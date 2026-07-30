@@ -6,7 +6,18 @@ from unittest.mock import MagicMock
 import pytest
 import yaml
 
+from harness.controller_state_contracts import (
+    ControllerStateContractViolation,
+)
+from harness.phase_graph import PhaseGraph
 from harness.squad import SquadController
+from harness.squad_provider import SquadAgentResult
+from harness.squad_state import SquadStateStore
+
+
+EXT_ROOT = Path(__file__).resolve().parent.parent.parent
+DEFINITION = EXT_ROOT / "extension" / "workflow" / "definition.yaml"
+EXT_YML = EXT_ROOT / "extension" / "extension.yml"
 
 
 @pytest.mark.parametrize(
@@ -155,6 +166,172 @@ def test_squad_records_checkpoint_after_successful_advance(
     assert calls[0]["spec_id"] == "001-demo"
 
 
+def test_malformed_controller_result_never_reaches_checkpoint(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    squad_dir = tmp_path / "runs" / "run-test"
+    store = SquadStateStore(squad_dir)
+    store.initialize(
+        "run-test",
+        "greenfield",
+        "msg",
+        0,
+        "phase3-tasks-lexicon",
+    )
+    controller = SquadController(
+        provider=MagicMock(),
+        state_store=store,
+        phase_graph=PhaseGraph(DEFINITION, EXT_YML),
+        ext_dir=EXT_ROOT / "extension",
+        project_root=tmp_path,
+        squad_dir=squad_dir,
+    )
+    executor = MagicMock()
+    executor.execute.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "DONE",
+            "state_updates": {
+                "tasks_lexicon_action": "proceed",
+                "tasks_lexicon_pass": "not-boolean",
+                "tasks_lexicon_attempts": 0,
+                "tasks_lexicon_findings": 0,
+            },
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    controller._executors["deterministic_lexicon"] = executor
+    monkeypatch.setattr(
+        controller,
+        "_guard_constitution_provenance",
+        lambda phase: phase,
+    )
+    monkeypatch.setattr(
+        controller,
+        "_guard_spec_lexicon_evidence",
+        lambda phase: phase,
+    )
+    monkeypatch.setattr(
+        controller,
+        "_guard_understanding_evidence",
+        lambda phase: phase,
+    )
+    monkeypatch.setattr(controller, "_refresh_run_context", lambda *_: None)
+    monkeypatch.setattr(controller, "_ensure_telemetry_manifest", lambda: None)
+    checkpoint_calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        controller,
+        "_checkpoint_successful_phase",
+        lambda phase, next_phase: checkpoint_calls.append(
+            (phase, next_phase)
+        ),
+    )
+
+    result = controller.run_single_phase(
+        "phase3-tasks-lexicon",
+        "validate",
+        "banzai",
+    )
+
+    assert result.status == "blocked"
+    assert result.phase == "phase3-tasks-lexicon"
+    assert checkpoint_calls == []
+    assert store.load()["completed_phases"] == []
+
+
+def test_routing_construction_failure_never_reaches_checkpoint(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    squad_dir = tmp_path / "runs" / "run-test"
+    store = SquadStateStore(squad_dir)
+    store.initialize(
+        "run-test",
+        "greenfield",
+        "msg",
+        0,
+        "phase3-tasks-lexicon",
+    )
+    controller = SquadController(
+        provider=MagicMock(),
+        state_store=store,
+        phase_graph=PhaseGraph(DEFINITION, EXT_YML),
+        ext_dir=EXT_ROOT / "extension",
+        project_root=tmp_path,
+        squad_dir=squad_dir,
+    )
+    executor = MagicMock()
+    executor.execute.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "DONE",
+            "state_updates": {
+                "tasks_lexicon_action": "proceed",
+                "tasks_lexicon_pass": True,
+                "tasks_lexicon_attempts": 0,
+                "tasks_lexicon_findings": 0,
+            },
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    controller._executors["deterministic_lexicon"] = executor
+    monkeypatch.setattr(
+        controller,
+        "_guard_constitution_provenance",
+        lambda phase: phase,
+    )
+    monkeypatch.setattr(
+        controller,
+        "_guard_spec_lexicon_evidence",
+        lambda phase: phase,
+    )
+    monkeypatch.setattr(
+        controller,
+        "_guard_understanding_evidence",
+        lambda phase: phase,
+    )
+    monkeypatch.setattr(controller, "_refresh_run_context", lambda *_: None)
+    monkeypatch.setattr(controller, "_ensure_telemetry_manifest", lambda: None)
+
+    def reject_route(*_args, **_kwargs):
+        raise ControllerStateContractViolation(
+            "must-not-leak",
+            contract="routing",
+            json_path="$.state_updates.manual_phase_runs",
+            validator="ownership",
+        )
+
+    monkeypatch.setattr(
+        controller,
+        "_coordinate_transition_routing",
+        reject_route,
+    )
+    checkpoint_calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        controller,
+        "_checkpoint_successful_phase",
+        lambda phase, next_phase: checkpoint_calls.append(
+            (phase, next_phase)
+        ),
+    )
+
+    result = controller.run_single_phase(
+        "phase3-tasks-lexicon",
+        "validate",
+        "banzai",
+    )
+
+    assert result.status == "blocked"
+    assert result.phase == "phase3-tasks-lexicon"
+    assert checkpoint_calls == []
+    assert store.load()["completed_phases"] == []
+
+
 def test_squad_checkpoints_staging_spec_with_state_spec_id(
     monkeypatch,
     tmp_path: Path,
@@ -247,6 +424,42 @@ def test_squad_terminal_phase4_checkpoint_includes_published_spec(
     controller._checkpoint_successful_phase("phase4-document", "done")
 
     assert calls[0]["additional_spec_dirs"] == (published,)
+
+
+def test_completion_checkpoint_inputs_reconstruct_from_durable_route(
+    tmp_path: Path,
+) -> None:
+    controller = object.__new__(SquadController)
+    controller._project_root = tmp_path
+    controller._squad_dir = tmp_path / "runs" / "spec-run"
+    active = controller._squad_dir / "specs" / "001-demo"
+    published = tmp_path / "specs" / "001-demo"
+    active.mkdir(parents=True)
+    published.mkdir(parents=True)
+    prepared = MagicMock()
+    prepared.intent.route = {
+        "kind": "routed",
+        "from_phase": "phase4-document",
+        "to_phase": "DONE",
+        "manual_phase_run": False,
+        "record_completion": True,
+    }
+    state = {
+        "run_id": "spec-run",
+        "spec_id": "001-demo",
+        "spec_dir": "runs/spec-run/specs/001-demo",
+        "published_spec_dir": "specs/001-demo",
+    }
+
+    inputs = controller._completion_checkpoint_inputs(
+        prepared,
+        state,
+    )
+
+    assert inputs["spec_dir"] == active
+    assert inputs["run_id"] == "spec-run"
+    assert inputs["spec_id"] == "001-demo"
+    assert inputs["additional_spec_dirs"] == (published,)
 
 
 def test_squad_terminal_phase4_checkpoint_includes_accepted_kb_targets(

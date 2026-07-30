@@ -44,3 +44,39 @@ def test_build_echelon_commit_message_rejects_blank_required_fields() -> None:
         assert "subject" in str(exc)
     else:
         raise AssertionError("blank subject should fail")
+
+
+def test_completion_checkpoint_commit_message_adds_exact_identity_trailers() -> None:
+    message = build_echelon_commit_message(
+        "echelon-checkpoint: 001-demo phase3-plan",
+        EchelonCommitMetadata(
+            origin="phase-a",
+            action="checkpoint",
+            spec_id="001-demo",
+            run_id="squad-20260723-123456",
+            phase="phase3-plan",
+            next_phase="phase3-consensus",
+            checkpoint_id="phase3-plan",
+            completion_id="a" * 32,
+        ),
+    )
+
+    assert "Echelon-Next-Phase: phase3-consensus" in message
+    assert f"Echelon-Completion: {'a' * 32}" in message
+
+
+def test_legacy_commit_message_omits_completion_checkpoint_trailers() -> None:
+    message = build_echelon_commit_message(
+        "echelon-checkpoint: 001-demo phase3-plan",
+        EchelonCommitMetadata(
+            origin="phase-a",
+            action="checkpoint",
+            spec_id="001-demo",
+            run_id="squad-20260723-123456",
+            phase="phase3-plan",
+            checkpoint_id="phase3-plan",
+        ),
+    )
+
+    assert "Echelon-Next-Phase:" not in message
+    assert "Echelon-Completion:" not in message

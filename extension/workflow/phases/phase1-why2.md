@@ -55,9 +55,11 @@ against `{spec_dir}/spec.md`. Return corrective `product_input_updates` for
 unsupported included mappings, unresolved questions, or conflicts, preserving
 canonical fields exactly. Do not edit the controller-owned ledger.
 
-Return journal entries in `echelon_result.journal_entries` and a qualitative
-`PASS`, `FAIL`, or `BLOCKED` verdict. Do not include `quality_scores` in state
-updates or in `echelon_result.state_updates`.
+Return journal entries in `echelon_result.journal_entries` and exactly one
+qualitative `PASS`, `FAIL`, or `STOP_AND_ASK` verdict. `DONE` is not a valid
+WHY2 verdict because it does not certify whether the specification may advance.
+Do not include `quality_scores` in state updates or in
+`echelon_result.state_updates`.
 
 </instructions>
 
@@ -78,11 +80,14 @@ Produce in `{spec_dir}/`:
 The controller combines SAGE's qualitative result with its certified score:
 
 1. Certified gates pass, no CRITICAL issues, and no required amendments remain:
-   proceed to the assessment checkpoint.
+   return `PASS`; the controller certifies the exact spec content and proceeds
+   to derived Lexicon authoring (or directly to assessment when that gate is
+   disabled).
 2. Certified gates fail, a CRITICAL issue exists, or a required amendment
    remains: route to WHAT with the concrete amendment list while below the
    iteration limit.
-3. At the iteration cap, use the workflow's explicit force-convergence warning.
+3. At the iteration cap, the controller blocks. Do not claim best-effort
+   convergence or waive failed quality.
 
 SAGE may make a certified pass stricter through a qualitative FAIL. SAGE may
 never make a certified failure pass. Score history, deltas, and iteration
@@ -90,15 +95,100 @@ routing are controller-owned. Required amendments are mandatory amendments:
 even without a CRITICAL issue, HIGH issues marked required keep the verdict at
 `FAIL` until repaired.
 
+## Evidence Resolution Routing
+
+Classify each failed finding before choosing a repair route:
+
+- `spec_repair`: CARTOGRAPHER can repair it from evidence already present in
+  the active artifact root; return an ordinary `FAIL` and do not request
+  investigation.
+- `evidence_resolution`: a project-specific fact must be established from a
+  declared reference input, its directly relevant primary material, a
+  repository, a database export or snapshot, or a permitted read-only service.
+  Return `FAIL` with the exact state updates below.
+- `human_decision`: the answer requires the user's policy, scope, or authority;
+  use the User-Gated Critical Issues protocol below.
+
+For `evidence_resolution`, return a machine-readable request. Do not merely
+write “route to INVESTIGATOR” in prose:
+
+```yaml
+echelon_result:
+  verdict: FAIL
+  state_updates:
+    evidence_resolution_status: pending
+    evidence_requests:
+      requests:
+        - id: ER-001
+          question: "<project-specific fact to establish>"
+          affected_requirements: [FR-001]
+          evidence_needed: "<minimum authoritative evidence required>"
+          supplied_reference_ids: [IN-REF-...]
+```
+
+Every WHY2 result MUST also classify its findings in the control plane. For a
+passing review return `evidence_resolution_status: not_required` with an empty
+list. For a failing review, include one entry for every blocking finding. The
+`route` value must be exactly `spec_repair`, `evidence_resolution`, or
+`human_decision`:
+
+```yaml
+echelon_result:
+  state_updates:
+    evidence_resolution_status: not_required # or pending
+    finding_routes:
+      findings:
+        - issue_id: ISS-001
+          route: evidence_resolution
+          rationale: "A declared primary reference must establish the fact."
+```
+
+For every finding, write `Action Required` and a `### Resolution Guidance`
+subsection inside that issue's `issues.md` block. It must state the exact next
+action or project decision, one evidence-backed suggested option if one exists,
+and which values cannot be inferred. Never suggest a retry as the resolution.
+Mark `Banzai eligible: yes` only for a fully evidence-backed option that does
+not decide product policy, scope, requirements, security posture, or a quality
+waiver. Banzai COMMANDER may select only that exact option; all other choices
+remain human decisions.
+
+If any finding has `route: evidence_resolution`,
+`evidence_resolution_status` MUST be `pending` and a complete
+`evidence_requests` object is required. If none do, status MUST be
+`not_required` and omit `evidence_requests`. NEVER use an agent-authored
+`BLOCKED` verdict for a routeable evidence gap; it is rejected before routing.
+
+Create a request only when the missing fact cannot be resolved by amending the
+specification. Every request must name the affected requirement and the
+minimum evidence needed. Never request an investigation based only on a generic
+best practice or an unsupported inference.
+
 ## User-Gated Critical Issues
 
-Set `escalation_question`, `blocked_reason`, and `status: blocked` only when all
-of these are true:
+Return a question only when all of these are true:
 
 1. No squad agent can resolve the issue.
 2. The answer requires information only the user holds.
 3. Proceeding would require an arbitrary decision that binds downstream work.
 
 Route squad-solvable issues back to WHAT without user escalation.
+
+Every question-bearing result uses this exact controller input:
+
+```yaml
+echelon_result:
+  verdict: STOP_AND_ASK
+  state_updates:
+    status: blocked
+    blocked_reason: human_clarification_required
+    escalation_question: "<one concrete project decision>"
+    escalation_recommended_answer: "<evidence-backed recommendation>"
+    escalation_risk_level: "<low | medium | high | critical>"
+```
+
+Include `escalation_recommended_answer` and `escalation_risk_level` together
+only when evidence supports a recommendation; otherwise omit both. Never put a
+question on `FAIL`, `BLOCKED`, or `ESCALATE`. The controller owns
+clarification writes and state cleanup.
 
 **Transition:** `phases[phase1-why2]` in `workflow/definition.yaml`.

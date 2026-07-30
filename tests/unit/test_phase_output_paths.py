@@ -4,6 +4,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 CHECKPOINT = ROOT / "extension" / "agents" / "control" / "checkpoint.md"
 PHASE2_DECIDE = ROOT / "extension" / "workflow" / "phases" / "phase2-decide.md"
+PHASE1_WHAT = ROOT / "extension" / "workflow" / "phases" / "phase1-what.md"
 PHASE1_WHY2 = ROOT / "extension" / "workflow" / "phases" / "phase1-why2.md"
 BUILD_INIT = ROOT / "extension" / "workflow" / "phases" / "build-1-init.md"
 BUILD_FINALIZE = ROOT / "extension" / "workflow" / "phases" / "build-8-finalize.md"
@@ -33,12 +34,27 @@ class TestPhaseOutputPaths:
         for filename in [
             "spec.md",
             "glossary.md",
-            "00-overview.md",
+            "requirements-overview.md",
             "assumptions.md",
             "issues.md",
         ]:
             assert f"{{spec_dir}}/{filename}" in text
         assert "Produce outputs in `{spec_dir}/`" in text
+
+    def test_phase1_what_outputs_requirements_overview_not_final_overview(self) -> None:
+        text = PHASE1_WHAT.read_text(encoding="utf-8")
+
+        assert "{spec_dir}/requirements-overview.md` exists" in text
+        assert "`00-overview.md` exists" not in text
+        assert "Expected Outputs — BOTH REQUIRED" in text
+        assert "- `requirements-overview.md`" in text
+        assert "- `00-overview.md`" not in text
+
+    def test_phase2_decide_reads_requirements_overview_not_final_overview(self) -> None:
+        text = PHASE2_DECIDE.read_text(encoding="utf-8")
+
+        assert "{spec_dir}/requirements-overview.md" in text
+        assert "{spec_dir}/00-overview.md" not in text
 
     def test_build_init_uses_canonical_report_paths(self) -> None:
         text = BUILD_INIT.read_text(encoding="utf-8")

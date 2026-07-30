@@ -4,8 +4,18 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import subprocess
+import sys
+import types
 
 import pytest
+
+from harness.human_input import HumanInputPolicyRegistry
+
+
+class _EmptyPolicyGraph:
+    def human_input_policy_registry(self) -> HumanInputPolicyRegistry:
+        return HumanInputPolicyRegistry(())
 
 
 def test_requirement_folder_is_snapshotted_with_stable_catalog(tmp_path: Path) -> None:
@@ -41,6 +51,289 @@ def test_requirement_folder_is_snapshotted_with_stable_catalog(tmp_path: Path) -
         "task_ids": [],
         "targets": [],
     }]
+
+
+def test_requirement_pdf_revision_creates_page_traceability_units(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.product_inputs import (
+        parse_input_declaration,
+        resolve_product_input_revision,
+    )
+
+    project = tmp_path / "workspace"
+    source = project / "sources" / "PBS-E-73.pdf"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"%PDF-placeholder")
+    base_inputs = project / "specs" / "004-demo" / "inputs"
+    base_inputs.mkdir(parents=True)
+    (base_inputs / "manifest.json").write_text('{"base": true}\n', encoding="utf-8")
+    monkeypatch.setattr(
+        "echelon.product_inputs._extract_pdf_pages",
+        lambda _path: ["Requirement one", "Requirement two"],
+    )
+
+    resolution = resolve_product_input_revision(
+        project,
+        project / "specs" / "004-demo" / "amendments" / "001" / "inputs",
+        [parse_input_declaration("requirement:sources/PBS-E-73.pdf")],
+    )
+
+    catalog = json.loads(resolution.catalog_path.read_text(encoding="utf-8"))["units"]
+    assert [unit["statement"] for unit in catalog] == ["Requirement one", "Requirement two"]
+    assert [unit["source_locator"] for unit in catalog] == [
+        "sources/PBS-E-73.pdf:page:1",
+        "sources/PBS-E-73.pdf:page:2",
+    ]
+    assert all(unit["id"].startswith("IN-REQ-") for unit in catalog)
+    assert (base_inputs / "manifest.json").read_text(encoding="utf-8") == '{"base": true}\n'
+
+
+def test_product_input_attachment_appends_revision_and_rebuilds_aggregate(tmp_path: Path) -> None:
+    from echelon.product_inputs import (
+        attach_product_input_revision,
+        parse_input_declaration,
+        resolve_product_inputs,
+    )
+
+    project = tmp_path / "workspace"
+    base_source = project / "sources" / "base"
+    added_source = project / "sources" / "DE-OPTA-SCHEMA-MAPPING"
+    base_source.mkdir(parents=True)
+    added_source.mkdir(parents=True)
+    (base_source / "brief.md").write_text("Initial requirement\n", encoding="utf-8")
+    (added_source / "mapping.csv").write_text(
+        "filter_id,table_name,column_name\nPBS-E-57,events,player_id\n",
+        encoding="utf-8",
+    )
+    run_dir = project / "runs" / "run-1"
+    base = resolve_product_inputs(
+        project,
+        run_dir,
+        [parse_input_declaration("reference:sources/base")],
+    )
+    original_snapshot = (
+        base.inputs_dir / "snapshots" / "reference" / "reference-001" / "brief.md"
+    ).read_bytes()
+
+    result = attach_product_input_revision(
+        project,
+        base.inputs_dir,
+        [parse_input_declaration("reference:sources/DE-OPTA-SCHEMA-MAPPING")],
+        command="echelon spec add-input",
+        evidence_requests={"requests": [{"id": "ER-001", "question": "Need mapping"}]},
+    )
+
+    assert result.added
+    assert result.attachment_id == "001"
+    assert (base.inputs_dir / "attachments" / "001" / "manifest.json").is_file()
+    assert (
+        base.inputs_dir / "snapshots" / "reference" / "reference-001" / "brief.md"
+    ).read_bytes() == original_snapshot
+    aggregate_manifest = json.loads((base.inputs_dir / "manifest.json").read_text(encoding="utf-8"))
+    accepted = [item for item in aggregate_manifest["resources"] if item.get("status") == "accepted"]
+    assert any(item["source_locator"].endswith("sources/base/brief.md") for item in accepted)
+    assert any(
+        item["source_locator"].endswith("sources/DE-OPTA-SCHEMA-MAPPING/mapping.csv")
+        for item in accepted
+    )
+    ledger = json.loads((base.inputs_dir / "attachment-ledger.json").read_text(encoding="utf-8"))
+    assert ledger["attachments"][0]["id"] == "001"
+    assert ledger["attachments"][0]["command"] == "echelon spec add-input"
+    assert ledger["attachments"][0]["linked_evidence_request_ids"] == ["ER-001"]
+
+
+def test_product_input_attachment_all_duplicate_source_is_idempotent(tmp_path: Path) -> None:
+    from echelon.product_inputs import (
+        attach_product_input_revision,
+        parse_input_declaration,
+        resolve_product_inputs,
+    )
+
+    project = tmp_path / "workspace"
+    source = project / "sources" / "base"
+    source.mkdir(parents=True)
+    (source / "brief.md").write_text("Same evidence\n", encoding="utf-8")
+    base = resolve_product_inputs(
+        project,
+        project / "runs" / "run-1",
+        [parse_input_declaration("reference:sources/base")],
+    )
+    before = (base.inputs_dir / "manifest.json").read_text(encoding="utf-8")
+
+    result = attach_product_input_revision(
+        project,
+        base.inputs_dir,
+        [parse_input_declaration("reference:sources/base")],
+        command="echelon spec add-input",
+    )
+
+    assert not result.added
+    assert result.duplicates
+    assert not (base.inputs_dir / "attachments" / "001").exists()
+    assert (base.inputs_dir / "manifest.json").read_text(encoding="utf-8") == before
+
+
+def test_product_input_attachment_duplicate_content_is_reported_without_duplicate_catalog_unit(
+    tmp_path: Path,
+) -> None:
+    from echelon.product_inputs import (
+        attach_product_input_revision,
+        parse_input_declaration,
+        resolve_product_inputs,
+    )
+
+    project = tmp_path / "workspace"
+    first = project / "sources" / "first"
+    second = project / "sources" / "second"
+    first.mkdir(parents=True)
+    second.mkdir(parents=True)
+    (first / "a.md").write_text("Same evidence\n", encoding="utf-8")
+    (second / "b.md").write_text("Same evidence\n", encoding="utf-8")
+    base = resolve_product_inputs(
+        project,
+        project / "runs" / "run-1",
+        [parse_input_declaration("reference:sources/first")],
+    )
+
+    result = attach_product_input_revision(
+        project,
+        base.inputs_dir,
+        [parse_input_declaration("reference:sources/second")],
+        command="echelon spec add-input",
+    )
+
+    assert not result.added
+    assert result.duplicates[0]["reason"] == "duplicate content"
+    catalog = json.loads((base.inputs_dir / "catalog.json").read_text(encoding="utf-8"))
+    assert len(catalog["units"]) == 1
+
+
+def test_product_input_revision_refuses_to_replace_existing_evidence(tmp_path: Path) -> None:
+    from echelon.product_inputs import (
+        ProductInputError,
+        parse_input_declaration,
+        resolve_product_input_revision,
+    )
+
+    project = tmp_path / "workspace"
+    source = project / "requirements.md"
+    source.parent.mkdir(parents=True)
+    source.write_text("Requirement\n", encoding="utf-8")
+    destination = project / "specs" / "004-demo" / "amendments" / "001" / "inputs"
+    destination.mkdir(parents=True)
+
+    with pytest.raises(ProductInputError, match="already exists"):
+        resolve_product_input_revision(
+            project,
+            destination,
+            [parse_input_declaration("requirement:requirements.md")],
+        )
+
+
+def test_requirement_pdf_without_extractable_text_blocks_preflight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.product_inputs import (
+        ProductInputError,
+        parse_input_declaration,
+        resolve_product_input_revision,
+    )
+
+    project = tmp_path / "workspace"
+    source = project / "requirements.pdf"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"%PDF-placeholder")
+    monkeypatch.setattr("echelon.product_inputs._extract_pdf_pages", lambda _path: [])
+
+    with pytest.raises(ProductInputError, match="no extractable text"):
+        resolve_product_input_revision(
+            project,
+            project / "revision-inputs",
+            [parse_input_declaration("requirement:requirements.pdf")],
+        )
+
+
+def test_requirement_pdf_uses_pypdf_when_poppler_is_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.product_inputs import _extract_pdf_pages
+
+    source = tmp_path / "requirements.pdf"
+    source.write_bytes(b"%PDF-placeholder")
+
+    class _Page:
+        def __init__(self, text: str) -> None:
+            self._text = text
+
+        def extract_text(self) -> str:
+            return self._text
+
+    class _Reader:
+        def __init__(self, _path: Path) -> None:
+            self.pages = [_Page("Requirement one"), _Page("Requirement two")]
+
+    fake_pypdf = types.ModuleType("pypdf")
+    fake_pypdf.PdfReader = _Reader  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "pypdf", fake_pypdf)
+
+    def _missing_poppler(*_args: object, **_kwargs: object) -> object:
+        raise FileNotFoundError
+
+    monkeypatch.setattr("echelon.product_inputs.subprocess.run", _missing_poppler)
+
+    assert _extract_pdf_pages(source) == ["Requirement one", "Requirement two"]
+
+
+def test_requirement_pdf_prefers_pypdf_over_poppler(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.product_inputs import _extract_pdf_pages
+
+    source = tmp_path / "requirements.pdf"
+    source.write_bytes(b"%PDF-placeholder")
+
+    class _Page:
+        def extract_text(self) -> str:
+            return "pypdf requirement"
+
+    class _Reader:
+        def __init__(self, _path: Path) -> None:
+            self.pages = [_Page()]
+
+    fake_pypdf = types.ModuleType("pypdf")
+    fake_pypdf.PdfReader = _Reader  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "pypdf", fake_pypdf)
+
+    def _poppler_must_not_run(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("pypdf must be attempted before pdftotext")
+
+    monkeypatch.setattr("echelon.product_inputs.subprocess.run", _poppler_must_not_run)
+
+    assert _extract_pdf_pages(source) == ["pypdf requirement"]
+
+
+def test_requirement_pdf_falls_back_to_poppler_when_pypdf_is_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.product_inputs import _extract_pdf_pages
+
+    source = tmp_path / "requirements.pdf"
+    source.write_bytes(b"%PDF-placeholder")
+    monkeypatch.setitem(sys.modules, "pypdf", None)
+    monkeypatch.setattr(
+        "echelon.product_inputs.subprocess.run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="Poppler requirement\f", stderr=""
+        ),
+    )
+
+    assert _extract_pdf_pages(source) == ["Poppler requirement"]
 
 
 def test_requirement_catalog_keeps_markdown_scaffolding_as_context_only(tmp_path: Path) -> None:
@@ -404,7 +697,14 @@ def test_controller_ignores_empty_exclusions_for_context_only_catalog_units(tmp_
         "phase1-what",
         product_inputs=resolution.state_payload(project),
     )
-    controller = SquadController(object(), store, object(), project / "ext", project, squad_dir=run_dir)
+    controller = SquadController(
+        object(),
+        store,
+        _EmptyPolicyGraph(),
+        project / "ext",
+        project,
+        squad_dir=run_dir,
+    )
     result = SquadAgentResult(
         exit_code=0,
         raw_output="",
@@ -432,7 +732,11 @@ def test_controller_ignores_empty_exclusions_for_context_only_catalog_units(tmp_
         },
     )
 
-    assert controller._apply_product_input_updates(result, "phase1-what") is None
+    assert controller._apply_product_input_updates(
+        result,
+        "phase1-what",
+        store.load(),
+    ) is None
     refreshed_context = resolution.requirement_context_path.read_text(encoding="utf-8")
     assert context_only_id not in refreshed_context
     assert requirement_id in refreshed_context
@@ -474,7 +778,14 @@ def test_discover_ignores_reference_traceability_updates(tmp_path: Path) -> None
         "phase1-discover",
         product_inputs=resolution.state_payload(project),
     )
-    controller = SquadController(object(), store, object(), project / "ext", project, squad_dir=run_dir)
+    controller = SquadController(
+        object(),
+        store,
+        _EmptyPolicyGraph(),
+        project / "ext",
+        project,
+        squad_dir=run_dir,
+    )
     result = SquadAgentResult(
         exit_code=0,
         raw_output="",
@@ -579,7 +890,14 @@ def test_phase_plan_controller_rejects_bad_traceability_before_consensus(tmp_pat
     state = store.load()
     state["spec_dir"] = str(spec.relative_to(project))
     store.save(state)
-    controller = SquadController(object(), store, object(), project / "ext", project, squad_dir=run_dir)
+    controller = SquadController(
+        object(),
+        store,
+        _EmptyPolicyGraph(),
+        project / "ext",
+        project,
+        squad_dir=run_dir,
+    )
     result = SquadAgentResult(
         exit_code=0,
         raw_output="",
@@ -597,7 +915,11 @@ def test_phase_plan_controller_rejects_bad_traceability_before_consensus(tmp_pat
         },
     )
 
-    error = controller._apply_product_input_updates(result, "phase3-plan")
+    error = controller._apply_product_input_updates(
+        result,
+        "phase3-plan",
+        store.load(),
+    )
 
     assert error == f"invalid product input updates: {unit_id}: task T-S01 does not reference the mapped specification IDs"
     ledger = json.loads(resolution.traceability_path.read_text(encoding="utf-8"))
@@ -654,13 +976,24 @@ def test_consensus_controller_validates_run_local_traceability_without_requiring
     state = store.load()
     state["spec_dir"] = str(spec.relative_to(project))
     store.save(state)
-    controller = SquadController(object(), store, object(), project / "ext", project, squad_dir=run_dir)
+    controller = SquadController(
+        object(),
+        store,
+        _EmptyPolicyGraph(),
+        project / "ext",
+        project,
+        squad_dir=run_dir,
+    )
     result = SquadAgentResult(
         exit_code=0, raw_output="", duration_ms=0, timed_out=False,
         echelon_result={"verdict": "PASS"},
     )
 
-    assert controller._apply_product_input_updates(result, "phase3-consensus") is None
+    assert controller._apply_product_input_updates(
+        result,
+        "phase3-consensus",
+        store.load(),
+    ) is None
 
 
 def test_prompt_contract_uses_snapshot_paths_and_structured_updates() -> None:
@@ -708,6 +1041,48 @@ def test_product_input_context_includes_controller_mapping_repair() -> None:
     assert "Product Input Mapping Repair" in prompt
     assert "IN-REQ-1: unresolved disposition open_question" in prompt
     assert "Do not return COMPLETE" in prompt
+
+
+def test_product_input_context_renders_added_reference_material() -> None:
+    from harness.squad_executors import _render_product_input_context
+
+    prompt = _render_product_input_context({
+        "product_inputs": {
+            "manifest": "runs/run-1/inputs/manifest.json",
+            "catalog": "runs/run-1/inputs/catalog.json",
+            "traceability": "runs/run-1/inputs/traceability.json",
+            "requirement_context": "runs/run-1/inputs/requirement-context.md",
+            "reference_context": "runs/run-1/inputs/reference-context.md",
+        },
+        "product_input_attachments": [
+            {
+                "id": "001",
+                "declarations": [
+                    {
+                        "role": "reference",
+                        "location": "sources/DE-OPTA-SCHEMA-MAPPING",
+                    }
+                ],
+                "resources": [
+                    {
+                        "snapshot": (
+                            "attachments/001/snapshots/reference/"
+                            "reference-001/mapping.csv"
+                        )
+                    }
+                ],
+                "linked_evidence_request_ids": ["ER-001"],
+            }
+        ],
+        "evidence_requests": {
+            "requests": [{"id": "ER-001", "question": "Need mapping"}]
+        },
+    })
+
+    assert "## Added Reference Material" in prompt
+    assert "sources/DE-OPTA-SCHEMA-MAPPING" in prompt
+    assert "ER-001" in prompt
+    assert "Preserve and extend prior investigation artifacts" in prompt
 
 
 def test_product_input_context_makes_phase_one_id_repair_allowlist_explicit() -> None:
@@ -841,7 +1216,7 @@ def test_phase_a_publication_copies_evidence_only_after_traceability_is_ready(tm
     from harness.squad import SquadController
     from harness.squad_state import SquadStateStore
 
-    class TerminalGraph:
+    class TerminalGraph(_EmptyPolicyGraph):
         def entry_phase(self) -> str:
             return "DONE"
 
@@ -878,3 +1253,236 @@ def test_phase_a_publication_copies_evidence_only_after_traceability_is_ready(tm
 
     assert controller._publish_product_input_evidence(spec, store.load()) == []
     assert (spec / "inputs" / "manifest.json").is_file()
+
+
+def _product_effect_staging_fixture(
+    tmp_path: Path,
+):
+    from echelon.product_inputs import parse_input_declaration, resolve_product_inputs
+    from harness.squad import SquadController
+    from harness.squad_provider import SquadAgentResult
+    from harness.squad_state import SquadStateStore
+
+    project = tmp_path / "workspace"
+    source = project / "requirements.md"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "# Product heading\n\nA normative requirement.\n",
+        encoding="utf-8",
+    )
+    run_dir = project / "runs" / "run-1"
+    resolution = resolve_product_inputs(
+        project,
+        run_dir,
+        [parse_input_declaration("requirement:requirements.md")],
+    )
+    catalog = json.loads(resolution.catalog_path.read_text(encoding="utf-8"))
+    structural_unit, normative_unit = catalog["units"]
+    ledger = json.loads(resolution.traceability_path.read_text(encoding="utf-8"))
+    ledger["requirements"].insert(
+        0,
+        {
+            "input_unit_id": structural_unit["id"],
+            "disposition": "open_question",
+            "rationale": "Legacy structural entry.",
+            "spec_ids": [],
+            "task_ids": [],
+            "targets": [],
+        },
+    )
+    resolution.traceability_path.write_text(
+        json.dumps(ledger, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    resolution.traceability_markdown_path.write_text(
+        "# Product Input Traceability\n\nlegacy\n",
+        encoding="utf-8",
+    )
+    resolution.requirement_context_path.write_text(
+        "# stale requirement context\n",
+        encoding="utf-8",
+    )
+
+    spec_dir = run_dir / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-001 "
+        "depends=none target=sources/web\n",
+        encoding="utf-8",
+    )
+    store = SquadStateStore(run_dir)
+    store.initialize(
+        "run-1",
+        "greenfield",
+        "demo",
+        0,
+        "phase3-plan",
+        implementation_targets=["sources/web"],
+        product_inputs=resolution.state_payload(project),
+    )
+    state = store.load()
+    state["spec_dir"] = str(spec_dir.relative_to(project))
+    store.save(state)
+    controller = SquadController(
+        object(),
+        store,
+        _EmptyPolicyGraph(),
+        project / "ext",
+        project,
+        squad_dir=run_dir,
+    )
+    result = SquadAgentResult(
+        exit_code=0,
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+        echelon_result={
+            "verdict": "DONE",
+            "product_input_updates": [
+                {
+                    "input_unit_id": normative_unit["id"],
+                    "disposition": "included",
+                    "rationale": "Mapped during planning.",
+                    "spec_ids": ["FR-001"],
+                    "task_ids": ["T-001"],
+                    "targets": ["sources/web"],
+                }
+            ],
+        },
+    )
+    visible = (
+        resolution.traceability_path,
+        resolution.traceability_markdown_path,
+        resolution.requirement_context_path,
+    )
+    return controller, store, result, visible
+
+
+@pytest.mark.parametrize(
+    ("fault_point", "fault_occurrence"),
+    [
+        ("json", 1),
+        ("markdown", 1),
+        ("requirement_context", 1),
+        ("json", 2),
+        ("markdown", 2),
+        ("task_validation", 1),
+    ],
+    ids=[
+        "structural-json",
+        "structural-markdown",
+        "requirement-context",
+        "candidate-json",
+        "candidate-markdown",
+        "final-task-validation",
+    ],
+)
+def test_product_effect_staging_failure_keeps_visible_inputs_byte_identical(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fault_point: str,
+    fault_occurrence: int,
+) -> None:
+    import echelon.product_inputs as product_inputs
+    from harness.squad import _ProductInputCommitError
+
+    controller, store, result, visible = _product_effect_staging_fixture(tmp_path)
+    before = {path: path.read_bytes() for path in visible}
+    calls = 0
+
+    if fault_point == "json":
+        original = product_inputs._write_json
+
+        def faulting_write_json(path, payload):
+            nonlocal calls
+            original(path, payload)
+            if path.name == "traceability.json":
+                calls += 1
+                if calls == fault_occurrence:
+                    raise OSError("injected staged JSON failure")
+
+        monkeypatch.setattr(product_inputs, "_write_json", faulting_write_json)
+    elif fault_point == "markdown":
+        original = product_inputs._write_traceability_markdown
+
+        def faulting_write_markdown(path, payload):
+            nonlocal calls
+            original(path, payload)
+            calls += 1
+            if calls == fault_occurrence:
+                raise OSError("injected staged Markdown failure")
+
+        monkeypatch.setattr(
+            product_inputs,
+            "_write_traceability_markdown",
+            faulting_write_markdown,
+        )
+    elif fault_point == "requirement_context":
+        original = product_inputs.refresh_requirement_context_from_catalog
+
+        def faulting_context(catalog_path, requirement_context_path):
+            original(catalog_path, requirement_context_path)
+            raise OSError("injected staged requirement-context failure")
+
+        monkeypatch.setattr(
+            product_inputs,
+            "refresh_requirement_context_from_catalog",
+            faulting_context,
+        )
+    else:
+        original = product_inputs.apply_product_input_updates
+
+        def faulting_final_validation(*args, **kwargs):
+            original(*args, **kwargs)
+            raise OSError("injected final task validation failure")
+
+        monkeypatch.setattr(
+            product_inputs,
+            "apply_product_input_updates",
+            faulting_final_validation,
+        )
+
+    with pytest.raises(_ProductInputCommitError):
+        controller._prepare_external_phase_effects(
+            result,
+            "phase3-plan",
+            store.load(),
+            manual_phase_run=False,
+        )
+
+    assert {path: path.read_bytes() for path in visible} == before
+    assert "pending_external_publication" not in store.load()
+
+
+def test_product_effect_staging_changes_only_sealed_copies_until_publish(
+    tmp_path: Path,
+) -> None:
+    controller, store, result, visible = _product_effect_staging_fixture(tmp_path)
+    before = {path: path.read_bytes() for path in visible}
+
+    prepared = controller._prepare_external_phase_effects(
+        result,
+        "phase3-plan",
+        store.load(),
+        manual_phase_run=False,
+    )
+
+    assert prepared is not None
+    assert {path: path.read_bytes() for path in visible} == before
+    manifest = json.loads(
+        next(
+            (
+                controller._squad_dir
+                / ".publication-outbox"
+                / prepared.marker.transaction_id
+            ).glob("manifest.json")
+        ).read_text(encoding="utf-8")
+    )
+    assert [operation["target"] for operation in manifest["operations"]] == sorted(
+        str(path.relative_to(controller._project_root)).replace("\\", "/")
+        for path in visible
+    )
+
+    prepared.publish()
+
+    assert {path: path.read_bytes() for path in visible} != before

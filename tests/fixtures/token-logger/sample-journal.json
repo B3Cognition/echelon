@@ -18,7 +18,7 @@
     "phase": "what",
     "timestamp": "2026-04-02T20:55:00Z",
     "summary": "Wrote spec.md with 8 requirements. All CA overlay claims explicitly gate-conditioned on U-CA-004.",
-    "output_files": ["spec.md", "00-overview.md"],
+    "output_files": ["spec.md", "requirements-overview.md"],
     "quality_self_assessment": 0.83,
     "blockers": [],
     "usage": {

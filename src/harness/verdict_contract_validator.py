@@ -44,6 +44,13 @@ def validate_verdict_contracts(repo_root: Path) -> list[VerdictContractFinding]:
         phase_id = str(phase.get("id") or spec_file)
         allowed = contract.canonical | contract.legacy
         workflow_values = _workflow_verdict_values(phase.get("transitions") or [])
+        declared_verdicts = phase.get("allowed_verdicts")
+        if isinstance(declared_verdicts, list):
+            workflow_values.update(
+                verdict
+                for verdict in declared_verdicts
+                if isinstance(verdict, str)
+            )
         unexpected = sorted(workflow_values - allowed)
         if unexpected:
             findings.append(

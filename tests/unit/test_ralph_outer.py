@@ -36,8 +36,26 @@ from harness.provider import (
     SandboxSpec,
 )
 from harness import ralph
+from harness.build_result import BuildResult
+from harness.llm_tool_policy import LlmToolPolicy
 from harness.ralph import RalphController
 from harness.state import StateStore
+
+
+def _valid_plan_conformance_json() -> str:
+    return json.dumps(
+        {
+            "status": "pass",
+            "findings": [],
+            "sources": [
+                "spec.md",
+                "requirements-overview.md",
+                "plan.md",
+                "tasks.md",
+            ],
+        },
+        indent=2,
+    ) + "\n"
 from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
 
 
@@ -123,6 +141,56 @@ class MockProvider(SandboxProvider):
         self.destroyed = True
 
 
+class SyntheticBuildProvider(SandboxProvider):
+    """SandboxProvider that mutates the real git worktree without invoking an LLM."""
+
+    def __init__(self) -> None:
+        self.worktree: Optional[Path] = None
+        self.created = False
+        self.destroyed = False
+
+    def create(self, spec: SandboxSpec) -> SandboxHandle:
+        self.created = True
+        self.worktree = Path(spec.worktree_mount)
+        return SandboxHandle(id="synthetic-sandbox-1", session_id="synthetic")
+
+    def exec(
+        self,
+        handle: SandboxHandle,
+        cmd: str,
+        cwd: Optional[str] = None,
+        env: Optional[Dict[str, str]] = None,
+        timeout_ms: int = 1_200_000,
+    ) -> ExecResult:
+        del handle, cwd, env, timeout_ms
+        if "verify" in cmd:
+            return ExecResult(
+                exit_code=0,
+                stdout=json.dumps({"passed": True, "failures": []}),
+                stderr="",
+                duration_ms=100,
+                resource_stats=None,
+            )
+        assert self.worktree is not None
+        (self.worktree / "built.txt").write_text("synthetic delivery\n", encoding="utf-8")
+        return ExecResult(
+            exit_code=0,
+            stdout="synthetic build complete",
+            stderr="",
+            duration_ms=100,
+            resource_stats=None,
+        )
+
+    def write_file(self, handle: SandboxHandle, path: str, content: bytes) -> None:
+        pass
+
+    def read_file(self, handle: SandboxHandle, path: str) -> bytes:
+        return b""
+
+    def destroy(self, handle: SandboxHandle) -> None:
+        self.destroyed = True
+
+
 # === Fixtures ===
 
 
@@ -140,6 +208,8 @@ def _make_gitops() -> MagicMock:
     gitops.destroy_worktree.return_value = None
     gitops.commit.return_value = "abc123"
     gitops.push.return_value = None
+    gitops.get_default_branch.return_value = "main"
+    gitops.local_merge.return_value = None
     gitops.create_draft_pr.return_value = "https://github.com/test/repo/pull/1"
     gitops.promote_pr_ready.return_value = None
     gitops.base_dir = Path("/tmp/project")
@@ -153,8 +223,9 @@ def _make_controller(
     llm_provider: Optional[Any] = None,
     llm_build_runner: Optional[Any] = None,
     fulfillment_runner: Optional[Any] = None,
+    config: Optional[HarnessConfig] = None,
 ) -> tuple:
-    config = _make_config()
+    config = config or _make_config()
     provider = MockProvider(verify_results=verify_results)
     gitops = _make_gitops()
     state_store = StateStore(tmp_path, "spec-001", "default")
@@ -221,8 +292,22 @@ class TestOuterLoopConvergence:
         gitops.base_dir = project
         source = project / "specs" / "spec-001-demo"
         source.mkdir(parents=True)
-        for name in ("spec.md", "plan.md", "research.md", "data-model.md"):
-            (source / name).write_text(f"# {name}\n", encoding="utf-8")
+        for name in (
+            "00-overview.md",
+            "requirements-overview.md",
+            "spec.md",
+            "plan.md",
+            "plan-conformance.md",
+            "plan-conformance.json",
+            "research.md",
+            "data-model.md",
+        ):
+            content = (
+                _valid_plan_conformance_json()
+                if name == "plan-conformance.json"
+                else f"# {name}\n"
+            )
+            (source / name).write_text(content, encoding="utf-8")
         for name in ("test-strategy.md", "test-architecture.md", "coverage-map.md"):
             (source / name).write_text(f"# {name}\n", encoding="utf-8")
         (source / "tasks.md").write_text(
@@ -267,8 +352,22 @@ class TestOuterLoopConvergence:
         gitops.base_dir = project
         source = project / "specs" / "spec-001-demo"
         source.mkdir(parents=True)
-        for name in ("spec.md", "plan.md", "research.md", "data-model.md"):
-            (source / name).write_text(f"# {name}\n", encoding="utf-8")
+        for name in (
+            "00-overview.md",
+            "requirements-overview.md",
+            "spec.md",
+            "plan.md",
+            "plan-conformance.md",
+            "plan-conformance.json",
+            "research.md",
+            "data-model.md",
+        ):
+            content = (
+                _valid_plan_conformance_json()
+                if name == "plan-conformance.json"
+                else f"# {name}\n"
+            )
+            (source / name).write_text(content, encoding="utf-8")
         for name in ("test-strategy.md", "test-architecture.md", "coverage-map.md"):
             (source / name).write_text(f"# {name}\n", encoding="utf-8")
         (source / "tasks.md").write_text(
@@ -2024,6 +2123,121 @@ class TestOuterLoopConvergence:
         assert provider.destroyed is True
         gitops.create_worktree.assert_called_once()
         gitops.promote_pr_ready.assert_called_once()
+        gitops.local_merge.assert_called_once_with(
+            "harness/spec-001-default-iter-0",
+            "spec-001",
+        )
+
+    def test_merge_failure_blocks_convergence(self, tmp_path: Path) -> None:
+        """Verified branch cannot be reported converged until it lands on default."""
+        controller, provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+        )
+        gitops.local_merge.side_effect = RuntimeError("merge conflict")
+
+        result = controller.run_loop(max_outer=5, max_inner=3)
+
+        assert result.status == "blocked"
+        assert result.termination_reason == "target_merge_failed"
+        gitops.local_merge.assert_called_once_with(
+            "harness/spec-001-default-iter-0",
+            "spec-001",
+        )
+        gitops.promote_pr_ready.assert_not_called()
+        assert provider.destroyed is True
+        gitops.destroy_worktree.assert_not_called()
+        final_state = state_store.read()
+        assert final_state["status"] == "blocked"
+        assert final_state["target_merge"]["error"] == "merge conflict"
+
+    @pytest.mark.integration
+    def test_synthetic_run_lands_verified_work_on_target_main(
+        self, tmp_path: Path
+    ) -> None:
+        """Ralph + real GitOps lands synthetic build output on target main."""
+        from harness.gitops import GitOpsManager
+
+        target = tmp_path / "sources" / "synthetic"
+        target.mkdir(parents=True)
+        subprocess.run(["git", "init", "-b", "main"], cwd=target, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=target,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"],
+            cwd=target,
+            check=True,
+        )
+        (target / "README.md").write_text("base\n", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=target, check=True)
+        subprocess.run(["git", "commit", "-m", "base"], cwd=target, check=True)
+        subprocess.run(
+            ["git", "config", "receive.denyCurrentBranch", "updateInstead"],
+            cwd=target,
+            check=True,
+        )
+
+        harness_root = tmp_path / "workspace"
+        harness_root.mkdir()
+        config = HarnessConfig(
+            target_repo=str(target),
+            target_default_branch="main",
+            provider="docker",
+            pr_host="none",
+        )
+        gitops = GitOpsManager(config=config, base_dir=str(harness_root))
+        gitops.clone_mirror(str(target))
+        gitops.sync_runtime_extension = MagicMock(return_value=None)
+
+        provider = SyntheticBuildProvider()
+        state_dir = harness_root / "runs" / "state"
+        state_store = StateStore(state_dir, "909", "default")
+        state_store.initialize("synthetic-run", "semi")
+        state_store.transition("running")
+
+        controller = RalphController(
+            provider=provider,
+            gitops=gitops,
+            state_store=state_store,
+            mode_controller=ModeController("semi"),
+            escalation_handler=EscalationHandler(str(harness_root / "runs")),
+            spec_id="909",
+            strategy_id="default",
+            config=config,
+        )
+
+        result = controller.run_loop(
+            max_outer=1,
+            max_inner=0,
+            token_budget=100_000,
+            build_command="synthetic build",
+        )
+
+        assert result.status == "converged"
+        assert provider.created is True
+        assert provider.destroyed is True
+        assert (target / "built.txt").read_text(encoding="utf-8") == (
+            "synthetic delivery\n"
+        )
+        branch = result.branch
+        assert branch == "harness/909/default/iter-0"
+        contains = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", branch, "main"],
+            cwd=gitops.mirror_path,
+            check=False,
+        )
+        assert contains.returncode == 0
+        final_state = state_store.read()
+        assert final_state["status"] == "converged"
+        assert final_state["target_merge"] == {
+            "branch": branch,
+            "default_branch": "main",
+            "verified": True,
+            "pushed": True,
+        }
 
     def test_convergence_writes_ready_to_land_status(self, tmp_path: Path) -> None:
         """Ralph owns the implemented-but-not-landed status transition."""
@@ -2563,6 +2777,32 @@ class TestOuterLoopConvergence:
 
         assert decision["action"] == "scoped"
         assert result.passed is True
+
+    def test_single_target_completion_uses_full_fulfillment_refresh(
+        self, tmp_path: Path
+    ) -> None:
+        """A one-target delivery at 100% progress must bootstrap full evidence."""
+        controller, _provider, _gitops, state_store = _make_controller(tmp_path)
+        worktree = tmp_path / "workspace" / "sources" / "prosaic"
+        spec_dir = tmp_path / "workspace" / "specs" / "001-dashboard"
+        worktree.mkdir(parents=True)
+        spec_dir.mkdir(parents=True)
+        state = state_store.read()
+        state["implementation_target"] = "sources/prosaic"
+        state["declared_targets"] = ["sources/prosaic"]
+        state["target_task_ids"] = ["T-001", "T-002"]
+        state["spec_dir"] = str(spec_dir)
+        state["build"] = {
+            "total_tasks": 2,
+            "completed_tasks": 2,
+            "tasks_completed_pct": 100,
+        }
+        state_store.write(state)
+
+        decision = controller._fulfillment_refresh_decision(str(worktree))
+
+        assert decision["action"] == "full"
+        assert decision["reason"] == "single target convergence boundary reached"
 
     def test_convergence_only_fulfillment_policy_skips_failed_slice_refresh(
         self, tmp_path: Path
@@ -3149,12 +3389,12 @@ class TestOuterLoopConvergence:
         assert result.termination_reason == "build_incomplete"
         captured = capsys.readouterr()
         assert "host LLM tool permissions blocked the build" in captured.err
-        assert "allow_unsafe_host_execution: true" in captured.err
+        assert "do not enable unsafe host execution" in captured.err
         assert "verify_command" not in captured.err
         state = state_store.read()
         assert state["termination_reason"] == "build_incomplete"
         assert state["build_status"] == "host_tool_permission_denied"
-        assert "allow_unsafe_host_execution" in state["build_reason"]
+        assert "do not enable unsafe host execution" in state["build_reason"]
         assert state["cleanup_warnings"][0]["operation"] == "sandbox_destroy"
         assert "podman rm timed out" in state["cleanup_warnings"][0]["error"]
         gitops.commit.assert_not_called()
@@ -3525,8 +3765,6 @@ class TestOuterLoopConvergence:
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Harness detects when the LLM writes outside the isolated worktree."""
-        from harness.build_result import BuildResult
-
         project = tmp_path / "project"
         project.mkdir()
         subprocess.run(["git", "init", "-b", "main"], cwd=project, check=True)
@@ -3575,6 +3813,147 @@ class TestOuterLoopConvergence:
         assert "outside the isolated worktree" in captured.err
         assert "real target repo" not in captured.err
         assert state_store.read()["termination_reason"] == "containment_violation"
+        gitops.commit.assert_not_called()
+        gitops.destroy_worktree.assert_not_called()
+
+    def test_llm_build_blocks_when_workspace_root_gets_dirty(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Target-scoped delivery must detect writes to the orchestration workspace."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        subprocess.run(["git", "init", "-b", "main"], cwd=workspace, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=workspace, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=workspace, check=True)
+        spec_dir = workspace / "specs" / "spec-001"
+        spec_dir.mkdir(parents=True)
+        for name in (
+            "00-overview.md",
+            "requirements-overview.md",
+            "spec.md",
+            "plan.md",
+            "plan-conformance.md",
+            "plan-conformance.json",
+            "research.md",
+            "data-model.md",
+        ):
+            content = (
+                _valid_plan_conformance_json()
+                if name == "plan-conformance.json"
+                else f"# {name}\n"
+            )
+            (spec_dir / name).write_text(content, encoding="utf-8")
+        for name in ("test-strategy.md", "test-architecture.md", "coverage-map.md"):
+            (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+        (spec_dir / "constitution.md").write_text(
+            "# Real Constitution\n\nProject-specific governance.\n",
+            encoding="utf-8",
+        )
+        (workspace / "specs" / "spec-001" / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=base req=FR-001 depends=none target=sources/prosaic\n",
+            encoding="utf-8",
+        )
+        canonical = workspace / ".specify" / "memory" / "constitution.md"
+        canonical.parent.mkdir(parents=True)
+        canonical.write_text("# Real Constitution\n", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=workspace, check=True)
+        subprocess.run(["git", "commit", "-m", "base"], cwd=workspace, check=True)
+
+        harness_base = workspace / "runs" / "targets" / "prosaic"
+        worktree = harness_base / "runs" / "build-1" / "worktrees" / "default" / "iter-0"
+        worktree.mkdir(parents=True)
+        source = workspace / "sources" / "prosaic"
+        source.mkdir(parents=True)
+
+        llm_build_runner = MagicMock()
+
+        def dirty_workspace(_worktree_path: str, _prompt: str, **_kwargs):
+            (workspace / "node_modules").mkdir()
+            (workspace / "node_modules" / ".package-lock.json").write_text("{}", encoding="utf-8")
+            return BuildResult(
+                exit_code=0,
+                status="done",
+                impasse_file=None,
+                stdout="",
+                stderr="",
+                duration_ms=1000,
+            )
+
+        llm_build_runner.exec_build.side_effect = dirty_workspace
+        controller, _provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+            llm_build_runner=llm_build_runner,
+        )
+        gitops.base_dir = harness_base
+        gitops.create_worktree.return_value = str(worktree)
+        state = state_store.read()
+        state["workspace_root"] = str(workspace)
+        state["source_root"] = str(source)
+        state["spec_dir"] = str(spec_dir)
+        state_store.write(state)
+
+        result = controller.run_loop(
+            max_outer=1,
+            max_inner=0,
+            build_prompt="implement something",
+        )
+
+        assert result.status == "blocked"
+        assert result.termination_reason == "containment_violation"
+        captured = capsys.readouterr()
+        assert "CONTAINMENT VIOLATION" in captured.err
+        assert "node_modules/.package-lock.json" in captured.err
+        violation = state_store.read()["containment_violation"]
+        assert violation["project_dir"] == str(workspace)
+        gitops.commit.assert_not_called()
+        gitops.destroy_worktree.assert_not_called()
+
+    def test_target_scoped_llm_build_blocks_unsafe_host_execution(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Unsafe host LLM execution is incompatible with isolated target delivery."""
+        config = _make_config()
+        config.llm.tool_policy = LlmToolPolicy(
+            allow_unsafe_host_execution=True,
+            approval_reason="Operator approved old host execution behavior.",
+        )
+        llm_build_runner = MagicMock()
+        llm_build_runner.exec_build.return_value = BuildResult(
+            exit_code=0,
+            status="done",
+            impasse_file=None,
+            stdout="",
+            stderr="",
+            duration_ms=1000,
+        )
+        controller, _provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+            llm_build_runner=llm_build_runner,
+            config=config,
+        )
+        workspace = tmp_path / "workspace"
+        source = workspace / "sources" / "prosaic"
+        worktree = tmp_path / "runs" / "targets" / "prosaic" / "worktrees" / "default" / "iter-0"
+        state = state_store.read()
+        state["workspace_root"] = str(workspace)
+        state["source_root"] = str(source)
+        state_store.write(state)
+        gitops.create_worktree.return_value = str(worktree)
+
+        result = controller.run_loop(
+            max_outer=1,
+            max_inner=0,
+            build_prompt="implement something",
+        )
+
+        assert result.status == "blocked"
+        assert result.termination_reason == "containment_violation"
+        assert state_store.read()["build_status"] == "unsafe_host_execution_blocked"
+        captured = capsys.readouterr()
+        assert "Unsafe host LLM execution is disabled for isolated target delivery" in captured.err
+        llm_build_runner.exec_build.assert_not_called()
         gitops.commit.assert_not_called()
         gitops.destroy_worktree.assert_not_called()
 

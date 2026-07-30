@@ -26,7 +26,7 @@ try:
     from codegen.security.yaml_safety import YamlSafety
     from codegen.memory.mempalace_reader import MemPalaceReader
     from codegen.memory.mempalace_writer import MemPalaceWriter
-    from codegen.memory.requirements_miner import RequirementsMiner
+    from echelon.spec_memory_miner import SpecMemoryMiner
     from codegen.memory.context import MemPalaceContext
     from codegen.decompose.cartographer import (
         CartographerDispatcher,
@@ -39,7 +39,7 @@ except ImportError:
     from src.codegen.security.yaml_safety import YamlSafety  # type: ignore[no-redef]
     from src.codegen.memory.mempalace_reader import MemPalaceReader  # type: ignore[no-redef]
     from src.codegen.memory.mempalace_writer import MemPalaceWriter  # type: ignore[no-redef]
-    from src.codegen.memory.requirements_miner import RequirementsMiner  # type: ignore[no-redef]
+    from src.echelon.spec_memory_miner import SpecMemoryMiner  # type: ignore[no-redef]
     from src.codegen.memory.context import MemPalaceContext  # type: ignore[no-redef]
     from src.codegen.decompose.cartographer import (  # type: ignore[no-redef]
         CartographerDispatcher,
@@ -484,7 +484,7 @@ class PhaseGateRunner:
             }
 
             ctx = MemPalaceContext.from_wing(wing=wing, run_id=pipeline_id)
-            miner = RequirementsMiner(ctx, project_dir=Path("."))
+            miner = SpecMemoryMiner(ctx, project_dir=Path("."))
             mine_result = miner.mine_bug(bug)
             logger.info(
                 "[PhaseGate] Bug mined: phase=%s retry=%d fr_id=%s drawer_ids=%s",

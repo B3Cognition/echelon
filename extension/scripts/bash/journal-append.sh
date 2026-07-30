@@ -12,7 +12,9 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/python-detect.sh"
 VALIDATOR="$SCRIPT_DIR/validate-journal-entry.sh"
+JOURNAL_SCHEMA_PATH="${SCHEMA_PATH:-$SCRIPT_DIR/../../workflow/journal-entry-types.json}"
 
 # ── Parse arguments ─────────────────────────────────────────────────────────
 ENTRY=""
@@ -67,52 +69,10 @@ VERDICT=$(printf '%s' "$ENTRY" | bash "$VALIDATOR" 2>/dev/null)
 VALIDATOR_RC=$?
 set -e
 
-# ── Append entry unconditionally (DR-001: preserve journal continuity) ─────
-# Create journal file if it does not exist
-if [ ! -f "$JOURNAL_PATH" ]; then
-  touch "$JOURNAL_PATH"
-fi
-
-# Compact the entry to a single line
-COMPACT_ENTRY=$(printf '%s' "$ENTRY" | jq -c '.' 2>/dev/null) || COMPACT_ENTRY="$ENTRY"
-echo "$COMPACT_ENTRY" >> "$JOURNAL_PATH"
-
-# ── On FAIL (exit 1): construct and append schema_warning sibling ──────────
+# ── Report validation details; the shared Python store emits the sibling. ──
 if [ "$VALIDATOR_RC" -eq 1 ]; then
   VIOLATING_ID=$(printf '%s' "$ENTRY" | jq -r '.id // "unknown"' 2>/dev/null) || VIOLATING_ID="unknown"
   ERROR_DETAILS=$(printf '%s' "$VERDICT" | jq -r '.errors[0] // "validation failed"' 2>/dev/null) || ERROR_DETAILS="validation failed"
-
-  # Determine violation_type
-  if printf '%s' "$ERROR_DETAILS" | grep -qi "size limit"; then
-    VIOLATION_TYPE="size_limit_exceeded"
-  elif printf '%s' "$ERROR_DETAILS" | grep -qi "malformed\|parse"; then
-    VIOLATION_TYPE="malformed_json"
-  else
-    VIOLATION_TYPE="missing_required_field"
-  fi
-
-  CURRENT_PHASE=$(printf '%s' "$ENTRY" | jq -r '.phase // "unknown"' 2>/dev/null) || CURRENT_PHASE="unknown"
-  TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-
-  WARNING_ENTRY=$(jq -n \
-    --arg vid "$VIOLATING_ID" \
-    --arg vtype "$VIOLATION_TYPE" \
-    --arg details "$ERROR_DETAILS" \
-    --arg phase "$CURRENT_PHASE" \
-    --arg ts "$TIMESTAMP" \
-    '{
-      type: "schema_warning",
-      phase: $phase,
-      agent: "speckit-echelon-commander",
-      timestamp: $ts,
-      data: {
-        violating_entry_id: $vid,
-        violation_type: $vtype,
-        details: $details
-      }
-    }')
-
-  echo "$WARNING_ENTRY" | jq -c '.' >> "$JOURNAL_PATH"
   echo "SCHEMA_WARNING: $ERROR_DETAILS (entry $VIOLATING_ID)" >&2
 fi
 
@@ -120,6 +80,19 @@ fi
 if [ "$VALIDATOR_RC" -eq 2 ]; then
   WARN_MSG=$(printf '%s' "$VERDICT" | jq -r '.warnings[0] // "unknown warning"' 2>/dev/null) || WARN_MSG="unknown warning"
   echo "VALIDATION_WARN: $WARN_MSG" >&2
+fi
+
+# ── One shared fcntl-locked, fsynced, atomic journal transaction. ──────────
+CURRENT_PHASE=$(printf '%s' "$ENTRY" | jq -r '.phase // "unknown"' 2>/dev/null) || CURRENT_PHASE="unknown"
+if ! printf '%s' "$ENTRY" | \
+  "$PYTHON" -m harness.journal_entry_validator append \
+    --journal-path "$JOURNAL_PATH" \
+    --phase "$CURRENT_PHASE" \
+    --policy warn \
+    --schema-path "$JOURNAL_SCHEMA_PATH" \
+    --input-format json 2>/dev/null; then
+  echo "WARNING: journal append failed" >&2
+  exit 0
 fi
 
 # ── tool_output_ref cross-check for tool: sources ──────────────────────────

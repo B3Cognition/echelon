@@ -10,6 +10,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from harness.blocked_decision import build_blocked_decision_v2
+from harness.recovery_instruction import RecoveryKind, RecoveryInstruction
+
 
 def _write_blocked_run(tmp_path: Path, options: list[dict]) -> Path:
     run_dir = tmp_path / "runs" / "spec-20260619-111111-000001"
@@ -43,6 +46,9 @@ def _patch_resume_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
 
     phase_graph_mod = types.ModuleType("harness.phase_graph")
 
+    class FakePhaseNode:
+        pass
+
     class FakePhaseGraph:
         def __init__(self, *args, **kwargs) -> None:
             pass
@@ -57,14 +63,19 @@ def _patch_resume_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
                 "DONE",
             ]
 
+    phase_graph_mod.PhaseNode = FakePhaseNode
     phase_graph_mod.PhaseGraph = FakePhaseGraph
 
     provider_mod = types.ModuleType("harness.squad_provider")
+
+    class FakeSquadAgentResult:
+        pass
 
     class FakeProvider:
         def __init__(self, *args, **kwargs) -> None:
             pass
 
+    provider_mod.SquadAgentResult = FakeSquadAgentResult
     provider_mod.SquadCliProvider = FakeProvider
 
     squad_mod = types.ModuleType("harness.squad")
@@ -87,6 +98,126 @@ def _patch_resume_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "harness.phase_graph", phase_graph_mod)
     monkeypatch.setitem(sys.modules, "harness.squad_provider", provider_mod)
     monkeypatch.setitem(sys.modules, "harness.squad", squad_mod)
+
+
+def test_resume_submits_a_valid_v2_answer_only_through_controller(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.cli import _cmd_resume
+
+    run_dir = _write_blocked_run(
+        tmp_path,
+        [
+            {
+                "id": "approve",
+                "label": "Approve the reviewed boundary",
+                "next_phase": "phase2-decide",
+            }
+        ],
+    )
+    decision = build_blocked_decision_v2(
+        decision_id="dec-cli-resume",
+        status="awaiting_human",
+        source_kind="human_gate",
+        producer_id="checkpoint-assess",
+        source_phase="checkpoint-assess",
+        reason_code="checkpoint_assessment",
+        classification="material",
+        question="Approve the reviewed boundary?",
+        options=[
+            {
+                "id": "approve",
+                "label": "Approve the reviewed boundary",
+                "description": "Accept the reviewed scope.",
+                "recommended": True,
+                "risk_level": "medium",
+                "next_phase": "phase2-decide",
+                "outcome": "approved",
+            }
+        ],
+        recommended_answer=None,
+        risk_level="medium",
+        resolution_handler="gate_outcome",
+        autonomy_mode="guided",
+        source_state_revision=0,
+        now="2026-07-28T10:00:00+00:00",
+    )
+    state_path = run_dir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "blocked_decision": decision,
+            "recovery_instruction": RecoveryInstruction(
+                kind=RecoveryKind.AWAIT_HUMAN_ANSWER,
+                reason_code="checkpoint_assessment",
+                phase="checkpoint-assess",
+                requires_human_input=True,
+                schema_version=2,
+                decision_id="dec-cli-resume",
+            ).to_dict(),
+        }
+    )
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    answers: list[str] = []
+    _patch_resume_dependencies(monkeypatch)
+    controller = sys.modules["harness.squad"].SquadController
+    controller.resume_with_human_input = lambda self, answer: answers.append(answer) or True
+
+    _cmd_resume(["approve"], project_root=tmp_path, ext_dir=Path.cwd() / "extension")
+
+    assert answers == ["approve"]
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+    assert persisted["blocked_decision"] == decision
+
+
+def test_resume_rejects_stale_v2_reason_before_controller_construction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.cli import _cmd_resume
+
+    run_dir = _write_blocked_run(tmp_path, [])
+    decision = build_blocked_decision_v2(
+        decision_id="dec-cli-stale-reason",
+        status="awaiting_human",
+        source_kind="provider_escalation",
+        producer_id="phase1-investigate",
+        source_phase="phase1-investigate",
+        reason_code="human_clarification_required",
+        classification="material",
+        question="Which boundary should be used?",
+        options=[],
+        recommended_answer=None,
+        risk_level="medium",
+        resolution_handler="clarification_resume",
+        autonomy_mode="guided",
+        source_state_revision=0,
+        now="2026-07-28T10:00:00+00:00",
+    )
+    state_path = run_dir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "blocked_decision": decision,
+            "recovery_instruction": RecoveryInstruction(
+                kind=RecoveryKind.AWAIT_HUMAN_ANSWER,
+                reason_code="stale_unrelated_reason",
+                phase="phase1-investigate",
+                requires_human_input=True,
+                schema_version=2,
+                decision_id="dec-cli-stale-reason",
+            ).to_dict(),
+        }
+    )
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    _patch_resume_dependencies(monkeypatch)
+
+    with pytest.raises(SystemExit) as exc:
+        _cmd_resume(["Use the public boundary"], project_root=tmp_path, ext_dir=Path.cwd() / "extension")
+
+    assert exc.value.code == 1
 
 
 def test_resume_option_a_routes_to_offered_next_phase(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -301,7 +432,7 @@ def test_resume_terminal_block_delegates_to_continue(
     assert calls == [([], tmp_path, Path.cwd() / "extension")]
 
 
-def test_resume_phase_dispatch_limit_resets_the_capped_phase(
+def test_resume_phase_dispatch_limit_requires_issue_resolution(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -331,13 +462,238 @@ def test_resume_phase_dispatch_limit_resets_the_capped_phase(
     _patch_resume_dependencies(monkeypatch)
     monkeypatch.setattr("echelon.cli._cmd_continue", lambda *args, **kwargs: None)
 
-    _cmd_resume(
-        ["Authorize one targeted retry of phase1-what using the latest issues.md findings."],
+    with pytest.raises(SystemExit) as exc:
+        _cmd_resume(
+            ["Authorize one targeted retry of phase1-what using the latest issues.md findings."],
+            project_root=tmp_path,
+            ext_dir=Path.cwd() / "extension",
+        )
+
+    resumed = json.loads(state_path.read_text(encoding="utf-8"))
+    assert exc.value.code == 1
+    assert resumed["phase"] == "terminal-blocked"
+    assert resumed["phase_dispatch_counts"]["phase1-what"] == 6
+
+
+def test_resolve_records_one_issue_and_starts_targeted_repair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.cli import _cmd_spec_resolve
+
+    run_dir = _write_blocked_run(tmp_path, options=[])
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "issues.md").write_text(
+        """# Issues
+
+### ISS-001: Advisory wording
+- **Severity:** LOW
+- **Action Required:** None
+
+### ISS-002: Retry policy needs a product decision
+- **Severity:** CRITICAL
+- **Action Required:** Choose whether retries are disabled or use exponential backoff.
+- **Recommendation:** Document the selected retry behavior.
+
+### ISS-003: Timeout needs a product decision
+- **Severity:** HIGH
+- **Action Required:** Choose the client timeout.
+""",
+        encoding="utf-8",
+    )
+    state_path = run_dir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "phase": "terminal-blocked",
+            "blocked_reason": "phase_dispatch_limit",
+            "spec_dir": str(spec_dir),
+            "escalation_question": "How should I proceed?",
+            "phase_dispatch_counts": {
+                "phase1-tracker": 1,
+                "phase1-what": 6,
+                "phase1-understanding": 6,
+                "phase1-why2": 5,
+            },
+            "issue_resolution_revalidation_attempted": "ISS-002",
+        }
+    )
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    _cmd_spec_resolve(
+        ["ISS-002", "Use exponential backoff with a documented cap."],
         project_root=tmp_path,
         ext_dir=Path.cwd() / "extension",
     )
 
-    resumed = json.loads(state_path.read_text(encoding="utf-8"))
-    assert "phase1-what" not in resumed["phase_dispatch_counts"]
-    assert resumed["phase_dispatch_counts"] == {"phase1-why2": 3}
-    assert resumed["phase_dispatch_limit_recovery"]["phase"] == "phase1-what"
+    resolved = json.loads(state_path.read_text(encoding="utf-8"))
+    assert resolved["selected_issue_resolution"] == "ISS-002"
+    assert "issue_resolution_revalidation_attempted" not in resolved
+    assert resolved["issue_resolution_ledger"]["ISS-002"] == {
+        "issue_id": "ISS-002",
+        "title": "Retry policy needs a product decision",
+        "severity": "CRITICAL",
+        "guidance": "Choose whether retries are disabled or use exponential backoff.",
+        "status": "selected",
+        "decision": "Use exponential backoff with a documented cap.",
+        "repair_phase": "phase1-what",
+    }
+    assert resolved["issue_resolution_recovery"] == {
+        "issue_id": "ISS-002",
+        "from_phase": "phase1-why2",
+        "to_phase": "phase1-what",
+        "reason": "issue_resolution",
+    }
+    assert resolved["issue_resolution_repair_baseline"]["issue_id"] == "ISS-002"
+    assert resolved["issue_resolution_repair_baseline"]["repair_phase"] == "phase1-what"
+    assert resolved["issue_resolution_repair_baseline"]["recorded_at"]
+    assert resolved["status"] == "running"
+    assert resolved["phase"] == "phase1-what"
+    assert "blocked_reason" not in resolved
+    assert "escalation_question" not in resolved
+    assert resolved["phase_dispatch_counts"] == {"phase1-tracker": 1}
+
+
+def test_resolve_same_selected_decision_is_idempotent(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _cmd_spec_resolve
+
+    run_dir = _write_blocked_run(tmp_path, options=[])
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "issues.md").write_text(
+        """# Issues
+
+### ISS-001: Retry policy
+- **Severity:** CRITICAL
+- **Action Required:** Choose retry behavior.
+""",
+        encoding="utf-8",
+    )
+    state_path = run_dir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "spec_dir": str(spec_dir),
+            "selected_issue_resolution": "ISS-001",
+            "issue_resolution_ledger": {
+                "ISS-001": {
+                    "status": "selected",
+                    "decision": "Use exponential backoff.",
+                }
+            },
+            "issue_resolution_repair_baseline": {"recorded_at": "fixed"},
+        }
+    )
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    _cmd_spec_resolve(
+        ["ISS-001", "Use exponential backoff."],
+        project_root=tmp_path,
+        ext_dir=Path.cwd() / "extension",
+    )
+
+    unchanged = json.loads(state_path.read_text(encoding="utf-8"))
+    assert unchanged["issue_resolution_repair_baseline"] == {"recorded_at": "fixed"}
+    assert "already recorded with this decision" in capsys.readouterr().out
+
+
+def test_resolve_requires_sage_order(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from echelon.cli import _cmd_spec_resolve
+
+    run_dir = _write_blocked_run(tmp_path, options=[])
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "issues.md").write_text(
+        """### ISS-001: First decision
+- **Severity:** CRITICAL
+- **Action Required:** Choose the first value.
+
+### ISS-002: Second decision
+- **Severity:** HIGH
+- **Action Required:** Choose the second value.
+""",
+        encoding="utf-8",
+    )
+    state_path = run_dir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["spec_dir"] = str(spec_dir)
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    monkeypatch.setattr("echelon.cli._cmd_run", lambda *args, **kwargs: None)
+
+    with pytest.raises(SystemExit) as exc:
+        _cmd_spec_resolve(
+            ["ISS-002", "Second value"],
+            project_root=tmp_path,
+            ext_dir=Path.cwd() / "extension",
+        )
+
+    assert exc.value.code == 1
+    unchanged = json.loads(state_path.read_text(encoding="utf-8"))
+    assert "issue_resolution_ledger" not in unchanged
+
+
+def test_issue_requests_skip_resolved_issues_and_read_required_amendment(tmp_path: Path) -> None:
+    from echelon.cli import _issue_resolution_requests
+
+    run_dir = _write_blocked_run(tmp_path, options=[])
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "issues.md").write_text(
+        """### ISS-001: Already fixed ✓ RESOLVED
+**Status**: ✓ RESOLVED
+No action required.
+
+### ISS-002: State machine incomplete
+**Severity**: CRITICAL
+**Required Amendment**: Complete every transition with explicit outcomes.
+""",
+        encoding="utf-8",
+    )
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    state["spec_dir"] = str(spec_dir)
+
+    assert _issue_resolution_requests(tmp_path, run_dir, state) == [
+        {
+            "issue_id": "ISS-002",
+            "title": "State machine incomplete",
+            "severity": "CRITICAL",
+            "guidance": "Complete every transition with explicit outcomes.",
+        }
+    ]
+
+
+def test_issue_screen_guidance_shows_action_command_and_clickable_source(tmp_path: Path) -> None:
+    from echelon.cli import _issue_resolution_screen_guidance
+
+    run_dir = _write_blocked_run(tmp_path, options=[])
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    issues_path = spec_dir / "issues.md"
+    issues_path.write_text(
+        """### ISS-002: Retry policy
+- **Severity:** CRITICAL
+- **Action Required:** Select retry behavior.
+
+### Resolution Guidance
+- **Decision required:** Retry behavior.
+- **Suggested option:** Use exponential backoff with a cap of three attempts.
+- **Evidence basis:** API reference documents idempotent reads.
+- **Values not inferable:** Retry behavior for non-idempotent writes.
+- **Banzai eligible:** no
+""",
+        encoding="utf-8",
+    )
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    state["spec_dir"] = str(spec_dir)
+
+    fields = dict(_issue_resolution_screen_guidance(tmp_path, run_dir, state))
+    assert fields["issues file"] == str(issues_path)
+    assert fields["open issues"] == issues_path.as_uri()
+    assert "action: Select retry behavior." in fields["ISS-002"]
+    assert "suggested: Use exponential backoff with a cap of three attempts." in fields["ISS-002"]
+    assert "evidence: API reference documents idempotent reads." in fields["ISS-002"]
+    assert "user decides: Retry behavior for non-idempotent writes." in fields["ISS-002"]
+    assert "echelon spec resolve ISS-002" in fields["ISS-002"]

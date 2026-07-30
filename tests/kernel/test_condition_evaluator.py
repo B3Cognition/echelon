@@ -319,14 +319,14 @@ class TestConditionEvaluator:
         assert self.ev.evaluate("NOT quality_gates.pass", {"quality_gates": {"pass": False}}) is True
 
     # ── Lexicon-gate re-dispatch guards evaluate deterministically ───────
-    # Real conditions from definition.yaml phase1-what (spec) and phase3-plan
+    # Real conditions from definition.yaml phase1-lexicon (spec) and phase3-plan
     # (tasks). With lexicon_gate config merged into the eval state (squad.py),
     # both the controller-owned failed and pending paths resolve deterministically
     # instead of punting to COMMANDER.
 
     TASKS_GUARD = "lexicon_gate.enabled AND NOT tasks_lexicon_pass AND iteration < max_iterations"
-    SPEC_GUARD = "lexicon_gate.enabled AND lexicon_evaluation = failed AND iteration < max_iterations"
-    PENDING_SPEC_GUARD = "lexicon_gate.enabled AND lexicon_evaluation = pending AND iteration < max_iterations"
+    SPEC_GUARD = "lexicon_gate.spec_enabled AND lexicon_evaluation = failed AND iteration < max_iterations"
+    PENDING_SPEC_GUARD = "lexicon_gate.spec_enabled AND lexicon_evaluation = pending AND iteration < max_iterations"
 
     def test_tasks_guard_fail_path_redispatches(self):
         state = {"lexicon_gate": {"enabled": True}, "tasks_lexicon_pass": False,
@@ -344,11 +344,28 @@ class TestConditionEvaluator:
         assert self.ev.evaluate(self.TASKS_GUARD, state) is False
 
     def test_spec_guard_fail_path_redispatches(self):
-        state = {"lexicon_gate": {"enabled": True}, "lexicon_evaluation": "failed",
-                 "iteration": 0, "max_iterations": 3}
+        state = {
+            "lexicon_gate": {"spec_enabled": True},
+            "lexicon_evaluation": "failed",
+            "iteration": 0,
+            "max_iterations": 3,
+        }
         assert self.ev.evaluate(self.SPEC_GUARD, state) is True
 
     def test_spec_guard_pending_path_redispatches(self):
-        state = {"lexicon_gate": {"enabled": True}, "lexicon_evaluation": "pending",
-                 "iteration": 0, "max_iterations": 3}
+        state = {
+            "lexicon_gate": {"spec_enabled": True},
+            "lexicon_evaluation": "pending",
+            "iteration": 0,
+            "max_iterations": 3,
+        }
         assert self.ev.evaluate(self.PENDING_SPEC_GUARD, state) is True
+
+    def test_spec_guard_disabled_subgate_falls_through(self):
+        state = {
+            "lexicon_gate": {"spec_enabled": False},
+            "lexicon_evaluation": "pending",
+            "iteration": 0,
+            "max_iterations": 3,
+        }
+        assert self.ev.evaluate(self.PENDING_SPEC_GUARD, state) is False

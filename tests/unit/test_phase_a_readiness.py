@@ -12,7 +12,16 @@ from harness.phase_a_readiness import (
 def _write_required(spec_dir: Path) -> None:
     spec_dir.mkdir(parents=True)
     for name in REQUIRED_PHASE_A_BUILD_INPUTS:
-        (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+        content = (
+            '{\n'
+            '  "status": "pass",\n'
+            '  "findings": [],\n'
+            '  "sources": ["spec.md", "requirements-overview.md", "plan.md", "tasks.md"]\n'
+            '}\n'
+            if name == "plan-conformance.json"
+            else f"# {name}\n"
+        )
+        (spec_dir / name).write_text(content, encoding="utf-8")
 
 
 def test_ready_state_requires_all_core_build_input_artifacts(tmp_path: Path) -> None:
@@ -54,6 +63,7 @@ def test_ready_state_requires_all_mandatory_sentinel_outputs(tmp_path: Path) -> 
         "data-model.md",
         "tasks.md",
         "constitution.md",
+        "requirements-overview.md",
     ):
         (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
 
@@ -61,10 +71,62 @@ def test_ready_state_requires_all_mandatory_sentinel_outputs(tmp_path: Path) -> 
 
     assert not result.ready
     assert set(result.missing) == {
+        "00-overview.md",
+        "plan-conformance.md",
+        "plan-conformance.json",
         "test-strategy.md",
         "test-architecture.md",
         "coverage-map.md",
     }
+
+
+def test_ready_state_requires_final_overview_and_conformance_outputs(tmp_path: Path) -> None:
+    spec_dir = tmp_path / "runs" / "run-1" / "specs" / "001-demo"
+    _write_required(spec_dir)
+    for name in ("00-overview.md", "plan-conformance.md", "plan-conformance.json"):
+        (spec_dir / name).unlink(missing_ok=True)
+
+    result = validate_phase_a_readiness({"status": "done"}, [spec_dir])
+
+    assert not result.ready
+    assert set(result.missing) == {
+        "00-overview.md",
+        "plan-conformance.md",
+        "plan-conformance.json",
+    }
+
+
+def test_ready_state_rejects_invalid_plan_conformance_json(tmp_path: Path) -> None:
+    spec_dir = tmp_path / "runs" / "run-1" / "specs" / "001-demo"
+    _write_required(spec_dir)
+    (spec_dir / "plan-conformance.json").write_text(
+        '{"status": "maybe", "findings": [], "sources": []}\n',
+        encoding="utf-8",
+    )
+
+    result = validate_phase_a_readiness({"status": "done"}, [spec_dir])
+
+    assert not result.ready
+    assert "plan-conformance.json invalid" in result.blockers[0]
+
+
+def test_ready_state_accepts_minimal_valid_plan_conformance_json(tmp_path: Path) -> None:
+    spec_dir = tmp_path / "runs" / "run-1" / "specs" / "001-demo"
+    _write_required(spec_dir)
+    (spec_dir / "plan-conformance.json").write_text(
+        (
+            '{\n'
+            '  "status": "pass",\n'
+            '  "findings": [],\n'
+            '  "sources": ["spec.md", "requirements-overview.md", "plan.md", "tasks.md"]\n'
+            '}\n'
+        ),
+        encoding="utf-8",
+    )
+
+    result = validate_phase_a_readiness({"status": "done"}, [spec_dir])
+
+    assert result.ready
 
 
 def test_ready_state_rejects_placeholder_constitution(tmp_path: Path) -> None:

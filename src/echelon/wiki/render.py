@@ -171,6 +171,8 @@ def _spec_overview(model: WikiModel, spec: WikiSpec) -> str:
         for artifact_id in spec.artifact_ids
     }
     for name, label in (
+        ("00-overview.md", "Final overview"),
+        ("requirements-overview.md", "Requirements orientation"),
         ("spec.md", "Specification"),
         ("plan.md", "Implementation plan"),
         ("tasks.md", "Task ledger"),

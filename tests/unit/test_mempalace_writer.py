@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from codegen.memory.context import MemPalaceContext
+import codegen.memory.mempalace_writer as writer_module
 from codegen.memory.mempalace_writer import MemPalaceWriter
 
 
@@ -169,3 +170,359 @@ def test_write_merges_extra_metadata(monkeypatch, tmp_path):
     assert captured["artifact_hash"] == "sha256:" + "1" * 64
     assert captured["canonical"] is True
     assert captured["run_id"] == "run-1"
+
+
+class _ExactCollection:
+    def __init__(self) -> None:
+        self.records: dict[str, tuple[str, dict[str, object]]] = {}
+        self.upsert_calls = 0
+        self.add_calls = 0
+
+    def get(self, *, ids, include):
+        found = [drawer_id for drawer_id in ids if drawer_id in self.records]
+        return {
+            "ids": found,
+            "documents": [self.records[drawer_id][0] for drawer_id in found],
+            "metadatas": [self.records[drawer_id][1] for drawer_id in found],
+        }
+
+    def upsert(self, *, ids, documents, metadatas):
+        self.upsert_calls += 1
+        for drawer_id, document, metadata in zip(
+            ids,
+            documents,
+            metadatas,
+            strict=True,
+        ):
+            self.records[drawer_id] = (document, metadata)
+
+    def add(self, *, ids, documents, metadatas):
+        self.add_calls += 1
+        for drawer_id, document, metadata in zip(
+            ids,
+            documents,
+            metadatas,
+            strict=True,
+        ):
+            if drawer_id in self.records:
+                raise ValueError("duplicate ID")
+            self.records[drawer_id] = (document, metadata)
+
+
+def test_deterministic_requirement_drawer_ids_are_unique_and_path_run_independent() -> None:
+    digest = "1" * 64
+    first = writer_module.deterministic_requirement_drawer_id(
+        wing="demo",
+        room="functional-requirements",
+        spec_sha256=digest,
+        requirement_id="FR-001",
+        content="FR-001: First",
+    )
+    second = writer_module.deterministic_requirement_drawer_id(
+        wing="demo",
+        room="functional-requirements",
+        spec_sha256=digest,
+        requirement_id="FR-002",
+        content="FR-002: Second",
+    )
+    replay = writer_module.deterministic_requirement_drawer_id(
+        wing="demo",
+        room="functional-requirements",
+        spec_sha256=digest,
+        requirement_id="FR-001",
+        content="FR-001: First",
+    )
+
+    assert first != second
+    assert replay == first
+    assert len(first.rsplit("_", 1)[-1]) == 64
+
+
+def test_write_exact_distinguishes_written_from_exact_existing() -> None:
+    ctx = _make_ctx(wing="demo", run_id="run-one")
+    writer = MemPalaceWriter(ctx)
+    collection = _ExactCollection()
+    digest = "2" * 64
+    content = "FR-001: Upload."
+    drawer_id = writer_module.deterministic_requirement_drawer_id(
+        wing="demo",
+        room="functional-requirements",
+        spec_sha256=digest,
+        requirement_id="FR-001",
+        content=content,
+    )
+
+    with patch.object(writer, "_get_collection", return_value=collection):
+        with patch(
+            "codegen.memory.mempalace_writer.add_drawer",
+            object(),
+        ):
+            first = writer.write_exact(
+                room="functional-requirements",
+                content=content,
+                phase="RE",
+                drawer_id=drawer_id,
+                spec_sha256=digest,
+                requirement_id="FR-001",
+                source_file="/first/location/spec.md",
+            )
+            replay = writer.write_exact(
+                room="functional-requirements",
+                content=content,
+                phase="RE",
+                drawer_id=drawer_id,
+                spec_sha256=digest,
+                requirement_id="FR-001",
+                source_file="/different/location/spec.md",
+            )
+
+    assert first.outcome == "written"
+    assert replay.outcome == "already_present"
+    assert first.drawer_id == replay.drawer_id == drawer_id
+    assert collection.add_calls == 1
+    assert collection.upsert_calls == 0
+
+
+def test_write_exact_protects_and_verifies_wing_and_room_metadata() -> None:
+    ctx = _make_ctx(wing="demo")
+    writer = MemPalaceWriter(ctx)
+    collection = _ExactCollection()
+    digest = "7" * 64
+    content = "FR-001: Upload."
+    room = "functional-requirements"
+    drawer_id = writer_module.deterministic_requirement_drawer_id(
+        wing="demo",
+        room=room,
+        spec_sha256=digest,
+        requirement_id="FR-001",
+        content=content,
+    )
+
+    with patch.object(writer, "_get_collection", return_value=collection):
+        with patch(
+            "codegen.memory.mempalace_writer.add_drawer",
+            object(),
+        ):
+            written = writer.write_exact(
+                room=room,
+                content=content,
+                phase="RE",
+                drawer_id=drawer_id,
+                spec_sha256=digest,
+                requirement_id="FR-001",
+                extra_metadata={
+                    "wing": "other",
+                    "room": "bugs",
+                    "scope": "other",
+                    "canonical": False,
+                    "artifact_hash": "sha256:" + ("0" * 64),
+                },
+            )
+            verified = writer.verify_exact(
+                room=room,
+                content=content,
+                drawer_id=drawer_id,
+                spec_sha256=digest,
+                requirement_id="FR-001",
+            )
+            stored_wing = collection.records[drawer_id][1]["wing"]
+            stored_room = collection.records[drawer_id][1]["room"]
+            stored_scope = collection.records[drawer_id][1]["scope"]
+            stored_canonical = collection.records[drawer_id][1][
+                "canonical"
+            ]
+            stored_artifact_hash = collection.records[drawer_id][1][
+                "artifact_hash"
+            ]
+            collection.records[drawer_id][1]["wing"] = "other"
+            drifted = writer.verify_exact(
+                room=room,
+                content=content,
+                drawer_id=drawer_id,
+                spec_sha256=digest,
+                requirement_id="FR-001",
+            )
+
+    assert written.outcome == "written"
+    assert verified.outcome == "already_present"
+    assert stored_wing == "demo"
+    assert stored_room == room
+    assert stored_scope == "canonical"
+    assert stored_canonical is True
+    assert stored_artifact_hash == f"sha256:{digest}"
+    assert drifted.outcome == "drift"
+
+
+def test_write_exact_rejects_same_id_content_drift_without_overwrite() -> None:
+    ctx = _make_ctx(wing="demo")
+    writer = MemPalaceWriter(ctx)
+    collection = _ExactCollection()
+    digest = "3" * 64
+    expected_content = "FR-001: Expected"
+    drawer_id = writer_module.deterministic_requirement_drawer_id(
+        wing="demo",
+        room="functional-requirements",
+        spec_sha256=digest,
+        requirement_id="FR-001",
+        content=expected_content,
+    )
+    collection.records[drawer_id] = (
+        "FR-001: Drifted",
+        {
+            "canonical_spec_sha256": digest,
+            "requirement_id": "FR-001",
+            "requirement_content_sha256": hashlib.sha256(
+                b"FR-001: Drifted"
+            ).hexdigest(),
+        },
+    )
+
+    with patch.object(writer, "_get_collection", return_value=collection):
+        with patch(
+            "codegen.memory.mempalace_writer.add_drawer",
+            object(),
+        ):
+            result = writer.write_exact(
+                room="functional-requirements",
+                content=expected_content,
+                phase="RE",
+                drawer_id=drawer_id,
+                spec_sha256=digest,
+                requirement_id="FR-001",
+            )
+
+    assert result.outcome == "drift"
+    assert collection.upsert_calls == 0
+    assert collection.records[drawer_id][0] == "FR-001: Drifted"
+
+
+def test_write_exact_does_not_overwrite_racing_same_id_drift() -> None:
+    ctx = _make_ctx(wing="demo")
+    writer = MemPalaceWriter(ctx)
+    digest = "6" * 64
+    content = "FR-001: Expected"
+    drawer_id = writer_module.deterministic_requirement_drawer_id(
+        wing="demo",
+        room="functional-requirements",
+        spec_sha256=digest,
+        requirement_id="FR-001",
+        content=content,
+    )
+
+    class RacingCollection(_ExactCollection):
+        def add(self, *, ids, documents, metadatas):
+            self.records[drawer_id] = (
+                "FR-001: Racing drift",
+                {
+                    "canonical_spec_sha256": digest,
+                    "requirement_id": "FR-001",
+                    "requirement_content_sha256": hashlib.sha256(
+                        b"FR-001: Racing drift"
+                    ).hexdigest(),
+                },
+            )
+            raise ValueError("duplicate ID")
+
+    collection = RacingCollection()
+    with patch.object(writer, "_get_collection", return_value=collection):
+        with patch(
+            "codegen.memory.mempalace_writer.add_drawer",
+            object(),
+        ):
+            result = writer.write_exact(
+                room="functional-requirements",
+                content=content,
+                phase="RE",
+                drawer_id=drawer_id,
+                spec_sha256=digest,
+                requirement_id="FR-001",
+            )
+
+    assert result.outcome == "drift"
+    assert collection.records[drawer_id][0] == "FR-001: Racing drift"
+
+
+def test_write_exact_classifies_backend_failure_as_unavailable() -> None:
+    ctx = _make_ctx(wing="demo")
+    writer = MemPalaceWriter(ctx)
+    digest = "4" * 64
+    content = "FR-001: Upload."
+    drawer_id = writer_module.deterministic_requirement_drawer_id(
+        wing="demo",
+        room="functional-requirements",
+        spec_sha256=digest,
+        requirement_id="FR-001",
+        content=content,
+    )
+
+    with patch("codegen.memory.mempalace_writer.add_drawer", None):
+        unavailable = writer.write_exact(
+            room="functional-requirements",
+            content=content,
+            phase="RE",
+            drawer_id=drawer_id,
+            spec_sha256=digest,
+            requirement_id="FR-001",
+        )
+    with patch(
+        "codegen.memory.mempalace_writer.add_drawer",
+        object(),
+    ):
+        with patch.object(
+            writer,
+            "_get_collection",
+            side_effect=RuntimeError("database unavailable"),
+        ):
+            failed = writer.write_exact(
+                room="functional-requirements",
+                content=content,
+                phase="RE",
+                drawer_id=drawer_id,
+                spec_sha256=digest,
+                requirement_id="FR-001",
+            )
+
+    assert unavailable.outcome == "unavailable"
+    assert failed.outcome == "unavailable"
+
+
+def test_read_only_collection_open_never_requests_creation() -> None:
+    writer = MemPalaceWriter(_make_ctx())
+
+    with patch("mempalace.miner.get_collection", return_value=object()) as get_collection:
+        writer.get_collection_read_only()
+
+    get_collection.assert_called_once_with("/fake/palace", create=False)
+
+
+def test_write_exact_classifies_non_backend_write_error_as_failed() -> None:
+    writer = MemPalaceWriter(_make_ctx(wing="demo"))
+    digest = "5" * 64
+    content = "FR-001: Upload."
+    drawer_id = writer_module.deterministic_requirement_drawer_id(
+        wing="demo",
+        room="functional-requirements",
+        spec_sha256=digest,
+        requirement_id="FR-001",
+        content=content,
+    )
+
+    class InvalidCollection:
+        def get(self, **kwargs):
+            return {"ids": [], "documents": [], "metadatas": []}
+
+        def add(self, **kwargs):
+            raise ValueError("invalid metadata")
+
+    with patch("codegen.memory.mempalace_writer.add_drawer", object()):
+        with patch.object(writer, "_get_collection", return_value=InvalidCollection()):
+            result = writer.write_exact(
+                room="functional-requirements",
+                content=content,
+                phase="RE",
+                drawer_id=drawer_id,
+                spec_sha256=digest,
+                requirement_id="FR-001",
+            )
+
+    assert result.outcome == "failed"

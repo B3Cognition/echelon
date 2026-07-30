@@ -39,8 +39,12 @@ check() {
 # Assertions after first run
 applied_1=$(jq -r '.endocrine_state.applied_dispatches | length' "$ENDOCRINE_STATE_FILE")
 journal_1=$(wc -l < "$TMPDIR/.specify/squad/reasoning-journal.jsonl")
+index_1=$(cat "$TMPDIR/.specify/squad/reasoning-journal-index.json")
 check "after first run, D-001 in applied_dispatches" "jq -e '.endocrine_state.applied_dispatches | index(\"D-001\")' '$ENDOCRINE_STATE_FILE' > /dev/null"
 check "after first run, journal has entries" "[ $journal_1 -ge 2 ]"
+check "journal index is created" "[ -f '$TMPDIR/.specify/squad/reasoning-journal-index.json' ]"
+check "journal IDs are unique" "jq -s -e 'map(.id) as \$ids | (\$ids | length) == (\$ids | unique | length)' '$TMPDIR/.specify/squad/reasoning-journal.jsonl' > /dev/null"
+check "journal index matches final row" "[ \"\$(jq -r '.last_entry_id' '$TMPDIR/.specify/squad/reasoning-journal-index.json')\" = \"\$(tail -1 '$TMPDIR/.specify/squad/reasoning-journal.jsonl' | jq -r '.id')\" ]"
 
 # Run hook AGAIN with same dispatch_id — should be no-op
 (cd "$TMPDIR" && bash "$HOOK" --agent SAGE --dispatch-id D-001 --result-file "$TMPDIR/result.yaml") > /dev/null
@@ -49,6 +53,7 @@ applied_2=$(jq -r '.endocrine_state.applied_dispatches | length' "$ENDOCRINE_STA
 journal_2=$(wc -l < "$TMPDIR/.specify/squad/reasoning-journal.jsonl")
 check "applied_dispatches did not grow on re-run" "[ $applied_1 -eq $applied_2 ]"
 check "journal did not grow on re-run" "[ $journal_1 -eq $journal_2 ]"
+check "journal index did not change on re-run" "[ '$index_1' = \"\$(cat '$TMPDIR/.specify/squad/reasoning-journal-index.json')\" ]"
 
 # Run hook with different dispatch_id — should fire
 (cd "$TMPDIR" && bash "$HOOK" --agent SAGE --dispatch-id D-002 --result-file "$TMPDIR/result.yaml") > /dev/null
@@ -72,6 +77,7 @@ echo "{\"iteration\": 3, \"phase\": \"build-2-implement\", \"thresholds\": {\"to
 
 check "runs/.current state receives applied dispatch" "jq -e '.endocrine_state.applied_dispatches | index(\"D-RUNS\")' '$RUN_DIR/state.json' > /dev/null"
 check "runs/.current journal receives entries" "[ \$(wc -l < '$RUN_DIR/reasoning-journal.jsonl') -ge 2 ]"
+check "runs/.current journal index is created" "[ -f '$RUN_DIR/reasoning-journal-index.json' ]"
 check "legacy .specify/squad journal not created for runs/.current" "[ ! -e '$RUN_WS/.specify/squad/reasoning-journal.jsonl' ]"
 
 echo

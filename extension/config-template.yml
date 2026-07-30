@@ -216,7 +216,8 @@ lexicon_gate:
       path: requirements.lexicon.md
       source_ref: spec.md
       mode: derived
-      # phase1-lexicon validation evidence injected into repair dispatches.
+      # phase1-lexicon validation evidence injected only into the narrow
+      # phase1-lexicon-derive repair dispatch.
       report: spec-lexicon-report.json
     tasks:
       enabled: true

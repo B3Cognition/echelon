@@ -153,3 +153,141 @@ def test_successful_dispatch_reports_usage_once(tmp_path: Path) -> None:
     provider.exec_agent(str(tmp_path), "prompt")
 
     assert recorded == [17]
+
+
+def test_raw_result_telemetry_does_not_invoke_hostile_scalar_protocols(
+    tmp_path: Path,
+) -> None:
+    protocol_calls: list[str] = []
+
+    class HostileInt(int):
+        def __int__(self) -> int:
+            protocol_calls.append("__int__")
+            raise RuntimeError("raw telemetry secret")
+
+        def __bool__(self) -> bool:
+            protocol_calls.append("__bool__")
+            raise RuntimeError("raw telemetry secret")
+
+    class HostileString(str):
+        def __str__(self) -> str:
+            protocol_calls.append("__str__")
+            raise RuntimeError("raw telemetry secret")
+
+    class HostileProvider(_Provider):
+        def exec_agent(
+            self,
+            project_root: str,
+            prompt: str,
+            **kwargs: object,
+        ) -> SquadAgentResult:
+            result = super().exec_agent(project_root, prompt, **kwargs)
+            result.token_usage = HostileInt(17)
+            result.token_usage_details = {
+                "input_tokens": HostileInt(10),
+            }
+            result.model_name = HostileString("sensitive-model")
+            return result
+
+    provider, store = _instrumented(tmp_path, HostileProvider())
+
+    result = provider.exec_agent(str(tmp_path), "prompt")
+
+    assert type(result.token_usage) is HostileInt
+    assert protocol_calls == []
+    spans, diagnostics = store.read_spans()
+    assert diagnostics == ()
+    assert len(spans) == 1
+    assert spans[0].token_usage.known is False
+    assert "gen_ai.response.model" not in spans[0].attributes
+
+
+def test_raw_result_status_does_not_invoke_hostile_boolean_protocol(
+    tmp_path: Path,
+) -> None:
+    protocol_calls: list[str] = []
+
+    class HostileTimedOut(int):
+        def __bool__(self) -> bool:
+            protocol_calls.append("__bool__")
+            raise RuntimeError("raw status secret")
+
+    class HostileProvider(_Provider):
+        def exec_agent(
+            self,
+            project_root: str,
+            prompt: str,
+            **kwargs: object,
+        ) -> SquadAgentResult:
+            result = super().exec_agent(project_root, prompt, **kwargs)
+            result.timed_out = HostileTimedOut(0)  # type: ignore[assignment]
+            return result
+
+    provider, store = _instrumented(tmp_path, HostileProvider())
+
+    provider.exec_agent(str(tmp_path), "prompt")
+
+    assert protocol_calls == []
+    spans, _ = store.read_spans()
+    assert spans[0].status == "ERROR"
+
+
+def test_raw_result_token_telemetry_does_not_invoke_integer_protocol(
+    tmp_path: Path,
+) -> None:
+    protocol_calls: list[str] = []
+
+    class HostileInt(int):
+        def __int__(self) -> int:
+            protocol_calls.append("__int__")
+            raise RuntimeError("raw token secret")
+
+    class HostileProvider(_Provider):
+        def exec_agent(
+            self,
+            project_root: str,
+            prompt: str,
+            **kwargs: object,
+        ) -> SquadAgentResult:
+            result = super().exec_agent(project_root, prompt, **kwargs)
+            result.token_usage = HostileInt(17)
+            result.token_usage_details = {
+                "input_tokens": HostileInt(10),
+            }
+            return result
+
+    provider, store = _instrumented(tmp_path, HostileProvider())
+
+    provider.exec_agent(str(tmp_path), "prompt")
+
+    assert protocol_calls == []
+    spans, _ = store.read_spans()
+    assert spans[0].token_usage.known is False
+
+
+def test_raw_non_result_object_is_not_introspected(tmp_path: Path) -> None:
+    protocol_calls: list[str] = []
+
+    class HostileResult:
+        def __getattribute__(self, name: str) -> object:
+            protocol_calls.append(name)
+            raise RuntimeError("raw object secret")
+
+    class HostileProvider:
+        def exec_agent(
+            self,
+            project_root: str,
+            prompt: str,
+            **kwargs: object,
+        ) -> object:
+            return HostileResult()
+
+    provider, store = _instrumented(tmp_path, HostileProvider())
+
+    result = provider.exec_agent(str(tmp_path), "prompt")
+
+    assert type(result) is HostileResult
+    assert protocol_calls == []
+    spans, _ = store.read_spans()
+    assert spans[0].status == "ERROR"
+    assert spans[0].token_usage.known is False

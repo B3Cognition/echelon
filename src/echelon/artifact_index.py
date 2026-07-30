@@ -33,6 +33,26 @@ _BUILD_MARKERS = (
 
 _ARTIFACTS = (
     ArtifactDefinition(
+        "00-overview.md",
+        "Final overview",
+        "Final PM/developer brief generated after planning conformance passes.",
+        "Phase A",
+        "Finalizer",
+        "Generated at Phase A finalization after plan/task conformance.",
+        "Implementers and decision makers",
+        "phase_a",
+    ),
+    ArtifactDefinition(
+        "requirements-overview.md",
+        "Requirements orientation",
+        "Phase 1 orientation generated with the requirements contract.",
+        "Phase A",
+        "Cartographer",
+        "Generated with spec.md during requirements authoring.",
+        "Spec readers",
+        "phase_a",
+    ),
+    ArtifactDefinition(
         "spec.md",
         "Feature contract",
         "Defines the requested behavior and acceptance boundaries.",
@@ -59,6 +79,26 @@ _ARTIFACTS = (
         "Planner",
         "Updated before task execution.",
         "Implementers",
+        "phase_a",
+    ),
+    ArtifactDefinition(
+        "plan-conformance.md",
+        "Plan conformance report",
+        "Checks that plan.md and tasks.md conform to the spec and scope artifacts.",
+        "Phase A",
+        "Finalizer",
+        "Generated after PLAN/PLAN2 and before build readiness.",
+        "Implementers and reviewers",
+        "phase_a",
+    ),
+    ArtifactDefinition(
+        "plan-conformance.json",
+        "Plan conformance data",
+        "Machine-readable conformance result for final overview and build readiness.",
+        "Phase A",
+        "Finalizer",
+        "Generated with plan-conformance.md.",
+        "Automation and reviewers",
         "phase_a",
     ),
     ArtifactDefinition(

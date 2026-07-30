@@ -92,7 +92,18 @@ def test_ready_spec_can_be_preserved_while_a_different_spec_run_starts(
     spec_dir = tmp_path / "specs" / "001-first-spec"
     spec_dir.mkdir(parents=True)
     for name in REQUIRED_PHASE_A_BUILD_INPUTS:
-        content = constitution if name == "constitution.md" else f"# {name}\n"
+        if name == "constitution.md":
+            content = constitution
+        elif name == "plan-conformance.json":
+            content = (
+                '{\n'
+                '  "status": "pass",\n'
+                '  "findings": [],\n'
+                '  "sources": ["spec.md", "requirements-overview.md", "plan.md", "tasks.md"]\n'
+                '}\n'
+            )
+        else:
+            content = f"# {name}\n"
         (spec_dir / name).write_text(content, encoding="utf-8")
     (spec_dir / "quality-gates.md").write_text(
         "# Quality Gates\n\n## Verdict: PASS\n",
@@ -121,6 +132,61 @@ def test_ready_spec_can_be_preserved_while_a_different_spec_run_starts(
     assert (tmp_path / "runs" / ".current").read_text(encoding="utf-8").strip() == "spec-new"
     assert (new_run / "staging").is_dir()
     assert json.loads((old_run / "state.json").read_text(encoding="utf-8")) == old_state
+
+
+def test_manual_next_phase_reuses_a_blocked_run(tmp_path: Path, monkeypatch) -> None:
+    active_run = tmp_path / "runs" / "spec-blocked"
+    active_run.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text("spec-blocked\n", encoding="utf-8")
+    (active_run / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "phase": "terminal-blocked",
+                "user_message": "Build audit logging",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "echelon.phase_a_start.start_phase_a_spec",
+        lambda *_args, **_kwargs: pytest.fail("manual recovery must not create a run"),
+    )
+
+    run_dir, is_fresh = _select_squad_dir(
+        tmp_path,
+        "",
+        manual_recovery=True,
+    )
+
+    assert run_dir == active_run
+    assert is_fresh is False
+
+
+def test_manual_next_phase_reuses_a_human_blocked_run(tmp_path: Path, monkeypatch) -> None:
+    active_run = tmp_path / "runs" / "spec-blocked"
+    active_run.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text("spec-blocked\n", encoding="utf-8")
+    (active_run / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "phase": "terminal-blocked",
+                "user_message": "Build audit logging",
+                "escalation_question": "Choose a repair strategy.",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "echelon.phase_a_start.start_phase_a_spec",
+        lambda *_args, **_kwargs: pytest.fail("manual recovery must not create a run"),
+    )
+
+    run_dir, is_fresh = _select_squad_dir(tmp_path, "", manual_recovery=True)
+
+    assert run_dir == active_run
+    assert is_fresh is False
 
 
 def test_spec_help_documents_checkpoint_gated_switch_flags(capsys) -> None:

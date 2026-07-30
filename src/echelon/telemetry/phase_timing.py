@@ -9,7 +9,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from echelon.telemetry.model import PhaseTimingEvent
-from echelon.telemetry.store import TelemetryStore
+from echelon.telemetry.store import (
+    TelemetryDurabilityError,
+    TelemetryStore,
+)
 
 
 def _timestamp(now: datetime | None = None) -> str:
@@ -22,27 +25,98 @@ def _parse_timestamp(value: str) -> datetime:
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
 
 
+def _persist_timing_event(
+    store: TelemetryStore,
+    event: PhaseTimingEvent,
+) -> None:
+    expected_stream = store.phase_timing_stream_with_event(event)
+    try:
+        store.append_phase_timing(event)
+    except TelemetryDurabilityError:
+        raise
+    except (AttributeError, OSError, ValueError):
+        store.confirm_phase_timing_stream(expected_stream)
+
+
+def _durable_timing_events(
+    store: TelemetryStore,
+) -> tuple[PhaseTimingEvent, ...]:
+    events, diagnostics = store.read_durable_phase_timings()
+    if diagnostics:
+        raise ValueError(
+            "cannot adopt phase timing from invalid telemetry events"
+        )
+    return events
+
+
 def record_phase_start(
     store: TelemetryStore,
     *,
     phase: str,
     budget_seconds: float,
     event_time: str | None = None,
+    completion_id: str | None = None,
+    effect_id: str | None = None,
 ) -> PhaseTimingEvent:
-    events, diagnostics = store.read_phase_timings()
-    if diagnostics:
-        raise ValueError("cannot start phase timing with invalid telemetry events")
-    prior = next((event for event in reversed(events) if event.phase == phase), None)
-    if prior is not None and prior.event == "started":
-        return prior
-    event = PhaseTimingEvent.started(
-        trace_id=store.trace_id,
-        phase=phase,
-        budget_seconds=budget_seconds,
-        event_time=event_time or _timestamp(),
-    )
-    store.append_phase_timing(event)
-    return event
+    with store.phase_timing_transaction() as snapshot:
+        events, diagnostics = snapshot
+        if diagnostics:
+            raise ValueError(
+                "cannot start phase timing with invalid telemetry events"
+            )
+        if (completion_id is None) != (effect_id is None):
+            raise ValueError("completion timing identity must be complete")
+        if effect_id is not None:
+            matches = [
+                event
+                for event in events
+                if event.effect_id == effect_id
+            ]
+            if len(matches) > 1:
+                raise ValueError("duplicate completion timing effect")
+            if matches:
+                events = _durable_timing_events(store)
+                matches = [
+                    event
+                    for event in events
+                    if event.effect_id == effect_id
+                ]
+            if len(matches) > 1:
+                raise ValueError("duplicate completion timing effect")
+            if matches:
+                prior = matches[0]
+                if (
+                    prior.trace_id != store.trace_id
+                    or prior.phase != phase
+                    or prior.event != "started"
+                    or prior.budget_seconds != float(budget_seconds)
+                    or prior.elapsed_seconds is not None
+                    or prior.over_budget is not None
+                    or prior.completion_id != completion_id
+                ):
+                    raise ValueError("completion timing effect drift")
+                return prior
+        else:
+            prior = next(
+                (
+                    event
+                    for event in reversed(events)
+                    if event.phase == phase
+                ),
+                None,
+            )
+            if prior is not None and prior.event == "started":
+                return prior
+        event = PhaseTimingEvent.started(
+            trace_id=store.trace_id,
+            phase=phase,
+            budget_seconds=budget_seconds,
+            event_time=event_time or _timestamp(),
+            completion_id=completion_id,
+            effect_id=effect_id,
+        )
+        _persist_timing_event(store, event)
+        return event
 
 
 def record_phase_finish(
@@ -50,27 +124,122 @@ def record_phase_finish(
     *,
     phase: str,
     event_time: str | None = None,
+    completion_id: str | None = None,
+    effect_id: str | None = None,
+    expected_budget_seconds: float | None = None,
 ) -> PhaseTimingEvent:
-    events, diagnostics = store.read_phase_timings()
-    if diagnostics:
-        raise ValueError("cannot finish phase timing with invalid telemetry events")
-    prior = next((event for event in reversed(events) if event.phase == phase), None)
-    if prior is None or prior.event != "started":
-        raise ValueError(f"no active phase timing start event for {phase!r}")
-    finished_at = event_time or _timestamp()
-    elapsed_seconds = max(
-        0.0,
-        (_parse_timestamp(finished_at) - _parse_timestamp(prior.event_time)).total_seconds(),
-    )
-    event = PhaseTimingEvent.finished(
-        trace_id=store.trace_id,
-        phase=phase,
-        budget_seconds=prior.budget_seconds,
-        elapsed_seconds=elapsed_seconds,
-        event_time=finished_at,
-    )
-    store.append_phase_timing(event)
-    return event
+    with store.phase_timing_transaction() as snapshot:
+        events, diagnostics = snapshot
+        if diagnostics:
+            raise ValueError(
+                "cannot finish phase timing with invalid telemetry events"
+            )
+        if (completion_id is None) != (effect_id is None):
+            raise ValueError("completion timing identity must be complete")
+        if (
+            expected_budget_seconds is not None
+            and (
+                isinstance(expected_budget_seconds, bool)
+                or not isinstance(expected_budget_seconds, (int, float))
+            )
+        ):
+            raise ValueError("invalid expected phase timing budget")
+        matches = (
+            [
+                (index, event)
+                for index, event in enumerate(events)
+                if event.effect_id == effect_id
+            ]
+            if effect_id is not None
+            else []
+        )
+        if len(matches) > 1:
+            raise ValueError("duplicate completion timing effect")
+        if matches:
+            events = _durable_timing_events(store)
+            matches = [
+                (index, event)
+                for index, event in enumerate(events)
+                if event.effect_id == effect_id
+            ]
+        if len(matches) > 1:
+            raise ValueError("duplicate completion timing effect")
+        if matches:
+            position, existing = matches[0]
+            prior = next(
+                (
+                    event
+                    for event in reversed(events[:position])
+                    if event.phase == phase
+                ),
+                None,
+            )
+            if prior is None or prior.event != "started":
+                raise ValueError("completion timing effect has no start")
+            expected_elapsed = max(
+                0.0,
+                (
+                    _parse_timestamp(existing.event_time)
+                    - _parse_timestamp(prior.event_time)
+                ).total_seconds(),
+            )
+            expected_over_budget = (
+                expected_elapsed > prior.budget_seconds * 1.2
+                if prior.budget_seconds > 0
+                else False
+            )
+            if (
+                existing.trace_id != store.trace_id
+                or existing.phase != phase
+                or existing.event != "finished"
+                or existing.budget_seconds != prior.budget_seconds
+                or (
+                    expected_budget_seconds is not None
+                    and existing.budget_seconds
+                    != float(expected_budget_seconds)
+                )
+                or existing.elapsed_seconds != expected_elapsed
+                or existing.over_budget is not expected_over_budget
+                or existing.completion_id != completion_id
+            ):
+                raise ValueError("completion timing effect drift")
+            return existing
+        prior = next(
+            (
+                event
+                for event in reversed(events)
+                if event.phase == phase
+            ),
+            None,
+        )
+        if prior is None or prior.event != "started":
+            raise ValueError(
+                f"no active phase timing start event for {phase!r}"
+            )
+        if (
+            expected_budget_seconds is not None
+            and prior.budget_seconds != float(expected_budget_seconds)
+        ):
+            raise ValueError("phase timing budget drift")
+        finished_at = event_time or _timestamp()
+        elapsed_seconds = max(
+            0.0,
+            (
+                _parse_timestamp(finished_at)
+                - _parse_timestamp(prior.event_time)
+            ).total_seconds(),
+        )
+        event = PhaseTimingEvent.finished(
+            trace_id=store.trace_id,
+            phase=phase,
+            budget_seconds=prior.budget_seconds,
+            elapsed_seconds=elapsed_seconds,
+            event_time=finished_at,
+            completion_id=completion_id,
+            effect_id=effect_id,
+        )
+        _persist_timing_event(store, event)
+        return event
 
 
 def record_split_metrics(

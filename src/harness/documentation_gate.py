@@ -18,6 +18,9 @@ from harness.docs_verifier import (
 from harness.verify_result import FailureCategory, FailureEntry
 
 
+DOCUMENTATION_COVERAGE_FAILURE_BATCH_LIMIT = 5
+
+
 @dataclass(frozen=True)
 class DocumentationGateResult:
     passed: bool
@@ -186,31 +189,40 @@ def validate_documentation_coverage(
         return ("documentation-coverage-incomplete", "; ".join(details))
 
     root = Path(worktree).resolve()
+    coverage_errors: list[str] = []
     for change_id in delivery_ids:
         entry = by_id[change_id]
         disposition = str(entry.get("disposition") or "").strip()
         if disposition not in {"covered", "not_applicable"}:
-            return (
-                "documentation-coverage-incomplete",
-                f"{change_id} must use disposition covered or not_applicable",
+            coverage_errors.append(
+                f"{change_id} must use disposition covered or not_applicable"
             )
+            continue
         if disposition == "not_applicable":
             if not str(entry.get("reason") or "").strip():
-                return (
-                    "documentation-coverage-incomplete",
+                coverage_errors.append(
                     f"{change_id} not_applicable disposition requires a reason",
                 )
             continue
         if not _nonempty_string_list(entry.get("readme_sections")):
-            return (
-                "documentation-coverage-incomplete",
+            coverage_errors.append(
                 f"{change_id} must cite at least one README section",
             )
         if not _nonempty_string_list(entry.get("changelog_sections")):
-            return (
-                "documentation-coverage-incomplete",
+            coverage_errors.append(
                 f"{change_id} must cite at least one CHANGELOG section",
             )
+
+    if coverage_errors:
+        return (
+            "documentation-coverage-incomplete",
+            _format_batched_documentation_coverage_errors(coverage_errors),
+        )
+
+    for change_id in delivery_ids:
+        entry = by_id[change_id]
+        if str(entry.get("disposition") or "").strip() == "not_applicable":
+            continue
         evidence_paths = _nonempty_string_list(entry.get("evidence_paths"))
         if not evidence_paths:
             return (
@@ -245,6 +257,16 @@ def validate_documentation_coverage(
             "DOCS VERIFIER found unsupported claims: " + "; ".join(unsupported),
         )
     return None
+
+
+def _format_batched_documentation_coverage_errors(errors: list[str]) -> str:
+    shown = errors[:DOCUMENTATION_COVERAGE_FAILURE_BATCH_LIMIT]
+    remaining = len(errors) - len(shown)
+    message = "; ".join(shown)
+    if remaining:
+        noun = "issue" if remaining == 1 else "issues"
+        message += f"; and {remaining} more documentation coverage {noun}"
+    return message
 
 
 def _nonempty_string_list(value: object) -> list[str]:

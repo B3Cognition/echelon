@@ -23,6 +23,8 @@ class TestPlanTemplates:
         assert result.valid is True
         assert result.errors == []
         assert "## Plan Section Contract" in text
+        assert "## Requirement Preservation" in text
+        assert "| Requirement | Product Invariant | Architecture Decision | Preserves? | Evidence |" in text
 
     def test_plan_template_keeps_domain_sections_bounded(self) -> None:
         text = (TEMPLATE_DIR / "plan-template.md").read_text(encoding="utf-8")

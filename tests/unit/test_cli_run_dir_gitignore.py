@@ -41,6 +41,8 @@ def test_setup_run_dir_preserves_and_idempotently_extends_gitignore(tmp_path: Pa
     lines = (runs_dir / ".gitignore").read_text(encoding="utf-8").splitlines()
     assert "custom-local-entry" in lines
     assert lines.count("**/.echelon/checkpoints.json") == 1
+    assert lines.count("**/.echelon/checkpoints.lock") == 1
+    assert lines.count("**/.echelon/.checkpoints.json.*.tmp") == 1
     assert lines.count("*/state.json") == 1
     assert lines.count("*/*.tmp") == 1
     assert lines.count(".current*") == 1

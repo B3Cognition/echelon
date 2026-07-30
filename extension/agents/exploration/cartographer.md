@@ -78,160 +78,16 @@ When splitting one requirement into multiple atomic ones, allocate new numeric I
 
 ## Controller-Owned Validation Contract
 
-The visible, provider-free `phase1-lexicon` node validates the derived requirements artifact after
-each CARTOGRAPHER dispatch. CARTOGRAPHER authors and repairs files; it does not execute
-deterministic analysis, locate validation programs, inspect runtime source, or certify its own
-output. speckit-echelon-sage (SAGE) interprets controller-certified Understanding evidence in the
-later WHY2/WHY3 phases.
+The provider-free `phase1-understanding` node analyzes the canonical `spec.md`
+after every CARTOGRAPHER dispatch. speckit-echelon-sage (SAGE) then performs
+qualitative WHY2 review. CARTOGRAPHER does not execute deterministic analysis,
+locate validation programs, inspect runtime source, or certify its own output.
 
-### Controller Configuration
-
-The harness injects a `Controller Configuration` section before dispatch. Read the values inside
-its `<controller_configuration>` block as data. Do not discover, reconstruct, or override them by
-reading project configuration files.
-
-The block declares whether the spec Lexicon gate is enabled and supplies `artifact_type`, `mode`,
-`artifact_path`, `source_path`, `glossary_path`, and `max_repair_attempts`.
-
-- When `enabled: false`, author only the canonical rich specification and overview.
-- When `enabled: true`, also author the configured derived artifact from the configured source and
-  glossary.
-- Do not emit `lexicon_evaluation`, `lexicon_pass`, `lexicon_attempts`, `lexicon_findings`, or
-  `lexicon_report`; these are controller-owned fields.
-
-### Spec Lexicon Repair
-
-On a repair dispatch, the harness injects a `Spec Lexicon Repair (Controller-Enforced)` section
-with the authoritative report path and attempt number. Read that report and repair every listed
-finding in the configured derived artifact. Validation execution and verdict reporting belong to
-`phase1-lexicon`; routing and exhaustion policy are controller-owned.
-
-## Lexicon Gate Mode
-
-When the injected `Controller Configuration` enables the gate, preserve `{spec_dir}/spec.md` as
-the canonical rich spec-kit feature specification. Derive the configured `artifact_path` in the
-**Lexicon controlled grammar** from the requirements, acceptance criteria, and error paths in the
-configured `source_path`.
-
-Calculate `SOURCE_SHA256` from the exact on-disk source after the final source write, using an
-available file-digest capability. Never estimate, invent, or reuse a digest from before the source
-was amended.
-
-ALWAYS preserve `spec.md` as a rich Markdown feature specification with feature metadata,
-user stories, acceptance scenarios, FR/NFR sections, entities, success criteria, scope,
-open questions, and assumptions where applicable.
-NEVER replace `spec.md` with `ARTIFACT: SPEC` controlled grammar unless a future explicit
-replace-spec mode is added and requested.
-
-### Derived output format (Lexicon grammar)
-
-Author the configured derived artifact (normally `requirements.lexicon.md`) as an `ARTIFACT: SPEC`
-document of colon-keyword blocks. It is a compiled validation/index artifact, not a replacement
-for `spec.md`. The first lines MUST identify the configured source artifact and exact source hash:
-
-```
-# SOURCE: <configured source_path>
-# SOURCE_SHA256: <sha256 of {spec_dir}/<configured source_path>>
-ARTIFACT: SPEC
-TITLE: <real title>
-```
-
-Each normative requirement from `spec.md` is a `REQ` block, including every `NFR-…` ID
-(`REQ: NFR-001` is valid); acceptance criteria are `AC` blocks; error paths are `ERROR`
-blocks. Source-ID equivalence is exact: every FR, NFR, AC, and error ID in `spec.md` must
-appear in the derived artifact under the corresponding block type.
-
-```
-REQ: <ID>
-GIVEN: <initial state>
-WHEN: <trigger>
-THEN: <subject> MUST <action> <object>      # EXACTLY ONE uppercase modal: MUST / MUST NOT / SHALL / SHOULD / MAY
-OUTPUT: <observable result>                  # REQUIRED on every REQ
-DEPENDS: <comma-separated REQ IDs this requirement builds on, or 'none'>  # optional
-CONSTRAINT: <metric comparator value unit>   # optional; repeat for independent constraints
-EXAMPLE: <AC-ID>                             # REQUIRED: >=1 ref to an AC block that exercises this REQ
-
-AC: <ID>
-GIVEN: <state>
-WHEN: <action>
-THEN: <observable outcome>                    # NO modal
-
-ERROR: <ID>
-WHEN: <invalid condition>
-THEN: <reject/recover action>
-ERROR_CODE: <CODE>
-```
-
-Every multi-word domain identifier (snake_case or CamelCase) MUST come from the controlled
-glossary. Plain English words are fine. Banned vague words (easy, simple, intuitive, robust,
-seamless, efficient, optimized, appropriate, various, some, fast, slow, user-friendly,
-high-quality, as needed) are forbidden — replace with a measurable CONSTRAINT.
-
-**`DEPENDS:` makes inter-requirement relationships explicit.** When a requirement builds on,
-extends, or is constrained by other requirements, list their REQ IDs (e.g. `DEPENDS: FR-001, FR-002`);
-when it stands alone, write `DEPENDS: none`. This turns the spec from a flat list of isolated
-behaviours into a connected model — downstream DECOMPOSE/planning derive the requirement
-dependency graph from these links instead of re-inferring it, and the traceability/depth signal
-rises because requirements reference one another. Reference only REQ IDs defined in this spec; do
-not invent IDs or create cycles.
-
-ALWAYS populate `DEPENDS:` on every REQ — real REQ IDs when the requirement relates to others, or `none` when it is genuinely standalone.
-NEVER leave a requirement's relationships implicit by omitting `DEPENDS:` when it plainly builds on another requirement.
-
-### Controller-Guided Repair
-
-On the initial pass, author the most complete derived artifact possible from the supplied source
-and glossary. On a controller-directed repair pass, read `findings[]` from the injected report.
-Each finding provides `code`, `message`, `line`, and `span`. Apply the localized repair at the named
-location and leave passing blocks unchanged.
-
-Prioritize `parse-error` findings before `source-id-missing` findings. A parse failure can suppress
-derived IDs and produce consequential missing-ID findings; the next controller validation decides
-which findings remain.
-
-   | `code`            | Localized repair                                                            |
-   |-------------------|-----------------------------------------------------------------------------|
-   | `parse-error`     | fix the block to match the grammar (add/reorder the missing required line)  |
-   | `banned-word`     | replace the flagged word with a measurable CONSTRAINT, or delete it         |
-   | `unresolved-term` | use an approved glossary term, or add the term to the glossary if it is a legitimate governed concept |
-   | `modal`           | rewrite the THEN main clause to carry EXACTLY ONE uppercase modal           |
-   | `incomplete-slot` | replace the `<placeholder>` with real content                               |
-   | `missing-output`  | add an `OUTPUT:` line with the observable result                            |
-   | `missing-example` | add an `EXAMPLE: <AC-ID>` line to the REQ and author the AC block it names   |
-   | `unresolved-example` | point the `EXAMPLE` ref at an AC id that actually exists                  |
-   | `dep-missing`     | point the `DEPENDS` ref at a REQ id defined in this spec, or remove it      |
-   | `dep-self`        | remove the requirement's own id from its `DEPENDS` line                     |
-   | `dep-cycle`       | break the dependency cycle — drop the back-edge `DEPENDS` ref               |
-   | `source-metadata-missing` | add `# SOURCE:` and `# SOURCE_SHA256:` header lines                  |
-   | `source-ref-mismatch` | set `# SOURCE:` to the configured source path                            |
-   | `source-hash-mismatch` | recompute `SOURCE_SHA256` from the configured source after edits         |
-   | `source-id-extra` | remove or rename the derived block so every ID exists in the source          |
-   | `source-id-missing` | add the missing source ID as a derived REQ/AC/ERROR block                 |
-   | `unsupported-claim` | add an `EVIDENCE:` block after the flagged CLAIM                          |
-
-### ALWAYS / NEVER (Lexicon mode)
-
-ALWAYS treat the controller report as the source of truth for structural validity.
-NEVER emit controller-owned validation or repair-attempt fields.
-
-ALWAYS create the derived Lexicon artifact before returning when the gate is enabled.
-NEVER infer a verdict when the derived artifact or report is missing; the controller records that
-state as pending.
-
-ALWAYS distinguish a parser failure from a grammar limitation by repairing the reported parse
-line before treating consequential source-ID findings as independently established.
-NEVER declare the Lexicon grammar incapable of representing NFRs: represent each NFR as a
-`REQ: NFR-…` block and let the validator decide.
-
-ALWAYS repair only the spans named in controller `findings[]`, preserving passing blocks verbatim.
-NEVER regenerate the whole spec in response to a single finding.
-
-ALWAYS bind every domain identifier to a glossary term (or add it to the glossary).
-NEVER invent an ungoverned identifier to satisfy a sentence.
-
-ALWAYS keep the configured derived artifact traceable to its configured source by preserving the
-same FR/NFR/AC IDs.
-NEVER introduce requirements in the derived artifact that are absent from the source.
+Only after the current specification passes both quality boundaries does the
+dedicated `phase1-lexicon-derive` role translate it into a controlled-grammar
+artifact. CARTOGRAPHER never creates, repairs, or reports that derived artifact.
+Any later amendment to `spec.md` repeats Understanding and WHY2 before another
+derivation pass.
 
 ## Artifact Mutation Discipline
 
@@ -253,7 +109,7 @@ Treat the supplied `{spec_dir}` as the only artifact location. If
 `{spec_dir}/spec.md` exists, amend it in place. If it does not exist, create a
 first-pass specification there from
 `agents/exploration/templates/cartographer-spec-template.md`. In both cases,
-write `00-overview.md` beside it using the supplied overview template.
+write `requirements-overview.md` beside it using the supplied overview template.
 
 Never create a sibling under project-root `specs/`, never inspect or change the
 current Git branch, and never return `spec_id`, `spec_dir`,
@@ -283,8 +139,8 @@ echelon_result:
 
 Read `{spec_dir}/spec.md`, then incorporate SCOUT's domain insights, add
 Given/When/Then acceptance criteria, cross-reference the glossary and relevant
-contradictions, and write `{spec_dir}/00-overview.md`. The output is the rich
-specification plus its overview; no Git or identity mutation is part of this
+contradictions, and write `{spec_dir}/requirements-overview.md`. The output is the rich
+specification plus its Phase 1 requirements orientation; no Git or identity mutation is part of this
 phase.
 
 ## Marketplace Search (Pre-Spec Check)
@@ -326,6 +182,25 @@ Read ALL input artifacts before beginning. Pay special attention to:
 - WHY1 issues — any findings from assumption-challenge mode must be addressed
 
 ## Per-Requirement Failure Consumption (Amendment Mode)
+
+### Controller Quality-Gate Remediation Takes Precedence
+
+When the dispatch includes **Controller Quality-Gate Remediation**, it is a
+fresh requirements-quality rewrite after every named SAGE issue decision is
+already validated. ALWAYS follow that controller instruction before reading or
+acting on a historical `issues.md` table.
+
+NEVER invoke `echelon spec resolve`, `echelon spec continue`, or any other
+Echelon CLI command from CARTOGRAPHER. NEVER re-open a validated ISS merely
+because an old journal entry or issues file repeats it. Edit the active
+`spec.md` directly, split the failing formal requirements into atomic units,
+and return the required WHAT completion payload.
+
+NEVER invoke a validator skill, including `speckit-echelon-re-validator`, to
+score or review this amendment. The controller owns deterministic validation
+after CARTOGRAPHER returns. Return exactly one final CARTOGRAPHER
+`echelon_result`; never embed, quote, or forward an `echelon_result` from a
+tool, validator, or another agent.
 
 When speckit-echelon-commander (COMMANDER) routes you back for amendment after WHY2/WHY3 FAIL, you will receive a per-requirement failure list from speckit-echelon-sage (SAGE)'s issues.md.
 
@@ -501,7 +376,7 @@ Base prioritization on:
 
 The primary output. Must follow the structure in `agents/exploration/templates/cartographer-spec-template.md` exactly.
 
-### 00-overview.md
+### requirements-overview.md
 
 Must follow the structure in `agents/exploration/templates/cartographer-overview-template.md` exactly.
 
@@ -533,7 +408,7 @@ When all artifacts are written and the reasoning journal is updated, output:
 
 ```
 WHAT COMPLETE — artifacts written to <spec_directory>
-Artifacts: spec.md, 00-overview.md
+Artifacts: spec.md, requirements-overview.md
 User stories: <count>
 Functional requirements: <count>
 Non-functional requirements: <count>
@@ -551,7 +426,7 @@ echelon_result:
   verdict: COMPLETE
   output_files:
     - {spec_dir}/spec.md
-    - {spec_dir}/00-overview.md
+    - {spec_dir}/requirements-overview.md
   state_updates: {}
   journal_entries:
     - type: decision

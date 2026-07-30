@@ -20,6 +20,11 @@ Swift.
 ## Architecture Decisions
 - ADR-001: Swift.
 
+## Requirement Preservation
+| Requirement | Product Invariant | Architecture Decision | Preserves? | Evidence |
+| --- | --- | --- | --- | --- |
+| FR-001 | Existing behavior remains stable. | ADR-001 | yes | Covered by tests. |
+
 ## Project Structure
 ```text
 src/

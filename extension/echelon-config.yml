@@ -139,11 +139,11 @@ governance:
 # =============================================================================
 # The hard-gate counterpart to quality_gates (which is a SOFT score). When
 # enabled, CARTOGRAPHER keeps spec.md as the canonical rich spec-kit feature
-# specification and derives requirements.lexicon.md in the Lexicon controlled
-# grammar. The provider-free phase1-lexicon node validates that derived artifact,
-# writes a structured findings report, and re-dispatches CARTOGRAPHER with report
-# context when repair is required. Soft Understanding/SAGE scoring still reads
-# the rich spec.md and runs once AFTER the derived artifact is structurally clean.
+# specification. Deterministic Understanding and SAGE WHY2 certify that exact
+# spec content first. Only then does the narrow phase1-lexicon-derive node create
+# requirements.lexicon.md in the Lexicon controlled grammar. The provider-free
+# phase1-lexicon node validates the derived artifact, writes a structured
+# findings report, and loops only through the narrow derivation node for repair.
 #
 # Default ON: produce the derived requirements.lexicon.md gate artifact while
 # preserving spec.md. Set enabled=false to skip derived Lexicon generation.

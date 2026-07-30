@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
@@ -66,7 +67,149 @@ def test_spec_rewind_help_declares_a_ledger_checkpoint_target():
 
     assert result.exit_code == 0
     assert "Recorded checkpoint phase or ID" in result.output
+    assert "--commit" in result.output
     assert "Safe phase id" not in result.output
+
+
+@pytest.mark.unit
+def test_spec_rewind_forwards_checkpoint_commit(monkeypatch):
+    from echelon.cli_app import run
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_rewind",
+        lambda args, project_root: calls.append(args),
+    )
+
+    run([
+        "spec",
+        "rewind",
+        "phase1-what",
+        "--commit",
+        "98152f1",
+        "--confirm",
+    ])
+
+    assert calls == [[
+        "phase1-what",
+        "--commit",
+        "98152f1",
+        "--confirm",
+    ]]
+
+
+@pytest.mark.unit
+def test_spec_amend_routes_product_inputs_and_dry_run(monkeypatch):
+    from echelon.cli_app import run
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr("echelon.cli._cmd_spec_amend", lambda args: calls.append(args))
+
+    run([
+        "spec",
+        "amend",
+        "004-demo",
+        "Add requirement evidence",
+        "--input",
+        "requirement:sources/PBS-E-73.pdf",
+        "--input",
+        "reference:sources/PBS-E-73-figma-design.pdf",
+        "--dry-run",
+    ])
+
+    assert calls == [[
+        "004-demo",
+        "Add requirement evidence",
+        "--input",
+        "requirement:sources/PBS-E-73.pdf",
+        "--input",
+        "reference:sources/PBS-E-73-figma-design.pdf",
+        "--dry-run",
+    ]]
+
+
+@pytest.mark.unit
+def test_spec_add_input_routes_product_inputs(monkeypatch):
+    from echelon.cli_app import run
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr("echelon.cli._cmd_spec_add_input", lambda args: calls.append(args))
+
+    run([
+        "spec",
+        "add-input",
+        "--input",
+        "reference:sources/DE-OPTA-SCHEMA-MAPPING",
+        "--input",
+        "reference:sources/DE-RESOLVER-BENCHMARK",
+    ])
+
+    assert calls == [[
+        "--input",
+        "reference:sources/DE-OPTA-SCHEMA-MAPPING",
+        "--input",
+        "reference:sources/DE-RESOLVER-BENCHMARK",
+    ]]
+
+
+@pytest.mark.unit
+def test_spec_add_input_help_declares_input_option():
+    result = invoke_help("spec", "add-input")
+
+    assert result.exit_code == 0
+    assert "--input" in result.output
+    assert "parked investigation" in result.output
+
+
+@pytest.mark.unit
+def test_spec_amend_help_declares_input_and_dry_run_options():
+    result = invoke_help("spec", "amend")
+
+    assert result.exit_code == 0
+    assert "SPEC_ID" in result.output
+    assert "--input" in result.output
+    assert "--dry-run" in result.output
+
+
+@pytest.mark.unit
+def test_spec_amend_status_routes_to_the_amendment_lifecycle(monkeypatch):
+    from echelon.cli_app import run
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr("echelon.cli._cmd_spec_amend", lambda args: calls.append(args))
+
+    run(["spec", "amend", "status", "004-demo/001"])
+
+    assert calls == [["status", "004-demo/001"]]
+
+
+@pytest.mark.unit
+def test_spec_amend_preparation_does_not_advertise_an_unimplemented_approval_action(
+    monkeypatch,
+):
+    from echelon.cli_app import app
+    from echelon.spec_amendment import (
+        AmendmentPreparation,
+        AmendmentWorktree,
+        ControlBaseline,
+    )
+
+    baseline = ControlBaseline("004-demo", "004-demo", "a" * 40, False)
+    prepared = AmendmentPreparation(
+        amendment_id="004-demo/001",
+        baseline=baseline,
+        revision=1,
+        dry_run=False,
+        worktree=AmendmentWorktree(Path("/tmp/amendment"), "amend/004-demo/001", baseline, 1),
+        state_path=Path("/tmp/state.json"),
+    )
+    monkeypatch.setattr("echelon.spec_amendment.prepare_amendment", lambda *_args: prepared)
+
+    result = CliRunner().invoke(app, ["spec", "amend", "004-demo", "Add evidence"])
+
+    assert result.exit_code == 0
+    assert "No canonical spec, plan, or task artifact has been changed." in result.output
+    assert "approve its workflow" not in result.output
 
 
 @pytest.mark.unit

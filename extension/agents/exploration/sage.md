@@ -178,7 +178,7 @@ Validate the specification against deterministic quality standards and challenge
 All current artifacts:
 - All DISCOVER outputs (glossary, mental model, boundaries, assumptions, unknowns)
 - `spec.md` — the specification to validate
-- `00-overview.md` — domain overview
+- `requirements-overview.md` — Phase 1 requirements orientation
 - `assumption-review.md` (from WHY1, if it ran)
 - `reasoning-journal.jsonl`
 - `calibration-profile.yaml` (if available from knowledge base)
@@ -266,7 +266,13 @@ For every claim that a prior issue is "resolved", verify: (a) is there an integr
 
 Perform a structured sweep across all artifacts to detect contradictions. This step is MANDATORY — it must always execute and always produce a result (even if that result is zero contradictions). Silent skipping is forbidden.
 
-Load `agents/exploration/appendices/sage-contradiction-detection-reference.md` for the five contradiction types, structured report fields, zero-contradiction statement, and logging requirements.
+Load `agents/exploration/appendices/sage-contradiction-detection-reference.md` for the six contradiction types, structured report fields, zero-contradiction statement, and logging requirements.
+
+For WHY3, explicitly check `architecture_requirement_drift`: compare validated
+`spec.md` against HOW/PLAN artifacts (`plan.md, research.md, data-model.md, contracts/`)
+and planning artifacts. Flag any mechanism, deferral, persistence,
+ordering, consistency, security, privacy, or lifecycle behavior that changes a
+validated product invariant, even when the HOW artifacts agree with each other.
 
 #### 9. Pre-Mortem on the Spec
 
@@ -283,11 +289,13 @@ Assume the implementation will fail because of a spec deficiency. Ask:
 - All certified quality gate metrics meet thresholds
 - No CRITICAL issues found
 - Cross-artifact consistency verified
+- No `architecture_requirement_drift` from validated `spec.md` into HOW/PLAN/TASKS
 - No untestable requirements remain
 
 **FAIL** if ANY of the following are true:
 - Any quality gate metric below threshold
 - CRITICAL consistency issues between artifacts
+- Any `architecture_requirement_drift` that changes validated `spec.md` behavior
 - Untestable requirements that cannot be resolved by rewording
 - Missing requirements that would cause implementation failure
 
@@ -300,6 +308,33 @@ Must follow the structure in `agents/exploration/templates/sage-quality-gates-te
 ## Output: issues.md (Both Modes)
 
 Must follow the structure in `agents/exploration/templates/sage-issues-template.md` exactly.
+
+For every issue, include `Action Required` and a `Resolution Guidance` subsection.
+This is a controller contract, not optional explanatory prose:
+
+- State the one next action or decision that can advance this issue. Never write
+  "retry" as an action.
+- State one suggested option only if it is grounded in cited project evidence.
+- Mark `Banzai eligible: yes` only when that suggested option is fully supported
+  by the cited evidence and selecting it cannot set product policy, alter scope,
+  weaken a quality gate, or waive a critical requirement. Otherwise mark `no`.
+- Mark `Decision required: No user decision — agent repair` for a repair the
+  responsible agent can perform. Do not escalate that issue to a human.
+- Record values that cannot be inferred from the declared sources. They require
+  an explicit user decision and must be `Banzai eligible: no`.
+
+Never mark a suggestion Banzai eligible merely because it is conventional,
+plausible, or convenient. Banzai may copy only an explicitly eligible option;
+it cannot invent, combine, or reinterpret one.
+
+When a WHY1 or WHY2 finding requires a project decision only the user can make,
+return `verdict: STOP_AND_ASK` with `status: blocked`,
+`blocked_reason: human_clarification_required`, and one concrete
+`escalation_question`. Include `escalation_recommended_answer` and
+`escalation_risk_level: low | medium | high | critical` together only when the
+recommendation is evidence-backed; otherwise omit both. Never attach a
+question to `FAIL`, `BLOCKED`, or `ESCALATE`. The controller owns
+clarification writes and state cleanup.
 
 ---
 
@@ -410,7 +445,7 @@ When analysis is complete and all artifacts are written, output:
 ```
 WHY<1|2|3> COMPLETE — artifacts written to <spec_directory>
 Mode: <assumption-challenge | spec-validation>
-Verdict: <PASS | FAIL | BLOCKED>
+Verdict: <PASS | FAIL | STOP_AND_ASK | BLOCKED>
 Issues: <critical_count> CRITICAL, <high_count> HIGH, <medium_count> MEDIUM, <low_count> LOW
 Quality gates: <met_count>/<total_count> passing (spec-validation only)
 Blocking: <YES — must fix before proceeding | NO — can proceed with warnings>
@@ -420,9 +455,9 @@ Blocking: <YES — must fix before proceeding | NO — can proceed with warnings
 
 ## Output Block
 
-For `PASS` or `FAIL`, include one `quality_check` entry and one `challenge`
-entry per finding. Omit `challenge` entries if no issues are found (set
-`issues: []` in the `quality_check` entry).
+For `PASS`, `FAIL`, or `STOP_AND_ASK`, include one `quality_check` entry and one
+`challenge` entry per finding. Omit `challenge` entries if no issues are found
+(set `issues: []` in the `quality_check` entry).
 
 For `BLOCKED` because Certified Understanding Evidence is missing, do not invent
 scores or write quality artifacts. Return `output_files: []`, put the exact
@@ -430,7 +465,7 @@ missing evidence path in `state_updates.blocked_reason`, and return
 `journal_entries: []`.
 
 echelon_result:
-  verdict: <PASS | FAIL | BLOCKED>
+  verdict: <PASS | FAIL | STOP_AND_ASK | BLOCKED>
   output_files:
     - ${STAGING_DIR}/assumption-review.md
     - ${STAGING_DIR}/issues.md

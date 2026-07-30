@@ -13,7 +13,7 @@ Every file below MUST be included (or marked `[ABSENT: <path>]` if missing). Sil
 | --- | --- | --- |
 | `spec.md` | `{spec_dir}/spec.md` | Required |
 | `glossary.md` | `{spec_dir}/glossary.md` (or `${STAGING_DIR}/glossary.md` if not yet moved) | Required |
-| `00-overview.md` | `{spec_dir}/00-overview.md` | Required |
+| `requirements-overview.md` | `{spec_dir}/requirements-overview.md` | Required — Phase 1 orientation, not final delivery overview |
 | `assumptions.md` | `{spec_dir}/assumptions.md` (or staging) | Required |
 | `issues.md` | `{spec_dir}/issues.md` | From WHY2 |
 | `calibration-profile.yaml` | `knowledge-base/calibration-profile.yaml` | Mark `[ABSENT]` on cold start |
@@ -79,12 +79,15 @@ The harness owns the `phase2-decide` timing window declared in
 
 ### Feasibility Structural Gate
 
-GATEKEEPER authors `feasibility.md`; the harness validates it after dispatch
-when the structural governance gate is enabled. The harness writes
-`feasibility-structural-report.json`, owns the pass and attempt state, and
-applies `governance.max_repair_attempts` plus `governance.on_exhausted`.
+GATEKEEPER authors and repairs `feasibility.md`. After a projectable verdict,
+the provider-free `phase2-feasibility-structural` node certifies it and writes
+`feasibility-structural-report.json`. That visible node owns pass, findings,
+attempt, and exhaustion state and applies `governance.max_repair_attempts` plus
+`governance.on_exhausted`.
 
 On re-dispatch, the prompt contains the report path and repair instructions.
 Repair every listed finding, preserve passing sections, and return the normal
 phase verdict. Deterministic validation and structural gate state remain
-harness-owned.
+harness-owned. GATEKEEPER must not emit `feasibility_verdict` or any
+`feasibility_structural_*` field. A manual structural run without a persisted
+verdict blocks; resume `phase2-decide` to recover.

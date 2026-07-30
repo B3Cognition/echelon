@@ -137,9 +137,16 @@ class TestRunMultiTarget:
         assert captured_cmd["cmd"] == ["echelon", "harness", "run", "024",
                                        "strategy=codegen", "max_outer=3"]
 
-    def test_target_metadata_env_forwarded(self, tmp_path: Path) -> None:
+    def test_single_target_metadata_env_includes_owned_task_ids(self, tmp_path: Path) -> None:
         target = tmp_path / "r"
         target.mkdir()
+        spec_dir = tmp_path / "specs" / "024"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=foundation req=FR-001 depends=none target=r\n"
+            "- [ ] T-002 complexity=standard phase=verify req=FR-002 depends=T-001 target=r\n",
+            encoding="utf-8",
+        )
         captured: dict = {}
 
         def fake_popen(cmd, cwd, stdout, stderr, text, env=None):
@@ -152,7 +159,7 @@ class TestRunMultiTarget:
             return m
 
         with patch("subprocess.Popen", side_effect=fake_popen):
-            run_multi_target("024", [target], [], echelon_bin="echelon")
+            run_multi_target("024", [target], [], echelon_bin="echelon", workspace_root=tmp_path)
 
         assert captured["cwd"] == str(target)
         assert captured["env"]["ECHELON_POLYREPO_ROOT"] == str(tmp_path)
@@ -161,7 +168,7 @@ class TestRunMultiTarget:
         assert captured["env"]["ECHELON_WORKSPACE_ROOT"] == str(tmp_path)
         assert captured["env"]["ECHELON_SOURCE_ROOT"] == str(target.resolve())
         assert captured["env"]["ECHELON_SOURCE_ID"] == "r"
-        assert "ECHELON_TARGET_TASK_IDS" not in captured["env"]
+        assert captured["env"]["ECHELON_TARGET_TASK_IDS"] == "T-001,T-002"
 
     def test_multi_target_delivery_is_dependency_ordered_and_task_scoped(
         self,

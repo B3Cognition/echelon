@@ -77,6 +77,7 @@ class MockGitOps:
         self.worktrees_destroyed: list = []
         self.commits: list = []
         self.pushes: list = []
+        self.local_merges: list = []
         self.pr_created = False
         self.pr_promoted = False
         self.pr_merged = False
@@ -118,6 +119,15 @@ class MockGitOps:
     def push(self, worktree_path: str, branch: str) -> None:
         """Record push."""
         self.pushes.append({"path": worktree_path, "branch": branch})
+
+    def local_merge(self, branch: str, spec_id: str, spec_name: str = "") -> None:
+        """Record target default-branch landing."""
+        self.local_merges.append({
+            "branch": branch,
+            "spec_id": spec_id,
+            "spec_name": spec_name,
+            "default_branch": self._default_branch,
+        })
 
     def create_draft_pr(
         self, branch: str, spec_id: str, strategy_id: str,

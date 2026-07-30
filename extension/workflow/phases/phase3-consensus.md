@@ -68,7 +68,7 @@ This phase uses `type: staged_parallel`. **Always dispatch in the two stages bel
   <instructions>
   You are SAGE. Read agents/exploration/sage.md for your complete protocol. Operate in **spec-validation mode** (WHY3 — consensus).
   When Product Input Contract paths are present, reject consensus while a normative unit remains `open_question` or `conflict`, and return the required structured product-input corrections.
-  Read and interpret the harness-injected Certified Understanding Evidence report. Do not run validators, recalculate scores, or return controller-owned quality scores. Check cross-artifact consistency across ALL artifacts, including the read-only constitution snapshot. This is the final qualitative quality check. Produce outputs in `{spec_dir}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
+  Read and interpret the harness-injected Certified Understanding Evidence report. Do not run validators, recalculate scores, or return controller-owned quality scores. Check cross-artifact consistency across ALL artifacts, including the read-only constitution snapshot. Explicitly check `architecture_requirement_drift`: compare validated `spec.md` against plan.md, research.md, data-model.md, contracts/, tasks.md, and test artifacts, and reject consensus if HOW/PLAN/TASKS change product behavior while agreeing with each other. This is the final qualitative quality check. Produce outputs in `{spec_dir}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 

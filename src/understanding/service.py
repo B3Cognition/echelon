@@ -67,7 +67,13 @@ def parse_requirements(spec_text: str) -> dict[str, object]:
             for requirement_id, text in extract_lexicon_requirements(spec_text)
         ]
     else:
-        pattern = re.compile(r"^- \*\*([A-Z]{1,5}-\d{3,4})\*\*:(.+)$")
+        # Acceptance criteria sometimes carry a parenthesized classifier before
+        # their colon (for example ``**AC-005** (Error): ...``).  It describes
+        # the criterion but must not make that criterion invisible to the
+        # quality gate.
+        pattern = re.compile(
+            r"^- \*\*([A-Z]{1,5}-\d{3,4})\*\*(?:\s*\([^)]*\))?\s*:(.+)$"
+        )
         requirements = []
         for line in spec_text.splitlines():
             match = pattern.match(line.strip())
@@ -75,6 +81,31 @@ def parse_requirements(spec_text: str) -> dict[str, object]:
                 requirements.append(
                     {"id": match.group(1), "text": match.group(2).strip()}
                 )
+        # Echelon's conventional Markdown template presents normative
+        # requirements as ``### FR-001: …`` followed by a ``Statement``
+        # field, rather than as a single bold-ID bullet. Recognize that
+        # first-class template as well so the quality gate does not silently
+        # score only acceptance criteria and ignore the actual FR/NFR set.
+        heading_pattern = re.compile(
+            r"^#{1,6}\s+((?:FR|NFR)-\d{3,4})\b", re.IGNORECASE
+        )
+        statement_pattern = re.compile(r"^- \*\*Statement\*\*:\s*(.+)$")
+        existing_ids = {
+            str(requirement["id"]).upper() for requirement in requirements
+        }
+        active_id: str | None = None
+        for line in spec_text.splitlines():
+            heading = heading_pattern.match(line.strip())
+            if heading:
+                active_id = heading.group(1).upper()
+                continue
+            statement = statement_pattern.match(line.strip())
+            if active_id and statement and active_id not in existing_ids:
+                requirements.append(
+                    {"id": active_id, "text": statement.group(1).strip()}
+                )
+                existing_ids.add(active_id)
+                active_id = None
     return {
         "requirements": requirements,
         "full_spec": spec_text,
@@ -242,13 +273,34 @@ def analyze_spec_bundle(
     requirements = parsed["requirements"]
     assert isinstance(requirements, list)
 
-    analysis = analyze_spec(
-        spec_path,
+    # Quality gates measure the formal requirements, not the surrounding
+    # narrative.  A normal spec contains headings, rationale, architecture
+    # notes, tables, and examples; feeding all of that to the metric engine
+    # makes prose length and incidental words determine whether a requirement
+    # passes.  The per-requirement report already uses this parsed source, so
+    # the aggregate gate must use the same canonical requirement set.
+    scoring_text = spec_text
+    scoring_basis = "full_spec_fallback"
+    if requirements:
+        scoring_text = "\n".join(
+            f"- **{requirement['id']}**: {requirement['text']}"
+            for requirement in requirements
+        )
+        scoring_basis = "formal_requirements"
+    analysis = analyze_text(
+        scoring_text,
         enhanced=enhanced,
         use_nlp=use_nlp,
         extract_entities=enhanced,
         use_energy=use_energy,
     )
+    analysis["spec_path"] = str(spec_path)
+    analysis["spec_name"] = (
+        spec_path.parent.name
+        if spec_path.stem.lower() in {"spec", "requirements", "req"}
+        else spec_path.stem
+    )
+    analysis["scoring_basis"] = scoring_basis
     per_requirement: list[dict[str, object]] = []
     semantic_analyzer = SemanticAnalyzer(use_spacy=use_nlp)
     constraint_analyzer = ConstraintAnalyzer()

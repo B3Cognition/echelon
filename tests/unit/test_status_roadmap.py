@@ -18,31 +18,29 @@ ROOT = Path(__file__).resolve().parents[2]
 def _workflow_primary_path() -> list[str]:
     workflow = yaml.safe_load((ROOT / "extension/workflow/definition.yaml").read_text())
     phases = {phase["id"]: phase for phase in workflow["phases"]}
-    path: list[str] = []
-    current = "init"
-    seen: set[str] = set()
 
-    while current and current not in seen:
-        path.append(current)
-        seen.add(current)
+    def longest(current: str, seen: frozenset[str]) -> list[str]:
         if current == "done":
-            break
-        transitions = phases[current].get("transitions", [])
-        next_phase = ""
-        for transition in transitions:
+            return ["done"]
+        if current not in phases or current in seen:
+            return []
+        next_seen = seen | {current}
+        candidates: list[list[str]] = []
+        for transition in phases[current].get("transitions", []):
             candidate = transition.get("to")
             if (
-                candidate
-                and candidate != current
-                and candidate != "escalate"
-                and candidate != "terminal-blocked"
-                and candidate not in seen
+                not candidate
+                or candidate == current
+                or candidate in {"escalate", "terminal-blocked"}
+                or candidate in next_seen
             ):
-                next_phase = candidate
-                break
-        current = next_phase
+                continue
+            suffix = longest(candidate, next_seen)
+            if suffix:
+                candidates.append([current, *suffix])
+        return max(candidates, key=len, default=[])
 
-    return path
+    return longest("init", frozenset())
 
 
 @pytest.mark.unit
@@ -96,11 +94,12 @@ def test_fallback_roadmap_keeps_visible_deterministic_spec_gates(tmp_path):
     phases = _derive_roadmap_phases(tmp_path / "missing-workflow.yaml")
 
     what_index = phases.index("phase1-what")
-    assert phases[what_index : what_index + 4] == [
+    assert phases[what_index : what_index + 5] == [
         "phase1-what",
-        "phase1-lexicon",
         "phase1-understanding",
         "phase1-why2",
+        "phase1-lexicon-derive",
+        "phase1-lexicon",
     ]
     plan_index = phases.index("phase3-plan")
     assert phases[plan_index : plan_index + 5] == [

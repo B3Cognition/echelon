@@ -2,18 +2,367 @@
 import sys
 from pathlib import Path
 
+import pytest
+import yaml
+
 EXT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(EXT_ROOT) not in sys.path:
     sys.path.insert(0, str(EXT_ROOT))
 
+from harness.controller_state_contracts import (
+    ControllerContractRegistryError,
+    validate_controller_result,
+)
+from harness.controller_state_contract_requirements import (
+    required_controller_contract_name,
+)
 from harness.phase_graph import PhaseGraph
 
 DEFINITION = EXT_ROOT / "extension/workflow/definition.yaml"
 EXT_YML = EXT_ROOT / "extension/extension.yml"
+REQUIRED_CONTROLLER_CONTRACTS = {
+    "phase1-lexicon": "spec_lexicon",
+    "phase1-understanding": "understanding",
+    "phase1-why2": "phase1_quality_certificate",
+    "phase2-decide": "feasibility_authoring_verdict",
+    "phase2-tracker-alignment": "intent_alignment_authoring_verdict",
+    "phase3-tasks-lexicon": "tasks_lexicon",
+    "phase3-understanding": "understanding",
+    "phase3-consensus-tasks-lexicon": "tasks_lexicon",
+}
+
+
+@pytest.mark.parametrize(
+    ("artifact", "contract"),
+    [
+        ("feasibility", "feasibility_structural"),
+        ("intent-alignment-check", "intent_alignment_structural"),
+    ],
+)
+def test_structural_contract_is_derived_from_artifact(
+    artifact: str, contract: str
+) -> None:
+    assert required_controller_contract_name(
+        {
+            "id": f"custom-{artifact}",
+            "type": "deterministic_structural",
+            "structural_artifact": artifact,
+        }
+    ) == contract
+
+
+def test_unknown_structural_artifact_has_no_contract() -> None:
+    assert required_controller_contract_name(
+        {
+            "id": "custom-structural",
+            "type": "deterministic_structural",
+            "structural_artifact": "unknown",
+        }
+    ) is None
+
+
+def _write_structural_graph(
+    tmp_path: Path, mutation: str | None = None
+) -> tuple[Path, Path]:
+    registry = tmp_path / "contracts.yaml"
+    registry.write_bytes(
+        (
+            EXT_ROOT / "extension/workflow/controller-state-contracts.yaml"
+        ).read_bytes()
+    )
+    phase: dict[str, object] = {
+        "id": "custom-structural",
+        "type": "deterministic_structural",
+        "structural_artifact": "feasibility",
+        "allowed_state_updates": [],
+        "controller_state_contract": "feasibility_structural",
+        "transitions": [
+            {"to": "author", "condition": "structural_action = repair"},
+            {"to": "blocked", "condition": "structural_action = block"},
+            {
+                "to": "done",
+                "condition": (
+                    "structural_action in [proceed, proceed_with_warning] "
+                    "AND feasibility_verdict = PASS"
+                ),
+            },
+        ],
+    }
+    if mutation == "missing_artifact":
+        phase.pop("structural_artifact")
+    elif mutation == "unknown_artifact":
+        phase["structural_artifact"] = "unknown"
+    elif mutation == "agent":
+        phase["agent"] = "provider"
+    elif mutation == "agents":
+        phase["agents"] = [{"id": "provider"}]
+    elif mutation == "allowlist":
+        phase["allowed_state_updates"] = ["provider_field"]
+    elif mutation == "wrong_contract":
+        phase["controller_state_contract"] = "intent_alignment_structural"
+    elif mutation == "missing_repair":
+        phase["transitions"] = phase["transitions"][1:]
+    elif mutation == "missing_block":
+        phase["transitions"] = [
+            phase["transitions"][0],
+            phase["transitions"][2],
+        ]
+    elif mutation == "missing_forward":
+        phase["transitions"] = phase["transitions"][:2]
+    definition = tmp_path / "definition.yaml"
+    definition.write_text(
+        yaml.safe_dump(
+            {
+                "controller_state_contracts_file": registry.name,
+                "phases": [
+                    phase,
+                    {"id": "author", "type": "terminal"},
+                    {"id": "blocked", "type": "terminal"},
+                    {"id": "done", "type": "terminal"},
+                ],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    extension = tmp_path / "extension.yml"
+    extension.write_text("provides: {commands: []}\n", encoding="utf-8")
+    return definition, extension
+
+
+def test_phase_graph_parses_explicit_structural_artifact(tmp_path: Path) -> None:
+    definition, extension = _write_structural_graph(tmp_path)
+
+    node = PhaseGraph(definition, extension).get("custom-structural")
+
+    assert node.structural_artifact == "feasibility"
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing_artifact",
+        "unknown_artifact",
+        "agent",
+        "agents",
+        "allowlist",
+        "wrong_contract",
+        "missing_repair",
+        "missing_block",
+        "missing_forward",
+    ],
+)
+def test_phase_graph_rejects_malformed_structural_node(
+    tmp_path: Path, mutation: str
+) -> None:
+    definition, extension = _write_structural_graph(tmp_path, mutation)
+
+    with pytest.raises(ControllerContractRegistryError):
+        PhaseGraph(definition, extension)
 
 
 class TestPhaseGraph:
     graph = PhaseGraph(DEFINITION, EXT_YML)
+
+    def test_real_workflow_compiles_exact_initial_human_input_registry(self):
+        registry = self.graph.human_input_policy_registry()
+        dispatch_phases = frozenset({
+            "checkpoint-assess",
+            "checkpoint-plan",
+            "escalate",
+            "init",
+            "phase1-constitution",
+            "phase1-discover",
+            "phase1-investigate",
+            "phase1-lexicon",
+            "phase1-lexicon-derive",
+            "phase1-modeler",
+            "phase1-synthesizer",
+            "phase1-tracker",
+            "phase1-understanding",
+            "phase1-what",
+            "phase1-why1",
+            "phase1-why2",
+            "phase2-decide",
+            "phase2-feasibility-structural",
+            "phase2-intent-alignment-structural",
+            "phase2-strategic-overview",
+            "phase2-tracker-alignment",
+            "phase3-consensus",
+            "phase3-consensus-tasks-lexicon",
+            "phase3-how",
+            "phase3-plan",
+            "phase3-sentinel",
+            "phase3-specialists",
+            "phase3-tasks-lexicon",
+            "phase3-understanding",
+            "phase4-document",
+        })
+
+        def fields(policy):
+            return (
+                policy.classification,
+                policy.semi_policy,
+                policy.resolution_handler,
+                policy.allow_free_text,
+                policy.allowed_phase_ids,
+                policy.allowed_target_phases,
+                policy.context_state_keys,
+                policy.context_paths,
+                tuple(
+                    (
+                        option.id,
+                        option.label,
+                        option.description,
+                        option.recommended,
+                        option.risk_level,
+                        option.next_phase,
+                        option.outcome,
+                    )
+                    for option in policy.options
+                ),
+            )
+
+        expected = {
+            ("provider_escalation", "phase1-tracker", "human_clarification_required"): (
+                "material", "require_human", "clarification_resume", True,
+                frozenset({"phase1-tracker"}), frozenset({"phase1-tracker"}),
+                ("user_message", "phase"),
+                ("{staging_dir}/user-intent.md",), (),
+            ),
+            ("provider_escalation", "phase1-why1", "human_clarification_required"): (
+                "material", "require_human", "clarification_resume", True,
+                frozenset({"phase1-why1"}), frozenset({"phase1-why1"}),
+                ("user_message", "phase", "quality_scores"),
+                ("{staging_dir}/assumptions.md", "{staging_dir}/unknowns.md"), (),
+            ),
+            ("provider_escalation", "phase1-why2", "human_clarification_required"): (
+                "material", "require_human", "clarification_resume", True,
+                frozenset({"phase1-why2"}), frozenset({"phase1-why2"}),
+                ("user_message", "phase", "quality_scores"),
+                ("{spec_dir}/spec.md", "{spec_dir}/issues.md"), (),
+            ),
+            ("provider_escalation", "phase1-investigate", "human_clarification_required"): (
+                "material", "require_human", "clarification_resume", True,
+                frozenset({"phase1-investigate"}), frozenset({"phase1-investigate"}),
+                ("user_message", "phase"),
+                ("{spec_dir}/evidence-resolution.md",), (),
+            ),
+            ("provider_escalation", "phase1-investigate", "investigation_access_required"): (
+                "external_prerequisite", "require_human", "clarification_resume", True,
+                frozenset({"phase1-investigate"}), frozenset({"phase1-investigate"}),
+                ("user_message", "phase"),
+                ("{spec_dir}/evidence-resolution.md",), (),
+            ),
+            ("human_gate", "checkpoint-assess", "checkpoint_assess_decision_required"): (
+                "material", "require_human", "gate_outcome", False,
+                frozenset({"checkpoint-assess"}),
+                frozenset({"phase2-decide", "terminal-blocked"}),
+                ("user_message", "phase", "quality_scores"),
+                (
+                    "{spec_dir}/spec.md",
+                    "{spec_dir}/quality-gates.md",
+                    "{spec_dir}/issues.md",
+                ),
+                (
+                    (
+                        "approve", "Approve", "Continue to feasibility assessment.",
+                        False, "medium", "phase2-decide", "approved",
+                    ),
+                    (
+                        "reject", "Reject", "Stop for specification revision.",
+                        False, "low", "terminal-blocked", "rejected",
+                    ),
+                ),
+            ),
+            ("provider_escalation", "phase2-tracker-alignment", "human_clarification_required"): (
+                "material", "require_human", "clarification_resume", True,
+                frozenset({"phase2-tracker-alignment"}),
+                frozenset({"phase2-tracker-alignment"}),
+                ("user_message", "phase"),
+                (
+                    "{spec_dir}/user-intent.md",
+                    "{spec_dir}/intent-alignment-check.md",
+                ),
+                (),
+            ),
+            ("human_gate", "checkpoint-plan", "checkpoint_plan_decision_required"): (
+                "operational", "auto_if_recommended_low_risk", "gate_outcome", False,
+                frozenset({"checkpoint-plan"}),
+                frozenset({"phase4-document", "terminal-blocked"}),
+                ("user_message", "phase", "quality_scores"),
+                ("{spec_dir}/plan.md", "{spec_dir}/tasks.md"),
+                (
+                    (
+                        "approve", "Approve", "Continue to finalization.",
+                        True, "low", "phase4-document", "approved",
+                    ),
+                    (
+                        "reject", "Reject", "Stop for plan revision.",
+                        False, "low", "terminal-blocked", "rejected",
+                    ),
+                ),
+            ),
+            ("controller_safeguard", "phase_dispatch_limit", "phase_dispatch_limit"): (
+                "material", "require_human", "phase_dispatch_limit", False,
+                dispatch_phases, frozenset({"phase1-what"}),
+                (
+                    "phase",
+                    "phase_dispatch_limit_phase",
+                    "phase_dispatch_limit",
+                    "issue_resolution_ledger",
+                ),
+                (), (),
+            ),
+            ("controller_safeguard", "consecutive_why_fails", "consecutive_why_fails"): (
+                "material", "require_human", "reset_why_fail_count", True,
+                frozenset({"phase1-why2"}), frozenset({"phase1-why2"}),
+                ("phase", "why_fail_count", "issue_resolution_ledger"), (), (),
+            ),
+            ("controller_safeguard", "why2_metric_stagnation", "why2_metric_stagnation"): (
+                "material", "require_human", "reset_why2_stagnation", True,
+                frozenset({"phase1-why2"}), frozenset({"phase1-why2"}),
+                ("phase", "why_fail_count", "why2_metric_stagnation_count"), (), (),
+            ),
+        }
+        actual = {
+            (policy.source_kind, policy.producer_id, policy.reason_code): fields(policy)
+            for policy in registry.policies
+        }
+
+        assert actual == expected
+
+    def test_question_provider_allowlists_match_declared_policies(self):
+        required_question_fields = {
+            "status",
+            "blocked_reason",
+            "escalation_question",
+            "escalation_recommended_answer",
+            "escalation_risk_level",
+        }
+        declared_producers = {
+            "phase1-tracker",
+            "phase1-why1",
+            "phase1-why2",
+            "phase1-investigate",
+            "phase2-tracker-alignment",
+        }
+
+        for phase_id in self.graph.all_phase_ids():
+            node = self.graph.get(phase_id)
+            allowed = set(node.allowed_state_updates or [])
+            if phase_id in declared_producers:
+                assert required_question_fields <= allowed
+                assert node.state_update_types["status"] == "string"
+                assert node.state_update_enums["status"] == ["blocked"]
+            else:
+                assert not (
+                    allowed
+                    & {
+                        "escalation_recommended_answer",
+                        "escalation_risk_level",
+                    }
+                )
 
     def test_loads_init_phase(self):
         node = self.graph.get("init")
@@ -45,49 +394,90 @@ class TestPhaseGraph:
         assert why2_gate.understanding_target == "phase1-why2"
         assert why3_gate.type == "deterministic_understanding"
         assert why3_gate.understanding_target == "phase3-consensus"
-        assert self.graph.get("phase1-lexicon").transitions[-1]["to"] == why2_gate.id
+        assert self.graph.get("phase1-what").transitions[-1]["to"] == why2_gate.id
         assert why2_gate.transitions == [{"to": "phase1-why2", "condition": "always"}]
         tasks_gate = self.graph.get("phase3-tasks-lexicon")
         assert self.graph.get("phase3-plan").transitions[-1]["to"] == tasks_gate.id
         assert tasks_gate.transitions[-1]["to"] == why3_gate.id
         assert why3_gate.transitions == [{"to": "phase3-consensus", "condition": "always"}]
 
-    def test_spec_lexicon_runs_in_visible_provider_free_node(self):
+    def test_spec_lexicon_derivation_and_validation_are_separate_nodes(self):
         what = self.graph.get("phase1-what")
+        why2 = self.graph.get("phase1-why2")
+        derive = self.graph.get("phase1-lexicon-derive")
         lexicon = self.graph.get("phase1-lexicon")
 
-        assert what.transitions == [{"to": "phase1-lexicon", "condition": "always"}]
+        assert what.transitions == [
+            {
+                "to": "phase1-investigate",
+                "condition": "evidence_resolution_status = pending",
+            },
+            {"to": "phase1-understanding", "condition": "always"},
+        ]
+        assert set(what.required_state_updates) == {"evidence_resolution_status"}
+        assert set(what.allowed_verdicts) == {"DONE", "FAIL"}
+        assert what.evidence_routing == "requests"
+        assert why2.transitions[-2] == {
+            "to": "phase1-lexicon-derive",
+            "condition": (
+                "verdict = PASS AND no_CRITICAL_issues "
+                "AND quality_gates.pass"
+            ),
+        }
+        assert derive.type == "agent"
+        assert derive.agent == "speckit-echelon-lexicon-deriver"
+        assert derive.outputs == ["requirements.lexicon.md"]
+        assert derive.allowed_state_updates == []
+        assert set(derive.allowed_verdicts or []) == {"DONE", "FAIL"}
+        assert derive.transitions == [
+            {"to": "phase1-lexicon", "condition": "always"},
+        ]
         assert lexicon.type == "deterministic_lexicon"
         assert lexicon.lexicon_artifact == "spec"
         assert lexicon.allowed_state_updates == []
-        assert set(lexicon.controller_state_updates) == {
+        assert lexicon.controller_state_update_keys == {
             "lexicon_evaluation",
             "lexicon_pass",
             "lexicon_attempts",
             "lexicon_findings",
             "lexicon_report",
             "lexicon_warning_waiver",
+            "blocked_reason",
         }
         assert lexicon.transitions == [
             {
-                "to": "phase1-what",
+                "to": "phase1-lexicon-derive",
                 "condition": (
-                    "lexicon_gate.enabled AND lexicon_evaluation = pending "
+                    "lexicon_gate.spec_enabled AND lexicon_evaluation = pending "
                     "AND iteration < max_iterations"
                 ),
                 "action": "increment_iteration",
             },
             {
-                "to": "phase1-what",
+                "to": "phase1-lexicon-derive",
                 "condition": (
-                    "lexicon_gate.enabled AND lexicon_evaluation = failed "
+                    "lexicon_gate.spec_enabled AND lexicon_evaluation = failed "
                     "AND lexicon_attempts < lexicon_gate.max_repair_attempts "
                     "AND iteration < max_iterations"
                 ),
                 "action": "increment_iteration",
             },
-            {"to": "phase1-understanding", "condition": "always"},
+            {"to": "checkpoint-assess", "condition": "always"},
         ]
+
+    def test_why2_requires_structured_finding_routes(self):
+        why2 = self.graph.get("phase1-why2")
+
+        assert set(why2.required_state_updates) == {
+            "evidence_resolution_status",
+            "finding_routes",
+        }
+        assert why2.state_update_enums["evidence_resolution_status"] == [
+            "not_required",
+            "pending",
+        ]
+        assert set(why2.allowed_verdicts) == {"PASS", "FAIL", "STOP_AND_ASK"}
+        assert why2.evidence_routing == "finding_routes"
 
     def test_phase_timing_windows_are_controller_metadata(self):
         decide = self.graph.get("phase2-decide")
@@ -127,6 +517,53 @@ class TestPhaseGraph:
         assert "spec.md" not in context_pack
         assert "constitution.md" not in context_pack
         assert "assumptions.md" not in context_pack
+
+    def test_why2_routes_external_evidence_requests_to_phase1_investigate(self):
+        why2 = self.graph.get("phase1-why2")
+        investigate = self.graph.get("phase1-investigate")
+
+        assert why2.transitions[0] == {
+            "to": "phase1-investigate",
+            "condition": "evidence_resolution_status = pending",
+        }
+        assert {"evidence_resolution_status", "evidence_requests"}.issubset(
+            why2.allowed_state_updates or []
+        )
+        assert investigate.type == "agent"
+        assert investigate.agent == "speckit-echelon-investigator"
+        assert investigate.transitions == [
+            {
+                "to": "phase1-what",
+                "condition": "evidence_resolution_status in [validated, conflicting]",
+            },
+            {
+                "to": "terminal-blocked",
+                "condition": "evidence_resolution_status in [inconclusive, access_required]",
+            },
+        ]
+
+    def test_phase1_investigate_validated_routes_back_to_requirements_before_gates(self):
+        investigate = self.graph.get("phase1-investigate")
+        what = self.graph.get("phase1-what")
+        understanding = self.graph.get("phase1-understanding")
+        why2 = self.graph.get("phase1-why2")
+        lexicon_derive = self.graph.get("phase1-lexicon-derive")
+        lexicon = self.graph.get("phase1-lexicon")
+
+        assert investigate.transitions[0] == {
+            "to": "phase1-what",
+            "condition": "evidence_resolution_status in [validated, conflicting]",
+        }
+        assert what.transitions[-1] == {"to": "phase1-understanding", "condition": "always"}
+        assert understanding.type == "deterministic_understanding"
+        assert understanding.transitions == [{"to": "phase1-why2", "condition": "always"}]
+        assert any(
+            transition["to"] == "phase1-lexicon-derive"
+            for transition in why2.transitions
+        )
+        assert lexicon_derive.transitions == [{"to": "phase1-lexicon", "condition": "always"}]
+        assert lexicon.type == "deterministic_lexicon"
+        assert lexicon.transitions[-1] == {"to": "checkpoint-assess", "condition": "always"}
 
     def test_phase3_consensus_context_packs_cover_spec_plan_and_tasks(self):
         """Consensus agents must receive enough artifacts to validate plan/tasks."""
@@ -223,6 +660,12 @@ class TestPhaseGraph:
         node = self.graph.get("phase1-what")
 
         assert "{staging_dir}/user-clarifications.md" in node.context_pack
+
+    def test_phase1_what_receives_evidence_resolution_artifacts(self):
+        context_pack = set(self.graph.get("phase1-what").context_pack)
+
+        assert "{spec_dir}/evidence-resolution.md" in context_pack
+        assert "{spec_dir}/evidence-grades.md" in context_pack
 
     def test_phase1_modeler_loads_node_condition_and_greenfield_skip(self):
         node = self.graph.get("phase1-modeler")
@@ -374,6 +817,91 @@ phases:
     ]
 
 
+def _write_controller_boundary_graph(
+    tmp_path: Path,
+    *,
+    allowlist: object,
+    nested_field: str | None,
+) -> tuple[Path, Path]:
+    """Write one direct-PhaseGraph controller-boundary fixture."""
+
+    registry = tmp_path / "contracts.yaml"
+    registry.write_bytes(
+        (
+            EXT_ROOT
+            / "extension/workflow/controller-state-contracts.yaml"
+        ).read_bytes()
+    )
+    phase: dict[str, object] = {
+        "id": "start",
+        "type": "agent",
+        "allowed_state_updates": [],
+        "controller_state_contract": "spec_lexicon",
+        "transitions": [{"to": "DONE", "condition": "always"}],
+    }
+    if nested_field is None:
+        phase["allowed_state_updates"] = allowlist
+    else:
+        phase["type"] = "staged_parallel"
+        phase[nested_field] = [
+            {"id": "nested", "allowed_state_updates": allowlist}
+        ]
+    definition = tmp_path / "definition.yaml"
+    definition.write_text(
+        yaml.safe_dump(
+            {
+                "controller_state_contracts_file": registry.name,
+                "phases": [phase, {"id": "DONE", "type": "terminal"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    extension_yml = tmp_path / "extension.yml"
+    extension_yml.write_text(
+        "provides: {commands: []}\n",
+        encoding="utf-8",
+    )
+    return definition, extension_yml
+
+
+@pytest.mark.parametrize("nested_field", (None, "agents", "pre_dispatch"))
+def test_phase_graph_rejects_null_allowlist_for_controller_boundary(
+    tmp_path: Path,
+    nested_field: str | None,
+) -> None:
+    definition, extension_yml = _write_controller_boundary_graph(
+        tmp_path,
+        allowlist=None,
+        nested_field=nested_field,
+    )
+
+    with pytest.raises(
+        ControllerContractRegistryError,
+        match="allowed_state_updates.*list",
+    ):
+        PhaseGraph(definition, extension_yml)
+
+
+@pytest.mark.parametrize("nested_field", (None, "agents", "pre_dispatch"))
+@pytest.mark.parametrize(
+    "unsafe_allowlist",
+    ([123], [""], ["lexicon_pass"]),
+)
+def test_phase_graph_rejects_unsafe_controller_boundary_allowlist(
+    tmp_path: Path,
+    nested_field: str | None,
+    unsafe_allowlist: list[object],
+) -> None:
+    definition, extension_yml = _write_controller_boundary_graph(
+        tmp_path,
+        allowlist=unsafe_allowlist,
+        nested_field=nested_field,
+    )
+
+    with pytest.raises(ControllerContractRegistryError):
+        PhaseGraph(definition, extension_yml)
+
+
 def test_phase3_consensus_declares_per_agent_result_contracts():
     graph = PhaseGraph(DEFINITION, EXT_YML)
     node = graph.get("phase3-consensus")
@@ -393,15 +921,15 @@ def test_phase3_consensus_declares_per_agent_result_contracts():
 def test_phase2_governance_verdicts_are_controller_owned():
     graph = PhaseGraph(DEFINITION, EXT_YML)
     gates = {
-        "phase2-decide": "feasibility_structural_pass",
-        "phase2-tracker-alignment": "intent_alignment_check_structural_pass",
+        "phase2-decide": "feasibility_verdict",
+        "phase2-tracker-alignment": "intent_alignment_verdict",
     }
 
     for phase_id, pass_key in gates.items():
         node = graph.get(phase_id)
         assert pass_key not in (node.allowed_state_updates or [])
-        assert pass_key in node.controller_state_updates
-        assert "governance_gate_exhausted" in node.controller_state_updates
+        assert pass_key in node.controller_state_update_keys
+        assert "governance_gate_exhausted" not in node.controller_state_update_keys
 
 
 def test_phase1_lexicon_reserves_verdict_fields_for_the_controller():
@@ -415,9 +943,10 @@ def test_phase1_lexicon_reserves_verdict_fields_for_the_controller():
         "lexicon_findings",
         "lexicon_report",
         "lexicon_warning_waiver",
+        "blocked_reason",
     }
     assert controller_fields.isdisjoint(node.allowed_state_updates or [])
-    assert set(node.controller_state_updates) == controller_fields
+    assert node.controller_state_update_keys == controller_fields
 
 
 def test_tasks_lexicon_runs_in_two_visible_provider_free_nodes():
@@ -443,7 +972,517 @@ def test_tasks_lexicon_runs_in_two_visible_provider_free_nodes():
         assert node.type == "deterministic_lexicon"
         assert node.lexicon_artifact == "tasks"
         assert node.allowed_state_updates == []
-        assert set(node.controller_state_updates) == controller_fields
+        assert node.controller_state_update_keys == controller_fields
+
+
+def test_shared_controller_contracts_are_compiled_once() -> None:
+    graph = PhaseGraph(DEFINITION, EXT_YML)
+    first = graph.get("phase3-tasks-lexicon").controller_state_contract
+    second = graph.get("phase3-consensus-tasks-lexicon").controller_state_contract
+
+    assert first is second
+    assert first is graph.controller_contract("tasks_lexicon")
+    assert first.name == "tasks_lexicon"
+    assert first.state_update_keys == {
+        "tasks_lexicon_action",
+        "tasks_lexicon_pass",
+        "tasks_lexicon_attempts",
+        "tasks_lexicon_findings",
+        "tasks_lexicon_report",
+        "blocked_reason",
+    }
+
+    understanding_first = graph.get(
+        "phase1-understanding"
+    ).controller_state_contract
+    understanding_second = graph.get(
+        "phase3-understanding"
+    ).controller_state_contract
+    assert understanding_first is understanding_second
+    assert understanding_first is graph.controller_contract("understanding")
+    assert understanding_first.name == "understanding"
+    assert understanding_first.state_update_keys == {
+        "quality_scores",
+        "understanding_evidence",
+        "blocked_reason",
+    }
+
+
+def test_production_contracts_own_exact_existing_controller_field_inventory() -> None:
+    graph = PhaseGraph(DEFINITION, EXT_YML)
+    expected = {
+        "spec_lexicon": {
+            "lexicon_evaluation",
+            "lexicon_pass",
+            "lexicon_attempts",
+            "lexicon_findings",
+            "lexicon_report",
+            "lexicon_warning_waiver",
+            "blocked_reason",
+        },
+        "tasks_lexicon": {
+            "tasks_lexicon_action",
+            "tasks_lexicon_pass",
+            "tasks_lexicon_attempts",
+            "tasks_lexicon_findings",
+            "tasks_lexicon_report",
+            "blocked_reason",
+        },
+        "understanding": {
+            "quality_scores",
+            "understanding_evidence",
+            "blocked_reason",
+        },
+        "phase1_quality_certificate": {
+            "spec_quality_certificate",
+        },
+        "feasibility_structural": {
+            "structural_action",
+            "feasibility_structural_pass",
+            "feasibility_structural_attempts",
+            "feasibility_structural_findings",
+            "feasibility_structural_report",
+            "governance_gate_exhausted",
+        },
+        "intent_alignment_structural": {
+            "structural_action",
+            "intent_alignment_check_structural_pass",
+            "intent_alignment_check_structural_attempts",
+            "intent_alignment_check_structural_findings",
+            "intent_alignment_check_structural_report",
+            "governance_gate_exhausted",
+        },
+    }
+
+    assert {
+        name: graph.controller_contract(name).state_update_keys
+        for name in expected
+    } == expected
+    assert len(set().union(*expected.values())) == 25
+
+
+def test_production_contracts_reject_incomplete_success_results() -> None:
+    graph = PhaseGraph(DEFINITION, EXT_YML)
+
+    assert validate_controller_result(
+        graph.controller_contract("spec_lexicon"),
+        "DONE",
+        {},
+    )
+    assert validate_controller_result(
+        graph.controller_contract("understanding"),
+        "DONE",
+        {},
+    )
+
+
+@pytest.mark.parametrize(
+    ("contract_name", "verdict", "updates"),
+    [
+        (
+            "spec_lexicon",
+            "DONE",
+            {"lexicon_evaluation": "pending", "lexicon_attempts": 0},
+        ),
+        (
+            "spec_lexicon",
+            "DONE",
+            {
+                "lexicon_evaluation": "passed",
+                "lexicon_attempts": 0,
+                "lexicon_pass": True,
+                "lexicon_findings": 0,
+                "lexicon_report": "spec-lexicon-report.json",
+            },
+        ),
+        (
+            "tasks_lexicon",
+            "DONE",
+            {
+                "tasks_lexicon_action": "block",
+                "tasks_lexicon_pass": False,
+                "tasks_lexicon_attempts": 1,
+                "tasks_lexicon_findings": 1,
+                "tasks_lexicon_report": "tasks-lexicon-report.json",
+                "blocked_reason": "lexicon_gate_exhausted",
+            },
+        ),
+        (
+            "understanding",
+            "DONE",
+            {
+                "quality_scores": [{"pass": True, "source": "harness"}],
+                "understanding_evidence": {
+                    "phase": "phase1-why2",
+                    "iteration": 0,
+                    "status": "completed",
+                    "path": "understanding.json",
+                    "digest": "abc123",
+                    "pass": True,
+                    "failing_gates": [],
+                    "error": None,
+                },
+            },
+        ),
+        (
+            "understanding",
+            "BLOCKED",
+            {
+                "understanding_evidence": {
+                    "phase": "phase1-why2",
+                    "iteration": 0,
+                    "status": "error",
+                    "path": None,
+                    "digest": None,
+                    "pass": None,
+                    "failing_gates": [],
+                    "error": "analysis failed",
+                },
+                "blocked_reason": "analysis failed",
+            },
+        ),
+        (
+            "feasibility_structural",
+            "PASS",
+            {
+                "structural_action": "proceed",
+                "feasibility_structural_pass": True,
+                "feasibility_structural_attempts": 0,
+                "feasibility_structural_findings": 0,
+            },
+        ),
+        (
+            "intent_alignment_structural",
+            "WARN",
+            {
+                "structural_action": "proceed_with_warning",
+                "intent_alignment_check_structural_pass": False,
+                "intent_alignment_check_structural_attempts": 1,
+                "intent_alignment_check_structural_findings": 2,
+                "intent_alignment_check_structural_report": "intent-report.json",
+                "governance_gate_exhausted": "intent-alignment-check",
+            },
+        ),
+    ],
+)
+def test_production_contracts_accept_valid_semantic_branches(
+    contract_name: str,
+    verdict: str,
+    updates: dict[str, object],
+) -> None:
+    graph = PhaseGraph(DEFINITION, EXT_YML)
+
+    assert not validate_controller_result(
+        graph.controller_contract(contract_name),
+        verdict,
+        updates,
+    )
+
+
+@pytest.mark.parametrize(
+    ("contract_name", "updates"),
+    [
+        (
+            "spec_lexicon",
+            {
+                "lexicon_evaluation": "pending",
+                "lexicon_attempts": 0,
+                "lexicon_pass": False,
+            },
+        ),
+        (
+            "spec_lexicon",
+            {
+                "lexicon_evaluation": "passed",
+                "lexicon_attempts": 0,
+                "lexicon_pass": True,
+                "lexicon_findings": 1,
+                "lexicon_report": "report.json",
+            },
+        ),
+        (
+            "tasks_lexicon",
+            {
+                "tasks_lexicon_action": "proceed",
+                "tasks_lexicon_pass": False,
+                "tasks_lexicon_attempts": 0,
+                "tasks_lexicon_findings": 0,
+            },
+        ),
+        (
+            "tasks_lexicon",
+            {
+                "tasks_lexicon_action": "block",
+                "tasks_lexicon_pass": False,
+                "tasks_lexicon_attempts": 1,
+                "tasks_lexicon_findings": 0,
+            },
+        ),
+        (
+            "understanding",
+            {
+                "quality_scores": [{"pass": "yes"}],
+                "understanding_evidence": {
+                    "status": "completed",
+                    "iteration": 0,
+                    "digest": "abc",
+                    "path": "report.json",
+                    "pass": True,
+                },
+            },
+        ),
+        (
+            "understanding",
+            {
+                "understanding_evidence": {
+                    "status": "error",
+                    "iteration": 0,
+                    "error": "analysis failed",
+                },
+            },
+        ),
+        (
+            "feasibility_structural",
+            {
+                "feasibility_structural_pass": False,
+                "feasibility_structural_attempts": 1,
+                "feasibility_structural_findings": 1,
+            },
+        ),
+        (
+            "intent_alignment_structural",
+            {
+                "intent_alignment_check_structural_pass": False,
+                "intent_alignment_check_structural_attempts": 1,
+                "governance_gate_exhausted": "feasibility",
+            },
+        ),
+    ],
+)
+def test_production_contracts_reject_semantic_invariant_violations(
+    contract_name: str,
+    updates: dict[str, object],
+) -> None:
+    graph = PhaseGraph(DEFINITION, EXT_YML)
+
+    assert validate_controller_result(
+        graph.controller_contract(contract_name),
+        "DONE",
+        updates,
+    )
+
+
+@pytest.mark.parametrize(
+    ("contract_name", "verdict", "updates"),
+    [
+        (
+            "understanding",
+            "DONE",
+            {
+                "understanding_evidence": {
+                    "status": "error",
+                    "iteration": 0,
+                    "error": "analysis failed",
+                },
+                "blocked_reason": "analysis failed",
+            },
+        ),
+        ("understanding", "BLOCKED", {}),
+        (
+            "understanding",
+            "BLOCKED",
+            {
+                "quality_scores": [{"pass": True}],
+                "understanding_evidence": {
+                    "status": "completed",
+                    "iteration": 0,
+                    "digest": "abc",
+                    "path": "report.json",
+                    "pass": True,
+                },
+            },
+        ),
+        ("spec_lexicon", "BLOCKED", {}),
+        ("tasks_lexicon", "BLOCKED", {}),
+        (
+            "spec_lexicon",
+            "DONE",
+            {
+                "lexicon_evaluation": "pending",
+                "lexicon_attempts": 0,
+                "lexicon_findings": 1,
+            },
+        ),
+        (
+            "feasibility_structural",
+            "PASS",
+            {
+                "feasibility_structural_pass": True,
+                "feasibility_structural_attempts": 3,
+                "governance_gate_exhausted": "feasibility",
+            },
+        ),
+        (
+            "intent_alignment_structural",
+            "ALIGNED",
+            {
+                "intent_alignment_check_structural_pass": True,
+                "intent_alignment_check_structural_attempts": 3,
+                "governance_gate_exhausted": "intent-alignment-check",
+            },
+        ),
+    ],
+    ids=[
+        "understanding-success-with-error-evidence",
+        "understanding-empty-blocked",
+        "understanding-blocked-with-completed-evidence",
+        "spec-lexicon-empty-blocked",
+        "tasks-lexicon-empty-blocked",
+        "spec-lexicon-pending-with-findings",
+        "feasibility-pass-with-exhaustion",
+        "alignment-pass-with-exhaustion",
+    ],
+)
+def test_production_contracts_fail_closed_across_discriminator_branches(
+    contract_name: str,
+    verdict: str,
+    updates: dict[str, object],
+) -> None:
+    graph = PhaseGraph(DEFINITION, EXT_YML)
+
+    assert validate_controller_result(
+        graph.controller_contract(contract_name),
+        verdict,
+        updates,
+    )
+
+
+def test_controller_node_outputs_contain_artifacts_only() -> None:
+    graph = PhaseGraph(DEFINITION, EXT_YML)
+
+    assert graph.get("phase1-lexicon").outputs == [
+        "spec-lexicon-report.json",
+    ]
+    for phase_id in (
+        "phase3-tasks-lexicon",
+        "phase3-consensus-tasks-lexicon",
+    ):
+        assert graph.get(phase_id).outputs == [
+            "tasks-lexicon-report.json",
+        ]
+
+
+def test_phase_graph_rejects_unknown_controller_contract(tmp_path: Path) -> None:
+    registry = tmp_path / "contracts.yaml"
+    registry.write_text(
+        yaml.safe_dump({
+            "schema_version": 1,
+            "contracts": {
+                "known": {
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["verdict", "state_updates"],
+                    "properties": {
+                        "verdict": {"type": "string"},
+                        "state_updates": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "properties": {"known": {"type": "boolean"}},
+                        },
+                    },
+                }
+            },
+        }),
+        encoding="utf-8",
+    )
+    definition = tmp_path / "definition.yaml"
+    definition.write_text(
+        yaml.safe_dump({
+            "controller_state_contracts_file": registry.name,
+            "phases": [{
+                "id": "start",
+                "controller_state_contract": "missing",
+            }],
+        }),
+        encoding="utf-8",
+    )
+    extension_yml = tmp_path / "extension.yml"
+    extension_yml.write_text("provides: {commands: []}\n", encoding="utf-8")
+
+    with pytest.raises(
+        ControllerContractRegistryError,
+        match="unknown controller state contract 'missing'",
+    ):
+        PhaseGraph(definition, extension_yml)
+
+
+@pytest.mark.parametrize(
+    ("phase_id", "expected_contract"),
+    sorted(REQUIRED_CONTROLLER_CONTRACTS.items()),
+)
+@pytest.mark.parametrize("mutation", ["missing", "mismatched"])
+def test_phase_graph_requires_exact_contract_for_controller_role(
+    tmp_path: Path,
+    phase_id: str,
+    expected_contract: str,
+    mutation: str,
+) -> None:
+    raw = yaml.safe_load(DEFINITION.read_text(encoding="utf-8"))
+    phase = next(item for item in raw["phases"] if item["id"] == phase_id)
+    if mutation == "missing":
+        phase.pop("controller_state_contract")
+    else:
+        phase["controller_state_contract"] = (
+            "tasks_lexicon"
+            if expected_contract != "tasks_lexicon"
+            else "understanding"
+        )
+    definition = tmp_path / "definition.yaml"
+    definition.write_text(
+        yaml.safe_dump(raw, sort_keys=False),
+        encoding="utf-8",
+    )
+    registry = DEFINITION.parent / "controller-state-contracts.yaml"
+    (tmp_path / registry.name).write_text(
+        registry.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ControllerContractRegistryError,
+        match=(
+            f"phase {phase_id!r} requires controller state contract "
+            f"{expected_contract!r}"
+        ),
+    ):
+        PhaseGraph(definition, EXT_YML)
+
+
+def test_phase_graph_requires_registry_for_controller_producing_type(
+    tmp_path: Path,
+) -> None:
+    definition = tmp_path / "definition.yaml"
+    definition.write_text(
+        yaml.safe_dump(
+            {
+                "phases": [
+                    {
+                        "id": "custom-understanding",
+                        "type": "deterministic_understanding",
+                        "allowed_state_updates": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ControllerContractRegistryError,
+        match="controller-producing phases require",
+    ):
+        PhaseGraph(definition, EXT_YML)
 
 
 def test_provider_nodes_do_not_own_tasks_lexicon_state():
@@ -458,7 +1497,7 @@ def test_provider_nodes_do_not_own_tasks_lexicon_state():
     }
     assert not {
         key
-        for key in consensus.controller_state_updates
+        for key in consensus.controller_state_update_keys
         if key.startswith("tasks_lexicon_")
     }
     plan2 = next(entry for entry in consensus.agents if entry["mode"] == "PLAN2")

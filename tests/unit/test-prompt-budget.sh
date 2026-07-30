@@ -23,8 +23,8 @@ assert() {
 # Test 1: script exists and is executable
 [[ -x "$SCRIPT" ]] && assert "script executable" "OK" || assert "script executable" "not executable"
 
-# Test 2: check command exits 1 (we know 3 agents exceed 500)
-bash "$SCRIPT" check --max 500 >/dev/null 2>&1 && assert "check --max 500 exits 1" "should have failed" || assert "check --max 500 exits 1" "OK"
+# Test 2: a deliberately strict cap must identify oversized prompts.
+bash "$SCRIPT" check --max 400 >/dev/null 2>&1 && assert "check --max 400 exits 1" "should have failed" || assert "check --max 400 exits 1" "OK"
 
 # Test 3: check with high limit passes — bumped from 1000 to 1500 because
 # commander.md has grown organically beyond 1000 (currently ~1278) with the
@@ -42,11 +42,10 @@ count=$(bash "$SCRIPT" report | grep -c "^[a-z]")
 top_count=$(bash "$SCRIPT" top 5 | grep -c "^[0-9]")
 [[ "$top_count" -eq 5 ]] && assert "top 5 returns 5 rows" "OK" || assert "top 5 returns 5 rows" "got $top_count"
 
-# Test 6: check identifies the known violators at the 500-line cap.
-# After ws3-cifix slimming: commander.md = 320 lines, sage.md = 500 lines (at cap, not over).
-# Only cartographer (~632 lines) genuinely exceeds 500. AUDITOR was split; sage and commander
-# were slimmed — the harness/workflow now owns routing/token/budget logic for both.
-violations=$(bash "$SCRIPT" check --max 500 2>&1 || true)
+# Test 6: check identifies a known violator at the strict 400-line cap.
+# CARTOGRAPHER remains just over this diagnostic threshold even after Lexicon
+# derivation responsibility moved to the dedicated narrow agent.
+violations=$(bash "$SCRIPT" check --max 400 2>&1 || true)
 echo "$violations" | grep -q "cartographer" && assert "check flags cartographer" "OK" || assert "check flags cartographer" "missing"
 
 # Test 7: report shows TOTAL line

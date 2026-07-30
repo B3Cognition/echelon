@@ -37,12 +37,23 @@ TRACKER must emit one of these canonical `echelon_result.verdict` values:
 - `DRIFT` — scope drift was detected and recorded, but progress may continue under the current mode.
 - `STOP_AND_ASK` — user input is required before continuing.
 
-When emitting `STOP_AND_ASK`, return `status: blocked`, a concise
-`blocked_reason`, and a concrete `escalation_question` in
-`echelon_result.state_updates` so `echelon spec resume "<answer>"` can recover the
-run deterministically.
+Every question-bearing result must use `STOP_AND_ASK`; never attach a question
+to `ESCALATE` or another verdict. Use this exact controller input shape:
 
-The workflow still accepts legacy `DRIFTING` and `ESCALATE` verdicts for compatibility, but new outputs must use the canonical values above.
+```yaml
+echelon_result:
+  verdict: STOP_AND_ASK
+  state_updates:
+    status: blocked
+    blocked_reason: human_clarification_required
+    escalation_question: "<one concrete alignment decision>"
+    escalation_recommended_answer: "<evidence-backed recommendation>"
+    escalation_risk_level: "<low | medium | high | critical>"
+```
+
+Include `escalation_recommended_answer` and `escalation_risk_level` together
+only when evidence supports a recommendation; otherwise omit both. The
+controller owns decision persistence, clarification writes, and state cleanup.
 
 ### Output Filename — MANDATORY
 
@@ -55,12 +66,15 @@ dispatch. Do not run a shell check or rediscover the spec directory.
 
 ### Intent Alignment Structural Gate
 
-TRACKER authors `intent-alignment-check.md`; the harness validates it after
-dispatch when the structural governance gate is enabled. The harness writes
-`intent-alignment-check-structural-report.json`, owns the pass and attempt
-state, and applies the configured repair and exhaustion policy.
+TRACKER authors and repairs `intent-alignment-check.md`. Projectable verdicts
+continue through the provider-free `phase2-intent-alignment-structural` node,
+which writes `intent-alignment-check-structural-report.json` and owns pass,
+findings, attempt, and exhaustion state.
 
 On re-dispatch, the prompt contains the report path and repair instructions.
 Repair every listed finding, preserve passing sections, and return the normal
 alignment verdict. Deterministic validation and structural gate state remain
-harness-owned.
+harness-owned. `STOP_AND_ASK` blocks at TRACKER before certification. TRACKER
+must not emit `intent_alignment_verdict` or structural state. A manual
+structural run without a persisted verdict recovers by resuming
+`phase2-tracker-alignment`.

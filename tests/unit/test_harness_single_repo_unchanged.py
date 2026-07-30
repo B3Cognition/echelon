@@ -24,6 +24,11 @@ Python.
 ## Architecture Decisions
 - ADR-001: Keep it simple.
 
+## Requirement Preservation
+| Requirement | Product Invariant | Architecture Decision | Preserves? | Evidence |
+| --- | --- | --- | --- | --- |
+| FR-001 | Single-repo delivery remains stable. | ADR-001 | yes | Covered by path tests. |
+
 ## Project Structure
 ```text
 src/
@@ -54,6 +59,14 @@ def _write_phase_a_build_inputs(spec_dir: Path) -> None:
             content = "- [ ] T-001 complexity=standard phase=build req=FR-001 depends=none\n"
         elif name == "constitution.md":
             content = "# Constitution\n\nReal project rules.\n"
+        elif name == "plan-conformance.json":
+            content = (
+                '{\n'
+                '  "status": "pass",\n'
+                '  "findings": [],\n'
+                '  "sources": ["spec.md", "requirements-overview.md", "plan.md", "tasks.md"]\n'
+                '}\n'
+            )
         else:
             content = f"# {name}\n"
         (spec_dir / name).write_text(content, encoding="utf-8")

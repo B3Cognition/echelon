@@ -17,6 +17,8 @@ class EchelonCommitMetadata:
     phase: str = ""
     strategy: str = ""
     checkpoint_id: str = ""
+    next_phase: str = ""
+    completion_id: str = ""
 
 
 def _clean(value: str) -> str:
@@ -45,6 +47,8 @@ def build_echelon_commit_message(subject: str, metadata: EchelonCommitMetadata) 
         ("Echelon-Phase", metadata.phase),
         ("Echelon-Strategy", metadata.strategy),
         ("Echelon-Checkpoint", metadata.checkpoint_id),
+        ("Echelon-Next-Phase", metadata.next_phase),
+        ("Echelon-Completion", metadata.completion_id),
     )
     for key, value in optional:
         cleaned = _clean(value)

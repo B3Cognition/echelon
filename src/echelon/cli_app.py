@@ -75,6 +75,8 @@ spec_app = typer.Typer(
         "                    [--re-policy none|cached-only|changed|refresh-all]\n"
         "                    [--re-max-inner <n>]\n"
         "  checkpoint list|accept|commit [--spec <id>] [--phase <phase-id>]\n"
+        "  add-input --input <role:path>...  Add evidence to a parked investigation run.\n"
+        "  resolve ISS-<n> <decision>  Record one issue decision and run its targeted repair.\n"
         "  publish <spec-id-or-branch> | publish --all\n"
         "                    Commit spec-only snapshots to the local default branch.\n"
         "  targets <spec_id>  Display every task grouped by delivery target.\n"
@@ -90,6 +92,31 @@ spec_checkpoint_app = typer.Typer(
     help="Phase A/spec checkpoint commands.",
     no_args_is_help=True,
 )
+spec_memory_app = typer.Typer(
+    add_completion=False,
+    help="Mine and audit canonical spec memory in MemPalace.",
+    no_args_is_help=True,
+)
+spec_graph_app = typer.Typer(
+    add_completion=False,
+    help="Build and audit deterministic spec artifact graphs.",
+    no_args_is_help=True,
+)
+memory_app = typer.Typer(
+    add_completion=False,
+    help="Search and inspect workspace memory in MemPalace.",
+    no_args_is_help=True,
+)
+spec_evidence_app = typer.Typer(
+    add_completion=False,
+    help="Inspect and mine spec verification evidence.",
+    no_args_is_help=True,
+)
+spec_evidence_memory_app = typer.Typer(
+    add_completion=False,
+    help="Mine spec verification evidence in MemPalace.",
+    no_args_is_help=True,
+)
 harness_app = typer.Typer(
     add_completion=False,
     help="Compatibility alias for delivery init/run/resume.",
@@ -103,6 +130,11 @@ llm_app = typer.Typer(
 re_app = typer.Typer(
     add_completion=False,
     help="Publish and inspect workspace reverse engineering.",
+    no_args_is_help=True,
+)
+re_memory_app = typer.Typer(
+    add_completion=False,
+    help="Mine workspace reverse-engineering memory in MemPalace.",
     no_args_is_help=True,
 )
 kb_app = typer.Typer(
@@ -129,13 +161,19 @@ app.add_typer(stack_app, name="stack")
 app.add_typer(delivery_app, name="delivery")
 app.add_typer(harness_app, name="harness", hidden=True)
 app.add_typer(llm_app, name="llm")
+app.add_typer(memory_app, name="memory")
 app.add_typer(re_app, name="re")
 app.add_typer(kb_app, name="kb")
 app.add_typer(wiki_app, name="wiki")
 app.add_typer(admin_app, name="admin", hidden=True)
 workspace_app.add_typer(workspace_sources_app, name="sources")
 spec_app.add_typer(spec_checkpoint_app, name="checkpoint")
+spec_app.add_typer(spec_memory_app, name="memory")
+spec_app.add_typer(spec_graph_app, name="graph")
+spec_app.add_typer(spec_evidence_app, name="evidence")
 delivery_app.add_typer(delivery_checkpoint_app, name="checkpoint")
+re_app.add_typer(re_memory_app, name="memory")
+spec_evidence_app.add_typer(spec_evidence_memory_app, name="memory")
 
 
 @admin_app.command("commands")
@@ -238,6 +276,151 @@ def _legacy_cli():
     from echelon import cli as legacy_cli
 
     return legacy_cli
+
+
+def _memory_exit_code(status: str) -> int:
+    if status in {"pass", "warn", "complete"}:
+        return 0
+    if status in {"fail", "partial"}:
+        return 1
+    return 2
+
+
+def _graph_exit_code(status: str) -> int:
+    if status in {"pass", "warn"}:
+        return 0
+    if status == "fail":
+        return 1
+    return 2
+
+
+def _echo_spec_graph_summary(graph: object, *, action: str) -> None:
+    inputs = list(getattr(graph, "inputs", ()))
+    memory = [
+        str(getattr(item, "status", "unknown"))
+        for item in inputs
+        if getattr(item, "role", "") == "memory_audit_report"
+    ]
+    memory_status = ",".join(memory) if memory else "not-applicable"
+    typer.echo(
+        f"Spec graph {action}: spec={getattr(graph, 'spec_id')} "
+        f"nodes={len(getattr(graph, 'nodes', ()))} "
+        f"edges={len(getattr(graph, 'edges', ()))} "
+        f"memory={memory_status}"
+    )
+
+
+def _echo_spec_graph_audit(report: object) -> None:
+    findings = list(getattr(report, "findings", ()))
+    typer.echo(
+        f"Spec graph audit {getattr(report, 'status')}: "
+        f"spec={getattr(report, 'spec_id')} findings={len(findings)}"
+    )
+    for finding in findings:
+        typer.echo(
+            f"  [{getattr(finding, 'severity')}] "
+            f"{getattr(finding, 'code')}: {getattr(finding, 'message')}"
+        )
+
+
+def _cleanup_stale_memory_best_effort(project_root: Path, spec_selector: str) -> None:
+    from echelon.mempalace_audit import cleanup_stale_spec_memory
+
+    try:
+        cleanup = cleanup_stale_spec_memory(project_root, spec_selector)
+    except Exception as exc:
+        typer.echo(
+            f"warning: stale MemPalace cleanup skipped: {type(exc).__name__}",
+            err=True,
+        )
+        return
+    if cleanup.deleted_count:
+        typer.echo(f"MemPalace cleanup: deleted={cleanup.deleted_count}")
+
+
+def _echo_json(data: dict) -> None:
+    import json
+
+    typer.echo(json.dumps(data, indent=2, sort_keys=True))
+
+
+def _echo_memory_facet(title: str, values: dict[str, int]) -> None:
+    typer.echo(title)
+    if not values:
+        typer.echo("  (none)")
+        return
+    width = max(len(value) for value in values)
+    for value, count in sorted(values.items()):
+        typer.echo(f"  {value.ljust(width)}  {count}")
+
+
+def _echo_memory_search(report: object) -> None:
+    typer.echo(f"MemPalace search: {getattr(report, 'query')!r}")
+    typer.echo(f"Wing: {getattr(report, 'wing')}")
+    if getattr(report, "room", None):
+        typer.echo(f"Room: {getattr(report, 'room')}")
+    if getattr(report, "spec", None):
+        typer.echo(f"Spec: {getattr(report, 'spec')}")
+    if getattr(report, "kind", None):
+        typer.echo(f"Kind: {getattr(report, 'kind')}")
+    hits = list(getattr(report, "hits", []))
+    if not hits:
+        typer.echo("\nNo results.")
+        return
+    for index, hit in enumerate(hits, start=1):
+        typer.echo("")
+        typer.echo(
+            f"[{index}] {hit.spec_id} / {hit.room} / {hit.kind} "
+            f"(distance={hit.distance})"
+        )
+        typer.echo(f"    Source: {hit.artifact_path}")
+        if hit.requirement_id:
+            typer.echo(f"    ID: {hit.requirement_id}")
+        typer.echo(f"    {hit.content}")
+
+
+def _render_re_memory_audit_markdown(report: object) -> str:
+    return _render_memory_audit_markdown(
+        "MemPalace RE Audit",
+        report,
+        extra=[f"- RE root: {getattr(report, 're_root')}"],
+    )
+
+
+def _render_spec_evidence_memory_audit_markdown(report: object) -> str:
+    return _render_memory_audit_markdown(
+        "MemPalace Spec Evidence Audit",
+        report,
+        extra=[
+            f"- Spec: {getattr(report, 'spec_id')}",
+            f"- Spec dir: {getattr(report, 'spec_dir')}",
+        ],
+    )
+
+
+def _render_memory_audit_markdown(
+    title: str,
+    report: object,
+    *,
+    extra: list[str],
+) -> str:
+    lines = [
+        f"# {title}",
+        "",
+        *extra,
+        f"- Status: {getattr(report, 'status')}",
+        f"- Artifacts: {getattr(report, 'artifact_count')}",
+        f"- Expected drawers: {getattr(report, 'expected_count')}",
+        f"- Present current drawers: {getattr(report, 'present_current_count')}",
+        f"- Missing: {len(getattr(report, 'missing', []))}",
+        f"- Stale: {len(getattr(report, 'stale', []))}",
+        f"- Wrong wing: {len(getattr(report, 'wrong_wing', []))}",
+        f"- Wrong room: {len(getattr(report, 'wrong_room', []))}",
+        f"- Non-canonical: {len(getattr(report, 'non_canonical', []))}",
+        f"- Lifecycle excluded: {len(getattr(report, 'lifecycle_excluded', []))}",
+        f"- Duplicate: {len(getattr(report, 'duplicate', []))}",
+    ]
+    return "\n".join(lines) + "\n"
 
 
 def _dispatch_phase(args: list[str]) -> None:
@@ -579,11 +762,22 @@ def spec_analyze(
     output_format: str = typer.Option(
         "text", "--format", help="Output format: text or json."
     ),
+    health: bool = typer.Option(
+        False,
+        "--health",
+        help="Render an observe-only reliability and telemetry exception report.",
+    ),
 ) -> None:
     """Analyze Spec execution cost, repair loops, blockers, and telemetry."""
     import json
 
-    from echelon.telemetry.render import analysis_to_json, render_analysis_text
+    from echelon.telemetry.health import analyze_spec_health
+    from echelon.telemetry.render import (
+        analysis_to_json,
+        health_to_json,
+        render_analysis_text,
+        render_health_text,
+    )
     from echelon.telemetry.spec_adapter import analyze_spec_run, analyze_spec_runs
 
     if output_format not in {"text", "json"}:
@@ -597,6 +791,17 @@ def spec_analyze(
         reports = analyze_spec_runs(resolved)
     if not reports:
         typer.echo(f"No Spec runs found under {path}.")
+        return
+    if health:
+        health_report = analyze_spec_health(reports)
+        typer.echo(
+            (
+                health_to_json(health_report)
+                if output_format == "json"
+                else render_health_text(health_report)
+            ),
+            nl=False,
+        )
         return
     if output_format == "json":
         if len(reports) == 1:
@@ -742,7 +947,11 @@ def root_status() -> None:
 )
 def root_continue(
     ctx: typer.Context,
-    mode: Optional[str] = typer.Option(None, "--mode", help="Autonomy mode override."),
+    mode: Optional[str] = typer.Option(
+        None,
+        "--mode",
+        help="Autonomy mode override for legacy runs; sealed decisions keep their persisted mode.",
+    ),
 ) -> None:
     """Compatibility alias for spec continue."""
     legacy_cli = _legacy_cli()
@@ -760,12 +969,18 @@ def root_continue(
 def root_rewind(
     ctx: typer.Context,
     phase_id: str = typer.Argument(..., help="Recorded checkpoint phase or ID to rewind to."),
+    checkpoint_commit: Optional[str] = typer.Option(
+        None,
+        "--commit",
+        help="Full checkpoint commit or unique abbreviated prefix.",
+    ),
     confirm: bool = typer.Option(False, "--confirm", help="Apply the rewind instead of previewing."),
 ) -> None:
     """Compatibility alias for spec rewind."""
     legacy_cli = _legacy_cli()
 
     args = [phase_id, *_ctx_args(ctx)]
+    _extend_option(args, "--commit", checkpoint_commit)
     if confirm:
         args.append("--confirm")
     legacy_cli._cmd_rewind(args, project_root=Path.cwd())
@@ -778,7 +993,10 @@ def root_rewind(
 )
 def root_resume(
     ctx: typer.Context,
-    answer: Optional[str] = typer.Argument(None, help="Answer for the blocked Phase A run."),
+    answer: Optional[str] = typer.Argument(
+        None,
+        help="Answer for an awaiting-human Phase A decision.",
+    ),
 ) -> None:
     """Compatibility alias for spec resume."""
     legacy_cli = _legacy_cli()
@@ -1416,7 +1634,11 @@ def spec_status() -> None:
 )
 def spec_continue(
     ctx: typer.Context,
-    mode: Optional[str] = typer.Option(None, "--mode", help="Autonomy mode override."),
+    mode: Optional[str] = typer.Option(
+        None,
+        "--mode",
+        help="Autonomy mode override for legacy runs; sealed decisions keep their persisted mode.",
+    ),
 ) -> None:
     """Run the next no-input Phase A recovery action."""
     from echelon import cli as legacy_cli
@@ -1432,7 +1654,10 @@ def spec_continue(
 )
 def spec_resume(
     ctx: typer.Context,
-    answer: Optional[str] = typer.Argument(None, help="Answer for the blocked Phase A run."),
+    answer: Optional[str] = typer.Argument(
+        None,
+        help="Answer for an awaiting-human Phase A decision.",
+    ),
 ) -> None:
     """Answer escalation questions from a blocked run."""
     from echelon import cli as legacy_cli
@@ -1444,6 +1669,54 @@ def spec_resume(
     legacy_cli._cmd_spec_resume(args)
 
 
+@spec_app.command("add-input")
+def spec_add_input(
+    input_values: Optional[list[str]] = typer.Option(
+        None,
+        "--input",
+        help=(
+            "Reference material for a parked investigation checkpoint as "
+            "requirement:<path> or reference:<path>; repeat as needed."
+        ),
+    ),
+) -> None:
+    """Add declared evidence to a parked investigation access checkpoint."""
+    from echelon import cli as legacy_cli
+
+    args: list[str] = []
+    _extend_repeated_option(args, "--input", input_values)
+    legacy_cli._cmd_spec_add_input(args)
+
+
+@spec_app.command(
+    "resolve",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def spec_resolve(
+    ctx: typer.Context,
+    issue_id: str = typer.Argument(..., help="SAGE issue ID, for example ISS-002."),
+    decision: Optional[str] = typer.Argument(None, help="Explicit project decision for this issue."),
+) -> None:
+    """Record one issue decision and dispatch its targeted WHAT repair."""
+    from echelon import cli as legacy_cli
+
+    project_root = Path.cwd()
+    args = [issue_id]
+    if decision is not None:
+        args.append(decision)
+    args.extend(list(ctx.args))
+    ext_dir = legacy_cli._installed_extension_or_exit(project_root)
+    legacy_cli._require_provider_capability(
+        "echelon spec resolve",
+        legacy_cli.ProviderCapability.ARTIFACT,
+        project_dir=project_root,
+    )
+    legacy_cli._require_phase_a_git_ownership(
+        project_root, command_name="echelon spec resolve"
+    )
+    legacy_cli._cmd_spec_resolve(args, project_root=project_root, ext_dir=ext_dir)
+
+
 @spec_app.command(
     "rewind",
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
@@ -1451,6 +1724,11 @@ def spec_resume(
 def spec_rewind(
     ctx: typer.Context,
     phase_id: str = typer.Argument(..., help="Recorded checkpoint phase or ID to rewind to."),
+    checkpoint_commit: Optional[str] = typer.Option(
+        None,
+        "--commit",
+        help="Full checkpoint commit or unique abbreviated prefix.",
+    ),
     confirm: bool = typer.Option(False, "--confirm", help="Apply the rewind instead of previewing."),
 ) -> None:
     """Rewind the active squad run to a safe checkpoint."""
@@ -1459,6 +1737,7 @@ def spec_rewind(
     from echelon import cli as legacy_cli
 
     args = [phase_id, *list(ctx.args)]
+    _extend_option(args, "--commit", checkpoint_commit)
     if confirm:
         args.append("--confirm")
     legacy_cli._cmd_rewind(args, project_root=Path.cwd())
@@ -1654,6 +1933,451 @@ def spec_checkpoint_commit(
     run_checkpoint_command(args, project_root=Path.cwd())
 
 
+@spec_graph_app.command("build")
+def spec_graph_build(
+    spec_selector: str,
+    write: bool = typer.Option(False, "--write"),
+) -> None:
+    """Build a deterministic graph from current canonical sources."""
+    from echelon.mempalace_requirements import SpecMemoryError, resolve_spec_dir
+    from echelon.spec_graph import (
+        SpecGraphError,
+        build_spec_graph,
+        write_spec_graph,
+    )
+
+    try:
+        graph = build_spec_graph(Path.cwd(), spec_selector)
+        spec_dir = resolve_spec_dir(Path.cwd(), spec_selector)
+        if write:
+            write_spec_graph(graph, spec_dir)
+    except (SpecGraphError, SpecMemoryError, OSError, ValueError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    _echo_spec_graph_summary(graph, action="built")
+
+
+@spec_graph_app.command("audit")
+def spec_graph_audit(
+    spec_selector: str,
+    as_json: bool = typer.Option(False, "--json"),
+    write: bool = typer.Option(False, "--write"),
+) -> None:
+    """Audit graph freshness and source coherence without mining memory."""
+    from echelon.mempalace_requirements import SpecMemoryError, resolve_spec_dir
+    from echelon.spec_graph import SpecGraphError
+    from echelon.spec_graph_audit import (
+        audit_spec_graph,
+        write_spec_graph_audit,
+    )
+
+    try:
+        report = audit_spec_graph(Path.cwd(), spec_selector)
+        if write:
+            spec_dir = resolve_spec_dir(Path.cwd(), spec_selector)
+            write_spec_graph_audit(report, spec_dir)
+    except (SpecGraphError, SpecMemoryError, OSError, ValueError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    if as_json:
+        _echo_json(report.to_dict())
+    else:
+        _echo_spec_graph_audit(report)
+    raise typer.Exit(code=_graph_exit_code(report.status))
+
+
+@spec_graph_app.command("refresh")
+def spec_graph_refresh(
+    spec_selector: str,
+    write: bool = typer.Option(False, "--write"),
+) -> None:
+    """Rebuild and audit the graph without refreshing MemPalace."""
+    from echelon.mempalace_requirements import SpecMemoryError, resolve_spec_dir
+    from echelon.spec_graph import (
+        SpecGraphError,
+        build_spec_graph,
+        write_spec_graph,
+    )
+    from echelon.spec_graph_audit import (
+        audit_spec_graph,
+        write_spec_graph_audit,
+    )
+
+    try:
+        spec_dir = resolve_spec_dir(Path.cwd(), spec_selector)
+        graph = build_spec_graph(Path.cwd(), spec_selector)
+        if write:
+            write_spec_graph(graph, spec_dir)
+        report = audit_spec_graph(Path.cwd(), spec_selector)
+        if write:
+            write_spec_graph_audit(report, spec_dir)
+    except (SpecGraphError, SpecMemoryError, OSError, ValueError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    _echo_spec_graph_summary(graph, action="refreshed")
+    _echo_spec_graph_audit(report)
+    raise typer.Exit(code=_graph_exit_code(report.status))
+
+
+@spec_memory_app.command("mine")
+def spec_memory_mine(
+    spec_selector: str,
+    write_report: bool = typer.Option(False, "--write-report"),
+) -> None:
+    from echelon.mempalace_requirements import SpecMemoryError, mine_spec_requirements
+
+    try:
+        report = mine_spec_requirements(Path.cwd(), spec_selector, run_id="manual")
+        if report.status == "complete":
+            _cleanup_stale_memory_best_effort(Path.cwd(), spec_selector)
+    except SpecMemoryError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    typer.echo(
+        f"MemPalace mine {report.status}: expected={report.expected_count} "
+        f"written={report.written_count} adopted={report.adopted_count} "
+        f"drifted={report.drifted_count} failed={report.failed_count}"
+    )
+    if write_report and report.status != "unavailable":
+        spec_dir = Path(report.spec_dir)
+        spec_dir.joinpath("mempalace-mine.json").write_text(
+            __import__("json").dumps(report.to_dict(), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    raise typer.Exit(code=_memory_exit_code(report.status))
+
+
+@spec_memory_app.command("audit")
+def spec_memory_audit(
+    spec_selector: str,
+    as_json: bool = typer.Option(False, "--json"),
+    write: bool = typer.Option(False, "--write"),
+    probe_retrieval: bool = typer.Option(False, "--probe-retrieval"),
+) -> None:
+    from echelon.mempalace_audit import audit_spec_memory, render_audit_markdown, write_audit_reports
+    from echelon.mempalace_requirements import SpecMemoryError
+
+    try:
+        report = audit_spec_memory(Path.cwd(), spec_selector, probe_retrieval=probe_retrieval)
+    except SpecMemoryError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    if write and report.status != "unavailable":
+        write_audit_reports(report, Path(report.spec_dir))
+    if as_json:
+        _echo_json(report.to_dict())
+    else:
+        typer.echo(render_audit_markdown(report).rstrip())
+    raise typer.Exit(code=_memory_exit_code(report.status))
+
+
+@spec_memory_app.command("refresh")
+def spec_memory_refresh(
+    spec_selector: str,
+    audit: bool = typer.Option(True, "--audit/--no-audit"),
+    write: bool = typer.Option(False, "--write"),
+) -> None:
+    from echelon.mempalace_audit import audit_spec_memory, render_audit_markdown, write_audit_reports
+    from echelon.mempalace_requirements import mine_spec_requirements
+    from echelon.mempalace_requirements import SpecMemoryError
+
+    try:
+        mine_report = mine_spec_requirements(Path.cwd(), spec_selector, run_id="manual")
+        if mine_report.status == "complete":
+            _cleanup_stale_memory_best_effort(Path.cwd(), spec_selector)
+    except SpecMemoryError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    typer.echo(
+        f"MemPalace mine {mine_report.status}: expected={mine_report.expected_count} "
+        f"written={mine_report.written_count} adopted={mine_report.adopted_count} "
+        f"drifted={mine_report.drifted_count} failed={mine_report.failed_count}"
+    )
+    if not audit:
+        raise typer.Exit(code=_memory_exit_code(mine_report.status))
+    try:
+        audit_report = audit_spec_memory(Path.cwd(), spec_selector)
+    except SpecMemoryError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    if write and audit_report.status != "unavailable":
+        write_audit_reports(audit_report, Path(audit_report.spec_dir))
+    typer.echo(render_audit_markdown(audit_report).rstrip())
+    raise typer.Exit(code=max(_memory_exit_code(mine_report.status), _memory_exit_code(audit_report.status)))
+
+
+@memory_app.command("search")
+def memory_search(
+    query: str,
+    room: Optional[str] = typer.Option(None, "--room", help="Restrict search to one memory room."),
+    spec: Optional[str] = typer.Option(None, "--spec", help="Restrict results to one spec slug."),
+    kind: Optional[str] = typer.Option(None, "--kind", help="Restrict to one memory artifact kind."),
+    limit: int = typer.Option(10, "--limit", "-n", min=1, max=100),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    from echelon.workspace_memory_search import WorkspaceMemorySearchError, search_workspace_memory
+
+    try:
+        report = search_workspace_memory(
+            Path.cwd(),
+            query,
+            room=room,
+            spec=spec,
+            kind=kind,
+            limit=limit,
+        )
+    except WorkspaceMemorySearchError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    if as_json:
+        _echo_json(report.to_dict())
+    else:
+        _echo_memory_search(report)
+
+
+@memory_app.command("list-rooms")
+def memory_list_rooms(
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    from echelon.workspace_memory_search import WorkspaceMemorySearchError, list_workspace_memory_facets
+
+    try:
+        report = list_workspace_memory_facets(Path.cwd())
+    except WorkspaceMemorySearchError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    if as_json:
+        _echo_json({"wing": report.wing, "rooms": report.rooms})
+    else:
+        _echo_memory_facet("MemPalace rooms", report.rooms)
+
+
+@memory_app.command("list-specs")
+def memory_list_specs(
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    from echelon.workspace_memory_search import WorkspaceMemorySearchError, list_workspace_memory_facets
+
+    try:
+        report = list_workspace_memory_facets(Path.cwd())
+    except WorkspaceMemorySearchError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    if as_json:
+        _echo_json({"wing": report.wing, "specs": report.specs})
+    else:
+        _echo_memory_facet("MemPalace specs", report.specs)
+
+
+@memory_app.command("list-kinds")
+def memory_list_kinds(
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    from echelon.workspace_memory_search import WorkspaceMemorySearchError, list_workspace_memory_facets
+
+    try:
+        report = list_workspace_memory_facets(Path.cwd())
+    except WorkspaceMemorySearchError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    if as_json:
+        _echo_json({"wing": report.wing, "kinds": report.kinds})
+    else:
+        _echo_memory_facet("MemPalace kinds", report.kinds)
+
+
+@re_memory_app.command("refresh")
+def re_memory_refresh(
+    audit: bool = typer.Option(True, "--audit/--no-audit"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    from echelon.mempalace_re import audit_re_memory, mine_re_memory
+    from echelon.mempalace_requirements import SpecMemoryError
+
+    try:
+        report = mine_re_memory(Path.cwd(), run_id="manual")
+    except SpecMemoryError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    if as_json and not audit:
+        _echo_json(report.to_dict())
+    elif not as_json:
+        typer.echo(
+            f"MemPalace RE mine {report.status}: artifacts={report.artifact_count} "
+            f"expected={report.expected_count} written={report.written_count} "
+            f"adopted={report.adopted_count} drifted={report.drifted_count} "
+            f"failed={report.failed_count}"
+        )
+    if not audit:
+        raise typer.Exit(code=_memory_exit_code(report.status))
+    try:
+        audit_report = audit_re_memory(Path.cwd())
+    except SpecMemoryError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    if as_json:
+        _echo_json({"mine": report.to_dict(), "audit": audit_report.to_dict()})
+    else:
+        typer.echo(_render_re_memory_audit_markdown(audit_report).rstrip())
+    raise typer.Exit(code=max(_memory_exit_code(report.status), _memory_exit_code(audit_report.status)))
+
+
+@re_memory_app.command("audit")
+def re_memory_audit(
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    from echelon.mempalace_re import audit_re_memory
+    from echelon.mempalace_requirements import SpecMemoryError
+
+    try:
+        report = audit_re_memory(Path.cwd())
+    except SpecMemoryError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    if as_json:
+        _echo_json(report.to_dict())
+    else:
+        typer.echo(_render_re_memory_audit_markdown(report).rstrip())
+    raise typer.Exit(code=_memory_exit_code(report.status))
+
+
+@spec_evidence_memory_app.command("refresh")
+def spec_evidence_memory_refresh(
+    spec_selector: str,
+    audit: bool = typer.Option(True, "--audit/--no-audit"),
+    as_json: bool = typer.Option(False, "--json"),
+    allow_unlanded: bool = typer.Option(
+        False,
+        "--allow-unlanded",
+        help="Mine evidence for a spec whose frontmatter status is not landed.",
+    ),
+) -> None:
+    from echelon.mempalace_requirements import SpecMemoryError
+    from echelon.mempalace_spec_evidence import (
+        audit_spec_evidence_memory,
+        mine_spec_evidence_memory,
+    )
+
+    try:
+        report = mine_spec_evidence_memory(
+            Path.cwd(),
+            spec_selector,
+            run_id="manual",
+            allow_unlanded=allow_unlanded,
+        )
+    except SpecMemoryError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    if as_json and not audit:
+        _echo_json(report.to_dict())
+    elif not as_json:
+        typer.echo(
+            f"MemPalace spec evidence mine {report.status}: "
+            f"spec={report.spec_id} artifacts={report.artifact_count} "
+            f"expected={report.expected_count} written={report.written_count} "
+            f"adopted={report.adopted_count} drifted={report.drifted_count} "
+            f"failed={report.failed_count}"
+        )
+    if not audit:
+        raise typer.Exit(code=_memory_exit_code(report.status))
+    try:
+        audit_report = audit_spec_evidence_memory(
+            Path.cwd(),
+            spec_selector,
+            allow_unlanded=allow_unlanded,
+        )
+    except SpecMemoryError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    if as_json:
+        _echo_json({"mine": report.to_dict(), "audit": audit_report.to_dict()})
+    else:
+        typer.echo(_render_spec_evidence_memory_audit_markdown(audit_report).rstrip())
+    raise typer.Exit(code=max(_memory_exit_code(report.status), _memory_exit_code(audit_report.status)))
+
+
+@spec_evidence_memory_app.command("audit")
+def spec_evidence_memory_audit(
+    spec_selector: str,
+    as_json: bool = typer.Option(False, "--json"),
+    allow_unlanded: bool = typer.Option(
+        False,
+        "--allow-unlanded",
+        help="Audit evidence for a spec whose frontmatter status is not landed.",
+    ),
+) -> None:
+    from echelon.mempalace_requirements import SpecMemoryError
+    from echelon.mempalace_spec_evidence import audit_spec_evidence_memory
+
+    try:
+        report = audit_spec_evidence_memory(
+            Path.cwd(),
+            spec_selector,
+            allow_unlanded=allow_unlanded,
+        )
+    except SpecMemoryError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    if as_json:
+        _echo_json(report.to_dict())
+    else:
+        typer.echo(_render_spec_evidence_memory_audit_markdown(report).rstrip())
+    raise typer.Exit(code=_memory_exit_code(report.status))
+
+
+@spec_evidence_app.command("publish")
+def spec_evidence_publish(
+    spec_selector: Optional[str] = typer.Argument(None),
+    all_specs: bool = typer.Option(False, "--all", help="Publish evidence packages for all published specs."),
+    run_id: Optional[str] = typer.Option(None, "--from-run", help="Use a specific run id below runs/."),
+    as_json: bool = typer.Option(False, "--json"),
+    allow_unlanded: bool = typer.Option(
+        False,
+        "--allow-unlanded",
+        help="Publish evidence for a spec whose frontmatter status is not landed.",
+    ),
+) -> None:
+    from echelon.mempalace_requirements import SpecMemoryError
+    from echelon.mempalace_spec_evidence import (
+        publish_all_spec_evidence_packages,
+        publish_spec_evidence_package,
+    )
+
+    try:
+        if all_specs:
+            report = publish_all_spec_evidence_packages(
+                Path.cwd(),
+                allow_unlanded=allow_unlanded,
+            )
+        else:
+            if spec_selector is None:
+                typer.echo("spec selector is required unless --all is used", err=True)
+                raise typer.Exit(code=2)
+            report = publish_spec_evidence_package(
+                Path.cwd(),
+                spec_selector,
+                run_id=run_id,
+                allow_unlanded=allow_unlanded,
+            )
+    except SpecMemoryError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    if as_json:
+        _echo_json(report.to_dict())
+    elif all_specs:
+        typer.echo(
+            f"Spec evidence packages {report.status}: total={report.total_count} "
+            f"published={report.published_count} failed={report.failed_count}"
+        )
+    else:
+        typer.echo(
+            f"Spec evidence package {report.status}: spec={report.spec_id} "
+            f"artifacts={report.published_count} skipped={report.skipped_count}"
+        )
+        typer.echo(f"Evidence dir: {report.evidence_dir}")
+    raise typer.Exit(code=0 if report.status in {"published", "complete"} else 1)
+
+
 @spec_app.command(
     "target",
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
@@ -1843,6 +2567,31 @@ def spec_change(
     from echelon import cli as legacy_cli
 
     legacy_cli._dispatch_skill_command("change", [spec_id, description, *list(ctx.args)])
+
+
+@spec_app.command(
+    "amend",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def spec_amend(
+    ctx: typer.Context,
+    spec_id: str = typer.Argument(..., help="Planned spec id to amend."),
+    description: str = typer.Argument(..., help="Product change summary."),
+    input_values: Optional[list[str]] = typer.Option(
+        None,
+        "--input",
+        help="Product input as requirement:<path> or reference:<path>; repeat as needed.",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview baseline and inputs without mutation."),
+) -> None:
+    """Prepare an isolated amendment for an unbuilt spec."""
+    from echelon import cli as legacy_cli
+
+    args = [spec_id, description, *list(ctx.args)]
+    _extend_repeated_option(args, "--input", input_values)
+    if dry_run:
+        args.append("--dry-run")
+    legacy_cli._cmd_spec_amend(args)
 
 
 @delivery_app.command(
@@ -2221,7 +2970,7 @@ def delivery_checkpoint_list(
     legacy_cli._cmd_delivery_checkpoint(args)
 
 
-def run(argv: list[str] | None = None) -> None:
+def run(argv: list[str] | None = None) -> int | None:
     """Run the Typer CLI app with an explicit argv for tests or sys.argv[1:]."""
     if argv in (["-v"], ["--version"], ["version"]):
         legacy_cli = _legacy_cli()
@@ -2234,7 +2983,7 @@ def run(argv: list[str] | None = None) -> None:
         before = wiki_service.capture_input_snapshot(project_root)
     except Exception:
         before = None
-    app(args=argv, standalone_mode=False)
+    exit_code = app(args=argv, standalone_mode=False)
     try:
         refreshed = wiki_service.refresh_after_changed_command(project_root, before)
     except Exception as exc:
@@ -2242,3 +2991,4 @@ def run(argv: list[str] | None = None) -> None:
     else:
         if refreshed is not None:
             typer.echo(f"Wiki auto-refreshed: {refreshed.home_path}")
+    return exit_code

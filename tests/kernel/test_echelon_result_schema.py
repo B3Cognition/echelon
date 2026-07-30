@@ -14,6 +14,7 @@ from harness.echelon_result_schema import (  # noqa: E402
     ALLOWED_VERDICTS,
     EchelonResultContract,
     EchelonResultValidationError,
+    validate_evidence_routing_state_updates,
     validate_echelon_result,
     validate_echelon_result_contract,
 )
@@ -136,6 +137,70 @@ def test_stop_and_ask_result_requires_blocked_reason():
                 "escalation_question": "Which target should Echelon use?",
             },
         })
+
+
+def test_human_input_question_is_rejected_outside_stop_and_ask():
+    for verdict, question in (
+        ("DONE", "Which target should Echelon use?"),
+        ("ESCALATE", "Which target should Echelon use?"),
+        ("ESCALATE", ["Which target should Echelon use?"]),
+    ):
+        with pytest.raises(EchelonResultValidationError, match="escalation_question"):
+            validate_echelon_result({
+                "verdict": verdict,
+                "state_updates": {
+                    "escalation_question": question,
+                },
+            })
+
+
+def test_human_input_stop_and_ask_preserves_provider_question_facts():
+    result = validate_echelon_result({
+        "verdict": "STOP_AND_ASK",
+        "state_updates": {
+            "status": "blocked",
+            "blocked_reason": "investigation_access_required",
+            "escalation_question": "Which approved credential should Echelon use?",
+            "escalation_recommended_answer": "Use the read-only service account.",
+            "escalation_risk_level": "medium",
+        },
+    })
+
+    assert result["state_updates"] == {
+        "status": "blocked",
+        "blocked_reason": "investigation_access_required",
+        "escalation_question": "Which approved credential should Echelon use?",
+        "escalation_recommended_answer": "Use the read-only service account.",
+        "escalation_risk_level": "medium",
+    }
+
+
+def test_human_input_stop_and_ask_rejects_non_scalar_risk_level():
+    with pytest.raises(EchelonResultValidationError, match="escalation_risk_level"):
+        validate_echelon_result({
+            "verdict": "STOP_AND_ASK",
+            "state_updates": {
+                "status": "blocked",
+                "blocked_reason": "investigation_access_required",
+                "escalation_question": "Which approved credential should Echelon use?",
+                "escalation_risk_level": ["medium"],
+            },
+        })
+
+
+def test_decision_resolution_verdict_is_rejected_by_general_phase_contract():
+    with pytest.raises(EchelonResultValidationError, match="DECISION_RESOLVED"):
+        validate_echelon_result_contract(
+            {
+                "verdict": "DECISION_RESOLVED",
+                "state_updates": {},
+                "journal_entries": [],
+                "decision": {},
+            },
+            EchelonResultContract(
+                allowed_verdicts=frozenset({"DECISION_RESOLVED"}),
+            ),
+        )
 
 
 def test_bad_state_updates_type_is_rejected():
@@ -286,6 +351,48 @@ def test_result_contract_rejects_invalid_routing_state_type():
             {
                 "verdict": "COMPLETE",
                 "state_updates": {"tasks_lexicon_attempts": "two"},
+            },
+            contract,
+        )
+
+
+def test_evidence_route_requires_actionable_declared_reference_request():
+    with pytest.raises(EchelonResultValidationError, match="evidence_requests.requests"):
+        validate_evidence_routing_state_updates(
+            {
+                "evidence_resolution_status": "pending",
+                "evidence_requests": {"requests": []},
+            },
+            verdict="FAIL",
+            require_finding_routes=False,
+        )
+
+
+def test_result_contract_rejects_unstructured_pending_evidence_route():
+    contract = EchelonResultContract(
+        allowed_state_update_keys=frozenset({
+            "evidence_resolution_status",
+            "evidence_requests",
+        }),
+        required_state_update_keys=frozenset({"evidence_resolution_status"}),
+        state_update_types={
+            "evidence_resolution_status": "string",
+            "evidence_requests": "object",
+        },
+        state_update_enums={
+            "evidence_resolution_status": frozenset({"not_required", "pending"}),
+        },
+        evidence_routing="requests",
+    )
+
+    with pytest.raises(EchelonResultValidationError, match="evidence_requests.requests"):
+        validate_echelon_result_contract(
+            {
+                "verdict": "FAIL",
+                "state_updates": {
+                    "evidence_resolution_status": "pending",
+                    "evidence_requests": {"requests": []},
+                },
             },
             contract,
         )

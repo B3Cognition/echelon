@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 import json
 import os
@@ -12,6 +12,8 @@ import shutil
 import socket
 import tempfile
 from typing import Any
+
+from harness.controller_lock_order import controller_lock_order
 
 
 class SpecLifecycleError(RuntimeError):
@@ -151,9 +153,50 @@ class SpecLifecycleLock:
 
     path: Path
     operation_id: str
+    _controller_guard: Any | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     @classmethod
     def _acquire_path(
+        cls,
+        lock_path: Path,
+        operation_id: str,
+        *,
+        owner_label: str,
+        controller_rank: str | None = None,
+    ) -> "SpecLifecycleLock":
+        guard = (
+            controller_lock_order(
+                controller_rank,
+                str(lock_path.resolve()),
+            )
+            if controller_rank is not None
+            else None
+        )
+        if guard is not None:
+            guard.__enter__()
+        try:
+            acquired = cls._acquire_path_unordered(
+                lock_path,
+                operation_id,
+                owner_label=owner_label,
+            )
+        except BaseException as error:
+            if guard is not None:
+                guard.__exit__(
+                    type(error),
+                    error,
+                    error.__traceback__,
+                )
+            raise
+        acquired._controller_guard = guard
+        return acquired
+
+    @classmethod
+    def _acquire_path_unordered(
         cls,
         lock_path: Path,
         operation_id: str,
@@ -210,13 +253,22 @@ class SpecLifecycleLock:
         )
 
     def release(self) -> None:
-        if not self.path.exists():
-            return
-        owner = _read_json_object(self.path / "owner.json", label="lifecycle lock owner")
-        owner_id = str(owner.get("operation_id") or "")
-        if owner_id != self.operation_id:
-            raise SpecLifecycleLocked(owner_id or "unknown")
-        shutil.rmtree(self.path)
+        try:
+            if not self.path.exists():
+                return
+            owner = _read_json_object(
+                self.path / "owner.json",
+                label="lifecycle lock owner",
+            )
+            owner_id = str(owner.get("operation_id") or "")
+            if owner_id != self.operation_id:
+                raise SpecLifecycleLocked(owner_id or "unknown")
+            shutil.rmtree(self.path)
+        finally:
+            guard = self._controller_guard
+            self._controller_guard = None
+            if guard is not None:
+                guard.__exit__(None, None, None)
 
     def __enter__(self) -> "SpecLifecycleLock":
         return self
@@ -234,6 +286,7 @@ class SpecRunExecutionLock(SpecLifecycleLock):
             Path(run_dir).resolve() / ".echelon" / "runtime" / "execution.lock",
             operation_id,
             owner_label="run execution lock owner",
+            controller_rank="spec_run",
         )
 
 
@@ -246,6 +299,7 @@ class PhaseAExecutionLock(SpecLifecycleLock):
             _runtime_dir(project_root) / "phase-a-execution.lock",
             operation_id,
             owner_label="Phase A execution lock owner",
+            controller_rank="phase_a",
         )
 
 

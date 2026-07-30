@@ -64,6 +64,63 @@ def test_rewind_requires_confirmation_when_branch_has_later_commits(tmp_path: Pa
     assert "echelon spec rewind phase3-plan --confirm" in result.message
 
 
+def test_rewind_preview_selects_checkpoint_commit_and_preserves_confirmation_selector(
+    tmp_path: Path,
+) -> None:
+    repo, _spec_dir, checkpoint, later = _repo_with_checkpoint(tmp_path)
+
+    result = prepare_rewind(
+        project_root=repo,
+        spec="001",
+        target="phase3-plan",
+        checkpoint_commit=checkpoint[:8],
+        confirm=False,
+    )
+
+    assert not result.applied
+    assert result.from_commit == later
+    assert result.to_commit == checkpoint
+    assert (
+        f"echelon spec rewind phase3-plan --commit {checkpoint[:8]} --confirm"
+        in result.message
+    )
+
+
+def test_rewind_preview_preserves_checkpoint_id_target_in_confirmation(
+    tmp_path: Path,
+) -> None:
+    repo, spec_dir, checkpoint, _later = _repo_with_checkpoint(tmp_path)
+    explicit_id = "user-accepted-phase3-plan-20260726-050000"
+    record_checkpoint_metadata(
+        spec_dir,
+        PhaseCheckpoint(
+            explicit_id,
+            "001-demo",
+            "phase3-plan",
+            "phase3-consensus",
+            checkpoint,
+            "",
+            "user-accepted",
+            "squad-1",
+            "2026-07-26T05:00:00Z",
+        ),
+    )
+
+    result = prepare_rewind(
+        project_root=repo,
+        spec="001",
+        target=explicit_id,
+        checkpoint_commit=checkpoint[:8],
+        confirm=False,
+    )
+
+    assert (
+        f"echelon spec rewind {explicit_id} "
+        f"--commit {checkpoint[:8]} --confirm"
+        in result.message
+    )
+
+
 def test_rewind_creates_backup_ref_and_resets_branch_when_confirmed(tmp_path: Path) -> None:
     repo, _spec_dir, checkpoint, later = _repo_with_checkpoint(tmp_path)
 

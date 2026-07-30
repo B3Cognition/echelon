@@ -27,6 +27,10 @@ def _workspace(tmp_path: Path) -> tuple[Path, object]:
     )
     (spec / "plan.md").write_text("# Plan\n", encoding="utf-8")
     (spec / "tasks.md").write_text("# Tasks\n\n- [ ] T-001 Work\n", encoding="utf-8")
+    (spec / "00-overview.md").write_text("# Final Overview\n", encoding="utf-8")
+    (spec / "requirements-overview.md").write_text(
+        "# Requirements Orientation\n", encoding="utf-8"
+    )
     (spec / "risk-matrix.md").write_text("# Risks\n", encoding="utf-8")
     (spec / "verification-summary.md").write_text("# Verification\n", encoding="utf-8")
     _write_yaml(spec / "targets.yml", {"targets": ["api"]})
@@ -62,6 +66,28 @@ def test_render_writes_navigation_views_and_self_contained_projection(tmp_path: 
     assert "Canonical source: `specs/001-demo/spec.md`" in projection.read_text()
     assert (output / ".obsidian/app.json").is_file()
     assert validate_rendered_links(output) == ()
+
+
+@pytest.mark.unit
+def test_spec_overview_reading_path_prefers_final_overview_then_requirements_orientation(
+    tmp_path: Path,
+) -> None:
+    project_root, model = _workspace(tmp_path)
+
+    render_wiki(model, project_root, tmp_path / "out")
+
+    overview = (tmp_path / "out/Specs/001-demo/Overview.md").read_text(
+        encoding="utf-8"
+    )
+    final_index = overview.index("Final overview")
+    requirements_index = overview.index("Requirements orientation")
+    spec_index = overview.index("Specification")
+    assert final_index < requirements_index < spec_index
+    assert "[Final overview](../../Artifacts/specs/001-demo/00-overview.md)" in overview
+    assert (
+        "[Requirements orientation](../../Artifacts/specs/001-demo/requirements-overview.md)"
+        in overview
+    )
 
 
 @pytest.mark.unit

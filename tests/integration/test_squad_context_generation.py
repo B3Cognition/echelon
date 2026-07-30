@@ -66,7 +66,7 @@ def _tracker_provider(verdict: str) -> MagicMock:
     if verdict == "STOP_AND_ASK":
         state_updates = {
             "status": "blocked",
-            "blocked_reason": "phase1-tracker: user intent needs clarification",
+            "blocked_reason": "human_clarification_required",
             "escalation_question": "Which target repository should Echelon inspect?",
         }
 
@@ -117,8 +117,8 @@ def test_run_context_generation_uses_runs_directory(tmp_path: Path) -> None:
     assert result.stale_report.exists()
 
 
-@pytest.mark.parametrize("verdict", ["DONE", "ALIGNED", "DRIFT", "DRIFTING"])
-def test_phase1_tracker_done_and_alignment_verdicts_route_forward(
+@pytest.mark.parametrize("verdict", ["ALIGNED", "DRIFT"])
+def test_phase1_tracker_canonical_progress_verdicts_route_forward(
     tmp_path: Path,
     verdict: str,
 ) -> None:
@@ -142,12 +142,10 @@ def test_phase1_tracker_done_and_alignment_verdicts_route_forward(
     assert (context_dir / "stale-memory-report.md").exists()
 
 
-@pytest.mark.parametrize("verdict", ["STOP_AND_ASK", "ESCALATE"])
-def test_phase1_tracker_stop_and_escalate_verdicts_route_back(
+def test_phase1_tracker_stop_and_ask_verdict_routes_back(
     tmp_path: Path,
-    verdict: str,
 ) -> None:
-    provider = _tracker_provider(verdict)
+    provider = _tracker_provider("STOP_AND_ASK")
     ctrl, store = _controller(tmp_path, provider=provider)
 
     result = ctrl.run_single_phase("phase1-tracker", "build photo sharing", "semi")
@@ -155,12 +153,11 @@ def test_phase1_tracker_stop_and_escalate_verdicts_route_back(
 
     assert result.phase == "phase1-tracker"
     assert state["last_dispatch"]["phase_id"] == "phase1-tracker"
-    assert state["last_dispatch"]["verdict"] == verdict
+    assert state["last_dispatch"]["verdict"] == "STOP_AND_ASK"
     assert state["manual_phase_runs"][-1]["next_phase"] == "phase1-tracker"
-    if verdict == "STOP_AND_ASK":
-        assert result.status == "blocked"
-        assert state["blocked_reason"] == "phase1-tracker: user intent needs clarification"
-        assert state["escalation_question"] == "Which target repository should Echelon inspect?"
+    assert result.status == "blocked"
+    assert state["blocked_reason"] == "human_clarification_required"
+    assert state["escalation_question"] == "Which target repository should Echelon inspect?"
 
 
 def test_run_context_refresh_retrieves_and_reconciles_mempalace_drawers(tmp_path: Path) -> None:
@@ -299,6 +296,18 @@ phases:
     (squad_dir / "staging").mkdir(exist_ok=True)
     graph = PhaseGraph(definition, extension_yml)
     store = SquadStateStore(squad_dir)
+    store.initialize(
+        "run-refresh",
+        "greenfield",
+        "refresh run-local context",
+        0,
+        "init",
+        autonomy_mode="banzai",
+    )
+    initial_state = store.load()
+    initial_state["spec_id"] = "001-demo"
+    initial_state["spec_dir"] = "runs/run-refresh/specs/001-demo"
+    store.save(initial_state)
 
     provider = MagicMock()
     run_local_spec_dir = squad_dir / "specs" / "001-demo"
@@ -315,17 +324,23 @@ phases:
             )
             for name in REQUIRED_PHASE_A_BUILD_INPUTS:
                 if name != "spec.md":
+                    content = (
+                        '{\n'
+                        '  "status": "pass",\n'
+                        '  "findings": [],\n'
+                        '  "sources": ["spec.md", "requirements-overview.md", "plan.md", "tasks.md"]\n'
+                        '}\n'
+                        if name == "plan-conformance.json"
+                        else f"# {name}\n"
+                    )
                     (run_local_spec_dir / name).write_text(
-                        f"# {name}\n", encoding="utf-8"
+                        content, encoding="utf-8"
                     )
             return SquadAgentResult(
                 exit_code=0,
                 echelon_result={
                     "verdict": "DONE",
-                    "state_updates": {
-                        "spec_id": "001-demo",
-                        "spec_dir": "runs/run-refresh/specs/001-demo",
-                    },
+                    "state_updates": {},
                 },
                 raw_output="",
                 duration_ms=50,

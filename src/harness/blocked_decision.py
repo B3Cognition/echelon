@@ -3,12 +3,69 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import datetime, timezone
-from typing import Any
+from datetime import datetime, timedelta, timezone
+import re
+from typing import Any, Mapping
+
+from harness.human_input import (
+    HUMAN_INPUT_IDENTIFIER_MAX_BYTES,
+    HUMAN_INPUT_MAX_OPTIONS,
+    HUMAN_INPUT_OPTION_ID_MAX_BYTES,
+    HUMAN_INPUT_QUESTION_MAX_BYTES,
+    HUMAN_INPUT_RECOMMENDATION_MAX_BYTES,
+    HumanInputOption,
+    HumanInputPolicyError,
+    validate_human_input_answer_shape,
+    validate_human_input_prompt_request_payload,
+)
 
 
 SCHEMA_VERSION = 1
+SCHEMA_V2 = 2
 VALID_RISK_LEVELS = {"low", "medium", "high", "critical"}
+_V2_STATUSES = frozenset({"pending", "resolving", "awaiting_human", "resolved", "failed"})
+_V2_SOURCE_KINDS = frozenset(
+    {"provider_escalation", "human_gate", "controller_safeguard", "legacy_recovery"}
+)
+_V2_CLASSIFICATIONS = frozenset(
+    {"operational", "material", "external_prerequisite"}
+)
+_V2_AUTONOMY_MODES = frozenset({"guided", "semi", "banzai"})
+_V2_RESOLVERS = frozenset({"user", "semi", "COMMANDER"})
+_V2_OPTION_FIELDS = frozenset(
+    {"id", "label", "description", "recommended", "risk_level", "next_phase", "outcome"}
+)
+_V2_FIELDS = frozenset(
+    {
+        "schema_version",
+        "id",
+        "status",
+        "source_kind",
+        "producer_id",
+        "source_phase",
+        "reason_code",
+        "classification",
+        "question",
+        "options",
+        "recommended_answer",
+        "risk_level",
+        "resolution_handler",
+        "autonomy_mode",
+        "source_state_revision",
+        "selected_option_id",
+        "answer_text",
+        "resolved_by",
+        "attempts",
+        "failure_code",
+        "created_at",
+        "resolved_at",
+    }
+)
+_DECISION_ID_RE = re.compile(r"dec-[A-Za-z0-9][A-Za-z0-9_-]*$")
+
+
+class BlockedDecisionError(ValueError):
+    """Raised when persisted blocked decision metadata is unsafe."""
 
 
 def _utc_now() -> str:
@@ -17,6 +74,392 @@ def _utc_now() -> str:
 
 def _clean_string(value: object) -> str:
     return value.strip() if isinstance(value, str) else ""
+
+
+def is_valid_decision_id(value: object) -> bool:
+    """Return whether a durable decision ID has the persisted v2 form."""
+    return (
+        isinstance(value, str)
+        and len(value.encode("utf-8")) <= HUMAN_INPUT_OPTION_ID_MAX_BYTES
+        and bool(_DECISION_ID_RE.fullmatch(value))
+    )
+
+
+def _required_v2_string(value: object, field: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise BlockedDecisionError(f"{field} must be a non-empty string")
+    return value.strip()
+
+
+def _optional_v2_string(value: object, field: str) -> str | None:
+    if value is None:
+        return None
+    return _required_v2_string(value, field)
+
+
+def _required_v2_bounded_string(
+    value: object,
+    field: str,
+    *,
+    max_bytes: int,
+) -> str:
+    normalized = _required_v2_string(value, field)
+    if len(normalized.encode("utf-8")) > max_bytes:
+        raise BlockedDecisionError(
+            f"{field} must not exceed {max_bytes:,} UTF-8 bytes"
+        )
+    return normalized
+
+
+def _optional_v2_bounded_string(
+    value: object,
+    field: str,
+    *,
+    max_bytes: int,
+) -> str | None:
+    if value is None:
+        return None
+    return _required_v2_bounded_string(value, field, max_bytes=max_bytes)
+
+
+def _validate_v2_timestamp(value: object, field: str, *, nullable: bool) -> str | None:
+    if value is None and nullable:
+        return None
+    timestamp = _required_v2_string(value, field)
+    try:
+        parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise BlockedDecisionError(f"{field} must be a UTC timestamp") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() != timedelta(0):
+        raise BlockedDecisionError(f"{field} must be a UTC timestamp")
+    return timestamp
+
+
+def _validate_v2_options(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        raise BlockedDecisionError("options must be a list")
+    if len(value) > HUMAN_INPUT_MAX_OPTIONS:
+        raise BlockedDecisionError(
+            f"options must not contain more than {HUMAN_INPUT_MAX_OPTIONS} entries"
+        )
+
+    options: list[dict[str, object]] = []
+    option_id_indexes: dict[str, int] = {}
+    option_label_indexes: dict[str, int] = {}
+    recommended_count = 0
+    for index, raw in enumerate(value):
+        if not isinstance(raw, Mapping):
+            raise BlockedDecisionError(f"options[{index}] must be an object")
+        if not all(isinstance(key, str) for key in raw):
+            raise BlockedDecisionError(f"options[{index}] field names must be strings")
+        unknown = set(raw) - _V2_OPTION_FIELDS
+        missing = _V2_OPTION_FIELDS - set(raw)
+        if unknown:
+            raise BlockedDecisionError(f"unknown option field: {sorted(unknown)[0]}")
+        if missing:
+            raise BlockedDecisionError(f"missing option field: {sorted(missing)[0]}")
+        option_id = _required_v2_bounded_string(
+            raw["id"],
+            f"options[{index}].id",
+            max_bytes=HUMAN_INPUT_OPTION_ID_MAX_BYTES,
+        )
+        if option_id in option_id_indexes:
+            raise BlockedDecisionError("duplicate option id")
+        option_id_indexes[option_id] = index
+        option_label = _required_v2_string(raw["label"], f"options[{index}].label")
+        if option_label in option_label_indexes:
+            raise BlockedDecisionError("duplicate option label")
+        option_label_indexes[option_label] = index
+        recommended = raw["recommended"]
+        if type(recommended) is not bool:
+            raise BlockedDecisionError(f"options[{index}].recommended must be a boolean")
+        recommended_count += int(recommended)
+        risk_level = raw["risk_level"]
+        if risk_level is not None and (
+            not isinstance(risk_level, str) or risk_level not in VALID_RISK_LEVELS
+        ):
+            raise BlockedDecisionError(
+                f"options[{index}].risk_level must be low, medium, high, or critical"
+            )
+        try:
+            option = HumanInputOption(
+                id=option_id,
+                label=option_label,
+                description=_required_v2_string(
+                    raw["description"], f"options[{index}].description"
+                ),
+                recommended=recommended,
+                risk_level=risk_level,
+                next_phase=_optional_v2_string(
+                    raw["next_phase"], f"options[{index}].next_phase"
+                ),
+                outcome=_optional_v2_string(
+                    raw["outcome"], f"options[{index}].outcome"
+                ),
+            )
+        except HumanInputPolicyError as exc:
+            raise BlockedDecisionError(str(exc)) from exc
+        options.append(
+            {
+                "id": option.id,
+                "label": option.label,
+                "description": option.description,
+                "recommended": option.recommended,
+                "risk_level": option.risk_level,
+                "next_phase": option.next_phase,
+                "outcome": option.outcome,
+            }
+        )
+    if recommended_count > 1:
+        raise BlockedDecisionError("at most one option may be recommended")
+    if any(
+        option_id_indexes[label] != label_index
+        for label, label_index in option_label_indexes.items()
+        if label in option_id_indexes
+    ):
+        raise BlockedDecisionError("option label conflicts with an option id")
+    return options
+
+
+def validate_blocked_decision_v2(value: object) -> dict[str, object]:
+    """Validate and return a copy of a complete schema-v2 blocked decision."""
+    if not isinstance(value, Mapping):
+        raise BlockedDecisionError("blocked decision must be an object")
+    if not all(isinstance(key, str) for key in value):
+        raise BlockedDecisionError("blocked decision field names must be strings")
+    unknown = set(value) - _V2_FIELDS
+    missing = _V2_FIELDS - set(value)
+    if unknown:
+        raise BlockedDecisionError(f"unknown blocked decision field: {sorted(unknown)[0]}")
+    if missing:
+        raise BlockedDecisionError(f"missing blocked decision field: {sorted(missing)[0]}")
+    if type(value["schema_version"]) is not int or value["schema_version"] != SCHEMA_V2:
+        raise BlockedDecisionError("unsupported blocked decision schema")
+    if not is_valid_decision_id(value["id"]):
+        raise BlockedDecisionError("blocked decision id must start with dec-")
+
+    status = value["status"]
+    if not isinstance(status, str) or status not in _V2_STATUSES:
+        raise BlockedDecisionError("unknown blocked decision status")
+    source_kind = value["source_kind"]
+    if not isinstance(source_kind, str) or source_kind not in _V2_SOURCE_KINDS:
+        raise BlockedDecisionError("unknown blocked decision source kind")
+    classification = value["classification"]
+    if not isinstance(classification, str) or classification not in _V2_CLASSIFICATIONS:
+        raise BlockedDecisionError("unknown blocked decision classification")
+    autonomy_mode = value["autonomy_mode"]
+    if not isinstance(autonomy_mode, str) or autonomy_mode not in _V2_AUTONOMY_MODES:
+        raise BlockedDecisionError("unknown blocked decision autonomy mode")
+    risk_level = value["risk_level"]
+    if risk_level is not None and (
+        not isinstance(risk_level, str) or risk_level not in VALID_RISK_LEVELS
+    ):
+        raise BlockedDecisionError("risk_level must be low, medium, high, or critical")
+    source_state_revision = value["source_state_revision"]
+    if type(source_state_revision) is not int or source_state_revision < 0:
+        raise BlockedDecisionError("source_state_revision must be a non-negative integer")
+    attempts = value["attempts"]
+    if type(attempts) is not int or attempts < 0:
+        raise BlockedDecisionError(
+            "attempts must be a non-negative integer"
+        )
+    if attempts > 2:
+        raise BlockedDecisionError("attempts must not exceed 2")
+    allowed_attempts = {
+        "pending": frozenset({0, 1}),
+        "resolving": frozenset({1, 2}),
+        "awaiting_human": frozenset({0}),
+        "failed": frozenset({0, 1, 2}),
+        "resolved": frozenset({0, 1, 2}),
+    }[status]
+    if attempts not in allowed_attempts:
+        raise BlockedDecisionError(
+            f"attempts value is unreachable for status {status!r}"
+        )
+
+    options = _validate_v2_options(value["options"])
+    option_ids = {option["id"] for option in options}
+    recommended_answer = _optional_v2_bounded_string(
+        value["recommended_answer"],
+        "recommended_answer",
+        max_bytes=HUMAN_INPUT_RECOMMENDATION_MAX_BYTES,
+    )
+    try:
+        validate_human_input_answer_shape(
+            options=options,
+            recommended_answer=recommended_answer,
+        )
+    except HumanInputPolicyError as exc:
+        raise BlockedDecisionError(
+            "choice decisions cannot record recommended_answer"
+        ) from exc
+    selected_option_id = _optional_v2_string(value["selected_option_id"], "selected_option_id")
+    answer_text = _optional_v2_string(value["answer_text"], "answer_text")
+    resolved_by = _optional_v2_string(value["resolved_by"], "resolved_by")
+    failure_code = _optional_v2_string(value["failure_code"], "failure_code")
+    resolved_at = _validate_v2_timestamp(value["resolved_at"], "resolved_at", nullable=True)
+
+    if selected_option_id is not None and selected_option_id not in option_ids:
+        raise BlockedDecisionError("selected_option_id requires a declared option")
+    if options and answer_text is not None:
+        raise BlockedDecisionError("choice decisions cannot record answer_text")
+    if (
+        source_kind == "human_gate"
+        or value["resolution_handler"] == "phase_dispatch_limit"
+    ) and not options:
+        raise BlockedDecisionError(
+            "human gate and phase dispatch decisions require at least one option"
+        )
+    if not options and selected_option_id is not None:
+        raise BlockedDecisionError("free-text decisions cannot record selected_option_id")
+    if status == "resolved":
+        if (selected_option_id is None) == (answer_text is None):
+            raise BlockedDecisionError("resolved decisions require exactly one answer shape")
+        if resolved_by not in _V2_RESOLVERS:
+            raise BlockedDecisionError("resolved decisions require a supported resolver")
+        if resolved_at is None:
+            raise BlockedDecisionError("resolved decisions require resolved_at")
+        if failure_code is not None:
+            raise BlockedDecisionError("resolved decisions cannot record failure_code")
+    else:
+        if selected_option_id is not None or answer_text is not None:
+            raise BlockedDecisionError("unresolved decisions cannot record an answer")
+        if resolved_by is not None or resolved_at is not None:
+            raise BlockedDecisionError("unresolved decisions cannot record resolution metadata")
+        if status == "failed" and failure_code is None:
+            raise BlockedDecisionError("failed decisions require failure_code")
+        if status != "failed" and failure_code is not None:
+            raise BlockedDecisionError("active decisions cannot record failure_code")
+
+    normalized = {
+        "schema_version": SCHEMA_V2,
+        "id": value["id"],
+        "status": status,
+        "source_kind": source_kind,
+        "producer_id": _required_v2_bounded_string(
+            value["producer_id"],
+            "producer_id",
+            max_bytes=HUMAN_INPUT_IDENTIFIER_MAX_BYTES,
+        ),
+        "source_phase": _required_v2_bounded_string(
+            value["source_phase"],
+            "source_phase",
+            max_bytes=HUMAN_INPUT_IDENTIFIER_MAX_BYTES,
+        ),
+        "reason_code": _required_v2_bounded_string(
+            value["reason_code"],
+            "reason_code",
+            max_bytes=HUMAN_INPUT_IDENTIFIER_MAX_BYTES,
+        ),
+        "classification": classification,
+        "question": _required_v2_bounded_string(
+            value["question"],
+            "question",
+            max_bytes=HUMAN_INPUT_QUESTION_MAX_BYTES,
+        ),
+        "options": options,
+        "recommended_answer": recommended_answer,
+        "risk_level": risk_level,
+        "resolution_handler": _required_v2_bounded_string(
+            value["resolution_handler"],
+            "resolution_handler",
+            max_bytes=HUMAN_INPUT_IDENTIFIER_MAX_BYTES,
+        ),
+        "autonomy_mode": autonomy_mode,
+        "source_state_revision": source_state_revision,
+        "selected_option_id": selected_option_id,
+        "answer_text": answer_text,
+        "resolved_by": resolved_by,
+        "attempts": attempts,
+        "failure_code": failure_code,
+        "created_at": _validate_v2_timestamp(value["created_at"], "created_at", nullable=False),
+        "resolved_at": resolved_at,
+    }
+    try:
+        validate_human_input_prompt_request_payload(
+            {
+                "decision_id": normalized["id"],
+                "source_kind": normalized["source_kind"],
+                "producer_id": normalized["producer_id"],
+                "source_phase": normalized["source_phase"],
+                "reason_code": normalized["reason_code"],
+                "classification": normalized["classification"],
+                "question": normalized["question"],
+                "options": normalized["options"],
+                "recommended_answer": normalized["recommended_answer"],
+                "risk_level": normalized["risk_level"],
+            }
+        )
+    except HumanInputPolicyError as exc:
+        raise BlockedDecisionError(str(exc)) from exc
+    return normalized
+
+
+def validate_blocked_decision(value: object) -> dict[str, object]:
+    """Dispatch blocked-decision validation by its exact integer schema version."""
+    if not isinstance(value, Mapping):
+        raise BlockedDecisionError("blocked decision must be an object")
+    schema_version = value.get("schema_version")
+    if type(schema_version) is not int:
+        raise BlockedDecisionError("unsupported blocked decision schema")
+    if schema_version == SCHEMA_VERSION:
+        return deepcopy(dict(value))
+    if schema_version == SCHEMA_V2:
+        return validate_blocked_decision_v2(value)
+    raise BlockedDecisionError("unsupported blocked decision schema")
+
+
+def build_blocked_decision_v2(
+    *,
+    decision_id: str,
+    status: str,
+    source_kind: str,
+    producer_id: str,
+    source_phase: str,
+    reason_code: str,
+    classification: str,
+    question: str,
+    options: list[dict[str, object]],
+    recommended_answer: str | None,
+    risk_level: str | None,
+    resolution_handler: str,
+    autonomy_mode: str,
+    source_state_revision: int,
+    selected_option_id: str | None = None,
+    answer_text: str | None = None,
+    resolved_by: str | None = None,
+    attempts: int = 0,
+    failure_code: str | None = None,
+    now: str | None = None,
+    resolved_at: str | None = None,
+) -> dict[str, object]:
+    """Build a fully populated, validated schema-v2 blocked decision."""
+    return validate_blocked_decision_v2(
+        {
+            "schema_version": SCHEMA_V2,
+            "id": decision_id,
+            "status": status,
+            "source_kind": source_kind,
+            "producer_id": producer_id,
+            "source_phase": source_phase,
+            "reason_code": reason_code,
+            "classification": classification,
+            "question": question,
+            "options": options,
+            "recommended_answer": recommended_answer,
+            "risk_level": risk_level,
+            "resolution_handler": resolution_handler,
+            "autonomy_mode": autonomy_mode,
+            "source_state_revision": source_state_revision,
+            "selected_option_id": selected_option_id,
+            "answer_text": answer_text,
+            "resolved_by": resolved_by,
+            "attempts": attempts,
+            "failure_code": failure_code,
+            "created_at": now or _utc_now(),
+            "resolved_at": resolved_at,
+        }
+    )
 
 
 def normalize_escalation_options(options: object) -> list[dict[str, Any]]:
@@ -119,6 +562,9 @@ def build_blocked_decision(
 
 def ensure_blocked_decision(state: dict[str, Any]) -> None:
     """Attach typed decision metadata to a blocked escalation state in-place."""
+    existing = state.get("blocked_decision")
+    if isinstance(existing, Mapping) and existing.get("schema_version") == SCHEMA_V2:
+        return
     if state.get("status") != "blocked":
         return
     decision = build_blocked_decision(state)

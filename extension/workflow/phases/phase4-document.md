@@ -161,6 +161,8 @@ after KB proposal processing in 12.7b:
 ```
 Artifact                          | Producer        | Status
 ----------------------------------|-----------------|--------
+00-overview.md                    | FINALIZE        | OK/MISSING/UNVALIDATED
+requirements-overview.md          | WHAT            | OK/MISSING/UNVALIDATED
 glossary.md                       | DISCOVER        | OK/MISSING/UNVALIDATED
 mental-model.md                   | DISCOVER        | ...
 boundaries.md                     | DISCOVER        | ...
@@ -180,6 +182,8 @@ tasks.md                          | PLAN            | ...
 critical-path.md                  | PLAN            | ...
 risk-matrix.md                    | PLAN            | ...
 dependencies.md                   | PLAN            | ...
+plan-conformance.md               | FINALIZE        | ...
+plan-conformance.json             | FINALIZE        | ...
 test-strategy.md                  | TEST speckit-echelon-architect (ARCHITECT)  | ...
 test-architecture.md              | TEST speckit-echelon-architect (ARCHITECT)  | ...
 coverage-map.md                   | TEST speckit-echelon-architect (ARCHITECT)  | ...
@@ -218,6 +222,75 @@ Additional artifacts (conditional):
 - `calibration-analytics.md` (if AUDITOR produced analytics)
 - `constitution-amendment-candidates.md` (if ARCHITECT or consolidation proposed amendments)
 - `risk-acceptance-log.md` (if speckit-echelon-guardian (GUARDIAN) produced Risk Acceptance Records)
+
+### 12.6a Write Plan Conformance and Final Overview — MANDATORY
+
+Before writing `ARTIFACTS.md`, produce the final delivery entry point and its
+conformance evidence:
+
+- `plan-conformance.md`
+- `plan-conformance.json`
+- `00-overview.md`
+
+Use these prescribed artifact contracts:
+
+- `extension/templates/plan-conformance-template.md` for `plan-conformance.md`
+- `extension/templates/plan-conformance.schema.json` for `plan-conformance.json`
+- `extension/templates/00-overview-template.md` for `00-overview.md`
+
+Read `spec.md`, `requirements-overview.md`, `mvp-scope.md`, `plan.md`,
+`tasks.md`, `dependencies.md`, `critical-path.md`, `risk-matrix.md`,
+`test-strategy.md`, `coverage-map.md`, `quality-gates.md`, `issues.md`, and
+`implementability-report.md` when present.
+
+`plan-conformance.md` must answer these checks explicitly:
+
+- Does every major requirement in `spec.md` have implementation coverage in
+  `plan.md` and canonical `tasks.md` rows?
+- Does every major behavior in `plan.md` and `tasks.md` trace to `spec.md`,
+  `mvp-scope.md`, an ADR/research decision, or an explicit follow-up/deferred
+  scope record?
+- Do MVP, post-MVP, and conditional work agree across `mvp-scope.md`,
+  `plan.md`, and `tasks.md`?
+- Do `requirements-overview.md`, `plan.md`, and `tasks.md` disagree on any user
+  visible behavior?
+- Are all final overview claims backed by the conformant artifacts above?
+
+`plan-conformance.json` must be machine-readable and contain at least:
+
+```json
+{
+  "status": "pass",
+  "findings": [],
+  "sources": [
+    "spec.md",
+    "requirements-overview.md",
+    "mvp-scope.md",
+    "plan.md",
+    "tasks.md",
+    "dependencies.md",
+    "critical-path.md"
+  ]
+}
+```
+
+It must conform to `extension/templates/plan-conformance.schema.json`.
+
+Use `"status": "needs_repair"` when a drift finding requires artifact repair
+before build readiness. Do not hide drift by rewriting `00-overview.md` around
+it; record the drift and route repair through the responsible artifact.
+
+`00-overview.md` is the final PM/developer brief. It must be generated only
+after the conformance checks above are complete, and it must say that it is
+derived from the final Phase A artifacts. It should tell a developer how to
+start, what delivery slices the plan/tasks define, which dependencies need
+control first, what partial result is allowed by the existing scope artifacts,
+and where to stop and ask.
+
+NEVER let `00-overview.md` introduce new scope, new sequencing, or a new
+MVP/post-MVP split. If final overview guidance would conflict with
+`spec.md`, `mvp-scope.md`, `plan.md`, or `tasks.md`, fix the conflicting
+artifact first or record the conformance finding.
 
 ### 12.6b Run speckit-echelon-consolidator (CONSOLIDATOR) — MANDATORY
 

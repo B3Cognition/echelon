@@ -2,14 +2,20 @@
 from __future__ import annotations
 
 import json
-import inspect
 import re
+import inspect
 import shutil
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
+from harness.controller_state_contracts import ControllerStateContractViolation
+from harness.governance_structural_gate import (
+    GovernanceStructuralGateResult,
+    run_governance_structural_gate,
+)
 from harness.prompt_markdown import read_prompt_markdown
 from harness.quality_scores import (
     normalize_why_quality_scores,
@@ -17,6 +23,7 @@ from harness.quality_scores import (
     resolve_quality_gate_thresholds,
 )
 from harness.spec_lexicon_gate import run_spec_lexicon_gate
+from harness.state_transaction_namespace import store_owned_update_keys
 from harness.tasks_lexicon_gate import run_tasks_lexicon_gate
 from harness.understanding_gate import run_understanding_gate
 
@@ -24,6 +31,75 @@ if TYPE_CHECKING:
     from harness.phase_graph import PhaseGraph, PhaseNode
     from harness.squad_provider import SquadAgentResult, SquadCliProvider
     from harness.squad_state import SquadStateStore
+
+
+_STAGED_VERDICT_STATE_KEYS = {
+    "WHY3": "why3_verdict",
+    "ASSESS2": "assess2_verdict",
+}
+_EXECUTOR_BLOCK_REASONS = frozenset(
+    {
+        "invalid_evidence_inventory",
+        "missing_consensus_prerequisite",
+        "missing_phase_outputs",
+    }
+)
+_JOURNAL_CONTEXT_MAX_BYTES = 24 * 1024
+_WHY_STATE_CONTEXT_KEYS = (
+    "run_id",
+    "spec_id",
+    "phase",
+    "iteration",
+    "max_iterations",
+    "autonomy_mode",
+    "implementation_targets",
+    "user_message",
+    "quality_gate_remediation",
+    "selected_issue_resolution",
+)
+
+
+@dataclass(frozen=True)
+class ExecutorBlockedResult:
+    """Trusted executor recovery produced after provider validation."""
+
+    reason: str
+    result: "SquadAgentResult"
+
+    def __post_init__(self) -> None:
+        from harness.prepared_phase_result import detach_squad_agent_result
+        from harness.squad_provider import SquadAgentResult
+
+        if self.reason not in _EXECUTOR_BLOCK_REASONS:
+            raise ControllerStateContractViolation(
+                "unsupported executor block reason",
+                contract="executor",
+                json_path="$.executor_block.reason",
+                validator="provenance",
+            )
+        if type(self.result) is not SquadAgentResult:
+            raise ControllerStateContractViolation(
+                "executor block result has an invalid type",
+                contract="executor",
+                json_path="$.executor_block.result",
+                validator="provenance",
+            )
+        detached = detach_squad_agent_result(self.result)
+        if detached.verdict != "BLOCKED":
+            raise ControllerStateContractViolation(
+                "executor block result must have a BLOCKED verdict",
+                contract="executor",
+                json_path="$.executor_block.result.verdict",
+                validator="provenance",
+            )
+        if detached.state_updates.get("blocked_reason") != self.reason:
+            raise ControllerStateContractViolation(
+                "executor block reason does not match result state",
+                contract="executor",
+                json_path="$.executor_block.result.state_updates.blocked_reason",
+                validator="provenance",
+            )
+        object.__setattr__(self, "result", detached)
 
 
 def _shared_agent_contract() -> str:
@@ -295,6 +371,41 @@ def _render_product_input_context(state: dict) -> str:
         "  task_ids: []",
         "  targets: []",
     ]
+    attachments = state.get("product_input_attachments")
+    if isinstance(attachments, list) and attachments:
+        lines.extend([
+            "",
+            "## Added Reference Material",
+            "- Preserve and extend prior investigation artifacts; do not restart evidence collection from scratch.",
+        ])
+        for attachment in attachments:
+            if not isinstance(attachment, dict):
+                continue
+            attachment_id = str(attachment.get("id") or "").strip() or "(unknown)"
+            request_ids = [
+                str(item).strip()
+                for item in attachment.get("linked_evidence_request_ids", [])
+                if str(item).strip()
+            ]
+            intended_for = ", ".join(request_ids) if request_ids else "outstanding evidence requests"
+            lines.append(f"- Attachment {attachment_id}: intended for {intended_for}.")
+            declarations = attachment.get("declarations")
+            if isinstance(declarations, list):
+                for declaration in declarations:
+                    if not isinstance(declaration, dict):
+                        continue
+                    role = str(declaration.get("role") or "").strip()
+                    location = str(declaration.get("location") or "").strip()
+                    if role or location:
+                        lines.append(f"  - {role or 'input'}: {location}")
+            resources = attachment.get("resources")
+            if isinstance(resources, list):
+                for resource in resources[:10]:
+                    if not isinstance(resource, dict):
+                        continue
+                    snapshot = str(resource.get("snapshot") or "").strip()
+                    if snapshot:
+                        lines.append(f"  - snapshot: {snapshot}")
     repair = state.get("product_input_mapping_repair")
     if isinstance(repair, dict):
         blockers = repair.get("blockers")
@@ -392,6 +503,121 @@ def _render_controller_repair_context(state: dict) -> str:
         ),
     )
     sections: list[str] = []
+    quality_remediation = state.get("quality_gate_remediation")
+    if isinstance(quality_remediation, dict):
+        evidence = quality_remediation.get("evidence")
+        report = evidence.get("path") if isinstance(evidence, dict) else ""
+        failed_gates: list[str] = []
+        weak_requirements: dict[str, list[str]] = {}
+        validated_issue_ids = sorted(
+            str(issue_id)
+            for issue_id, entry in (state.get("issue_resolution_ledger") or {}).items()
+            if isinstance(entry, dict) and entry.get("status") == "validated"
+        )
+        if validated_issue_ids:
+            stale_issue_instruction = (
+                "This controller instruction OVERRIDES any stale `issues.md`, "
+                "journal, or state text that tells you to resolve "
+                + ", ".join(f"`{issue_id}`" for issue_id in validated_issue_ids)
+                + ". Those decisions are already validated."
+            )
+        else:
+            stale_issue_instruction = (
+                "This controller instruction OVERRIDES any stale `issues.md`, "
+                "journal, or state text that tries to reopen already validated "
+                "issue decisions."
+            )
+        if isinstance(report, str) and report:
+            try:
+                payload = json.loads(Path(report).read_text(encoding="utf-8"))
+                gates_payload = payload.get("gates")
+                if isinstance(gates_payload, dict):
+                    for name, gate in gates_payload.items():
+                        if not isinstance(gate, dict) or gate.get("pass") is True:
+                            continue
+                        score = gate.get("score")
+                        threshold = gate.get("threshold")
+                        failed_gates.append(
+                            f"{name} ({score} < required {threshold})"
+                        )
+                        if name == "overall":
+                            continue
+                        weak_requirements[str(name)] = []
+                    per_requirement = payload.get("per_requirement")
+                    if isinstance(per_requirement, list):
+                        for item in per_requirement:
+                            if not isinstance(item, dict):
+                                continue
+                            requirement_id = str(
+                                item.get("requirement_id") or ""
+                            ).strip()
+                            metrics = item.get("metrics")
+                            categories = (
+                                metrics.get("category_averages")
+                                if isinstance(metrics, dict)
+                                else None
+                            )
+                            if not requirement_id or not isinstance(categories, dict):
+                                continue
+                            for category in weak_requirements:
+                                gate = gates_payload.get(category)
+                                threshold = (
+                                    gate.get("threshold")
+                                    if isinstance(gate, dict)
+                                    else None
+                                )
+                                score = categories.get(category)
+                                if (
+                                    isinstance(threshold, (int, float))
+                                    and isinstance(score, (int, float))
+                                    and score < threshold
+                                ):
+                                    weak_requirements[category].append(requirement_id)
+            except (OSError, ValueError, TypeError):
+                # The evidence path is advisory context. The deterministic
+                # gate remains the source of truth if an old report is gone.
+                pass
+        sections.extend([
+            "## Controller Quality-Gate Remediation",
+            "All previously named issue resolutions are complete, but the certified "
+            "Understanding gates still fail. This is a fresh remediation cycle, not "
+            "a request to repeat stale ISS findings.",
+            stale_issue_instruction,
+            "Do NOT invoke any `echelon spec resolve`, `echelon spec continue`, "
+            "or other Echelon CLI command. You are the authoring agent; edit the "
+            "active spec directly.",
+            f"Read the certified report at `{report}` before editing." if report else "Read the current certified Understanding report before editing.",
+            "Certified failing gates: " + ", ".join(failed_gates)
+            if failed_gates else "Use the failing gates in the certified report as the repair checklist.",
+            "The Understanding gate scores only formal AC/FR/NFR requirement "
+            "statements. Do not append diagrams, narrative, matrices, or test "
+            "appendices as a substitute for editing those scored statements.",
+            "Rewrite the affected requirements into atomic, independently testable "
+            "statements with explicit actor, trigger, action, observable outcome, "
+            "and measurable acceptance criteria. Add explicit conditional/error "
+            "flows where the behavioral gate requires them.",
+            "Edit `spec.md` during this phase. The controller compares its SHA-256 "
+            "with the remediation baseline and rejects a DONE result with no spec "
+            "change; a review-only response is invalid.",
+            "For each compound requirement, split independently verifiable behavior "
+            "into separately identified formal requirements or acceptance criteria. "
+            "State explicit exclusions and invalid-combination behavior where relevant.",
+            "Do not merely inspect, summarize, or confirm the existing ISS repairs. "
+            "The required deliverable is an actual rewrite of the failing formal "
+            "requirements for the certified metric families.",
+            "Preserve the already-recorded issue decisions and do not re-open them. "
+            "Return the normal required phase state updates after completing the "
+            "specification remediation.",
+            "",
+        ])
+        for category, requirement_ids in weak_requirements.items():
+            if requirement_ids:
+                sections.append(
+                    "Certified weak requirement IDs for "
+                    f"`{category}`: {', '.join(requirement_ids)}."
+                )
+        if weak_requirements:
+            sections.append("")
     for pass_key, report_key, artifact in gates:
         if state.get(pass_key) is not False:
             continue
@@ -406,7 +632,87 @@ def _render_controller_repair_context(state: dict) -> str:
             f"Do not report `{pass_key}` or run a validator; the controller certifies the file after dispatch.",
             "",
         ])
+    output_recovery = state.get("phase_output_recovery")
+    if isinstance(output_recovery, dict):
+        phase = str(output_recovery.get("phase") or "").strip()
+        missing = output_recovery.get("missing_outputs")
+        invalid = output_recovery.get("invalid_outputs")
+        prior_updates = output_recovery.get("prior_state_updates")
+        if phase and (
+            (isinstance(missing, list) and missing)
+            or (isinstance(invalid, list) and invalid)
+        ):
+            rendered_missing = ", ".join(
+                str(item) for item in missing if isinstance(item, str) and item
+            ) if isinstance(missing, list) else ""
+            rendered_invalid = ", ".join(
+                f"{item.get('path')}: {item.get('reason')}"
+                for item in invalid
+                if isinstance(item, dict) and item.get("path") and item.get("reason")
+            ) if isinstance(invalid, list) else ""
+            sections.extend([
+                "## Phase Output Repair",
+                f"The prior `{phase}` result was valid except for required artifacts needing repair. Missing: {rendered_missing or '(none)'}. Invalid: {rendered_invalid or '(none)'}.",
+                "Read the existing phase artifacts and repair only the named artifacts. Do not repeat external retrieval or discard established evidence unless the existing artifacts are contradictory or cannot support the required repair.",
+                "Before returning, verify every required phase output exists. Return the prior routing state updates again after the artifacts are complete.",
+            ])
+            if rendered_invalid:
+                sections.extend([
+                    "### Non-negotiable invalid-artifact repair",
+                    "The invalid artifact is not evidence and must not be treated as a completed result.",
+                    "Do NOT respond that the prior investigation is already complete. Write a replacement for every invalid artifact, using the declared source seeds and the required schema. If the prior evidence cannot establish its source frontier, perform the necessary bounded source expansion before answering.",
+                    "This retry intentionally excludes stale evidence reports and journal entries from its context. Use tools to inspect the declared inputs and create the replacement artifact on disk before returning `echelon_result`.",
+                ])
+            if isinstance(prior_updates, dict) and prior_updates:
+                sections.extend([
+                    "Prior routing state updates to preserve:",
+                    "```json",
+                    json.dumps(prior_updates, indent=2, sort_keys=True),
+                    "```",
+                ])
+            sections.append("")
     return "\n".join(sections)
+
+
+def _render_issue_resolution_context(state: dict) -> str:
+    """Render the one issue decision a repair is authorized to apply or validate."""
+    selected = str(state.get("selected_issue_resolution") or "").strip()
+    ledger = state.get("issue_resolution_ledger")
+    if not selected or not isinstance(ledger, dict):
+        return ""
+    entry = ledger.get(selected)
+    if not isinstance(entry, dict) or entry.get("status") not in {"selected", "repaired"}:
+        return ""
+    status = str(entry.get("status") or "")
+    validation_rules = ""
+    if status == "repaired":
+        validation_rules = (
+            "- This repair is now under targeted validation. Compare the current "
+            "specification with the exact guidance and user decision above.\n"
+            "- If the current specification implements that decision, OMIT this "
+            "issue from `finding_routes` even when the aggregate Understanding "
+            "gate still fails. Those aggregate failures may be caused by other "
+            "issues.\n"
+            "- Re-list this issue only when you can identify a concrete missing or "
+            "contradictory part of its decision in the current spec, citing the "
+            "affected section and the missing detail. Never re-list it merely "
+            "because it appeared in a prior issues.md or prior score report.\n"
+        )
+    return (
+        "## Selected Issue Resolution (Controller-Owned)\n"
+        f"- Issue: {selected} — {entry.get('title', '')}\n"
+        f"- SAGE guidance: {entry.get('guidance', '')}\n"
+        f"- User decision: {entry.get('decision', '')}\n"
+        "- You MUST amend the canonical spec.md to implement this named repair. "
+        "Do not declare the issue advisory, defer it, or claim design readiness instead.\n"
+        "- If the repair cannot be completed from the declared evidence, return FAIL "
+        "with the exact missing evidence or user decision; do not advance.\n"
+        "- Apply this decision only to the named issue. Do not claim that any "
+        "other issue is resolved; the controller retains them in the ledger.\n\n"
+        "- Your completion report MUST discuss only this selected issue. Never "
+        "state or imply that all issues are resolved.\n\n"
+        + validation_rules
+    )
 
 
 def _render_spec_lexicon_context(
@@ -415,7 +721,7 @@ def _render_spec_lexicon_context(
     resolved_config: dict[str, object],
 ) -> str:
     """Render authoritative spec Lexicon configuration and repair evidence."""
-    if dispatch != "phase1-what":
+    if dispatch != "phase1-lexicon-derive":
         return ""
     gate = resolved_config.get("lexicon_gate")
     gate = gate if isinstance(gate, dict) else {}
@@ -465,12 +771,63 @@ def _render_spec_lexicon_context(
             "The previous derived requirements artifact failed the controller-owned hard gate.",
             f"- Report: `{report}`",
             f"- Attempt: `{attempt}` of `{repair_limit}`",
+            f"- Artifact: `{artifact_path}`",
             "Read the report and repair every listed finding in the configured artifact.",
+            f"This dispatch is a Lexicon repair pass: update the configured artifact and return `{artifact_path}` in `output_files`.",
+            "Do not edit spec.md or any other canonical source artifact.",
+            "Do not declare specification quality, design readiness, spec completion, or downstream phase readiness.",
             "Preserve source IDs and sections that already satisfy the grammar.",
             "Validation execution and deterministic verdict reporting are controller-owned.",
             "",
         ])
+        lines.extend(_render_spec_lexicon_repair_findings(report))
+        lines.append("")
     return "\n".join(lines)
+
+
+def _render_spec_lexicon_repair_findings(report: str) -> list[str]:
+    """Render compact, actionable findings from a controller report."""
+    report_path = Path(report)
+    try:
+        payload = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return [
+            "The report could not be read by the prompt renderer; the path above remains authoritative.",
+        ]
+    findings = payload.get("findings") if isinstance(payload, dict) else None
+    if not isinstance(findings, list):
+        return ["The report does not contain a readable `findings[]` list."]
+    counts: dict[str, int] = {}
+    normalized: list[dict[str, object]] = []
+    for item in findings:
+        if not isinstance(item, dict):
+            continue
+        code = str(item.get("code") or "unknown").strip() or "unknown"
+        counts[code] = counts.get(code, 0) + 1
+        normalized.append(item)
+    lines = [f"- Finding count: `{len(normalized)}`"]
+    if counts:
+        lines.append("- Findings by code:")
+        for code, count in sorted(counts.items()):
+            lines.append(f"  - `{code}`: {count}")
+    if normalized:
+        lines.append("- First concrete findings:")
+        for item in normalized[:8]:
+            code = str(item.get("code") or "unknown").strip() or "unknown"
+            message = str(item.get("message") or "").strip()
+            span = str(item.get("span") or "").strip()
+            line = item.get("line")
+            try:
+                line_text = f"line {int(line)}"
+            except (TypeError, ValueError):
+                line_text = "line unknown"
+            detail = f"  - `{code}` at {line_text}"
+            if span:
+                detail += f", span `{span}`"
+            if message:
+                detail += f": {message}"
+            lines.append(detail)
+    return lines
 
 
 def _render_certified_understanding_context(state: dict, dispatch: str) -> str:
@@ -491,15 +848,32 @@ def _render_certified_understanding_context(state: dict, dispatch: str) -> str:
     failing_gates = failing if isinstance(failing, list) else []
     rendered_failing = ", ".join(f"`{gate}`" for gate in failing_gates) or "none"
     certified_pass = str(bool(evidence.get("pass"))).lower()
+    scores_line = ""
+    report_ref = str(evidence.get("path") or "").strip()
+    if report_ref:
+        try:
+            payload = json.loads(Path(report_ref).read_text(encoding="utf-8"))
+            scores = payload.get("scores")
+            if isinstance(scores, dict):
+                scores_line = "- Certified scores: " + ", ".join(
+                    f"{name}={value}"
+                    for name, value in sorted(scores.items())
+                    if isinstance(value, (int, float))
+                ) + "\n"
+        except (OSError, ValueError, TypeError):
+            pass
     return (
         "# Certified Understanding Evidence\n"
         "The Echelon controller produced this report before provider dispatch. "
-        "Interpret it; do not recalculate or override its scores.\n"
+        "Interpret it; do not recalculate or override its scores. These are the "
+        "only current scores; never quote older scores from state.json, issues.md, "
+        "or the reasoning journal.\n"
         f"- Report: `{evidence.get('path')}`\n"
         f"- Digest: `{evidence.get('digest')}`\n"
         f"- Iteration: `{evidence.get('iteration')}`\n"
         f"- Certified pass: `{certified_pass}`\n"
         f"- Failing gates: {rendered_failing}\n\n"
+        f"{scores_line}\n"
     )
 
 
@@ -538,11 +912,94 @@ def _render_published_re_context(state: dict) -> str:
 
 
 _MANDATORY_PHASE_OUTPUTS: dict[str, tuple[str, ...]] = {
-    "phase1-what": ("spec.md", "00-overview.md"),
+    "phase1-what": ("spec.md", "requirements-overview.md"),
+    "phase1-lexicon-derive": ("requirements.lexicon.md",),
+    "phase1-investigate": (
+        "evidence-resolution.md",
+        "evidence-grades.md",
+        "evidence-inventory.json",
+    ),
     "phase3-how": ("plan.md", "research.md", "data-model.md", "contracts"),
     "phase3-sentinel": ("test-strategy.md", "test-architecture.md", "coverage-map.md"),
     "phase3-plan": ("tasks.md", "critical-path.md", "risk-matrix.md", "dependencies.md"),
 }
+
+
+def _reference_url_seeds(state: dict) -> tuple[str, ...]:
+    """Return declared URL entry points, without treating credentials as seeds."""
+    inputs = state.get("product_inputs")
+    if not isinstance(inputs, dict):
+        return ()
+    reference_context = Path(str(inputs.get("reference_context") or ""))
+    try:
+        text = reference_context.read_text(encoding="utf-8")
+    except OSError:
+        return ()
+    # The reference context is controller-produced.  URLs are safe locators to
+    # require in the inventory; never extract arbitrary text, which may include
+    # access material supplied alongside a URL.
+    return tuple(dict.fromkeys(re.findall(r"https?://[^\s<>()]+", text)))
+
+
+def _validate_evidence_inventory(
+    path: Path, *, required_seed_locators: tuple[str, ...] = ()
+) -> str | None:
+    """Return a structural error for an evidence inventory, or ``None`` when valid."""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return f"not valid JSON: {exc}"
+    if not isinstance(payload, dict):
+        return "root must be an object"
+    if payload.get("schema_version") != 1:
+        return "schema_version must equal 1"
+    sources = payload.get("sources")
+    if not isinstance(sources, list):
+        return "missing required list: sources"
+    if not sources:
+        return "sources must not be empty"
+    required_source_fields = (
+        "id",
+        "locator",
+        "kind",
+        "status",
+        "disposition",
+        "discovered_from",
+        "discovery_method",
+    )
+    for index, source in enumerate(sources):
+        if not isinstance(source, dict):
+            return f"sources[{index}] must be an object"
+        for field in required_source_fields:
+            if not isinstance(source.get(field), str) or not source[field].strip():
+                return f"sources[{index}].{field} must be a non-empty string"
+    frontier = payload.get("frontier")
+    if not isinstance(frontier, dict):
+        return "missing required object: frontier"
+    if not isinstance(frontier.get("disposition"), str) or not frontier["disposition"].strip():
+        return "frontier.disposition must be a non-empty string"
+    unvisited = frontier.get("unvisited_relevant_sources")
+    if not isinstance(unvisited, list) or not all(
+        isinstance(source, str) and source.strip() for source in unvisited
+    ):
+        return "frontier.unvisited_relevant_sources must be a list of non-empty strings"
+    expanded_seeds = frontier.get("expanded_seed_locators")
+    if not isinstance(expanded_seeds, list) or not all(
+        isinstance(source, str) and source.strip() for source in expanded_seeds
+    ):
+        return "frontier.expanded_seed_locators must be a list of non-empty strings"
+    inventory_locators = {str(source["locator"]).strip() for source in sources}
+    missing_seeds = [seed for seed in required_seed_locators if seed not in inventory_locators]
+    if missing_seeds:
+        return "missing declared source seed(s): " + ", ".join(missing_seeds)
+    missing_expanded_seeds = [
+        seed for seed in required_seed_locators if seed not in expanded_seeds
+    ]
+    if missing_expanded_seeds:
+        return "frontier does not account for declared source seed(s): " + ", ".join(
+            missing_expanded_seeds
+        )
+    return None
 
 
 def _normalize_spec_dir_ref(spec_dir_ref: str, project_root: Path) -> str:
@@ -613,8 +1070,97 @@ def _render_active_spec_roots_context(
     )
 
 
-def _render_context_candidate(file_ref: str, candidate: Path) -> str:
+def _context_pack_filters(item: str) -> dict[str, str]:
+    """Parse the optional ``[key=value]`` selector on a context-pack item."""
+    match = re.search(r"\[([^\]]+)\]", item)
+    if match is None:
+        return {}
+    filters: dict[str, str] = {}
+    for part in match.group(1).split(","):
+        key, separator, value = part.partition("=")
+        if separator and key.strip() and value.strip():
+            filters[key.strip()] = value.strip()
+    return filters
+
+
+def _render_reasoning_journal_context(
+    candidate: Path,
+    filters: dict[str, str],
+) -> str:
+    """Render only the requested, bounded journal evidence for an agent."""
+    resolved = candidate.resolve()
+    try:
+        entries = [
+            json.loads(line)
+            for line in candidate.read_text(encoding="utf-8", errors="replace").splitlines()
+            if line.strip()
+        ]
+    except (OSError, ValueError):
+        return f"\n---\n# {resolved}\n[Journal unavailable or malformed]"
+
+    requested_type = filters.get("type")
+    # ``routing_decision`` is the historic context-pack selector for durable
+    # decision records, whose canonical journal type is ``decision``.
+    if requested_type == "routing_decision":
+        requested_type = "decision"
+    selected = [
+        entry
+        for entry in entries
+        if isinstance(entry, dict)
+        and (not requested_type or entry.get("type") == requested_type)
+        and (not filters.get("phase") or entry.get("phase") == filters["phase"])
+    ]
+    rendered: list[str] = []
+    used = 0
+    for entry in reversed(selected):
+        line = json.dumps(entry, ensure_ascii=False, sort_keys=True)
+        line_bytes = len(line.encode("utf-8")) + 1
+        if line_bytes > _JOURNAL_CONTEXT_MAX_BYTES:
+            # A single verbose historical entry must not consume the entire
+            # SAGE budget or hide the rest of the current decision trail.
+            continue
+        if rendered and used + line_bytes > _JOURNAL_CONTEXT_MAX_BYTES:
+            break
+        rendered.append(line)
+        used += line_bytes
+    rendered.reverse()
+    selector = ", ".join(f"{key}={value}" for key, value in sorted(filters.items()))
+    header = (
+        f"\n---\n# {resolved}\n"
+        f"[Journal context: {len(rendered)}/{len(selected)} matching entries"
+        f"{f'; {selector}' if selector else ''}; newest entries retained]"
+    )
+    return header + ("\n" + "\n".join(rendered) if rendered else "\n[No matching entries]")
+
+
+def _render_why_state_context(state: dict) -> str:
+    """Give SAGE current routing facts without injecting stale run history."""
+    projection = {
+        key: state[key]
+        for key in _WHY_STATE_CONTEXT_KEYS
+        if key in state
+    }
+    ledger = state.get("issue_resolution_ledger")
+    if isinstance(ledger, dict):
+        projection["issue_resolution_statuses"] = {
+            str(issue_id): str(entry.get("status") or "unknown")
+            for issue_id, entry in ledger.items()
+            if isinstance(entry, dict)
+        }
+    return "\n---\n# Current controller state (WHY projection)\n" + json.dumps(
+        projection, indent=2, ensure_ascii=False, sort_keys=True
+    )
+
+
+def _render_context_candidate(
+    file_ref: str,
+    candidate: Path,
+    *,
+    filters: dict[str, str] | None = None,
+) -> str:
     """Render a context-pack file or directory into deterministic prompt text."""
+    if candidate.name == "reasoning-journal.jsonl":
+        return _render_reasoning_journal_context(candidate, filters or {})
     resolved_candidate = candidate.resolve()
     if candidate.is_dir():
         chunks = [f"\n---\n# {resolved_candidate.as_posix().rstrip('/')}/"]
@@ -751,6 +1297,9 @@ class PhaseExecutor(ABC):
             "unexpected_state_updates",
             getattr(node, "unexpected_state_updates", "quarantine"),
         )
+        evidence_routing = entry.get(
+            "evidence_routing", getattr(node, "evidence_routing", "none")
+        )
         return EchelonResultContract(
             allowed_state_update_keys=(
                 frozenset(str(key) for key in allowed)
@@ -772,6 +1321,7 @@ class PhaseExecutor(ABC):
                 else None
             ),
             unexpected_state_updates=str(unexpected),
+            evidence_routing=str(evidence_routing),
         )
 
     def _exec_agent_with_contract(
@@ -804,7 +1354,14 @@ class PhaseExecutor(ABC):
             prompt_metadata and accepts_prompt_metadata
         ):
             kwargs["prompt_metadata"] = prompt_metadata or {}
-        return self._provider.exec_agent(str(self._project_root), prompt, **kwargs)
+        raw_result = self._provider.exec_agent(
+            str(self._project_root),
+            prompt,
+            **kwargs,
+        )
+        from harness.prepared_phase_result import detach_squad_agent_result
+
+        return detach_squad_agent_result(raw_result)
 
     def _project_config_path(self) -> Path:
         canonical = self._project_root / ".echelon" / "config.yml"
@@ -848,6 +1405,8 @@ class PhaseExecutor(ABC):
         result: "SquadAgentResult",
         allowed_state_updates: object = None,
         result_contract=None,
+        *,
+        direct_state_write: bool = False,
     ) -> "SquadAgentResult":
         """Validate result state updates before executor-side direct state writes."""
         if result.echelon_result is None:
@@ -861,9 +1420,22 @@ class PhaseExecutor(ABC):
         )
         from harness.squad_provider import SquadAgentResult
 
+        verdict = (result.verdict or "").upper()
+        blocking_verdict = verdict in {"BLOCKED", "STOP_AND_ASK"}
+        if direct_state_write and not blocking_verdict:
+            reserved_updates = store_owned_update_keys(result.state_updates)
+            if reserved_updates:
+                key = sorted(reserved_updates)[0]
+                raise ControllerStateContractViolation(
+                    "provider attempted a transaction-owned state update",
+                    contract="provider",
+                    json_path=f"$.state_updates.{key}",
+                    validator="ownership",
+                )
+
         try:
             self._normalize_why_result_quality_scores(node, result)
-            if (result.verdict or "").upper() == "BLOCKED":
+            if verdict == "BLOCKED" or (direct_state_write and blocking_verdict):
                 # BLOCKED results are consumed by the controller as harness-owned
                 # blocked-state metadata, not applied through phase state_updates.
                 result.echelon_result = validate_echelon_result(result.echelon_result)
@@ -877,6 +1449,7 @@ class PhaseExecutor(ABC):
                     state_update_enums=contract.state_update_enums,
                     allowed_verdicts=contract.allowed_verdicts,
                     unexpected_state_updates=contract.unexpected_state_updates,
+                    evidence_routing=contract.evidence_routing,
                 )
             outcome = validate_echelon_result_contract(
                 result.echelon_result,
@@ -909,20 +1482,16 @@ class PhaseExecutor(ABC):
     @abstractmethod
     def execute(
         self, node: "PhaseNode", state_store: "SquadStateStore"
-    ) -> "SquadAgentResult":
+    ) -> "SquadAgentResult | ExecutorBlockedResult":
         ...
 
     def _write_journal_entries(
         self, result: "SquadAgentResult", phase_id: str
     ) -> None:
-        """Append journal_entries[] from an agent result to the reasoning journal.
-
-        Serialized write: every caller holds the GIL or calls this after
-        thread-join, so appends are never concurrent.
-        """
-        import json
-        from datetime import datetime, timezone
-        from harness.journal_entry_validator import prepare_journal_entries_for_append
+        """Append agent journal entries through the shared durable store."""
+        from harness.journal_entry_validator import (
+            append_reasoning_journal_entries,
+        )
 
         entries = list((result.echelon_result or {}).get("journal_entries", []))
         if result.quarantined_state_updates:
@@ -943,28 +1512,13 @@ class PhaseExecutor(ABC):
             )
         if not entries:
             return
-
-        journal_path = self._squad_dir / "reasoning-journal.jsonl"
-        journal_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Derive next id from current line count (monotonic within a session)
-        next_id = 1
-        if journal_path.exists():
-            lines = [ln for ln in journal_path.read_text().splitlines() if ln.strip()]
-            next_id = len(lines) + 1
-
-        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        prepared_entries = prepare_journal_entries_for_append(
+        append_reasoning_journal_entries(
+            self._squad_dir,
             entries,
             phase_id=phase_id,
-            next_id=next_id,
-            timestamp=ts,
             schema_path=self._ext_dir / "workflow/journal-entry-types.yaml",
             invalid_registered_policy="quarantine",
         )
-        with journal_path.open("a") as fh:
-            for entry in prepared_entries:
-                fh.write(json.dumps(entry, default=lambda o: o.isoformat() if hasattr(o, "isoformat") else str(o)) + "\n")
 
     def _extension_path_context(self) -> str:
         return (
@@ -981,6 +1535,14 @@ class PhaseExecutor(ABC):
     def _assemble_prompt(self, node: "PhaseNode", state: dict) -> str:
         static_parts: list[str] = []
         dynamic_parts: list[str] = []
+        output_recovery = state.get("phase_output_recovery")
+        isolated_invalid_inventory_repair = (
+            node.id == "phase1-investigate"
+            and isinstance(output_recovery, dict)
+            and output_recovery.get("phase") == node.id
+            and isinstance(output_recovery.get("invalid_outputs"), list)
+            and bool(output_recovery["invalid_outputs"])
+        )
 
         # Resolve run dirs early — needed for both context pack file reads and
         # the text-level translation applied to agent/spec file content below.
@@ -1016,10 +1578,18 @@ class PhaseExecutor(ABC):
         spec_dir_ref = _normalize_spec_dir_ref(str(state.get("spec_dir") or "").strip(), self._project_root)
         search_bases = _spec_search_bases(spec_dir_ref, self._project_root, staging_dir_str)
         for item in node.context_pack:
+            if isolated_invalid_inventory_repair and (
+                item.startswith("{spec_dir}/evidence-resolution.md")
+                or item.startswith("{spec_dir}/investigation/")
+                or item.startswith("{spec_dir}/evidence-inventory.json")
+                or item.startswith(".specify/squad/reasoning-journal.jsonl")
+            ):
+                continue
             # Items may have inline comments: ".specify/echelon/re/state.json — current run state"
             file_ref = item.split(" ")[0].split("(")[0].rstrip()
             if not file_ref or file_ref.startswith("#"):
                 continue
+            context_filters = _context_pack_filters(item)
             resolved = _translate_squad_path(
                 file_ref.replace("{spec_dir}", spec_dir_ref)
                 .replace("{context_dir}", context_dir_str)
@@ -1031,12 +1601,20 @@ class PhaseExecutor(ABC):
                 candidates = [base / resolved for base in search_bases]
             for candidate in candidates:
                 if candidate.exists():
-                    dynamic_parts.append(_render_context_candidate(file_ref, candidate))
+                    dynamic_parts.append(
+                        _render_context_candidate(
+                            file_ref,
+                            candidate,
+                            filters=context_filters,
+                        )
+                    )
                     break
 
         # 4. Current state.json for context
         state_path = self._squad_dir / "state.json"
-        if state_path.exists():
+        if node.id in {"phase1-why1", "phase1-why2"}:
+            dynamic_parts.append(_render_why_state_context(state))
+        elif state_path.exists():
             dynamic_parts.append(f"\n---\n# Current state.json\n{state_path.read_text()}")
         # Inject squad run context so agents know where to write
         context_preamble = (
@@ -1049,6 +1627,7 @@ class PhaseExecutor(ABC):
             f"{_render_implementation_target_context(state)}"
             f"{_render_product_input_context(state)}"
             f"{_render_controller_repair_context(state)}"
+            f"{_render_issue_resolution_context(state)}"
             f"{_render_spec_lexicon_context(state, node.id, self._resolved_config())}"
             f"{_render_published_re_context(state)}"
             f"{_render_certified_understanding_context(state, node.id)}"
@@ -1071,7 +1650,7 @@ class PhaseExecutor(ABC):
                 f"Existing spec_dir: {spec_dir}\n"
                 f"Existing feature_branch: {feature_branch}\n"
                 "Do NOT create, switch, rename, or discover a branch or spec directory. "
-                "Reuse the existing spec_dir and amend spec.md and 00-overview.md "
+                "Reuse the existing spec_dir and amend spec.md and requirements-overview.md "
                 "in place.\n\n"
             )
 
@@ -1135,7 +1714,10 @@ class PhaseExecutor(ABC):
                         prompt_metadata,
                     )
                     result = self._validate_result_state_updates(
-                        node, result, result_contract=result_contract
+                        node,
+                        result,
+                        result_contract=result_contract,
+                        direct_state_write=True,
                     )
                     if result.blocked:
                         return result
@@ -1279,9 +1861,11 @@ class AgentExecutor(PhaseExecutor):
 
     def execute(
         self, node: "PhaseNode", state_store: "SquadStateStore"
-    ) -> "SquadAgentResult":
+    ) -> "SquadAgentResult | ExecutorBlockedResult":
         from harness.squad_provider import SquadAgentResult
 
+        state = state_store.load()
+        self._quarantine_invalid_recovery_outputs(node, state, state_store)
         state = state_store.load()
         pre_dispatch_result = self._run_pre_dispatch(node, state, state_store)
         if pre_dispatch_result is not None and pre_dispatch_result.blocked:
@@ -1319,21 +1903,111 @@ class AgentExecutor(PhaseExecutor):
                     updates["shadow_output_recovered"] = recovered
             missing_outputs = self._required_phase_outputs_missing(node, state)
             if missing_outputs:
-                result = SquadAgentResult(
+                recovery_state_updates = dict(result.state_updates)
+                prior_recovery = state.get("phase_output_recovery")
+                prior_invalid_outputs = (
+                    prior_recovery.get("invalid_outputs")
+                    if isinstance(prior_recovery, dict)
+                    else None
+                )
+                recovery_updates: dict[str, object] = {
+                    "blocked_reason": "missing_phase_outputs",
+                    "missing_outputs": missing_outputs,
+                    "recovery_state_updates": recovery_state_updates,
+                }
+                if isinstance(prior_invalid_outputs, list) and prior_invalid_outputs:
+                    recovery_updates["invalid_outputs"] = prior_invalid_outputs
+                blocked_result = SquadAgentResult(
                     exit_code=0,
                     echelon_result={
                         "verdict": "BLOCKED",
-                        "state_updates": {
-                            "blocked_reason": "missing_phase_outputs",
-                            "missing_outputs": missing_outputs,
-                        },
+                        "state_updates": recovery_updates,
                     },
                     raw_output=result.raw_output,
                     duration_ms=result.duration_ms,
                     timed_out=result.timed_out,
                     cost_usd=result.cost_usd,
                 )
+                return ExecutorBlockedResult(
+                    reason="missing_phase_outputs",
+                    result=blocked_result,
+                )
+            elif node.id == "phase1-investigate":
+                spec_dir = self._canonical_spec_dir(state)
+                inventory_error = (
+                    _validate_evidence_inventory(
+                        spec_dir / "evidence-inventory.json",
+                        required_seed_locators=_reference_url_seeds(state),
+                    )
+                    if spec_dir is not None
+                    else "spec_dir is unavailable"
+                )
+                if inventory_error:
+                    recovery_state_updates = dict(result.state_updates)
+                    blocked_result = SquadAgentResult(
+                        exit_code=0,
+                        echelon_result={
+                            "verdict": "BLOCKED",
+                            "state_updates": {
+                                "blocked_reason": "invalid_evidence_inventory",
+                                "invalid_outputs": [{
+                                    "path": "evidence-inventory.json",
+                                    "reason": inventory_error,
+                                }],
+                                "recovery_state_updates": recovery_state_updates,
+                            },
+                        },
+                        raw_output=result.raw_output,
+                        duration_ms=result.duration_ms,
+                        timed_out=result.timed_out,
+                        cost_usd=result.cost_usd,
+                    )
+                    return ExecutorBlockedResult(
+                        reason="invalid_evidence_inventory",
+                        result=blocked_result,
+                    )
         return result
+
+    def _quarantine_invalid_recovery_outputs(
+        self,
+        node: "PhaseNode",
+        state: dict,
+        state_store: "SquadStateStore",
+    ) -> None:
+        """Move rejected outputs aside so an agent cannot mistake them for evidence."""
+        recovery = state.get("phase_output_recovery")
+        if not isinstance(recovery, dict) or recovery.get("phase") != node.id:
+            return
+        invalid = recovery.get("invalid_outputs")
+        if not isinstance(invalid, list) or not invalid:
+            return
+        spec_dir = self._canonical_spec_dir(state)
+        if spec_dir is None:
+            return
+        quarantined: list[str] = []
+        for item in invalid:
+            if not isinstance(item, dict):
+                continue
+            relative = str(item.get("path") or "").strip()
+            candidate = spec_dir / relative
+            if not relative or candidate.parent != spec_dir or not candidate.is_file():
+                continue
+            archived = candidate.with_name(f"{candidate.stem}.invalid{candidate.suffix}")
+            index = 1
+            while archived.exists():
+                archived = candidate.with_name(
+                    f"{candidate.stem}.invalid-{index}{candidate.suffix}"
+                )
+                index += 1
+            candidate.replace(archived)
+            quarantined.append(archived.name)
+        if quarantined:
+            refreshed = state_store.load()
+            refreshed_recovery = refreshed.get("phase_output_recovery")
+            if isinstance(refreshed_recovery, dict):
+                refreshed_recovery["quarantined_invalid_outputs"] = quarantined
+                refreshed["phase_output_recovery"] = refreshed_recovery
+                state_store.save(refreshed)
 
 
 class CommanderInternalExecutor(PhaseExecutor):
@@ -1383,7 +2057,7 @@ class DeterministicUnderstandingExecutor(PhaseExecutor):
 
     def execute(
         self, node: "PhaseNode", state_store: "SquadStateStore"
-    ) -> "SquadAgentResult":
+    ) -> "SquadAgentResult | ExecutorBlockedResult":
         from harness.config import get_full_resolved_config
         from harness.squad_provider import SquadAgentResult
 
@@ -1479,24 +2153,12 @@ class DeterministicLexiconExecutor(PhaseExecutor):
             fallback_config_path=self._ext_dir / "echelon-config.yml",
         )
         if artifact == "spec":
-            if "lexicon_warning_waiver" in state:
-                state.pop("lexicon_warning_waiver")
-                state_store.save(state)
             gate = run_spec_lexicon_gate(
                 project_root=self._project_root,
                 spec_dir_ref=str(state.get("spec_dir") or ""),
                 config=config,
                 previous_attempts=state.get("lexicon_attempts", 0),
             )
-            if gate.evaluation == "pending":
-                stale = state_store.load()
-                changed = False
-                for key in ("lexicon_pass", "lexicon_findings", "lexicon_report"):
-                    if key in stale:
-                        stale.pop(key)
-                        changed = True
-                if changed:
-                    state_store.save(stale)
             updates = gate.state_updates()
             marker = (
                 "✓" if gate.passed is True else "~" if gate.passed is None else "✗"
@@ -1533,6 +2195,110 @@ class DeterministicLexiconExecutor(PhaseExecutor):
             duration_ms=0,
             timed_out=False,
         )
+
+
+class DeterministicStructuralExecutor(PhaseExecutor):
+    """Certify one governance artifact without invoking an AI provider."""
+
+    def __init__(
+        self,
+        phase_graph: "PhaseGraph",
+        ext_dir: Path,
+        project_root: Path,
+        squad_dir: Optional[Path] = None,
+    ) -> None:
+        self._graph = phase_graph
+        self._ext_dir = ext_dir
+        self._project_root = project_root
+        self._squad_dir = squad_dir
+
+    def execute(
+        self, node: "PhaseNode", state_store: "SquadStateStore"
+    ) -> "SquadAgentResult":
+        from harness.config import get_full_resolved_config
+        from harness.squad_provider import SquadAgentResult
+
+        artifact = str(getattr(node, "structural_artifact", "") or "")
+        prefixes = {
+            "feasibility": (
+                "feasibility_verdict",
+                "feasibility_structural_attempts",
+            ),
+            "intent-alignment-check": (
+                "intent_alignment_verdict",
+                "intent_alignment_check_structural_attempts",
+            ),
+        }
+        state = state_store.load()
+        if artifact not in prefixes:
+            gate = GovernanceStructuralGateResult(
+                artifact_key=artifact,
+                action="block",
+                passed=False,
+                attempts=0,
+                findings=0,
+                report_path=None,
+                exhausted_artifact=None,
+                blocked_reason="governance_structural_artifact_unknown",
+                detail=f"unsupported structural artifact for {node.id}",
+            )
+            updates: dict[str, object] = {"structural_action": "block"}
+        else:
+            verdict_key, attempts_key = prefixes[artifact]
+            if state.get(verdict_key) is None:
+                gate = GovernanceStructuralGateResult(
+                    artifact_key=artifact,
+                    action="block",
+                    passed=False,
+                    attempts=_normalized_attempts(state.get(attempts_key)),
+                    findings=0,
+                    report_path=None,
+                    exhausted_artifact=None,
+                    blocked_reason=(
+                        "governance_structural_authoring_verdict_missing"
+                    ),
+                    detail=f"run the owner phase before {node.id}",
+                )
+            else:
+                spec_ref = str(state.get("spec_dir") or "").strip()
+                spec_dir = Path(spec_ref) if spec_ref else None
+                if spec_dir is not None and not spec_dir.is_absolute():
+                    spec_dir = self._project_root / spec_dir
+                gate = run_governance_structural_gate(
+                    artifact_key=artifact,
+                    spec_dir=spec_dir,
+                    extension_root=self._ext_dir,
+                    governance_config=get_full_resolved_config(
+                        self._project_root,
+                        fallback_config_path=(
+                            self._ext_dir / "echelon-config.yml"
+                        ),
+                    ),
+                    previous_attempts=state.get(attempts_key, 0),
+                    iteration=state.get("iteration", 0),
+                    max_iterations=state.get("max_iterations", 0),
+                )
+            updates = gate.state_updates()
+        verdict = {
+            "proceed": "PASS",
+            "repair": "REPAIR",
+            "proceed_with_warning": "WARN",
+            "block": "FAIL",
+        }[gate.action]
+        return SquadAgentResult(
+            exit_code=0,
+            echelon_result={"verdict": verdict, "state_updates": updates},
+            raw_output=str(gate.report_path or gate.detail),
+            duration_ms=0,
+            timed_out=False,
+        )
+
+
+def _normalized_attempts(value: object) -> int:
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
 
 
 class StagedParallelExecutor(PhaseExecutor):
@@ -1648,7 +2414,7 @@ class StagedParallelExecutor(PhaseExecutor):
 
     def execute(
         self, node: "PhaseNode", state_store: "SquadStateStore"
-    ) -> "SquadAgentResult":
+    ) -> "SquadAgentResult | ExecutorBlockedResult":
         from harness.squad_provider import SquadAgentResult
 
         stage1_agents = [a for a in node.agents if a.get("stage", 1) == 1]
@@ -1687,6 +2453,7 @@ class StagedParallelExecutor(PhaseExecutor):
                     node,
                     future.result(),
                     result_contract=result_contract,
+                    direct_state_write=True,
                 )
                 if result.blocked:
                     return result
@@ -1699,7 +2466,11 @@ class StagedParallelExecutor(PhaseExecutor):
             self._write_journal_entries(result, node.id)
             state_store.increment_cost(result.cost_usd)
             state = state_store.load()
-            state[f"{label.lower().replace(' ', '_')}_verdict"] = result.verdict
+            verdict_state_key = _STAGED_VERDICT_STATE_KEYS.get(
+                label.strip().upper()
+            )
+            if verdict_state_key is not None:
+                state[verdict_state_key] = result.verdict
             for k, v in result.state_updates.items():
                 state[k] = v
             state_store.save(state)
@@ -1721,19 +2492,22 @@ class StagedParallelExecutor(PhaseExecutor):
                 if impl_report_path is not None
                 else Path(spec_dir_ref or "{spec_dir}") / "implementability-report.md"
             )
-            return SquadAgentResult(
-                exit_code=0,
-                echelon_result={
-                    "verdict": "BLOCKED",
-                    "state_updates": {
-                        "blocked_reason": "missing_consensus_prerequisite",
-                        "missing_outputs": [str(expected)],
+            return ExecutorBlockedResult(
+                reason="missing_consensus_prerequisite",
+                result=SquadAgentResult(
+                    exit_code=0,
+                    echelon_result={
+                        "verdict": "BLOCKED",
+                        "state_updates": {
+                            "blocked_reason": "missing_consensus_prerequisite",
+                            "missing_outputs": [str(expected)],
+                        },
+                        "journal_entries": [],
                     },
-                    "journal_entries": [],
-                },
-                raw_output=f"required PLAN2 input is missing: {expected}",
-                duration_ms=0,
-                timed_out=False,
+                    raw_output=f"required PLAN2 input is missing: {expected}",
+                    duration_ms=0,
+                    timed_out=False,
+                ),
             )
 
         state = state_store.load()
@@ -1754,6 +2528,7 @@ class StagedParallelExecutor(PhaseExecutor):
                 node,
                 stage2_result,
                 result_contract=result_contract,
+                direct_state_write=True,
             )
             if stage2_result.blocked:
                 return stage2_result
@@ -1826,6 +2601,7 @@ class ConditionalSequentialExecutor(PhaseExecutor):
                         node,
                         result,
                         result_contract=result_contract,
+                        direct_state_write=True,
                     )
                     if result.blocked:
                         return result
@@ -1838,60 +2614,6 @@ class ConditionalSequentialExecutor(PhaseExecutor):
         return SquadAgentResult(
             exit_code=0,
             echelon_result={"verdict": "DONE", "state_updates": {}},
-            raw_output="",
-            duration_ms=0,
-            timed_out=False,
-        )
-
-
-class HumanGateExecutor(PhaseExecutor):
-    """Handles type: human_gate — auto-proceed in semi/banzai; prompt in guided."""
-
-    def execute(
-        self, node: "PhaseNode", state_store: "SquadStateStore"
-    ) -> "SquadAgentResult":
-        from harness.squad_provider import SquadAgentResult
-        state = state_store.load()
-        autonomy = state.get("autonomy_mode", "semi")
-
-        if autonomy in ("semi", "banzai"):
-            print(f"[checkpoint] {node.label} — auto-proceeding ({autonomy} mode)")
-            return SquadAgentResult(
-                exit_code=0,
-                echelon_result={
-                    "verdict": "APPROVED",
-                    "state_updates": {"gate_result": "auto_approved"},
-                },
-                raw_output="",
-                duration_ms=0,
-                timed_out=False,
-            )
-
-        # guided: prompt user
-        from echelon.ui import banner as _banner
-        spec_dir = state.get("spec_dir", "specs/")
-        _banner(
-            "SQUAD — CHECKPOINT",
-            [
-                ("phase", node.label),
-                ("review artifacts in", spec_dir),
-                ("type", "'approve' to continue, 'reject' to stop"),
-            ],
-        )
-        try:
-            answer = input("> ").strip().lower()
-        except EOFError:
-            answer = "approve"
-
-        approved = answer in ("approve", "yes", "y")
-        return SquadAgentResult(
-            exit_code=0,
-            echelon_result={
-                "verdict": "APPROVED" if approved else "REJECTED",
-                "state_updates": {
-                    "gate_result": "human_approved" if approved else "human_rejected"
-                },
-            },
             raw_output="",
             duration_ms=0,
             timed_out=False,

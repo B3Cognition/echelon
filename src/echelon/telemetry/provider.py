@@ -92,11 +92,22 @@ class InstrumentedProvider:
         try:
             result = self._provider.exec_agent(project_root, prompt, **kwargs)
             if self._usage_recorder is not None:
-                self._usage_recorder(result)
+                try:
+                    self._usage_recorder(result)
+                except Exception:
+                    logger.warning(
+                        "Could not record provider usage for workflow=%s phase=%s",
+                        self._store.workflow,
+                        context.phase,
+                    )
+            timed_out = _raw_result_field(result, "timed_out")
+            exit_code = _raw_result_field(result, "exit_code")
             status = (
                 "ERROR"
-                if bool(getattr(result, "timed_out", False))
-                or int(getattr(result, "exit_code", 0) or 0) != 0
+                if type(timed_out) is not bool
+                or timed_out
+                or type(exit_code) is not int
+                or exit_code != 0
                 else "OK"
             )
             return result
@@ -120,22 +131,66 @@ class InstrumentedProvider:
                 )
                 self._store.append_event({
                     "schema_version": 1, "type": "dispatch", "trace_id": self._store.trace_id,
-                    "phase": context.phase, "agent": context.agent, "attempt": context.attempt,
-                    "reason": context.reason, "outcome": status, "event_time": _timestamp(ended),
-                    "started_at": _timestamp(started), "ended_at": _timestamp(ended),
-                    "duration_ms": duration_ms, "model": str(getattr(result, "model_name", "") or ""),
-                    "blocker": _blocker(result),
-                })
-                if bool(getattr(result, "echelon_result_repair_attempted", False)):
+                        "phase": context.phase, "agent": context.agent, "attempt": context.attempt,
+                        "reason": context.reason, "outcome": status, "event_time": _timestamp(ended),
+                        "started_at": _timestamp(started), "ended_at": _timestamp(ended),
+                        "duration_ms": duration_ms,
+                        "model": _exact_text(
+                            _raw_result_field(result, "model_name")
+                        ),
+                        "blocker": _blocker(result),
+                    })
+                if (
+                    _raw_result_field(
+                        result,
+                        "echelon_result_repair_attempted",
+                    )
+                    is True
+                ):
+                    repair_outcome = _exact_text(
+                        _raw_result_field(
+                            result,
+                            "echelon_result_repair_outcome",
+                        )
+                    )
+                    repair_started_at = _exact_text(
+                        _raw_result_field(
+                            result,
+                            "echelon_result_repair_started_at",
+                        )
+                    )
+                    repair_ended_at = _exact_text(
+                        _raw_result_field(
+                            result,
+                            "echelon_result_repair_ended_at",
+                        )
+                    )
+                    repair_duration = _raw_result_field(
+                        result,
+                        "echelon_result_repair_duration_ms",
+                    )
+                    repair_model = _exact_text(
+                        _raw_result_field(
+                            result,
+                            "echelon_result_repair_model_name",
+                        )
+                    )
                     self._store.append_event({
                         "schema_version": 1, "type": "dispatch", "trace_id": self._store.trace_id,
                         "phase": context.phase, "agent": context.agent, "attempt": context.attempt + 1,
-                        "reason": "provider_retry", "outcome": str(getattr(result, "echelon_result_repair_outcome", "ERROR") or "ERROR"),
-                        "event_time": str(getattr(result, "echelon_result_repair_ended_at", "") or _timestamp(ended)),
-                        "started_at": str(getattr(result, "echelon_result_repair_started_at", "") or _timestamp(ended)),
-                        "ended_at": str(getattr(result, "echelon_result_repair_ended_at", "") or _timestamp(ended)),
-                        "duration_ms": int(getattr(result, "echelon_result_repair_duration_ms", 0) or 0),
-                        "model": str(getattr(result, "echelon_result_repair_model_name", "") or ""), "blocker": "",
+                        "reason": "provider_retry",
+                        "outcome": repair_outcome or "ERROR",
+                        "event_time": repair_ended_at or _timestamp(ended),
+                        "started_at": repair_started_at or _timestamp(ended),
+                        "ended_at": repair_ended_at or _timestamp(ended),
+                        "duration_ms": (
+                            repair_duration
+                            if type(repair_duration) is int
+                            and repair_duration >= 0
+                            else 0
+                        ),
+                        "model": repair_model,
+                        "blocker": "",
                     })
             except Exception:
                 logger.warning(
@@ -146,19 +201,48 @@ class InstrumentedProvider:
                 )
 
 
+def _raw_result_field(
+    result: object | None,
+    name: str,
+    default: object = None,
+) -> object:
+    """Read one stored result field without invoking producer protocols."""
+    from harness.squad_provider import SquadAgentResult
+
+    if type(result) is not SquadAgentResult:
+        return default
+    try:
+        return object.__getattribute__(result, name)
+    except Exception:
+        return default
+
+
+def _exact_text(value: object) -> str:
+    return value if type(value) is str else ""
+
+
 def _token_usage(result: object | None) -> TokenUsage:
     if result is None:
         return TokenUsage.unknown()
-    details = getattr(result, "token_usage_details", None)
-    values = dict(details) if isinstance(details, dict) else {}
-    total = getattr(result, "token_usage", 0)
+    details = _raw_result_field(result, "token_usage_details")
+    values = (
+        {
+            key: value
+            for key, value in dict.items(details)
+            if type(key) is str
+            and type(value) is int
+            and value >= 0
+        }
+        if type(details) is dict
+        else {}
+    )
+    total = _raw_result_field(result, "token_usage")
     if (
         "total_tokens" not in values
-        and isinstance(total, (int, float))
-        and not isinstance(total, bool)
-        and int(total) > 0
+        and type(total) is int
+        and total > 0
     ):
-        values["total_tokens"] = int(total)
+        values["total_tokens"] = total
     return TokenUsage.from_mapping(values)
 
 
@@ -175,30 +259,53 @@ def _attributes(
         "echelon.dispatch.kind": context.kind,
         "echelon.dispatch.attempt": context.attempt,
         "echelon.dispatch.reason": context.reason,
-        "echelon.result.verdict": str(getattr(result, "verdict", None) or "UNKNOWN"),
+        "echelon.result.verdict": _result_verdict(result),
         "gen_ai.operation.name": "agent",
     }
-    provider = getattr(result, "provider_name", "")
-    model = getattr(result, "model_name", "")
+    provider = _exact_text(_raw_result_field(result, "provider_name"))
+    model = _exact_text(_raw_result_field(result, "model_name"))
     if provider:
-        attributes["gen_ai.provider.name"] = str(provider)
+        attributes["gen_ai.provider.name"] = provider
     if model:
-        attributes["gen_ai.response.model"] = str(model)
+        attributes["gen_ai.response.model"] = model
     if result is not None:
-        attributes["echelon.result.repair_attempted"] = bool(
-            getattr(result, "echelon_result_repair_attempted", False)
+        attributes["echelon.result.repair_attempted"] = (
+            _raw_result_field(
+                result,
+                "echelon_result_repair_attempted",
+            )
+            is True
         )
-        attributes["echelon.result.repair_succeeded"] = bool(
-            getattr(result, "echelon_result_repair_succeeded", False)
+        attributes["echelon.result.repair_succeeded"] = (
+            _raw_result_field(
+                result,
+                "echelon_result_repair_succeeded",
+            )
+            is True
         )
     return attributes
 
 
+def _result_verdict(result: object | None) -> str:
+    payload = _raw_result_field(result, "echelon_result")
+    if type(payload) is not dict:
+        return "UNKNOWN"
+    verdict = dict.get(payload, "verdict")
+    return verdict if type(verdict) is str and verdict else "UNKNOWN"
+
+
 def _blocker(result: object | None) -> str:
-    updates = getattr(result, "state_updates", {})
-    if isinstance(updates, dict):
-        value = updates.get("blocked_reason")
-        if isinstance(value, str) and value:
+    payload = _raw_result_field(result, "echelon_result")
+    if type(payload) is dict:
+        updates = dict.get(payload, "state_updates")
+        if type(updates) is dict:
+            value = dict.get(updates, "blocked_reason")
+            if type(value) is str and value:
+                return value
+    quarantined = _raw_result_field(result, "quarantined_state_updates")
+    if type(quarantined) is dict:
+        value = dict.get(quarantined, "blocked_reason")
+        if type(value) is str and value:
             return value
     return ""
 

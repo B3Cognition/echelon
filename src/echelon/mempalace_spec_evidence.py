@@ -1,0 +1,713 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+import hashlib
+import json
+from pathlib import Path
+import shutil
+from typing import Any
+
+from echelon.context_metadata import artifact_hash
+from echelon.mempalace_requirements import (
+    SpecMemoryError,
+    _read_int,
+    _read_mempalace_wing,
+    _read_str_list,
+    resolve_spec_dir,
+)
+from echelon.mempalace_memory_audit import audit_artifact_memory
+from harness.spec_frontmatter import read_frontmatter
+
+
+@dataclass(frozen=True)
+class SpecEvidenceArtifactSnapshot:
+    spec_id: str
+    spec_dir: Path
+    artifact_file: Path
+    content: bytes
+    source: str
+    artifact_metadata: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class SpecEvidenceMemoryMineReport:
+    schema_version: int
+    spec_id: str
+    spec_dir: str
+    wing: str | None
+    palace_path: str | None
+    status: str
+    artifact_count: int
+    expected_count: int
+    written_count: int
+    adopted_count: int
+    skipped_count: int
+    failed_count: int
+    drifted_count: int
+    unavailable_count: int = 0
+    drawer_ids: list[str] = field(default_factory=list)
+    expected_drawer_ids: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "spec_id": self.spec_id,
+            "spec_dir": self.spec_dir,
+            "wing": self.wing,
+            "palace_path": self.palace_path,
+            "status": self.status,
+            "artifact_count": self.artifact_count,
+            "expected_count": self.expected_count,
+            "written_count": self.written_count,
+            "adopted_count": self.adopted_count,
+            "skipped_count": self.skipped_count,
+            "failed_count": self.failed_count,
+            "drifted_count": self.drifted_count,
+            "unavailable_count": self.unavailable_count,
+            "drawer_ids": list(self.drawer_ids),
+            "expected_drawer_ids": list(self.expected_drawer_ids),
+            "errors": list(self.errors),
+        }
+
+
+@dataclass(frozen=True)
+class SpecEvidenceMemoryAuditReport:
+    schema_version: int
+    spec_id: str
+    spec_dir: str
+    wing: str | None
+    palace_path: str | None
+    status: str
+    artifact_count: int
+    expected_count: int
+    present_current_count: int
+    missing: list[str] = field(default_factory=list)
+    stale: list[str] = field(default_factory=list)
+    wrong_wing: list[str] = field(default_factory=list)
+    wrong_room: list[str] = field(default_factory=list)
+    non_canonical: list[str] = field(default_factory=list)
+    lifecycle_excluded: list[str] = field(default_factory=list)
+    duplicate: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+    recommendations: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "spec_id": self.spec_id,
+            "spec_dir": self.spec_dir,
+            "wing": self.wing,
+            "palace_path": self.palace_path,
+            "status": self.status,
+            "artifact_count": self.artifact_count,
+            "expected_count": self.expected_count,
+            "present_current_count": self.present_current_count,
+            "missing": list(self.missing),
+            "stale": list(self.stale),
+            "wrong_wing": list(self.wrong_wing),
+            "wrong_room": list(self.wrong_room),
+            "non_canonical": list(self.non_canonical),
+            "lifecycle_excluded": list(self.lifecycle_excluded),
+            "duplicate": list(self.duplicate),
+            "errors": list(self.errors),
+            "recommendations": list(self.recommendations),
+        }
+
+
+@dataclass(frozen=True)
+class SpecEvidencePublishReport:
+    schema_version: int
+    spec_id: str
+    spec_dir: str
+    evidence_dir: str
+    source_run_dir: str | None
+    status: str
+    published_count: int
+    skipped_count: int
+    artifact_paths: list[str] = field(default_factory=list)
+    manifest_path: str | None = None
+    errors: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "spec_id": self.spec_id,
+            "spec_dir": self.spec_dir,
+            "evidence_dir": self.evidence_dir,
+            "source_run_dir": self.source_run_dir,
+            "status": self.status,
+            "published_count": self.published_count,
+            "skipped_count": self.skipped_count,
+            "artifact_paths": list(self.artifact_paths),
+            "manifest_path": self.manifest_path,
+            "errors": list(self.errors),
+        }
+
+
+@dataclass(frozen=True)
+class SpecEvidencePublishAllReport:
+    schema_version: int
+    status: str
+    total_count: int
+    published_count: int
+    failed_count: int
+    reports: list[SpecEvidencePublishReport] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "status": self.status,
+            "total_count": self.total_count,
+            "published_count": self.published_count,
+            "failed_count": self.failed_count,
+            "reports": [report.to_dict() for report in self.reports],
+            "errors": list(self.errors),
+        }
+
+
+CANONICAL_SPEC_EVIDENCE_ARTIFACTS = {
+    "docs-verification-report.md",
+    "documentation-impact-report.md",
+    "evidence-grades.md",
+    "evidence-inventory.json",
+    "evidence-resolution.md",
+    "fulfillment-report.md",
+    "implementability-report.md",
+    "plan-conformance.json",
+    "plan-conformance.md",
+    "verified-fulfillment-ledger.json",
+}
+
+PUBLISHED_EVIDENCE_DIR = "evidence"
+
+PUBLISHED_VERIFY_EVIDENCE_ARTIFACTS = (
+    "canonical-requirements.json",
+    "canonical-requirements.md",
+    "requirement-audit.md",
+    "implementation-map.md",
+    "codegraph-evidence-map.json",
+    "codegraph-evidence-map.md",
+    "judgment-prepass.json",
+    "judgment-prepass.md",
+    "progress-integrity.json",
+    "progress-integrity.md",
+)
+
+
+def _require_landed_spec(spec_dir: Path, *, allow_unlanded: bool) -> None:
+    if allow_unlanded:
+        return
+    status = str(read_frontmatter(spec_dir).get("status") or "").strip().lower()
+    if status != "landed":
+        raise SpecMemoryError(
+            f"spec evidence requires landed spec: {spec_dir.name} "
+            f"(status={status or 'missing'})"
+        )
+
+
+def _room_for_evidence_artifact(name: str) -> str:
+    if name in {
+        "fulfillment-report.md",
+        "verified-fulfillment-ledger.json",
+        "fulfillment-report.fallback.md",
+    }:
+        return "spec-fulfillment-evidence"
+    if name in {"implementation-map.md", "codegraph-evidence-map.md"}:
+        return "spec-implementation-evidence"
+    if name.startswith("docs-") or name.startswith("documentation-"):
+        return "spec-documentation-evidence"
+    if name in {
+        "judgment-prepass.json",
+        "judgment-prepass.md",
+        "progress-integrity.json",
+        "progress-integrity.md",
+        "requirement-audit.md",
+    }:
+        return "spec-verification-evidence"
+    return "spec-evidence-context"
+
+
+def _snapshot_for_artifact(
+    project_root: Path,
+    spec_dir: Path,
+    artifact: Path,
+) -> SpecEvidenceArtifactSnapshot:
+    spec_id = spec_dir.name
+    source = artifact.resolve().relative_to(project_root.resolve()).as_posix()
+    digest = artifact_hash(artifact)
+    return SpecEvidenceArtifactSnapshot(
+        spec_id=spec_id,
+        spec_dir=spec_dir,
+        artifact_file=artifact,
+        content=artifact.read_bytes(),
+        source=source,
+        artifact_metadata={
+            "scope": "spec-evidence",
+            "canonical": True,
+            "artifact_kind": "spec-evidence",
+            "artifact_path": source,
+            "artifact_hash": digest,
+            "source_file": source,
+            "lifecycle_status": "active",
+            "provenance_type": "spec_evidence_mine",
+            "added_by": "echelon",
+            "phase": "VERIFY",
+            "room": _room_for_evidence_artifact(artifact.name),
+            "spec_id": spec_id,
+        },
+    )
+
+
+def load_spec_evidence_artifact_snapshots(
+    project_root: Path,
+    spec_selector: str | Path,
+    *,
+    allow_unlanded: bool = False,
+) -> list[SpecEvidenceArtifactSnapshot]:
+    root = project_root.resolve()
+    spec_dir = resolve_spec_dir(root, spec_selector)
+    _require_landed_spec(spec_dir, allow_unlanded=allow_unlanded)
+    artifacts: list[Path] = []
+    for name in sorted(CANONICAL_SPEC_EVIDENCE_ARTIFACTS):
+        artifact = spec_dir / name
+        if artifact.is_file():
+            artifacts.append(artifact)
+    evidence_dir = spec_dir / PUBLISHED_EVIDENCE_DIR
+    if evidence_dir.is_dir():
+        for artifact in sorted(evidence_dir.iterdir()):
+            if artifact.is_file() and artifact.name in {
+                *PUBLISHED_VERIFY_EVIDENCE_ARTIFACTS,
+                "manifest.json",
+            }:
+                artifacts.append(artifact)
+    return [_snapshot_for_artifact(root, spec_dir, artifact) for artifact in sorted(artifacts)]
+
+
+def publish_spec_evidence_package(
+    project_root: Path,
+    spec_selector: str | Path,
+    *,
+    run_id: str | None = None,
+    allow_unlanded: bool = False,
+) -> SpecEvidencePublishReport:
+    root = project_root.resolve()
+    spec_dir = resolve_spec_dir(root, spec_selector)
+    _require_landed_spec(spec_dir, allow_unlanded=allow_unlanded)
+    source_run_dir = _resolve_verify_evidence_run_dir(root, spec_dir.name, run_id)
+    evidence_dir = spec_dir / PUBLISHED_EVIDENCE_DIR
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    copied: list[str] = []
+    skipped = 0
+    entries: list[dict[str, Any]] = []
+    for name in PUBLISHED_VERIFY_EVIDENCE_ARTIFACTS:
+        source = source_run_dir / name
+        if not source.is_file():
+            skipped += 1
+            continue
+        target = evidence_dir / name
+        shutil.copy2(source, target)
+        relative_target = target.relative_to(root).as_posix()
+        copied.append(relative_target)
+        entries.append(
+            {
+                "path": relative_target,
+                "source": source.relative_to(root).as_posix(),
+                "sha256": _file_sha256(target),
+            }
+        )
+    manifest_path = evidence_dir / "manifest.json"
+    manifest = {
+        "schema_version": 1,
+        "spec_id": spec_dir.name,
+        "source_run_dir": source_run_dir.relative_to(root).as_posix(),
+        "artifacts": entries,
+    }
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return SpecEvidencePublishReport(
+        schema_version=1,
+        spec_id=spec_dir.name,
+        spec_dir=str(spec_dir),
+        evidence_dir=str(evidence_dir),
+        source_run_dir=str(source_run_dir),
+        status="published" if copied else "empty",
+        published_count=len(copied),
+        skipped_count=skipped,
+        artifact_paths=copied,
+        manifest_path=str(manifest_path),
+    )
+
+
+def publish_all_spec_evidence_packages(
+    project_root: Path,
+    *,
+    allow_unlanded: bool = False,
+) -> SpecEvidencePublishAllReport:
+    root = project_root.resolve()
+    specs_root = root / "specs"
+    reports: list[SpecEvidencePublishReport] = []
+    errors: list[str] = []
+    if not specs_root.is_dir():
+        return SpecEvidencePublishAllReport(
+            schema_version=1,
+            status="empty",
+            total_count=0,
+            published_count=0,
+            failed_count=0,
+        )
+    spec_dirs = [
+        path
+        for path in sorted(specs_root.iterdir())
+        if path.is_dir() and (path / "spec.md").is_file()
+    ]
+    for spec_dir in spec_dirs:
+        try:
+            reports.append(
+                publish_spec_evidence_package(
+                    root,
+                    spec_dir.name,
+                    allow_unlanded=allow_unlanded,
+                )
+            )
+        except SpecMemoryError as exc:
+            errors.append(f"{spec_dir.name}:{exc}")
+    failed = len(errors)
+    published = sum(1 for report in reports if report.status == "published")
+    status = "complete"
+    if failed:
+        status = "partial" if reports else "fail"
+    elif not reports:
+        status = "empty"
+    return SpecEvidencePublishAllReport(
+        schema_version=1,
+        status=status,
+        total_count=len(spec_dirs),
+        published_count=published,
+        failed_count=failed,
+        reports=reports,
+        errors=errors,
+    )
+
+
+def _resolve_verify_evidence_run_dir(
+    project_root: Path,
+    spec_id: str,
+    run_id: str | None,
+) -> Path:
+    if run_id:
+        direct = project_root / "runs" / run_id
+        nested = direct / "verify-spec" / spec_id
+        candidates = [nested, direct]
+    else:
+        runs = project_root / "runs"
+        candidates = []
+        if runs.is_dir():
+            candidates.extend(runs.glob(f"verify-spec-{spec_id}-*"))
+            candidates.extend(runs.glob(f"*/verify-spec/{spec_id}"))
+    complete = [
+        path
+        for path in candidates
+        if path.is_dir()
+        and (path / "state.json").is_file()
+        and any((path / name).is_file() for name in PUBLISHED_VERIFY_EVIDENCE_ARTIFACTS)
+    ]
+    if not complete:
+        raise SpecMemoryError(
+            f"published verify evidence source not found for spec: {spec_id}"
+        )
+    return sorted(
+        complete,
+        key=lambda path: max(
+            (path / name).stat().st_mtime
+            for name in PUBLISHED_VERIFY_EVIDENCE_ARTIFACTS
+            if (path / name).is_file()
+        ),
+    )[-1]
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+class SpecEvidenceMemoryAdapter:
+    def __init__(self, project_root: Path, run_id: str) -> None:
+        from codegen.memory.context import MemPalaceContext
+        from echelon.spec_memory_miner import SpecMemoryMiner
+
+        wing = _read_mempalace_wing(project_root)
+        self.context = MemPalaceContext.from_wing(wing, run_id=run_id)
+        self.miner = SpecMemoryMiner(self.context, project_dir=project_root)
+        self.wing = self.context.wing
+        self.palace_path = self.context.palace_path
+
+    def mine_spec_evidence_artifact_bytes(
+        self,
+        content: bytes,
+        *,
+        source: str,
+        artifact_metadata: dict[str, Any],
+    ) -> object:
+        return self.miner.mine_spec_evidence_artifact_bytes(
+            content,
+            source=source,
+            artifact_metadata=artifact_metadata,
+        )
+
+    def plan_spec_evidence_artifact_rows(
+        self,
+        content: bytes,
+        *,
+        source: str,
+        artifact_metadata: dict[str, Any],
+    ) -> list[object]:
+        return self.miner.plan_spec_evidence_artifact_rows(
+            content,
+            source=source,
+            artifact_metadata=artifact_metadata,
+        )
+
+    def open_collection_read_only(self) -> object:
+        opener = getattr(self.miner, "open_collection_read_only", None)
+        if not callable(opener):
+            raise SpecMemoryError(
+                "installed MemPalace does not support read-only collection access"
+            )
+        return opener()
+
+
+def create_spec_evidence_memory_adapter(
+    project_root: Path,
+    run_id: str,
+) -> SpecEvidenceMemoryAdapter:
+    return SpecEvidenceMemoryAdapter(project_root, run_id)
+
+
+def audit_spec_evidence_memory(
+    project_root: Path,
+    spec_selector: str | Path,
+    *,
+    allow_unlanded: bool = False,
+) -> SpecEvidenceMemoryAuditReport:
+    spec_dir = resolve_spec_dir(project_root, spec_selector)
+    snapshots = load_spec_evidence_artifact_snapshots(
+        project_root,
+        spec_selector,
+        allow_unlanded=allow_unlanded,
+    )
+    try:
+        adapter = create_spec_evidence_memory_adapter(project_root, run_id="audit")
+    except SpecMemoryError:
+        raise
+    except (Exception, SystemExit) as exc:
+        return SpecEvidenceMemoryAuditReport(
+            schema_version=1,
+            label="Spec Evidence",
+            root=str(spec_dir),
+            wing=None,
+            palace_path=None,
+            status="unavailable",
+            artifact_count=len(snapshots),
+            expected_count=0,
+            present_current_count=0,
+            errors=[type(exc).__name__],
+        )
+    generic = audit_artifact_memory(
+        label="Spec Evidence",
+        root=spec_dir,
+        snapshots=snapshots,
+        adapter=adapter,
+        artifact_kind="spec-evidence",
+        scope="spec-evidence",
+        spec_id=spec_dir.name,
+        planner_name="plan_spec_evidence_artifact_rows",
+    )
+    return SpecEvidenceMemoryAuditReport(
+        schema_version=generic.schema_version,
+        spec_id=spec_dir.name,
+        spec_dir=generic.root,
+        wing=generic.wing,
+        palace_path=generic.palace_path,
+        status=generic.status,
+        artifact_count=generic.artifact_count,
+        expected_count=generic.expected_count,
+        present_current_count=generic.present_current_count,
+        missing=generic.missing,
+        stale=generic.stale,
+        wrong_wing=generic.wrong_wing,
+        wrong_room=generic.wrong_room,
+        non_canonical=generic.non_canonical,
+        lifecycle_excluded=generic.lifecycle_excluded,
+        duplicate=generic.duplicate,
+        errors=generic.errors,
+        recommendations=generic.recommendations,
+    )
+
+
+def _cleanup_existing_spec_evidence_drawers(adapter: object, spec_id: str) -> list[str]:
+    try:
+        opener = getattr(adapter, "open_collection_read_only", None)
+        if not callable(opener):
+            return ["spec_evidence_cleanup_unavailable"]
+        collection = opener()
+        rows = collection.get(  # type: ignore[attr-defined]
+            where={"wing": {"$eq": getattr(adapter, "wing", "")}},
+            include=["metadatas"],
+        )
+        ids = rows.get("ids") if isinstance(rows, dict) else None
+        metadatas = rows.get("metadatas") if isinstance(rows, dict) else None
+        if not isinstance(ids, list) or not isinstance(metadatas, list):
+            return ["spec_evidence_cleanup_invalid_response"]
+        delete_ids = [
+            drawer_id
+            for drawer_id, metadata in zip(ids, metadatas)
+            if isinstance(drawer_id, str)
+            and isinstance(metadata, dict)
+            and metadata.get("artifact_kind") == "spec-evidence"
+            and metadata.get("spec_id") == spec_id
+            and metadata.get("wing") == getattr(adapter, "wing", "")
+        ]
+        if delete_ids:
+            collection.delete(ids=delete_ids)  # type: ignore[attr-defined]
+    except (Exception, SystemExit) as exc:
+        return [f"spec_evidence_cleanup_skipped:{type(exc).__name__}"]
+    return []
+
+
+def mine_spec_evidence_memory(
+    project_root: Path,
+    spec_selector: str | Path,
+    *,
+    run_id: str,
+    allow_unlanded: bool = False,
+) -> SpecEvidenceMemoryMineReport:
+    snapshots = load_spec_evidence_artifact_snapshots(
+        project_root,
+        spec_selector,
+        allow_unlanded=allow_unlanded,
+    )
+    spec_dir = resolve_spec_dir(project_root, spec_selector)
+    try:
+        adapter = create_spec_evidence_memory_adapter(project_root, run_id)
+    except SpecMemoryError:
+        raise
+    except (Exception, SystemExit) as exc:
+        return SpecEvidenceMemoryMineReport(
+            schema_version=1,
+            spec_id=spec_dir.name,
+            spec_dir=str(spec_dir),
+            wing=None,
+            palace_path=None,
+            status="unavailable",
+            artifact_count=len(snapshots),
+            expected_count=0,
+            written_count=0,
+            adopted_count=0,
+            skipped_count=0,
+            failed_count=0,
+            drifted_count=0,
+            errors=[type(exc).__name__],
+        )
+    cleanup_errors = _cleanup_existing_spec_evidence_drawers(adapter, spec_dir.name)
+    try:
+        results = [
+            adapter.mine_spec_evidence_artifact_bytes(
+                snapshot.content,
+                source=snapshot.source,
+                artifact_metadata=snapshot.artifact_metadata,
+            )
+            for snapshot in snapshots
+        ]
+    except ValueError as exc:
+        return SpecEvidenceMemoryMineReport(
+            schema_version=1,
+            spec_id=spec_dir.name,
+            spec_dir=str(spec_dir),
+            wing=str(getattr(adapter, "wing", "")) or None,
+            palace_path=str(getattr(adapter, "palace_path", "")) or None,
+            status="partial",
+            artifact_count=len(snapshots),
+            expected_count=0,
+            written_count=0,
+            adopted_count=0,
+            skipped_count=0,
+            failed_count=1,
+            drifted_count=0,
+            errors=[type(exc).__name__],
+        )
+    except (ImportError, OSError, RuntimeError, SpecMemoryError, SystemExit) as exc:
+        return SpecEvidenceMemoryMineReport(
+            schema_version=1,
+            spec_id=spec_dir.name,
+            spec_dir=str(spec_dir),
+            wing=str(getattr(adapter, "wing", "")) or None,
+            palace_path=str(getattr(adapter, "palace_path", "")) or None,
+            status="unavailable",
+            artifact_count=len(snapshots),
+            expected_count=0,
+            written_count=0,
+            adopted_count=0,
+            skipped_count=0,
+            failed_count=0,
+            drifted_count=0,
+            errors=[type(exc).__name__],
+        )
+    expected = sorted(
+        {
+            drawer_id
+            for item in results
+            for drawer_id in _read_str_list(item, "expected_drawer_ids")
+        }
+    )
+    drawer_ids = sorted(
+        {
+            drawer_id
+            for item in results
+            for drawer_id in _read_str_list(item, "drawer_ids")
+        }
+    )
+    written = sum(_read_int(item, "written") for item in results)
+    adopted = sum(_read_int(item, "already_present") for item in results)
+    skipped = sum(_read_int(item, "skipped") for item in results)
+    failed = sum(_read_int(item, "failed") for item in results)
+    drifted = sum(_read_int(item, "drifted") for item in results)
+    unavailable = sum(_read_int(item, "unavailable") for item in results)
+    status = "complete"
+    if unavailable:
+        status = "unavailable"
+    elif failed or drifted:
+        status = "partial"
+    return SpecEvidenceMemoryMineReport(
+        schema_version=1,
+        spec_id=spec_dir.name,
+        spec_dir=str(spec_dir),
+        wing=str(getattr(adapter, "wing", "")) or None,
+        palace_path=str(getattr(adapter, "palace_path", "")) or None,
+        status=status,
+        artifact_count=len(snapshots),
+        expected_count=len(expected),
+        written_count=written,
+        adopted_count=adopted,
+        skipped_count=skipped,
+        failed_count=failed,
+        drifted_count=drifted,
+        unavailable_count=unavailable,
+        drawer_ids=drawer_ids,
+        expected_drawer_ids=expected,
+        errors=[
+            *cleanup_errors,
+            *[
+                str(error)
+                for item in results
+                for error in getattr(item, "errors", [])
+                if isinstance(error, str)
+            ],
+        ],
+    )

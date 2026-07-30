@@ -43,6 +43,8 @@ def test_migration_plan_ignores_child_source_roots(tmp_path: Path) -> None:
         "/.echelon/runtime/",
         "/.echelon/cache/",
         "/.echelon/recovery-backups/",
+        ".DS_Store",
+        "node_modules/",
         "/sources/*",
         "!/sources/README.md",
     )
@@ -73,6 +75,8 @@ def test_migration_write_initializes_git_and_stages_only_workspace_files(
     assert "/.echelon/runtime/" in gitignore
     assert "/.echelon/cache/" in gitignore
     assert "/.echelon/recovery-backups/" in gitignore
+    assert ".DS_Store" in gitignore
+    assert "node_modules/" in gitignore
     assert "/sources/*" in gitignore
     assert "!/sources/README.md" in gitignore
     assert result.source_roots_scaffolded is True
@@ -223,7 +227,7 @@ def test_migration_untracks_legacy_runtime_state(tmp_path: Path) -> None:
 def test_existing_gitignore_runtime_entries_satisfy_runtime_ignore(tmp_path: Path) -> None:
     _write_workspace(tmp_path)
     (tmp_path / ".gitignore").write_text(
-        ".specify\nruns\n.claude\n.claude-work\n!/.echelon/\n!/.echelon/config.yml\n.echelon/local.yml\n.echelon/runtime\n.echelon/cache\n.echelon/recovery-backups\n/sources/*\n!/sources/README.md\n",
+        ".specify\nruns\n.claude\n.claude-work\n!/.echelon/\n!/.echelon/config.yml\n.echelon/local.yml\n.echelon/runtime\n.echelon/cache\n.echelon/recovery-backups\n.DS_Store\nnode_modules/\n/sources/*\n!/sources/README.md\n",
         encoding="utf-8",
     )
     subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
@@ -233,7 +237,7 @@ def test_existing_gitignore_runtime_entries_satisfy_runtime_ignore(tmp_path: Pat
     assert result.gitignore_updated is False
     assert result.staged_paths == ("sources/README.md", "re/.gitignore")
     assert (tmp_path / ".gitignore").read_text(encoding="utf-8") == (
-        ".specify\nruns\n.claude\n.claude-work\n!/.echelon/\n!/.echelon/config.yml\n.echelon/local.yml\n.echelon/runtime\n.echelon/cache\n.echelon/recovery-backups\n/sources/*\n!/sources/README.md\n"
+        ".specify\nruns\n.claude\n.claude-work\n!/.echelon/\n!/.echelon/config.yml\n.echelon/local.yml\n.echelon/runtime\n.echelon/cache\n.echelon/recovery-backups\n.DS_Store\nnode_modules/\n/sources/*\n!/sources/README.md\n"
     )
 
 

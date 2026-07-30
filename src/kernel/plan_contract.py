@@ -10,6 +10,7 @@ REQUIRED_SECTIONS = (
     "Summary",
     "Technical Context",
     "Architecture Decisions",
+    "Requirement Preservation",
     "Project Structure",
     "Implementation Phases",
     "Testing Strategy",

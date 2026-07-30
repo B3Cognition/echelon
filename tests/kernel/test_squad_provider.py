@@ -2,6 +2,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 EXT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(EXT_ROOT) not in sys.path:
     sys.path.insert(0, str(EXT_ROOT))
@@ -9,6 +11,7 @@ if str(EXT_ROOT) not in sys.path:
 from harness.squad_provider import (
     SquadAgentResult,
     _extract_echelon_result,
+    _extract_strict_echelon_result,
     _validate_or_block_echelon_result,
 )
 
@@ -95,6 +98,95 @@ echelon_result:
 """
         result = _extract_echelon_result(raw)
         assert result["verdict"] == "DONE"
+
+    def test_strict_extraction_accepts_one_bare_complete_envelope(self):
+        raw = """echelon_result:
+  verdict: DECISION_RESOLVED
+  state_updates: {}
+  journal_entries: []
+  decision:
+    selected_option_id: approve
+    answer_text: null
+    rationale: Best exact allowed option.
+    confidence: high
+"""
+
+        result = _extract_strict_echelon_result(raw)
+
+        assert result is not None
+        assert result["verdict"] == "DECISION_RESOLVED"
+        assert result["decision"]["selected_option_id"] == "approve"
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            (
+                "echelon_result:\n"
+                "  verdict: DECISION_RESOLVED\n"
+                "  state_updates: {}\n"
+                "  journal_entries: []\n"
+                "  decision:\n"
+                "    selected_option_id: reject\n"
+                "    answer_text: null\n"
+                "    rationale: First answer.\n"
+                "    confidence: low\n\n"
+                "echelon_result:\n"
+                "  verdict: DECISION_RESOLVED\n"
+                "  state_updates: {}\n"
+                "  journal_entries: []\n"
+                "  decision:\n"
+                "    selected_option_id: approve\n"
+                "    answer_text: null\n"
+                "    rationale: Conflicting second answer.\n"
+                "    confidence: high\n"
+            ),
+            (
+                "```yaml\n"
+                "echelon_result:\n"
+                "  verdict: DECISION_RESOLVED\n"
+                "  state_updates: {}\n"
+                "  journal_entries: []\n"
+                "  decision: {}\n"
+                "```\n"
+            ),
+            (
+                "Here is the answer.\n"
+                "echelon_result:\n"
+                "  verdict: DECISION_RESOLVED\n"
+                "  state_updates: {}\n"
+                "  journal_entries: []\n"
+                "  decision: {}\n"
+            ),
+            (
+                "echelon_result:\n"
+                "  verdict: DECISION_RESOLVED\n"
+                "  state_updates: {}\n"
+                "  journal_entries: []\n"
+                "  decision: {}\n"
+                "This is trailing prose.\n"
+            ),
+            (
+                "echelon_result:\n"
+                "  verdict: DECISION_RESOLVED\n"
+                "  state_updates: {}\n"
+                "  journal_entries: []\n"
+                "  decision:\n"
+                "    selected_option_id: approve\n"
+                "    answer_text: null\n"
+                "    rationale: Evidence says: approve.\n"
+                "    confidence: high\n"
+            ),
+        ],
+        ids=(
+            "duplicate",
+            "fenced",
+            "leading_prose",
+            "trailing_prose",
+            "repair_required",
+        ),
+    )
+    def test_strict_extraction_rejects_non_bare_or_repaired_output(self, raw):
+        assert _extract_strict_echelon_result(raw) is None
 
     def test_recovers_unquoted_colon_in_product_input_rationale(self):
         raw = """echelon_result:

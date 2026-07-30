@@ -71,8 +71,34 @@ def _make_phase_a_spec(base: Path, spec_dir_name: str = "001-demo", *, canonical
     """Create minimal published Phase A build inputs for harness preflight."""
     spec_dir = base / "specs" / spec_dir_name
     spec_dir.mkdir(parents=True, exist_ok=True)
-    for name in ("spec.md", "plan.md", "research.md", "data-model.md"):
-        content = "---\ntargets:\n  - .\n---\n# Spec\n" if name == "spec.md" else f"# {name}\n"
+    for name in (
+        "00-overview.md",
+        "requirements-overview.md",
+        "spec.md",
+        "plan.md",
+        "plan-conformance.md",
+        "plan-conformance.json",
+        "research.md",
+        "data-model.md",
+    ):
+        if name == "spec.md":
+            content = "---\ntargets:\n  - .\n---\n# Spec\n"
+        elif name == "plan-conformance.json":
+            content = json.dumps(
+                {
+                    "status": "pass",
+                    "findings": [],
+                    "sources": [
+                        "spec.md",
+                        "requirements-overview.md",
+                        "plan.md",
+                        "tasks.md",
+                    ],
+                },
+                indent=2,
+            )
+        else:
+            content = f"# {name}\n"
         (spec_dir / name).write_text(content, encoding="utf-8")
     for name in ("test-strategy.md", "test-architecture.md", "coverage-map.md"):
         (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
@@ -748,6 +774,35 @@ class TestCmdHarnessResume:
         mock_recover.assert_called_once()
         assert mock_recover.call_args.kwargs["project_dir"] == source
         mock_run.assert_called_once()
+
+    def test_target_continue_dispatches_continue_not_answer_required_resume(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        polyrepo = tmp_path / "workspace"
+        source = polyrepo / "sources" / "prosaic"
+        source.mkdir(parents=True)
+        (source / ".git").mkdir()
+        _make_echelon_yml(polyrepo)
+        spec_dir = _make_phase_a_spec(polyrepo, "001-prose-distribution-engine")
+        (spec_dir / "spec.md").write_text(
+            "---\ntargets:\n  - sources/prosaic\n---\n# Spec\n",
+            encoding="utf-8",
+        )
+        (spec_dir / "tasks.md").write_text(
+            "- [x] T-001 complexity=standard phase=build req=FR-001 depends=none target=sources/prosaic\n",
+            encoding="utf-8",
+        )
+
+        with patch("pathlib.Path.cwd", return_value=polyrepo), \
+             patch("echelon.orchestrator.run_multi_target", return_value=0) as mock_run:
+            from echelon.cli import _cmd_harness_continue
+            with pytest.raises(SystemExit) as exc:
+                _cmd_harness_continue(["001-prose-distribution-engine"])
+
+        assert exc.value.code == 0
+        mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["command"] == "continue"
 
     def test_target_resume_detects_verify_command_from_feature_branch(
         self,

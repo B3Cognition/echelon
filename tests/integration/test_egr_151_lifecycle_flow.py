@@ -25,6 +25,11 @@ Python.
 ## Architecture Decisions
 - ADR-001: Keep it simple.
 
+## Requirement Preservation
+| Requirement | Product Invariant | Architecture Decision | Preserves? | Evidence |
+| --- | --- | --- | --- | --- |
+| INFRA | Delivery remains isolated by spec branch. | ADR-001 | yes | Lifecycle assertions below. |
+
 ## Project Structure
 ```text
 src/
@@ -88,6 +93,14 @@ def _write_phase_a_artifacts(spec_dir: Path, *, ready: bool) -> None:
             )
         elif name == "constitution.md":
             content = "# Constitution\n\nProject rules.\n"
+        elif name == "plan-conformance.json":
+            content = (
+                '{\n'
+                '  "status": "pass",\n'
+                '  "findings": [],\n'
+                '  "sources": ["spec.md", "requirements-overview.md", "plan.md", "tasks.md"]\n'
+                '}\n'
+            )
         else:
             content = f"# {name}\n"
         (spec_dir / name).write_text(content, encoding="utf-8")

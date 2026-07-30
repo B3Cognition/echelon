@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
+import math
+import re
 from typing import Iterable, Mapping
 
 
@@ -13,6 +16,7 @@ _TOKEN_KEYS = (
     "cache_read_input_tokens",
     "cache_creation_input_tokens",
 )
+_COMPLETION_ID_PATTERN = re.compile(r"\A[0-9a-f]{32}\Z")
 
 
 @dataclass(frozen=True)
@@ -162,6 +166,8 @@ class PhaseTimingEvent:
     budget_seconds: float
     elapsed_seconds: float | None = None
     over_budget: bool | None = None
+    completion_id: str | None = None
+    effect_id: str | None = None
 
     @classmethod
     def started(
@@ -171,6 +177,8 @@ class PhaseTimingEvent:
         phase: str,
         budget_seconds: float,
         event_time: str,
+        completion_id: str | None = None,
+        effect_id: str | None = None,
     ) -> "PhaseTimingEvent":
         return cls(
             trace_id=trace_id,
@@ -178,6 +186,8 @@ class PhaseTimingEvent:
             event="started",
             event_time=event_time,
             budget_seconds=budget_seconds,
+            completion_id=completion_id,
+            effect_id=effect_id,
         )
 
     @classmethod
@@ -189,6 +199,8 @@ class PhaseTimingEvent:
         budget_seconds: float,
         elapsed_seconds: float,
         event_time: str,
+        completion_id: str | None = None,
+        effect_id: str | None = None,
     ) -> "PhaseTimingEvent":
         return cls(
             trace_id=trace_id,
@@ -198,10 +210,12 @@ class PhaseTimingEvent:
             budget_seconds=budget_seconds,
             elapsed_seconds=elapsed_seconds,
             over_budget=elapsed_seconds > budget_seconds * 1.2 if budget_seconds > 0 else False,
+            completion_id=completion_id,
+            effect_id=effect_id,
         )
 
     def to_json_dict(self) -> dict[str, object]:
-        return {
+        record: dict[str, object] = {
             "schema_version": 1,
             "type": "phase_timing",
             "trace_id": self.trace_id,
@@ -212,12 +226,17 @@ class PhaseTimingEvent:
             "elapsed_seconds": self.elapsed_seconds,
             "over_budget": self.over_budget,
         }
+        if self.completion_id is not None:
+            record["completion_id"] = self.completion_id
+            record["effect_id"] = self.effect_id
+        return record
 
     @classmethod
     def from_json_dict(cls, value: Mapping[str, object]) -> "PhaseTimingEvent":
         if value.get("schema_version") != 1 or value.get("type") != "phase_timing":
             raise ValueError("invalid phase timing event")
-        if value.get("event") not in {"started", "finished"}:
+        event = value.get("event")
+        if event not in {"started", "finished"}:
             raise ValueError("invalid phase timing event kind")
         trace_id = value.get("trace_id")
         phase = value.get("phase")
@@ -240,14 +259,94 @@ class PhaseTimingEvent:
         over_budget = value.get("over_budget")
         if over_budget is not None and not isinstance(over_budget, bool):
             raise ValueError("invalid phase timing over-budget value")
+        completion_id = value.get("completion_id")
+        effect_id = value.get("effect_id")
+        if completion_id is not None or effect_id is not None:
+            expected_keys = frozenset(
+                {
+                    "schema_version",
+                    "type",
+                    "trace_id",
+                    "phase",
+                    "event",
+                    "event_time",
+                    "budget_seconds",
+                    "elapsed_seconds",
+                    "over_budget",
+                    "completion_id",
+                    "effect_id",
+                }
+            )
+            if frozenset(value) != expected_keys:
+                raise ValueError(
+                    "invalid phase timing completion identity"
+                )
+        if (completion_id is None) != (effect_id is None):
+            raise ValueError("invalid phase timing completion identity")
+        if completion_id is not None and (
+            type(completion_id) is not str
+            or _COMPLETION_ID_PATTERN.fullmatch(completion_id) is None
+            or type(effect_id) is not str
+            or effect_id
+            != (
+                f"{completion_id}:timing:"
+                f"{'open' if event == 'started' else 'close'}:{phase}"
+            )
+            or len(effect_id) > 2_048
+        ):
+            raise ValueError("invalid phase timing completion identity")
+        if completion_id is not None:
+            normalized_time = (
+                event_time[:-1] + "+00:00"
+                if event_time.endswith("Z")
+                else event_time
+            )
+            try:
+                datetime.fromisoformat(normalized_time)
+            except ValueError as exc:
+                raise ValueError(
+                    "invalid phase timing completion timestamp"
+                ) from exc
+            if (
+                not math.isfinite(float(budget))
+                or float(budget) < 0
+            ):
+                raise ValueError(
+                    "invalid phase timing completion budget"
+                )
+        if (
+            event == "started"
+            and (elapsed is not None or over_budget is not None)
+        ) or (
+            event == "finished"
+            and (elapsed is None or over_budget is None)
+        ):
+            raise ValueError("invalid phase timing event shape")
+        if event == "finished" and completion_id is not None:
+            assert elapsed is not None
+            expected_over_budget = (
+                float(elapsed) > float(budget) * 1.2
+                if float(budget) > 0
+                else False
+            )
+            if (
+                not math.isfinite(float(elapsed))
+                or float(elapsed) < 0
+                or over_budget is not expected_over_budget
+            ):
+                raise ValueError(
+                    "invalid phase timing completion elapsed value"
+                )
         return cls(
             trace_id=trace_id,
             phase=phase,
-            event=str(value["event"]),
+            event=str(event),
             event_time=event_time,
             budget_seconds=float(budget),
             elapsed_seconds=float(elapsed) if elapsed is not None else None,
             over_budget=over_budget,
+            completion_id=completion_id,
+            effect_id=effect_id,
         )
 
 

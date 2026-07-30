@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import hashlib
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -14,8 +15,12 @@ from echelon.cli import (
     _ensure_active_continue_spec_context,
     _next_continue_phase,
     _phase_a_readiness_candidate_dirs,
+    _reset_quality_remediation_dispatch_counts,
+    _supersede_quality_guard_decision,
 )
 from harness.phase_checkpoints import PhaseCheckpoint, record_checkpoint_metadata
+from harness.blocked_decision import build_blocked_decision_v2
+from harness.recovery_instruction import RecoveryKind, RecoveryInstruction
 
 
 @pytest.fixture(autouse=True)
@@ -37,6 +42,22 @@ def _write_real_constitution(project_root: Path) -> None:
     const.write_text("# Constitution\n\nReal project rules.\n", encoding="utf-8")
 
 
+def _valid_plan_conformance_json() -> str:
+    return json.dumps(
+        {
+            "status": "pass",
+            "findings": [],
+            "sources": [
+                "spec.md",
+                "requirements-overview.md",
+                "plan.md",
+                "tasks.md",
+            ],
+        },
+        indent=2,
+    ) + "\n"
+
+
 def _record_run_checkpoint(run_dir: Path, spec_id: str, phase: str) -> None:
     spec_dir = run_dir / "specs" / spec_id
     spec_dir.mkdir(parents=True, exist_ok=True)
@@ -54,6 +75,223 @@ def _record_run_checkpoint(run_dir: Path, spec_id: str, phase: str) -> None:
             created_at="2026-07-18T12:00:00Z",
         ),
     )
+
+
+def _pending_v2_decision(*, autonomy_mode: str) -> dict[str, object]:
+    return build_blocked_decision_v2(
+        decision_id="dec-cli-continue",
+        status="pending",
+        source_kind="human_gate",
+        producer_id="checkpoint-assess",
+        source_phase="phase1-what",
+        reason_code="checkpoint_assessment",
+        classification="operational",
+        question="Should the reviewed boundary be accepted?",
+        options=[
+            {
+                "id": "accept",
+                "label": "Accept the reviewed boundary",
+                "description": "Continue with the reviewed scope.",
+                "recommended": True,
+                "risk_level": "low",
+                "next_phase": "phase2-decide",
+                "outcome": "approved",
+            }
+        ],
+        recommended_answer=None,
+        risk_level="low",
+        resolution_handler="gate_outcome",
+        autonomy_mode=autonomy_mode,
+        source_state_revision=0,
+        now="2026-07-28T10:00:00+00:00",
+    )
+
+
+def _v2_continue_decision(
+    *,
+    status: str,
+    autonomy_mode: str,
+    classification: str,
+) -> dict[str, object]:
+    return build_blocked_decision_v2(
+        decision_id="dec-cli-continue-side-effect",
+        status=status,
+        source_kind="human_gate",
+        producer_id="checkpoint-assess",
+        source_phase="phase1-what",
+        reason_code="checkpoint_assessment",
+        classification=classification,
+        question="Should the reviewed boundary be accepted?",
+        options=[
+            {
+                "id": "accept",
+                "label": "Accept the reviewed boundary",
+                "description": "Continue with the reviewed scope.",
+                "recommended": True,
+                "risk_level": "low",
+                "next_phase": "phase2-decide",
+                "outcome": "approved",
+            }
+        ],
+        recommended_answer=None,
+        risk_level="low",
+        resolution_handler="gate_outcome",
+        autonomy_mode=autonomy_mode,
+        source_state_revision=0,
+        attempts=1 if status == "resolving" else 0,
+        failure_code="resolution_attempts_exhausted" if status == "failed" else None,
+        now="2026-07-28T10:00:00+00:00",
+    )
+
+
+def _v2_continue_instruction(status: str) -> dict[str, object]:
+    kind, phase, requires_human_input = {
+        "pending": (RecoveryKind.RESOLVE_DECISION, "phase1-what", False),
+        "resolving": (RecoveryKind.RESOLVE_DECISION, "phase1-what", False),
+        "awaiting_human": (RecoveryKind.AWAIT_HUMAN_ANSWER, "phase1-what", True),
+        "failed": (RecoveryKind.MANUAL_DIAGNOSIS, "", False),
+    }[status]
+    return RecoveryInstruction(
+        kind=kind,
+        reason_code="checkpoint_assessment",
+        phase=phase,
+        requires_human_input=requires_human_input,
+        schema_version=2,
+        decision_id="dec-cli-continue-side-effect",
+    ).to_dict()
+
+
+def test_continue_uses_sealed_v2_decision_mode_not_cli_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "run_id": "spec-test",
+            "status": "blocked",
+            "phase": "phase1-what",
+            "user_message": "prepare the release",
+            "autonomy_mode": "banzai",
+            "blocked_decision": _pending_v2_decision(autonomy_mode="banzai"),
+            "recovery_instruction": RecoveryInstruction(
+                kind=RecoveryKind.RESOLVE_DECISION,
+                reason_code="checkpoint_assessment",
+                phase="phase1-what",
+                requires_human_input=False,
+                schema_version=2,
+                decision_id="dec-cli-continue",
+            ).to_dict(),
+        },
+    )
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(
+        "echelon.cli._cmd_run",
+        lambda args, project_root, ext_dir: calls.append(args),
+    )
+
+    _cmd_continue(
+        ["--mode", "guided"],
+        project_root=tmp_path,
+        ext_dir=tmp_path / ".specify/extensions/echelon",
+    )
+
+    assert calls == [["prepare the release", "--mode", "banzai"]]
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["blocked_decision"]["status"] == "pending"
+    assert state["recovery_instruction"]["kind"] == "resolve_decision"
+
+
+@pytest.mark.parametrize("status", ("pending", "resolving"))
+def test_continue_routes_eligible_semi_and_recovering_decisions_without_cli_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    status: str,
+) -> None:
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "run_id": "spec-test",
+            "status": "blocked",
+            "phase": "phase1-what",
+            "user_message": "prepare the release",
+            "autonomy_mode": "semi",
+            "blocked_decision": _v2_continue_decision(
+                status=status,
+                autonomy_mode="semi",
+                classification="operational",
+            ),
+            "recovery_instruction": _v2_continue_instruction(status),
+        },
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_run",
+        lambda args, project_root, ext_dir: calls.append(args),
+    )
+    state_path = run_dir / "state.json"
+    before = state_path.read_bytes()
+
+    _cmd_continue(
+        ["--mode", "guided"],
+        project_root=tmp_path,
+        ext_dir=tmp_path / ".specify/extensions/echelon",
+    )
+
+    assert calls == [["prepare the release", "--mode", "semi"]]
+    assert state_path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    ("status", "autonomy_mode", "classification"),
+    [
+        ("awaiting_human", "guided", "operational"),
+        ("awaiting_human", "semi", "material"),
+        ("awaiting_human", "banzai", "external_prerequisite"),
+        ("failed", "banzai", "operational"),
+    ],
+)
+def test_continue_nonautomatic_v2_decisions_are_filesystem_read_only(
+    tmp_path: Path,
+    status: str,
+    autonomy_mode: str,
+    classification: str,
+) -> None:
+    published = tmp_path / "specs" / "001-side-effect"
+    published.mkdir(parents=True)
+    (published / "spec.md").write_text("# Published\n", encoding="utf-8")
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "run_id": "spec-test",
+            "status": "blocked",
+            "phase": "phase1-what",
+            "user_message": "prepare the release",
+            "autonomy_mode": autonomy_mode,
+            "spec_id": "001-side-effect",
+            "spec_dir": "runs/spec-test/specs/stale",
+            "published_spec_dir": "specs/001-side-effect",
+            "blocked_decision": _v2_continue_decision(
+                status=status,
+                autonomy_mode=autonomy_mode,
+                classification=classification,
+            ),
+            "recovery_instruction": _v2_continue_instruction(status),
+        },
+    )
+    state_path = run_dir / "state.json"
+    before = state_path.read_bytes()
+    assert not (run_dir / "specs").exists()
+
+    _cmd_continue(
+        [],
+        project_root=tmp_path,
+        ext_dir=tmp_path / ".specify/extensions/echelon",
+    )
+
+    assert state_path.read_bytes() == before
+    assert not (run_dir / "specs").exists()
 
 
 def test_continue_prefers_specify_feature_directory_over_stale_short_spec_id(
@@ -145,12 +383,13 @@ def test_readiness_candidates_exclude_stale_short_spec_alias_when_slug_is_known(
 
 
 @pytest.mark.parametrize("last_dispatch_phase", ["phase1-what", "phase1-lexicon"])
-def test_continue_routes_terminal_lexicon_block_to_visible_gate(
+def test_continue_does_not_rerun_exhausted_lexicon_gate_without_repair(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys,
     last_dispatch_phase: str,
 ) -> None:
-    """Hard-gate recovery is certified by the visible node, not the CLI."""
+    """An exhausted hard gate needs artifact repair, not another blind gate run."""
     _write_real_constitution(tmp_path)
     run_dir = _write_run_state(
         tmp_path,
@@ -199,11 +438,17 @@ THEN: The dashboard is visible
     _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
 
     state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
-    assert state["phase"] == "phase1-lexicon"
-    assert state["status"] == "running"
-    assert "lexicon_pass" not in state
-    assert "lexicon_findings" not in state
-    assert calls == [["build the dashboard", "--mode", "semi"]]
+    assert state["phase"] == "terminal-blocked"
+    assert state["status"] == "blocked"
+    assert state["blocked_reason"] == "lexicon_gate_exhausted"
+    assert calls == []
+    output = capsys.readouterr().out
+    assert "Manual recovery required" in output
+    assert "requirements.lexicon.md" in output
+    assert "spec-lexicon-report.json" in output
+    assert "echelon phase run phase1-lexicon-derive" in output
+    assert "echelon phase run phase1-what" not in output
+    assert "echelon phase run phase1-lexicon\n" not in output
 
 
 def test_continue_honors_persisted_banzai_judgment_after_readiness_misroute(
@@ -273,9 +518,16 @@ def test_continue_allows_ready_spec_after_constitution_provenance(tmp_path: Path
     (spec_dir / "quality-gates.md").write_text("# Quality Gates\n\n## Verdict: PASS\n")
     for name in (
         "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
+        "00-overview.md", "requirements-overview.md",
+        "plan-conformance.md", "plan-conformance.json",
         "test-strategy.md", "test-architecture.md", "coverage-map.md",
     ):
-        (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+        content = (
+            _valid_plan_conformance_json()
+            if name == "plan-conformance.json"
+            else f"# {name}\n"
+        )
+        (spec_dir / name).write_text(content, encoding="utf-8")
     (spec_dir / "constitution.md").write_text(
         "# Constitution\n\nReal project rules.\n",
         encoding="utf-8",
@@ -313,6 +565,8 @@ def test_continue_ignores_stale_ready_files_when_solution_phases_were_skipped(
     (spec_dir / "constitution.md").write_text("# Constitution\n\nReal project rules.\n")
     for name in (
         "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
+        "00-overview.md", "requirements-overview.md",
+        "plan-conformance.md", "plan-conformance.json",
         "test-strategy.md", "test-architecture.md", "coverage-map.md",
     ):
         (spec_dir / name).write_text(f"# stale {name}\n", encoding="utf-8")
@@ -543,9 +797,16 @@ def test_continue_does_not_honor_stale_recommendation_when_build_is_ready(
     published_spec_dir.mkdir(parents=True)
     for name in (
         "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
+        "00-overview.md", "requirements-overview.md",
+        "plan-conformance.md", "plan-conformance.json",
         "test-strategy.md", "test-architecture.md", "coverage-map.md",
     ):
-        (published_spec_dir / name).write_text(f"# published {name}\n", encoding="utf-8")
+        content = (
+            _valid_plan_conformance_json()
+            if name == "plan-conformance.json"
+            else f"# published {name}\n"
+        )
+        (published_spec_dir / name).write_text(content, encoding="utf-8")
     (published_spec_dir / "constitution.md").write_text(
         "# Constitution\n\nReal project rules.\n",
         encoding="utf-8",
@@ -1032,9 +1293,11 @@ def test_continue_explains_how_to_recover_from_phase_dispatch_limit(
     _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
 
     output = capsys.readouterr().out
-    assert "authorize one targeted retry of phase1-what" in output.lower()
-    assert "latest issues.md findings" in output
-    assert 'echelon spec resume "Authorize one targeted retry of phase1-what' in output
+    assert 'echelon spec resolve ISS-<n> "<project decision>"' in output
+    assert "No retry has been authorized" in output
+    assert "Resolve the first unresolved issue" in output
+    assert "targeted repair" in output
+    assert "retain the remaining issue ledger" in output
 
 
 def test_continue_ignores_legacy_nested_re_state_for_active_spec_run(
@@ -1194,6 +1457,501 @@ def test_recovery_retries_completed_phase_after_state_update_validation_failure(
     assert action.command == "echelon spec continue"
 
 
+def test_legacy_controller_contract_failure_retries_current_phase_without_rewind() -> None:
+    action = _classify_run_recovery(
+        {
+            "status": "blocked",
+            "phase": "phase1-why2",
+            "blocked_reason": "controller_state_contract_validation_failed",
+            "last_dispatch": {"phase_id": "phase1-understanding"},
+            "controller_contract_error": {
+                "phase_id": "phase1-why2",
+                "contract": "preparation",
+                "validator": "ownership",
+            },
+        }
+    )
+
+    assert action.kind == "retry_phase"
+    assert action.phase == "phase1-why2"
+    assert action.command == "echelon spec continue"
+    assert "rewind" not in action.command
+
+
+def test_recovery_after_exhausted_issue_resolutions_requests_quality_gate_decision() -> None:
+    action = _classify_run_recovery(
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "quality_gates_failed_after_resolutions",
+        }
+    )
+
+    assert action.kind == "human_resume"
+    assert action.command == 'echelon spec resume "<quality-gate decision>"'
+    assert "No further `spec resolve` command applies" in action.note
+
+
+def test_legacy_issue_resolution_next_with_no_open_ledger_entries_is_reclassified() -> None:
+    action = _classify_run_recovery(
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "issue_resolution_next",
+            "issue_resolution_ledger": {
+                "ISS-001": {"status": "validated"},
+                "ISS-002": {"status": "validated"},
+            },
+        }
+    )
+
+    assert action.reason == "quality_gate_remediation"
+    assert action.command == "echelon spec continue"
+
+
+def test_consecutive_why_failure_after_all_resolutions_restarts_quality_remediation() -> None:
+    action = _classify_run_recovery(
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "consecutive_why_fails",
+            "issue_resolution_ledger": {
+                "ISS-006": {"status": "validated"},
+                "ISS-007": {"status": "validated"},
+            },
+        }
+    )
+
+    assert action.kind == "retry_phase"
+    assert action.reason == "quality_gate_remediation"
+    assert action.phase == "phase1-what"
+
+
+def test_quality_remediation_supersedes_only_its_stale_why_safeguard() -> None:
+    decision = build_blocked_decision_v2(
+        decision_id="dec-quality-guard",
+        status="awaiting_human",
+        source_kind="controller_safeguard",
+        producer_id="consecutive_why_fails",
+        source_phase="phase1-why2",
+        reason_code="consecutive_why_fails",
+        classification="material",
+        question="Provide a repair instruction.",
+        options=[],
+        recommended_answer=None,
+        risk_level=None,
+        resolution_handler="reset_why_fail_count",
+        autonomy_mode="semi",
+        source_state_revision=3,
+        now="2026-07-29T00:00:00+00:00",
+    )
+    state = {
+        "quality_gate_remediation": {"attempt": 1},
+        "issue_resolution_ledger": {"ISS-042": {"status": "validated"}},
+        "blocked_decision": decision,
+        "recovery_instruction": {"stale": "instruction"},
+    }
+
+    assert _supersede_quality_guard_decision(state) is True
+    assert state["blocked_decision"]["status"] == "resolved"
+    assert state["blocked_decision"]["resolved_by"] == "COMMANDER"
+    assert "recovery_instruction" not in state
+
+
+def test_quality_remediation_no_progress_retries_authoring_without_resolve() -> None:
+    action = _classify_run_recovery(
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "quality_gate_remediation_no_artifact_progress",
+        }
+    )
+
+    assert action.kind == "retry_phase"
+    assert action.reason == "quality_gate_remediation"
+    assert action.command == "echelon spec continue"
+
+
+def test_dispatch_cap_missing_published_evidence_retries_active_spec(
+    tmp_path: Path,
+) -> None:
+    active_spec = tmp_path / "runs" / "run" / "specs" / "001-demo"
+    active_spec.mkdir(parents=True)
+    (active_spec / "issues.md").write_text("# Issues\n", encoding="utf-8")
+
+    action = _classify_run_recovery(
+        {
+            "status": "blocked",
+            "phase": "phase1-understanding",
+            "blocked_reason": "phase_dispatch_limit_evidence_missing",
+            "spec_dir": str(active_spec),
+            "published_spec_dir": "specs/001-demo",
+        },
+        project_root=tmp_path,
+    )
+
+    assert action.kind == "retry_phase"
+    assert action.reason == "phase_dispatch_limit_evidence_retry"
+    assert action.phase == "phase1-understanding"
+
+
+def test_quality_remediation_resets_its_authoring_quality_phase_counts() -> None:
+    state = {
+        "phase_dispatch_counts": {
+            "phase1-what": 8,
+            "phase1-lexicon": 6,
+            "phase1-understanding": 6,
+            "phase1-why2": 5,
+            "phase1-discover": 3,
+        },
+    }
+    _reset_quality_remediation_dispatch_counts(state)
+
+    assert state["phase_dispatch_counts"] == {"phase1-discover": 3}
+
+
+def test_spec_continue_prints_start_and_end_timestamps(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _cmd_continue(
+        [],
+        project_root=tmp_path,
+        ext_dir=tmp_path / ".specify/extensions/echelon",
+    )
+
+    output = capsys.readouterr().out
+    assert "[squad] start:" in output
+    assert "[squad] end:" in output
+
+
+def test_persisted_runtime_sync_recovery_retries_after_compatible_sync(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "echelon.cli._runtime_extension_compatibility",
+        lambda _project_root: SimpleNamespace(
+            compatible=True,
+            command="",
+            note="runtime extension is compatible",
+        ),
+        raising=False,
+    )
+
+    action = _classify_run_recovery(
+        {
+            "status": "blocked",
+            "phase": "phase1-why2",
+            "blocked_reason": "controller_state_contract_validation_failed",
+            "recovery_instruction": {
+                "schema_version": 1,
+                "kind": "sync_runtime_then_retry",
+                "reason_code": "controller_state_contract_validation_failed",
+                "phase": "phase1-why2",
+                "requires_human_input": False,
+            },
+        },
+        project_root=tmp_path,
+    )
+
+    assert action.kind == "retry_phase"
+    assert action.phase == "phase1-why2"
+    assert action.command == "echelon spec continue"
+
+
+def test_stale_contract_instruction_reconciles_to_phase_output_recovery() -> None:
+    action = _classify_run_recovery(
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "missing_phase_outputs",
+            "recovery_instruction": {
+                "schema_version": 1,
+                "kind": "sync_runtime_then_retry",
+                "reason_code": "controller_state_contract_validation_failed",
+                "phase": "phase1-what",
+                "requires_human_input": False,
+            },
+            "controller_contract_error": {
+                "phase_id": "phase1-what",
+                "contract": "preparation",
+                "validator": "ownership",
+            },
+            "phase_output_recovery": {
+                "phase": "phase1-what",
+                "missing_outputs": ["requirements-overview.md"],
+                "prior_state_updates": {
+                    "spec_status": "planned",
+                    "evidence_resolution_status": "not_required",
+                },
+            },
+            "last_dispatch": {
+                "phase_id": "phase1-what",
+                "verdict": "BLOCKED",
+            },
+        }
+    )
+
+    assert action.kind == "retry_phase"
+    assert action.reason == "missing_phase_outputs"
+    assert action.phase == "phase1-what"
+    assert action.command == "echelon spec continue"
+    assert "runtime" not in action.note
+
+
+def test_continue_prioritizes_phase_output_recovery_over_pending_issue(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "missing_phase_outputs",
+            "user_message": "Expose the supported machine-readable format",
+            "recovery_instruction": {
+                "schema_version": 1,
+                "kind": "sync_runtime_then_retry",
+                "reason_code": "controller_state_contract_validation_failed",
+                "phase": "phase1-what",
+                "requires_human_input": False,
+            },
+            "phase_output_recovery": {
+                "phase": "phase1-what",
+                "missing_outputs": ["requirements-overview.md"],
+                "prior_state_updates": {
+                    "spec_status": "planned",
+                    "evidence_resolution_status": "not_required",
+                },
+            },
+            "issue_resolution_recovery": {
+                "issue_id": "ISS-003",
+                "from_phase": "phase1-why2",
+                "to_phase": "phase1-what",
+                "reason": "issue_resolution",
+            },
+        },
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_run",
+        lambda args, **_kwargs: calls.append(args),
+    )
+
+    _cmd_continue(
+        [],
+        project_root=tmp_path,
+        ext_dir=tmp_path / ".specify/extensions/echelon",
+    )
+
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["status"] == "running"
+    assert state["phase"] == "phase1-what"
+    assert state["blocked_reason"] is None
+    assert "recovery_instruction" not in state
+    assert state["phase_output_recovery"]["missing_outputs"] == [
+        "requirements-overview.md"
+    ]
+    assert state["issue_resolution_recovery"]["issue_id"] == "ISS-003"
+    assert len(calls) == 1
+
+
+def test_continue_starts_controller_owned_issue_repair(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Issue resolution must leave terminal-blocked before invoking the controller."""
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "consecutive_why_fails",
+            "user_message": "Expose the supported machine-readable format",
+            "escalation_question": "Resolve ISS-001 before continuing.",
+            "escalation_options": ["Use a project decision."],
+            "selected_issue_resolution": "ISS-001",
+            "issue_resolution_ledger": {
+                "ISS-001": {"status": "selected", "decision": "Adopt JSON."}
+            },
+            "issue_resolution_recovery": {
+                "issue_id": "ISS-001",
+                "from_phase": "phase1-why2",
+                "to_phase": "phase1-what",
+                "reason": "issue_resolution",
+            },
+        },
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_run",
+        lambda args, **_kwargs: calls.append(args),
+    )
+
+    _cmd_continue(
+        [],
+        project_root=tmp_path,
+        ext_dir=tmp_path / ".specify/extensions/echelon",
+    )
+
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["status"] == "running"
+    assert state["phase"] == "phase1-what"
+    assert state["blocked_reason"] is None
+    assert state["escalation_question"] is None
+    assert state["selected_issue_resolution"] == "ISS-001"
+    assert state["issue_resolution_recovery"]["issue_id"] == "ISS-001"
+    assert len(calls) == 1
+
+
+def test_continue_revalidates_repaired_issue_before_requesting_new_decision(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "consecutive_why_fails",
+            "user_message": "Expose the supported machine-readable format",
+            "escalation_question": "Resolve ISS-001 before continuing.",
+            "selected_issue_resolution": "ISS-001",
+            "issue_resolution_ledger": {
+                "ISS-001": {"status": "repaired", "decision": "Adopt JSON."}
+            },
+            "issue_resolution_recovery": {
+                "issue_id": "ISS-001",
+                "status": "consumed",
+            },
+            "why_fail_count": 2,
+            "why2_metric_stagnation_count": 2,
+            "why_failure_baseline": {"recorded_at": "2026-01-01T00:00:00+00:00"},
+        },
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_run",
+        lambda args, **_kwargs: calls.append(args),
+    )
+
+    _cmd_continue(
+        [],
+        project_root=tmp_path,
+        ext_dir=tmp_path / ".specify/extensions/echelon",
+    )
+
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["status"] == "running"
+    assert state["phase"] == "phase1-understanding"
+    assert state["issue_resolution_revalidation_attempted"] == "ISS-001"
+    assert state["why_fail_count"] == 0
+    assert state["why2_metric_stagnation_count"] == 0
+    assert "why_failure_baseline" not in state
+    assert len(calls) == 1
+
+
+def test_continue_consumes_controller_recovery_instruction(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "phase1-why2",
+            "blocked_reason": "controller_state_contract_validation_failed",
+            "user_message": "Expose the supported machine-readable format",
+            "recovery_instruction": {
+                "schema_version": 1,
+                "kind": "sync_runtime_then_retry",
+                "reason_code": "controller_state_contract_validation_failed",
+                "phase": "phase1-why2",
+                "requires_human_input": False,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        "echelon.cli._runtime_extension_compatibility",
+        lambda _project_root: SimpleNamespace(
+            compatible=True,
+            command="",
+            note="runtime extension is compatible",
+        ),
+        raising=False,
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_run",
+        lambda args, **_kwargs: calls.append(args),
+    )
+
+    _cmd_continue(
+        [],
+        project_root=tmp_path,
+        ext_dir=tmp_path / ".specify/extensions/echelon",
+    )
+
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["status"] == "running"
+    assert state["phase"] == "phase1-why2"
+    assert "recovery_instruction" not in state
+    assert state["blocked_reason"] is None
+    assert len(calls) == 1
+
+
+def test_continue_requires_runtime_sync_before_retry(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "phase1-why2",
+            "blocked_reason": "controller_state_contract_validation_failed",
+            "user_message": "Expose the supported machine-readable format",
+            "recovery_instruction": {
+                "schema_version": 1,
+                "kind": "sync_runtime_then_retry",
+                "reason_code": "controller_state_contract_validation_failed",
+                "phase": "phase1-why2",
+                "requires_human_input": False,
+            },
+        },
+    )
+    update_command = (
+        "specify extension update echelon --dev /checkout/echelon/extension"
+    )
+    monkeypatch.setattr(
+        "echelon.cli._runtime_extension_compatibility",
+        lambda _project_root: SimpleNamespace(
+            compatible=False,
+            command=update_command,
+            note="installed runtime is missing shipped files",
+        ),
+        raising=False,
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_run",
+        lambda args, **_kwargs: calls.append(args),
+    )
+
+    _cmd_continue(
+        [],
+        project_root=tmp_path,
+        ext_dir=tmp_path / ".specify/extensions/echelon",
+    )
+
+    captured = capsys.readouterr()
+    assert update_command in captured.out
+    assert calls == []
+
+
 def test_continue_manual_block_does_not_claim_human_resume(
     tmp_path: Path,
     capsys,
@@ -1214,6 +1972,40 @@ def test_continue_manual_block_does_not_claim_human_resume(
     assert "Manual recovery required" in captured.out
     assert "inspect echelon spec status, then choose a recovery action" in captured.out
     assert 'echelon spec resume "<your answer>"' not in captured.out
+
+
+def test_continue_displays_executable_escalation_options(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "checkpoint-assess",
+            "blocked_reason": "checkpoint-assess human gate",
+            "escalation_question": "Proceed to DECIDE or return to WHAT?",
+            "escalation_options": [
+                {
+                    "id": "proceed_to_decide",
+                    "label": "Proceed to DECIDE",
+                    "next_phase": "phase2-decide",
+                },
+                {
+                    "id": "route_back_to_what",
+                    "label": "Return to WHAT",
+                    "next_phase": "phase1-what",
+                },
+            ],
+        },
+    )
+
+    _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
+
+    captured = capsys.readouterr()
+    assert "A: Proceed to DECIDE" in captured.out
+    assert "B: Return to WHAT" in captured.out
+    assert "Answer with A/B, the option id, or the option label." in captured.out
 
 
 def test_continue_traceability_readiness_failure_offers_traceability_repair(tmp_path: Path, capsys) -> None:

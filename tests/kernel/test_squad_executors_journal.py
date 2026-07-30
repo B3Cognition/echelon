@@ -10,23 +10,30 @@ import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 EXT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(EXT_ROOT) not in sys.path:
     sys.path.insert(0, str(EXT_ROOT))
 
+from harness.controller_state_contracts import ControllerStateContractViolation
 from harness.phase_graph import PhaseGraph, PhaseNode
 from harness.squad_executors import (
     AgentExecutor,
     ConditionalSequentialExecutor,
     DeterministicLexiconExecutor,
+    ExecutorBlockedResult,
     StagedParallelExecutor,
+    _MANDATORY_PHASE_OUTPUTS,
     _canonical_echelon_result_contract,
     _allowed_state_updates_contract,
+    _validate_evidence_inventory,
 )
 from harness.squad_provider import SquadAgentResult
 from harness.squad_state import SquadStateStore
+from harness.spec_lexicon_gate import SpecLexiconGateResult
 from harness.tasks_lexicon_gate import TasksLexiconGateResult
 
 
@@ -59,6 +66,257 @@ def _result(entries=None, verdict="DONE") -> SquadAgentResult:
         duration_ms=0,
         timed_out=False,
     )
+
+
+def test_executor_block_rejects_unknown_internal_reason_as_contract_failure() -> None:
+    blocked = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "BLOCKED",
+            "state_updates": {"blocked_reason": "invented_recovery"},
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+
+    with pytest.raises(ControllerStateContractViolation) as raised:
+        ExecutorBlockedResult(reason="invented_recovery", result=blocked)
+
+    assert raised.value.contract == "executor"
+    assert raised.value.validator == "provenance"
+
+
+def test_phase1_investigate_requires_evidence_artifacts() -> None:
+    assert _MANDATORY_PHASE_OUTPUTS["phase1-investigate"] == (
+        "evidence-resolution.md",
+        "evidence-grades.md",
+        "evidence-inventory.json",
+    )
+
+
+def test_evidence_inventory_requires_source_dispositions_and_a_frontier(tmp_path) -> None:
+    valid = tmp_path / "evidence-inventory.json"
+    valid.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "sources": [
+                    {
+                        "id": "SRC-001",
+                        "locator": "https://example.test/docs",
+                        "kind": "documentation_portal",
+                        "status": "expanded",
+                        "disposition": "included",
+                        "discovered_from": "declared_input",
+                        "discovery_method": "manifest",
+                    }
+                ],
+                "frontier": {
+                    "disposition": "complete",
+                    "expanded_seed_locators": ["https://example.test/docs"],
+                    "unvisited_relevant_sources": [],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    invalid = tmp_path / "invalid-evidence-inventory.json"
+    invalid.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "sources": [
+                    {
+                        "id": "SRC-001",
+                        "locator": "https://example.test/docs",
+                        "kind": "documentation_portal",
+                        "status": "expanded",
+                        "disposition": "included",
+                        "discovered_from": "declared_input",
+                        "discovery_method": "manifest",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert _validate_evidence_inventory(valid) is None
+    assert _validate_evidence_inventory(invalid) == "missing required object: frontier"
+
+
+def test_evidence_inventory_requires_every_declared_url_seed(tmp_path) -> None:
+    inventory = tmp_path / "evidence-inventory.json"
+    inventory.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "sources": [
+                    {
+                        "id": "SRC-001",
+                        "locator": "https://example.test/linked-schema.json",
+                        "kind": "api_schema",
+                        "status": "retrieved",
+                        "disposition": "included",
+                        "discovered_from": "SRC-000",
+                        "discovery_method": "link",
+                    }
+                ],
+                "frontier": {
+                    "disposition": "complete",
+                    "expanded_seed_locators": [
+                        "https://example.test/linked-schema.json"
+                    ],
+                    "unvisited_relevant_sources": [],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert _validate_evidence_inventory(
+        inventory, required_seed_locators=("https://example.test/portal",)
+    ) == "missing declared source seed(s): https://example.test/portal"
+
+
+def test_invalid_inventory_is_quarantined_before_investigator_retry(tmp_path) -> None:
+    squad_dir = tmp_path / "runs" / "run-test"
+    squad_dir.mkdir(parents=True)
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    inventory = spec_dir / "evidence-inventory.json"
+    inventory.write_text('{"stale": true}\n', encoding="utf-8")
+    executor = _executor(tmp_path, squad_dir=squad_dir)
+    store = SquadStateStore(squad_dir)
+    store.initialize("r", "greenfield", "msg", 0, "phase1-investigate")
+    state = store.load()
+    state.update(
+        {
+            "spec_dir": "specs/001-demo",
+            "phase_output_recovery": {
+                "phase": "phase1-investigate",
+                "invalid_outputs": [{
+                    "path": "evidence-inventory.json",
+                    "reason": "missing declared source seed",
+                }],
+            },
+        }
+    )
+    store.save(state)
+
+    from harness.phase_graph import PhaseNode
+
+    executor._quarantine_invalid_recovery_outputs(
+        PhaseNode(id="phase1-investigate", type="agent"), store.load(), store
+    )
+
+    assert not inventory.exists()
+    assert (spec_dir / "evidence-inventory.invalid.json").exists()
+    assert store.load()["phase_output_recovery"]["quarantined_invalid_outputs"] == [
+        "evidence-inventory.invalid.json"
+    ]
+
+
+def test_invalid_inventory_repair_excludes_stale_investigation_context(tmp_path) -> None:
+    squad_dir = tmp_path / "runs" / "run-test"
+    squad_dir.mkdir(parents=True)
+    spec_dir = tmp_path / "specs" / "001-demo"
+    investigation_dir = spec_dir / "investigation"
+    investigation_dir.mkdir(parents=True)
+    (spec_dir / "evidence-resolution.md").write_text("STALE EVIDENCE\n", encoding="utf-8")
+    (investigation_dir / "old.md").write_text("STALE INVESTIGATION\n", encoding="utf-8")
+    (spec_dir / "evidence-inventory.json").write_text("{\"stale\": true}\n", encoding="utf-8")
+    executor = _executor(tmp_path, squad_dir=squad_dir)
+    from harness.phase_graph import PhaseNode
+
+    node = PhaseNode(
+        id="phase1-investigate",
+        type="agent",
+        context_pack=[
+            "{spec_dir}/evidence-resolution.md",
+            "{spec_dir}/investigation/",
+            "{spec_dir}/evidence-inventory.json",
+            ".specify/squad/reasoning-journal.jsonl [phase=phase1-why2]",
+        ],
+    )
+    prompt = executor._assemble_prompt(
+        node,
+        {
+            "squad_dir": str(squad_dir),
+            "staging_dir": str(squad_dir / "staging"),
+            "spec_dir": "specs/001-demo",
+            "phase_output_recovery": {
+                "phase": "phase1-investigate",
+                "invalid_outputs": [{
+                    "path": "evidence-inventory.json",
+                    "reason": "missing declared seed",
+                }],
+            },
+        },
+    )
+
+    assert "STALE EVIDENCE" not in prompt
+    assert "STALE INVESTIGATION" not in prompt
+    assert "Use tools to inspect the declared inputs" in prompt
+
+
+def test_phase1_investigate_preserves_valid_evidence_result_when_grade_artifact_is_missing(tmp_path):
+    squad_dir = tmp_path / "runs" / "spec-20260724-123456"
+    squad_dir.mkdir(parents=True)
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "evidence-resolution.md").write_text("# Evidence\n", encoding="utf-8")
+
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "investigator.md").write_text("# Investigator\n", encoding="utf-8")
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "COMPLETE",
+            "state_updates": {"evidence_resolution_status": "conflicting"},
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/investigator.md"
+    graph.all_phase_ids.return_value = []
+    executor = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+    store = SquadStateStore(squad_dir)
+    store.initialize("r", "greenfield", "msg", 0, "phase1-investigate")
+    state = store.load()
+    state["spec_dir"] = "specs/001-demo"
+    store.save(state)
+
+    from harness.phase_graph import PhaseNode
+
+    node = PhaseNode(
+        id="phase1-investigate",
+        type="agent",
+        agent="INVESTIGATOR",
+        allowed_state_updates=["evidence_resolution_status"],
+        required_state_updates=["evidence_resolution_status"],
+        state_update_types={"evidence_resolution_status": "string"},
+        state_update_enums={"evidence_resolution_status": ["conflicting"]},
+        allowed_verdicts=["COMPLETE"],
+    )
+
+    result = executor.execute(node, store)
+
+    assert isinstance(result, ExecutorBlockedResult)
+    assert result.reason == "missing_phase_outputs"
+    assert result.result.state_updates["missing_outputs"] == [
+        "evidence-grades.md",
+        "evidence-inventory.json",
+    ]
+    assert result.result.state_updates["recovery_state_updates"] == {
+        "evidence_resolution_status": "conflicting"
+    }
 
 
 def _journal_entry(entry_type: str = "insight", **overrides) -> dict:
@@ -268,21 +526,61 @@ def _node(phase_id: str = "test-phase"):
     return PhaseNode(id=phase_id, type="agent")
 
 
-def test_judgment_dispatch_writes_returned_journal_entries(tmp_path):
-    """Journal entries in COMMANDER's echelon_result are written to disk."""
+def _commit_blocked_judgment(ctrl, phase_id: str) -> None:
+    """Seal and commit one ambiguous route so deferred journals may publish."""
+    node = PhaseNode(
+        id=phase_id,
+        type="agent",
+        transitions=[
+            {
+                "to": "phase1-discover",
+                "condition": "unknown.judgment",
+            }
+        ],
+    )
+    state = ctrl._state_store.load()
+    state["phase"] = phase_id
+    ctrl._state_store.save(state)
+    snapshot = ctrl._state_store.capture_routing_snapshot(
+        expected_phase=phase_id,
+    )
+    prepared = ctrl._prepare_phase_result(
+        node,
+        SquadAgentResult(
+            exit_code=0,
+            echelon_result={"verdict": "DONE", "state_updates": {}},
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        ),
+        snapshot,
+    )
+    decision = ctrl._coordinate_transition_routing(
+        node,
+        prepared,
+        snapshot,
+    )
+    assert ctrl._advance_prepared_result_or_block(node, decision) is not None
+
+
+def test_judgment_journal_entries_publish_only_after_committed_route(tmp_path):
+    """Returned COMMANDER journals are deferred until routing commits."""
     ctrl, provider = _squad_controller(tmp_path)
     provider.exec_agent.return_value = SquadAgentResult(
         exit_code=0,
         echelon_result={
             "verdict": "BLOCKED",
-            "state_updates": {},
+            "state_updates": {
+                "status": "blocked",
+                "blocked_reason": "test judgment block",
+            },
             "journal_entries": [{"type": "escalation", "data": {"reason": "test"}}],
         },
         raw_output="",
         duration_ms=0,
         timed_out=False,
     )
-    ctrl._judgment_dispatch("test reason", _node("phase1-discover"))
+    _commit_blocked_judgment(ctrl, "phase1-discover")
     entries = _read_journal(tmp_path, squad_dir=tmp_path / "squad" / "run-test")
     assert len(entries) == 1
     assert entries[0]["type"] == "escalation"
@@ -296,7 +594,10 @@ def test_judgment_dispatch_replaces_null_journal_metadata(tmp_path):
         exit_code=0,
         echelon_result={
             "verdict": "BLOCKED",
-            "state_updates": {},
+            "state_updates": {
+                "status": "blocked",
+                "blocked_reason": "test judgment block",
+            },
             "journal_entries": [
                 {
                     "id": None,
@@ -310,7 +611,7 @@ def test_judgment_dispatch_replaces_null_journal_metadata(tmp_path):
         duration_ms=0,
         timed_out=False,
     )
-    ctrl._judgment_dispatch("test reason", _node("phase1-why2"))
+    _commit_blocked_judgment(ctrl, "phase1-why2")
     entries = _read_journal(tmp_path, squad_dir=tmp_path / "squad" / "run-test")
     assert entries[0]["id"] == 1
     assert entries[0]["timestamp"] is not None
@@ -322,7 +623,11 @@ def test_judgment_dispatch_empty_entries_writes_nothing(tmp_path):
     ctrl, provider = _squad_controller(tmp_path)
     provider.exec_agent.return_value = SquadAgentResult(
         exit_code=0,
-        echelon_result={"verdict": "DONE", "state_updates": {}, "journal_entries": []},
+        echelon_result={
+            "verdict": "JUDGMENT_RESOLVED",
+            "state_updates": {},
+            "journal_entries": [],
+        },
         raw_output="",
         duration_ms=0,
         timed_out=False,
@@ -344,26 +649,29 @@ def test_judgment_dispatch_continues_id_sequence_after_executor_writes(tmp_path)
         exit_code=0,
         echelon_result={
             "verdict": "BLOCKED",
-            "state_updates": {},
+            "state_updates": {
+                "status": "blocked",
+                "blocked_reason": "test judgment block",
+            },
             "journal_entries": [{"type": "escalation"}],
         },
         raw_output="",
         duration_ms=0,
         timed_out=False,
     )
-    ctrl._judgment_dispatch("reason", _node("phase1-b"))
+    _commit_blocked_judgment(ctrl, "phase1-b")
     entries = _read_journal(tmp_path, squad_dir=shared_squad_dir)
     assert len(entries) == 2
     assert entries[0]["id"] == 1
     assert entries[1]["id"] == 2
 
 
-def test_commander_judgment_quarantines_invented_reporting_state(tmp_path):
+def test_commander_judgment_canonicalization_is_read_only(tmp_path):
     ctrl, _provider = _squad_controller(tmp_path)
     result = SquadAgentResult(
         exit_code=0,
         echelon_result={
-            "verdict": "DONE",
+            "verdict": "JUDGMENT_RESOLVED",
             "state_updates": {
                 "next_phase": "phase1-discover",
                 "total_tasks": 61,
@@ -375,12 +683,13 @@ def test_commander_judgment_quarantines_invented_reporting_state(tmp_path):
         timed_out=False,
     )
 
-    applied = ctrl._apply_judgment_state_updates(result, "phase1-discover")
-    ctrl._write_journal_entries(result, "phase1-discover")
+    before = ctrl._state_store.load()
+    canonical = ctrl._canonicalize_judgment_result(result)
+    ctrl._write_journal_entries(canonical, "phase1-discover")
 
     state = ctrl._state_store.load()
-    assert applied is True
-    assert state["next_phase"] == "phase1-discover"
+    assert state == before
+    assert canonical.state_updates == {"next_phase": "phase1-discover"}
     assert "total_tasks" not in state
     entries = _read_journal(tmp_path, squad_dir=tmp_path / "squad" / "run-test")
     assert entries[0]["type"] == "state_contract_warning"
@@ -537,18 +846,15 @@ def test_why2_routing_contract_uses_full_quality_score_shape():
 
 
 def test_spec_lexicon_routing_contract_requires_certificate_fields():
-    """WHAT agents do not report fields owned by controller validation."""
-    from harness.phase_graph import PhaseNode
+    """Derivation agents do not report fields owned by controller validation."""
+    from harness.phase_graph import PhaseGraph
     from harness.squad_executors import _routing_contract
 
-    node = PhaseNode(
-        id="phase1-what",
-        type="agent",
-        transitions=[{
-            "condition": "lexicon_gate.enabled AND lexicon_evaluation = failed AND iteration < max_iterations",
-            "to": "phase1-what",
-        }],
-    )
+    root = Path(__file__).resolve().parents[2]
+    node = PhaseGraph(
+        root / "extension/workflow/definition.yaml",
+        root / "extension/extension.yml",
+    ).get("phase1-lexicon-derive")
 
     contract = _routing_contract(node)
 
@@ -556,11 +862,17 @@ def test_spec_lexicon_routing_contract_requires_certificate_fields():
     assert "lexicon_attempts:" not in contract
     assert "lexicon_findings:" not in contract
 
-    phase_text = (Path(__file__).resolve().parents[2] / "extension/workflow/phases/phase1-what.md").read_text()
-    assert "a missing artifact is pending, never `lexicon_pass: false`" in phase_text.lower()
+    phase_text = (
+        Path(__file__).resolve().parents[2]
+        / "extension/workflow/phases/phase1-lexicon-derive.md"
+    ).read_text()
+    assert (
+        "provider-free `phase1-lexicon` node performs structural certification"
+        in phase_text.lower()
+    )
 
 
-def test_phase1_what_prompt_injects_resolved_spec_lexicon_configuration(tmp_path):
+def test_phase1_lexicon_derive_prompt_injects_resolved_configuration(tmp_path):
     config_dir = tmp_path / ".echelon"
     config_dir.mkdir(parents=True)
     (config_dir / "config.yml").write_text(
@@ -589,7 +901,7 @@ def test_phase1_what_prompt_injects_resolved_spec_lexicon_configuration(tmp_path
     from harness.phase_graph import PhaseNode
 
     prompt = ex._assemble_prompt(
-        PhaseNode(id="phase1-what", type="agent"),
+        PhaseNode(id="phase1-lexicon-derive", type="agent"),
         {
             "squad_dir": str(squad_dir),
             "spec_dir": "runs/run-test/specs/001-demo",
@@ -608,7 +920,7 @@ def test_phase1_what_prompt_injects_resolved_spec_lexicon_configuration(tmp_path
     assert "Do not discover or override these values" in prompt
 
 
-def test_phase1_what_prompt_marks_disabled_spec_lexicon_subgate(tmp_path):
+def test_phase1_lexicon_derive_prompt_marks_disabled_spec_subgate(tmp_path):
     config_dir = tmp_path / ".echelon"
     config_dir.mkdir(parents=True)
     (config_dir / "config.yml").write_text(
@@ -625,7 +937,7 @@ def test_phase1_what_prompt_marks_disabled_spec_lexicon_subgate(tmp_path):
     from harness.phase_graph import PhaseNode
 
     prompt = ex._assemble_prompt(
-        PhaseNode(id="phase1-what", type="agent"),
+        PhaseNode(id="phase1-lexicon-derive", type="agent"),
         {
             "squad_dir": str(squad_dir),
             "spec_dir": "runs/run-test/specs/001-demo",
@@ -636,15 +948,44 @@ def test_phase1_what_prompt_marks_disabled_spec_lexicon_subgate(tmp_path):
     assert "When disabled, do not create or amend a derived Lexicon artifact." in prompt
 
 
-def test_phase1_what_prompt_injects_controller_spec_lexicon_repair_report(tmp_path):
+def test_phase1_lexicon_derive_prompt_injects_controller_repair_report(tmp_path):
     squad_dir = tmp_path / "runs" / "run-test"
     squad_dir.mkdir(parents=True)
     ex = _executor(tmp_path, squad_dir=squad_dir)
     from harness.phase_graph import PhaseNode
 
     report = tmp_path / "runs/run-test/specs/001-demo/spec-lexicon-report.json"
+    report.parent.mkdir(parents=True)
+    report.write_text(
+        json.dumps(
+            {
+                "ok": False,
+                "findings": [
+                    {
+                        "code": "parse-error",
+                        "message": "Unexpected token OUTPUT",
+                        "line": 12,
+                        "span": "OUTPUT",
+                    },
+                    {
+                        "code": "banned-word",
+                        "message": "banned word 'robust'",
+                        "line": 27,
+                        "span": "robust",
+                    },
+                    {
+                        "code": "banned-word",
+                        "message": "banned word 'simple'",
+                        "line": 42,
+                        "span": "simple",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     prompt = ex._assemble_prompt(
-        PhaseNode(id="phase1-what", type="agent"),
+        PhaseNode(id="phase1-lexicon-derive", type="agent"),
         {
             "squad_dir": str(squad_dir),
             "spec_dir": "runs/run-test/specs/001-demo",
@@ -659,6 +1000,36 @@ def test_phase1_what_prompt_injects_controller_spec_lexicon_repair_report(tmp_pa
     assert prompt.count(str(report)) == 1
     assert "Attempt: `2`" in prompt
     assert "Validation execution and deterministic verdict reporting are controller-owned." in prompt
+    assert "Finding count: `3`" in prompt
+    assert "`parse-error`: 1" in prompt
+    assert "`banned-word`: 2" in prompt
+    assert "line 12" in prompt
+    assert "Unexpected token OUTPUT" in prompt
+    assert "span `robust`" in prompt
+    assert "return `requirements.lexicon.md` in `output_files`" in prompt
+    assert "Do not declare specification quality" in prompt
+    assert "Do not edit spec.md" in prompt
+
+
+def test_phase1_what_prompt_does_not_receive_spec_lexicon_repair(tmp_path):
+    squad_dir = tmp_path / "runs" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    from harness.phase_graph import PhaseNode
+
+    prompt = ex._assemble_prompt(
+        PhaseNode(id="phase1-what", type="agent"),
+        {
+            "squad_dir": str(squad_dir),
+            "spec_dir": "runs/run-test/specs/001-demo",
+            "lexicon_evaluation": "failed",
+            "lexicon_pass": False,
+            "lexicon_report": "/evidence/spec-lexicon-report.json",
+        },
+    )
+
+    assert "# Controller Configuration" not in prompt
+    assert "# Spec Lexicon Repair (Controller-Enforced)" not in prompt
 
 
 def test_unrelated_phase_does_not_receive_spec_lexicon_configuration(tmp_path):
@@ -694,10 +1065,32 @@ def test_phase1_what_outputs_are_checked_by_the_executor(tmp_path):
 
     assert ex._required_phase_outputs_missing(node, state) == [
         "spec.md",
-        "00-overview.md",
+        "requirements-overview.md",
     ]
     (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
-    (spec_dir / "00-overview.md").write_text("# Overview\n", encoding="utf-8")
+    (spec_dir / "requirements-overview.md").write_text("# Overview\n", encoding="utf-8")
+    assert ex._required_phase_outputs_missing(node, state) == []
+
+
+def test_phase1_lexicon_derive_checks_only_derived_artifact(tmp_path):
+    squad_dir = tmp_path / "runs" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    from harness.phase_graph import PhaseNode
+
+    spec_dir = tmp_path / "runs/run-test/specs/001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+    state = {"spec_dir": str(spec_dir.relative_to(tmp_path))}
+    node = PhaseNode(id="phase1-lexicon-derive", type="agent")
+
+    assert ex._required_phase_outputs_missing(node, state) == [
+        "requirements.lexicon.md",
+    ]
+    (spec_dir / "requirements.lexicon.md").write_text(
+        "ARTIFACT: SPEC\n",
+        encoding="utf-8",
+    )
     assert ex._required_phase_outputs_missing(node, state) == []
 
 
@@ -1273,6 +1666,207 @@ def test_pre_dispatch_applies_allowed_state_updates(tmp_path):
     assert state_store.load()["allowed_key"] is True
 
 
+def test_pre_dispatch_rejects_allowlisted_transaction_owned_update_before_write(
+    tmp_path,
+):
+    squad_dir = tmp_path / "squad" / "run-test"
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "guardian.md").write_text("# GUARDIAN\nPre-dispatch agent.")
+
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("r", "greenfield", "msg", 0, "phase1-discover")
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "DONE",
+            "state_updates": {"manual_phase_runs": ["forged"]},
+            "journal_entries": [],
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/guardian.md"
+    graph.all_phase_ids.return_value = []
+    executor = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+    node = PhaseNode(
+        id="phase1-discover",
+        type="agent",
+        pre_dispatch=[{
+            "id": "guard",
+            "agent": "speckit-echelon-guardian",
+            "allowed_state_updates": ["manual_phase_runs"],
+        }],
+        allowed_state_updates=[],
+    )
+
+    with pytest.raises(ControllerStateContractViolation) as raised:
+        executor._run_pre_dispatch(node, state_store.load(), state_store)
+
+    assert raised.value.contract == "provider"
+    assert raised.value.validator == "ownership"
+    assert raised.value.json_path == "$.state_updates.manual_phase_runs"
+    assert "manual_phase_runs" not in state_store.load()
+
+
+def test_pre_dispatch_stop_and_ask_short_circuits_without_state_write(tmp_path):
+    squad_dir = tmp_path / "squad" / "run-test"
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "guardian.md").write_text("# GUARDIAN\nPre-dispatch agent.")
+
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("r", "greenfield", "msg", 0, "phase1-discover")
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "STOP_AND_ASK",
+            "state_updates": {
+                "status": "blocked",
+                "blocked_reason": "clarification required",
+                "escalation_question": "Which target should be used?",
+            },
+            "journal_entries": [],
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/guardian.md"
+    graph.all_phase_ids.return_value = []
+    executor = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+    node = PhaseNode(
+        id="phase1-discover",
+        type="agent",
+        pre_dispatch=[{
+            "id": "guard",
+            "agent": "speckit-echelon-guardian",
+            "allowed_state_updates": [
+                "status",
+                "blocked_reason",
+                "escalation_question",
+            ],
+        }],
+        allowed_state_updates=[],
+    )
+
+    result = executor._run_pre_dispatch(
+        node,
+        state_store.load(),
+        state_store,
+    )
+
+    assert result is not None
+    assert result.verdict == "STOP_AND_ASK"
+    state = state_store.load()
+    assert state["status"] == "running"
+    assert "blocked_reason" not in state
+    assert "escalation_question" not in state
+
+
+def test_conditional_nested_rejects_transaction_owned_update_before_write(
+    tmp_path,
+):
+    squad_dir = tmp_path / "squad" / "run-test"
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "guardian.md").write_text("# GUARDIAN\nNested agent.")
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("r", "greenfield", "msg", 0, "phase-test")
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "DONE",
+            "state_updates": {"manual_phase_runs": ["forged"]},
+            "journal_entries": [],
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/guardian.md"
+    graph.all_phase_ids.return_value = []
+    executor = ConditionalSequentialExecutor(
+        provider,
+        graph,
+        ext_dir,
+        tmp_path,
+        squad_dir,
+    )
+    node = SimpleNamespace(
+        id="phase-test",
+        agents=[{
+            "id": "speckit-echelon-guardian",
+            "condition": "always",
+            "allowed_state_updates": ["manual_phase_runs"],
+        }],
+        allowed_state_updates=[],
+    )
+
+    with pytest.raises(ControllerStateContractViolation) as raised:
+        executor.execute(node, state_store)
+
+    assert raised.value.validator == "ownership"
+    assert raised.value.json_path == "$.state_updates.manual_phase_runs"
+    assert "manual_phase_runs" not in state_store.load()
+
+
+def test_staged_nested_rejects_transaction_owned_update_before_write(tmp_path):
+    squad_dir = tmp_path / "squad" / "run-test"
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("r", "greenfield", "msg", 0, "phase3-consensus")
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "PASS",
+            "state_updates": {"manual_phase_runs": ["forged"]},
+            "journal_entries": [],
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    graph = MagicMock()
+    graph.agent_file.return_value = None
+    graph.all_phase_ids.return_value = []
+    executor = StagedParallelExecutor(
+        provider,
+        graph,
+        tmp_path / "ext",
+        tmp_path,
+        squad_dir,
+    )
+    node = SimpleNamespace(
+        id="phase3-consensus",
+        agents=[{
+            "id": "speckit-echelon-sage",
+            "mode": "WHY3",
+            "stage": 1,
+            "context_pack": [],
+            "allowed_state_updates": ["manual_phase_runs"],
+        }],
+        allowed_state_updates=[],
+    )
+
+    with pytest.raises(ControllerStateContractViolation) as raised:
+        executor.execute(node, state_store)
+
+    assert raised.value.validator == "ownership"
+    assert raised.value.json_path == "$.state_updates.manual_phase_runs"
+    assert "manual_phase_runs" not in state_store.load()
+
+
 def test_staged_prompt_injects_shared_endocrine_contract(tmp_path):
     """Staged parallel prompts receive the same shared endocrine contract."""
     squad_dir = tmp_path / "squad" / "run-test"
@@ -1555,6 +2149,7 @@ def test_staged_parallel_quarantines_state_update_outside_allowlist(tmp_path):
     result = executor.execute(node, state_store)
 
     assert result.verdict == "PASS"
+    assert state_store.load()["why3_verdict"] == "PASS"
     assert "unexpected" not in state_store.load()
     entries = _read_journal(tmp_path, squad_dir=squad_dir)
     assert entries[0]["type"] == "state_contract_warning"
@@ -1612,9 +2207,9 @@ def test_staged_parallel_blocks_plan2_when_implementability_report_is_missing(tm
 
     result = executor.execute(node, state_store)
 
-    assert result.verdict == "BLOCKED"
-    assert result.state_updates["blocked_reason"] == "missing_consensus_prerequisite"
-    assert result.state_updates["missing_outputs"] == [
+    assert isinstance(result, ExecutorBlockedResult)
+    assert result.reason == "missing_consensus_prerequisite"
+    assert result.result.state_updates["missing_outputs"] == [
         str(spec_dir / "implementability-report.md")
     ]
     assert provider.exec_agent.call_count == 1
@@ -2038,9 +2633,9 @@ def test_phase3_sentinel_blocks_when_required_outputs_missing(tmp_path):
 
     result = ex.execute(node, store)
 
-    assert result.verdict == "BLOCKED"
-    assert result.state_updates["blocked_reason"] == "missing_phase_outputs"
-    assert result.state_updates["missing_outputs"] == [
+    assert isinstance(result, ExecutorBlockedResult)
+    assert result.reason == "missing_phase_outputs"
+    assert result.result.state_updates["missing_outputs"] == [
         "test-strategy.md",
         "test-architecture.md",
         "coverage-map.md",
@@ -2088,9 +2683,9 @@ def test_phase3_plan_blocks_when_required_outputs_missing(tmp_path):
 
     result = ex.execute(node, store)
 
-    assert result.verdict == "BLOCKED"
-    assert result.state_updates["blocked_reason"] == "missing_phase_outputs"
-    assert result.state_updates["missing_outputs"] == [
+    assert isinstance(result, ExecutorBlockedResult)
+    assert result.reason == "missing_phase_outputs"
+    assert result.result.state_updates["missing_outputs"] == [
         "tasks.md",
         "critical-path.md",
         "risk-matrix.md",
@@ -2163,6 +2758,61 @@ def test_deterministic_tasks_lexicon_executor_dispatches_provider_free_service(
     assert observed["previous_attempts"] == 1
     assert observed["workflow_iteration"] == 2
     assert observed["max_workflow_iterations"] == 5
+
+
+def test_deterministic_spec_lexicon_executor_is_read_only_before_advance(
+    tmp_path,
+    monkeypatch,
+):
+    squad_dir = tmp_path / "runs" / "run-test"
+    store = SquadStateStore(squad_dir)
+    store.initialize("run-test", "brownfield", "demo", 0, "phase1-lexicon")
+    state = store.load()
+    state.update(
+        {
+            "lexicon_warning_waiver": True,
+            "lexicon_pass": True,
+            "lexicon_findings": 0,
+            "lexicon_report": "stale-report.json",
+        }
+    )
+    store.save(state)
+    monkeypatch.setattr(
+        "harness.squad_executors.run_spec_lexicon_gate",
+        lambda **_kwargs: SpecLexiconGateResult(
+            evaluation="pending",
+            passed=None,
+            attempts=0,
+            detail="disabled",
+        ),
+    )
+    monkeypatch.setattr(
+        "harness.config.get_full_resolved_config",
+        lambda *_args, **_kwargs: {"lexicon_gate": {"enabled": False}},
+    )
+    executor = DeterministicLexiconExecutor(
+        MagicMock(spec=PhaseGraph),
+        tmp_path / "extension",
+        tmp_path,
+        squad_dir,
+    )
+    node = PhaseNode(
+        id="phase1-lexicon",
+        type="deterministic_lexicon",
+        lexicon_artifact="spec",
+        allowed_state_updates=[],
+    )
+    before = store.load()
+
+    with patch.object(store, "save", wraps=store.save) as save:
+        result = executor.execute(node, store)
+
+    assert result.state_updates == {
+        "lexicon_evaluation": "pending",
+        "lexicon_attempts": 0,
+    }
+    assert save.call_count == 0
+    assert store.load() == before
 
 
 def test_deterministic_lexicon_executor_blocks_unsupported_artifact(tmp_path):
@@ -2302,6 +2952,6 @@ def test_phase3_sentinel_does_not_recover_shadow_outputs_without_explicit_output
 
     result = ex.execute(node, store)
 
-    assert result.verdict == "BLOCKED"
-    assert result.state_updates["blocked_reason"] == "missing_phase_outputs"
+    assert isinstance(result, ExecutorBlockedResult)
+    assert result.reason == "missing_phase_outputs"
     assert not (spec_dir / "test-strategy.md").exists()

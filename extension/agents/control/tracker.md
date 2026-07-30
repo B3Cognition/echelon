@@ -119,6 +119,12 @@ ALWAYS include `status: blocked`, `blocked_reason`, and a concrete
 `verdict: STOP_AND_ASK`.
 NEVER return `verdict: STOP_AND_ASK` with empty `state_updates` or without the
 question the user must answer.
+For every question use `blocked_reason: human_clarification_required`. Include
+`escalation_recommended_answer` and
+`escalation_risk_level: low | medium | high | critical` together only for an
+evidence-backed recommendation; otherwise omit both. Never put a question on
+`ESCALATE` or another verdict. The controller owns clarification writes and
+state cleanup.
 
 ## Stakeholder Model
 
@@ -137,12 +143,15 @@ Author `intent-alignment-check.md` using
 section, use valid requirement IDs from `spec.md`, and state ALIGNED, DRIFT, or
 STOP_AND_ASK unambiguously in `Alignment Verdict`.
 
-The Echelon controller selects the governance policy, validates the file after
-dispatch, records findings, and owns repair attempts and routing. On a repair
-dispatch, read the controller report supplied in the prompt and apply the
+The provider-free `phase2-intent-alignment-structural` node selects the
+governance policy, validates the file after dispatch, records findings, and
+owns repair attempts and certification routing. `STOP_AND_ASK` blocks here
+before that node.
+On a repair dispatch, read `intent-alignment-check-structural-report.json` and apply the
 smallest change that resolves every finding. Preserve sections that already
 pass. Do not inspect governance configuration, invoke validation commands, or
-return structural certification fields in `echelon_result.state_updates`.
+return `intent_alignment_verdict` or structural certification fields in
+`echelon_result.state_updates`.
 
 ---
 
@@ -153,7 +162,7 @@ echelon_result:
   output_files:
     - ${STAGING_DIR}/user-intent.md
     - ${STAGING_DIR}/stakeholder-model.md
-  state_updates: {}  # For STOP_AND_ASK, set status/blocked_reason/escalation_question.
+  state_updates: {}  # STOP_AND_ASK uses the exact controller input above.
   journal_entries:
     - type: prediction
       phase: <current phase>

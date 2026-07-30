@@ -1,11 +1,13 @@
 """Tests for GitOpsManager.delete_remote_branch."""
 from __future__ import annotations
 
+import os
 import subprocess
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from harness.config import HarnessConfig
 from harness.errors import GitOpsError
 from harness.gitops import GitOpsManager
 
@@ -28,6 +30,17 @@ def _make_push_gitops(default_branch: str = "main") -> MagicMock:
     m.push_landed_default_branch = GitOpsManager.push_landed_default_branch.__get__(
         m, GitOpsManager
     )
+    return m
+
+
+def _make_local_merge_gitops(tmp_path, default_branch: str = "main") -> MagicMock:
+    """Return a GitOpsManager mock with local_merge bound as a real method."""
+    m = MagicMock(spec=GitOpsManager)
+    m.get_default_branch.return_value = default_branch
+    m._mirror_path = tmp_path / "mirror.git"
+    m._base_dir = tmp_path
+    m._config = HarnessConfig(target_repo=".", target_default_branch=default_branch)
+    m.local_merge = GitOpsManager.local_merge.__get__(m, GitOpsManager)
     return m
 
 
@@ -153,6 +166,118 @@ class TestPushPreparedBranch:
             result = gitops.push_landed_default_branch(str(tmp_path), "main")
 
         assert result is False
+
+
+@pytest.mark.unit
+class TestLocalMerge:
+    def test_proves_feature_branch_is_on_default_before_push(self, tmp_path) -> None:
+        gitops = _make_local_merge_gitops(tmp_path)
+
+        with patch("harness.gitops._run_git") as run_git:
+            gitops.local_merge("harness/909/default/iter-1", "909")
+
+        mirror_cwd = str(gitops._mirror_path)
+        landing_dir = (
+            tmp_path
+            / "runs"
+            / "worktrees"
+            / f"land-909-harness-909-default-iter-1-{os.getpid()}"
+        )
+        landing_cwd = str(landing_dir)
+        run_git.assert_any_call(
+            ["worktree", "add", landing_cwd, "main"],
+            cwd=mirror_cwd,
+        )
+        run_git.assert_any_call(
+            [
+                "merge",
+                "--no-ff",
+                "harness/909/default/iter-1",
+                "-m",
+                "merge: 909",
+            ],
+            cwd=landing_cwd,
+        )
+        run_git.assert_any_call(
+            [
+                "merge-base",
+                "--is-ancestor",
+                "harness/909/default/iter-1",
+                "main",
+            ],
+            cwd=landing_cwd,
+        )
+        run_git.assert_any_call(["push", "upstream", "main"], cwd=landing_cwd)
+
+    @pytest.mark.integration
+    def test_updates_local_target_default_branch_from_mirror_branch(self, tmp_path) -> None:
+        target = tmp_path / "target"
+        target.mkdir()
+        subprocess.run(["git", "init", "-b", "main"], cwd=target, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=target,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"],
+            cwd=target,
+            check=True,
+        )
+        (target / "README.md").write_text("base\n", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=target, check=True)
+        subprocess.run(["git", "commit", "-m", "base"], cwd=target, check=True)
+        subprocess.run(
+            ["git", "config", "receive.denyCurrentBranch", "updateInstead"],
+            cwd=target,
+            check=True,
+        )
+
+        config = HarnessConfig(
+            target_repo=str(target),
+            target_default_branch="main",
+            provider="docker",
+        )
+        gitops = GitOpsManager(config=config, base_dir=str(tmp_path / "harness"))
+        gitops.clone_mirror(str(target))
+
+        feature_worktree = tmp_path / "feature-worktree"
+        subprocess.run(
+            [
+                "git",
+                "worktree",
+                "add",
+                "-b",
+                "harness/909/default/iter-1",
+                str(feature_worktree),
+                "main",
+            ],
+            cwd=gitops.mirror_path,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=feature_worktree,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"],
+            cwd=feature_worktree,
+            check=True,
+        )
+        (feature_worktree / "built.txt").write_text("spec 909\n", encoding="utf-8")
+        subprocess.run(["git", "add", "built.txt"], cwd=feature_worktree, check=True)
+        subprocess.run(["git", "commit", "-m", "build 909"], cwd=feature_worktree, check=True)
+
+        gitops.local_merge("harness/909/default/iter-1", "909")
+
+        contains = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", "harness/909/default/iter-1", "main"],
+            cwd=gitops.mirror_path,
+            check=False,
+        )
+        assert contains.returncode == 0
+        assert (target / "built.txt").read_text(encoding="utf-8") == "spec 909\n"
 
 
 @pytest.mark.unit

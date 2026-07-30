@@ -253,6 +253,22 @@ def test_rewind_reports_targets_from_the_active_ledger(
     assert "Available checkpoints: phase3-plan" in captured.err
 
 
+def test_rewind_rejects_empty_commit_selector_before_resolving_run(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    with pytest.raises(SystemExit) as exc:
+        _cmd_rewind(
+            ["phase1-what", "--commit", ""],
+            project_root=tmp_path,
+        )
+
+    assert exc.value.code == 1
+    captured = capsys.readouterr()
+    assert "Usage: echelon spec rewind" in captured.err
+    assert "No active squad run found" not in captured.err
+
+
 def test_rewind_accepts_and_resets_to_any_active_ledger_checkpoint(
     tmp_path: Path,
     monkeypatch,
@@ -361,6 +377,61 @@ def test_rewind_phase1_what_uses_the_active_ledger_for_preview_and_confirm(
     assert state["phase_dispatch_counts"] == {}
 
 
+def test_rewind_selects_historical_duplicate_phase_by_commit_and_truncates_there(
+    tmp_path: Path,
+) -> None:
+    _git(tmp_path, "init", "-b", "004-transform-selector")
+    _git(tmp_path, "config", "user.email", "tests@example.com")
+    _git(tmp_path, "config", "user.name", "Echelon Tests")
+    (tmp_path / ".gitignore").write_text(
+        "/runs/.current\n/runs/*/state.json\n/specs/*/.echelon/checkpoints.json\n",
+        encoding="utf-8",
+    )
+    spec_dir = tmp_path / "specs" / "004-transform-selector"
+    spec_dir.mkdir(parents=True)
+
+    checkpoints: list[PhaseCheckpoint] = []
+    for index, content in enumerate(("# First\n", "# Second\n", "# Third\n"), start=1):
+        (spec_dir / "spec.md").write_text(content, encoding="utf-8")
+        _git(tmp_path, "add", ".gitignore", "specs/004-transform-selector/spec.md")
+        _git(tmp_path, "commit", "-m", f"checkpoint {index}")
+        commit = _git(tmp_path, "rev-parse", "HEAD")
+        checkpoint = PhaseCheckpoint(
+            id="phase1-what",
+            spec_id="004-transform-selector",
+            phase="phase1-what",
+            next_phase="phase1-understanding",
+            commit=commit,
+            metadata_commit="",
+            source="auto",
+            run_id="spec-run",
+            created_at=f"2026-07-26T0{index}:00:00Z",
+            completion_id=f"{index:032x}",
+        )
+        record_checkpoint_metadata(spec_dir, checkpoint)
+        checkpoints.append(checkpoint)
+
+    _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "spec_dir": "specs/004-transform-selector",
+            "completed_phases": ["phase1-what", "phase1-lexicon"],
+        },
+    )
+    selected = checkpoints[1]
+
+    _cmd_rewind(
+        ["phase1-what", "--commit", selected.commit[:8], "--confirm"],
+        project_root=tmp_path,
+    )
+
+    assert _git(tmp_path, "rev-parse", "HEAD") == selected.commit
+    retained = load_checkpoint_ledger(spec_dir).checkpoints
+    assert retained == checkpoints[:2]
+
+
 def test_rewind_refuses_a_run_that_is_still_running(tmp_path: Path, capsys) -> None:
     """A live controller must not be able to overwrite a completed rewind."""
     run_dir = _write_run_state(
@@ -413,7 +484,10 @@ def test_rewind_reconstructs_primary_predecessors_for_the_roadmap() -> None:
     assert rewound["iteration"] == 0
 
 
-@pytest.mark.parametrize("target_phase", ["phase1-what", "phase1-lexicon"])
+@pytest.mark.parametrize(
+    "target_phase",
+    ["phase1-what", "phase1-lexicon-derive", "phase1-lexicon"],
+)
 def test_rewind_to_spec_authoring_or_gate_resets_spec_lexicon_repair_state(
     target_phase: str,
 ) -> None:
@@ -438,6 +512,72 @@ def test_rewind_to_spec_authoring_or_gate_resets_spec_lexicon_repair_state(
     assert "lexicon_warning_waiver" not in rewound
     assert rewound["lexicon_evaluation"] == "pending"
     assert "lexicon_gate_exhausted" not in rewound
+
+
+@pytest.mark.parametrize(
+    "target_phase",
+    ["phase1-what", "phase1-understanding", "phase1-why2"],
+)
+def test_rewind_to_spec_quality_sequence_clears_quality_certificate(
+    target_phase: str,
+) -> None:
+    rewound = _reset_rewind_state(
+        {
+            "spec_quality_certificate": {
+                "spec_sha256": "stale",
+                "understanding_report_sha256": "stale",
+            },
+        },
+        target_phase,
+        "runs/spec-1/specs/001-demo",
+    )
+
+    assert "spec_quality_certificate" not in rewound
+
+
+def test_rewind_to_lexicon_derivation_preserves_current_quality_certificate() -> None:
+    certificate = {
+        "spec_sha256": "current",
+        "understanding_report_sha256": "current",
+    }
+    rewound = _reset_rewind_state(
+        {"spec_quality_certificate": certificate},
+        "phase1-lexicon-derive",
+        "runs/spec-1/specs/001-demo",
+    )
+
+    assert rewound["spec_quality_certificate"] == certificate
+
+
+def test_rewind_before_why2_clears_stale_issue_and_why_state() -> None:
+    rewound = _reset_rewind_state(
+        {
+            "issue_resolution_ledger": {"ISS-002": {"status": "selected"}},
+            "selected_issue_resolution": "ISS-002",
+            "issue_resolution_recovery": {"issue_id": "ISS-002"},
+            "issue_resolution_repair_baseline": {"issue_id": "ISS-002"},
+            "phase_dispatch_limit_recovery": {"phase": "phase1-what"},
+            "issues_log": [{"issue_id": "ISS-002"}],
+            "why_fail_count": 2,
+            "why2_metric_stagnation_count": 2,
+            "why_failure_baseline": {"phase_id": "phase1-why2"},
+        },
+        "init",
+        "runs/spec-1/specs/001-demo",
+    )
+
+    for key in (
+        "issue_resolution_ledger",
+        "selected_issue_resolution",
+        "issue_resolution_recovery",
+        "issue_resolution_repair_baseline",
+        "phase_dispatch_limit_recovery",
+        "issues_log",
+        "why_failure_baseline",
+    ):
+        assert key not in rewound
+    assert rewound["why_fail_count"] == 0
+    assert rewound["why2_metric_stagnation_count"] == 0
 
 
 def test_rewind_missing_checkpoint_exits_without_traceback(

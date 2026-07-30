@@ -13,6 +13,22 @@ from echelon.cli import (
 )
 
 
+def _valid_plan_conformance_json() -> str:
+    return json.dumps(
+        {
+            "status": "pass",
+            "findings": [],
+            "sources": [
+                "spec.md",
+                "requirements-overview.md",
+                "plan.md",
+                "tasks.md",
+            ],
+        },
+        indent=2,
+    ) + "\n"
+
+
 def _issues_doc(title: str) -> str:
     return "\n".join(
         [
@@ -131,6 +147,145 @@ def test_blocked_squad_escalation_prioritizes_resume(
     assert "echelon spec continue" not in captured.out
 
 
+def test_blocked_squad_escalation_displays_executable_options(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir = tmp_path / "runs" / "spec-20260724-070600-019100"
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "phase": "checkpoint-assess",
+                "blocked_reason": "checkpoint-assess human gate",
+                "escalation_question": (
+                    "Approve proceeding to DECIDE, or return to WHAT to fix "
+                    "the priority-tag inconsistency?"
+                ),
+                "escalation_options": [
+                    {
+                        "id": "proceed_to_decide",
+                        "label": "Proceed to DECIDE",
+                        "next_phase": "phase2-decide",
+                    },
+                    {
+                        "id": "route_back_to_what",
+                        "label": "Return to WHAT",
+                        "next_phase": "phase1-what",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _print_next_steps(tmp_path, "blocked")
+
+    captured = capsys.readouterr()
+    assert "A: Proceed to DECIDE" in captured.out
+    assert "B: Return to WHAT" in captured.out
+    assert "Answer with A/B, the option id, or the option label." in captured.out
+
+
+def test_controller_contract_failure_has_one_consistent_next_step(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    run_dir = tmp_path / "runs" / "spec-20260726-075512-129608"
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "phase": "phase1-why2",
+                "blocked_reason": "controller_state_contract_validation_failed",
+                "last_dispatch": {"phase_id": "phase1-understanding"},
+                "controller_contract_error": {
+                    "phase_id": "phase1-why2",
+                    "contract": "preparation",
+                    "validator": "ownership",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "echelon.cli._runtime_extension_compatibility",
+        lambda _project_root: type(
+            "Compatibility",
+            (),
+            {
+                "compatible": True,
+                "command": "",
+                "note": "runtime extension is compatible",
+            },
+        )(),
+        raising=False,
+    )
+
+    _print_next_steps(tmp_path, "blocked")
+
+    captured = capsys.readouterr()
+    assert "phase1-why2" in captured.out
+    assert "echelon spec continue" in captured.out
+    assert 'echelon spec resume "<your answer>"' not in captured.out
+    assert "echelon spec rewind" not in captured.out
+
+
+def test_stale_contract_metadata_renders_current_missing_output_recovery(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir = tmp_path / "runs" / "spec-test"
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "phase": "terminal-blocked",
+                "blocked_reason": "missing_phase_outputs",
+                "recovery_instruction": {
+                    "schema_version": 1,
+                    "kind": "sync_runtime_then_retry",
+                    "reason_code": "controller_state_contract_validation_failed",
+                    "phase": "phase1-what",
+                    "requires_human_input": False,
+                },
+                "phase_output_recovery": {
+                    "phase": "phase1-what",
+                    "missing_outputs": ["requirements-overview.md"],
+                    "prior_state_updates": {},
+                },
+                "issue_resolution_recovery": {
+                    "issue_id": "ISS-003",
+                    "from_phase": "phase1-why2",
+                    "to_phase": "phase1-what",
+                    "reason": "issue_resolution",
+                },
+                "last_dispatch": {
+                    "phase_id": "phase1-what",
+                    "verdict": "BLOCKED",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _print_next_steps(tmp_path, "blocked")
+
+    output = capsys.readouterr().out
+    assert "missing_phase_outputs" in output
+    assert "phase1-what" in output
+    assert "echelon spec continue" in output
+    assert "controller_state_contract_validation_failed" not in output
+    assert "runtime contracts" not in output
+
+
 def test_ready_next_step_has_clear_subtitle_and_next_command(
     tmp_path: Path,
     capsys,
@@ -147,9 +302,16 @@ def test_ready_next_step_has_clear_subtitle_and_next_command(
     )
     for name in (
         "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
+        "00-overview.md", "requirements-overview.md",
+        "plan-conformance.md", "plan-conformance.json",
         "test-strategy.md", "test-architecture.md", "coverage-map.md",
     ):
-        (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+        content = (
+            _valid_plan_conformance_json()
+            if name == "plan-conformance.json"
+            else f"# {name}\n"
+        )
+        (spec_dir / name).write_text(content, encoding="utf-8")
     (spec_dir / "constitution.md").write_text(
         "# Constitution\n\nReady.\n",
         encoding="utf-8",
@@ -254,9 +416,16 @@ def test_blocked_non_escalation_run_does_not_claim_ready_to_build(
     spec_dir.mkdir(parents=True)
     for name in (
         "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
+        "00-overview.md", "requirements-overview.md",
+        "plan-conformance.md", "plan-conformance.json",
         "test-strategy.md", "test-architecture.md", "coverage-map.md",
     ):
-        (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+        content = (
+            _valid_plan_conformance_json()
+            if name == "plan-conformance.json"
+            else f"# {name}\n"
+        )
+        (spec_dir / name).write_text(content, encoding="utf-8")
     (spec_dir / "constitution.md").write_text(
         "# Constitution\n\nReady.\n",
         encoding="utf-8",
@@ -433,9 +602,16 @@ def test_done_run_uses_published_artifacts_instead_of_stale_staging_why2(
     spec_dir.mkdir(parents=True)
     for name in (
         "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
+        "00-overview.md", "requirements-overview.md",
+        "plan-conformance.md", "plan-conformance.json",
         "test-strategy.md", "test-architecture.md", "coverage-map.md",
     ):
-        (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+        content = (
+            _valid_plan_conformance_json()
+            if name == "plan-conformance.json"
+            else f"# {name}\n"
+        )
+        (spec_dir / name).write_text(content, encoding="utf-8")
     (spec_dir / "constitution.md").write_text(
         "# Constitution\n\nReady.\n",
         encoding="utf-8",
@@ -500,9 +676,16 @@ def test_continue_phase_treats_done_published_artifacts_as_build_ready(
     spec_dir.mkdir(parents=True)
     for name in (
         "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
+        "00-overview.md", "requirements-overview.md",
+        "plan-conformance.md", "plan-conformance.json",
         "test-strategy.md", "test-architecture.md", "coverage-map.md",
     ):
-        (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+        content = (
+            _valid_plan_conformance_json()
+            if name == "plan-conformance.json"
+            else f"# {name}\n"
+        )
+        (spec_dir / name).write_text(content, encoding="utf-8")
     (spec_dir / "constitution.md").write_text(
         "# Constitution\n\nReady.\n",
         encoding="utf-8",

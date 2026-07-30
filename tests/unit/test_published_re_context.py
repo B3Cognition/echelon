@@ -5,7 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from harness.published_re_context import attach_published_re_context
+from harness.published_re_context import (
+    attach_published_re_context,
+    write_canonical_re_context,
+)
 
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:
@@ -114,3 +117,93 @@ def test_attach_published_re_context_snapshots_only_registered_artifacts(
     canonical_spec.write_text("# Search v2\n", encoding="utf-8")
     assert snapshot_spec.read_text(encoding="utf-8") == "# Search v1\n"
 
+
+@pytest.mark.unit
+def test_write_canonical_re_context_hashes_sorted_snapshot_files(
+    tmp_path: Path,
+) -> None:
+    snapshot_root = tmp_path / "runs" / "spec-1" / "context" / "published-re"
+    overview = snapshot_root / "workspace" / "overview.md"
+    manifest = snapshot_root / "workspace" / "manifest.json"
+    overview.parent.mkdir(parents=True)
+    overview.write_text("# Overview\n", encoding="utf-8")
+    manifest.write_text('{"schema_version": 1}\n', encoding="utf-8")
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+
+    path = write_canonical_re_context(
+        tmp_path,
+        spec_dir,
+        {
+            "status": "attached",
+            "generation": 7,
+            "snapshot_root": str(snapshot_root),
+            "artifacts": {
+                "overview": str(overview),
+                "manifest": str(manifest),
+                "duplicate": str(overview),
+            },
+        },
+    )
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == 1
+    assert payload["status"] == "attached"
+    assert payload["generation"] == 7
+    assert payload["artifacts"] == sorted(
+        payload["artifacts"],
+        key=lambda row: row["path"],
+    )
+    assert [row["path"] for row in payload["artifacts"]] == [
+        "re/workspace/manifest.json",
+        "re/workspace/overview.md",
+    ]
+    assert all(row["hash"].startswith("sha256:") for row in payload["artifacts"])
+    assert path.read_bytes().endswith(b"\n")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("status", ["ignored", "absent"])
+def test_write_canonical_re_context_records_non_attached_status(
+    tmp_path: Path,
+    status: str,
+) -> None:
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+
+    path = write_canonical_re_context(
+        tmp_path,
+        spec_dir,
+        {"status": status, "generation": 0, "artifacts": {}},
+    )
+
+    assert json.loads(path.read_text(encoding="utf-8")) == {
+        "schema_version": 1,
+        "status": status,
+        "generation": 0,
+        "artifacts": [],
+    }
+
+
+@pytest.mark.unit
+def test_write_canonical_re_context_rejects_paths_outside_snapshot(
+    tmp_path: Path,
+) -> None:
+    snapshot_root = tmp_path / "runs" / "spec-1" / "context" / "published-re"
+    snapshot_root.mkdir(parents=True)
+    outside = tmp_path / "outside.md"
+    outside.write_text("outside\n", encoding="utf-8")
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+
+    with pytest.raises(ValueError, match="outside published RE snapshot"):
+        write_canonical_re_context(
+            tmp_path,
+            spec_dir,
+            {
+                "status": "attached",
+                "generation": 1,
+                "snapshot_root": str(snapshot_root),
+                "artifacts": {"outside": str(outside)},
+            },
+        )

@@ -6,6 +6,14 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE_DIR = ROOT / "extension" / "agents" / "exploration" / "templates"
 AGENT = ROOT / "extension" / "agents" / "exploration" / "sage.md"
+CONTRADICTION_REFERENCE = (
+    ROOT
+    / "extension"
+    / "agents"
+    / "exploration"
+    / "appendices"
+    / "sage-contradiction-detection-reference.md"
+)
 WHY1_PHASE = ROOT / "extension" / "workflow" / "phases" / "phase1-why1.md"
 WHY2_PHASE = ROOT / "extension" / "workflow" / "phases" / "phase1-why2.md"
 WHY3_PHASE = ROOT / "extension" / "workflow" / "phases" / "phase3-consensus.md"
@@ -76,6 +84,9 @@ class TestSageTemplates:
         assert "{spec_dir}/issues.md" in text
         assert "agent: speckit-echelon-sage (SAGE)" in text
         assert "agent: WHY" not in text
+        assert "architecture_requirement_drift" in text
+        assert "plan.md, research.md, data-model.md, contracts/" in text
+        assert "validated `spec.md`" in text
 
     def test_sage_pass_verdict_forbids_required_amendments(self) -> None:
         text = AGENT.read_text(encoding="utf-8")
@@ -95,11 +106,12 @@ class TestSageTemplates:
         assert "--output /tmp/u_validate.json" not in text
         assert "/tmp/understanding_output.json" not in text
 
-    def test_sage_output_contract_allows_blocked_when_evidence_is_missing(self) -> None:
+    def test_sage_output_contract_separates_questions_from_missing_evidence(self) -> None:
         text = AGENT.read_text(encoding="utf-8")
 
-        assert "Verdict: <PASS | FAIL | BLOCKED>" in text
-        assert "verdict: <PASS | FAIL | BLOCKED>" in text
+        assert "Verdict: <PASS | FAIL | STOP_AND_ASK | BLOCKED>" in text
+        assert "verdict: <PASS | FAIL | STOP_AND_ASK | BLOCKED>" in text
+        assert "`blocked_reason: human_clarification_required`" in text
         assert "heuristic equivalents" not in text
 
     def test_why1_dispatch_includes_sage_templates(self) -> None:
@@ -143,9 +155,26 @@ class TestSageTemplates:
         assert "Quality gates pass AND no CRITICAL issues**" not in text
         assert "Certified gates pass, no CRITICAL issues, and no required amendments remain" in text
 
+    def test_why2_dispatch_requires_structured_evidence_resolution_requests(self) -> None:
+        text = WHY2_PHASE.read_text(encoding="utf-8")
+
+        assert "evidence_resolution_status: pending" in text
+        assert "evidence_requests" in text
+        assert "spec_repair" in text
+        assert "human_decision" in text
+
     def test_why3_dispatch_includes_sage_templates(self) -> None:
         text = WHY3_PHASE.read_text(encoding="utf-8")
 
         assert "agents/exploration/templates/sage-quality-gates-template.md" in text
         assert "agents/exploration/templates/sage-issues-template.md" in text
         assert "using the provided templates" in text
+        assert "architecture_requirement_drift" in text
+        assert "validated `spec.md`" in text
+
+    def test_sage_contradiction_reference_includes_architecture_drift(self) -> None:
+        text = CONTRADICTION_REFERENCE.read_text(encoding="utf-8")
+
+        assert "architecture_requirement_drift" in text
+        assert "validated `spec.md`" in text
+        assert "plan.md, research.md, data-model.md, contracts/" in text

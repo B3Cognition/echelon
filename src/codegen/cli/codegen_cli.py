@@ -567,7 +567,10 @@ def _run_pipeline(args: argparse.Namespace) -> None:
             print(re_context)
         else:
             print(f"[codegen RE] No requirements found in MemPalace for wing={ctx.wing}.")
-            print(f"[codegen RE] Run: codegen requirements mine <spec> --wing {ctx.wing}")
+            print(
+                "[codegen RE] Run: echelon spec memory mine <spec-id> "
+                f"(legacy: codegen requirements mine <spec> --wing {ctx.wing})"
+            )
 
     print(f"[codegen run] Current phase: {state.current_phase}")
     print(f"[codegen run] Phases completed: {state.phases_completed}")
@@ -624,7 +627,7 @@ def _run_status(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 def _run_requirements(args: argparse.Namespace) -> None:
-    """Dispatch requirements subcommands (Spec 025 FR-RM)."""
+    """Dispatch legacy requirements subcommands (Spec 025 FR-RM)."""
     cmd = getattr(args, "requirements_command", None)
     if cmd == "mine":
         _run_requirements_mine(args)
@@ -635,6 +638,7 @@ def _run_requirements(args: argparse.Namespace) -> None:
     elif cmd == "clean":
         _run_requirements_clean(args)
     else:
+        print("Deprecated: use `echelon spec memory ...` for canonical spec memory.")
         print("Usage: codegen requirements mine <source> [--wing WING] [--glob PATTERN]")
         print("       codegen requirements search <query> --wing WING [--room ROOM] [--n N]")
         print("       codegen requirements mark-delivered <REQ_ID> --wing WING [--status STATUS]")
@@ -643,16 +647,20 @@ def _run_requirements(args: argparse.Namespace) -> None:
 
 def _run_requirements_mine(args: argparse.Namespace) -> None:
     """
-    Mine requirements from a markdown file or directory into MemPalace.
+    Legacy raw-file mining entry point.
 
     FR-RM-001: Parse by requirement ID.
     FR-RM-002: Write each requirement as a MemPalace drawer.
     FR-RM-003: Print MineResult summary.
     """
+    print(
+        "[codegen] Deprecated: canonical spec memory is owned by "
+        "`echelon spec memory mine|refresh`."
+    )
     try:
-        from codegen.memory.requirements_miner import RequirementsMiner
+        from echelon.spec_memory_miner import SpecMemoryMiner
     except ImportError:
-        from src.codegen.memory.requirements_miner import RequirementsMiner  # type: ignore
+        from src.echelon.spec_memory_miner import SpecMemoryMiner  # type: ignore
 
     source = Path(args.source)
     if not source.exists():
@@ -668,7 +676,7 @@ def _run_requirements_mine(args: argparse.Namespace) -> None:
         run_id="manual",
         wing_override=getattr(args, "wing", None) or None,
     )
-    miner = RequirementsMiner(ctx, project_dir=Path.cwd())
+    miner = SpecMemoryMiner(ctx, project_dir=Path.cwd())
 
     print(f"[codegen] Mining requirements from: {source}")
     print(f"[codegen] MemPalace wing: {ctx.wing}")

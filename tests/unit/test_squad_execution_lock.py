@@ -1,13 +1,47 @@
 """Run-local execution lease coverage for Phase A controllers."""
 
+from contextlib import contextmanager
 from pathlib import Path
+from threading import Event, Thread
 from unittest.mock import MagicMock
 
 import pytest
 
 from echelon.spec_lifecycle import SpecRunExecutionLock
+from harness.human_input import HumanInputPolicyRegistry
 from harness.squad import SquadController
 from harness.squad_state import SquadStateStore
+
+
+@contextmanager
+def _external_execution_owner(run_dir: Path):
+    acquired = Event()
+    release = Event()
+    failures: list[BaseException] = []
+
+    def hold() -> None:
+        try:
+            with SpecRunExecutionLock.acquire(
+                run_dir,
+                "other-owner",
+            ):
+                acquired.set()
+                assert release.wait(timeout=5)
+        except BaseException as error:
+            failures.append(error)
+            acquired.set()
+
+    owner = Thread(target=hold)
+    owner.start()
+    assert acquired.wait(timeout=5)
+    assert not failures
+    try:
+        yield
+    finally:
+        release.set()
+        owner.join(timeout=5)
+        assert not failures
+        assert not owner.is_alive()
 
 
 class _TerminalGraph:
@@ -16,6 +50,9 @@ class _TerminalGraph:
 
     def all_phase_ids(self) -> set[str]:
         return {"DONE"}
+
+    def human_input_policy_registry(self) -> HumanInputPolicyRegistry:
+        return HumanInputPolicyRegistry(())
 
 
 def _controller(tmp_path: Path) -> tuple[SquadController, SquadStateStore, MagicMock]:
@@ -40,7 +77,7 @@ def test_run_refuses_a_live_execution_owner_before_state_or_provider_mutation(
     controller, store, provider = _controller(tmp_path)
     before = store.load()
 
-    with SpecRunExecutionLock.acquire(store.squad_dir, "other-owner"):
+    with _external_execution_owner(store.squad_dir):
         result = controller.run(user_message="Build export API")
 
     assert result.status == "busy"
@@ -56,7 +93,7 @@ def test_manual_phase_refuses_a_live_execution_owner_before_state_mutation(
     controller, store, provider = _controller(tmp_path)
     before = store.load()
 
-    with SpecRunExecutionLock.acquire(store.squad_dir, "other-owner"):
+    with _external_execution_owner(store.squad_dir):
         result = controller.run_single_phase("DONE", user_message="Build export API")
 
     assert result.status == "busy"

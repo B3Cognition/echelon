@@ -14,7 +14,13 @@ from echelon.git_helpers import (
     run_git,
     worktree_dirty_paths,
 )
-from harness.phase_checkpoints import checkpoint_targets, load_checkpoint_ledger, resolve_checkpoint
+from harness.phase_checkpoints import (
+    CHECKPOINT_LEDGER_REL,
+    CHECKPOINT_LOCK_REL,
+    checkpoint_targets,
+    load_checkpoint_ledger,
+    resolve_checkpoint,
+)
 
 
 class RewindError(RuntimeError):
@@ -40,7 +46,21 @@ def _active_spec_dirty_paths(project_root: Path, spec_dir: Path, paths: set[str]
         # A run-local spec directory outside the project cannot be classified safely.
         return sorted(paths)
     prefix = f"{spec_path}/"
-    return sorted(path for path in paths if path == spec_path or path.startswith(prefix))
+    runtime_files = {
+        f"{spec_path}/{CHECKPOINT_LEDGER_REL.as_posix()}",
+        f"{spec_path}/{CHECKPOINT_LOCK_REL.as_posix()}",
+    }
+    temporary_prefix = f"{spec_path}/.echelon/.checkpoints.json."
+    return sorted(
+        path
+        for path in paths
+        if (path == spec_path or path.startswith(prefix))
+        and path not in runtime_files
+        and not (
+            path.startswith(temporary_prefix)
+            and path.endswith(".tmp")
+        )
+    )
 
 
 def _find_spec_dir(project_root: Path, spec: str) -> Path:
@@ -62,12 +82,17 @@ def prepare_rewind(
     target: str,
     confirm: bool,
     spec_dir: Path | None = None,
+    checkpoint_commit: str = "",
 ) -> RewindResult:
     resolved_spec_dir = spec_dir or _find_spec_dir(project_root, spec)
     ledger = load_checkpoint_ledger(resolved_spec_dir)
     try:
-        checkpoint = resolve_checkpoint(ledger, target)
-    except KeyError as exc:
+        checkpoint = resolve_checkpoint(
+            ledger,
+            target,
+            commit=checkpoint_commit,
+        )
+    except (KeyError, ValueError) as exc:
         available = checkpoint_targets(ledger)
         message = str(exc.args[0]) if exc.args else f"checkpoint not found: {target}"
         suffix = (
@@ -110,7 +135,14 @@ def prepare_rewind(
         f"  from: {head[:7]} current HEAD\n"
         f"  to:   {checkpoint.commit[:7]} {checkpoint.phase} checkpoint\n\n"
         f"Backup branch:\n  {backup_ref}\n\n"
-        f"Continue with:\n  echelon spec rewind {checkpoint.phase} --confirm"
+        "Continue with:\n  "
+        f"echelon spec rewind {target}"
+        + (
+            f" --commit {checkpoint_commit}"
+            if checkpoint_commit
+            else ""
+        )
+        + " --confirm"
     )
     if dirty_paths:
         message += "\n\nWorkspace changes to preserve:\n  " + "\n  ".join(sorted(dirty_paths))

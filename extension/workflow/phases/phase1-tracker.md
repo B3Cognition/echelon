@@ -49,12 +49,22 @@ TRACKER must emit one of these canonical `echelon_result.verdict` values:
 - `DRIFT` — intent risks were recorded, but progress may continue.
 - `STOP_AND_ASK` — user input is required before continuing.
 
-The workflow still accepts legacy `DONE`, `DRIFTING`, and `ESCALATE` verdicts for
-compatibility, but new outputs must use the canonical values above.
+Every question-bearing result must use `STOP_AND_ASK`; never attach a question
+to `ESCALATE` or another verdict. Use this exact controller input shape:
 
-When emitting `STOP_AND_ASK`, return `status: blocked`, a concise
-`blocked_reason`, and a concrete `escalation_question` in
-`echelon_result.state_updates` so `echelon spec resume "<answer>"` can recover the
-run deterministically.
+```yaml
+echelon_result:
+  verdict: STOP_AND_ASK
+  state_updates:
+    status: blocked
+    blocked_reason: human_clarification_required
+    escalation_question: "<one concrete question>"
+    escalation_recommended_answer: "<evidence-backed recommendation>"
+    escalation_risk_level: "<low | medium | high | critical>"
+```
+
+Include `escalation_recommended_answer` and `escalation_risk_level` together
+only when evidence supports a recommendation; otherwise omit both. The
+controller owns decision persistence, clarification writes, and state cleanup.
 
 **Transition:** `phases[phase1-why1]` — see `workflow/definition.yaml`

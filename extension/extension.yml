@@ -3,7 +3,7 @@ schema_version: "1.0"
 extension:
   id: "echelon"
   name: "Echelon"
-  version: "3.7.13"
+  version: "3.9.0"
   description: "Multi-agent cognitive system with adversarial critic, kill gate, role-separation enforcement, cross-run calibration learning per-agent injection, SOAR-powered build pipeline (codegen), full 34-metric requirements quality analysis, expert persona prompts, and native brownfield extraction (re-* commands). Designed for high-stakes, complex projects where quality, alignment, and risk management are paramount."
   author: "B3Cognition"
   repository: "https://github.com/B3Cognition/echelon"
@@ -239,7 +239,15 @@ provides:
       behavior:
         execution: agent
         capability: strong
-        tools: full         # writes spec.md, 00-overview.md (via Skill + direct)
+        tools: full         # writes spec.md, requirements-overview.md (via Skill + direct)
+        color: green
+    - name: "speckit.echelon.lexicon-deriver"
+      file: "agents/exploration/lexicon-deriver.md"
+      description: "LEXICON DERIVER — compiles a quality-certified specification into the controlled requirements grammar"
+      behavior:
+        execution: agent
+        capability: balanced
+        tools: write
         color: green
     - name: "speckit.echelon.sage"
       file: "agents/exploration/sage.md"

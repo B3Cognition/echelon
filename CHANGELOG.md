@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **Explicit governance structural nodes** — Feasibility and intent-alignment
+  certification now run in visible provider-free
+  `phase2-feasibility-structural` and
+  `phase2-intent-alignment-structural` nodes. Provider verdict handoff is
+  controller-owned and durable; repair, warning, and block outcomes use the
+  normal workflow, checkpoint, and recovery paths.
+
 - **Explicit Tasks Lexicon workflow nodes** — Replaced hidden tasks-Lexicon
   checks after planning and PLAN2 with two provider-free workflow nodes. Each
   certification is now visible, resumable, deterministically routed, and
