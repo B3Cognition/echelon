@@ -107,6 +107,11 @@ graph_app = typer.Typer(
     help="Build and audit artifact graphs rooted at a specification.",
     no_args_is_help=True,
 )
+graph_workspace_app = typer.Typer(
+    add_completion=False,
+    help="Build, audit, refresh, and inspect the workspace artifact graph.",
+    no_args_is_help=True,
+)
 memory_app = typer.Typer(
     add_completion=False,
     help="Search and inspect workspace memory in MemPalace.",
@@ -180,6 +185,7 @@ spec_app.add_typer(spec_evidence_app, name="evidence")
 delivery_app.add_typer(delivery_checkpoint_app, name="checkpoint")
 re_app.add_typer(re_memory_app, name="memory")
 spec_evidence_app.add_typer(spec_evidence_memory_app, name="memory")
+graph_app.add_typer(graph_workspace_app, name="workspace")
 
 
 @admin_app.command("commands")
@@ -321,6 +327,29 @@ def _echo_spec_graph_audit(report: object) -> None:
     typer.echo(
         f"Spec graph audit {getattr(report, 'status')}: "
         f"spec={getattr(report, 'spec_id')} findings={len(findings)}"
+    )
+    for finding in findings:
+        typer.echo(
+            f"  [{getattr(finding, 'severity')}] "
+            f"{getattr(finding, 'code')}: {getattr(finding, 'message')}"
+        )
+
+
+def _echo_workspace_graph_summary(candidate: object, *, action: str) -> None:
+    graph = getattr(candidate, "graph", candidate)
+    typer.echo(
+        f"Workspace graph {action}: workspace={getattr(graph, 'workspace_name', Path.cwd().name)} "
+        f"nodes={len(getattr(graph, 'nodes', ()))} "
+        f"edges={len(getattr(graph, 'edges', ()))}"
+    )
+
+
+def _echo_workspace_graph_audit(report: object) -> None:
+    findings = list(getattr(report, "findings", ()))
+    typer.echo(
+        f"Workspace graph audit {getattr(report, 'status')}: "
+        f"workspace={getattr(report, 'workspace_name', Path.cwd().name)} "
+        f"findings={len(findings)}"
     )
     for finding in findings:
         typer.echo(
@@ -2001,6 +2030,176 @@ def graph_build(
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=2) from exc
     _echo_spec_graph_summary(graph, action="built")
+
+
+@graph_workspace_app.command("build")
+def graph_workspace_build(
+    write: bool = typer.Option(False, "--write"),
+) -> None:
+    """Compose the workspace graph from current persisted member graphs."""
+    from echelon.workspace_graph import (
+        WorkspaceGraphError,
+        build_workspace_graph,
+        write_workspace_graph,
+    )
+
+    try:
+        candidate = build_workspace_graph(Path.cwd())
+        if write:
+            write_workspace_graph(candidate.graph, Path.cwd())
+    except (WorkspaceGraphError, OSError, ValueError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    _echo_workspace_graph_summary(candidate, action="built")
+
+
+@graph_workspace_app.command("audit")
+def graph_workspace_audit(
+    as_json: bool = typer.Option(False, "--json"),
+    write: bool = typer.Option(False, "--write"),
+) -> None:
+    """Audit workspace graph freshness without updating upstream members."""
+    from echelon.workspace_graph import WorkspaceGraphError
+    from echelon.workspace_graph_audit import (
+        audit_workspace_graph,
+        write_workspace_graph_audit,
+    )
+
+    try:
+        report = audit_workspace_graph(Path.cwd())
+        if write:
+            write_workspace_graph_audit(report, Path.cwd())
+    except (WorkspaceGraphError, OSError, ValueError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    if as_json:
+        _echo_json(report.to_dict())
+    else:
+        _echo_workspace_graph_audit(report)
+    raise typer.Exit(code=_graph_exit_code(report.status))
+
+
+@graph_workspace_app.command("refresh")
+def graph_workspace_refresh(
+    write: bool = typer.Option(False, "--write"),
+) -> None:
+    """Preview or explicitly refresh workspace graph members and receipts."""
+    from echelon.workspace_graph import WorkspaceGraphError
+    from echelon.workspace_graph_refresh import refresh_workspace_graph
+
+    try:
+        result = refresh_workspace_graph(Path.cwd(), write=write)
+    except (WorkspaceGraphError, OSError, ValueError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    for outcome in result.outcomes:
+        typer.echo(
+            f"Workspace refresh {outcome.action}: {outcome.subject_id} "
+            f"{outcome.domain} ({outcome.status or outcome.detail or 'unknown'})"
+        )
+    _echo_workspace_graph_summary(
+        result.candidate,
+        action="refreshed" if write else "previewed",
+    )
+    _echo_workspace_graph_audit(result.report)
+    raise typer.Exit(code=_graph_exit_code(result.report.status))
+
+
+@graph_workspace_app.command("export")
+def graph_workspace_export(
+    output_format: str = typer.Option("dot", "--format"),
+    lens: str = typer.Option("portfolio", "--lens"),
+    output: Optional[Path] = typer.Option(None, "--output"),
+) -> None:
+    """Export a persisted workspace graph without refreshing its members."""
+    from echelon.graph_visualization import (
+        GraphVisualizationError,
+        load_graph_document,
+        render_graph_dot,
+    )
+    from echelon.workspace_graph import workspace_graph_path, write_workspace_graph_bytes
+    from echelon.workspace_graph_audit import (
+        audit_workspace_graph,
+        persisted_workspace_graph_is_invalid,
+    )
+
+    try:
+        if output_format != "dot":
+            raise GraphVisualizationError(
+                f"unsupported graph export format {output_format!r}; expected dot"
+            )
+        root = Path.cwd()
+        report = audit_workspace_graph(root)
+        if persisted_workspace_graph_is_invalid(report):
+            raise GraphVisualizationError("workspace graph artifact fails its full contract")
+        document = load_graph_document(workspace_graph_path(root))
+        rendered = render_graph_dot(document, report, lens=lens)
+        if output is None:
+            typer.echo(rendered, nl=False)
+        else:
+            output_path = output if output.is_absolute() else root / output
+            write_workspace_graph_bytes(output_path, rendered.encode("utf-8"))
+            typer.echo(f"Workspace graph DOT: {output_path}")
+    except (GraphVisualizationError, OSError, ValueError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    raise typer.Exit(code=_graph_exit_code(report.status))
+
+
+@graph_workspace_app.command("view")
+def graph_workspace_view(
+    lens: Optional[str] = typer.Option(None, "--lens"),
+    output: Optional[Path] = typer.Option(None, "--output"),
+    open_browser: bool = typer.Option(True, "--open/--no-open"),
+) -> None:
+    """Create and optionally open an offline workspace graph viewer."""
+    import webbrowser
+
+    from echelon.graph_visualization import (
+        GraphVisualizationError,
+        load_cytoscape_source,
+        load_graph_document,
+        render_graph_html,
+    )
+    from echelon.workspace_graph import workspace_graph_path, write_workspace_graph_bytes
+    from echelon.workspace_graph_audit import (
+        audit_workspace_graph,
+        persisted_workspace_graph_is_invalid,
+    )
+
+    try:
+        root = Path.cwd()
+        report = audit_workspace_graph(root)
+        if persisted_workspace_graph_is_invalid(report):
+            raise GraphVisualizationError("workspace graph artifact fails its full contract")
+        document = load_graph_document(workspace_graph_path(root))
+        initial_lens = lens or ("exceptions" if report.findings else "portfolio")
+        html = render_graph_html(
+            document,
+            report,
+            cytoscape_source=load_cytoscape_source(),
+            initial_lens=initial_lens,
+        )
+        output_path = output or workspace_graph_path(root).with_name("workspace.html")
+        if not output_path.is_absolute():
+            output_path = root / output_path
+        write_workspace_graph_bytes(output_path, html.encode("utf-8"))
+        typer.echo(
+            f"Workspace graph viewer: {output_path} "
+            f"(audit={report.status}, findings={len(report.findings)})"
+        )
+        if open_browser:
+            try:
+                opened = webbrowser.open(output_path.resolve().as_uri())
+            except webbrowser.Error:
+                typer.echo("warning: workspace graph viewer was not opened", err=True)
+            else:
+                if not opened:
+                    typer.echo("warning: workspace graph viewer was not opened", err=True)
+    except (GraphVisualizationError, OSError, ValueError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    raise typer.Exit(code=_graph_exit_code(report.status))
 
 
 @graph_app.command("audit")

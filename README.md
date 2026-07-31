@@ -342,6 +342,56 @@ Refresh the affected memory domain first, then rebuild the graph. `view` and
 when the live graph audit fails, but return exit code `1` and show the findings;
 missing or invalid graph state returns `2`.
 
+#### Workspace artifact graph
+
+The workspace graph is a local, replaceable composition of the persisted
+canonical `specs/<id>/spec-artifact-graph.json` files. It uses live per-spec
+audits and workspace inputs, but does not treat per-spec audit sidecars or
+run-local artifacts as authority. It records the exact member-graph hash, each
+member's source-set and memory-state receipts, and workspace source/member-state
+digests, so the audit can identify whether canonical inputs, memory, a member,
+or the composed graph became stale.
+
+Use the conditional repair path when a workspace audit reports stale state:
+
+```bash
+# The single audit-first repair operation.
+echelon graph workspace refresh --write
+
+# Compose or inspect current persisted workspace state without upstream repair.
+echelon graph workspace build --write
+echelon graph workspace audit --json
+echelon graph workspace view --no-open
+echelon graph workspace export --format dot --output workspace.dot
+```
+
+`workspace refresh --write` is the single repair operation. It handles shared
+published RE once per workspace: it audits before repair and may audit again
+after repair; absent published RE is skipped. It audits requirement memory for
+every canonical spec, evidence memory only for landed specs with published
+snapshots, and each member graph. Only stale applicable domains are refreshed
+and only missing or stale member graphs are rebuilt before composition uses
+their exact persisted bytes.
+One member failure does not stop the remaining repairs; the member stays as an
+excluded placeholder with its diagnosis. With `--write`, refresh persists both
+the workspace graph and workspace audit, then returns the final workspace audit
+exit code: `0` for `pass`/`warn`, `1` for `fail`, or `2` for `unavailable`.
+
+`workspace build [--write]` only composes current persisted member graphs;
+`--write` persists the composed workspace graph. A successful composition exits
+`0` even when the graph contains excluded members, because health belongs to
+the audit. `workspace audit [--write]` audits persisted workspace state and
+writes only its audit sidecar with `--write`. `workspace refresh` without
+`--write` is a dry candidate audit: it does not mutate upstream memory, member
+graphs, or persisted workspace graph/audit output.
+
+`workspace view` and `workspace export` consume the persisted workspace graph
+and perform a live audit. They write an offline `workspace.html` or DOT to
+stdout/`--output` for a valid graph even when its audit is `fail` (or a valid
+placeholder-only graph is `unavailable`), then return that audit status. `pass`
+and `warn` exit `0`, `fail` exits `1`, and unavailable or missing/invalid
+persisted workspace state exits `2` without view/export output.
+
 ### Product inputs: requirements versus references
 
 `--input` is repeatable and deliberately separates product obligations from

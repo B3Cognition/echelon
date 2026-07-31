@@ -198,6 +198,7 @@ def test_html_viewer_is_offline_searchable_and_script_safe() -> None:
     assert 'id="graph-lens"' in html
     for lens in ("all", "exceptions", "traceability", "memory", "delivery"):
         assert f'value="{lens}"' in html
+    assert 'value="portfolio"' not in html
     assert '"initial_lens": "exceptions"' in html
     assert '"label": ""' in html
     assert 'selector: ".labelled"' in html

@@ -5,10 +5,9 @@ from __future__ import annotations
 from importlib.resources import files
 import json
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Mapping, Protocol
 
 from echelon.spec_graph import GRAPH_SCHEMA_VERSION
-from echelon.spec_graph_audit import SpecGraphAuditReport
 
 
 GRAPH_LENSES = ("all", "exceptions", "traceability", "memory", "delivery")
@@ -18,6 +17,11 @@ _LENS_EDGE_TYPES = {
     "traceability": {"HAS_REQUIREMENT", "DERIVED_FROM"},
     "memory": {"STORED_AS"},
     "delivery": {"IMPLEMENTS", "VERIFIED_BY", "DEFERRED_BY"},
+    "portfolio": {"CONTAINS_SPEC", "TARGETS", "SUPERSEDES"},
+}
+
+_LENS_NODE_TYPES = {
+    "portfolio": {"Workspace", "Spec", "SourceRoot"},
 }
 
 _NODE_STYLE = {
@@ -35,6 +39,15 @@ class GraphVisualizationError(RuntimeError):
     """Raised when a persisted graph cannot be rendered safely."""
 
 
+class GraphAuditReport(Protocol):
+    """Structural audit contract shared by spec and workspace graph views."""
+
+    status: str
+    findings: object
+
+    def to_dict(self) -> dict[str, object]: ...
+
+
 def load_graph_document(path: Path) -> dict[str, object]:
     """Read and validate the persisted graph document used by view/export."""
     try:
@@ -47,8 +60,16 @@ def load_graph_document(path: Path) -> dict[str, object]:
         raise GraphVisualizationError("graph document must be an object")
     if document.get("schema_version") != GRAPH_SCHEMA_VERSION:
         raise GraphVisualizationError("unsupported graph schema version")
-    if not isinstance(document.get("spec_id"), str) or not document["spec_id"]:
+    scope = _graph_scope(document)
+    if scope == "spec" and (
+        not isinstance(document.get("spec_id"), str) or not document["spec_id"]
+    ):
         raise GraphVisualizationError("graph spec_id must be a non-empty string")
+    if scope == "workspace" and (
+        not isinstance(document.get("workspace_name"), str)
+        or not document["workspace_name"]
+    ):
+        raise GraphVisualizationError("graph workspace_name must be a non-empty string")
     nodes = document.get("nodes")
     edges = document.get("edges")
     if not isinstance(nodes, list) or not isinstance(edges, list):
@@ -97,14 +118,15 @@ def load_graph_document(path: Path) -> dict[str, object]:
 
 def filter_graph(
     document: Mapping[str, object],
-    audit: SpecGraphAuditReport,
+    audit: GraphAuditReport,
     *,
     lens: str,
 ) -> dict[str, list[dict[str, object]]]:
     """Return a deterministic graph slice while preserving edge endpoints."""
-    if lens not in GRAPH_LENSES:
+    lenses = _available_lenses(document)
+    if lens not in lenses:
         raise GraphVisualizationError(
-            f"unknown graph lens {lens!r}; expected one of {', '.join(GRAPH_LENSES)}"
+            f"unknown graph lens {lens!r}; expected one of {', '.join(lenses)}"
         )
     nodes = {
         str(node["id"]): node
@@ -116,9 +138,9 @@ def filter_graph(
         selected_ids = set(nodes)
     elif lens == "exceptions":
         selected_ids = {
-            str(finding.subject_id)
-            for finding in audit.findings
-            if finding.subject_id in nodes
+            str(subject_id)
+            for finding in _audit_findings(audit)
+            if (subject_id := getattr(finding, "subject_id", None)) in nodes
         }
         selected_ids.update(
             node_id
@@ -149,6 +171,11 @@ def filter_graph(
             for edge in selected_edges
             for endpoint in (edge["source"], edge["target"])
         }
+        selected_ids.update(
+            node_id
+            for node_id, node in nodes.items()
+            if node.get("type") in _LENS_NODE_TYPES.get(lens, set())
+        )
 
     return {
         "nodes": [
@@ -174,17 +201,17 @@ def filter_graph(
 
 def render_graph_dot(
     document: Mapping[str, object],
-    audit: SpecGraphAuditReport,
+    audit: GraphAuditReport,
     *,
     lens: str,
 ) -> str:
     """Render a deterministic directed DOT document for one graph lens."""
     filtered = filter_graph(document, audit, lens=lens)
-    spec_id = str(document.get("spec_id") or audit.spec_id)
+    title = _graph_title(document)
     lines = [
-        f'digraph "{_dot_escape(spec_id)}" {{',
+        f'digraph "{_dot_escape(title)}" {{',
         (
-            f'  graph [label="{_dot_escape(spec_id)} | audit: '
+            f'  graph [label="{_dot_escape(title)} | audit: '
             f'{_dot_escape(audit.status)}", labelloc="t", rankdir="LR"];'
         ),
         '  node [fontname="Helvetica", fontsize="10", style="filled"];',
@@ -222,29 +249,85 @@ def load_cytoscape_source() -> str:
 
 def render_graph_html(
     document: Mapping[str, object],
-    audit: SpecGraphAuditReport,
+    audit: GraphAuditReport,
     *,
     cytoscape_source: str,
     initial_lens: str,
 ) -> str:
     """Render one self-contained interactive HTML graph viewer."""
-    if initial_lens not in GRAPH_LENSES:
+    lenses = _available_lenses(document)
+    if initial_lens not in lenses:
         raise GraphVisualizationError(f"unknown graph lens: {initial_lens}")
-    views = {
-        lens: _cytoscape_elements(filter_graph(document, audit, lens=lens))
-        for lens in GRAPH_LENSES
+    elements = _cytoscape_elements(filter_graph(document, audit, lens="all"))
+    node_ids = {
+        str(element["data"]["id"])
+        for element in elements
+        if element["group"] == "nodes"
     }
     payload = {
-        "spec_id": str(document.get("spec_id") or audit.spec_id),
+        "scope": _graph_scope(document),
+        "title": _graph_title(document),
         "audit": audit.to_dict(),
         "initial_lens": initial_lens,
-        "views": views,
+        "lenses": lenses,
+        "lens_edge_types": {
+            lens: sorted(_LENS_EDGE_TYPES[lens])
+            for lens in lenses
+            if lens in _LENS_EDGE_TYPES
+        },
+        "lens_node_types": {
+            lens: sorted(_LENS_NODE_TYPES[lens])
+            for lens in lenses
+            if lens in _LENS_NODE_TYPES
+        },
+        "exception_subject_ids": sorted(
+            str(subject_id)
+            for finding in _audit_findings(audit)
+            if (subject_id := getattr(finding, "subject_id", None)) in node_ids
+        ),
+        "elements": elements,
     }
     payload_json = json.dumps(payload, indent=2, sort_keys=True).replace("</", r"<\/")
     return (
         _HTML_TEMPLATE.replace("__CYTOSCAPE_SOURCE__", cytoscape_source)
         .replace("__GRAPH_PAYLOAD__", payload_json)
+        .replace(
+            "__PORTFOLIO_OPTION__",
+            '<option value="portfolio">Portfolio</option>'
+            if "portfolio" in lenses
+            else "",
+        )
     )
+
+
+def _graph_scope(document: Mapping[str, object]) -> str:
+    scope = document.get("scope")
+    if scope in {None, "spec"}:
+        return "spec"
+    if scope == "workspace":
+        return "workspace"
+    raise GraphVisualizationError(f"unsupported graph scope: {scope!r}")
+
+
+def _available_lenses(document: Mapping[str, object]) -> tuple[str, ...]:
+    if _graph_scope(document) == "workspace":
+        return (*GRAPH_LENSES, "portfolio")
+    return GRAPH_LENSES
+
+
+def _graph_title(document: Mapping[str, object]) -> str:
+    key = "workspace_name" if _graph_scope(document) == "workspace" else "spec_id"
+    value = document.get(key)
+    if isinstance(value, str) and value:
+        return value
+    return "Echelon graph"
+
+
+def _audit_findings(audit: GraphAuditReport) -> tuple[object, ...]:
+    try:
+        return tuple(audit.findings)
+    except TypeError:
+        return ()
 
 
 def _objects(value: object, label: str) -> list[dict[str, object]]:
@@ -376,6 +459,7 @@ _HTML_TEMPLATE = """<!doctype html>
         <option value="traceability">Traceability</option>
         <option value="memory">Memory</option>
         <option value="delivery">Delivery</option>
+        __PORTFOLIO_OPTION__
       </select>
       <button id="one-hop" type="button">1 hop</button>
       <button id="two-hop" type="button">2 hops</button>
@@ -401,7 +485,7 @@ _HTML_TEMPLATE = """<!doctype html>
       let selectedNode = null;
       let cy = null;
 
-      document.getElementById("graph-title").textContent = payload.spec_id;
+      document.getElementById("graph-title").textContent = payload.title;
       const status = document.getElementById("audit-status");
       status.textContent = `audit: ${payload.audit.status}`;
       status.className = `status status-${payload.audit.status}`;
@@ -455,6 +539,57 @@ _HTML_TEMPLATE = """<!doctype html>
         return lensSelect.value === "all" ? "cose" : "breadthfirst";
       }
 
+      function isException(node) {
+        const properties = node.data.properties || {};
+        return (
+          (properties.presence != null && properties.presence !== "present") ||
+          (properties.reconciliation_status != null && properties.reconciliation_status !== "pass")
+        );
+      }
+
+      function lensElements() {
+        const nodes = payload.elements.filter((element) => element.group === "nodes");
+        const edges = payload.elements.filter((element) => element.group === "edges");
+        const lens = lensSelect.value;
+        if (lens === "all") return payload.elements;
+
+        let selectedEdges;
+        const selectedIds = new Set();
+        if (lens === "exceptions") {
+          payload.exception_subject_ids.forEach((id) => selectedIds.add(id));
+          nodes.filter(isException).forEach((node) => selectedIds.add(node.data.id));
+          selectedEdges = edges.filter((edge) =>
+            selectedIds.has(edge.data.source) || selectedIds.has(edge.data.target)
+          );
+          selectedEdges.forEach((edge) => {
+            selectedIds.add(edge.data.source);
+            selectedIds.add(edge.data.target);
+          });
+          if (selectedIds.size === 0) {
+            nodes
+              .filter((node) => node.data.type === "Spec")
+              .forEach((node) => selectedIds.add(node.data.id));
+          }
+        } else {
+          const edgeTypes = new Set(payload.lens_edge_types[lens] || []);
+          const nodeTypes = new Set(payload.lens_node_types[lens] || []);
+          selectedEdges = edges.filter((edge) => edgeTypes.has(edge.data.type));
+          nodes
+            .filter((node) => nodeTypes.has(node.data.type))
+            .forEach((node) => selectedIds.add(node.data.id));
+          selectedEdges.forEach((edge) => {
+            selectedIds.add(edge.data.source);
+            selectedIds.add(edge.data.target);
+          });
+        }
+        return [
+          ...nodes.filter((node) => selectedIds.has(node.data.id)),
+          ...selectedEdges.filter((edge) =>
+            selectedIds.has(edge.data.source) && selectedIds.has(edge.data.target)
+          ),
+        ];
+      }
+
       function updateLabels() {
         const showAll = cy.nodes().length <= 30 || cy.zoom() >= 1.2;
         cy.elements().toggleClass("labelled", showAll);
@@ -464,7 +599,7 @@ _HTML_TEMPLATE = """<!doctype html>
         if (cy) cy.destroy();
         cy = cytoscape({
           container: document.getElementById("cy"),
-          elements: payload.views[lensSelect.value],
+          elements: lensElements(),
           style: styles,
           maxZoom: 2,
           layout: { name: layoutName(), directed: true, padding: 36, animate: false }

@@ -22,6 +22,18 @@ from echelon.spec_graph import (
 
 
 GRAPH_AUDIT_FILENAME = "spec-artifact-graph-audit.json"
+REBUILDABLE_GRAPH_FINDING_CODES = frozenset(
+    {
+        "graph_missing",
+        "graph_invalid",
+        "graph_inputs_invalid",
+        "graph_source_set_stale",
+        "graph_memory_state_stale",
+        "graph_input_added",
+        "graph_input_removed",
+        "graph_input_changed",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -65,6 +77,22 @@ class SpecGraphAuditReport:
             "findings": [finding.to_dict() for finding in self.findings],
             "recommendations": list(self.recommendations),
         }
+
+
+def classify_spec_graph_audit(report: object) -> str:
+    """Classify whether a live graph audit is current, stale, or unhealthy."""
+    status = getattr(report, "status", None)
+    if status in {"pass", "warn"}:
+        return "current"
+    finding_codes = {
+        getattr(finding, "code", None)
+        for finding in getattr(report, "findings", ())
+    }
+    if finding_codes & REBUILDABLE_GRAPH_FINDING_CODES:
+        return "stale"
+    if status == "unavailable" or "graph_source_unavailable" in finding_codes:
+        return "unavailable"
+    return "unhealthy"
 
 
 def audit_spec_graph(

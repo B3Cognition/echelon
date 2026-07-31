@@ -14,7 +14,11 @@ from echelon.spec_graph import (
     write_spec_graph,
 )
 from echelon.spec_graph_audit import (
+    GraphFinding,
+    REBUILDABLE_GRAPH_FINDING_CODES,
+    SpecGraphAuditReport,
     audit_spec_graph,
+    classify_spec_graph_audit,
     write_spec_graph_audit,
 )
 
@@ -106,6 +110,54 @@ def _graph(
         edges=tuple(edges),
         memory_receipts=receipts,
     )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("code", sorted(REBUILDABLE_GRAPH_FINDING_CODES))
+def test_classify_every_rebuildable_graph_finding_as_stale(code: str) -> None:
+    report = SpecGraphAuditReport(
+        schema_version=1,
+        spec_id="001-demo",
+        graph_hash="sha256:graph",
+        status="fail",
+        findings=(GraphFinding("error", code, f"finding {code}"),),
+    )
+
+    assert classify_spec_graph_audit(report) == "stale"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("status", "codes", "expected"),
+    [
+        ("pass", (), "current"),
+        ("warn", ("mempalace_reconciliation_unavailable",), "current"),
+        ("fail", ("graph_source_set_stale",), "stale"),
+        ("fail", ("graph_memory_state_stale",), "stale"),
+        ("unavailable", ("graph_missing",), "stale"),
+        ("fail", ("graph_invalid",), "stale"),
+        ("unavailable", ("graph_source_unavailable",), "unavailable"),
+        ("fail", ("requirement_verification_missing",), "unhealthy"),
+        ("fail", ("future_coherence_finding",), "unhealthy"),
+    ],
+)
+def test_classify_spec_graph_audit(
+    status: str,
+    codes: tuple[str, ...],
+    expected: str,
+) -> None:
+    report = SpecGraphAuditReport(
+        schema_version=1,
+        spec_id="001-demo",
+        graph_hash="sha256:graph",
+        status=status,
+        findings=tuple(
+            GraphFinding("error", code, f"finding {code}")
+            for code in codes
+        ),
+    )
+
+    assert classify_spec_graph_audit(report) == expected
 
 
 def _write_current_graph(tmp_path: Path, graph: SpecArtifactGraph) -> Path:

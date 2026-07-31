@@ -64,6 +64,7 @@ def test_graph_help_exposes_build_audit_and_refresh() -> None:
     assert "build" in result.output
     assert "audit" in result.output
     assert "refresh" in result.output
+    assert "workspace" in result.output
 
 
 @pytest.mark.unit
@@ -182,6 +183,29 @@ def test_graph_audit_maps_fail_and_unavailable_exit_codes(
 
     assert failed.exit_code == 1
     assert unavailable.exit_code == 2
+
+
+@pytest.mark.unit
+def test_live_graph_audit_reconstructs_without_persisting_member_graph(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _persist_graph(tmp_path)
+    rebuilt: list[str] = []
+    monkeypatch.setattr(
+        "echelon.spec_graph_audit.build_spec_graph",
+        lambda project_root, selector: rebuilt.append(str(selector)) or _graph(),
+    )
+    monkeypatch.setattr(
+        "echelon.spec_graph.write_spec_graph",
+        lambda *args, **kwargs: pytest.fail("live audit must not persist a member graph"),
+    )
+    from echelon.spec_graph_audit import audit_spec_graph
+
+    report = audit_spec_graph(tmp_path, "001-demo")
+
+    assert report.status == "pass"
+    assert rebuilt == [str(tmp_path / "specs" / "001-demo")]
 
 
 @pytest.mark.unit

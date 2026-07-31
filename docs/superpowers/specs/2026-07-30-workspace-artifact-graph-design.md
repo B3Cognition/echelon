@@ -6,11 +6,12 @@
 
 ## Goal
 
-Build one deterministic, inspectable workspace graph by composing persisted
-per-spec artifact graphs. The workspace graph provides portfolio navigation,
-cross-spec relationships, shared RE and MemPalace identity, freshness
-diagnostics, visualization, and a future retrieval input without creating a
-second mining or per-spec graph pipeline.
+Build one deterministic, inspectable workspace graph by preparing and composing
+persisted per-spec artifact graphs. The workspace graph provides portfolio
+navigation, cross-spec relationships, shared RE and MemPalace identity,
+freshness diagnostics, visualization, and a future retrieval input while
+orchestrating the existing memory and per-spec graph pipelines rather than
+creating replacements for them.
 
 ## V1 Boundary
 
@@ -19,6 +20,7 @@ V1:
 - discovers canonical specifications directly below `specs/`;
 - consumes each persisted `spec-artifact-graph.json`;
 - runs the existing live per-spec graph audit before composition;
+- refreshes stale canonical memory and per-spec graphs when explicitly asked;
 - includes healthy member graphs and visible placeholders for unhealthy ones;
 - normalizes genuinely shared artifact and MemPalace drawer identities;
 - adds deterministic workspace, target, and supersession relationships;
@@ -27,8 +29,7 @@ V1:
 
 V1 does not:
 
-- mine or refresh MemPalace;
-- build or refresh per-spec graphs implicitly;
+- mine memory or rebuild per-spec graphs from read-only workspace commands;
 - read run-local or unpublished RE/evidence artifacts;
 - crawl arbitrary workspace files;
 - infer semantic similarity or duplicate requirements with an LLM;
@@ -48,9 +49,11 @@ canonical sources
     -> workspace graph composition
 ```
 
-Workspace composition never invokes a per-spec builder or any memory mining
-API. It reads exact graph bytes and calls the existing read-only per-spec graph
-audit API.
+Composition itself reads exact graph bytes and calls the existing live
+per-spec graph audit API. The explicit workspace refresh operation may
+orchestrate the existing memory miners, audits, and per-spec graph builder
+before composition. It does not implement a second mining or graph-building
+path.
 
 ## Output
 
@@ -311,9 +314,20 @@ the audit result.
 
 `refresh` composes and audits the newly composed in-memory candidate. Without
 `--write`, it is a dry preview and does not audit an older persisted workspace
-graph. With `--write`, it atomically replaces the workspace graph, audits that
-exact candidate, and writes the audit artifact. It never refreshes memory or
-per-spec graphs.
+graph or mutate upstream state. With `--write`, it:
+
+1. audits shared RE memory once and refreshes it only when stale;
+2. audits each spec's requirement and evidence memory and refreshes only stale
+   applicable domains;
+3. audits each per-spec graph and rebuilds only missing, invalid, or
+   source/input/memory-stale graphs; coherence failures such as missing
+   verification or task mappings remain visible but are not rewritten;
+4. composes the exact persisted member graph bytes;
+5. atomically replaces the workspace graph and writes its audit.
+
+One member's refresh failure does not prevent repair of other members. The
+failed member remains visible as an excluded placeholder and the command
+returns the final workspace audit status.
 
 `view` and `export` consume the persisted workspace graph and run a live
 workspace audit. They produce output even for `fail`, then return the audit exit
@@ -354,25 +368,18 @@ workspace-specific layout engine.
 
 ## Failure And Recovery
 
-Normal recovery is explicit:
+Normal recovery is one explicit workspace operation:
 
 ```text
-member memory stale
-    -> refresh the applicable memory domain
-    -> echelon graph refresh <spec> --write
-    -> echelon graph workspace refresh --write
-
-member graph stale but memory current
-    -> echelon graph refresh <spec> --write
-    -> echelon graph workspace refresh --write
-
-workspace graph stale only
+memory, member graph, or workspace graph stale
     -> echelon graph workspace refresh --write
 ```
 
-Workspace graph commands never perform those upstream steps automatically.
-Audit findings identify the affected spec and stale layer so automation and
-operators can choose the bounded repair.
+The refresh command audits before mutation, avoids re-mining current domains
+and rewriting current member graphs, and uses existing hash-based adoption and
+reconciliation protections. `build`, `audit`, `view`, and `export` remain
+read-only with respect to memory and per-spec graphs. Audit findings identify
+the affected spec and stale layer when bounded repair cannot complete.
 
 ## Implementation Shape
 
@@ -381,6 +388,8 @@ Keep responsibilities separated:
 - `echelon.workspace_graph`: discovery, receipts, normalization, composition,
   deterministic rendering, and atomic writes;
 - `echelon.workspace_graph_audit`: live member and workspace freshness audit;
+- `echelon.workspace_graph_refresh`: audit-first orchestration of existing
+  memory refresh and per-spec graph APIs, with per-domain/member outcomes;
 - `echelon.graph_visualization`: scope-neutral rendering plus workspace
   `portfolio` lens and single-payload client-side filtering;
 - `echelon.cli_app`: the `echelon graph workspace` command adapter.
@@ -402,7 +411,9 @@ Focused verification must cover:
 - added and removed spec freshness;
 - changed member graph and changed member audit receipts;
 - target and supersession edges and warnings;
-- no calls to memory mining or per-spec graph builders;
+- no upstream mutation from `build`, `audit`, `view`, or `export`;
+- refresh audits first, refreshes shared RE once, and skips current domains;
+- refresh isolates member failures and reports unrepaired layers;
 - atomic writes;
 - workspace CLI output and exit codes;
 - viewer behavior with a multi-spec graph;
