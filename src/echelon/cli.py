@@ -7964,7 +7964,9 @@ def _cmd_drop_target(args: list[str], project_root: Path) -> None:
 
 def _cmd_benchmark(args: list[str], project_root: Path) -> None:
     from echelon.benchmark import (
+        CONTEXT_RENDER_MODES,
         baseline_snapshot_commands,
+        format_variant_execution_commands,
         latest_summary_path,
         load_saved_scorecard,
         load_summary,
@@ -7972,7 +7974,6 @@ def _cmd_benchmark(args: list[str], project_root: Path) -> None:
         list_variants,
         plan_variant_commands,
         run_benchmark_variant,
-        variant_execution_commands,
     )
 
     fixtures = list_fixtures()
@@ -7984,7 +7985,7 @@ def _cmd_benchmark(args: list[str], project_root: Path) -> None:
         "  echelon benchmark list\n"
         "  echelon benchmark show [latest|<summary-path-or-run-dir>]\n"
         "  echelon benchmark run <fixture-id> --variant <variant-id> "
-        "[--baseline-ref <ref>] [--artifact-only] [--dry-run]\n"
+        "[--baseline-ref <ref>] [--artifact-only] [--context-render legacy|bounded|both] [--dry-run]\n"
         "\n"
         "Example:\n"
         "  echelon benchmark run tiny-notes --variant baseline\n"
@@ -8038,19 +8039,23 @@ def _cmd_benchmark(args: list[str], project_root: Path) -> None:
             subtitle="Saved benchmark scores",
         )
         print(
-            "| Variant | Status | Spec | Delivery | Gaps | Verify Failures | Blocks | Retries | Dispatches | Seconds |"
+            "| Variant | Render | Status | Spec | Delivery | Gaps | Verify Failures | Blocks | Retries | Dispatches | Context Bytes | Context Tokens | Context Reduction | Seconds |"
         )
-        print("|---|---|---|---|---:|---:|---:|---:|---:|---:|")
+        print("|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
         variants = summary.get("variants")
         if isinstance(variants, dict):
             for variant_id, record in variants.items():
                 if not isinstance(record, dict):
                     continue
                 print(
-                    f"| {variant_id} | {record.get('status', '')} | {record.get('spec_id') or '-'} | "
+                    f"| {variant_id} | {record.get('context_render') or '-'} | "
+                    f"{record.get('status', '')} | {record.get('spec_id') or '-'} | "
                     f"{record.get('delivery_run_id') or '-'} | {record.get('fulfillment_gaps', 0)} | "
                     f"{record.get('verification_failures', 0)} | {record.get('blocked_states', 0)} | "
                     f"{record.get('retries', 0)} | {record.get('build_dispatches', 0)} | "
+                    f"{record.get('context_prompt_bytes', 0)} | "
+                    f"{record.get('context_prompt_tokens_estimate', 0)} | "
+                    f"{record.get('context_reduction_pct', 0)} | "
                     f"{float(record.get('elapsed_seconds') or 0.0):.1f} |"
                 )
         return
@@ -8092,6 +8097,7 @@ def _cmd_benchmark(args: list[str], project_root: Path) -> None:
     baseline_ref = ""
     artifact_only = False
     dry_run = False
+    context_render = "bounded"
     i = 2
     while i < len(args):
         if args[i] == "--variant" and i + 1 < len(args):
@@ -8103,12 +8109,19 @@ def _cmd_benchmark(args: list[str], project_root: Path) -> None:
         elif args[i] == "--artifact-only":
             artifact_only = True
             i += 1
+        elif args[i] == "--context-render" and i + 1 < len(args):
+            context_render = args[i + 1]
+            i += 2
         elif args[i] == "--dry-run":
             dry_run = True
             i += 1
         else:
             print(f"✗ Unknown benchmark argument: {args[i]}", file=sys.stderr)
             sys.exit(1)
+
+    if context_render not in CONTEXT_RENDER_MODES:
+        print(f"✗ Unknown context render mode: {context_render}", file=sys.stderr)
+        sys.exit(1)
 
     try:
         plan = plan_variant_commands(fixture_id, variant_id, artifact_only=artifact_only)
@@ -8132,23 +8145,29 @@ def _cmd_benchmark(args: list[str], project_root: Path) -> None:
         sys.exit(1)
 
     if dry_run:
-        commands = (
-            variant_execution_commands(plan, baseline_ref)
-            if baseline_ref
-            else baseline_snapshot_commands()
-            + variant_execution_commands(plan, "BENCHMARK_BASELINE_SNAPSHOT")
+        baseline_marker = baseline_ref or "BENCHMARK_BASELINE_SNAPSHOT"
+        render_modes = ("legacy", "bounded") if context_render == "both" else (context_render,)
+        commands = (() if baseline_ref else baseline_snapshot_commands()) + tuple(
+            formatted_command
+            for render_mode in render_modes
+            for formatted_command in format_variant_execution_commands(
+                plan,
+                baseline_marker,
+                context_render=render_mode,
+            )
         )
         _banner(
             "BENCHMARK DRY RUN",
             [
                 ("fixture", plan.fixture_id),
                 ("variant", plan.variant_id),
+                ("context_render", context_render),
                 ("mode", "artifact-only" if artifact_only else "full"),
             ],
             subtitle="Commands that would run",
         )
         for command in commands:
-            print(" ".join(command))
+            print(command if isinstance(command, str) else " ".join(command))
         return
 
     output_dir = run_benchmark_variant(
@@ -8157,12 +8176,14 @@ def _cmd_benchmark(args: list[str], project_root: Path) -> None:
         variant_id,
         baseline_ref=baseline_ref or None,
         artifact_only=artifact_only,
+        context_render=context_render,
     )
     _banner(
         "BENCHMARK COMPLETE",
         [
             ("fixture", fixture_id),
             ("variant", variant_id),
+            ("context_render", context_render),
             ("mode", "artifact-only" if artifact_only else "full"),
             ("output", str(output_dir)),
         ],
