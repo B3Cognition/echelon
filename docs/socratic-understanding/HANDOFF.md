@@ -8,6 +8,11 @@ this inspection necessarily follows that implementation commit.
 foundation is implemented and documented below. The planned Codex smoke and
 Luna/low A1 campaign remain unrun.
 
+**Current working-tree delta (2026-07-31):** the user additionally approved
+SUE-only V3 and orchestration hardening after a failed forensic run over spec
+035. The changes are covered by offline/replay tests; they do not constitute a
+new model run, a Codex smoke, or an A1 result.
+
 ## Authority and transcript limitation
 
 For this package, `SPECIFICATION.md` and `DECISIONS.md` are authoritative.
@@ -53,21 +58,21 @@ journal contracts.
 
 | Proposed capability | Current status | Exact evidence |
 |---|---|---|
-| Deterministic portable source bundle and source knowledge map | Implemented foundation; not yet the V3 source of truth | [`SUESourceBundle`](../../scripts/sue_source.py#L120), [`SourceKnowledgeMap`](../../scripts/sue_source.py#L131), and [`build_source_knowledge_map`](../../scripts/sue_source.py#L190) provide immutable, declared-only records and indexes. [`load_markdown_lexicon`](../../scripts/sue_source.py#L629) preserves complete multiline requirement-heading sections; [`load_generic_manifest`](../../scripts/sue_source.py#L842) enforces schema V1 and resolvable scalar JSON Pointers. `xml-id` and `page-paragraph` are explicitly unsupported until their post-A1 adapters exist. |
+| Deterministic portable source bundle and source knowledge map | Implemented; V3 now uses the bundle as its unit source of truth | [`SUESourceBundle`](../../scripts/sue_source.py#L139), [`SourceKnowledgeMap`](../../scripts/sue_source.py#L150), and [`build_source_knowledge_map`](../../scripts/sue_source.py#L209) provide immutable, declared-only records and indexes. [`load_markdown_lexicon`](../../scripts/sue_source.py#L665) preserves exact compound/dotted IDs and complete multiline unit sections; [`load_generic_manifest`](../../scripts/sue_source.py#L930) enforces schema V1 and resolvable scalar JSON Pointers. V3 [`load_requirement_scope`](../../scripts/sue_reproducibility.py#L203) selects exact bundle units instead of rediscovering IDs with a private regex, while [`build_sidecar`](../../scripts/sue_reproducibility.py#L872) retains the immutable bundle and digest in JSON evidence. `xml-id` and `page-paragraph` remain explicitly unsupported until their post-A1 adapters exist. |
 | Isolated, auditable V1 Codex cold-runner transport | Implemented; no live run claimed | [`ColdReaderRequest`](../../scripts/sue_runner.py#L95), [`build_subprocess_environment`](../../scripts/sue_runner.py#L192), [`build_model_invocation`](../../scripts/sue_runner.py#L224), and [`run_cold_reader`](../../scripts/sue_runner.py#L408) enforce an allowlisted environment, neutral temporary cwd, ephemeral/no-rules/no-user-config strict execution, disabled model-facing tools, no MCP/web/shell inheritance, and auditable result metadata. This is not a universal OS-level filesystem-secrecy guarantee. |
-| Per-attempt V1 Codex evidence | Implemented for success, retry, and terminal failure | [`run_model_call`](../../scripts/sue_challenge.py#L700) copies runner results; [`_persist_call_evidence`](../../scripts/sue_challenge.py#L1193) exclusively writes metadata, raw JSONL, final output, and stderr for every attempt. Reports and terminal-failure sidecars retain references and the complete runner metadata. Non-V1 Codex SUE tools remain on legacy transport pending separate migration. |
+| Per-attempt V1 and V3 evidence | Implemented for success, retry, and terminal failure | [`create_evidence_run_dir`](../../scripts/sue_challenge.py#L1229) creates run-scoped storage and [`_persist_call_evidence`](../../scripts/sue_challenge.py#L1294) exclusively writes metadata, raw output, final output, stderr, digests, and the exact validation failure for every attempt. V3 [`_write_run_manifest`](../../scripts/sue_reproducibility.py#L1170) indexes every call and failed chunk. Consensus, dialectic, and justification-graph transports remain on their compatibility paths pending separate migration. |
 | Deterministic requirements-quality baseline | Implemented | [`analyze_spec_bundle`](../../src/understanding/service.py#L260) parses requirements, computes per-requirement diagnostics, evaluates gates, and can generate diagrams. |
 | Immutable, controller-owned quality evidence | Implemented | [`run_understanding_gate`](../../src/harness/understanding_gate.py#L69) writes digest-addressed evidence; [`UnderstandingGateResult.state_updates`](../../src/harness/understanding_gate.py#L32) owns `quality_scores` and `understanding_evidence`. |
 | Workflow placement before qualitative WHY checks | Implemented for deterministic Understanding | [`phase3-understanding`](../../extension/workflow/definition.yaml#L1087) transitions to `phase3-consensus`. |
 | Quick Socratic question → spec-only answer filter | Implemented | [`ROUND1_PROMPT_TEMPLATE`](../../scripts/sue_challenge.py#L183), [`ROUND2_PROMPT_TEMPLATE`](../../scripts/sue_challenge.py#L217), strict validators, and [`main`](../../scripts/sue_challenge.py#L1543). |
 | Provider-specific compatibility transport | Implemented | [`build_model_invocation`](../../scripts/sue_challenge.py#L656) and [`run_model_call`](../../scripts/sue_challenge.py#L700) preserve legacy provider behavior while routing only schema-bearing V1 Codex calls through the hardened cold runner. |
 | Independent multi-reader reconstruction with stable/noise split | Implemented | [`run_reader`](../../scripts/sue_consensus.py#L373), [`cluster_findings`](../../scripts/sue_consensus.py#L111), and [`split_stable`](../../scripts/sue_consensus.py#L146). |
-| Typed interpretation graphs with behavioural assertions | Implemented | [`Edge`](../../scripts/sue_reproducibility.py#L87), [`Assertion`](../../scripts/sue_reproducibility.py#L100), [`ReqInterpretation`](../../scripts/sue_reproducibility.py#L112), and [`ReaderGraph`](../../scripts/sue_reproducibility.py#L119); extraction contract in [`build_extraction_prompt`](../../scripts/sue_reproducibility.py#L355). |
+| Typed interpretation graphs with behavioural assertions | Implemented and schema-bound for Codex V3 | [`Edge`](../../scripts/sue_reproducibility.py#L88), [`Assertion`](../../scripts/sue_reproducibility.py#L101), [`ReqInterpretation`](../../scripts/sue_reproducibility.py#L113), and [`ReaderGraph`](../../scripts/sue_reproducibility.py#L120) define the records. [`build_output_schema`](../../scripts/sue_reproducibility.py#L404) closes every chunk to its exact unit IDs and edge vocabulary; [`validate_graph`](../../scripts/sue_reproducibility.py#L507) independently enforces complete coverage, finite confidence, and unit-local provenance for compatibility providers and replay. |
 | Cross-run noise floor and stable-low fractures | Implemented | [`aggregate_passes`](../../scripts/sue_reproducibility.py#L511) computes SR mean/stdev, per-requirement variance, extraction-noise floor, and the all-passes `stable_low` intersection. |
 | Behavioural divergence candidates | Partially implemented | [`Witness`](../../scripts/sue_reproducibility.py#L157) and [`find_witnesses`](../../scripts/sue_reproducibility.py#L613) produce heuristic candidates; the current report explicitly labels them unverified. |
 | Bounded adaptive Socratic drill | Implemented as a manual/Forensic instrument | [`LENSES`](../../scripts/sue_dialectic.py#L132), [`next_step`](../../scripts/sue_dialectic.py#L306), and [`run_dialogue`](../../scripts/sue_dialectic.py#L411) implement deterministic operators, a one-revision budget, retention flags, and aporia terminal states. |
 | Justification graph with claims, evidence, assumptions, conflicts | Implemented as an instrumented pilot | [`Claim`](../../scripts/sue_jgraph.py#L42), [`consensus_conflicts`](../../scripts/sue_jgraph.py#L140), and [`convergence_metrics`](../../scripts/sue_jgraph.py#L192). |
-| One-command tier orchestration | Implemented | [`PROFILES`](../../scripts/sue_auto.py#L59), [`select_drills`](../../scripts/sue_auto.py#L116), and [`main`](../../scripts/sue_auto.py#L334). |
+| One-command tier orchestration | Implemented with explicit failure and cost semantics | [`PROFILES`](../../scripts/sue_auto.py#L66), [`plan_budget`](../../scripts/sue_auto.py#L92), and [`main`](../../scripts/sue_auto.py#L438) provide bounded profiles, fail-fast/nonzero defaults, explicit partial-result opt-ins, and a hard retry-inclusive provider-attempt ceiling. [`archive_drill_artifacts`](../../scripts/sue_auto.py#L415) preserves one immutable artifact path per selected finding instead of losing earlier dialogues to fixed-name aliases. |
 | Diagnose-only and no silent spec rewrite | Implemented | The orchestrator states the boundary in [`sue_auto.py`](../../scripts/sue_auto.py#L1); the challenged file is read through [`SpecDocument`](../../scripts/sue_challenge.py#L325), and [`sue_auto.main`](../../scripts/sue_auto.py#L334) applies report collision guards. |
 | Live evidence that the pipeline runs | Present | The checked-in [`sue-dossier.md`](../../specs/030-build-sue-challenge-script/sue-dossier.md#L1) records successful v2, v3, and drill tiers and concrete aporias/stable findings. |
 | Full SRP experimental validation | Not complete | The historical smoke run reports A1 agreement `0.346` against a `≥0.80` target and calls the result inconclusive in [`2026-07-18-srp-v0-smoke-run.md`](../superpowers/plans/2026-07-18-srp-v0-smoke-run.md#L30). The full corpus remains an unchecked, A1-gated task in [`2026-07-20-sue-100-percent-closure.md`](../superpowers/plans/2026-07-20-sue-100-percent-closure.md#L418). No live run has tested the new Luna/low profile. |
@@ -86,8 +91,15 @@ both in the ambient environment and with the provider markers
 `CODEX_THREAD_ID`, `CODEX_CI`, and `ECHELON_LLM` cleared while retaining the
 rest of `os.environ`. The provider-default test clears those three markers, so
 ambient Codex detection remains runtime behaviour rather than test input.
-At the implementation baseline, all 459 tests passed in each environment.
+At the current working-tree delta, all 498 tests passed in each environment.
 These zero-call tests do not constitute a Codex smoke or A1 result.
+
+The offline replay audit of the 18 V3 failure artifacts retained from spec 035
+classified six as incomplete JSON, five as ungrounded labels, two as illegal
+edge types, one as a duplicate JSON key, one as out-of-unit provenance, and one
+as invalid confidence; two outputs rejected by the former single-line label
+rule are accepted by the corrected full-unit vocabulary anchor. This replay
+made no provider calls and did not modify the challenged specification.
 
 ## Where SUE should integrate
 

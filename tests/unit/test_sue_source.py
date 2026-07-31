@@ -361,6 +361,67 @@ def test_markdown_adapter_preserves_explicit_requirement_id(tmp_path):
     assert bundle.units[0].source_refs[0].locator == "L3-L3"
 
 
+def test_markdown_adapter_preserves_compound_and_dotted_ids_without_colons(
+        tmp_path):
+    path = tmp_path / "requirements.md"
+    path.write_text(
+        "- **AC-1.1** First criterion.\n"
+        "- **FR-EL-001** Event log MUST render.\n"
+        "- **NFR-COMPAT-002** Existing data MUST load.\n"
+    )
+
+    bundle = source.load_source_bundle(path)
+
+    assert [unit.id for unit in bundle.units] == [
+        "AC-1.1",
+        "FR-EL-001",
+        "NFR-COMPAT-002",
+    ]
+    assert [unit.source_refs[0].locator for unit in bundle.units] == [
+        "L1-L1",
+        "L2-L2",
+        "L3-L3",
+    ]
+    assert not any(unit.id.startswith("requirements:L") for unit in bundle.units)
+
+
+def test_markdown_explicit_unit_owns_nested_body_and_its_provenance(tmp_path):
+    path = tmp_path / "requirements.md"
+    path.write_text(
+        "- **FR-AUTH-001** Authorization rules:\n"
+        "  - create MUST reject foreign fields\n"
+        "  - update MUST preserve owned fields\n"
+        "- **FR-AUTH-002** Failure MUST be reported.\n"
+    )
+
+    bundle = source.load_source_bundle(path)
+
+    assert [unit.id for unit in bundle.units] == [
+        "FR-AUTH-001",
+        "FR-AUTH-002",
+    ]
+    assert bundle.units[0].source_refs[0].locator == "L1-L3"
+    assert bundle.units[0].text == (
+        "- **FR-AUTH-001** Authorization rules:\n"
+        "  - create MUST reject foreign fields\n"
+        "  - update MUST preserve owned fields"
+    )
+    assert bundle.units[0].text == source.resolve_source_ref(
+        bundle, bundle.units[0].source_refs[0]
+    )
+
+
+def test_markdown_adapter_rejects_marked_id_it_cannot_preserve(tmp_path):
+    path = tmp_path / "requirements.md"
+    path.write_text("- **FR-AUTH/001** The request MUST be authorized.\n")
+
+    with pytest.raises(source.SUESourceError) as error:
+        source.load_source_bundle(path)
+
+    assert error.value.code == "UNSUPPORTED_UNIT_ID"
+    assert "FR-AUTH/001" in error.value.message
+
+
 def test_markdown_adapter_unit_text_round_trips_to_source_ref(tmp_path):
     path = tmp_path / "requirements.md"
     path.write_text("# Requirements\n\n- **FR-001**: The system MUST save.\n")

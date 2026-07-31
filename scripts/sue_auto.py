@@ -18,7 +18,9 @@ import importlib.util
 import json
 import math
 import re
+import shutil
 import sys
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -56,6 +58,12 @@ class Profile:
     drill_cap: int
 
 
+@dataclass(frozen=True)
+class CallBudget:
+    logical_calls: int
+    max_provider_attempts: int
+
+
 PROFILES = {
     "lite": Profile(tiers=("v1",), drill_cap=0),
     "deep": Profile(tiers=("v2", "v3", "drills"), drill_cap=3),
@@ -63,8 +71,10 @@ PROFILES = {
 }
 
 
-def plan_calls(profile_name: str, unit_count: int) -> int:
-    """Upper-bound call estimate for the plan line (not a hard limit)."""
+def plan_calls(
+    profile_name: str, unit_count: int, drill_cap: int | None = None
+) -> int:
+    """Maximum logical calls before corrective retries."""
     profile = PROFILES[profile_name]
     calls = 0
     for tier in profile.tiers:
@@ -77,8 +87,24 @@ def plan_calls(profile_name: str, unit_count: int) -> int:
         elif tier == "jgraph":
             calls += READERS
         elif tier == "drills":
-            calls += profile.drill_cap * DRILL_TURN_BUDGET
+            effective_cap = profile.drill_cap if drill_cap is None else drill_cap
+            calls += effective_cap * DRILL_TURN_BUDGET
     return calls
+
+
+def plan_budget(
+    profile_name: str, unit_count: int, drill_cap: int | None = None
+) -> CallBudget:
+    """Bound both logical calls and physical provider attempts.
+
+    Every SUE logical call permits at most one corrective retry, so the
+    provider-attempt bound is exactly twice the logical-call plan.
+    """
+    logical = plan_calls(profile_name, unit_count, drill_cap=drill_cap)
+    return CallBudget(
+        logical_calls=logical,
+        max_provider_attempts=logical * 2,
+    )
 
 
 # ── Drill selection (pure; zero model calls) ─────────────────────────────────
@@ -114,33 +140,33 @@ def lens_for_unit(unit_id: str) -> str:
 
 
 def select_drills(stable_findings: list, stable_low: list, cap: int) -> list:
-    """v2 stable findings first, then v3 stable-low fill; no duplicate targets."""
+    """Select findings, preserving distinct questions on the same target."""
     drills: list = []
-    targeted: set = set()
-    for finding in stable_findings:
+    v2_targets: set = set()
+    for index, finding in enumerate(stable_findings, start=1):
         if len(drills) >= cap:
             break
         target = finding["target"]
-        if target in targeted:
-            continue
-        targeted.add(target)
+        source_id = finding.get("id") or f"V2-F{index:03d}"
+        v2_targets.add(target)
         drills.append({
             "lens": choose_lens(finding["verdict"], finding["question"]),
             "seed": finding["question"],
             "target": target,
             "source": "v2-stable",
+            "source_id": source_id,
         })
     for unit in stable_low:
         if len(drills) >= cap:
             break
-        if unit in targeted:
+        if unit in v2_targets:
             continue
-        targeted.add(unit)
         drills.append({
             "lens": lens_for_unit(unit),
             "seed": f"the exact meaning and obligations of {unit}",
             "target": unit,
             "source": "v3-stable-low",
+            "source_id": f"V3-{unit}",
         })
     return drills
 
@@ -148,7 +174,7 @@ def select_drills(stable_findings: list, stable_low: list, cap: int) -> list:
 # ── v2 report parsing (anchored to sue_consensus.render_report's format) ─────
 
 _STABLE_HEAD_RE = re.compile(
-    r"^### \d+\. \[(CONTRADICTED|UNANSWERABLE)\] \(support (\d+)\) (.*\S)\s*$"
+    r"^### (\d+)\. \[(CONTRADICTED|UNANSWERABLE)\] \(support (\d+)\) (.*\S)\s*$"
 )
 _TARGET_RE = re.compile(r"^- \*\*Target:\*\* (.*\S)\s*$")
 
@@ -166,9 +192,10 @@ def parse_stable_findings(report_text: str) -> list:
         head = _STABLE_HEAD_RE.match(line)
         if head:
             current = {
-                "verdict": head.group(1),
-                "support": int(head.group(2)),
-                "question": head.group(3),
+                "id": f"V2-F{int(head.group(1)):03d}",
+                "verdict": head.group(2),
+                "support": int(head.group(3)),
+                "question": head.group(4),
                 "target": "",
             }
             findings.append(current)
@@ -192,12 +219,20 @@ def render_dossier(ctx: dict) -> str:
     lines.append(f"- **Profile:** {ctx['profile']}")
     lines.append(f"- **Dialogue model:** {ctx['models']['dialogue']}")
     lines.append(f"- **Measurement model:** {ctx['models']['measure']}")
+    if ctx["models"].get("requested"):
+        lines.append(f"- **Requested model:** {ctx['models']['requested']}")
+    if ctx["models"].get("reasoning_effort"):
+        lines.append(
+            f"- **Reasoning effort:** {ctx['models']['reasoning_effort']}"
+        )
     lines.append("")
     lines.append("## Tier outcomes")
     lines.append("")
     for tier in ctx["tiers"]:
         status = tier["status"]
         suffix = f" (exit {tier['exit_code']})" if status == "failed" else ""
+        if status == "not_run":
+            suffix = f" ({tier.get('reason', 'not run')})"
         lines.append(f"- {tier['tier']}: {status}{suffix}")
     lines.append("")
 
@@ -212,7 +247,7 @@ def render_dossier(ctx: dict) -> str:
         if terminal.startswith("APORIA"):
             lines.append(
                 f"- {terminal} — {drill['lens']} drill on {drill['target']}: "
-                f"{drill['seed']} (socratic-dialogue.md)"
+                f"{drill['seed']} ({drill.get('artifact_markdown') or drill.get('artifact_json')})"
             )
             fixed_targets.add(drill["target"])
             entries += 1
@@ -251,7 +286,8 @@ def render_dossier(ctx: dict) -> str:
             )
         lines.append("")
     measurement = ctx.get("measurement")
-    if measurement:
+    measurement_status = ctx.get("measurement_status", "not_run")
+    if measurement_status == "available" and measurement:
         lines.append("## v3 measurement")
         lines.append("")
         lines.append(
@@ -261,16 +297,25 @@ def render_dossier(ctx: dict) -> str:
             f"stable-low {len(ctx.get('stable_low') or [])} unit(s)"
         )
         lines.append("")
+    elif any(tier["tier"] == "v3" for tier in ctx["tiers"]):
+        lines.append("## v3 measurement")
+        lines.append("")
+        lines.append(
+            f"- **V3 measurement unavailable:** {measurement_status}; no "
+            "stable-low count or semantic-reproducibility score is claimed."
+        )
+        lines.append("")
     if ctx.get("drills"):
         lines.append("## Dialectic drills")
         lines.append("")
-        lines.append("| Lens | Target | Terminal | Turns | Source |")
-        lines.append("|---|---|---|---|---|")
+        lines.append("| Finding | Lens | Target | Terminal | Turns | Artifact |")
+        lines.append("|---|---|---|---|---|---|")
         for drill in ctx["drills"]:
             lines.append(
-                f"| {drill['lens']} | {drill['target']} "
+                f"| {drill.get('source_id', '')} | {drill['lens']} | {drill['target']} "
                 f"| {drill.get('terminal_state', '?')} "
-                f"| {drill.get('turns', '?')} | {drill.get('source', '')} |"
+                f"| {drill.get('turns', '?')} "
+                f"| {drill.get('artifact_markdown') or drill.get('artifact_json', '')} |"
             )
         lines.append("")
     jgraph = ctx.get("jgraph")
@@ -317,11 +362,40 @@ def parse_args(argv: list):
              "(default: the CLI's default model — Sonnet is not "
              "measurement-grade)",
     )
+    v1.add_codex_profile_arguments(parser)
     parser.add_argument("--max-drills", type=v1._positive_int, default=None)
+    parser.add_argument(
+        "--max-provider-attempts",
+        type=v1._positive_int,
+        default=None,
+        help="hard preflight ceiling for physical provider attempts, including retries",
+    )
+    parser.add_argument(
+        "--continue-on-tier-failure",
+        action="store_true",
+        help="continue later tiers after a failed tier; final status still fails",
+    )
+    parser.add_argument(
+        "--allow-partial",
+        action="store_true",
+        help="return success when at least one tier succeeds despite failures",
+    )
     parser.add_argument("--timeout", type=v1._positive_float,
                         default=v1.DEFAULT_TIMEOUT_SECONDS)
     parser.add_argument("--json", action="store_true")
-    return parser.parse_args(argv)
+    options = parser.parse_args(argv)
+    profile = PROFILES[options.profile]
+    commands_to_validate = []
+    if any(tier in profile.tiers for tier in ("v1", "v2", "jgraph", "drills")):
+        commands_to_validate.append(options.model_cmd)
+    if "v3" in profile.tiers:
+        commands_to_validate.append(options.measure_model_cmd)
+    for model_command in commands_to_validate:
+        _command, protocol = v1.resolve_model_command(model_command)
+        v1.resolve_codex_profile(
+            protocol, options.model, options.reasoning_effort
+        )
+    return options
 
 
 def _read_json(path: Path):
@@ -329,6 +403,41 @@ def _read_json(path: Path):
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
+
+
+def _artifact_ref(spec_dir: Path, path: Path) -> str:
+    try:
+        return str(path.relative_to(spec_dir))
+    except ValueError:
+        return str(path.resolve())
+
+
+def _safe_artifact_label(value: str) -> str:
+    label = re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip("-.")
+    return label[:80] or "finding"
+
+
+def archive_drill_artifacts(
+    spec_dir: Path, run_dir: Path, index: int, drill: dict
+) -> dict:
+    """Copy one completed dialogue before the next drill overwrites aliases."""
+    finding_dir = run_dir / (
+        f"{index:02d}-{_safe_artifact_label(drill['source_id'])}-"
+        f"{_safe_artifact_label(drill['lens'])}"
+    )
+    finding_dir.mkdir(parents=True, exist_ok=False)
+    source_json = spec_dir / dial.JSON_FILENAME
+    if not source_json.is_file():
+        raise OSError(f"dialectic JSON artifact is missing: {source_json}")
+    artifact_json = finding_dir / "dialogue.json"
+    shutil.copy2(source_json, artifact_json)
+    result = {"artifact_json": _artifact_ref(spec_dir, artifact_json)}
+    source_markdown = spec_dir / dial.REPORT_FILENAME
+    if source_markdown.is_file():
+        artifact_markdown = finding_dir / "dialogue.md"
+        shutil.copy2(source_markdown, artifact_markdown)
+        result["artifact_markdown"] = _artifact_ref(spec_dir, artifact_markdown)
+    return result
 
 
 def main(argv: list | None = None) -> int:
@@ -359,20 +468,45 @@ def main(argv: list | None = None) -> int:
     profile = PROFILES[options.profile]
     drill_cap = (options.max_drills if options.max_drills is not None
                  else profile.drill_cap)
-    unit_count = len(v3.scan_requirement_ids(spec))
+    try:
+        _source_bundle, requirement_ids = v3.load_requirement_scope(spec_path)
+    except v3.source.SUESourceError as exc:
+        return v1.fail(
+            v1.EXIT_BAD_INPUT,
+            f"bad input: specification '{spec_path}' cannot be represented "
+            f"as source units: {exc}",
+        )
+    unit_count = len(requirement_ids)
+    budget = plan_budget(options.profile, unit_count, drill_cap=drill_cap)
+    if (options.max_provider_attempts is not None
+            and budget.max_provider_attempts > options.max_provider_attempts):
+        return v1.fail(
+            v1.EXIT_BAD_INPUT,
+            f"bad input: profile '{options.profile}' requires up to "
+            f"{budget.max_provider_attempts} provider attempts for {unit_count} "
+            f"unit(s), exceeding --max-provider-attempts "
+            f"{options.max_provider_attempts}",
+        )
     timeout_args = ["--timeout", str(options.timeout)]
+    profile_args = []
+    if options.model is not None:
+        profile_args += ["--model", options.model]
+    if options.reasoning_effort is not None:
+        profile_args += ["--reasoning-effort", options.reasoning_effort]
     print(
         f"Profile: {options.profile} — tiers: {' → '.join(profile.tiers)} · "
-        f"{unit_count} unit(s) · est. ≤{plan_calls(options.profile, unit_count)} "
-        "calls"
+        f"{unit_count} unit(s) · plan: {budget.logical_calls} logical calls · "
+        f"≤{budget.max_provider_attempts} provider attempts including retries"
     )
 
     tiers: list = []
     stable_findings: list = []
     measurement = None
+    measurement_status = "not_run"
     stable_low: list = []
     jgraph_summary = None
     drill_results: list = []
+    drill_run_dir: Path | None = None
 
     def record(tier: str, rc: int):
         tiers.append(
@@ -382,13 +516,15 @@ def main(argv: list | None = None) -> int:
         return rc == 0
 
     for tier in profile.tiers:
+        rc = v1.EXIT_SUCCESS
         if tier == "v1":
             rc = v1.main([str(spec_path), "--model-cmd", options.model_cmd,
-                          *timeout_args])
+                          *profile_args, *timeout_args])
             record("v1", rc)
         elif tier == "v2":
             rc = v2.main([str(spec_path), "--readers", str(READERS),
-                          "--model-cmd", options.model_cmd, *timeout_args])
+                          "--model-cmd", options.model_cmd,
+                          *profile_args, *timeout_args])
             if record("v2", rc):
                 try:
                     stable_findings = parse_stable_findings(
@@ -398,8 +534,9 @@ def main(argv: list | None = None) -> int:
                 except OSError:
                     stable_findings = []
         elif tier == "v3":
+            measurement_status = "unavailable"
             v3_argv = [str(spec_path), "--passes", str(V3_PASSES),
-                       *timeout_args]
+                       *profile_args, *timeout_args]
             if options.measure_model_cmd:
                 v3_argv += ["--model-cmd", options.measure_model_cmd]
             rc = v3.main(v3_argv)
@@ -407,32 +544,64 @@ def main(argv: list | None = None) -> int:
                 sidecar = _read_json(spec_dir / v3.JSON_FILENAME) or {}
                 measurement = sidecar.get("stability") or {}
                 stable_low = list(measurement.get("stable_low") or [])
+                measurement_status = "available"
         elif tier == "jgraph":
             rc = jg.main([str(spec_path), "--readers", str(READERS),
-                          "--model-cmd", options.model_cmd, *timeout_args])
+                          "--model-cmd", options.model_cmd,
+                          *profile_args, *timeout_args])
             if record("jgraph", rc):
                 sidecar = _read_json(spec_dir / jg.JSON_FILENAME) or {}
                 jgraph_summary = sidecar.get("convergence")
         elif tier == "drills":
             drills = select_drills(stable_findings, stable_low, drill_cap)
             failures = 0
-            for drill in drills:
+            if drills:
+                drill_run_dir = (
+                    spec_dir / "sue-drills" / f"auto-{uuid.uuid4().hex}"
+                )
+                try:
+                    drill_run_dir.mkdir(parents=True, exist_ok=False)
+                except OSError:
+                    failures = len(drills)
+            for drill_index, drill in enumerate(drills, start=1):
+                if drill_run_dir is None:
+                    break
                 rc = dial.main([
                     str(spec_path), "--lens", drill["lens"],
                     "--seed", drill["seed"], "--target", drill["target"],
-                    "--model-cmd", options.model_cmd, *timeout_args,
+                    "--model-cmd", options.model_cmd,
+                    *profile_args, *timeout_args,
                 ])
                 if rc != 0:
                     failures += 1
                     continue
                 trace = _read_json(spec_dir / dial.JSON_FILENAME) or {}
+                try:
+                    artifacts = archive_drill_artifacts(
+                        spec_dir, drill_run_dir, drill_index, drill
+                    )
+                except OSError:
+                    failures += 1
+                    continue
                 drill_results.append({
-                    **drill,
+                    **drill, **artifacts,
                     "terminal_state": trace.get("terminal_state"),
                     "turns": len(trace.get("turns") or []),
                 })
-            if drills:
-                record("drills", 0 if failures < len(drills) else 3)
+            rc = 0 if failures == 0 else v1.EXIT_UNUSABLE_OUTPUT
+            record("drills", rc)
+
+        if rc != 0 and not options.continue_on_tier_failure:
+            break
+
+    completed_tiers = {tier["tier"] for tier in tiers}
+    for tier in profile.tiers:
+        if tier not in completed_tiers:
+            tiers.append({
+                "tier": tier,
+                "status": "not_run",
+                "reason": "stopped after prior tier failure",
+            })
 
     ctx = {
         "spec_path": str(spec_path),
@@ -441,13 +610,21 @@ def main(argv: list | None = None) -> int:
         "models": {
             "dialogue": options.model_cmd,
             "measure": options.measure_model_cmd or "(cli default)",
+            "requested": options.model,
+            "reasoning_effort": options.reasoning_effort,
         },
         "tiers": tiers,
         "stable_findings": stable_findings,
         "measurement": measurement,
+        "measurement_status": measurement_status,
         "stable_low": stable_low,
         "drills": drill_results,
         "jgraph": jgraph_summary,
+        "call_budget": {
+            "logical_calls": budget.logical_calls,
+            "max_provider_attempts": budget.max_provider_attempts,
+            "configured_max_provider_attempts": options.max_provider_attempts,
+        },
     }
     report = render_dossier(ctx)
     try:
@@ -465,11 +642,18 @@ def main(argv: list | None = None) -> int:
                   if (d.get("terminal_state") or "").startswith("APORIA"))
     print(
         f"{len(stable_findings)} stable finding(s) · "
-        f"{len(stable_low)} stable-low unit(s) · {aporias} drill aporia(s) · "
+        + (
+            f"{len(stable_low)} stable-low unit(s)"
+            if measurement_status == "available"
+            else "stable-low N/A"
+        )
+        + f" · {aporias} drill aporia(s) · "
         f"{len(failed)} tier failure(s)"
     )
     if options.json:
         print(json.dumps(ctx, indent=1))
+    if failed and not (options.allow_partial and succeeded):
+        return failed[0]["exit_code"]
     if succeeded:
         return v1.EXIT_SUCCESS
     return failed[0]["exit_code"] if failed else v1.EXIT_SUCCESS

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import math
 import re
 import shlex
 import sys
@@ -31,7 +32,20 @@ def _load_v1():
     return module
 
 
+def _load_source():
+    existing = sys.modules.get("sue_source")
+    if existing is not None:
+        return existing
+    path = Path(__file__).resolve().parent / "sue_source.py"
+    spec = importlib.util.spec_from_file_location("sue_source", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["sue_source"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 v1 = _load_v1()
+source = _load_source()
 
 REPORT_FILENAME = "semantic-reproducibility.md"
 JSON_FILENAME = "semantic-reproducibility.json"
@@ -40,8 +54,6 @@ EDGE_TYPES = (
     "performs", "acts_on", "applies_when", "results_in",
     "except_when", "assumes", "requires", "transitions_to",
 )
-
-REQ_ID_RE = re.compile(r"\b((?:REQ|FR|AC|NFR|ERR|SC|U|OQ|A)-[0-9]{1,4}[a-z]?)\b")
 
 # v3.1: behavioural unit families scored by default; assumption/decision/open-
 # question families (A-, U-, OQ-, SC-) dilute agreement with non-behavioural
@@ -177,34 +189,25 @@ def norm(label: str) -> str:
     return " ".join(words)
 
 
-_ID_PATTERN = r"(?:REQ|FR|AC|NFR|ERR|SC|U|OQ|A)-[0-9]{1,4}[a-z]?"
-_DEF_SITE_RE = re.compile(
-    rf"^(?:[-*]\s*)?\*\*({_ID_PATTERN})\*\*\s*:"        # markdown: - **FR-001**:
-    rf"|^(?:REQ|FR|AC|NFR|ERR|SC|U|OQ|A):\s+({_ID_PATTERN})\s*$"  # lexicon head
-    rf"|^({_ID_PATTERN})\s*:"                            # plain: FR-001: ...
-    rf"|^#+\s+({_ID_PATTERN})\b"                         # heading: ### FR-001
-)
+def requirement_ids_from_bundle(
+    bundle, families: tuple = DEFAULT_FAMILIES
+) -> set[str]:
+    """Select exact source-unit IDs without rediscovering them from prose."""
+    selected_families = {family.upper() for family in families}
+    selected: set[str] = set()
+    for unit in bundle.units:
+        family = source.unit_id_family(unit.id)
+        if family is None or family in selected_families:
+            selected.add(unit.id)
+    return selected
 
 
-def scan_requirement_ids(spec, families: tuple = DEFAULT_FAMILIES) -> set:
-    """Deterministic set of requirement-unit ids present in the spec text,
-    restricted to the given id families (v3.1 unit-scope rule) and anchored
-    to DEFINITION SITES: a unit counts only where it is defined — markdown
-    `- **ID**:` items, lexicon `FAMILY: ID` block heads, plain `ID:` lines,
-    or `# ID` headings — never where it is merely mentioned. Cross-references
-    to another spec's ids inside prose otherwise become phantom units that
-    distort SR in both directions (hallucinated-edge zeros, both-empty 1.0s
-    — the spec-030 REQ-* case). A spec with no recognizable definition sites
-    falls back to the any-mention scan rather than measuring zero units."""
-    defined: set[str] = set()
-    mentioned: set[str] = set()
-    for line in spec.lines:
-        match = _DEF_SITE_RE.match(line.strip())
-        if match:
-            defined.add(next(g for g in match.groups() if g))
-        mentioned.update(REQ_ID_RE.findall(line))
-    found = defined or mentioned
-    return {rid for rid in found if rid.rsplit("-", 1)[0] in families}
+def load_requirement_scope(
+    path: Path, families: tuple = DEFAULT_FAMILIES
+):
+    """Load V3's immutable source snapshot and its explicitly declared units."""
+    bundle = source.load_source_bundle(Path(path))
+    return bundle, requirement_ids_from_bundle(bundle, families)
 
 
 def _singular(word: str) -> str:
@@ -380,9 +383,10 @@ def build_extraction_prompt(spec, framing_suffix: str, known_ids: set,
         f"{framing_suffix}\n\n"
         f"Edge types (closed set): {', '.join(EDGE_TYPES)}.\n"
         f"{_EXEMPLAR}\n\n"
-        "Rules: every edge and assumption carries the source line number it is "
-        "grounded in; every word of an edge's s/t label MUST appear verbatim in "
-        "the cited line (reuse the specification's own words — never paraphrase "
+        "Rules: every edge and assumption carries a source line number inside "
+        "that requirement's source span; every word of an edge's s/t label MUST "
+        "appear verbatim somewhere in that requirement's source text (reuse the "
+        "specification's own words — never paraphrase "
         "node labels); 1-3 behavioural assertions (given/when/then, line-cited) per "
         "requirement that mandates observable behaviour; extract ONLY these "
         f"requirement units and no others: {ids_hint}.\n"
@@ -397,15 +401,130 @@ def build_extraction_prompt(spec, framing_suffix: str, known_ids: set,
     )
 
 
+def build_output_schema(known_ids: set[str]) -> dict:
+    """Closed JSON schema for one V3 extraction chunk.
+
+    Codex receives this through its structured-output transport. Other
+    providers are still checked by ``validate_graph`` against the same
+    invariants after parsing.
+    """
+    edge = {
+        "type": "object",
+        "properties": {
+            "s": {"type": "string", "minLength": 1},
+            "type": {"type": "string", "enum": list(EDGE_TYPES)},
+            "t": {"type": "string", "minLength": 1},
+            "line": {"type": "integer", "minimum": 1},
+            "conf": {"type": "number", "minimum": 0, "maximum": 1},
+        },
+        "required": ["s", "type", "t", "line", "conf"],
+        "additionalProperties": False,
+    }
+    assumption = {
+        "type": "object",
+        "properties": {
+            "text": {"type": "string", "minLength": 1},
+            "line": {"type": "integer", "minimum": 1},
+        },
+        "required": ["text", "line"],
+        "additionalProperties": False,
+    }
+    assertion = {
+        "type": "object",
+        "properties": {
+            "given": {"type": "string", "minLength": 1},
+            "when": {"type": "string", "minLength": 1},
+            "then": {"type": "string", "minLength": 1},
+            "lines": {
+                "type": "array",
+                "items": {"type": "integer", "minimum": 1},
+                "minItems": 1,
+            },
+        },
+        "required": ["given", "when", "then", "lines"],
+        "additionalProperties": False,
+    }
+    body = {
+        "type": "object",
+        "properties": {
+            "edges": {"type": "array", "items": edge},
+            "assumptions": {"type": "array", "items": assumption},
+            "assertions": {"type": "array", "items": assertion},
+        },
+        "required": ["edges", "assumptions", "assertions"],
+        "additionalProperties": False,
+    }
+    ordered_ids = sorted(known_ids)
+    return {
+        "type": "object",
+        "properties": {
+            "requirements": {
+                "type": "object",
+                "properties": {unit_id: body for unit_id in ordered_ids},
+                "required": ordered_ids,
+                "additionalProperties": False,
+            },
+        },
+        "required": ["requirements"],
+        "additionalProperties": False,
+    }
+
+
+_LINE_LOCATOR_RE = re.compile(r"L([1-9][0-9]*)-L([1-9][0-9]*)\Z")
+
+
+def _unit_source_anchor(source_bundle, req_id: str,
+                        spec_lines: list | None) -> tuple[set[int] | None, str | None]:
+    """Return prompt-line span and vocabulary for a directly numbered unit.
+
+    A generic manifest can point at other documents whose locators do not map
+    to line numbers in the manifest prompt. Those references remain preserved
+    in the bundle, but are not falsely treated as prompt-line provenance here.
+    """
+    if source_bundle is None or spec_lines is None:
+        return None, None
+    matching_documents = {
+        document.id
+        for document in source_bundle.documents
+        if document.text.splitlines() == list(spec_lines)
+    }
+    unit = next((candidate for candidate in source_bundle.units
+                 if candidate.id == req_id), None)
+    if unit is None:
+        return None, None
+    allowed: set[int] = set()
+    for ref in unit.source_refs:
+        if ref.document_id not in matching_documents or ref.locator_kind != "line-range":
+            continue
+        match = _LINE_LOCATOR_RE.fullmatch(ref.locator)
+        if match is None:
+            continue
+        start, end = map(int, match.groups())
+        allowed.update(range(start, end + 1))
+    return (allowed or None), unit.text
+
+
 def validate_graph(payload: dict, known_ids: set, max_line: int,
                    spec_lines: list | None = None,
-                   situations: dict | None = None):
+                   situations: dict | None = None,
+                   source_bundle=None):
     """Strict graph validation. Returns (dict req->ReqInterpretation, ungrounded)
     or v1.ParseFailure. With spec_lines, enforces the v3.1 vocabulary anchor:
     edge labels must reuse words of the cited line."""
     reqs = payload.get("requirements")
     if not isinstance(reqs, dict) or not reqs:
         return v1.ParseFailure(reason="requirements must be a non-empty object")
+    unexpected = sorted(set(reqs) - known_ids)
+    if unexpected:
+        return v1.ParseFailure(
+            reason=(f"unknown requirement id {unexpected[0]!r} "
+                    "(not present in the requested chunk)")
+        )
+    missing = sorted(known_ids - set(reqs))
+    if missing:
+        return v1.ParseFailure(
+            reason=f"missing requested requirement ids: {', '.join(missing)}"
+        )
     out: dict = {}
     ungrounded = 0
     for req_id, body in reqs.items():
@@ -415,6 +534,23 @@ def validate_graph(payload: dict, known_ids: set, max_line: int,
             )
         if not isinstance(body, dict):
             return v1.ParseFailure(reason=f"{req_id} body must be an object")
+        allowed_lines, unit_text = _unit_source_anchor(
+            source_bundle, req_id, spec_lines
+        )
+
+        def validate_line(line, label: str):
+            if not isinstance(line, int) or isinstance(line, bool):
+                return v1.ParseFailure(reason=f"{label} must be an integer")
+            if not 1 <= line <= max_line:
+                return v1.ParseFailure(
+                    reason=f"{label} must be between 1 and {max_line}"
+                )
+            if allowed_lines is not None and line not in allowed_lines:
+                return v1.ParseFailure(
+                    reason=f"{label} {line} is outside source span for {req_id}"
+                )
+            return None
+
         edges: list[Edge] = []
         for i, raw in enumerate(body.get("edges", []) or []):
             if not isinstance(raw, dict):
@@ -428,34 +564,46 @@ def validate_graph(payload: dict, known_ids: set, max_line: int,
             if not (isinstance(s, str) and s.strip() and isinstance(t, str) and t.strip()):
                 return v1.ParseFailure(reason=f"{req_id}.edges[{i}] s/t must be non-empty strings")
             line = raw.get("line")
-            if not isinstance(line, int) or isinstance(line, bool):
-                return v1.ParseFailure(reason=f"{req_id}.edges[{i}].line must be an integer")
-            conf = raw.get("conf", 1.0)
-            if not isinstance(conf, (int, float)) or isinstance(conf, bool):
-                conf = 1.0
-            if not (1 <= line <= max_line):
-                ungrounded += 1
-                continue  # dropped from scoring, counted as diagnostic
+            line_failure = validate_line(line, f"{req_id}.edges[{i}].line")
+            if line_failure is not None:
+                return line_failure
+            conf = raw.get("conf")
+            if (not isinstance(conf, (int, float)) or isinstance(conf, bool)
+                    or not math.isfinite(conf) or not 0 <= conf <= 1):
+                return v1.ParseFailure(
+                    reason=(f"{req_id}.edges[{i}].conf must be a finite "
+                            "number between 0 and 1")
+                )
             if spec_lines is not None:
-                cited = spec_lines[line - 1]
+                cited = unit_text if unit_text is not None else spec_lines[line - 1]
                 for label in (s, t):
                     if not _label_grounded(label, cited):
                         return v1.ParseFailure(
                             reason=(
                                 f"{req_id}.edges[{i}] label {label!r} uses words "
-                                f"not present in cited line {line} — node labels "
-                                "must reuse the specification's own words from "
-                                "the cited line"
+                                f"not present in source text for {req_id} — node "
+                                "labels must reuse the specification's own words "
+                                "from that requirement"
                             )
                         )
             edges.append(Edge(s=s.strip(), type=etype, t=t.strip(),
                               line=line, conf=float(conf)))
         assumptions = []
         for i, raw in enumerate(body.get("assumptions", []) or []):
-            if not isinstance(raw, dict) or not isinstance(raw.get("text"), str):
-                return v1.ParseFailure(reason=f"{req_id}.assumptions[{i}] must carry text")
+            if (not isinstance(raw, dict)
+                    or not isinstance(raw.get("text"), str)
+                    or not raw["text"].strip()):
+                return v1.ParseFailure(
+                    reason=f"{req_id}.assumptions[{i}] must carry non-empty text"
+                )
+            line = raw.get("line")
+            line_failure = validate_line(
+                line, f"{req_id}.assumptions[{i}].line"
+            )
+            if line_failure is not None:
+                return line_failure
             assumptions.append({"text": raw["text"].strip(),
-                                "line": raw.get("line") if isinstance(raw.get("line"), int) else None})
+                                "line": line})
         assertions: list[Assertion] = []
         for i, raw in enumerate(body.get("assertions", []) or []):
             if not isinstance(raw, dict):
@@ -468,8 +616,17 @@ def validate_graph(payload: dict, known_ids: set, max_line: int,
             lines = raw.get("lines")
             if not isinstance(lines, list) or not all(
                 isinstance(n, int) and not isinstance(n, bool) for n in lines
-            ):
-                return v1.ParseFailure(reason=f"{req_id}.assertions[{i}].lines must be integers")
+            ) or not lines:
+                return v1.ParseFailure(
+                    reason=f"{req_id}.assertions[{i}].lines must be non-empty integers"
+                )
+            for line_index, assertion_line in enumerate(lines):
+                line_failure = validate_line(
+                    assertion_line,
+                    f"{req_id}.assertions[{i}].lines[{line_index}]",
+                )
+                if line_failure is not None:
+                    return line_failure
             assertions.append(Assertion(given=g.strip(), when=w.strip(),
                                         then=t_.strip(), lines=list(lines)))
         canonical = (situations or {}).get(req_id)
@@ -561,15 +718,21 @@ def score_requirements(readers: list) -> dict:
         all_reqs.update(reader.requirements)
     result: dict = {}
     for req_id in sorted(all_reqs):
+        covering = [reader for reader in readers if req_id in reader.requirements]
+        if len(covering) < 2:
+            # Absence caused by a failed extraction chunk is unavailable
+            # evidence, not an empty interpretation. Never turn transport or
+            # schema failure into semantic disagreement.
+            continue
         pair_scores: list[float] = []
         near = 0
-        for ri, rj in combinations(readers, 2):
-            a = {e.triple for e in ri.requirements.get(req_id, ReqInterpretation([], [], [])).edges}
-            b = {e.triple for e in rj.requirements.get(req_id, ReqInterpretation([], [], [])).edges}
+        for ri, rj in combinations(covering, 2):
+            a = {e.triple for e in ri.requirements[req_id].edges}
+            b = {e.triple for e in rj.requirements[req_id].edges}
             pair_scores.append(_jaccard(a, b))
             near += _near_misses(a, b)
-        edge_counts = [len(r.requirements[req_id].edges) for r in readers if req_id in r.requirements]
-        assumption_counts = [len(r.requirements[req_id].assumptions) for r in readers if req_id in r.requirements]
+        edge_counts = [len(r.requirements[req_id].edges) for r in covering]
+        assumption_counts = [len(r.requirements[req_id].assumptions) for r in covering]
         score = sum(pair_scores) / len(pair_scores) if pair_scores else 1.0
         mean_edges = sum(edge_counts) / len(edge_counts) if edge_counts else 0.0
         result[req_id] = {
@@ -752,12 +915,20 @@ def render_report(spec, spec_path: Path, readers: list, per_req: dict,
                   run_date: str, dropped: list,
                   phrasing_variants: int = 0,
                   evidence: dict | None = None,
-                  stability: dict | None = None) -> str:
+                  stability: dict | None = None,
+                  run_evidence: dict | None = None) -> str:
     lines: list[str] = []
     lines.append("# Semantic Reproducibility Report")
     lines.append("")
     lines.append(f"- **Specification:** {spec_path}")
     lines.append(f"- **Run date:** {run_date}")
+    if run_evidence is not None:
+        lines.append(
+            f"- **Run evidence:** {run_evidence['manifest_ref']} "
+            f"({run_evidence['call_count']} provider attempt(s), "
+            f"{run_evidence['chunk_failure_count']} failed chunk(s))"
+        )
+        lines.append(f"- **Run status:** {run_evidence['status']}")
     lines.append(
         f"- **Readers:** {len(readers)} completed"
         + (f" ({len(dropped)} dropped: {', '.join(dropped)})" if dropped else "")
@@ -871,12 +1042,20 @@ def render_report(spec, spec_path: Path, readers: list, per_req: dict,
 def build_sidecar(spec_path: Path, readers: list, per_req: dict, sr: float,
                   witnesses: list, fractures: dict, run_date: str,
                   evidence: dict | None = None,
-                  stability: dict | None = None) -> dict:
+                  stability: dict | None = None,
+                  source_bundle=None,
+                  run_evidence: dict | None = None) -> dict:
     sidecar_stability = stability
     return {
         "specification": str(spec_path),
         "run_date": run_date,
+        "source_bundle": (
+            json.loads(source.canonical_json(source_bundle))
+            if source_bundle is not None
+            else None
+        ),
         "stability": sidecar_stability,
+        "run_evidence": run_evidence,
         "readers": [
             {
                 "reader": r.reader_no,
@@ -974,6 +1153,7 @@ def parse_args(argv: list) -> tuple:
         default=None,
         help="repeatable PROVIDER=COMMAND; each model receives every reader framing",
     )
+    v1.add_codex_profile_arguments(parser)
     parser.add_argument("--timeout", type=v1._positive_float,
                         default=v1.DEFAULT_TIMEOUT_SECONDS)
     parser.add_argument("--json", action="store_true")
@@ -988,23 +1168,65 @@ def parse_args(argv: list) -> tuple:
     return commands, options
 
 
+def _write_run_manifest(
+    spec_dir: Path,
+    evidence_dir: Path,
+    config,
+    source_bundle,
+    call_evidence: list,
+    chunk_failures: list[dict],
+    status: str,
+) -> dict:
+    """Persist the immutable V3 run index after all attempted calls finish."""
+    manifest_path = evidence_dir / "run-manifest.json"
+    payload = {
+        "schema_version": 1,
+        "instrument": "sue-reproducibility-v3",
+        "status": status,
+        "specification": str(config.spec_path),
+        "source_snapshot_digest": source_bundle.snapshot_digest,
+        "provider": config.model_protocol,
+        "requested_model": config.model,
+        "reasoning_effort": config.reasoning_effort,
+        "calls": [v1._call_evidence_payload(call) for call in call_evidence],
+        "chunk_failures": chunk_failures,
+    }
+    v1._write_exclusive_text(
+        manifest_path,
+        json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n",
+    )
+    return {
+        "manifest_ref": v1._artifact_ref(spec_dir, manifest_path),
+        "evidence_dir": v1._artifact_ref(spec_dir, evidence_dir),
+        "status": status,
+        "call_count": len(call_evidence),
+        "chunk_failure_count": len(chunk_failures),
+    }
+
+
 def main(argv: list | None = None) -> int:
     try:
         model_commands, options = parse_args(
             list(sys.argv[1:]) if argv is None else list(argv)
         )
+        configs = {}
+        for model_command in model_commands:
+            model, reasoning_effort = v1.resolve_codex_profile(
+                model_command.protocol,
+                options.model,
+                options.reasoning_effort,
+            )
+            configs[model_command] = v1.RunConfig(
+                spec_path=options.spec_path,
+                max_questions=1,
+                model_command=model_command.command,
+                timeout_seconds=options.timeout,
+                model_protocol=model_command.protocol,
+                model=model,
+                reasoning_effort=reasoning_effort,
+            )
     except v1.ArgumentFailure as exc:
         return v1.fail(v1.EXIT_BAD_INPUT, f"bad input: {exc}")
-    configs = {
-        model_command: v1.RunConfig(
-            spec_path=options.spec_path,
-            max_questions=1,
-            model_command=model_command.command,
-            timeout_seconds=options.timeout,
-            model_protocol=model_command.protocol,
-        )
-        for model_command in model_commands
-    }
     # Duplicate --model-cmd entries intentionally collapse to one RunConfig
     # here (dict key dedupe): their ReaderJobs still run separately and share
     # the config — identical readers, one preflight. Not a bug.
@@ -1032,7 +1254,22 @@ def main(argv: list | None = None) -> int:
     families = tuple(
         f.strip().upper() for f in options.families.split(",") if f.strip()
     )
-    known_ids = scan_requirement_ids(spec, families)
+    try:
+        source_bundle, known_ids = load_requirement_scope(
+            config.spec_path, families
+        )
+    except source.SUESourceError as exc:
+        if exc.code == "INCONCLUSIVE_INPUT":
+            return v1.fail(
+                v1.EXIT_BAD_INPUT,
+                f"bad input: specification '{config.spec_path}' contains no "
+                f"recognizable requirement ids: {exc}",
+            )
+        return v1.fail(
+            v1.EXIT_BAD_INPUT,
+            f"bad input: specification '{config.spec_path}' cannot be "
+            f"represented as source units: {exc}",
+        )
     if not known_ids:
         return v1.fail(
             v1.EXIT_BAD_INPUT,
@@ -1047,6 +1284,17 @@ def main(argv: list | None = None) -> int:
     situations = parse_controlled_situations(spec)
     chunks = chunk_ids(known_ids)
     jobs = build_reader_jobs(model_commands, options.readers, FRAMINGS)
+    call_evidence: list = []
+    chunk_failures: list[dict] = []
+    try:
+        evidence_dir = v1.create_evidence_run_dir(
+            spec_dir, "reproducibility"
+        )
+    except (OSError, ValueError) as exc:
+        return v1.fail(
+            v1.EXIT_BAD_INPUT,
+            f"bad input: cannot create V3 evidence directory: {exc}",
+        )
 
     def _run_pass(pass_offset: int):
         """One full K-reader measurement. Returns (readers, dropped)."""
@@ -1064,13 +1312,26 @@ def main(argv: list | None = None) -> int:
                                             situations=situations),
                     lambda payload, _chunk=chunk: validate_graph(
                         payload, _chunk, len(spec.lines), spec_lines=spec.lines,
-                        situations=situations,
+                        situations=situations, source_bundle=source_bundle,
                     ),
                     round_no=pass_offset * 10000 + job.reader_no * 100 + chunk_no,
                     spec_dir=spec_dir,
+                    output_schema=build_output_schema(chunk),
+                    call_evidence=call_evidence,
+                    evidence_dir=evidence_dir,
                 )
                 if isinstance(outcome, v1.RoundExit):
                     failed_chunks += 1
+                    chunk_failures.append({
+                        "pass": pass_offset,
+                        "reader": job.reader_no,
+                        "framing": job.framing_name,
+                        "provider": job.model_command.provider,
+                        "model": reader_config.model or job.model_command.model_tag,
+                        "chunk": chunk_no,
+                        "unit_ids": sorted(chunk),
+                        "diagnostic": outcome.diagnostic,
+                    })
                     continue
                 requirements, ungrounded = outcome
                 merged.update(requirements)
@@ -1084,7 +1345,7 @@ def main(argv: list | None = None) -> int:
             readers.append(ReaderGraph(
                 reader_no=job.reader_no, framing=job.framing_name,
                 provider=job.model_command.provider,
-                model_tag=job.model_command.model_tag,
+                model_tag=reader_config.model or job.model_command.model_tag,
                 requirements=merged, ungrounded_edges=ungrounded_total,
                 failed_chunks=failed_chunks,
             ))
@@ -1096,11 +1357,19 @@ def main(argv: list | None = None) -> int:
     for pass_no in range(1, options.passes + 1):
         readers, dropped = _run_pass(pass_no)
         if len(readers) < 2:
+            try:
+                run_evidence = _write_run_manifest(
+                    spec_dir, evidence_dir, config, source_bundle,
+                    call_evidence, chunk_failures, "failed",
+                )
+                evidence_note = f"; evidence: {run_evidence['manifest_ref']}"
+            except OSError as exc:
+                evidence_note = f"; evidence manifest write failed: {exc}"
             return v1.fail(
                 v1.EXIT_UNUSABLE_OUTPUT,
                 f"unusable model output: pass {pass_no} completed fewer than 2 "
                 f"readers ({len(readers)} of {len(jobs)}; dropped: "
-                f"{', '.join(dropped) or 'none'})",
+                f"{', '.join(dropped) or 'none'}){evidence_note}",
             )
         pass_scores.append(score_requirements(readers))
 
@@ -1113,14 +1382,30 @@ def main(argv: list | None = None) -> int:
     fractures = fracture_lines(readers, per_req, witnesses)
     evidence = evidence_metrics(readers)
     run_date = datetime.now().strftime("%Y-%m-%d")
+    run_status = (
+        "completed_with_coverage_gaps" if chunk_failures else "completed"
+    )
+    try:
+        run_evidence = _write_run_manifest(
+            spec_dir, evidence_dir, config, source_bundle,
+            call_evidence, chunk_failures, run_status,
+        )
+    except OSError as exc:
+        return v1.fail(
+            v1.EXIT_BAD_INPUT,
+            f"bad input: cannot write V3 evidence manifest: {exc}",
+        )
 
     report = render_report(spec, config.spec_path, readers, per_req, sr,
                            witnesses, fractures, run_date, dropped,
                            phrasing_variants=phrasing_variants,
-                           evidence=evidence, stability=stability)
+                           evidence=evidence, stability=stability,
+                           run_evidence=run_evidence)
     sidecar = build_sidecar(config.spec_path, readers, per_req, sr, witnesses,
                             fractures, run_date,
-                            evidence=evidence, stability=stability)
+                            evidence=evidence, stability=stability,
+                            source_bundle=source_bundle,
+                            run_evidence=run_evidence)
     try:
         (spec_dir / REPORT_FILENAME).write_text(report, encoding="utf-8")
         (spec_dir / JSON_FILENAME).write_text(
@@ -1129,8 +1414,13 @@ def main(argv: list | None = None) -> int:
     except OSError as exc:
         return v1.fail(v1.EXIT_BAD_INPUT, f"bad input: cannot write report: {exc}")
     print(f"Report: {spec_dir / REPORT_FILENAME}")
+    score_label = (
+        "Partial semantic reproducibility"
+        if chunk_failures
+        else "Semantic reproducibility"
+    )
     print(
-        f"Semantic reproducibility: {sr:.3f} ({_grade(sr)}) over "
+        f"{score_label}: {sr:.3f} ({_grade(sr)}) over "
         f"{len(per_req)} requirement(s); witnesses: {len(witnesses)}; "
         f"fracture sites: {len(fractures)}"
     )
@@ -1146,6 +1436,14 @@ def main(argv: list | None = None) -> int:
         print(f"  lowest: {req_id} = {values['score']:.2f}")
     if options.json:
         print(json.dumps(sidecar, indent=1))
+    if chunk_failures:
+        return v1.fail(
+            v1.EXIT_UNUSABLE_OUTPUT,
+            "unusable model output: V3 completed with extraction coverage "
+            f"gaps ({len(chunk_failures)} failed chunk(s)); partial report "
+            f"retained at '{spec_dir / REPORT_FILENAME}'; evidence: "
+            f"{run_evidence['manifest_ref']}",
+        )
     return v1.EXIT_SUCCESS
 
 

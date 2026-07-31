@@ -69,6 +69,31 @@ class TestModelCommands:
         with pytest.raises(v1.ArgumentFailure, match="shell-parseable"):
             v3.parse_model_command('stub "unterminated')
 
+    def test_main_builds_pinned_codex_configs_before_preflight(
+            self, tmp_path, monkeypatch, capsys):
+        spec = tmp_path / "spec.md"
+        spec.write_text("- **FR-001**: system records the event.\n")
+        captured = []
+
+        def stop_at_preflight(config):
+            captured.append(config)
+            return (v1.EXIT_BAD_INPUT, "stop after config capture")
+
+        monkeypatch.setattr(v1, "preflight", stop_at_preflight)
+
+        rc = v3.main([
+            str(spec),
+            "--model-cmd", "codex=codex",
+            "--model", "gpt-5.6-luna",
+            "--reasoning-effort", "low",
+        ])
+
+        assert rc == v1.EXIT_BAD_INPUT
+        assert len(captured) == 1
+        assert captured[0].model == "gpt-5.6-luna"
+        assert captured[0].reasoning_effort == "low"
+        capsys.readouterr()
+
 
 class TestReaderJobs:
     def test_two_models_receive_the_same_three_framings(self):
@@ -118,55 +143,90 @@ class TestNorm:
         assert v3.norm("process") == "process"
 
 
-class TestScanIds:
-    def test_definition_sites_exclude_cross_references(self):
+class TestRequirementScope:
+    def test_source_bundle_ids_exclude_cross_references(self, tmp_path):
         # The spec-030 phantom-unit defect: ids quoted inside another unit's
-        # prose (cross-references to a different spec) must not become units.
-        spec = v1.SpecDocument(path=Path("x"), lines=[
-            "- **AC-023**: findings overlap the REQ-009 ordering conflict "
-            "and the undefined pointer of REQ-002.",
-            "- **FR-034**: the report MUST be written beside the spec.",
-        ])
-        assert v3.scan_requirement_ids(spec) == {"AC-023", "FR-034"}
+        # body must not become units.
+        path = tmp_path / "spec.md"
+        path.write_text(
+            "- **AC-1.1** findings overlap REQ-009 and NFR-004.\n"
+            "- **FR-EL-001** The report MUST be written beside the spec.\n"
+        )
 
-    def test_markdown_definition_sites_counted(self):
-        spec = v1.SpecDocument(path=Path("x"), lines=[
-            "- **FR-001**: ...", "AC-012 and NFR-004 apply", "no ids here",
-        ])
-        # AC-012/NFR-004 are mentions only; a definition site exists, so the
-        # fallback does not fire.
-        assert v3.scan_requirement_ids(spec) == {"FR-001"}
+        bundle, ids = v3.load_requirement_scope(path)
 
-    def test_lexicon_block_heads_are_definition_sites(self):
-        spec = v1.SpecDocument(path=Path("x"), lines=[
-            "REQ: REQ-001", "GIVEN: a builder", "AC: AC-005",
-            "THEN: behaves like REQ-099",
-        ])
-        assert v3.scan_requirement_ids(spec) == {"REQ-001", "AC-005"}
+        assert ids == {"AC-1.1", "FR-EL-001"}
+        assert [unit.id for unit in bundle.units] == ["AC-1.1", "FR-EL-001"]
 
-    def test_plain_colon_definitions_counted(self):
-        spec = v1.SpecDocument(path=Path("x"), lines=[
-            "FR-007: the run MUST exit 0.", "see FR-008 for details",
-        ])
-        assert v3.scan_requirement_ids(spec) == {"FR-007"}
+    def test_lexicon_block_heads_are_bundle_units(self, tmp_path):
+        path = tmp_path / "spec.lex"
+        path.write_text(
+            "REQ: REQ-001\n"
+            "GIVEN: a builder\n"
+            "WHEN: the builder acts\n"
+            "THEN: behaves like REQ-099\n"
+            "AC: AC-005\n"
+        )
 
-    def test_mention_only_spec_falls_back_to_any_mention(self):
-        # A spec with no recognizable definition sites keeps the old
-        # any-mention behaviour rather than scanning zero units.
-        spec = v1.SpecDocument(path=Path("x"), lines=[
-            "AC-012 and NFR-004 apply", "no ids here",
-        ])
-        assert v3.scan_requirement_ids(spec) == {"AC-012", "NFR-004"}
+        _bundle, ids = v3.load_requirement_scope(path)
 
-    def test_non_behavioural_families_excluded_by_default(self):
-        spec = v1.SpecDocument(path=Path("x"), lines=[
-            "FR-001 holds; assumption A-003 and open question OQ-002 and U-007",
-        ])
-        assert v3.scan_requirement_ids(spec) == {"FR-001"}
+        assert ids == {"REQ-001", "AC-005"}
 
-    def test_families_opt_in(self):
-        spec = v1.SpecDocument(path=Path("x"), lines=["FR-001 and A-003"])
-        assert v3.scan_requirement_ids(spec, ("FR", "A")) == {"FR-001", "A-003"}
+    def test_non_behavioural_families_are_opt_in(self, tmp_path):
+        path = tmp_path / "spec.md"
+        path.write_text(
+            "- **FR-001** The run MUST finish.\n"
+            "- **A-003** The clock is assumed monotonic.\n"
+            "- **OQ-002** Which clock is authoritative?\n"
+        )
+
+        _bundle, default_ids = v3.load_requirement_scope(path)
+        _bundle, selected_ids = v3.load_requirement_scope(
+            path, ("FR", "A")
+        )
+
+        assert default_ids == {"FR-001"}
+        assert selected_ids == {"FR-001", "A-003"}
+
+    def test_non_prefixed_bundle_unit_remains_in_scope(self):
+        document = v3.source.SourceDocument.from_text(
+            id="payments",
+            source_uri="payments.txt",
+            media_type="text/plain",
+            text="Payment retries stop after three attempts.\n",
+        )
+        bundle = v3.source.make_bundle(
+            bundle_id="payments",
+            adapter_id="manifest",
+            documents=(document,),
+            units=(
+                v3.source.SourceUnit(
+                    id="PAYMENT-RETRY",
+                    kind="requirement",
+                    text="Payment retries stop after three attempts.",
+                    normative_level="must",
+                    source_refs=(
+                        v3.source.SourceRef(
+                            "payments", "line-range", "L1-L1"
+                        ),
+                    ),
+                    declared_relations=(),
+                    situation=None,
+                ),
+            ),
+        )
+
+        assert v3.requirement_ids_from_bundle(bundle) == {"PAYMENT-RETRY"}
+
+    def test_mention_only_prose_is_rejected_instead_of_inventing_units(
+            self, tmp_path):
+        path = tmp_path / "spec.md"
+        path.write_text("AC-012 and NFR-004 apply, but are defined elsewhere.\n")
+
+        with pytest.raises(v3.source.SUESourceError) as error:
+            v3.load_requirement_scope(path)
+
+        assert error.value.code == "INCONCLUSIVE_INPUT"
 
 
 class TestLabelGrounding:
@@ -208,6 +268,30 @@ class TestLabelGrounding:
         reqs, ungrounded = result
         assert len(reqs["FR-001"].edges) == 1 and ungrounded == 0
 
+    def test_multiline_unit_vocabulary_is_a_valid_anchor(self, tmp_path):
+        path = tmp_path / "spec.md"
+        path.write_text(
+            "- **FR-001** The system MUST display an inline error.\n"
+            "  It MUST retain the last valid card rendering.\n"
+        )
+        bundle, ids = v3.load_requirement_scope(path)
+        lines = path.read_text().splitlines()
+        result = v3.validate_graph(
+            {"requirements": {"FR-001": {
+                "edges": [{
+                    "s": "system", "type": "performs",
+                    "t": "retain last valid card rendering",
+                    "line": 1, "conf": 0.9,
+                }],
+                "assumptions": [], "assertions": [],
+            }}},
+            ids, len(lines), spec_lines=lines, source_bundle=bundle,
+        )
+
+        reqs, ungrounded = result
+        assert len(reqs["FR-001"].edges) == 1
+        assert ungrounded == 0
+
 
 class TestScoring:
     def test_identical_graphs_score_1(self):
@@ -241,11 +325,22 @@ class TestScoring:
         assert per["FR-001"]["score"] == 0.0
         assert per["FR-001"]["near_misses"] == 1
 
-    def test_missing_reader_treated_as_empty(self):
+    def test_missing_reader_is_not_scored_as_an_empty_interpretation(self):
         a = {"FR-001": _interp([_edge("system", "write report")])}
         per = v3.score_requirements([_reader(1, a), _reader(2, {})])
-        assert per["FR-001"]["score"] == 0.0
-        assert per["FR-001"]["readers_covering"] == 1
+
+        assert "FR-001" not in per
+
+    def test_only_reader_pairs_with_real_unit_coverage_are_compared(self):
+        interpretation = _interp([_edge("system", "write report")])
+        per = v3.score_requirements([
+            _reader(1, {"FR-001": interpretation}),
+            _reader(2, {}),
+            _reader(3, {"FR-001": interpretation}),
+        ])
+
+        assert per["FR-001"]["score"] == 1.0
+        assert per["FR-001"]["readers_covering"] == 2
 
 
 class TestWitnesses:
@@ -487,6 +582,17 @@ class TestChunking:
 
 
 class TestValidateGraph:
+    def test_response_must_cover_every_requested_unit_exactly_once(self):
+        result = v3.validate_graph(
+            {"requirements": {"FR-001": {
+                "edges": [], "assumptions": [], "assertions": [],
+            }}},
+            {"FR-001", "FR-002"}, 10,
+        )
+
+        assert isinstance(result, v1.ParseFailure)
+        assert "missing requested requirement ids: FR-002" in result.reason
+
     def test_unknown_requirement_id_rejected(self):
         result = v3.validate_graph(
             {"requirements": {"FR-999": {"edges": []}}}, {"FR-001"}, 10
@@ -502,16 +608,117 @@ class TestValidateGraph:
         )
         assert isinstance(result, v1.ParseFailure)
 
-    def test_out_of_range_edge_dropped_and_counted(self):
+    def test_out_of_range_edge_is_rejected(self):
         result = v3.validate_graph(
             {"requirements": {"FR-001": {"edges": [
                 {"s": "a", "type": "performs", "t": "b", "line": 99},
                 {"s": "a", "type": "performs", "t": "c", "line": 2}]}}},
             {"FR-001"}, 10,
         )
-        reqs, ungrounded = result
-        assert ungrounded == 1
-        assert len(reqs["FR-001"].edges) == 1
+
+        assert isinstance(result, v1.ParseFailure)
+        assert "line must be between 1 and 10" in result.reason
+
+    @pytest.mark.parametrize("confidence", ["high", -0.1, 1.1, float("nan")])
+    def test_edge_confidence_must_be_finite_number_in_closed_interval(
+            self, confidence):
+        result = v3.validate_graph(
+            {"requirements": {"FR-001": {
+                "edges": [{
+                    "s": "a", "type": "performs", "t": "b",
+                    "line": 1, "conf": confidence,
+                }],
+                "assumptions": [], "assertions": [],
+            }}},
+            {"FR-001"}, 10,
+        )
+
+        assert isinstance(result, v1.ParseFailure)
+        assert ".conf must be a finite number between 0 and 1" in result.reason
+
+    @pytest.mark.parametrize(
+        "field,value,needle",
+        [
+            ("assumptions", [{"text": "inferred", "line": 4}], "outside source span"),
+            ("assertions", [{
+                "given": "state", "when": "action", "then": "outcome",
+                "lines": [1, 4],
+            }], "outside source span"),
+        ],
+    )
+    def test_evidence_lines_must_belong_to_the_requirement_source_span(
+            self, tmp_path, field, value, needle):
+        path = tmp_path / "spec.md"
+        path.write_text(
+            "# Context\n"
+            "- **FR-001** The system MUST write the report.\n"
+            "  The report includes provenance.\n"
+            "# Unrelated\n"
+        )
+        bundle, ids = v3.load_requirement_scope(path)
+        body = {"edges": [], "assumptions": [], "assertions": []}
+        body[field] = value
+
+        result = v3.validate_graph(
+            {"requirements": {"FR-001": body}}, ids, 4,
+            spec_lines=path.read_text().splitlines(), source_bundle=bundle,
+        )
+
+        assert isinstance(result, v1.ParseFailure)
+        assert needle in result.reason
+
+
+class TestV3OutputSchema:
+    def test_schema_closes_requirement_keys_and_requires_complete_chunk(self):
+        schema = v3.build_output_schema({"FR-002", "FR-001"})
+        requirements = schema["properties"]["requirements"]
+
+        assert requirements["required"] == ["FR-001", "FR-002"]
+        assert set(requirements["properties"]) == {"FR-001", "FR-002"}
+        assert requirements["additionalProperties"] is False
+
+    def test_schema_closes_edge_types_and_numeric_provenance(self):
+        schema = v3.build_output_schema({"FR-001"})
+        body = schema["properties"]["requirements"]["properties"]["FR-001"]
+        edge = body["properties"]["edges"]["items"]
+        assumption = body["properties"]["assumptions"]["items"]
+        assertion = body["properties"]["assertions"]["items"]
+
+        assert edge["properties"]["type"]["enum"] == list(v3.EDGE_TYPES)
+        assert edge["properties"]["line"]["minimum"] == 1
+        assert edge["properties"]["conf"] == {
+            "type": "number", "minimum": 0, "maximum": 1,
+        }
+        assert assumption["required"] == ["text", "line"]
+        assert assertion["properties"]["lines"]["minItems"] == 1
+
+    def test_main_passes_chunk_schema_to_every_provider_attempt(
+            self, tmp_path, monkeypatch, capsys):
+        spec = tmp_path / "spec.md"
+        spec.write_text("- **FR-001** The system MUST write the report.\n")
+        captured = []
+
+        monkeypatch.setattr(v1, "preflight", lambda _config: None)
+
+        def fake_execute(_config, _prompt, validator, round_no=None,
+                         spec_dir=None, output_schema=None, **_kwargs):
+            captured.append(output_schema)
+            return validator({"requirements": {"FR-001": {
+                "edges": [], "assumptions": [], "assertions": [],
+            }}})
+
+        monkeypatch.setattr(v1, "execute_round", fake_execute)
+
+        rc = v3.main([str(spec), "--model-cmd", "codex=codex"])
+
+        assert rc == v1.EXIT_SUCCESS
+        assert len(captured) == 3
+        assert all(schema is not None for schema in captured)
+        assert all(
+            schema["properties"]["requirements"]["required"] == ["FR-001"]
+            for schema in captured
+        )
+        capsys.readouterr()
 
 
 # ── Scenario tests ───────────────────────────────────────────────────────────
@@ -621,6 +828,15 @@ class TestScenario:
         sidecar = json.loads((tmp_path / "semantic-reproducibility.json").read_text())
         assert sidecar["semantic_reproducibility"] == 1.0
         assert sidecar["witnesses"] == []
+        assert sidecar["source_bundle"]["snapshot_digest"]
+        assert sidecar["source_bundle"]["adapter"] == {
+            "id": "markdown-lexicon",
+            "version": "1",
+        }
+        assert [
+            (unit["id"], unit["source_refs"][0]["locator"])
+            for unit in sidecar["source_bundle"]["units"]
+        ] == [("FR-001", "L1-L1"), ("FR-002", "L2-L2")]
 
     def test_conflicting_assertion_yields_witness_and_fracture(self, tmp_path):
         spec = tmp_path / "spec.md"
@@ -651,9 +867,10 @@ class TestScenario:
             _graph_json(), "garbage", "garbage", _graph_json(),
         ])
         rc = v3.main([str(spec), "--claude-cmd", shlex.quote(stub)])
-        assert rc == 0
+        assert rc == v1.EXIT_UNUSABLE_OUTPUT
         report = (tmp_path / "semantic-reproducibility.md").read_text()
         assert "1 dropped: R2(behavioural)" in report
+        assert "Run status:** completed_with_coverage_gaps" in report
 
     def test_two_dropouts_exit_3(self, tmp_path, capsys):
         spec = tmp_path / "spec.md"
@@ -664,6 +881,13 @@ class TestScenario:
         rc = v3.main([str(spec), "--claude-cmd", shlex.quote(stub)])
         assert rc == 3
         assert "fewer than 2 readers" in capsys.readouterr().err
+        evidence_runs = list((tmp_path / v1.EVIDENCE_DIR_NAME).glob(
+            "reproducibility-*"
+        ))
+        assert len(evidence_runs) == 1
+        manifest = json.loads((evidence_runs[0] / "run-manifest.json").read_text())
+        assert manifest["status"] == "failed"
+        assert manifest["chunk_failures"]
 
     def test_chunked_extraction_merges_per_reader(self, tmp_path, monkeypatch):
         """CHUNK_SIZE=1 forces 2 chunks per reader; merged graphs must cover
@@ -707,10 +931,30 @@ class TestScenario:
         )
         stub = _replay_stub(tmp_path, responses)
         rc = v3.main([str(spec), "--claude-cmd", shlex.quote(stub)])
-        assert rc == 0
+        assert rc == v1.EXIT_UNUSABLE_OUTPUT
         report = (tmp_path / "semantic-reproducibility.md").read_text()
         assert "Failed extraction chunks (coverage gaps):** R1=1" in report
         assert "3 completed" in report
+        evidence_runs = list((tmp_path / v1.EVIDENCE_DIR_NAME).glob(
+            "reproducibility-*"
+        ))
+        assert len(evidence_runs) == 1
+        manifest = json.loads((evidence_runs[0] / "run-manifest.json").read_text())
+        assert manifest["status"] == "completed_with_coverage_gaps"
+        assert len(manifest["calls"]) == 7
+        assert manifest["chunk_failures"][0]["reader"] == 1
+        assert manifest["chunk_failures"][0]["unit_ids"] == ["FR-002"]
+        assert "no JSON object found" in manifest["chunk_failures"][0]["diagnostic"]
+        failed_calls = [
+            call for call in manifest["calls"] if call["validation_failure"]
+        ]
+        assert len(failed_calls) == 2
+        assert all((tmp_path / call["final_output_ref"]).is_file()
+                   for call in manifest["calls"])
+        sidecar = json.loads((tmp_path / "semantic-reproducibility.json").read_text())
+        assert sidecar["run_evidence"]["manifest_ref"].endswith(
+            "/run-manifest.json"
+        )
 
     def test_no_requirement_ids_exit_1(self, tmp_path, capsys):
         spec = tmp_path / "spec.md"

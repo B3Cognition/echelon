@@ -25,14 +25,33 @@ _UNIT_KINDS = frozenset(
     {"requirement", "acceptance-criterion", "constraint", "rule"}
 )
 _NORMATIVE_LEVELS = frozenset({"must", "should", "may", "unspecified"})
+UNIT_FAMILIES = ("REQ", "FR", "AC", "NFR", "ERR", "SC", "U", "OQ", "A")
+UNIT_ID_PATTERN = (
+    rf"(?:{'|'.join(UNIT_FAMILIES)})"
+    r"[-_][A-Za-z0-9]+(?:[-_.][A-Za-z0-9]+)*"
+)
+UNIT_ID_RE = re.compile(
+    rf"^(?P<family>{'|'.join(UNIT_FAMILIES)})"
+    r"[-_][A-Za-z0-9]+(?:[-_.][A-Za-z0-9]+)*$",
+    re.IGNORECASE,
+)
 _EXPLICIT_UNIT_RE = re.compile(
-    r"^\s*(?:(?:#{1,6}|[-*+])\s+)?(?:\*\*)?((?:FR|REQ|AC)[-_][A-Za-z0-9-]+)(?:\*\*)?\s*:\s*(.+?)\s*$",
+    rf"^\s*(?P<bullet>[-*+]\s+)?(?:\*\*)?"
+    rf"(?P<unit_id>{UNIT_ID_PATTERN})(?:\*\*)?"
+    r"(?P<colon>\s*:)?\s+(?P<body>.+?)\s*$",
     re.IGNORECASE,
 )
 _HEADING_UNIT_RE = re.compile(
-    r"^\s*(#{1,6})\s+((?:FR|REQ|AC)[-_][A-Za-z0-9-]+)\b(.*)$",
+    rf"^\s*(#{{1,6}})\s+({UNIT_ID_PATTERN})(?=\s|:|$)(.*)$",
     re.IGNORECASE,
 )
+_MARKED_UNIT_CANDIDATE_RE = re.compile(
+    rf"^\s*(?:[-*+]\s+|#{{1,6}}\s+)(?:\*\*)?"
+    rf"((?:{'|'.join(UNIT_FAMILIES)})[-_][^\s*:]+)",
+    re.IGNORECASE,
+)
+_MARKDOWN_HEADING_RE = re.compile(r"^\s*#{1,6}\s+")
+_MARKDOWN_RULE_RE = re.compile(r"^\s*(?:-{3,}|_{3,}|\*{3,})\s*$")
 _NORMATIVE_RE = re.compile(r"\b(MUST|SHALL|SHOULD|MAY)\b", re.IGNORECASE)
 _LEXICON_RE = re.compile(r"^(REQ|AC|GIVEN|WHEN|THEN):\s*(.*?)\s*$", re.IGNORECASE)
 
@@ -626,6 +645,23 @@ def _normative_level(text: str) -> str:
     return match.group(1).lower().replace("shall", "must") if match else "unspecified"
 
 
+def unit_id_family(unit_id: str) -> str | None:
+    """Return the exact declared family for a supported source-unit ID."""
+    match = UNIT_ID_RE.fullmatch(unit_id)
+    return match.group("family").upper() if match else None
+
+
+def _explicit_unit_match(line: str) -> re.Match[str] | None:
+    match = _EXPLICIT_UNIT_RE.fullmatch(line)
+    if match is None:
+        return None
+    # Bare definitions retain the established ``FR-001: ...`` form. A colon
+    # is optional only for a Markdown list item such as ``- **FR-EL-001**``.
+    if match.group("bullet") is None and match.group("colon") is None:
+        return None
+    return match
+
+
 def load_markdown_lexicon(path: Path) -> SUESourceBundle:
     """Load the small, explicit Markdown and lexicon source subset."""
     path = Path(path)
@@ -639,6 +675,8 @@ def load_markdown_lexicon(path: Path) -> SUESourceBundle:
     lexicon: dict[str, tuple[str, int]] = {}
     heading_sites: list[tuple[int, str, str]] = []
     covered_heading_lines: set[int] = set()
+    explicit_sites: list[tuple[int, str]] = []
+    covered_explicit_lines: set[int] = set()
 
     for number, line in enumerate(lines, start=1):
         heading = _HEADING_UNIT_RE.fullmatch(line)
@@ -687,6 +725,61 @@ def load_markdown_lexicon(path: Path) -> SUESourceBundle:
         )
         covered_heading_lines.update(range(start, end + 1))
 
+    for number, line in enumerate(lines, start=1):
+        if number in covered_heading_lines:
+            continue
+        explicit = _explicit_unit_match(line)
+        if explicit:
+            explicit_sites.append((number, explicit.group("unit_id")))
+            continue
+        candidate = _MARKED_UNIT_CANDIDATE_RE.match(line)
+        if candidate and unit_id_family(candidate.group(1)) is None:
+            _source_error(
+                "UNSUPPORTED_UNIT_ID",
+                f"cannot represent explicit unit identifier exactly on "
+                f"line {number}: {candidate.group(1)!r}",
+            )
+
+    for index, (start, unit_id) in enumerate(explicit_sites):
+        end = (
+            explicit_sites[index + 1][0] - 1
+            if index + 1 < len(explicit_sites)
+            else len(lines)
+        )
+        for boundary in range(start + 1, end + 1):
+            line = lines[boundary - 1]
+            if _MARKDOWN_HEADING_RE.match(line) or _MARKDOWN_RULE_RE.fullmatch(line):
+                end = boundary - 1
+                break
+        while end > start and not lines[end - 1].strip():
+            end -= 1
+        unit_text = _line_range_text(text, start, end)
+        located_units.append(
+            (
+                start,
+                SourceUnit(
+                    id=unit_id,
+                    kind=(
+                        "acceptance-criterion"
+                        if unit_id_family(unit_id) == "AC"
+                        else "requirement"
+                    ),
+                    text=unit_text,
+                    normative_level=_normative_level(unit_text),
+                    source_refs=(
+                        SourceRef(
+                            document_id,
+                            "line-range",
+                            f"L{start}-L{end}",
+                        ),
+                    ),
+                    declared_relations=(),
+                    situation=None,
+                ),
+            )
+        )
+        covered_explicit_lines.update(range(start, end + 1))
+
     def flush_lexicon() -> None:
         nonlocal lexicon
         if "REQ" not in lexicon and "AC" not in lexicon:
@@ -727,7 +820,7 @@ def load_markdown_lexicon(path: Path) -> SUESourceBundle:
         lexicon = {}
 
     for number, line in enumerate(lines, start=1):
-        if number in covered_heading_lines:
+        if number in covered_heading_lines or number in covered_explicit_lines:
             if lexicon:
                 flush_lexicon()
             continue
@@ -741,17 +834,12 @@ def load_markdown_lexicon(path: Path) -> SUESourceBundle:
             continue
         if lexicon:
             flush_lexicon()
-        explicit = _EXPLICIT_UNIT_RE.fullmatch(line)
-        if explicit:
-            unit_id, _ = explicit.groups()
-            kind = "acceptance-criterion" if unit_id.upper().startswith("AC") else "requirement"
+        bullet = re.fullmatch(r"\s*[-*+]\s+(.+?)\s*", line)
+        if bullet and _NORMATIVE_RE.search(bullet.group(1)):
+            unit_id = f"{document_id}:L{number}-L{number}"
+            kind = "requirement"
         else:
-            bullet = re.fullmatch(r"\s*[-*+]\s+(.+?)\s*", line)
-            if bullet and _NORMATIVE_RE.search(bullet.group(1)):
-                unit_id = f"{document_id}:L{number}-L{number}"
-                kind = "requirement"
-            else:
-                continue
+            continue
         unit_text = _line_range_text(text, number, number)
         located_units.append(
             (

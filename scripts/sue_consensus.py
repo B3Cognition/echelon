@@ -469,17 +469,23 @@ def parse_args(argv: list) -> tuple:
                         default=None,
                         help="PROVIDER=COMMAND or bare command; resolves from "
                              "ECHELON_LLM/markers when omitted")
+    v1.add_codex_profile_arguments(parser)
     parser.add_argument(
         "--timeout", type=v1._positive_float, default=v1.DEFAULT_TIMEOUT_SECONDS
     )
     parser.add_argument("--no-elenchus", action="store_true")
     options = parser.parse_args(argv)
     command, protocol = v1.resolve_model_command(options.claude_cmd)
+    model, reasoning_effort = v1.resolve_codex_profile(
+        protocol, options.model, options.reasoning_effort
+    )
     config = v1.RunConfig(
         spec_path=options.spec_path,
         max_questions=options.questions,
         model_command=command,
         model_protocol=protocol,
+        model=model,
+        reasoning_effort=reasoning_effort,
         timeout_seconds=options.timeout,
     )
     return config, options

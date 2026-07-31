@@ -210,6 +210,7 @@ class TestDataclasses:
                     "raw_output_ref",
                     "final_output_ref",
                     "stderr_ref",
+                    "validation_failure",
                 },
             ),
             ("ParseFailure", {"reason", "is_timeout"}),
@@ -881,6 +882,29 @@ class TestRunModelCall:
         ]
         assert invocation.stdin_text == "PROMPT"
 
+    def test_non_v1_codex_invocation_pins_requested_execution_profile(
+            self, tmp_path):
+        config = sue.RunConfig(
+            spec_path=tmp_path / "spec.md",
+            max_questions=1,
+            model_command="codex",
+            timeout_seconds=10,
+            model_protocol="codex-stdin",
+            model="gpt-5.6-luna",
+            reasoning_effort="low",
+        )
+
+        invocation = sue.build_model_invocation(config, "PROMPT")
+
+        assert invocation.argv == [
+            "codex", "exec", "--ephemeral", "--skip-git-repo-check",
+            "--sandbox", "read-only",
+            "--model", "gpt-5.6-luna",
+            "-c", 'model_reasoning_effort="low"',
+            "-",
+        ]
+        assert invocation.stdin_text == "PROMPT"
+
     def test_model_cmd_and_claude_cmd_are_aliases(self, tmp_path):
         spec = tmp_path / "spec.md"
         spec.write_text("# s\n")
@@ -1089,6 +1113,15 @@ class TestExtractJsonObject:
     def test_top_level_array_is_parse_failure(self):
         # A JSON array at top level is not an object (T-006 contract).
         assert isinstance(sue.extract_json_object('[{"a": 1}]'), sue.ParseFailure)
+
+    def test_duplicate_object_key_is_rejected_before_silent_collapse(self):
+        result = sue.extract_json_object(
+            '{"requirements":{"AC-4.5":{"edges":[]},'
+            '"AC-4.5":{"edges":[{"s":"different"}]}}}'
+        )
+
+        assert isinstance(result, sue.ParseFailure)
+        assert "duplicate JSON object key 'AC-4.5'" in result.reason
 
     def test_never_raises_on_adversarial_input(self):
         for raw in ["{", "}", '{"a"', "``` {", '{"a": "unterminated', "{not json}"]:
@@ -1442,6 +1475,42 @@ class TestExecuteRound:
         assert metadata["timeout_seconds"] == 10
         assert metadata["prompt_digest"] == hashlib.sha256(b"PROMPT").hexdigest()
         assert metadata["schema_digest"]
+        assert metadata["validation_failure"] == (
+            "model call failed (non-zero exit status or empty output)"
+        )
+
+    def test_legacy_provider_evidence_preserves_stdout_as_final_output(
+            self, tmp_path, monkeypatch):
+        reply = _round1_reply("Q1")
+        monkeypatch.setattr(
+            sue,
+            "run_model_call",
+            lambda *_args: sue.CallOutcome(
+                kind="ok",
+                stdout=reply,
+                stderr="legacy warning",
+                duration_seconds=0.1,
+            ),
+        )
+        evidence_dir = tmp_path / sue.EVIDENCE_DIR_NAME / "legacy-test"
+        evidence_dir.mkdir(parents=True)
+        evidence = []
+
+        result = sue.execute_round(
+            self._config("legacy-stub"),
+            "PROMPT",
+            self._r1_validator,
+            1,
+            tmp_path,
+            call_evidence=evidence,
+            evidence_dir=evidence_dir,
+        )
+
+        questions, _ = result
+        assert [question.id for question in questions] == ["Q1"]
+        assert (tmp_path / evidence[0].final_output_ref).read_text() == reply
+        metadata = json.loads((tmp_path / evidence[0].metadata_ref).read_text())
+        assert metadata["validation_failure"] is None
 
     def test_retry_records_each_call_metadata_without_reusing_stale_values(
         self, tmp_path, monkeypatch
@@ -1682,7 +1751,7 @@ class TestExecuteRound:
 
         assert isinstance(result, sue.RoundExit)
         evidence = json.loads(
-            (tmp_path / sue.DEBUG_DIR_NAME / "round2-call-evidence.json").read_text()
+            (evidence_dir / "debug" / "round2-call-evidence.json").read_text()
         )
         assert evidence["round"] == 2
         assert len(evidence["attempts"]) == 2
@@ -1714,6 +1783,36 @@ class TestExecuteRound:
             assert (tmp_path / item["final_output_ref"]).is_file()
             assert (tmp_path / item["stderr_ref"]).is_file()
         assert len(call_evidence) == 2
+
+    def test_evidence_scoped_debug_dumps_do_not_overwrite_between_runs(
+            self, tmp_path, monkeypatch):
+        outcomes = iter([
+            sue.CallOutcome("ok", "FIRST-BAD", "", 0.1),
+            sue.CallOutcome("ok", "SECOND-BAD", "", 0.1),
+        ])
+        monkeypatch.setattr(sue, "run_model_call", lambda *_args: next(outcomes))
+        config = dataclasses.replace(
+            self._config("legacy"), attempts_per_round=1
+        )
+        run_one = tmp_path / sue.EVIDENCE_DIR_NAME / "run-one"
+        run_two = tmp_path / sue.EVIDENCE_DIR_NAME / "run-two"
+        run_one.mkdir(parents=True)
+        run_two.mkdir(parents=True)
+
+        first = sue.execute_round(
+            config, "PROMPT", self._r1_validator, 1, tmp_path,
+            evidence_dir=run_one,
+        )
+        second = sue.execute_round(
+            config, "PROMPT", self._r1_validator, 1, tmp_path,
+            evidence_dir=run_two,
+        )
+
+        assert isinstance(first, sue.RoundExit)
+        assert isinstance(second, sue.RoundExit)
+        assert (run_one / "debug" / "round1-attempt1-stdout.txt").read_text() == "FIRST-BAD"
+        assert (run_two / "debug" / "round1-attempt1-stdout.txt").read_text() == "SECOND-BAD"
+        assert not (tmp_path / sue.DEBUG_DIR_NAME).exists()
 
     def test_double_timeout_exits_3_with_timeout_prefixed_dumps(self, tmp_path):
         # AC-017 + FR-029 + FR-013: timeout retries re-issue the identical

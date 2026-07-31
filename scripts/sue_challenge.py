@@ -402,6 +402,7 @@ class CallEvidence:
     raw_output_ref: str | None = None
     final_output_ref: str | None = None
     stderr_ref: str | None = None
+    validation_failure: str | None = None
 
 
 @dataclass(frozen=True)
@@ -452,6 +453,47 @@ def _positive_float(value: str) -> float:
     return parsed
 
 
+def add_codex_profile_arguments(parser: argparse.ArgumentParser) -> None:
+    """Expose the shared Codex execution-profile options on a SUE parser."""
+    parser.add_argument(
+        "--model",
+        default=None,
+        help=(
+            "Codex model override; Codex defaults visibly to "
+            f"{DEFAULT_CODEX_MODEL!r}"
+        ),
+    )
+    parser.add_argument(
+        "--reasoning-effort",
+        choices=CODEX_REASONING_EFFORTS,
+        default=None,
+        help=(
+            "Codex reasoning effort; Codex defaults visibly to "
+            f"{DEFAULT_CODEX_REASONING_EFFORT!r}"
+        ),
+    )
+
+
+def resolve_codex_profile(
+    protocol: str,
+    model: str | None,
+    reasoning_effort: str | None,
+) -> tuple[str | None, str | None]:
+    """Validate and resolve one provider's explicit execution profile."""
+    if protocol != "codex-stdin":
+        if model is not None:
+            raise ArgumentFailure("--model is supported only for codex")
+        if reasoning_effort is not None:
+            raise ArgumentFailure(
+                "--reasoning-effort is supported only for codex"
+            )
+        return None, None
+    return (
+        model or DEFAULT_CODEX_MODEL,
+        reasoning_effort or DEFAULT_CODEX_REASONING_EFFORT,
+    )
+
+
 def parse_args(argv: list[str]) -> RunConfig:
     """Parse the challenge CLI invocation and provider-specific options."""
     parser = _Parser(
@@ -497,23 +539,7 @@ def parse_args(argv: list[str]) -> RunConfig:
         metavar="SECONDS",
         help="per-model-call budget in seconds (default: 300)",
     )
-    parser.add_argument(
-        "--model",
-        default=None,
-        help=(
-            "Codex model override; Codex defaults visibly to "
-            f"{DEFAULT_CODEX_MODEL!r}"
-        ),
-    )
-    parser.add_argument(
-        "--reasoning-effort",
-        choices=CODEX_REASONING_EFFORTS,
-        default=None,
-        help=(
-            "Codex reasoning effort; Codex defaults visibly to "
-            f"{DEFAULT_CODEX_REASONING_EFFORT!r}"
-        ),
-    )
+    add_codex_profile_arguments(parser)
     parser.add_argument(
         "--attempts-per-round",
         type=_positive_int,
@@ -533,19 +559,9 @@ def parse_args(argv: list[str]) -> RunConfig:
         raise ArgumentFailure(f"model command is not shell-parseable: {exc}") from None
     if not words:
         raise ArgumentFailure("model command splits to zero words")
-    if protocol != "codex-stdin":
-        if namespace.model is not None:
-            raise ArgumentFailure("--model is supported only for codex")
-        if namespace.reasoning_effort is not None:
-            raise ArgumentFailure("--reasoning-effort is supported only for codex")
-    model = DEFAULT_CODEX_MODEL if protocol == "codex-stdin" else None
-    reasoning_effort = (
-        DEFAULT_CODEX_REASONING_EFFORT if protocol == "codex-stdin" else None
+    model, reasoning_effort = resolve_codex_profile(
+        protocol, namespace.model, namespace.reasoning_effort
     )
-    if namespace.model is not None:
-        model = namespace.model
-    if namespace.reasoning_effort is not None:
-        reasoning_effort = namespace.reasoning_effort
     return RunConfig(
         spec_path=namespace.spec_path,
         max_questions=namespace.questions,
@@ -681,16 +697,21 @@ def build_model_invocation(config: RunConfig, prompt: str) -> ModelInvocation:
         # persisted), read-only sandbox, prompt on stdin ("-"). Flags from the
         # provider-selection design; verified against the installed CLI at
         # first live run (preflight exits 2 while the binary is absent).
-        return ModelInvocation(
-            argv=words + [
-                "exec",
-                "--ephemeral",
-                "--skip-git-repo-check",
-                "--sandbox", "read-only",
-                "-",
-            ],
-            stdin_text=prompt,
-        )
+        argv = words + [
+            "exec",
+            "--ephemeral",
+            "--skip-git-repo-check",
+            "--sandbox", "read-only",
+        ]
+        if config.model:
+            argv.extend(["--model", config.model])
+        if config.reasoning_effort:
+            argv.extend([
+                "-c",
+                f'model_reasoning_effort="{config.reasoning_effort}"',
+            ])
+        argv.append("-")
+        return ModelInvocation(argv=argv, stdin_text=prompt)
     if config.model_protocol == "copilot-argv":
         if len(prompt) > ARGV_PROMPT_LIMIT:
             raise ArgvTransportOverflow(
@@ -908,11 +929,26 @@ def _run_model_call(
 _FENCE_RE = re.compile(r"```[^\n`]*\n(.*?)```", re.DOTALL)
 
 
+class _DuplicateJsonKey(ValueError):
+    """Internal signal used to prevent json.loads' last-value-wins collapse."""
+
+
+def _reject_duplicate_object_keys(pairs):
+    parsed = {}
+    for key, value in pairs:
+        if key in parsed:
+            raise _DuplicateJsonKey(key)
+        parsed[key] = value
+    return parsed
+
+
 def _try_json(text: str):
-    """Parse ``text`` as JSON, returning None on any parse error."""
+    """Parse JSON without ever silently collapsing duplicate object keys."""
     try:
-        return json.loads(text)
-    except ValueError:
+        return json.loads(text, object_pairs_hook=_reject_duplicate_object_keys)
+    except _DuplicateJsonKey as error:
+        return ParseFailure(reason=f"duplicate JSON object key {error.args[0]!r}")
+    except (json.JSONDecodeError, ValueError):
         return None
 
 
@@ -972,6 +1008,8 @@ def extract_json_object(raw: str) -> dict | ParseFailure:
     (or any non-object value) at top level is not an object and fails.
     """
     direct = _try_json(raw)
+    if isinstance(direct, ParseFailure):
+        return direct
     if isinstance(direct, dict):
         return direct
     if direct is not None:
@@ -980,10 +1018,14 @@ def extract_json_object(raw: str) -> dict | ParseFailure:
         )
     for fence_content in _FENCE_RE.findall(raw):
         fenced = _try_json(fence_content)
+        if isinstance(fenced, ParseFailure):
+            return fenced
         if isinstance(fenced, dict):
             return fenced
     for candidate in _balanced_brace_candidates(raw):
         scanned = _try_json(candidate)
+        if isinstance(scanned, ParseFailure):
+            return scanned
         if isinstance(scanned, dict):
             return scanned
     return ParseFailure(reason="no JSON object found in the model output")
@@ -1184,13 +1226,20 @@ def _attempt_result(
     return validator(extracted)
 
 
-def _create_evidence_run_dir(spec_dir: Path) -> Path:
-    """Create a fresh V1 evidence directory without reusing prior-run state."""
+def create_evidence_run_dir(spec_dir: Path, prefix: str = "challenge") -> Path:
+    """Create a fresh instrument evidence directory without stale-run reuse."""
+    if re.fullmatch(r"[a-z][a-z0-9-]*", prefix) is None:
+        raise ValueError(f"invalid evidence run prefix: {prefix!r}")
     root = spec_dir / EVIDENCE_DIR_NAME
     root.mkdir(exist_ok=True)
-    run_dir = root / f"challenge-{uuid.uuid4().hex}"
+    run_dir = root / f"{prefix}-{uuid.uuid4().hex}"
     run_dir.mkdir(exist_ok=False)
     return run_dir
+
+
+def _create_evidence_run_dir(spec_dir: Path) -> Path:
+    """Backward-compatible V1 evidence-directory helper."""
+    return create_evidence_run_dir(spec_dir, "challenge")
 
 
 def _artifact_ref(spec_dir: Path, path: Path) -> str:
@@ -1234,6 +1283,7 @@ def _call_evidence_payload(evidence: CallEvidence) -> dict:
         "raw_output_digest": outcome.raw_output_digest,
         "final_output_digest": outcome.final_output_digest,
         "usage": outcome.usage,
+        "validation_failure": evidence.validation_failure,
         "metadata_ref": evidence.metadata_ref,
         "raw_output_ref": evidence.raw_output_ref,
         "final_output_ref": evidence.final_output_ref,
@@ -1247,6 +1297,30 @@ def _persist_call_evidence(
     evidence: CallEvidence,
 ) -> CallEvidence:
     """Persist one runner result exactly once and return its durable references."""
+    # Hardened runners supply raw/final streams independently. Legacy provider
+    # adapters only expose stdout; retain it instead of writing empty evidence
+    # artifacts and pretending the call was reconstructable.
+    raw_output = evidence.outcome.raw_output or evidence.outcome.stdout
+    final_output = evidence.outcome.final_output or evidence.outcome.stdout
+    stderr = evidence.outcome.stderr
+    outcome = replace(
+        evidence.outcome,
+        raw_output=raw_output,
+        final_output=final_output,
+        raw_output_digest=(
+            evidence.outcome.raw_output_digest
+            or hashlib.sha256(raw_output.encode("utf-8")).hexdigest()
+        ),
+        final_output_digest=(
+            evidence.outcome.final_output_digest
+            or hashlib.sha256(final_output.encode("utf-8")).hexdigest()
+        ),
+        stderr_digest=(
+            evidence.outcome.stderr_digest
+            or hashlib.sha256(stderr.encode("utf-8")).hexdigest()
+        ),
+    )
+    evidence = replace(evidence, outcome=outcome)
     run_identity = evidence.outcome.run_id or "run-id-unavailable"
     identity_digest = hashlib.sha256(run_identity.encode("utf-8")).hexdigest()[:16]
     stem = (
@@ -1264,9 +1338,9 @@ def _persist_call_evidence(
         final_output_ref=_artifact_ref(spec_dir, final_output_path),
         stderr_ref=_artifact_ref(spec_dir, stderr_path),
     )
-    _write_exclusive_text(raw_output_path, evidence.outcome.raw_output)
-    _write_exclusive_text(final_output_path, evidence.outcome.final_output)
-    _write_exclusive_text(stderr_path, evidence.outcome.stderr)
+    _write_exclusive_text(raw_output_path, raw_output)
+    _write_exclusive_text(final_output_path, final_output)
+    _write_exclusive_text(stderr_path, stderr)
     _write_exclusive_text(
         metadata_path,
         json.dumps(
@@ -1285,15 +1359,20 @@ def _write_debug_dump(
     round_no: int,
     attempts: list[tuple[CallEvidence, ParseFailure]],
     timeout_seconds: float,
+    evidence_dir: Path | None = None,
 ) -> Path:
-    """Save both failing attempts' raw output and provenance under .sue-debug.
+    """Save failing attempts under their run directory when one is available.
 
     Timeout attempts carry a first line naming the exhausted budget (ISS-207).
     Model identity fields preserve provider-reported values verbatim; absent
     values serialize as JSON null rather than being inferred.
     """
-    debug_dir = spec_dir / DEBUG_DIR_NAME
-    debug_dir.mkdir(exist_ok=True)
+    debug_dir = (
+        evidence_dir / "debug"
+        if evidence_dir is not None
+        else spec_dir / DEBUG_DIR_NAME
+    )
+    debug_dir.mkdir(parents=True, exist_ok=True)
     for evidence, failure in attempts:
         outcome = evidence.outcome
         prefix = f"TIMEOUT after {timeout_seconds:g}s\n" if failure.is_timeout else ""
@@ -1345,6 +1424,9 @@ def execute_round(
             attempt_no=attempt_no,
             outcome=outcome,
         )
+        result = _attempt_result(outcome, validator)
+        if isinstance(result, ParseFailure):
+            evidence = replace(evidence, validation_failure=result.reason)
         if evidence_dir is not None:
             try:
                 evidence = _persist_call_evidence(spec_dir, evidence_dir, evidence)
@@ -1358,14 +1440,19 @@ def execute_round(
                 )
         if call_evidence is not None:
             call_evidence.append(evidence)
-        result = _attempt_result(outcome, validator)
         if not isinstance(result, ParseFailure):
             return result
         attempts.append((evidence, result))
         if attempt_no < config.attempts_per_round:
             current_prompt = build_retry_prompt(prompt, result)
     try:
-        debug_dir = _write_debug_dump(spec_dir, round_no, attempts, config.timeout_seconds)
+        debug_dir = _write_debug_dump(
+            spec_dir,
+            round_no,
+            attempts,
+            config.timeout_seconds,
+            evidence_dir=evidence_dir,
+        )
         dump_note = f"raw output saved under '{debug_dir}'"
     except OSError as exc:
         # The dump is best-effort diagnostics: the writable pre-flight check
