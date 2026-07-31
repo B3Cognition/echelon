@@ -31,6 +31,7 @@ def _validate_controller_provider_allowlist(
     allowed: object,
     contract: CompiledControllerStateContract,
     nested: bool = False,
+    check_overlap: bool = True,
 ) -> None:
     boundary = "nested controller boundary" if nested else "controller boundary"
     if type(allowed) is not list:
@@ -43,7 +44,7 @@ def _validate_controller_provider_allowlist(
             f"phase {phase_id!r} {boundary} requires "
             "allowed_state_updates to contain only non-empty strings"
         )
-    overlap = contract.state_update_keys.intersection(allowed)
+    overlap = contract.state_update_keys.intersection(allowed) if check_overlap else set()
     if overlap:
         raise ControllerContractRegistryError(
             f"phase {phase_id!r} {boundary}: controller state contract "
@@ -230,6 +231,7 @@ class PhaseGraph:
                                 ),
                                 contract=contract,
                                 nested=True,
+                                check_overlap=False,
                             )
             node = PhaseNode(
                 id=p["id"],

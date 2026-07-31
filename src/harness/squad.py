@@ -7540,7 +7540,7 @@ class SquadController:
             node.id != "phase1-lexicon"
             and str(gate.get("on_exhausted", "block")).lower() == "warn"
         ):
-            return {"lexicon_warning_waiver": True}, None
+            return {}, None
 
         return {}, PHASE_TERMINAL_BLOCKED
 
@@ -7851,7 +7851,8 @@ class SquadController:
                 "deterministic_lexicon",
                 "deterministic_structural",
                 "deterministic_understanding",
-            },
+            }
+            or node.id == "phase3-consensus",
             state_removals=frozenset(state_removals),
             control_updates=control_updates,
         )

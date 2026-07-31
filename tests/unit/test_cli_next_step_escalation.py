@@ -260,10 +260,9 @@ def test_checkpoint_next_step_includes_recent_gate_context(
     assert "source-hash-mismatch" in captured.out
 
 
-def test_controller_contract_failure_has_one_consistent_next_step(
+def test_controller_contract_failure_without_recovery_does_not_suggest_continue(
     tmp_path: Path,
     capsys,
-    monkeypatch,
 ) -> None:
     run_dir = tmp_path / "runs" / "spec-20260726-075512-129608"
     run_dir.mkdir(parents=True)
@@ -284,25 +283,12 @@ def test_controller_contract_failure_has_one_consistent_next_step(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(
-        "echelon.cli._runtime_extension_compatibility",
-        lambda _project_root: type(
-            "Compatibility",
-            (),
-            {
-                "compatible": True,
-                "command": "",
-                "note": "runtime extension is compatible",
-            },
-        )(),
-        raising=False,
-    )
 
     _print_next_steps(tmp_path, "blocked")
 
     captured = capsys.readouterr()
-    assert "phase1-why2" in captured.out
-    assert "echelon spec continue" in captured.out
+    assert "echelon spec continue" not in captured.out
+    assert "no runtime-sync recovery instruction was recorded" in captured.out
     assert 'echelon spec resume "<your answer>"' not in captured.out
     assert "echelon spec rewind" not in captured.out
 

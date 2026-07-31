@@ -17,6 +17,7 @@ REQUIRED_CONTROLLER_CONTRACTS: Mapping[str, str] = MappingProxyType(
         "phase2-intent-alignment-structural": "intent_alignment_structural",
         "phase3-tasks-lexicon": "tasks_lexicon",
         "phase3-understanding": "understanding",
+        "phase3-consensus": "consensus_gate",
         "phase3-consensus-tasks-lexicon": "tasks_lexicon",
     }
 )

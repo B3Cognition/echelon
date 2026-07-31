@@ -1190,17 +1190,8 @@ phases:
         outputs:
           - revised tasks.md  # if changes needed
 
-    allowed_state_updates:
-      - gate_decision
-      - phase_recommendation
-      - implementability_metrics
-    state_update_types:
-      gate_decision: string
-      phase_recommendation: string
-      implementability_metrics: object
-    state_update_enums:
-      gate_decision: [PASS, REJECTED, accept_with_risk]
-      phase_recommendation: [proceed-to-build, phase3-how, advance_past_consensus_to_delivery]
+    allowed_state_updates: []
+    controller_state_contract: consensus_gate
     unexpected_state_updates: quarantine
 
     transitions:

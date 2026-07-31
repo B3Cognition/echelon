@@ -35,7 +35,6 @@ from harness.recovery_instruction import (
     RecoveryInstruction,
     RecoveryInstructionError,
     RecoveryKind,
-    controller_contract_recovery,
     retry_phase_recovery,
     validate_recovery_instruction,
 )
@@ -3379,16 +3378,7 @@ def _persisted_or_legacy_recovery_instruction(
 
     if phase_output_instruction is not None:
         return phase_output_instruction
-    if reason != "controller_state_contract_validation_failed":
-        return None
-    diagnostic = run_state.get("controller_contract_error")
-    diagnostic_phase = (
-        str(diagnostic.get("phase_id") or "").strip()
-        if isinstance(diagnostic, dict)
-        else ""
-    )
-    phase = diagnostic_phase or str(run_state.get("phase") or "").strip()
-    return controller_contract_recovery(phase)
+    return None
 
 
 def _render_escalation_options(options: object) -> str:
@@ -3884,6 +3874,15 @@ def _classify_run_recovery(
             phase=phase,
             command=rewind,
             note="safe checkpoint cleanup is required before retry",
+        )
+
+    if reason == "controller_state_contract_validation_failed":
+        return _RunRecoveryAction(
+            "manual_recovery",
+            reason=reason,
+            phase=str(run_state.get("phase") or "").strip(),
+            command="inspect echelon spec status, then choose a recovery action",
+            note="no runtime-sync recovery instruction was recorded",
         )
 
     retry_phase = _blocked_failed_dispatch_phase(run_state)

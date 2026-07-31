@@ -933,8 +933,34 @@ def _validate_human_input_authority_write(
             raise StateAdvanceError(
                 f"generic state writes cannot mutate active decision field {key!r}",
                 json_path=f"$.{key}",
-                validator="human_input_authority",
-            )
+            validator="human_input_authority",
+        )
+
+
+def _canonicalize_resolved_human_input_audit_for_diagnostic(
+    state: dict[str, Any],
+) -> bool:
+    decision = state.get("blocked_decision")
+    if not (
+        _is_human_input_decision_v2(decision)
+        and decision.get("status") == "resolved"
+    ):
+        return False
+    instruction = state.get("recovery_instruction")
+    if instruction is None:
+        return False
+    if (
+        isinstance(instruction, Mapping)
+        and instruction.get("schema_version") == 2
+        and instruction.get("decision_id") == decision.get("id")
+    ):
+        state.pop("recovery_instruction", None)
+        return True
+
+    state.pop("blocked_decision", None)
+    for key in _HUMAN_INPUT_DISPLAY_AUTHORITY_KEYS:
+        state.pop(key, None)
+    return True
 
 
 def _prepare_exact_state_postimage(
@@ -2730,17 +2756,19 @@ class SquadStateStore:
                 return False
             next_state = deepcopy(state)
             next_state.update(deepcopy(updates))
-            decision = next_state.get("blocked_decision")
-            if (
-                _is_human_input_decision_v2(decision)
-                and decision.get("status") == "resolved"
-            ):
-                next_state.pop("recovery_instruction", None)
+            authority_changed = (
+                _canonicalize_resolved_human_input_audit_for_diagnostic(
+                    next_state
+                )
+            )
             next_state["token_usage"] = (
                 int(next_state.get("token_usage") or 0)
                 + token_usage_delta
             )
-            self._save_unlocked(next_state)
+            self._save_unlocked(
+                next_state,
+                allow_human_input_authority_update=authority_changed,
+            )
             return True
 
     def begin_external_publication(

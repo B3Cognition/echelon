@@ -214,11 +214,34 @@ contracts:
               properties:
                 understanding_evidence:
                   required: [digest, path, pass]
-                  properties:
-                    status: {const: completed}
-                    digest: {type: string, minLength: 1}
-                    path: {type: string, minLength: 1}
-                    pass: {type: boolean}
+                properties:
+                  status: {const: completed}
+                  digest: {type: string, minLength: 1}
+                  path: {type: string, minLength: 1}
+                  pass: {type: boolean}
+
+  consensus_gate:
+    $schema: https://json-schema.org/draft/2020-12/schema
+    type: object
+    additionalProperties: false
+    required: [verdict, state_updates]
+    properties:
+      verdict:
+        type: string
+        enum: [PASS, FAIL, BLOCKED]
+      state_updates:
+        type: object
+        additionalProperties: false
+        properties:
+          gate_decision:
+            type: string
+            enum: [PASS, REJECTED, accept_with_risk]
+          phase_recommendation:
+            type: string
+            enum: [proceed-to-build, phase3-how, advance_past_consensus_to_delivery]
+          implementability_metrics:
+            type: object
+          blocked_reason: {type: string, minLength: 1}
 
   phase1_quality_certificate:
     $schema: https://json-schema.org/draft/2020-12/schema

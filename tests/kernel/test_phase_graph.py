@@ -885,7 +885,7 @@ def test_phase_graph_rejects_null_allowlist_for_controller_boundary(
 @pytest.mark.parametrize("nested_field", (None, "agents", "pre_dispatch"))
 @pytest.mark.parametrize(
     "unsafe_allowlist",
-    ([123], [""], ["lexicon_pass"]),
+    ([123], [""]),
 )
 def test_phase_graph_rejects_unsafe_controller_boundary_allowlist(
     tmp_path: Path,
@@ -902,11 +902,34 @@ def test_phase_graph_rejects_unsafe_controller_boundary_allowlist(
         PhaseGraph(definition, extension_yml)
 
 
+def test_phase_graph_rejects_phase_controller_boundary_overlap(
+    tmp_path: Path,
+) -> None:
+    definition, extension_yml = _write_controller_boundary_graph(
+        tmp_path,
+        allowlist=["lexicon_pass"],
+        nested_field=None,
+    )
+
+    with pytest.raises(ControllerContractRegistryError):
+        PhaseGraph(definition, extension_yml)
+
+
 def test_phase3_consensus_declares_per_agent_result_contracts():
     graph = PhaseGraph(DEFINITION, EXT_YML)
     node = graph.get("phase3-consensus")
     contracts = {entry["mode"]: entry for entry in node.agents}
+    controller_fields = {
+        "gate_decision",
+        "phase_recommendation",
+        "implementability_metrics",
+        "blocked_reason",
+    }
 
+    assert node.allowed_state_updates == []
+    assert node.controller_state_contract is not None
+    assert node.controller_state_contract.name == "consensus_gate"
+    assert node.controller_state_update_keys == controller_fields
     assert contracts["WHY3"]["allowed_state_updates"] == []
     assert contracts["WHY3"].get("required_state_updates", []) == []
     assert contracts["ASSESS2"]["allowed_state_updates"] == [

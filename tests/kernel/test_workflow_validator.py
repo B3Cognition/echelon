@@ -1309,6 +1309,7 @@ _REQUIRED_CONTROLLER_CONTRACTS = {
     "phase2-tracker-alignment": "intent_alignment_authoring_verdict",
     "phase3-tasks-lexicon": "tasks_lexicon",
     "phase3-understanding": "understanding",
+    "phase3-consensus": "consensus_gate",
     "phase3-consensus-tasks-lexicon": "tasks_lexicon",
 }
 

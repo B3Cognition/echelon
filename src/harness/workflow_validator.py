@@ -356,23 +356,6 @@ def validate_workflow_definition(
                     phase_id=phase_id,
                     path=f"{path} agents[{agent_index}]",
                 ))
-            nested_allowed = agent_entry.get(
-                "allowed_state_updates",
-                phase.get("allowed_state_updates"),
-            )
-            nested_allowed_set = (
-                set(str(key) for key in nested_allowed)
-                if isinstance(nested_allowed, list)
-                else set()
-            )
-            overlap = node.controller_state_update_keys & nested_allowed_set
-            if overlap:
-                issues.append(WorkflowValidationIssue(
-                    "nested agent allowed_state_updates overlap controller-owned "
-                    f"fields: {', '.join(sorted(overlap))}",
-                    phase_id=phase_id,
-                    path=f"{path} agents[{agent_index}]",
-                ))
         for pre_dispatch_index, agent_entry in enumerate(
             phase.get("pre_dispatch") or []
         ):

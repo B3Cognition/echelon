@@ -1457,7 +1457,7 @@ def test_recovery_retries_completed_phase_after_state_update_validation_failure(
     assert action.command == "echelon spec continue"
 
 
-def test_legacy_controller_contract_failure_retries_current_phase_without_rewind() -> None:
+def test_contract_failure_without_recovery_instruction_requires_manual_recovery() -> None:
     action = _classify_run_recovery(
         {
             "status": "blocked",
@@ -1472,10 +1472,10 @@ def test_legacy_controller_contract_failure_retries_current_phase_without_rewind
         }
     )
 
-    assert action.kind == "retry_phase"
+    assert action.kind == "manual_recovery"
     assert action.phase == "phase1-why2"
-    assert action.command == "echelon spec continue"
-    assert "rewind" not in action.command
+    assert action.command != "echelon spec continue"
+    assert "no runtime-sync recovery instruction" in action.note
 
 
 def test_recovery_after_exhausted_issue_resolutions_requests_quality_gate_decision() -> None:

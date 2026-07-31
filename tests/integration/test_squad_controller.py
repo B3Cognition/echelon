@@ -7092,6 +7092,23 @@ class TestFailClosedControllerPreparation:
         )
 
     @staticmethod
+    def _consensus_result() -> SquadAgentResult:
+        return SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "PASS",
+                "state_updates": {
+                    "gate_decision": "PASS",
+                    "phase_recommendation": "proceed-to-build",
+                    "implementability_metrics": {"ready_ratio": 1.0},
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+
+    @staticmethod
     def _patch_run_guards(
         ctrl: SquadController,
         monkeypatch: pytest.MonkeyPatch,
@@ -7148,6 +7165,95 @@ class TestFailClosedControllerPreparation:
             lambda *_: calls.append("checkpoint"),
         )
         return calls
+
+    def test_phase3_consensus_fields_are_controller_owned(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        store.initialize(
+            "r",
+            "greenfield",
+            "msg",
+            0,
+            "phase3-consensus",
+        )
+        node = ctrl._graph.get("phase3-consensus")
+        snapshot = store.capture_routing_snapshot(
+            expected_phase="phase3-consensus"
+        )
+
+        prepared = ctrl._prepare_phase_result_or_block(
+            node,
+            self._consensus_result(),
+            snapshot,
+        )
+
+        assert prepared is not None
+        assert prepared.controller_update_keys == {
+            "gate_decision",
+            "phase_recommendation",
+            "implementability_metrics",
+        }
+        assert prepared.provider_update_keys == set()
+        assert prepared.controller_contract_name == "consensus_gate"
+
+    def test_phase3_consensus_warned_tasks_gate_does_not_leak_spec_waiver(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        (tmp_path / ".echelon").mkdir()
+        (tmp_path / ".echelon" / "config.yml").write_text(
+            "lexicon_gate:\n"
+            "  enabled: true\n"
+            "  max_repair_attempts: 3\n"
+            "  on_exhausted: warn\n"
+            "  artifacts:\n"
+            "    tasks:\n"
+            "      enabled: true\n",
+            encoding="utf-8",
+        )
+        ctrl, store = _controller(tmp_path)
+        store.initialize(
+            "r",
+            "greenfield",
+            "msg",
+            0,
+            "phase3-consensus",
+        )
+        state = store.load()
+        state.update(
+            {
+                "tasks_lexicon_pass": False,
+                "tasks_lexicon_attempts": 3,
+                "tasks_lexicon_action": "proceed_with_warning",
+            }
+        )
+        store.save(state)
+        node = ctrl._graph.get("phase3-consensus")
+        snapshot = store.capture_routing_snapshot(
+            expected_phase="phase3-consensus"
+        )
+
+        prepared = ctrl._prepare_phase_result_or_block(
+            node,
+            SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "PASS",
+                    "state_updates": {},
+                    "journal_entries": [],
+                },
+                raw_output="",
+                duration_ms=0,
+                timed_out=False,
+            ),
+            snapshot,
+        )
+
+        assert prepared is not None
+        assert "lexicon_warning_waiver" not in prepared.state_updates
+        assert "lexicon_warning_waiver" not in prepared.controller_update_keys
 
     def test_malformed_controller_output_records_stable_redacted_diagnostic(
         self,

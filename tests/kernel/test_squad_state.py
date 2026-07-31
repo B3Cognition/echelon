@@ -33,6 +33,7 @@ from harness.human_input import (
     controller_safeguard_policies,
 )
 from harness.prepared_phase_result import PreparedPhaseResult, prepare_phase_result
+from harness.recovery_instruction import controller_contract_recovery
 from harness.squad_completion import (
     PreparedControllerCompletion,
     load_prepared_controller_completion,
@@ -4396,6 +4397,51 @@ class TestHumanInputDecisionStateCAS:
         }
         assert blocked["blocked_decision"] == resolved["blocked_decision"]
         assert "recovery_instruction" not in blocked
+
+    def test_failure_diagnostic_preserves_controller_recovery_after_resolved_audit(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r1", "greenfield", "msg", 0, "init")
+        request = _human_input_request(
+            source_kind="human_gate",
+            source_state_revision=store.load()["state_revision"],
+        )
+        awaiting = store.set_human_input_decision(
+            request,
+            initial_status="awaiting_human",
+        )
+        resolved = store.apply_human_input_state_resolution(
+            awaiting["blocked_decision"]["id"],
+            expected_state_revision=awaiting["state_revision"],
+            resolution=HumanInputResolution(
+                selected_option_id="approve",
+                answer_text=None,
+                resolved_by="user",
+            ),
+            state_updates={"status": "running", "phase": "phase3-consensus"},
+            state_removals=(),
+        )
+        recovery = controller_contract_recovery("phase3-consensus").to_dict()
+
+        persisted = store.merge_advance_failure_diagnostic(
+            from_phase="phase3-consensus",
+            expected_state_revision=resolved["state_revision"],
+            expected_previous_dispatch_sha256=None,
+            updates={
+                "status": "blocked",
+                "blocked_reason": "controller_state_contract_validation_failed",
+                "controller_contract_error": {"message": "contract failed"},
+                "recovery_instruction": recovery,
+            },
+        )
+
+        blocked = store.load()
+        assert persisted is True
+        assert blocked["status"] == "blocked"
+        assert blocked["recovery_instruction"] == recovery
+        assert "blocked_decision" not in blocked
 
     def test_human_input_resolution_detaches_updates_before_validation(
         self,
