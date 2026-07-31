@@ -611,6 +611,7 @@ def land(
         _delete_harness_branches(spec_id, project_dir)
         if spec_dir:
             write_status(spec_dir, "landed")
+        _clear_landed_active_authoring_pointer(wrapper_project_dir, spec_id, "")
         return True
 
     if _block_different_active_authoring_spec(
@@ -1418,9 +1419,55 @@ def _finish_landing(
     spec_dir = find_spec_dir(spec_id, spec_project_dir)
     if spec_dir:
         write_status(spec_dir, "landed")
+    _clear_landed_active_authoring_pointer(spec_project_dir, spec_id, feature_branch)
 
     logger.info("land: %s — landed successfully", spec_id)
     return True
+
+
+def _clear_landed_active_authoring_pointer(
+    project_dir: Path,
+    spec_id: str,
+    feature_branch: str,
+) -> None:
+    """Clear runs/.current when it still names the spec that just landed."""
+
+    root = Path(project_dir).resolve()
+    current = root / "runs" / ".current"
+    try:
+        run_name = current.read_text(encoding="utf-8").strip()
+    except OSError:
+        return
+    if not run_name:
+        return
+
+    state_path = root / "runs" / run_name / "state.json"
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(state, dict):
+        return
+
+    active_branch = str(state.get("feature_branch") or "").strip()
+    active_spec = str(state.get("spec_id") or "").strip()
+    if feature_branch:
+        if active_branch != feature_branch:
+            return
+    elif not _spec_id_matches(active_spec, spec_id):
+        return
+    try:
+        current.unlink()
+    except OSError as exc:
+        logger.warning("Could not clear landed active spec pointer %s: %s", current, exc)
+
+
+def _spec_id_matches(active_spec: str, requested_spec: str) -> bool:
+    if active_spec == requested_spec:
+        return True
+    if requested_spec.isdigit():
+        return bool(re.match(rf"^{re.escape(requested_spec)}(?:-|$)", active_spec))
+    return False
 
 
 def _land_default_branch(gitops: Any) -> str:

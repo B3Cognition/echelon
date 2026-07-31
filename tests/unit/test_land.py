@@ -1398,6 +1398,68 @@ def test_land_finishes_cleanup_when_default_already_contains_feature(
 
 
 @pytest.mark.unit
+def test_land_clears_active_authoring_pointer_for_landed_spec(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _commit(repo, "README.md", "base\n", "base")
+    _git(repo, "checkout", "-b", "001-feature")
+    _commit(repo, "feature.txt", "feature\n", "feature")
+    _git(repo, "checkout", "main")
+    _git(repo, "merge", "--no-ff", "001-feature", "-m", "land feature")
+
+    spec_dir = repo / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text(
+        "---\nstatus: ready_to_land\n---\n# Spec\n",
+        encoding="utf-8",
+    )
+    head = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    (spec_dir / "fulfillment-report.md").write_text(
+        "---\n"
+        f"verified_commit: {head}\n"
+        "---\n"
+        "| ID | Status | Evidence | Confidence | Notes |\n"
+        "|---|---|---|---|---|\n"
+        "| FR-001 | IMPLEMENTED | feature.txt | high | ok |\n",
+        encoding="utf-8",
+    )
+    current = repo / "runs" / ".current"
+    current.parent.mkdir(parents=True)
+    current.write_text("run-a\n", encoding="utf-8")
+    run_dir = repo / "runs" / "run-a"
+    run_dir.mkdir()
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run-a",
+                "spec_id": "001-demo",
+                "feature_branch": "001-feature",
+                "spec_dir": "runs/run-a/specs/001-demo",
+                "published_spec_dir": "specs/001-demo",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    gitops = MagicMock()
+    gitops.find_feature_branch.return_value = "001-feature"
+    gitops.get_default_branch.return_value = "main"
+    gitops.delete_remote_branch.return_value = True
+
+    with (
+        patch("harness.land._origin_remote_url", return_value=None),
+        patch("harness.land._cleanup_worktrees"),
+        patch("harness.land._delete_harness_branches"),
+    ):
+        result = land("001", project_dir=repo, gitops=gitops, options=LandOptions())
+
+    assert result is True
+    assert not current.exists()
+
+
+@pytest.mark.unit
 def test_prepare_feature_branch_merges_default_and_pushes(tmp_path: Path) -> None:
     from harness.land import LandOptions, prepare_feature_branch
 
