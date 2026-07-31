@@ -93,7 +93,7 @@ def test_codex_invocation_is_cold_and_explicit(tmp_path):
         "--ignore-rules",
         "--strict-config",
         "-c", "shell_environment_policy.inherit=none",
-        "-c", 'tools.web_search="disabled"',
+        "-c", "tools.web_search=false",
         "-c", "mcp_servers={}",
     ]
     for feature in EXPECTED_DISABLED_FEATURES:
@@ -192,15 +192,23 @@ def test_parse_codex_jsonl_extracts_usage_and_reported_model():
             "model": "gpt-5.6-luna",
             "usage": {},
         }),
-        "\n".join([
-            json.dumps({"type": "thread.started", "thread_id": "thread-1"}),
-            json.dumps({"type": "turn.completed", "usage": {}}),
-        ]),
+        json.dumps({"type": "thread.started", "thread_id": "thread-1"}),
     ],
 )
-def test_parse_codex_jsonl_requires_thread_and_reported_model(raw):
-    with pytest.raises(ValueError, match="thread_id and model"):
+def test_parse_codex_jsonl_requires_thread_and_usage(raw):
+    with pytest.raises(ValueError, match="thread_id and usage"):
         runner.parse_codex_jsonl(raw)
+
+
+def test_parse_codex_jsonl_preserves_absent_reported_model():
+    raw = "\n".join([
+        json.dumps({"type": "thread.started", "thread_id": "thread-1"}),
+        json.dumps({"type": "turn.completed", "usage": {"input_tokens": 100}}),
+    ])
+    metadata, usage = runner.parse_codex_jsonl(raw)
+    assert metadata["thread_id"] == "thread-1"
+    assert "model_reported" not in metadata
+    assert usage["input_tokens"] == 100
 
 
 def test_request_rejects_non_json_serializable_output_schema():
@@ -241,7 +249,7 @@ expected = [
     '--sandbox', 'read-only', '--ignore-user-config', '--ignore-rules',
     '--strict-config',
     '-c', 'shell_environment_policy.inherit=none',
-    '-c', 'tools.web_search="disabled"',
+    '-c', 'tools.web_search=false',
     '-c', 'mcp_servers={{}}',
 ]
 for feature in {EXPECTED_DISABLED_FEATURES!r}:

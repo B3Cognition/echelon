@@ -278,7 +278,7 @@ def build_model_invocation(request: ColdReaderRequest, workdir: Path) -> ModelIn
         "--ignore-rules",
         "--strict-config",
         "-c", "shell_environment_policy.inherit=none",
-        "-c", 'tools.web_search="disabled"',
+        "-c", "tools.web_search=false",
         "-c", "mcp_servers={}",
     ]
     for feature in CODEX_DISABLED_FEATURES:
@@ -305,8 +305,12 @@ def build_model_invocation(request: ColdReaderRequest, workdir: Path) -> ModelIn
     )
 
 
-def parse_codex_jsonl(raw: str) -> tuple[dict | None, dict | None]:
-    """Extract immutable run metadata and usage from strict Codex JSONL."""
+def parse_codex_jsonl(raw: str) -> tuple[dict, dict]:
+    """Extract immutable run metadata and usage from strict Codex JSONL.
+
+    Codex CLI releases do not consistently report the resolved model in JSONL.
+    Preserve that absence instead of inferring it from the requested model.
+    """
     metadata: dict[str, Any] = {}
     usage: dict | None = None
     saw_event = False
@@ -330,11 +334,10 @@ def parse_codex_jsonl(raw: str) -> tuple[dict | None, dict | None]:
     if (
         not saw_event
         or not metadata.get("thread_id")
-        or not metadata.get("model_reported")
         or usage is None
     ):
         raise _RunnerOutputError(
-            "Codex JSONL is missing required thread_id and model metadata or usage"
+            "Codex JSONL is missing required thread_id and usage"
         )
     return metadata, usage
 
