@@ -600,10 +600,11 @@ def preflight(config: RunConfig) -> tuple[int, str] | None:
         )
     executable = shlex.split(config.model_command)[0]
     if shutil.which(executable) is None:
+        safe_executable = runner.redact_sensitive_text(executable)
         return (
             EXIT_MODEL_COMMAND_MISSING,
             (
-                f"model command unavailable: executable '{executable}' not found — "
+                f"model command unavailable: executable '{safe_executable}' not found — "
                 "install it (default 'claude': https://docs.anthropic.com/en/docs/claude-code) "
                 "or pass --claude-cmd naming an available command"
             ),
@@ -710,7 +711,7 @@ def build_model_invocation(config: RunConfig, prompt: str) -> ModelInvocation:
     return ModelInvocation(argv=words + ["-p"], stdin_text=prompt)
 
 
-def _call_outcome_from_runner(result) -> CallOutcome:
+def _call_outcome_from_runner(result: runner.ColdReaderResult) -> CallOutcome:
     """Translate one complete runner result without dropping evidence fields."""
     kind_map = {
         "success": "ok",
@@ -1327,13 +1328,13 @@ def execute_round(
     call_evidence: list[CallEvidence] | None = None,
     evidence_dir: Path | None = None,
 ) -> object:
-    """Run one round: at most 2 attempts, then dump and request exit 3.
+    """Run one round with one or two attempts, then dump and request exit 3.
 
     Returns the validator's success value, or a RoundExit after the second
-    failure. Each attempt gets a fresh full timeout budget (FR-013); the first
-    failure triggers exactly 1 corrective retry (FR-028/FR-029). Rounds are
-    sequential calls in main with no cross-round loop, so a round-2 failure
-    never re-runs round 1 (FR-031).
+    failure when retries are enabled. Each attempt gets a fresh full timeout
+    budget (FR-013); the optional first failure triggers exactly 1 corrective
+    retry (FR-028/FR-029). Rounds are sequential calls in main with no
+    cross-round loop, so a round-2 failure never re-runs round 1 (FR-031).
     """
     attempts: list[tuple[CallEvidence, ParseFailure]] = []
     current_prompt = prompt

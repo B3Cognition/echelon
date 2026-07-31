@@ -125,13 +125,20 @@ def test_scientific_codex_request_rejects_missing_reasoning_effort():
         _codex_request(reasoning_effort=None, scientific=True)
 
 
-def test_scientific_codex_request_rejects_secret_bearing_command_wrapper():
+@pytest.mark.parametrize(
+    "command",
+    [
+        "env OPENAI_API_KEY=sue-sentinel-secret codex",
+        "OPENAI_API_KEY=sue-sentinel-secret",
+    ],
+)
+def test_scientific_codex_request_rejects_secret_bearing_command_wrapper(command):
     secret = "sue-sentinel-secret"
     with pytest.raises(
         runner.RunnerConfigurationError, match="single executable"
     ) as error:
         _codex_request(
-            command=f"env OPENAI_API_KEY={secret} codex",
+            command=command,
             scientific=True,
         )
     assert secret not in str(error.value)
@@ -283,7 +290,7 @@ print(json.dumps({{
 
 
 def test_non_scientific_wrapper_secret_is_redacted_from_evidence(tmp_path):
-    secret = "sue-sentinel-secret"
+    secret = "sue-sentinel-secret with spaces"
     fake = _make_fake_codex(
         tmp_path,
         """import json, pathlib, sys
@@ -293,10 +300,13 @@ print(json.dumps({'type': 'thread.started', 'thread_id': 'thread-1'}))
 print(json.dumps({'type': 'turn.completed', 'model': 'gpt-5.6-luna', 'usage': {}}))
 """,
     )
-    command = f"env OPENAI_API_KEY={secret} {shlex.quote(fake)}"
+    command = (
+        f"env {shlex.quote(f'OPENAI_API_KEY={secret}')} {shlex.quote(fake)}"
+    )
     result = runner.run_cold_reader(_codex_request(command))
     assert result.status == "success"
     assert all(secret not in token for token in result.argv_redacted)
+    assert all("with spaces" not in token for token in result.argv_redacted)
     assert "OPENAI_API_KEY=<redacted>" in result.argv_redacted
 
 

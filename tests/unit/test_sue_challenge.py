@@ -382,6 +382,23 @@ class TestArgumentHandling:
 
 
 class TestPreflight:
+    def test_missing_secret_bearing_executable_is_redacted(self, tmp_path):
+        spec = tmp_path / "spec.md"
+        spec.write_text("# Spec\n")
+        secret = "sue-sentinel-secret"
+        config = sue.parse_args([
+            str(spec),
+            "--model-cmd",
+            f"codex=OPENAI_API_KEY={secret}",
+        ])
+
+        failure = sue.preflight(config)
+
+        assert failure is not None
+        assert failure[0] == sue.EXIT_MODEL_COMMAND_MISSING
+        assert secret not in failure[1]
+        assert "OPENAI_API_KEY=<redacted>" in failure[1]
+
     def _call_marker_stub(self, tmp_path: Path) -> tuple[str, Path]:
         """Stub that records that a model call was launched."""
         marker = tmp_path / "model-was-called"

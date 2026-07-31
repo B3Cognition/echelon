@@ -96,6 +96,20 @@ _SECRET_OPTION_MARKERS = (
 )
 
 
+def _is_secret_name(value: str) -> bool:
+    normalized = value.lower().lstrip("-")
+    return any(marker in normalized for marker in _SECRET_OPTION_MARKERS)
+
+
+def redact_sensitive_text(value: str) -> str:
+    """Redact credential assignments without retaining any value suffix."""
+    if "=" in value:
+        name, _assigned = value.split("=", 1)
+        if _is_secret_name(name):
+            return f"{name}=<redacted>"
+    return _SECRET_ASSIGNMENT_RE.sub(r"\1=<redacted>", value)
+
+
 class RunnerConfigurationError(ValueError):
     """Raised when a cold-reader request cannot be executed reproducibly."""
 
@@ -162,7 +176,7 @@ class ColdReaderRequest:
                 raise RunnerConfigurationError(
                     "scientific Codex command must be a single executable token"
                 ) from exc
-            if len(command) != 1:
+            if len(command) != 1 or redact_sensitive_text(command[0]) != command[0]:
                 raise RunnerConfigurationError(
                     "scientific Codex command must be a single executable token"
                 )
@@ -392,14 +406,11 @@ def _redact_argv(argv: list[str], workdir: Path) -> tuple[str, ...]:
         if value == final_path:
             redacted.append("<final-output>")
             continue
-        normalized_option = value.lower().lstrip("-")
-        if "=" not in value and any(
-            marker in normalized_option for marker in _SECRET_OPTION_MARKERS
-        ):
+        if "=" not in value and _is_secret_name(value):
             redacted.append(value)
             redact_next = True
             continue
-        redacted.append(_SECRET_ASSIGNMENT_RE.sub(r"\1=<redacted>", value))
+        redacted.append(redact_sensitive_text(value))
     return tuple(redacted)
 
 
