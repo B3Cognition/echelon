@@ -6,7 +6,10 @@ from pathlib import Path
 import pytest
 
 from echelon.graph_visualization import (
+    VIEW_DEGREE_CAP,
+    GraphViewPayload,
     GraphVisualizationError,
+    build_graph_view_payload,
     filter_graph,
     load_cytoscape_source,
     load_graph_document,
@@ -116,6 +119,41 @@ def _audit(status: str = "fail") -> SpecGraphAuditReport:
     )
 
 
+def _degree_document(edge_count: int) -> dict[str, object]:
+    nodes = [
+        {"id": "node:hub", "type": "Artifact", "properties": {}}
+    ] + [
+        {"id": f"node:leaf:{index:03}", "type": "Artifact", "properties": {}}
+        for index in range(edge_count - 1)
+    ]
+    edges = [
+        {
+            "source": "node:hub",
+            "type": "SELF",
+            "target": "node:hub",
+            "properties": {},
+        }
+    ] + [
+        {
+            "source": "node:hub",
+            "type": "LINKS_TO",
+            "target": f"node:leaf:{index:03}",
+            "properties": {},
+        }
+        for index in range(edge_count - 1)
+    ]
+    return {
+        "schema_version": 1,
+        "generator_version": "test",
+        "spec_id": "degree-demo",
+        "source_set_digest": "sha256:sources",
+        "memory_state_digest": "sha256:memory",
+        "inputs": [],
+        "nodes": nodes,
+        "edges": edges,
+    }
+
+
 @pytest.mark.unit
 def test_load_graph_document_rejects_missing_edge_endpoint(tmp_path: Path) -> None:
     document = _document()
@@ -182,6 +220,77 @@ def test_exceptions_lens_includes_audited_subject_and_failed_memory_neighbor() -
 
 
 @pytest.mark.unit
+def test_graph_view_payload_contains_canonical_derived_node_and_edge_metadata() -> None:
+    payload = build_graph_view_payload(_document(), _audit(), initial_lens="exceptions")
+
+    assert isinstance(payload, GraphViewPayload)
+    assert payload.scope == "spec"
+    assert payload.title == "001-demo"
+    assert payload.lenses == ("all", "exceptions", "traceability", "memory", "delivery")
+    assert payload.initial_lens == "exceptions"
+    assert [node["id"] for node in payload.nodes] == sorted(
+        node["id"] for node in _document()["nodes"]
+    )
+    requirement = next(node for node in payload.nodes if node["id"] == "req:001-demo:FR-001")
+    assert requirement == {
+        "id": "req:001-demo:FR-001",
+        "type": "Requirement",
+        "properties": {
+            "requirement_id": "FR-001",
+            "summary": "</script><script>alert(1)</script>",
+        },
+        "label": "Requirement: FR-001",
+        "searchable_label": (
+            '{"id": "req:001-demo:FR-001", "label": "Requirement: FR-001", '
+            '"properties": {"requirement_id": "FR-001", "summary": '
+            '"</script><script>alert(1)</script>"}, "type": "Requirement"}'
+        ),
+        "degree": 5,
+        "member_specs": (),
+        "exception": True,
+        "lenses": ("all", "delivery", "exceptions", "memory", "traceability"),
+    }
+    derived_from = next(edge for edge in payload.edges if edge["type"] == "DERIVED_FROM")
+    assert derived_from == {
+        "source": "req:001-demo:FR-001",
+        "type": "DERIVED_FROM",
+        "target": "artifact:001-demo:input",
+        "properties": {},
+        "lenses": ("all", "exceptions", "traceability"),
+    }
+    assert payload.to_dict()["nodes"][0]["member_specs"] == ()
+    assert payload.to_dict()["edges"] == [dict(edge) for edge in payload.edges]
+
+
+@pytest.mark.unit
+def test_graph_view_payload_caps_complete_directed_degree_at_view_limit() -> None:
+    at_cap = build_graph_view_payload(
+        _degree_document(VIEW_DEGREE_CAP), _audit(status="pass"), initial_lens="all"
+    )
+    over_cap = build_graph_view_payload(
+        _degree_document(VIEW_DEGREE_CAP + 1), _audit(status="pass"), initial_lens="all"
+    )
+
+    assert next(node for node in at_cap.nodes if node["id"] == "node:hub")["degree"] == VIEW_DEGREE_CAP
+    assert next(node for node in over_cap.nodes if node["id"] == "node:hub")["degree"] == VIEW_DEGREE_CAP
+
+
+@pytest.mark.unit
+def test_graph_view_payload_counts_a_stored_self_loop_once() -> None:
+    payload = build_graph_view_payload(
+        _degree_document(1), _audit(status="pass"), initial_lens="all"
+    )
+
+    assert next(node for node in payload.nodes if node["id"] == "node:hub")["degree"] == 1
+
+
+@pytest.mark.unit
+def test_graph_view_payload_rejects_an_unknown_initial_lens() -> None:
+    with pytest.raises(GraphVisualizationError, match="unknown graph lens"):
+        build_graph_view_payload(_document(), _audit(), initial_lens="portfolio")
+
+
+@pytest.mark.unit
 def test_dot_export_is_deterministic_directed_and_escaped() -> None:
     first = render_graph_dot(_document(), _audit(), lens="delivery")
     second = render_graph_dot(_document(), _audit(), lens="delivery")
@@ -214,6 +323,9 @@ def test_html_viewer_is_offline_searchable_and_script_safe() -> None:
         assert f'value="{lens}"' in html
     assert 'value="portfolio"' not in html
     assert '"initial_lens": "exceptions"' in html
+    assert html.count("window.ECHELON_GRAPH = ") == 1
+    assert 'payload.nodes' in html
+    assert 'payload.edges' in html
     assert '"label": ""' in html
     assert 'selector: ".labelled"' in html
     assert 'cy.on("zoom", updateLabels)' in html
