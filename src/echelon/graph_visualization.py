@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Mapping, Protocol
 
-from echelon.spec_graph import GRAPH_SCHEMA_VERSION
+from echelon.graph_read import GraphReadError, read_graph_document
 
 
 GRAPH_LENSES = ("all", "exceptions", "traceability", "memory", "delivery")
@@ -49,71 +49,11 @@ class GraphAuditReport(Protocol):
 
 
 def load_graph_document(path: Path) -> dict[str, object]:
-    """Read and validate the persisted graph document used by view/export."""
+    """Read graph documents through the shared read-model validator."""
     try:
-        document = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError as exc:
-        raise GraphVisualizationError(f"graph artifact is missing: {path}") from exc
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise GraphVisualizationError(f"graph artifact is unreadable: {path}") from exc
-    if not isinstance(document, dict):
-        raise GraphVisualizationError("graph document must be an object")
-    if document.get("schema_version") != GRAPH_SCHEMA_VERSION:
-        raise GraphVisualizationError("unsupported graph schema version")
-    scope = _graph_scope(document)
-    if scope == "spec" and (
-        not isinstance(document.get("spec_id"), str) or not document["spec_id"]
-    ):
-        raise GraphVisualizationError("graph spec_id must be a non-empty string")
-    if scope == "workspace" and (
-        not isinstance(document.get("workspace_name"), str)
-        or not document["workspace_name"]
-    ):
-        raise GraphVisualizationError("graph workspace_name must be a non-empty string")
-    nodes = document.get("nodes")
-    edges = document.get("edges")
-    if not isinstance(nodes, list) or not isinstance(edges, list):
-        raise GraphVisualizationError("graph nodes and edges must be lists")
-
-    node_ids: set[str] = set()
-    for node in nodes:
-        if not isinstance(node, dict):
-            raise GraphVisualizationError("graph node must be an object")
-        node_id = node.get("id")
-        if not isinstance(node_id, str) or not node_id:
-            raise GraphVisualizationError("graph node id must be a non-empty string")
-        if node_id in node_ids:
-            raise GraphVisualizationError(f"duplicate graph node id: {node_id}")
-        if not isinstance(node.get("type"), str):
-            raise GraphVisualizationError(f"graph node type is invalid: {node_id}")
-        if not isinstance(node.get("properties"), dict):
-            raise GraphVisualizationError(f"graph node properties are invalid: {node_id}")
-        node_ids.add(node_id)
-
-    seen_edges: set[tuple[str, str, str]] = set()
-    for edge in edges:
-        if not isinstance(edge, dict):
-            raise GraphVisualizationError("graph edge must be an object")
-        source = edge.get("source")
-        edge_type = edge.get("type")
-        target = edge.get("target")
-        if not all(isinstance(value, str) and value for value in (source, edge_type, target)):
-            raise GraphVisualizationError("graph edge identity is invalid")
-        identity = (source, edge_type, target)
-        if identity in seen_edges:
-            raise GraphVisualizationError(
-                f"duplicate graph edge: {source} {edge_type} {target}"
-            )
-        if source not in node_ids or target not in node_ids:
-            raise GraphVisualizationError(
-                f"graph edge has missing endpoint: {source} {edge_type} {target}"
-            )
-        if not isinstance(edge.get("properties"), dict):
-            raise GraphVisualizationError(
-                f"graph edge properties are invalid: {source} {edge_type} {target}"
-            )
-        seen_edges.add(identity)
-    return document
+        return read_graph_document(path)
+    except GraphReadError as exc:
+        raise GraphVisualizationError(str(exc)) from exc
 
 
 def filter_graph(

@@ -132,6 +132,20 @@ def test_load_graph_document_rejects_missing_edge_endpoint(tmp_path: Path) -> No
 
 
 @pytest.mark.unit
+def test_load_graph_document_delegates_to_graph_reader(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import echelon.graph_visualization as graph_visualization
+
+    document = _document()
+    path = tmp_path / "spec-artifact-graph.json"
+    monkeypatch.setattr(graph_visualization, "read_graph_document", lambda received: document)
+
+    assert load_graph_document(path) is document
+
+
+@pytest.mark.unit
 def test_delivery_lens_retains_only_delivery_edges_and_their_endpoints() -> None:
     filtered = filter_graph(_document(), _audit(), lens="delivery")
 
