@@ -359,6 +359,57 @@ def test_member_receipts_preserve_graph_and_per_spec_digests(
 
 
 @pytest.mark.unit
+def test_workspace_composition_preserves_requirement_projection_properties(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path)
+    alpha = _spec_dir(tmp_path, "001-alpha")
+    _write_member_graph(
+        alpha,
+        _member_graph(
+            "001-alpha",
+            extra_nodes=(
+                GraphNode(
+                    "req:001-alpha:FR-001",
+                    "Requirement",
+                    {
+                        "requirement_id": "FR-001",
+                        "category": "functional",
+                        "source_line": 3,
+                        "source_path": "specs/001-alpha/spec.md",
+                        "source_text": "- **FR-001**: Build the report.",
+                    },
+                ),
+            ),
+            extra_edges=(
+                GraphEdge(
+                    "spec:001-alpha",
+                    "HAS_REQUIREMENT",
+                    "req:001-alpha:FR-001",
+                    {},
+                ),
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        "echelon.workspace_graph.audit_spec_graph",
+        lambda root, selector: _audit_for_current_graph(Path(selector)),
+    )
+
+    result = build_workspace_graph(tmp_path)
+    requirement = next(node for node in result.graph.nodes if node.id == "req:001-alpha:FR-001")
+
+    assert requirement.properties == {
+        "requirement_id": "FR-001",
+        "category": "functional",
+        "source_line": 3,
+        "source_path": "specs/001-alpha/spec.md",
+        "source_text": "- **FR-001**: Build the report.",
+    }
+
+
+@pytest.mark.unit
 def test_source_receipts_change_for_workspace_spec_and_targets_inputs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

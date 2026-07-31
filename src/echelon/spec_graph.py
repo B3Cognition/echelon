@@ -31,6 +31,7 @@ from kernel.task_contract import parse_task_rows, validate_tasks_markdown
 
 
 GRAPH_SCHEMA_VERSION = 1
+NODE_PROJECTION_VERSION = 2
 GRAPH_FILENAME = "spec-artifact-graph.json"
 
 
@@ -137,6 +138,7 @@ class SpecArtifactGraph:
         _validate_graph(self.nodes, self.edges)
         return {
             "schema_version": GRAPH_SCHEMA_VERSION,
+            "node_projection_version": NODE_PROJECTION_VERSION,
             "generator_version": self.generator_version,
             "spec_id": self.spec_id,
             "source_set_digest": self.source_set_digest,
@@ -207,7 +209,9 @@ def build_spec_graph(
             {
                 "requirement_id": row.id,
                 "category": _category_for(row.id),
+                "source_line": row.source_line,
                 "source_path": _workspace_path(root, spec_dir / "spec.md"),
+                "source_text": row.source_text,
             },
         )
         edges.append(GraphEdge(spec_node_id, "HAS_REQUIREMENT", node_id, {}))

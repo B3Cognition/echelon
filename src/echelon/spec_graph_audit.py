@@ -12,6 +12,7 @@ from echelon.mempalace_requirements import resolve_spec_dir
 from echelon.spec_graph import (
     GRAPH_FILENAME,
     GRAPH_SCHEMA_VERSION,
+    NODE_PROJECTION_VERSION,
     GraphEdge,
     GraphNode,
     SpecArtifactGraph,
@@ -27,6 +28,7 @@ REBUILDABLE_GRAPH_FINDING_CODES = frozenset(
         "graph_missing",
         "graph_invalid",
         "graph_inputs_invalid",
+        "graph_projection_stale",
         "graph_source_set_stale",
         "graph_memory_state_stale",
         "graph_input_added",
@@ -127,6 +129,7 @@ def audit_spec_graph(
             ],
         )
 
+    findings = _projection_findings(stored)
     try:
         current = build_spec_graph(project_root, spec_dir)
     except Exception as exc:
@@ -134,6 +137,7 @@ def audit_spec_graph(
             spec_id=spec_dir.name,
             graph_hash=graph_hash,
             findings=[
+                *findings,
                 GraphFinding(
                     "error",
                     "graph_source_unavailable",
@@ -143,7 +147,6 @@ def audit_spec_graph(
             unavailable=True,
         )
 
-    findings: list[GraphFinding] = []
     if stored.get("source_set_digest") != current.source_set_digest:
         findings.append(
             GraphFinding(
@@ -224,6 +227,51 @@ def _read_graph_payload(graph_bytes: bytes) -> dict[str, object]:
         raise SpecGraphError("graph node or edge must be an object")
     _validate_graph(nodes, edges)
     return payload
+
+
+def _projection_findings(stored: Mapping[str, object]) -> list[GraphFinding]:
+    stored_projection_version = stored.get("node_projection_version", 1)
+    try:
+        projection_version = int(stored_projection_version)
+    except (TypeError, ValueError):
+        projection_version = 1
+    if projection_version != NODE_PROJECTION_VERSION:
+        return [
+            GraphFinding(
+                "error",
+                "graph_projection_stale",
+                f"graph projection version {projection_version} is stale",
+            )
+        ]
+
+    for item in stored.get("nodes", []):
+        if not isinstance(item, Mapping) or item.get("type") != "Requirement":
+            continue
+        properties = item.get("properties")
+        if not isinstance(properties, Mapping):
+            break
+        source_text = properties.get("source_text")
+        source_path = properties.get("source_path")
+        source_line = properties.get("source_line")
+        if (
+            not isinstance(source_text, str)
+            or not source_text
+            or not isinstance(source_path, str)
+            or not source_path
+            or not isinstance(source_line, int)
+            or source_line <= 0
+        ):
+            break
+    else:
+        return []
+
+    return [
+        GraphFinding(
+            "error",
+            "graph_projection_stale",
+            "graph requirement projection is stale",
+        )
+    ]
 
 
 def _input_findings(
