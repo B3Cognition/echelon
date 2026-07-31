@@ -155,7 +155,12 @@ _HTML_TEMPLATE = """<!doctype html>
     .empty { color: #64748b; font-size: 12px; }
     @media (max-width: 860px) {
       header { padding: 0 10px; }
-      .controls { padding: 7px 10px; }
+      .controls { height: auto; min-height: 48px; flex-wrap: wrap;
+        padding: 7px 10px; overflow-x: hidden; }
+      .controls input[type="search"] { width: auto; min-width: 0; flex: 1 1 210px; }
+      .controls select { width: auto; min-width: 0; flex: 1 1 140px; }
+      .segment { width: auto; flex: 1 1 144px; }
+      .summary { margin-left: auto; }
       main { height: auto; min-height: calc(100vh - 106px); grid-template-columns: 1fr;
         grid-template-rows: minmax(420px, 62vh) minmax(260px, auto); }
       aside { border-left: 0; border-top: 1px solid #d6dce5; }

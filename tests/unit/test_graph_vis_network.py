@@ -299,6 +299,20 @@ def test_html_exposes_complete_accessible_operational_renderer_contract() -> Non
 
 
 @pytest.mark.unit
+def test_mobile_toolbar_wraps_controls_without_horizontal_overflow() -> None:
+    html = render_vis_graph_html(
+        _payload(),
+        "window.vis = {Network: function Network() {}, DataSet: function DataSet() {}};",
+    )
+
+    assert ".controls { height: auto; min-height: 48px; flex-wrap: wrap;" in html
+    assert "overflow-x: hidden;" in html
+    assert '.controls input[type="search"] { width: auto; min-width: 0; flex: 1 1 210px;' in html
+    assert ".controls select { width: auto; min-width: 0; flex: 1 1 140px;" in html
+    assert ".segment { width: auto; flex: 1 1 144px;" in html
+
+
+@pytest.mark.unit
 def test_degree_sizing_changes_effective_size_for_every_supported_node_type() -> None:
     supported_types = (
         "Spec",
