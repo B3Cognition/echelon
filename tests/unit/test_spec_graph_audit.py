@@ -264,6 +264,64 @@ def test_audit_reports_stale_requirement_projection(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("projection_version", [True, 2.0, "2"])
+def test_audit_rejects_non_exact_int_projection_versions(
+    tmp_path: Path,
+    monkeypatch,
+    projection_version: object,
+) -> None:
+    graph = _graph()
+    spec_dir = _write_current_graph(tmp_path, graph)
+    graph_path = spec_dir / "spec-artifact-graph.json"
+    payload = json.loads(graph_path.read_text(encoding="utf-8"))
+    payload["node_projection_version"] = projection_version
+    graph_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "echelon.spec_graph_audit.build_spec_graph",
+        lambda project_root, selector: graph,
+    )
+
+    report = audit_spec_graph(tmp_path, spec_dir)
+
+    assert report.status == "fail"
+    assert [finding.code for finding in report.findings] == [
+        "graph_projection_stale"
+    ]
+
+
+@pytest.mark.unit
+def test_audit_reports_rebuildable_graph_body_stale_when_valid_body_differs(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    graph = _graph()
+    spec_dir = _write_current_graph(tmp_path, graph)
+    graph_path = spec_dir / "spec-artifact-graph.json"
+    payload = json.loads(graph_path.read_text(encoding="utf-8"))
+    spec_node = next(node for node in payload["nodes"] if node["type"] == "Spec")
+    spec_node["properties"]["path"] = "specs/001-relocated"
+    graph_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "echelon.spec_graph_audit.build_spec_graph",
+        lambda project_root, selector: graph,
+    )
+
+    report = audit_spec_graph(tmp_path, spec_dir)
+
+    assert report.status == "fail"
+    assert [(finding.code, finding.subject_id) for finding in report.findings] == [
+        ("graph_body_stale", None)
+    ]
+    assert classify_spec_graph_audit(report) == "stale"
+
+
+@pytest.mark.unit
 def test_audit_distinguishes_graph_staleness_from_current_memory_health(
     tmp_path: Path,
     monkeypatch,

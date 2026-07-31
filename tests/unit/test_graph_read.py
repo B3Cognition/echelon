@@ -59,7 +59,7 @@ def _spec_audit(*, status: str = "pass", graph_hash: str = "sha256:live") -> Spe
         graph_hash=graph_hash,
         status=status,
         findings=(
-            GraphFinding("warning", "stale", "The audit is deliberately live.")
+            GraphFinding("warning", "stale", "The audit is deliberately live."),
         )
         if status != "pass"
         else (),
@@ -76,7 +76,7 @@ def _workspace_audit(
         status=status,
         members=(),
         findings=(
-            WorkspaceGraphFinding("warning", "stale", "The audit is deliberately live.")
+            WorkspaceGraphFinding("warning", "stale", "The audit is deliberately live."),
         ),
     )
 
@@ -203,6 +203,144 @@ def test_load_graph_uses_canonical_spec_graph_and_live_spec_audit(
     assert model.audit is audit
     assert model.graph_hash == f"sha256:{hashlib.sha256(data).hexdigest()}"
     assert model.graph_hash != audit.graph_hash
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("scope", "finding_code"),
+    [
+        ("spec", "graph_invalid"),
+        ("workspace", "workspace_graph_invalid"),
+    ],
+)
+def test_load_graph_rejects_contract_invalid_live_audit_before_indexing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    scope: str,
+    finding_code: str,
+) -> None:
+    import echelon.graph_read as graph_read
+
+    calls: list[str] = []
+    if scope == "spec":
+        spec_dir = tmp_path / "specs" / "905-demo"
+        _write_graph(spec_dir / GRAPH_FILENAME, _document())
+        audit = SpecGraphAuditReport(
+            schema_version=1,
+            spec_id="905-demo",
+            graph_hash="sha256:live",
+            status="fail",
+            findings=(GraphFinding("error", finding_code, "Invalid persisted graph."),),
+        )
+        monkeypatch.setattr(
+            graph_read, "resolve_spec_dir", lambda root, selector: spec_dir
+        )
+        monkeypatch.setattr(
+            graph_read,
+            "audit_spec_graph",
+            lambda root, selector: calls.append("audit") or audit,
+        )
+        selector: str | None = "905"
+    else:
+        graph_path = (
+            tmp_path
+            / ".echelon"
+            / "runtime"
+            / "graph"
+            / "workspace-artifact-graph.json"
+        )
+        _write_graph(graph_path, _document(scope="workspace"))
+        audit = WorkspaceGraphAuditReport(
+            schema_version=1,
+            workspace_name="demo",
+            graph_hash="sha256:live",
+            status="fail",
+            members=(),
+            findings=(
+                WorkspaceGraphFinding(
+                    "error", finding_code, "Invalid persisted workspace graph."
+                ),
+            ),
+        )
+        monkeypatch.setattr(graph_read, "workspace_graph_path", lambda root: graph_path)
+        monkeypatch.setattr(
+            graph_read,
+            "audit_workspace_graph",
+            lambda root: calls.append("audit") or audit,
+        )
+        selector = None
+
+    monkeypatch.setattr(
+        graph_read,
+        "_indexes",
+        lambda document: pytest.fail("contract-invalid graph was indexed"),
+    )
+
+    with pytest.raises(graph_read.GraphReadError, match=finding_code):
+        graph_read.load_graph(tmp_path, selector)
+
+    assert calls == ["audit"]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("scope", "finding_code"),
+    [
+        ("spec", "graph_body_stale"),
+        ("spec", "requirement_verification_missing"),
+        ("workspace", "workspace_graph_body_stale"),
+    ],
+)
+def test_load_graph_keeps_stale_and_other_failed_audits_queryable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    scope: str,
+    finding_code: str,
+) -> None:
+    import echelon.graph_read as graph_read
+
+    if scope == "spec":
+        spec_dir = tmp_path / "specs" / "905-demo"
+        _write_graph(spec_dir / GRAPH_FILENAME, _document())
+        audit = SpecGraphAuditReport(
+            schema_version=1,
+            spec_id="905-demo",
+            graph_hash="sha256:live",
+            status="fail",
+            findings=(GraphFinding("error", finding_code, "Failed live audit."),),
+        )
+        monkeypatch.setattr(
+            graph_read, "resolve_spec_dir", lambda root, selector: spec_dir
+        )
+        monkeypatch.setattr(
+            graph_read, "audit_spec_graph", lambda root, selector: audit
+        )
+        selector: str | None = "905"
+    else:
+        graph_path = (
+            tmp_path
+            / ".echelon"
+            / "runtime"
+            / "graph"
+            / "workspace-artifact-graph.json"
+        )
+        _write_graph(graph_path, _document(scope="workspace"))
+        audit = WorkspaceGraphAuditReport(
+            schema_version=1,
+            workspace_name="demo",
+            graph_hash="sha256:live",
+            status="fail",
+            members=(),
+            findings=(WorkspaceGraphFinding("error", finding_code, "Failed live audit."),),
+        )
+        monkeypatch.setattr(graph_read, "workspace_graph_path", lambda root: graph_path)
+        monkeypatch.setattr(graph_read, "audit_workspace_graph", lambda root: audit)
+        selector = None
+
+    model = graph_read.load_graph(tmp_path, selector)
+
+    assert model.audit is audit
+    assert graph_read.graph_read_exit_code(model) == 1
 
 
 @pytest.mark.unit

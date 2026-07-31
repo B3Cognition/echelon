@@ -38,6 +38,7 @@ class GraphReadModel:
 def read_graph_document(path: Path) -> dict[str, object]:
     """Read and validate one persisted schema-1 graph document."""
     document, _ = _read_graph_document_bytes(path)
+    _indexes(document)
     return document
 
 
@@ -48,12 +49,15 @@ def load_graph(project_root: Path, spec_selector: str | None = None) -> GraphRea
         graph_path = workspace_graph_path(root)
         document, graph_bytes = _read_graph_document_bytes(graph_path)
         audit = audit_workspace_graph(root)
+        invalid_finding_code = "workspace_graph_invalid"
     else:
         spec_dir = resolve_spec_dir(root, spec_selector)
         graph_path = spec_dir / GRAPH_FILENAME
         document, graph_bytes = _read_graph_document_bytes(graph_path)
         audit = audit_spec_graph(root, spec_selector)
+        invalid_finding_code = "graph_invalid"
 
+    _reject_contract_invalid_audit(audit, invalid_finding_code)
     nodes_by_id, outgoing, incoming = _indexes(document)
     return GraphReadModel(
         scope=_graph_scope(document),
@@ -118,8 +122,17 @@ def _read_graph_document_bytes(path: Path) -> tuple[dict[str, object], bytes]:
         or not document["workspace_name"]
     ):
         raise GraphReadError("graph workspace_name must be a non-empty string")
-    _indexes(document)
     return document, graph_bytes
+
+
+def _reject_contract_invalid_audit(
+    audit: SpecGraphAuditReport | WorkspaceGraphAuditReport,
+    finding_code: str,
+) -> None:
+    if any(finding.code == finding_code for finding in audit.findings):
+        raise GraphReadError(
+            f"persisted graph failed live contract audit: {finding_code}"
+        )
 
 
 def _indexes(

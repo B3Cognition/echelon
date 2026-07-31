@@ -178,7 +178,9 @@ def query_graph(
     if not lexical_seed_ids:
         return GraphResult((), (), ())
 
-    paths = _bounded_paths(model, tuple(sorted(lexical_seed_ids)), depth)
+    paths, depth_truncated = _bounded_paths(
+        model, tuple(sorted(lexical_seed_ids)), depth
+    )
     matches: list[_QueryMatch] = []
     for candidate_id, path in paths.items():
         node = model.nodes_by_id[candidate_id]
@@ -209,7 +211,7 @@ def query_graph(
         nodes=tuple(model.nodes_by_id[item.node_id] for item in returned),
         edges=_canonical_edges(edges),
         paths=returned_paths,
-        truncated=len(matches) > limit,
+        truncated=depth_truncated or len(matches) > limit,
     )
 
 
@@ -272,6 +274,7 @@ def explain_node(model: GraphReadModel, node_id: str, limit: int = 50) -> GraphR
         (item.edge for item in returned),
         (),
         truncated=len(adjacent) > limit,
+        canonical_edge_order=False,
     )
 
 
@@ -299,6 +302,7 @@ def neighbors(
         (item.edge for item in returned),
         (),
         truncated=len(adjacent) > limit,
+        canonical_edge_order=False,
     )
 
 
@@ -319,6 +323,7 @@ def shortest_path(
         [(source, GraphPath((source,), ()))]
     )
     visited_depth = {source: 0}
+    truncated = False
     while queue:
         current_id, current_path = queue.popleft()
         depth = len(current_path.steps)
@@ -334,6 +339,11 @@ def shortest_path(
                 (current_path,),
             )
         if depth >= max_hops:
+            if any(
+                item.node_id not in visited_depth
+                for item in _adjacent(model, current_id, "both", path_order=True)
+            ):
+                truncated = True
             continue
 
         for adjacent in _adjacent(model, current_id, "both", path_order=True):
@@ -352,18 +362,24 @@ def shortest_path(
                 )
             )
 
-    return _result(model, (), (), ())
+    return _result(model, (), (), (), truncated=truncated)
 
 
 def _bounded_paths(
     model: GraphReadModel, seed_ids: tuple[str, ...], max_depth: int
-) -> dict[str, GraphPath]:
+) -> tuple[dict[str, GraphPath], bool]:
     paths = {seed_id: GraphPath((seed_id,), ()) for seed_id in seed_ids}
     queue: deque[str] = deque(seed_ids)
+    truncated = False
     while queue:
         current_id = queue.popleft()
         current_path = paths[current_id]
         if len(current_path.steps) >= max_depth:
+            if any(
+                item.node_id not in paths
+                for item in _adjacent(model, current_id, "both", path_order=True)
+            ):
+                truncated = True
             continue
         for item in _adjacent(model, current_id, "both", path_order=True):
             if item.node_id in paths:
@@ -373,7 +389,7 @@ def _bounded_paths(
                 (*current_path.steps, item.step),
             )
             queue.append(item.node_id)
-    return paths
+    return paths, truncated
 
 
 def _lexical_features(
@@ -554,10 +570,11 @@ def _result(
     paths: tuple[GraphPath, ...],
     *,
     truncated: bool = False,
+    canonical_edge_order: bool = True,
 ) -> GraphResult:
     return GraphResult(
         nodes=tuple(model.nodes_by_id[node_id] for node_id in sorted(set(node_ids))),
-        edges=_canonical_edges(edges),
+        edges=_canonical_edges(edges) if canonical_edge_order else tuple(edges),
         paths=paths,
         truncated=truncated,
     )

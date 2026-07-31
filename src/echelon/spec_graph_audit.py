@@ -34,6 +34,7 @@ REBUILDABLE_GRAPH_FINDING_CODES = frozenset(
         "graph_input_added",
         "graph_input_removed",
         "graph_input_changed",
+        "graph_body_stale",
     }
 )
 
@@ -165,6 +166,18 @@ def audit_spec_graph(
         )
 
     findings.extend(_input_findings(stored, current))
+    current_document = current.to_dict()
+    if (
+        stored.get("nodes") != current_document["nodes"]
+        or stored.get("edges") != current_document["edges"]
+    ):
+        findings.append(
+            GraphFinding(
+                "error",
+                "graph_body_stale",
+                "graph nodes or edges differ from the current build",
+            )
+        )
     memory_findings, required_memory_unavailable = _memory_findings(current)
     findings.extend(memory_findings)
     findings.extend(_coherence_findings(current))
@@ -230,12 +243,11 @@ def _read_graph_payload(graph_bytes: bytes) -> dict[str, object]:
 
 
 def _projection_findings(stored: Mapping[str, object]) -> list[GraphFinding]:
-    stored_projection_version = stored.get("node_projection_version", 1)
-    try:
-        projection_version = int(stored_projection_version)
-    except (TypeError, ValueError):
-        projection_version = 1
-    if projection_version != NODE_PROJECTION_VERSION:
+    projection_version = stored.get("node_projection_version", 1)
+    if (
+        type(projection_version) is not int
+        or projection_version != NODE_PROJECTION_VERSION
+    ):
         return [
             GraphFinding(
                 "error",

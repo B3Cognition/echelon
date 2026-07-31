@@ -77,7 +77,7 @@ def _identities(edges: Iterable[Mapping[str, object]]) -> list[tuple[str, str, s
 
 
 @pytest.mark.unit
-def test_explain_includes_selected_node_and_canonically_ordered_incident_edges() -> None:
+def test_explain_preserves_direction_first_incident_edge_order() -> None:
     from echelon.graph_traversal import explain_node
 
     model = _model(
@@ -94,13 +94,13 @@ def test_explain_includes_selected_node_and_canonically_ordered_incident_edges()
 
     assert [node["id"] for node in result.nodes] == ["a", "b", "c", "d"]
     assert _identities(result.edges) == [
+        ("d", "ALPHA", "a"),
+        ("b", "REL", "a"),
         ("a", "CONNECT", "b"),
         ("a", "ZETA", "c"),
-        ("b", "REL", "a"),
-        ("d", "ALPHA", "a"),
     ]
     assert result.nodes[0] is model.nodes_by_id["a"]
-    assert result.edges[0] is model.outgoing["a"][1]
+    assert result.edges[0] is model.incoming["a"][0]
     assert result.paths == ()
     assert result.truncated is False
 
@@ -122,6 +122,7 @@ def test_neighbors_filter_stored_edge_arrows_case_insensitively_before_limiting(
     incoming = neighbors(model, "a", direction="in", relation="rel")
     outgoing = neighbors(model, "a", direction="out", relation="connect")
     missing = neighbors(model, "a", relation="missing")
+    both = neighbors(model, "a")
     limited = neighbors(model, "a", limit=1)
 
     assert _identities(incoming.edges) == [("b", "REL", "a")]
@@ -130,6 +131,12 @@ def test_neighbors_filter_stored_edge_arrows_case_insensitively_before_limiting(
     assert [node["id"] for node in missing.nodes] == ["a"]
     assert missing.edges == ()
     assert missing.truncated is False
+    assert _identities(both.edges) == [
+        ("d", "ALPHA", "a"),
+        ("b", "REL", "a"),
+        ("a", "CONNECT", "b"),
+        ("a", "ZETA", "c"),
+    ]
     assert _identities(limited.edges) == [("d", "ALPHA", "a")]
     assert [node["id"] for node in limited.nodes] == ["a", "d"]
     assert limited.truncated is True
@@ -292,7 +299,9 @@ def test_shortest_path_handles_identity_absence_and_hop_bounds() -> None:
     assert absent.nodes == ()
     assert absent.edges == ()
     assert absent.paths == ()
+    assert absent.truncated is False
     assert bounded.paths == ()
+    assert bounded.truncated is True
 
 
 @pytest.fixture
@@ -468,12 +477,19 @@ def test_query_empty_stopwords_no_matches_and_depth_bounds_are_successful(
     for result in (
         query_graph(query_model, "which and the?"),
         query_graph(query_model, "missing vocabulary"),
-        query_graph(query_model, "import validation", depth=1, node_type="Task"),
     ):
         assert result.nodes == ()
         assert result.edges == ()
         assert result.paths == ()
         assert result.truncated is False
+
+    depth_bounded = query_graph(
+        query_model, "import validation", depth=1, node_type="Task"
+    )
+    assert depth_bounded.nodes == ()
+    assert depth_bounded.edges == ()
+    assert depth_bounded.paths == ()
+    assert depth_bounded.truncated is True
 
     with pytest.raises(ValueError, match="depth"):
         query_graph(query_model, "import", depth=0)
