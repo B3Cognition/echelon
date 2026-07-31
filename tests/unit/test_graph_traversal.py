@@ -335,6 +335,7 @@ def query_model() -> GraphReadModel:
                 "Artifact",
                 path="docs/straße.md",
                 title="Straße",
+                compatibility_label="compatibilitytoken",
             ),
         ),
         (
@@ -451,9 +452,11 @@ def test_query_nfkc_normalizes_full_width_latin_to_ascii(
 ) -> None:
     from echelon.graph_traversal import query_graph
 
-    result = query_graph(query_model, "ＩＭＰＯＲＴ validation")
+    result = query_graph(query_model, "ｃｏｍｐａｔｉｂｉｌｉｔｙｔｏｋｅｎ")
 
-    assert result.nodes[0]["id"] == "artifact:905-import-prose:catalog"
+    assert [node["id"] for node in result.nodes] == [
+        "artifact:905-import-prose:unicode"
+    ]
 
 
 @pytest.mark.unit
