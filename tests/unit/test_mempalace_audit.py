@@ -141,7 +141,7 @@ def current_support_row(snapshot) -> dict:
             "deterministic_identity_schema_version": 1,
             "wing": "demo-wing",
             "room": "implementation-plan",
-            "scope": "canonical",
+            "scope": "canonical-support",
             "canonical": True,
             "artifact_kind": "supporting-context",
             "artifact_path": snapshot.source,
@@ -190,6 +190,41 @@ def test_audit_passes_matching_exact_drawer(tmp_path: Path, monkeypatch) -> None
     assert report.status == "pass"
     assert report.present_current_count == 1
     assert report.missing == []
+
+
+@pytest.mark.unit
+def test_audit_ignores_separately_reconciled_spec_evidence_rows(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    spec_dir = make_spec(tmp_path)
+    from echelon.mempalace_audit import audit_spec_memory
+    from echelon.mempalace_requirements import load_canonical_spec_snapshot
+
+    snapshot = load_canonical_spec_snapshot(tmp_path, spec_dir)
+    rows = {
+        "drawer-fr-001": current_row(snapshot),
+        "drawer-evidence": {
+            "document": "EVID-001: Published verification evidence.",
+            "metadata": {
+                "artifact_kind": "spec-evidence",
+                "artifact_path": "specs/003-demo/evidence/manifest.json",
+                "canonical": True,
+                "scope": "spec-evidence",
+                "wing": "demo-wing",
+            },
+        },
+    }
+    monkeypatch.setattr(
+        "echelon.mempalace_audit.create_requirement_memory_adapter",
+        lambda project_root, run_id: FakeAdapter(FakeCollection(rows)),
+    )
+
+    report = audit_spec_memory(tmp_path, spec_dir)
+
+    assert report.status == "pass"
+    assert report.stale == []
+    assert report.non_canonical == []
 
 
 @pytest.mark.unit

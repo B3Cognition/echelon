@@ -415,8 +415,9 @@ echelon graph workspace view --renderer vis
 `query`, `explain`, `path`, `neighbors`, and `impact` read the persisted
 workspace graph by default, which supports cross-spec paths. Add `--spec <id>`
 to any of those commands to read one persisted spec graph instead. Use `--json`
-for the common machine-readable envelope: schema version, scope, graph hash,
-live audit, command/request, returned nodes and edges, paths, and truncation.
+for the common machine-readable envelope keys: `schema_version`, `scope`,
+`graph_hash`, `audit`, `command`, `request`, `nodes`, `edges`, `paths`,
+`truncated`.
 
 The read commands return `0` only for a clean passing audit. They return `1`
 with usable stale results and audit findings, or `2` without results when the
