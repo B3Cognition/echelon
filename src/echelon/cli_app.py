@@ -306,6 +306,15 @@ def _graph_exit_code(status: str) -> int:
     return 2
 
 
+def _graph_renderer(renderer: str) -> str:
+    normalized = renderer.casefold()
+    if normalized in {"cytoscape", "vis"}:
+        return normalized
+    raise ValueError(
+        f"unknown graph renderer {renderer!r}; expected cytoscape or vis"
+    )
+
+
 def _echo_spec_graph_summary(graph: object, *, action: str) -> None:
     inputs = list(getattr(graph, "inputs", ()))
     memory = [
@@ -2310,6 +2319,7 @@ def graph_workspace_export(
 @graph_workspace_app.command("view")
 def graph_workspace_view(
     lens: Optional[str] = typer.Option(None, "--lens"),
+    renderer: str = typer.Option("cytoscape", "--renderer"),
     output: Optional[Path] = typer.Option(None, "--output"),
     open_browser: bool = typer.Option(True, "--open/--no-open"),
 ) -> None:
@@ -2318,10 +2328,12 @@ def graph_workspace_view(
 
     from echelon.graph_visualization import (
         GraphVisualizationError,
+        build_graph_view_payload,
         load_cytoscape_source,
         load_graph_document,
         render_graph_html,
     )
+    from echelon.graph_vis_network import load_vis_network_source, render_vis_graph_html
     from echelon.workspace_graph import workspace_graph_path, write_workspace_graph_bytes
     from echelon.workspace_graph_audit import (
         audit_workspace_graph,
@@ -2329,19 +2341,26 @@ def graph_workspace_view(
     )
 
     try:
+        selected_renderer = _graph_renderer(renderer)
         root = Path.cwd()
         report = audit_workspace_graph(root)
         if persisted_workspace_graph_is_invalid(report):
             raise GraphVisualizationError("workspace graph artifact fails its full contract")
         document = load_graph_document(workspace_graph_path(root))
         initial_lens = lens or ("exceptions" if report.findings else "portfolio")
-        html = render_graph_html(
-            document,
-            report,
-            cytoscape_source=load_cytoscape_source(),
-            initial_lens=initial_lens,
+        if selected_renderer == "cytoscape":
+            html = render_graph_html(
+                document,
+                report,
+                cytoscape_source=load_cytoscape_source(),
+                initial_lens=initial_lens,
+            )
+        else:
+            payload = build_graph_view_payload(document, report, initial_lens)
+            html = render_vis_graph_html(payload, load_vis_network_source())
+        output_path = output or workspace_graph_path(root).with_name(
+            "workspace-vis.html" if selected_renderer == "vis" else "workspace.html"
         )
-        output_path = output or workspace_graph_path(root).with_name("workspace.html")
         if not output_path.is_absolute():
             output_path = root / output_path
         write_workspace_graph_bytes(output_path, html.encode("utf-8"))
@@ -2477,6 +2496,7 @@ def graph_export(
 def graph_view(
     spec_selector: str,
     lens: Optional[str] = typer.Option(None, "--lens"),
+    renderer: str = typer.Option("cytoscape", "--renderer"),
     output: Optional[Path] = typer.Option(None, "--output"),
     open_browser: bool = typer.Option(True, "--open/--no-open"),
 ) -> None:
@@ -2486,10 +2506,12 @@ def graph_view(
     from echelon.graph_visualization import (
         GRAPH_LENSES,
         GraphVisualizationError,
+        build_graph_view_payload,
         load_cytoscape_source,
         load_graph_document,
         render_graph_html,
     )
+    from echelon.graph_vis_network import load_vis_network_source, render_vis_graph_html
     from echelon.mempalace_requirements import (
         SpecMemoryError,
         resolve_spec_dir,
@@ -2498,6 +2520,7 @@ def graph_view(
     from echelon.spec_graph_audit import audit_spec_graph
 
     try:
+        selected_renderer = _graph_renderer(renderer)
         spec_dir = resolve_spec_dir(Path.cwd(), spec_selector)
         document = load_graph_document(spec_dir / GRAPH_FILENAME)
         report = audit_spec_graph(Path.cwd(), spec_selector)
@@ -2509,14 +2532,25 @@ def graph_view(
                 f"unknown graph lens {initial_lens!r}; "
                 f"expected one of {', '.join(GRAPH_LENSES)}"
             )
-        html = render_graph_html(
-            document,
-            report,
-            cytoscape_source=load_cytoscape_source(),
-            initial_lens=initial_lens,
-        )
+        if selected_renderer == "cytoscape":
+            html = render_graph_html(
+                document,
+                report,
+                cytoscape_source=load_cytoscape_source(),
+                initial_lens=initial_lens,
+            )
+        else:
+            payload = build_graph_view_payload(document, report, initial_lens)
+            html = render_vis_graph_html(payload, load_vis_network_source())
         output_path = output or (
-            Path.cwd() / ".echelon" / "graph" / f"{spec_dir.name}.html"
+            Path.cwd()
+            / ".echelon"
+            / "graph"
+            / (
+                f"{spec_dir.name}-vis.html"
+                if selected_renderer == "vis"
+                else f"{spec_dir.name}.html"
+            )
         )
         if not output_path.is_absolute():
             output_path = Path.cwd() / output_path
@@ -2527,7 +2561,13 @@ def graph_view(
             f"(audit={report.status}, findings={len(report.findings)})"
         )
         if open_browser:
-            webbrowser.open(output_path.resolve().as_uri())
+            try:
+                opened = webbrowser.open(output_path.resolve().as_uri())
+            except webbrowser.Error:
+                typer.echo("warning: graph viewer was not opened", err=True)
+            else:
+                if not opened:
+                    typer.echo("warning: graph viewer was not opened", err=True)
     except (
         GraphVisualizationError,
         SpecGraphError,
