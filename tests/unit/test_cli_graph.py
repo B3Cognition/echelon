@@ -55,7 +55,7 @@ def _audit(status: str = "pass") -> SpecGraphAuditReport:
 
 
 @pytest.mark.unit
-def test_graph_help_exposes_build_audit_and_refresh() -> None:
+def test_graph_help_exposes_build_audit_refresh_and_consumption_commands() -> None:
     from echelon.cli_app import app
 
     result = CliRunner().invoke(app, ["graph", "--help"])
@@ -65,6 +65,11 @@ def test_graph_help_exposes_build_audit_and_refresh() -> None:
     assert "audit" in result.output
     assert "refresh" in result.output
     assert "workspace" in result.output
+    assert "query" in result.output
+    assert "explain" in result.output
+    assert "path" in result.output
+    assert "neighbors" in result.output
+    assert "impact" in result.output
 
 
 @pytest.mark.unit

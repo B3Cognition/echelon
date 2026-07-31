@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import shlex
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import typer
 
@@ -377,6 +377,37 @@ def _echo_json(data: dict) -> None:
     import json
 
     typer.echo(json.dumps(data, indent=2, sort_keys=True))
+
+
+def _run_graph_consumption(
+    command: str,
+    spec: Optional[str],
+    as_json: bool,
+    request: dict[str, object],
+    operation: Callable[[object], object],
+) -> None:
+    """Load one read scope, execute one traversal, and preserve audit exits."""
+    from echelon.graph_output import graph_result_payload, render_graph_result_text
+    from echelon.graph_read import GraphReadError, graph_read_exit_code, load_graph
+
+    try:
+        model = load_graph(Path.cwd(), spec)
+        result = operation(model)
+    except (GraphReadError, OSError, ValueError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+
+    if as_json:
+        _echo_json(graph_result_payload(model, command, request, result))  # type: ignore[arg-type]
+    else:
+        typer.echo(render_graph_result_text(model, command, result))  # type: ignore[arg-type]
+    raise typer.Exit(code=graph_read_exit_code(model))
+
+
+def _positive_graph_bound(value: int, option: str) -> int:
+    if value <= 0:
+        raise ValueError(f"{option} must be positive")
+    return value
 
 
 def _echo_memory_facet(title: str, values: dict[str, int]) -> None:
@@ -2030,6 +2061,136 @@ def graph_build(
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=2) from exc
     _echo_spec_graph_summary(graph, action="built")
+
+
+@graph_app.command("query")
+def graph_query(
+    question: str,
+    spec: Optional[str] = typer.Option(None, "--spec", help="Read one persisted spec graph."),
+    node_type: Optional[str] = typer.Option(None, "--type", help="Restrict results to one node type."),
+    depth: int = typer.Option(2, "--depth", help="Maximum evidence-path depth."),
+    limit: int = typer.Option(20, "--limit", "-n", help="Maximum result nodes."),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Query persisted graph nodes with deterministic lexical matching."""
+    from echelon.graph_traversal import query_graph
+
+    _run_graph_consumption(
+        "query",
+        spec,
+        as_json,
+        {"question": question, "type": node_type, "depth": depth, "limit": limit},
+        lambda model: query_graph(model, question, node_type, depth, limit),  # type: ignore[arg-type]
+    )
+
+
+@graph_app.command("explain")
+def graph_explain(
+    node: str,
+    spec: Optional[str] = typer.Option(None, "--spec", help="Read one persisted spec graph."),
+    limit: int = typer.Option(50, "--limit", "-n", help="Maximum relationships."),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Explain one graph node and its persisted relationships."""
+    from echelon.graph_read import resolve_node_id
+    from echelon.graph_traversal import explain_node
+
+    _run_graph_consumption(
+        "explain",
+        spec,
+        as_json,
+        {"node": node, "limit": limit},
+        lambda model: explain_node(model, resolve_node_id(model, node), limit),  # type: ignore[arg-type]
+    )
+
+
+@graph_app.command("path")
+def graph_path(
+    source: str,
+    target: str,
+    spec: Optional[str] = typer.Option(None, "--spec", help="Read one persisted spec graph."),
+    max_hops: int = typer.Option(8, "--max-hops", help="Maximum path hops."),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Find one deterministic shortest path over persisted relationships."""
+    from echelon.graph_read import resolve_node_id
+    from echelon.graph_traversal import shortest_path
+
+    _run_graph_consumption(
+        "path",
+        spec,
+        as_json,
+        {"source": source, "target": target, "max_hops": max_hops},
+        lambda model: shortest_path(
+            model,
+            resolve_node_id(model, source),
+            resolve_node_id(model, target),
+            _positive_graph_bound(max_hops, "--max-hops"),
+        ),  # type: ignore[arg-type]
+    )
+
+
+@graph_app.command("neighbors")
+def graph_neighbors(
+    node: str,
+    spec: Optional[str] = typer.Option(None, "--spec", help="Read one persisted spec graph."),
+    direction: str = typer.Option("both", "--direction", help="Stored edge direction: both, in, or out."),
+    relation: Optional[str] = typer.Option(None, "--relation", help="Stored relationship type."),
+    limit: int = typer.Option(50, "--limit", "-n", help="Maximum relationships."),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """List deterministic one-hop persisted graph relationships."""
+    from echelon.graph_read import resolve_node_id
+    from echelon.graph_traversal import neighbors
+
+    _run_graph_consumption(
+        "neighbors",
+        spec,
+        as_json,
+        {
+            "node": node,
+            "direction": direction,
+            "relation": relation,
+            "limit": limit,
+        },
+        lambda model: neighbors(
+            model,
+            resolve_node_id(model, node),
+            direction,
+            relation,
+            limit,
+        ),  # type: ignore[arg-type]
+    )
+
+
+@graph_app.command("impact")
+def graph_impact(
+    node: str,
+    spec: Optional[str] = typer.Option(None, "--spec", help="Read one persisted spec graph."),
+    max_depth: int = typer.Option(4, "--max-depth", help="Maximum impact depth."),
+    all_relations: bool = typer.Option(False, "--all-relations", help="Traverse all stored relationships."),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Calculate typed downstream impact from one persisted graph node."""
+    from echelon.graph_read import resolve_node_id
+    from echelon.graph_traversal import impact
+
+    _run_graph_consumption(
+        "impact",
+        spec,
+        as_json,
+        {
+            "node": node,
+            "max_depth": max_depth,
+            "all_relations": all_relations,
+        },
+        lambda model: impact(
+            model,
+            resolve_node_id(model, node),
+            max_depth,
+            all_relations,
+        ),  # type: ignore[arg-type]
+    )
 
 
 @graph_workspace_app.command("build")
