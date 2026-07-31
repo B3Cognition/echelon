@@ -316,6 +316,7 @@ class RunConfig:
     model_protocol: str = "claude-stdin"
     model: str | None = None
     reasoning_effort: str | None = None
+    attempts_per_round: int = 2
 
 
 ModelInvocation = runner.ModelInvocation
@@ -513,6 +514,17 @@ def parse_args(argv: list[str]) -> RunConfig:
             f"{DEFAULT_CODEX_REASONING_EFFORT!r}"
         ),
     )
+    parser.add_argument(
+        "--attempts-per-round",
+        type=_positive_int,
+        choices=(1, 2),
+        default=2,
+        metavar="{1,2}",
+        help=(
+            "maximum attempts for each logical round; use 1 for a hard "
+            "two-provider-call smoke bound (default: 2)"
+        ),
+    )
     namespace = parser.parse_args(argv)
     command, protocol = resolve_model_command(namespace.claude_cmd)
     try:
@@ -542,6 +554,7 @@ def parse_args(argv: list[str]) -> RunConfig:
         model_protocol=protocol,
         model=model,
         reasoning_effort=reasoning_effort,
+        attempts_per_round=namespace.attempts_per_round,
     )
 
 
@@ -697,13 +710,80 @@ def build_model_invocation(config: RunConfig, prompt: str) -> ModelInvocation:
     return ModelInvocation(argv=words + ["-p"], stdin_text=prompt)
 
 
+def _call_outcome_from_runner(result) -> CallOutcome:
+    """Translate one complete runner result without dropping evidence fields."""
+    kind_map = {
+        "success": "ok",
+        "timeout": "timeout",
+        "launch_missing": "launch_missing",
+        "transport_error": "failed",
+        "unusable_output": "failed",
+    }
+    return CallOutcome(
+        kind=kind_map.get(result.status, "failed"),
+        stdout=result.final_output,
+        stderr=result.stderr,
+        duration_seconds=result.duration_seconds,
+        run_id=result.run_id,
+        model_requested=result.model_requested,
+        model_reported=result.model_reported,
+        reasoning_effort=result.reasoning_effort,
+        status=result.status,
+        provider=result.provider,
+        started_at_utc=result.started_at_utc,
+        timeout_seconds=result.timeout_seconds,
+        exit_code=result.exit_code,
+        protocol=result.protocol,
+        argv_redacted=result.argv_redacted,
+        provider_cli_version=result.provider_cli_version,
+        provider_cli_version_status=result.provider_cli_version_status,
+        prompt_digest=result.prompt_digest,
+        schema_digest=result.schema_digest,
+        stderr_digest=result.stderr_digest,
+        raw_output=result.raw_output,
+        final_output=result.final_output,
+        raw_output_digest=result.raw_output_digest,
+        final_output_digest=result.final_output_digest,
+        usage=result.usage,
+    )
+
+
 def run_model_call(
     config: RunConfig, prompt: str, output_schema: dict | None = None
 ) -> CallOutcome:
     """Run one model call and convert every unexpected failure to an outcome."""
+    run_id = (
+        f"sue-challenge-{uuid.uuid4().hex}"
+        if config.model_protocol == "codex-stdin" and output_schema is not None
+        else None
+    )
     try:
-        return _run_model_call(config, prompt, output_schema)
+        return _run_model_call(
+            config,
+            prompt,
+            output_schema,
+            run_id=run_id,
+        )
     except Exception as exc:
+        if run_id is not None:
+            try:
+                request = runner.ColdReaderRequest(
+                    run_id=run_id,
+                    provider="codex",
+                    command=config.model_command,
+                    model=config.model,
+                    reasoning_effort=config.reasoning_effort,
+                    prompt=prompt,
+                    timeout_seconds=config.timeout_seconds,
+                    output_schema=output_schema,
+                    scientific=True,
+                )
+            except runner.RunnerConfigurationError:
+                pass
+            else:
+                return _call_outcome_from_runner(
+                    runner.unexpected_transport_result(request, exc)
+                )
         return CallOutcome(
             kind="failed",
             stdout="",
@@ -713,7 +793,11 @@ def run_model_call(
 
 
 def _run_model_call(
-    config: RunConfig, prompt: str, output_schema: dict | None = None
+    config: RunConfig,
+    prompt: str,
+    output_schema: dict | None = None,
+    *,
+    run_id: str | None = None,
 ) -> CallOutcome:
     """One model subprocess invocation per the frozen contract shape.
 
@@ -728,7 +812,7 @@ def _run_model_call(
     if config.model_protocol == "codex-stdin" and output_schema is not None:
         try:
             request = runner.ColdReaderRequest(
-                run_id=f"sue-challenge-{uuid.uuid4().hex}",
+                run_id=run_id or f"sue-challenge-{uuid.uuid4().hex}",
                 provider="codex",
                 command=config.model_command,
                 model=config.model,
@@ -742,41 +826,7 @@ def _run_model_call(
             return CallOutcome(
                 kind="failed", stdout="", stderr=str(exc), duration_seconds=0.0
             )
-        result = runner.run_cold_reader(request)
-        kind_map = {
-            "success": "ok",
-            "timeout": "timeout",
-            "launch_missing": "launch_missing",
-            "transport_error": "failed",
-            "unusable_output": "failed",
-        }
-        return CallOutcome(
-            kind=kind_map.get(result.status, "failed"),
-            stdout=result.final_output,
-            stderr=result.stderr,
-            duration_seconds=result.duration_seconds,
-            run_id=result.run_id,
-            model_requested=result.model_requested,
-            model_reported=result.model_reported,
-            reasoning_effort=result.reasoning_effort,
-            status=result.status,
-            provider=result.provider,
-            started_at_utc=result.started_at_utc,
-            timeout_seconds=result.timeout_seconds,
-            exit_code=result.exit_code,
-            protocol=result.protocol,
-            argv_redacted=result.argv_redacted,
-            provider_cli_version=result.provider_cli_version,
-            provider_cli_version_status=result.provider_cli_version_status,
-            prompt_digest=result.prompt_digest,
-            schema_digest=result.schema_digest,
-            stderr_digest=result.stderr_digest,
-            raw_output=result.raw_output,
-            final_output=result.final_output,
-            raw_output_digest=result.raw_output_digest,
-            final_output_digest=result.final_output_digest,
-            usage=result.usage,
-        )
+        return _call_outcome_from_runner(runner.run_cold_reader(request))
 
     try:
         invocation = build_model_invocation(config, prompt)
@@ -1287,7 +1337,7 @@ def execute_round(
     """
     attempts: list[tuple[CallEvidence, ParseFailure]] = []
     current_prompt = prompt
-    for attempt_no in (1, 2):
+    for attempt_no in range(1, config.attempts_per_round + 1):
         outcome = run_model_call(config, current_prompt, output_schema)
         evidence = CallEvidence(
             round_no=round_no,
@@ -1311,7 +1361,7 @@ def execute_round(
         if not isinstance(result, ParseFailure):
             return result
         attempts.append((evidence, result))
-        if attempt_no == 1:
+        if attempt_no < config.attempts_per_round:
             current_prompt = build_retry_prompt(prompt, result)
     try:
         debug_dir = _write_debug_dump(spec_dir, round_no, attempts, config.timeout_seconds)
@@ -1325,8 +1375,13 @@ def execute_round(
     return RoundExit(
         exit_code=EXIT_UNUSABLE_OUTPUT,
         diagnostic=(
-            f"unusable model output: round {round_no} failed after 1 corrective retry "
-            f"({attempts[-1][1].reason}); {dump_note}"
+            f"unusable model output: round {round_no} failed "
+            + (
+                "without a corrective retry "
+                if config.attempts_per_round == 1
+                else "after 1 corrective retry "
+            )
+            + f"({attempts[-1][1].reason}); {dump_note}"
         ),
     )
 

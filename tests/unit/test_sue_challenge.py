@@ -162,6 +162,7 @@ class TestDataclasses:
                     "model_protocol",
                     "model",
                     "reasoning_effort",
+                    "attempts_per_round",
                 },
             ),
             ("ModelInvocation", {"argv", "stdin_text"}),
@@ -227,6 +228,7 @@ class TestDataclasses:
             timeout_seconds=300.0,
         )
         assert config.max_questions == 15
+        assert config.attempts_per_round == 2
         question = sue.SocraticQuestion(
             id="Q1", question="What?", target="general", lines=[1], category="ambiguity"
         )
@@ -285,6 +287,14 @@ class TestArgumentHandling:
         assert config.model == "gpt-5.6-terra"
         assert config.reasoning_effort == "medium"
 
+    def test_attempts_per_round_can_disable_corrective_retries(self):
+        config = sue.parse_args([
+            "spec.md",
+            "--attempts-per-round",
+            "1",
+        ])
+        assert config.attempts_per_round == 1
+
     def test_non_codex_model_override_is_rejected(self, capsys):
         assert sue.main([
             "spec.md",
@@ -331,6 +341,8 @@ class TestArgumentHandling:
             ["--questions", "-1"],
             ["--timeout", "0"],
             ["--timeout", "-1"],
+            ["--attempts-per-round", "0"],
+            ["--attempts-per-round", "3"],
         ],
     )
     def test_non_positive_numeric_options_exit_1(self, extra, capsys):
@@ -698,6 +710,27 @@ class TestRunModelCall:
         assert outcome.kind == "failed"
         assert outcome.stdout == ""
         assert "RuntimeError: runner broke" in outcome.stderr
+        assert outcome.run_id.startswith("sue-challenge-")
+        assert outcome.provider == "codex"
+        assert outcome.model_requested == "requested-model"
+        assert outcome.model_reported is None
+        assert outcome.reasoning_effort == "low"
+        assert outcome.status == "transport_error"
+        assert outcome.timeout_seconds == 10
+        assert outcome.prompt_digest == hashlib.sha256(b"PROMPT").hexdigest()
+        canonical_schema = json.dumps(
+            sue.ROUND1_OUTPUT_SCHEMA,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+        assert outcome.schema_digest == hashlib.sha256(
+            canonical_schema.encode()
+        ).hexdigest()
+        assert outcome.stderr_digest == hashlib.sha256(
+            outcome.stderr.encode()
+        ).hexdigest()
 
     def test_non_v1_codex_call_uses_legacy_transport_not_runner(self, tmp_path, monkeypatch):
         def unexpected_runner_call(_request):
@@ -1340,6 +1373,58 @@ class TestExecuteRound:
         assert truncated is False
         assert int(count.read_text()) == 1
         assert not (spec_dir / sue.DEBUG_DIR_NAME).exists()
+
+    def test_one_attempt_budget_stops_without_corrective_retry(
+        self, tmp_path, monkeypatch
+    ):
+        calls = []
+
+        def broken_runner(_request):
+            calls.append("called")
+            raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid byte")
+
+        monkeypatch.setattr(sue.runner, "run_cold_reader", broken_runner)
+        evidence_dir = tmp_path / sue.EVIDENCE_DIR_NAME / "run"
+        evidence_dir.mkdir(parents=True)
+        config = sue.RunConfig(
+            spec_path=tmp_path / "spec.md",
+            max_questions=1,
+            model_command="codex",
+            timeout_seconds=10,
+            model_protocol="codex-stdin",
+            model="gpt-5.6-luna",
+            reasoning_effort="low",
+            attempts_per_round=1,
+        )
+        evidence = []
+
+        result = sue.execute_round(
+            config,
+            "PROMPT",
+            self._r1_validator,
+            1,
+            tmp_path,
+            sue.ROUND1_OUTPUT_SCHEMA,
+            evidence,
+            evidence_dir,
+        )
+
+        assert isinstance(result, sue.RoundExit)
+        assert "without a corrective retry" in result.diagnostic
+        assert calls == ["called"]
+        assert len(evidence) == 1
+        metadata = json.loads(
+            (tmp_path / evidence[0].metadata_ref).read_text()
+        )
+        assert metadata["run_id"].startswith("sue-challenge-")
+        assert metadata["provider"] == "codex"
+        assert metadata["requested_model"] == "gpt-5.6-luna"
+        assert metadata["reported_model"] is None
+        assert metadata["reasoning_effort"] == "low"
+        assert metadata["status"] == "transport_error"
+        assert metadata["timeout_seconds"] == 10
+        assert metadata["prompt_digest"] == hashlib.sha256(b"PROMPT").hexdigest()
+        assert metadata["schema_digest"]
 
     def test_retry_records_each_call_metadata_without_reusing_stale_values(
         self, tmp_path, monkeypatch

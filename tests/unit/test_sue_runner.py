@@ -6,6 +6,7 @@ import dataclasses
 import hashlib
 import importlib.util
 import json
+import shlex
 import stat
 import sys
 import time
@@ -122,6 +123,18 @@ def test_scientific_codex_request_rejects_missing_model():
 def test_scientific_codex_request_rejects_missing_reasoning_effort():
     with pytest.raises(runner.RunnerConfigurationError, match="reasoning effort"):
         _codex_request(reasoning_effort=None, scientific=True)
+
+
+def test_scientific_codex_request_rejects_secret_bearing_command_wrapper():
+    secret = "sue-sentinel-secret"
+    with pytest.raises(
+        runner.RunnerConfigurationError, match="single executable"
+    ) as error:
+        _codex_request(
+            command=f"env OPENAI_API_KEY={secret} codex",
+            scientific=True,
+        )
+    assert secret not in str(error.value)
 
 
 @pytest.mark.parametrize(
@@ -267,6 +280,24 @@ print(json.dumps({{
     assert "PROMPT" not in result.argv_redacted
     assert result.raw_output_digest
     assert result.final_output_digest
+
+
+def test_non_scientific_wrapper_secret_is_redacted_from_evidence(tmp_path):
+    secret = "sue-sentinel-secret"
+    fake = _make_fake_codex(
+        tmp_path,
+        """import json, pathlib, sys
+args = sys.argv[1:]
+pathlib.Path(args[args.index('--output-last-message') + 1]).write_text('{}')
+print(json.dumps({'type': 'thread.started', 'thread_id': 'thread-1'}))
+print(json.dumps({'type': 'turn.completed', 'model': 'gpt-5.6-luna', 'usage': {}}))
+""",
+    )
+    command = f"env OPENAI_API_KEY={secret} {shlex.quote(fake)}"
+    result = runner.run_cold_reader(_codex_request(command))
+    assert result.status == "success"
+    assert all(secret not in token for token in result.argv_redacted)
+    assert "OPENAI_API_KEY=<redacted>" in result.argv_redacted
 
 
 def test_success_result_captures_complete_immutable_execution_metadata(tmp_path):

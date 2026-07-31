@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shlex
 import signal
 import subprocess
@@ -81,6 +82,18 @@ COLD_READER_ENV_ALLOWLIST = (
     # macOS may synthesize this locale/encoding process variable at exec.
     "__CF_USER_TEXT_ENCODING",
 )
+_SECRET_ASSIGNMENT_RE = re.compile(
+    r"(?i)\b([A-Z0-9_-]*(?:api[_-]?key|token|secret|password|credential)"
+    r"[A-Z0-9_-]*)=([^\s]+)"
+)
+_SECRET_OPTION_MARKERS = (
+    "api-key",
+    "api_key",
+    "token",
+    "secret",
+    "password",
+    "credential",
+)
 
 
 class RunnerConfigurationError(ValueError):
@@ -142,6 +155,17 @@ class ColdReaderRequest:
             )
         if self.scientific and not self.output_schema:
             raise RunnerConfigurationError("scientific Codex runs require an output schema")
+        if self.scientific:
+            try:
+                command = shlex.split(self.command)
+            except ValueError as exc:
+                raise RunnerConfigurationError(
+                    "scientific Codex command must be a single executable token"
+                ) from exc
+            if len(command) != 1:
+                raise RunnerConfigurationError(
+                    "scientific Codex command must be a single executable token"
+                )
 
 
 @dataclass(frozen=True)
@@ -355,10 +379,28 @@ def _query_provider_cli_version(
 def _redact_argv(argv: list[str], workdir: Path) -> tuple[str, ...]:
     schema_path = str(workdir / "output-schema.json")
     final_path = str(workdir / "final.json")
-    return tuple(
-        "<output-schema>" if value == schema_path else "<final-output>" if value == final_path else value
-        for value in argv
-    )
+    redacted: list[str] = []
+    redact_next = False
+    for value in argv:
+        if redact_next:
+            redacted.append("<redacted>")
+            redact_next = False
+            continue
+        if value == schema_path:
+            redacted.append("<output-schema>")
+            continue
+        if value == final_path:
+            redacted.append("<final-output>")
+            continue
+        normalized_option = value.lower().lstrip("-")
+        if "=" not in value and any(
+            marker in normalized_option for marker in _SECRET_OPTION_MARKERS
+        ):
+            redacted.append(value)
+            redact_next = True
+            continue
+        redacted.append(_SECRET_ASSIGNMENT_RE.sub(r"\1=<redacted>", value))
+    return tuple(redacted)
 
 
 def _result(
@@ -402,6 +444,22 @@ def _result(
         prompt_digest=_digest(request.prompt),
         schema_digest=_digest(schema) if schema is not None else None,
         stderr_digest=_digest(stderr),
+    )
+
+
+def unexpected_transport_result(
+    request: ColdReaderRequest,
+    error: BaseException,
+) -> ColdReaderResult:
+    """Preserve request-known evidence when the runner fails unexpectedly."""
+    return _result(
+        request,
+        status="transport_error",
+        stderr=(
+            "model call failed unexpectedly: "
+            f"{error.__class__.__name__}: {error}"
+        ),
+        started_at_utc=_utc_now(),
     )
 
 
