@@ -243,7 +243,10 @@ def _scan_spec_extras(
     for drawer_id, (_document, metadata) in parsed.rows.items():
         if drawer_id in expected_ids or not _points_to_spec(metadata, snapshot):
             continue
-        if metadata.get("scope") == "spec-evidence":
+        if (
+            metadata.get("scope") == "spec-evidence"
+            and metadata.get("artifact_kind") == "spec-evidence"
+        ):
             continue
         artifact_path = metadata.get("artifact_path") or metadata.get(
             "source_file"

@@ -228,6 +228,44 @@ def test_audit_ignores_separately_reconciled_spec_evidence_rows(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("artifact_kind", [None, "supporting-context"])
+def test_audit_does_not_exempt_evidence_scope_with_wrong_artifact_kind(
+    tmp_path: Path,
+    monkeypatch,
+    artifact_kind: str | None,
+) -> None:
+    spec_dir = make_spec(tmp_path)
+    from echelon.mempalace_audit import audit_spec_memory
+    from echelon.mempalace_requirements import load_canonical_spec_snapshot
+
+    snapshot = load_canonical_spec_snapshot(tmp_path, spec_dir)
+    invalid_metadata = {
+        "artifact_path": "specs/003-demo/spec.md",
+        "canonical": True,
+        "scope": "spec-evidence",
+        "wing": "demo-wing",
+    }
+    if artifact_kind is not None:
+        invalid_metadata["artifact_kind"] = artifact_kind
+    rows = {
+        "drawer-fr-001": current_row(snapshot),
+        "drawer-invalid-evidence": {
+            "document": "FR-999: Incorrectly scoped normal drawer.",
+            "metadata": invalid_metadata,
+        },
+    }
+    monkeypatch.setattr(
+        "echelon.mempalace_audit.create_requirement_memory_adapter",
+        lambda project_root, run_id: FakeAdapter(FakeCollection(rows)),
+    )
+
+    report = audit_spec_memory(tmp_path, spec_dir)
+
+    assert report.status == "fail"
+    assert report.stale == ["drawer-invalid-evidence"]
+
+
+@pytest.mark.unit
 def test_audit_includes_support_artifact_rows_in_expected_set(
     tmp_path: Path, monkeypatch
 ) -> None:
