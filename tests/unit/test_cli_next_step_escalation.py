@@ -189,6 +189,77 @@ def test_blocked_squad_escalation_displays_executable_options(
     assert "Answer with A/B, the option id, or the option label." in captured.out
 
 
+def test_checkpoint_next_step_includes_recent_gate_context(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir = tmp_path / "runs" / "spec-20260731-130948-336574"
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
+    (run_dir / "reasoning-journal.jsonl").write_text(
+        json.dumps(
+            {
+                "phase": "phase1-lexicon-derive",
+                "type": "insight",
+                "data": {
+                    "artifact": "requirements.lexicon.md",
+                    "reasoning": (
+                        "Repair finding source-hash-mismatch was caused solely "
+                        "by a stale SOURCE_SHA256 header value."
+                    ),
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "phase": "checkpoint-assess",
+                "autonomy_mode": "semi",
+                "blocked_reason": "checkpoint_assess_decision_required",
+                "escalation_question": "Review Phase 1 Checkpoint artifacts.",
+                "escalation_options": [
+                    {
+                        "id": "approve",
+                        "label": "Approve",
+                        "next_phase": "phase2-decide",
+                    },
+                    {
+                        "id": "reject",
+                        "label": "Reject",
+                        "next_phase": "terminal-blocked",
+                    },
+                ],
+                "quality_scores": [
+                    {
+                        "pass": True,
+                        "pass_id": "WHY2-iter-4",
+                        "overall": 0.8092,
+                        "structure": 0.95,
+                        "testability": 0.9271,
+                        "cognitive": 0.6732,
+                    }
+                ],
+                "lexicon_evaluation": "passed",
+                "lexicon_findings": 0,
+                "lexicon_report": "runs/spec/spec-lexicon-report.json",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _print_next_steps(tmp_path, "blocked")
+
+    captured = capsys.readouterr()
+    assert "Why approval is needed: semi mode pauses at Phase 1 Checkpoint" in captured.out
+    assert "WHY2 passed (WHY2-iter-4: overall 0.8092" in captured.out
+    assert "Spec Lexicon passed with 0 finding(s)" in captured.out
+    assert "source-hash-mismatch" in captured.out
+
+
 def test_controller_contract_failure_has_one_consistent_next_step(
     tmp_path: Path,
     capsys,

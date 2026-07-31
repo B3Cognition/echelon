@@ -5080,9 +5080,24 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
     if result_status in {"blocked", "interrupted"}:
         action = _classify_run_recovery(current_state, project_root=project_root)
         if action.kind == "human_resume":
+            question = action.note
+            if run_dir is not None:
+                from harness.squad import _checkpoint_context
+
+                phase = str(current_state.get("phase") or "")
+                label = {
+                    "checkpoint-assess": "Phase 1 Checkpoint",
+                    "checkpoint-plan": "Plan Checkpoint",
+                }.get(phase, phase)
+                question += _checkpoint_context(
+                    current_state,
+                    node_id=phase,
+                    node_label=label,
+                    journal_path=run_dir / "reasoning-journal.jsonl",
+                )
             fields = [
                 ("reason", action.reason),
-                ("question", action.note),
+                ("question", question),
             ]
             rendered_options = _render_escalation_options(
                 current_state.get("escalation_options")

@@ -129,6 +129,23 @@ def test_load_glossary_recognizes_terms_from_markdown_headings(tmp_path):
 
 
 @pytest.mark.unit
+def test_load_glossary_recognizes_code_span_heading_terms_with_qualifiers(tmp_path):
+    glossary = tmp_path / "glossary.md"
+    glossary.write_text(
+        """# Domain Glossary
+
+## Terms
+
+### `model_tier` (candidate neutral key under this feature)
+- **Definition:** The requested neutral key.
+""",
+        encoding="utf-8",
+    )
+
+    assert "model_tier" in _load_glossary(glossary)
+
+
+@pytest.mark.unit
 def test_source_ref_accepts_fresh_derived_spec_with_same_requirement_ids(tmp_path):
     source = _write(tmp_path, "spec.md", RICH_SOURCE_SPEC)
     derived = _write(tmp_path, "requirements.lexicon.md", _derived_spec(RICH_SOURCE_SPEC))

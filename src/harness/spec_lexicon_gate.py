@@ -3,11 +3,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from harness.lexicon_gate_io import write_json_atomic
+from lexicon.glossary import load_glossary_terms
 
 
 @dataclass(frozen=True)
@@ -236,13 +236,4 @@ def _optional_sha256_file(path: Path) -> str | None:
 
 
 def _load_glossary_terms(glossary_path: Path) -> set[str]:
-    if not glossary_path.is_file():
-        return set()
-    glossary: set[str] = set()
-    for raw in glossary_path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        terms = re.findall(r"\*\*([^*]+)\*\*", line)
-        glossary.update(term.strip() for term in terms or [line])
-    return glossary
+    return load_glossary_terms(glossary_path)

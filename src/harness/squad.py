@@ -477,6 +477,144 @@ def _blocked_banner(phase: str, reason: str, question: str) -> None:
     )
 
 
+def _truncate_checkpoint_context(text: str, *, limit: int = 520) -> str:
+    clean = " ".join(str(text or "").split())
+    if len(clean) <= limit:
+        return clean
+    return clean[: max(0, limit - 1)].rstrip() + "..."
+
+
+def _latest_journal_reasoning(
+    journal_path: Path,
+    *,
+    phase: str,
+    artifact: str,
+) -> str:
+    try:
+        lines = journal_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    for raw in reversed(lines):
+        try:
+            entry = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if str(entry.get("phase") or "") != phase:
+            continue
+        data = entry.get("data")
+        if not isinstance(data, Mapping):
+            continue
+        if str(data.get("artifact") or "") != artifact:
+            continue
+        reasoning = str(data.get("reasoning") or "").strip()
+        if reasoning:
+            return _truncate_checkpoint_context(reasoning)
+    return ""
+
+
+def _latest_passing_quality_score(state: Mapping[str, object]) -> Mapping[str, object] | None:
+    scores = state.get("quality_scores")
+    if not isinstance(scores, list):
+        return None
+    for item in reversed(scores):
+        if isinstance(item, Mapping) and item.get("pass") is True:
+            return item
+    return None
+
+
+def _format_score(value: object) -> str:
+    if not isinstance(value, int | float):
+        return ""
+    return f"{float(value):.4g}"
+
+
+def _checkpoint_context(
+    state: Mapping[str, object],
+    *,
+    node_id: str,
+    node_label: str,
+    journal_path: Path,
+) -> str:
+    lines: list[str] = []
+    mode = str(state.get("autonomy_mode") or "").strip()
+    if mode in {"guided", "semi"}:
+        lines.append(
+            f"Why approval is needed: {mode} mode pauses at {node_label or node_id} "
+            "so a human approves the checkpoint before Echelon advances."
+        )
+
+    score = _latest_passing_quality_score(state)
+    if score is not None:
+        score_parts = [
+            label
+            for label in (
+                f"overall {_format_score(score.get('overall'))}",
+                f"structure {_format_score(score.get('structure'))}",
+                f"testability {_format_score(score.get('testability'))}",
+                f"cognitive {_format_score(score.get('cognitive'))}",
+            )
+            if not label.endswith(" ")
+        ]
+        pass_id = str(score.get("pass_id") or "latest")
+        if score_parts:
+            lines.append(f"WHY2 passed ({pass_id}: {', '.join(score_parts)}).")
+        else:
+            lines.append(f"WHY2 passed ({pass_id}).")
+
+    if state.get("lexicon_evaluation") == "passed":
+        findings = state.get("lexicon_findings")
+        finding_text = (
+            f" with {int(findings)} finding(s)"
+            if isinstance(findings, int)
+            else ""
+        )
+        report = str(state.get("lexicon_report") or "").strip()
+        if report:
+            lines.append(f"Spec Lexicon passed{finding_text}; report: {report}.")
+        else:
+            lines.append(f"Spec Lexicon passed{finding_text}.")
+
+    latest_repair = _latest_journal_reasoning(
+        journal_path,
+        phase="phase1-lexicon-derive",
+        artifact="requirements.lexicon.md",
+    )
+    if latest_repair:
+        lines.append(f"Latest lexicon repair: {latest_repair}")
+
+    if not lines:
+        return ""
+    return "\n\nCheckpoint context:\n- " + "\n- ".join(lines)
+
+
+def _resolve_human_input_option_answer(
+    answer: str,
+    options: tuple[HumanInputOption, ...],
+) -> HumanInputOption | None:
+    normalized = str(answer or "").strip()
+    if not normalized or not options:
+        return None
+
+    first_token = normalized.split(maxsplit=1)[0].strip(").:-—–")
+    if len(first_token) == 1 and first_token.isalpha():
+        index = ord(first_token.upper()) - ord("A")
+        if 0 <= index < len(options):
+            return options[index]
+
+    id_matches = [option for option in options if normalized == option.id]
+    if len(id_matches) == 1:
+        return id_matches[0]
+    if len(id_matches) > 1:
+        raise HumanInputPolicyError("sealed decision option ids are ambiguous")
+
+    label_matches = [option for option in options if normalized == option.label]
+    if len(label_matches) == 1:
+        return label_matches[0]
+    if len(label_matches) > 1:
+        raise HumanInputPolicyError("sealed decision option labels are ambiguous")
+    return None
+
+
 def _format_phase_dispatch_line(
     node: PhaseNode,
     graph: PhaseGraph,
@@ -2648,14 +2786,22 @@ class SquadController:
             expected_phase=node.id,
         )
         spec_dir = str(snapshot.state.get("spec_dir") or "the active spec")
+        label = node.label or node.id
+        checkpoint_context = _checkpoint_context(
+            snapshot.state,
+            node_id=node.id,
+            node_label=label,
+            journal_path=self._squad_dir / "reasoning-journal.jsonl",
+        )
         request = self._human_input_registry.prepare(
             source_kind=policy.source_kind,
             producer_id=policy.producer_id,
             phase_id=node.id,
             reason_code=policy.reason_code,
             question=(
-                f"Review {node.label or node.id} artifacts in {spec_dir}. "
+                f"Review {label} artifacts in {spec_dir}. "
                 "Approve to continue or reject to stop for revision."
+                f"{checkpoint_context}"
             ),
             source_state_revision=snapshot.state_revision,
         )
@@ -3792,21 +3938,10 @@ class SquadController:
         answer = answer.strip()
         options = self._human_input_options_from_decision(decision)
         if options:
-            id_matches = [option for option in options if answer == option.id]
-            if len(id_matches) == 1:
-                selected = id_matches[0]
-            elif len(id_matches) > 1:
-                raise HumanInputPolicyError("sealed decision option ids are ambiguous")
-            else:
-                label_matches = [option for option in options if answer == option.label]
-                if len(label_matches) != 1:
-                    raise HumanInputPolicyError(
-                        "human-input answer must exactly match one offered option id or label"
-                    )
-                selected = label_matches[0]
+            selected = _resolve_human_input_option_answer(answer, options)
             if selected is None:
                 raise HumanInputPolicyError(
-                    "human-input answer must exactly match an offered option id or label"
+                    "human-input answer must match A/B/C, one offered option id, or one option label"
                 )
             resolution = HumanInputResolution(
                 selected_option_id=selected.id,

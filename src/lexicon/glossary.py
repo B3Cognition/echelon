@@ -8,6 +8,7 @@ from pathlib import Path
 
 _BOLD_TERM_RE = re.compile(r"\*\*([^*]+)\*\*")
 _HEADING_TERM_RE = re.compile(r"^#{3,6}\s+(.+?)(?:\s+#+)?$")
+_CODE_SPAN_TERM_RE = re.compile(r"^`([^`]+)`(?:\s+\(.+\))?$")
 
 
 def load_glossary_terms(path: Path | None) -> set[str]:
@@ -22,7 +23,7 @@ def load_glossary_terms(path: Path | None) -> set[str]:
             continue
         heading = _HEADING_TERM_RE.match(line)
         if heading:
-            terms.add(heading.group(1).strip())
+            terms.add(_normalize_heading_term(heading.group(1)))
             continue
         if line.startswith("#"):
             continue
@@ -32,3 +33,11 @@ def load_glossary_terms(path: Path | None) -> set[str]:
         else:
             terms.add(line)
     return terms
+
+
+def _normalize_heading_term(text: str) -> str:
+    term = text.strip()
+    code_span = _CODE_SPAN_TERM_RE.match(term)
+    if code_span:
+        return code_span.group(1).strip()
+    return term
