@@ -8791,6 +8791,7 @@ from harness.skill_loader import (
     build_skill_prompt as _build_skill_prompt_impl,
     StreamEventPrinter as _StreamEventPrinter,
 )
+from harness.prosaic_prompt_loader import ProsaicPromptLoadError, ProsaicPromptLoader
 from harness.config import load_config
 from harness.llm_provider import AICodingCliProvider
 from harness.llm_tool_policy import (
@@ -8807,6 +8808,18 @@ def _find_skill(skill_base: str, project_dir: Path, cli: str) -> Path | None:
 
 def _build_prompt(skill_path: Path, arguments: str) -> str:
     return _build_skill_prompt_impl(skill_path, arguments)
+
+
+def _load_prosaic_command_prompt(skill_base: str, arguments: str, project_dir: Path) -> str | None:
+    """Load an installer-owned neutral command when the project has one."""
+    try:
+        artifact = ProsaicPromptLoader(project_dir).load_command(skill_base)
+    except ProsaicPromptLoadError as exc:
+        print(f"echelon: {exc}", file=sys.stderr)
+        sys.exit(1)
+    if artifact is None:
+        return None
+    return ProsaicPromptLoader.render_command(artifact.body, arguments)
 
 
 def _load_cli_config(project_dir: Path):
@@ -8984,22 +8997,22 @@ def _dispatch_skill_command(command: str, args: list[str]) -> None:
         sys.exit(1)
     cli = config.llm.cli
 
-    skill_path = _find_skill(skill_base, project_dir, cli)
-    if skill_path is None:
-        print(_skill_not_found_msg(skill_base, project_dir, cli), file=sys.stderr)
-        sys.exit(1)
+    prompt = _load_prosaic_command_prompt(skill_base, arguments, project_dir)
+    if prompt is None:
+        skill_path = _find_skill(skill_base, project_dir, cli)
+        if skill_path is None:
+            print(_skill_not_found_msg(skill_base, project_dir, cli), file=sys.stderr)
+            sys.exit(1)
 
     bin_ = shutil.which(cli) or cli
-    if cli == "opencode":
+    if cli == "opencode" and prompt is None:
         cmd = build_opencode_skill_command(bin_, skill_base, arguments, tool_policy)
         result = subprocess.run(cmd, cwd=str(project_dir))
-    elif cli in {"copilot", "codex", "openai-compatible"}:
-        prompt = _build_prompt(skill_path, arguments)
-        result_code = AICodingCliProvider(config).exec_prompt(str(project_dir), prompt)
-        sys.exit(result_code)
-    else:
+        sys.exit(result.returncode)
+    elif cli == "claude":
         # claude: use stream-json for live tool-call progress in the terminal
-        prompt = _build_prompt(skill_path, arguments)
+        if prompt is None:
+            prompt = _build_prompt(skill_path, arguments)
         _run_claude_streaming(
             bin_,
             prompt,
@@ -9008,7 +9021,11 @@ def _dispatch_skill_command(command: str, args: list[str]) -> None:
             config_dir=config.llm.config_dir,
         )
         return  # _run_claude_streaming calls sys.exit
-    sys.exit(result.returncode)
+
+    if prompt is None:
+        prompt = _build_prompt(skill_path, arguments)
+    result_code = AICodingCliProvider(config).exec_prompt(str(project_dir), prompt)
+    sys.exit(result_code)
 
 
 def _require_codegen_installation() -> None:

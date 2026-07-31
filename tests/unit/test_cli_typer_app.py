@@ -40,6 +40,34 @@ def test_re_execute_run_routes_to_deterministic_controller(monkeypatch):
 
 
 @pytest.mark.unit
+def test_prosaic_export_routes_explicit_source_and_destination(monkeypatch, tmp_path: Path):
+    from echelon.cli_app import run
+    from harness.prosaic_export import ProsaicExportResult
+
+    calls: list[tuple[Path, Path]] = []
+
+    def fake_export(extension_root: Path, destination: Path) -> ProsaicExportResult:
+        calls.append((extension_root, destination))
+        return ProsaicExportResult(destination=destination, exported_count=2)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("harness.prosaic_export.export_normalized_prose", fake_export)
+
+    run([
+        "prosaic",
+        "export",
+        "--extension-root",
+        "fixture-extension",
+        "--output",
+        "generated-prosaic",
+    ])
+
+    assert calls == [
+        (tmp_path / "fixture-extension", tmp_path / "generated-prosaic"),
+    ]
+
+
+@pytest.mark.unit
 def test_re_check_domain_routes_to_deterministic_gate(monkeypatch):
     from echelon.cli_app import run
 

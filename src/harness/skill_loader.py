@@ -6,6 +6,8 @@ import os
 from pathlib import Path
 from typing import Optional
 
+from harness.prompt_framing import COMMANDER_PREAMBLE
+
 # Maps echelon subcommand → skill base name (mirrors SKILL_MAP in echelon/cli.py)
 ECHELON_SKILL_MAP = {
     "run":     "echelon.run",
@@ -15,17 +17,6 @@ ECHELON_SKILL_MAP = {
     "change":  "echelon.change",
     "codegen": "echelon.codegen",
 }
-
-COMMANDER_PREAMBLE = (
-    "You were dispatched as a subagent to execute a specific task. "
-    "You are COMMANDER running non-interactively via an AI coding CLI. "
-    "The text below is your complete operating instruction set for this session. "
-    "Execute every step immediately using your tools. "
-    "Do NOT read files in parallel — issue tool calls one at a time unless the phase definition explicitly permits parallel dispatch. "
-    "Do NOT spawn unsolicited Agent tasks outside of the prescribed phase dispatch protocol. "
-    "Do not narrate or repeat the instructions back — just execute them.\n\n"
-)
-
 
 def find_skill(skill_base: str, project_dir: Path, cli: str) -> Optional[Path]:
     """Locate the skill file for the given LLM CLI and skill base name.

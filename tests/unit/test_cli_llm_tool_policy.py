@@ -16,6 +16,7 @@ from harness.provider_capability import (
     CLI_PROVIDER_CAPABILITIES,
     ProviderCapability,
 )
+from harness.prosaic_prompt_loader import ProsaicCommandArtifact
 
 
 @pytest.mark.unit
@@ -152,6 +153,49 @@ def test_dispatch_skill_command_routes_codex_through_ai_cli_provider(
     assert calls
     assert calls[0][0] == str(tmp_path)
     assert "review 005 pr_url=https://github.com/org/repo/pull/1" in calls[0][1]
+
+
+@pytest.mark.unit
+def test_dispatch_skill_command_uses_project_prosaic_command_before_native_skill(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".echelon" / "prosaic").mkdir(parents=True)
+    config = HarnessConfig(
+        target_repo=".",
+        target_default_branch="main",
+        provider="docker",
+        llm=LlmConfig(cli="codex"),
+    )
+    calls = []
+
+    class FakeProvider:
+        def __init__(self, loaded_config):
+            assert loaded_config is config
+            self.capabilities = CLI_PROVIDER_CAPABILITIES
+
+        def exec_prompt(self, worktree_path, prompt):
+            calls.append((worktree_path, prompt))
+            return 0
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ECHELON_LLM", "codex")
+    monkeypatch.setattr("echelon.cli.load_config", lambda project_dir, squad_only=True: config)
+    monkeypatch.setattr("echelon.cli.AICodingCliProvider", FakeProvider)
+    monkeypatch.setattr(
+        "echelon.cli.ProsaicPromptLoader.load_command",
+        lambda self, command_id: ProsaicCommandArtifact(
+            frontmatter={"name": command_id}, body="Review {{args}}."
+        ),
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        cli._dispatch_skill_command("review", ["005"])
+
+    assert exc.value.code == 0
+    assert calls
+    assert calls[0][0] == str(tmp_path)
+    assert "Review 005." in calls[0][1]
 
 
 @pytest.mark.unit
