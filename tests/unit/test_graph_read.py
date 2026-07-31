@@ -81,6 +81,13 @@ def _workspace_audit(
     )
 
 
+def _forbidden_side_effect(name: str):
+    def fail(*args: object, **kwargs: object) -> object:
+        raise AssertionError(f"graph reader called forbidden side effect: {name}")
+
+    return fail
+
+
 @pytest.mark.unit
 @pytest.mark.parametrize(
     ("mutate", "message"),
@@ -196,6 +203,58 @@ def test_load_graph_uses_canonical_spec_graph_and_live_spec_audit(
     assert model.audit is audit
     assert model.graph_hash == f"sha256:{hashlib.sha256(data).hexdigest()}"
     assert model.graph_hash != audit.graph_hash
+
+
+@pytest.mark.unit
+def test_load_graph_never_builds_refreshes_mines_or_writes_persisted_graphs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import echelon.graph_read as graph_read
+    import echelon.mempalace_requirements as mempalace_requirements
+    import echelon.spec_graph as spec_graph
+    import echelon.spec_graph_audit as spec_graph_audit
+    import echelon.workspace_graph as workspace_graph
+    import echelon.workspace_graph_audit as workspace_graph_audit
+    import echelon.workspace_graph_refresh as workspace_graph_refresh
+
+    spec_dir = tmp_path / "specs" / "905-demo"
+    workspace_path = (
+        tmp_path
+        / ".echelon"
+        / "runtime"
+        / "graph"
+        / "workspace-artifact-graph.json"
+    )
+    _write_graph(spec_dir / GRAPH_FILENAME, _document())
+    _write_graph(workspace_path, _document(scope="workspace"))
+
+    forbidden = (
+        (spec_graph, "build_spec_graph"),
+        (spec_graph, "write_spec_graph"),
+        (workspace_graph, "build_workspace_graph"),
+        (workspace_graph, "write_workspace_graph"),
+        (workspace_graph, "write_workspace_graph_bytes"),
+        (workspace_graph_refresh, "refresh_workspace_graph"),
+        (mempalace_requirements, "mine_spec_requirements"),
+        (spec_graph_audit, "write_spec_graph_audit"),
+        (workspace_graph_audit, "write_workspace_graph_audit"),
+    )
+    for module, name in forbidden:
+        sentinel = _forbidden_side_effect(f"{module.__name__}.{name}")
+        monkeypatch.setattr(module, name, sentinel)
+        monkeypatch.setattr(graph_read, name, sentinel, raising=False)
+
+    monkeypatch.setattr(graph_read, "workspace_graph_path", lambda root: workspace_path)
+    monkeypatch.setattr(graph_read, "resolve_spec_dir", lambda root, selector: spec_dir)
+    monkeypatch.setattr(graph_read, "audit_workspace_graph", lambda root: _workspace_audit())
+    monkeypatch.setattr(graph_read, "audit_spec_graph", lambda root, selector: _spec_audit())
+
+    workspace_model = graph_read.load_graph(tmp_path)
+    spec_model = graph_read.load_graph(tmp_path, "905")
+
+    assert workspace_model.scope == "workspace"
+    assert spec_model.scope == "spec"
 
 
 @pytest.mark.unit
