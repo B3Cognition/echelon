@@ -446,6 +446,17 @@ def test_query_is_unicode_casefolded_deterministic_and_visibly_limited(
 
 
 @pytest.mark.unit
+def test_query_nfkc_normalizes_full_width_latin_to_ascii(
+    query_model: GraphReadModel,
+) -> None:
+    from echelon.graph_traversal import query_graph
+
+    result = query_graph(query_model, "ＩＭＰＯＲＴ validation")
+
+    assert result.nodes[0]["id"] == "artifact:905-import-prose:catalog"
+
+
+@pytest.mark.unit
 def test_query_empty_stopwords_no_matches_and_depth_bounds_are_successful(
     query_model: GraphReadModel,
 ) -> None:
@@ -484,11 +495,11 @@ def impact_model() -> GraphReadModel:
         _node("amendment:one", "Amendment"),
         _node("source:app", "SourceRoot"),
         _node("excluded", "Other"),
+        _node("incoming-excluded", "Other"),
     )
     edges = (
         _edge("workspace:current", "CONTAINS_SPEC", "spec:old"),
         _edge("spec:new", "SUPERSEDES", "spec:old"),
-        _edge("spec:old", "SUPERSEDES", "spec:new"),
         _edge("spec:old", "HAS_REQUIREMENT", "req:one"),
         _edge("spec:old", "AMENDED_BY", "amendment:one"),
         _edge("spec:old", "TARGETS", "source:app"),
@@ -500,6 +511,7 @@ def impact_model() -> GraphReadModel:
         _edge("artifact:source", "STORED_AS", "drawer:one"),
         _edge("req:one", "STORED_AS", "drawer:one"),
         _edge("req:one", "UNAPPROVED", "excluded"),
+        _edge("incoming-excluded", "UNAPPROVED", "req:one"),
         _edge("req:two", "IMPLEMENTS", "req:one"),
         _edge("req:one", "IMPLEMENTS", "req:two"),
     )
@@ -537,13 +549,33 @@ def test_impact_default_follows_only_the_approved_typed_directions(
 
 
 @pytest.mark.unit
+def test_impact_reverse_supersedes_preserves_stored_arrow(
+    impact_model: GraphReadModel,
+) -> None:
+    from echelon.graph_traversal import impact
+
+    result = impact(impact_model, "spec:old", max_depth=1)
+    path = next(path for path in result.paths if path.node_ids[-1] == "spec:new")
+
+    assert path.node_ids == ("spec:old", "spec:new")
+    assert (
+        path.steps[0].source,
+        path.steps[0].type,
+        path.steps[0].target,
+        path.steps[0].direction,
+    ) == ("spec:new", "SUPERSEDES", "spec:old", "in")
+
+
+@pytest.mark.unit
 def test_impact_is_cycle_safe_uses_shortest_paths_and_marks_depth_truncation(
     impact_model: GraphReadModel,
 ) -> None:
     from echelon.graph_traversal import impact
 
     result = impact(impact_model, "artifact:source", max_depth=2)
-    cycle = impact(impact_model, "spec:old", max_depth=10)
+    cycle = impact(
+        impact_model, "req:one", max_depth=10, all_relations=True
+    )
 
     paths = {path.node_ids[-1]: path for path in result.paths}
     assert paths["drawer:one"].node_ids == ("artifact:source", "drawer:one")
@@ -554,9 +586,7 @@ def test_impact_is_cycle_safe_uses_shortest_paths_and_marks_depth_truncation(
     )
     assert len(paths) == len(result.nodes)
     assert result.truncated is True
-    assert [
-        path.node_ids for path in cycle.paths if path.node_ids[-1] == "spec:new"
-    ] == [("spec:old", "spec:new")]
+    assert len(cycle.paths) == len(cycle.nodes)
     assert cycle.truncated is False
 
 
@@ -573,10 +603,26 @@ def test_impact_all_relations_is_explicit_both_direction_escape_hatch(
 
     assert "excluded" not in {str(node["id"]) for node in default.nodes}
     assert "excluded" in {str(node["id"]) for node in unrestricted.nodes}
+    assert "incoming-excluded" not in {
+        str(node["id"]) for node in default.nodes
+    }
+    assert "incoming-excluded" in {
+        str(node["id"]) for node in unrestricted.nodes
+    }
     excluded_path = next(
         path for path in unrestricted.paths if path.node_ids[-1] == "excluded"
     )
     assert excluded_path.steps[0].direction == "out"
+    incoming_path = next(
+        path
+        for path in unrestricted.paths
+        if path.node_ids[-1] == "incoming-excluded"
+    )
+    assert (
+        incoming_path.steps[0].source,
+        incoming_path.steps[0].target,
+        incoming_path.steps[0].direction,
+    ) == ("incoming-excluded", "req:one", "in")
 
 
 @pytest.mark.unit
