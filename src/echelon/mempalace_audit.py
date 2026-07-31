@@ -449,12 +449,12 @@ def audit_spec_memory(
             _append_unique(wrong_wing, drawer_id)
         if metadata.get("room") != planned.room:
             _append_unique(wrong_room, drawer_id)
-        expected_scope = (
-            "canonical-support"
+        expected_scopes = (
+            {"canonical", "canonical-support"}
             if planned.requirement_id.startswith("CTX-")
-            else "canonical"
+            else {"canonical"}
         )
-        if metadata.get("scope") != expected_scope or metadata.get("canonical") is not True:
+        if metadata.get("scope") not in expected_scopes or metadata.get("canonical") is not True:
             _append_unique(non_canonical, drawer_id)
         if (
             planned.requirement_id.startswith("CTX-")

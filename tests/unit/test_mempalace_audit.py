@@ -266,8 +266,9 @@ def test_audit_does_not_exempt_evidence_scope_with_wrong_artifact_kind(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("persisted_scope", ("canonical", "canonical-support"))
 def test_audit_includes_support_artifact_rows_in_expected_set(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, persisted_scope: str
 ) -> None:
     spec_dir = make_spec(tmp_path)
     spec_dir.joinpath("plan.md").write_text(
@@ -281,9 +282,11 @@ def test_audit_includes_support_artifact_rows_in_expected_set(
 
     spec_snapshot = load_canonical_spec_snapshot(tmp_path, spec_dir)
     support_snapshot = load_supporting_artifact_snapshots(tmp_path, spec_dir)[0]
+    support_row = current_support_row(support_snapshot)
+    support_row["metadata"]["scope"] = persisted_scope
     rows = {
         "drawer-fr-001": current_row(spec_snapshot),
-        "drawer-plan-000": current_support_row(support_snapshot),
+        "drawer-plan-000": support_row,
     }
     monkeypatch.setattr(
         "echelon.mempalace_audit.create_requirement_memory_adapter",
