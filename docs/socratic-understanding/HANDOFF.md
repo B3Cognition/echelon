@@ -67,7 +67,7 @@ journal contracts.
 | Quick Socratic question → spec-only answer filter | Implemented | [`ROUND1_PROMPT_TEMPLATE`](../../scripts/sue_challenge.py#L183), [`ROUND2_PROMPT_TEMPLATE`](../../scripts/sue_challenge.py#L217), strict validators, and [`main`](../../scripts/sue_challenge.py#L1543). |
 | Provider-specific compatibility transport | Implemented | [`build_model_invocation`](../../scripts/sue_challenge.py#L656) and [`run_model_call`](../../scripts/sue_challenge.py#L700) preserve legacy provider behavior while routing only schema-bearing V1 Codex calls through the hardened cold runner. |
 | Independent multi-reader reconstruction with stable/noise split | Implemented | [`run_reader`](../../scripts/sue_consensus.py#L373), [`cluster_findings`](../../scripts/sue_consensus.py#L111), and [`split_stable`](../../scripts/sue_consensus.py#L146). |
-| Typed interpretation graphs with behavioural assertions | Implemented and schema-bound for Codex V3 | [`Edge`](../../scripts/sue_reproducibility.py#L88), [`Assertion`](../../scripts/sue_reproducibility.py#L101), [`ReqInterpretation`](../../scripts/sue_reproducibility.py#L113), and [`ReaderGraph`](../../scripts/sue_reproducibility.py#L120) define the records. [`build_output_schema`](../../scripts/sue_reproducibility.py#L404) closes every chunk to its exact unit IDs and edge vocabulary; [`validate_graph`](../../scripts/sue_reproducibility.py#L507) independently enforces complete coverage, finite confidence, and unit-local provenance for compatibility providers and replay. |
+| Typed interpretation graphs with behavioural assertions | Implemented and schema-bound for Codex V3 | [`Edge`](../../scripts/sue_reproducibility.py#L88), [`Assertion`](../../scripts/sue_reproducibility.py#L101), [`ReqInterpretation`](../../scripts/sue_reproducibility.py#L113), and [`ReaderGraph`](../../scripts/sue_reproducibility.py#L120) define the records. [`build_output_schema`](../../scripts/sue_reproducibility.py#L404) closes every chunk to its exact unit IDs and edge vocabulary; [`validate_graph`](../../scripts/sue_reproducibility.py#L507) independently enforces complete coverage, finite confidence, and unit-local provenance for compatibility providers and replay. Model-controlled labels and citations that cannot be grounded are quarantined and counted as evidence loss; malformed structure and impossible data remain hard failures. |
 | Cross-run noise floor and stable-low fractures | Implemented | [`aggregate_passes`](../../scripts/sue_reproducibility.py#L511) computes SR mean/stdev, per-requirement variance, extraction-noise floor, and the all-passes `stable_low` intersection. |
 | Behavioural divergence candidates | Partially implemented | [`Witness`](../../scripts/sue_reproducibility.py#L157) and [`find_witnesses`](../../scripts/sue_reproducibility.py#L613) produce heuristic candidates; the current report explicitly labels them unverified. |
 | Bounded adaptive Socratic drill | Implemented as a manual/Forensic instrument | [`LENSES`](../../scripts/sue_dialectic.py#L132), [`next_step`](../../scripts/sue_dialectic.py#L306), and [`run_dialogue`](../../scripts/sue_dialectic.py#L411) implement deterministic operators, a one-revision budget, retention flags, and aporia terminal states. |
@@ -91,15 +91,14 @@ both in the ambient environment and with the provider markers
 `CODEX_THREAD_ID`, `CODEX_CI`, and `ECHELON_LLM` cleared while retaining the
 rest of `os.environ`. The provider-default test clears those three markers, so
 ambient Codex detection remains runtime behaviour rather than test input.
-At the current working-tree delta, all 498 tests passed in each environment.
+At the current working-tree delta, all 499 tests passed in each environment.
 These zero-call tests do not constitute a Codex smoke or A1 result.
 
-The offline replay audit of the 18 V3 failure artifacts retained from spec 035
-classified six as incomplete JSON, five as ungrounded labels, two as illegal
-edge types, one as a duplicate JSON key, one as out-of-unit provenance, and one
-as invalid confidence; two outputs rejected by the former single-line label
-rule are accepted by the corrected full-unit vocabulary anchor. This replay
-made no provider calls and did not modify the challenged specification.
+The offline replay audit of the eight V3 chunks that failed in the latest spec
+035 run now produces zero hard validation failures. Seventeen model-controlled
+labels or citations are quarantined as ungrounded evidence and retained in the
+run accounting. This replay made no provider calls and did not modify the
+challenged specification.
 
 ## Where SUE should integrate
 

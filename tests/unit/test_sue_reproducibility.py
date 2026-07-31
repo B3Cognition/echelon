@@ -246,7 +246,7 @@ class TestLabelGrounding:
         assert v3._label_grounded("sanctioned commands", line)
         assert v3._label_grounded("sanctioned command", line)
 
-    def test_validate_graph_enforces_anchor(self):
+    def test_validate_graph_quarantines_ungrounded_label_instead_of_killing_chunk(self):
         lines = ["- **FR-001**: the system MUST write the report."]
         result = v3.validate_graph(
             {"requirements": {"FR-001": {"edges": [
@@ -254,8 +254,9 @@ class TestLabelGrounding:
                  "line": 1, "conf": 0.9}]}}},
             {"FR-001"}, 1, spec_lines=lines,
         )
-        assert isinstance(result, v1.ParseFailure)
-        assert "must reuse the specification's own words" in result.reason
+        reqs, ungrounded = result
+        assert reqs["FR-001"].edges == []
+        assert ungrounded == 1
 
     def test_validate_graph_accepts_anchored_labels(self):
         lines = ["- **FR-001**: the system MUST write the report."]
@@ -637,17 +638,17 @@ class TestValidateGraph:
         assert ".conf must be a finite number between 0 and 1" in result.reason
 
     @pytest.mark.parametrize(
-        "field,value,needle",
+        "field,value,expected_ungrounded",
         [
-            ("assumptions", [{"text": "inferred", "line": 4}], "outside source span"),
+            ("assumptions", [{"text": "inferred", "line": 4}], 1),
             ("assertions", [{
                 "given": "state", "when": "action", "then": "outcome",
-                "lines": [1, 4],
-            }], "outside source span"),
+                "lines": [2, 4],
+            }], 1),
         ],
     )
-    def test_evidence_lines_must_belong_to_the_requirement_source_span(
-            self, tmp_path, field, value, needle):
+    def test_evidence_outside_source_span_is_quarantined(
+            self, tmp_path, field, value, expected_ungrounded):
         path = tmp_path / "spec.md"
         path.write_text(
             "# Context\n"
@@ -664,8 +665,12 @@ class TestValidateGraph:
             spec_lines=path.read_text().splitlines(), source_bundle=bundle,
         )
 
-        assert isinstance(result, v1.ParseFailure)
-        assert needle in result.reason
+        reqs, ungrounded = result
+        assert ungrounded == expected_ungrounded
+        if field == "assumptions":
+            assert reqs["FR-001"].assumptions == []
+        else:
+            assert reqs["FR-001"].assertions[0].lines == [2]
 
 
 class TestV3OutputSchema:
@@ -791,6 +796,21 @@ class TestAggregatePasses:
 
 
 class TestScenario:
+    def test_ungrounded_model_edges_do_not_drop_v3_chunk(self, tmp_path):
+        spec = tmp_path / "spec.md"
+        spec.write_text(_SPEC + "\n")
+        payload = json.loads(_graph_json())
+        payload["requirements"]["FR-001"]["edges"][0]["t"] = "invented broker label"
+        response = json.dumps(payload)
+        stub = _replay_stub(tmp_path, [response] * 3)
+
+        rc = v3.main([str(spec), "--claude-cmd", shlex.quote(stub)])
+
+        assert rc == v1.EXIT_SUCCESS
+        report = (tmp_path / "semantic-reproducibility.md").read_text()
+        assert "Ungrounded evidence dropped" in report
+        assert "R1=1" in report and "R2=1" in report and "R3=1" in report
+
     def test_multipass_reports_stability_and_noise_floor(self, tmp_path, capsys):
         spec = tmp_path / "spec.md"
         spec.write_text(_SPEC + "\n")

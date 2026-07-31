@@ -509,8 +509,9 @@ def validate_graph(payload: dict, known_ids: set, max_line: int,
                    situations: dict | None = None,
                    source_bundle=None):
     """Strict graph validation. Returns (dict req->ReqInterpretation, ungrounded)
-    or v1.ParseFailure. With spec_lines, enforces the v3.1 vocabulary anchor:
-    edge labels must reuse words of the cited line."""
+    or v1.ParseFailure. Model-controlled evidence that cannot be grounded is
+    quarantined and counted; structural/schema violations remain hard failures.
+    With spec_lines, edge labels must reuse words of the requirement source."""
     reqs = payload.get("requirements")
     if not isinstance(reqs, dict) or not reqs:
         return v1.ParseFailure(reason="requirements must be a non-empty object")
@@ -566,6 +567,10 @@ def validate_graph(payload: dict, known_ids: set, max_line: int,
             line = raw.get("line")
             line_failure = validate_line(line, f"{req_id}.edges[{i}].line")
             if line_failure is not None:
+                if (allowed_lines is not None and isinstance(line, int)
+                        and 1 <= line <= max_line):
+                    ungrounded += 1
+                    continue
                 return line_failure
             conf = raw.get("conf")
             if (not isinstance(conf, (int, float)) or isinstance(conf, bool)
@@ -578,14 +583,12 @@ def validate_graph(payload: dict, known_ids: set, max_line: int,
                 cited = unit_text if unit_text is not None else spec_lines[line - 1]
                 for label in (s, t):
                     if not _label_grounded(label, cited):
-                        return v1.ParseFailure(
-                            reason=(
-                                f"{req_id}.edges[{i}] label {label!r} uses words "
-                                f"not present in source text for {req_id} — node "
-                                "labels must reuse the specification's own words "
-                                "from that requirement"
-                            )
-                        )
+                        ungrounded += 1
+                        break
+                else:
+                    edges.append(Edge(s=s.strip(), type=etype, t=t.strip(),
+                                      line=line, conf=float(conf)))
+                continue
             edges.append(Edge(s=s.strip(), type=etype, t=t.strip(),
                               line=line, conf=float(conf)))
         assumptions = []
@@ -601,6 +604,10 @@ def validate_graph(payload: dict, known_ids: set, max_line: int,
                 line, f"{req_id}.assumptions[{i}].line"
             )
             if line_failure is not None:
+                if (allowed_lines is not None and isinstance(line, int)
+                        and 1 <= line <= max_line):
+                    ungrounded += 1
+                    continue
                 return line_failure
             assumptions.append({"text": raw["text"].strip(),
                                 "line": line})
@@ -620,15 +627,23 @@ def validate_graph(payload: dict, known_ids: set, max_line: int,
                 return v1.ParseFailure(
                     reason=f"{req_id}.assertions[{i}].lines must be non-empty integers"
                 )
+            grounded_lines = []
             for line_index, assertion_line in enumerate(lines):
                 line_failure = validate_line(
                     assertion_line,
                     f"{req_id}.assertions[{i}].lines[{line_index}]",
                 )
                 if line_failure is not None:
+                    if (allowed_lines is not None and isinstance(assertion_line, int)
+                            and 1 <= assertion_line <= max_line):
+                        ungrounded += 1
+                        continue
                     return line_failure
+                grounded_lines.append(assertion_line)
+            if not grounded_lines:
+                continue
             assertions.append(Assertion(given=g.strip(), when=w.strip(),
-                                        then=t_.strip(), lines=list(lines)))
+                                        then=t_.strip(), lines=grounded_lines))
         canonical = (situations or {}).get(req_id)
         if canonical is not None:
             expected = (norm(canonical["given"]), norm(canonical["when"]))
@@ -961,7 +976,7 @@ def render_report(spec, spec_path: Path, readers: list, per_req: dict,
     lines.append(f"  - evidence coverage: {evidence['coverage']:.2f}")
     lines.append(f"  - requirements measured: {len(per_req)}")
     ungrounded = ", ".join(f"R{r.reader_no}={r.ungrounded_edges}" for r in readers)
-    lines.append(f"- **Ungrounded edges dropped:** {ungrounded}")
+    lines.append(f"- **Ungrounded evidence dropped:** {ungrounded}")
     if any(r.failed_chunks for r in readers):
         chunk_note = ", ".join(
             f"R{r.reader_no}={r.failed_chunks}" for r in readers if r.failed_chunks
