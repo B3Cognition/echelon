@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import webbrowser
 
 import pytest
 from typer.testing import CliRunner
@@ -472,11 +473,23 @@ def test_graph_view_rejects_unknown_renderer_before_writing_output(
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("renderer", ("cytoscape", "vis"))
+@pytest.mark.parametrize(
+    ("renderer", "open_browser"),
+    (
+        ("cytoscape", lambda url: False),
+        (
+            "cytoscape",
+            lambda url: (_ for _ in ()).throw(webbrowser.Error("blocked")),
+        ),
+        ("vis", lambda url: False),
+        ("vis", lambda url: (_ for _ in ()).throw(webbrowser.Error("blocked"))),
+    ),
+)
 def test_graph_view_browser_failure_preserves_audit_exit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     renderer: str,
+    open_browser,
 ) -> None:
     _persist_graph(tmp_path)
     monkeypatch.chdir(tmp_path)
@@ -484,7 +497,7 @@ def test_graph_view_browser_failure_preserves_audit_exit(
         "echelon.spec_graph_audit.audit_spec_graph",
         lambda project_root, selector: _audit("fail"),
     )
-    monkeypatch.setattr("webbrowser.open", lambda url: False)
+    monkeypatch.setattr("webbrowser.open", open_browser)
     from echelon.cli_app import app
 
     result = CliRunner().invoke(
@@ -493,6 +506,10 @@ def test_graph_view_browser_failure_preserves_audit_exit(
     )
 
     assert result.exit_code == 1
+    output = tmp_path / ".echelon" / "graph" / (
+        "001-demo-vis.html" if renderer == "vis" else "001-demo.html"
+    )
+    assert output.is_file()
     assert "warning: graph viewer was not opened" in result.stderr
 
 
