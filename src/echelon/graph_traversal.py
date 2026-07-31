@@ -5,9 +5,97 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Iterable
 from dataclasses import dataclass
+import re
+from types import MappingProxyType
 from typing import Mapping, cast
+import unicodedata
 
 from echelon.graph_read import GraphReadModel, resolve_node_id
+
+
+QUERY_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "are",
+        "be",
+        "by",
+        "do",
+        "does",
+        "for",
+        "from",
+        "how",
+        "in",
+        "is",
+        "of",
+        "on",
+        "or",
+        "please",
+        "show",
+        "that",
+        "the",
+        "these",
+        "this",
+        "those",
+        "to",
+        "what",
+        "when",
+        "where",
+        "which",
+        "who",
+        "why",
+        "with",
+    }
+)
+
+NODE_TYPE_ALIASES: Mapping[str, str] = MappingProxyType(
+    {
+        "amendment": "Amendment",
+        "amendments": "Amendment",
+        "artifact": "Artifact",
+        "artifacts": "Artifact",
+        "deferral": "Deferral",
+        "deferrals": "Deferral",
+        "drawer": "MemPalaceDrawer",
+        "drawers": "MemPalaceDrawer",
+        "requirement": "Requirement",
+        "requirements": "Requirement",
+        "source": "SourceRoot",
+        "sources": "SourceRoot",
+        "spec": "Spec",
+        "specification": "Spec",
+        "specifications": "Spec",
+        "specs": "Spec",
+        "task": "Task",
+        "tasks": "Task",
+        "workspace": "Workspace",
+        "workspaces": "Workspace",
+    }
+)
+
+IMPACT_RELATIONS: Mapping[
+    tuple[str, str], frozenset[tuple[str, str]]
+] = MappingProxyType(
+    {
+        ("Artifact", "DERIVED_FROM"): frozenset({("in", "Requirement")}),
+        ("Artifact", "STORED_AS"): frozenset({("out", "MemPalaceDrawer")}),
+        ("Requirement", "IMPLEMENTS"): frozenset({("in", "Task")}),
+        ("Requirement", "VERIFIED_BY"): frozenset({("out", "Artifact")}),
+        ("Requirement", "DEFERRED_BY"): frozenset({("out", "Deferral")}),
+        ("Requirement", "STORED_AS"): frozenset(
+            {("out", "MemPalaceDrawer")}
+        ),
+        ("Task", "DEFERRED_BY"): frozenset({("out", "Deferral")}),
+        ("Spec", "HAS_REQUIREMENT"): frozenset({("out", "Requirement")}),
+        ("Spec", "AMENDED_BY"): frozenset({("out", "Amendment")}),
+        ("Spec", "TARGETS"): frozenset({("out", "SourceRoot")}),
+        ("Spec", "SUPERSEDES"): frozenset({("in", "Spec")}),
+        ("Workspace", "CONTAINS_SPEC"): frozenset({("out", "Spec")}),
+    }
+)
+
+_TOKEN_PATTERN = re.compile(r"[\w]+(?:-[\w]+)*", re.UNICODE)
 
 
 @dataclass(frozen=True)
@@ -38,6 +126,138 @@ class _Adjacent:
     edge: Mapping[str, object]
     step: PathStep
     node_id: str
+
+
+@dataclass(frozen=True)
+class _QueryMatch:
+    node_id: str
+    rank: tuple[int, int, int, int, int, int]
+    path: GraphPath
+
+
+def query_graph(
+    model: GraphReadModel,
+    question: str,
+    node_type: str | None = None,
+    depth: int = 2,
+    limit: int = 20,
+) -> GraphResult:
+    """Return deterministic lexical matches with bounded expansion evidence."""
+    _validate_depth(depth)
+    _validate_limit(limit)
+    raw_tokens = _tokens(question)
+    inferred_type = next(
+        (NODE_TYPE_ALIASES[token] for token in raw_tokens if token in NODE_TYPE_ALIASES),
+        None,
+    )
+    output_type = (
+        _resolve_node_type(model, node_type)
+        if node_type is not None
+        else inferred_type
+    )
+    if node_type is not None and output_type is None:
+        return GraphResult((), (), ())
+
+    query_tokens = tuple(
+        token
+        for token in raw_tokens
+        if token not in QUERY_STOPWORDS and token not in NODE_TYPE_ALIASES
+    )
+    if not query_tokens:
+        return GraphResult((), (), ())
+
+    features_by_id = {
+        node_id: _lexical_features(node_id, node, raw_tokens, query_tokens)
+        for node_id, node in model.nodes_by_id.items()
+    }
+    lexical_seed_ids = {
+        node_id
+        for node_id, features in features_by_id.items()
+        if features != (0, 0, 0, 0, 0)
+    }
+    if not lexical_seed_ids:
+        return GraphResult((), (), ())
+
+    paths = _bounded_paths(model, tuple(sorted(lexical_seed_ids)), depth)
+    matches: list[_QueryMatch] = []
+    for candidate_id, path in paths.items():
+        node = model.nodes_by_id[candidate_id]
+        if output_type is None:
+            if candidate_id not in lexical_seed_ids:
+                continue
+        elif str(node["type"]).casefold() != output_type.casefold():
+            continue
+        base_rank = features_by_id[candidate_id]
+        matches.append(
+            _QueryMatch(
+                candidate_id,
+                (*base_rank, -len(path.steps)),
+                path,
+            )
+        )
+
+    matches.sort(key=lambda item: (*(-value for value in item.rank), item.node_id))
+    returned = matches[:limit]
+    returned_paths = tuple(item.path for item in returned)
+    edge_index = _edge_index(model)
+    edges = tuple(
+        edge_index[_step_identity(step)]
+        for item in returned
+        for step in item.path.steps
+    )
+    return GraphResult(
+        nodes=tuple(model.nodes_by_id[item.node_id] for item in returned),
+        edges=_canonical_edges(edges),
+        paths=returned_paths,
+        truncated=len(matches) > limit,
+    )
+
+
+def impact(
+    model: GraphReadModel,
+    node_id: str,
+    max_depth: int = 4,
+    all_relations: bool = False,
+) -> GraphResult:
+    """Return cycle-safe downstream impact using approved typed directions."""
+    start = resolve_node_id(model, node_id)
+    _validate_depth(max_depth)
+    start_path = GraphPath((start,), ())
+    queue: deque[tuple[str, GraphPath]] = deque([(start, start_path)])
+    visited = {start}
+    paths: list[GraphPath] = []
+    truncated = False
+
+    while queue:
+        current_id, current_path = queue.popleft()
+        current_depth = len(current_path.steps)
+        adjacent = _impact_adjacent(model, current_id, all_relations)
+        if current_depth >= max_depth:
+            if any(item.node_id not in visited for item in adjacent):
+                truncated = True
+            continue
+        for item in adjacent:
+            if item.node_id in visited:
+                continue
+            visited.add(item.node_id)
+            path = GraphPath(
+                (*current_path.node_ids, item.node_id),
+                (*current_path.steps, item.step),
+            )
+            paths.append(path)
+            queue.append((item.node_id, path))
+
+    edge_index = _edge_index(model)
+    edges = tuple(
+        edge_index[_step_identity(step)] for path in paths for step in path.steps
+    )
+    return _result(
+        model,
+        tuple(visited - {start}),
+        edges,
+        tuple(paths),
+        truncated=truncated,
+    )
 
 
 def explain_node(model: GraphReadModel, node_id: str, limit: int = 50) -> GraphResult:
@@ -133,6 +353,126 @@ def shortest_path(
             )
 
     return _result(model, (), (), ())
+
+
+def _bounded_paths(
+    model: GraphReadModel, seed_ids: tuple[str, ...], max_depth: int
+) -> dict[str, GraphPath]:
+    paths = {seed_id: GraphPath((seed_id,), ()) for seed_id in seed_ids}
+    queue: deque[str] = deque(seed_ids)
+    while queue:
+        current_id = queue.popleft()
+        current_path = paths[current_id]
+        if len(current_path.steps) >= max_depth:
+            continue
+        for item in _adjacent(model, current_id, "both", path_order=True):
+            if item.node_id in paths:
+                continue
+            paths[item.node_id] = GraphPath(
+                (*current_path.node_ids, item.node_id),
+                (*current_path.steps, item.step),
+            )
+            queue.append(item.node_id)
+    return paths
+
+
+def _lexical_features(
+    node_id: str,
+    node: Mapping[str, object],
+    canonical_query_tokens: tuple[str, ...],
+    query_tokens: tuple[str, ...],
+) -> tuple[int, int, int, int, int]:
+    properties = cast(Mapping[str, object], node["properties"])
+    identity_values = tuple(
+        value
+        for key, property_value in properties.items()
+        if key.endswith("_id")
+        for value in _scalar_values(property_value)
+    )
+    source_values = tuple(_scalar_values(properties.get("source_text")))
+    other_values = tuple(
+        value
+        for key, property_value in properties.items()
+        if key != "source_text" and not key.endswith("_id")
+        for value in _scalar_values(property_value)
+    )
+    identity_source_values = (*identity_values, *source_values)
+    searchable_values = (*identity_source_values, *other_values)
+    identity_source_tokens = {
+        token for value in identity_source_values for token in _tokens(value)
+    }
+    other_tokens = {token for value in other_values for token in _tokens(value)}
+    return (
+        int(_tokens(node_id) == canonical_query_tokens),
+        int(any(_tokens(value) == query_tokens for value in identity_values)),
+        int(
+            any(
+                _contains_phrase(_tokens(value), query_tokens)
+                for value in searchable_values
+            )
+        ),
+        sum(token in identity_source_tokens for token in query_tokens),
+        sum(token in other_tokens for token in query_tokens),
+    )
+
+
+def _scalar_values(value: object) -> tuple[str, ...]:
+    if isinstance(value, (str, int, float, bool)):
+        return (str(value),)
+    if isinstance(value, (list, tuple)):
+        return tuple(
+            str(item) for item in value if isinstance(item, (str, int, float, bool))
+        )
+    return ()
+
+
+def _contains_phrase(tokens: tuple[str, ...], phrase: tuple[str, ...]) -> bool:
+    width = len(phrase)
+    return any(
+        tokens[index : index + width] == phrase
+        for index in range(len(tokens) - width + 1)
+    )
+
+
+def _tokens(value: object) -> tuple[str, ...]:
+    return tuple(_TOKEN_PATTERN.findall(_normalize(str(value))))
+
+
+def _normalize(value: str) -> str:
+    return unicodedata.normalize("NFKC", value).casefold()
+
+
+def _resolve_node_type(model: GraphReadModel, requested: str) -> str | None:
+    normalized = _normalize(requested.strip())
+    aliased = NODE_TYPE_ALIASES.get(normalized)
+    if aliased is not None:
+        return aliased
+    return next(
+        (
+            str(node["type"])
+            for node in model.nodes_by_id.values()
+            if _normalize(str(node["type"])) == normalized
+        ),
+        None,
+    )
+
+
+def _impact_adjacent(
+    model: GraphReadModel, node_id: str, all_relations: bool
+) -> tuple[_Adjacent, ...]:
+    adjacent = _adjacent(model, node_id, "both", path_order=True)
+    if all_relations:
+        return adjacent
+    current_type = str(model.nodes_by_id[node_id]["type"])
+    return tuple(
+        item
+        for item in adjacent
+        if (
+            item.step.direction,
+            str(model.nodes_by_id[item.node_id]["type"]),
+        )
+        in IMPACT_RELATIONS.get((current_type, item.step.type), frozenset())
+    )
 
 
 def _adjacent(
@@ -251,6 +591,11 @@ def _step_identity(step: PathStep) -> tuple[str, str, str]:
 def _validate_limit(limit: int) -> None:
     if limit <= 0:
         raise ValueError("graph traversal limit must be positive")
+
+
+def _validate_depth(depth: int) -> None:
+    if depth <= 0:
+        raise ValueError("graph traversal depth must be positive")
 
 
 def _validate_direction(direction: str) -> None:

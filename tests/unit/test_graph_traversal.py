@@ -43,6 +43,32 @@ def _model(
     )
 
 
+def _typed_model(
+    nodes: Iterable[Mapping[str, object]], edges: Iterable[Mapping[str, object]]
+) -> GraphReadModel:
+    nodes_by_id = {str(node["id"]): node for node in nodes}
+    outgoing = {node_id: [] for node_id in nodes_by_id}
+    incoming = {node_id: [] for node_id in nodes_by_id}
+    for edge in edges:
+        outgoing[str(edge["source"])].append(edge)
+        incoming[str(edge["target"])].append(edge)
+    return GraphReadModel(
+        scope="spec",
+        graph_hash="sha256:test",
+        document={},
+        audit=object(),  # type: ignore[arg-type]
+        nodes_by_id=nodes_by_id,
+        outgoing={node_id: tuple(values) for node_id, values in outgoing.items()},
+        incoming={node_id: tuple(values) for node_id, values in incoming.items()},
+    )
+
+
+def _node(
+    node_id: str, node_type: str, **properties: object
+) -> dict[str, object]:
+    return {"id": node_id, "type": node_type, "properties": properties}
+
+
 def _identities(edges: Iterable[Mapping[str, object]]) -> list[tuple[str, str, str]]:
     return [
         (str(edge["source"]), str(edge["type"]), str(edge["target"]))
@@ -267,3 +293,295 @@ def test_shortest_path_handles_identity_absence_and_hop_bounds() -> None:
     assert absent.edges == ()
     assert absent.paths == ()
     assert bounded.paths == ()
+
+
+@pytest.fixture
+def query_model() -> GraphReadModel:
+    return _typed_model(
+        (
+            _node(
+                "artifact:905-import-prose:catalog",
+                "Artifact",
+                path="inputs/import-validation.md",
+                source_text="Import validation source",
+                labels=["parser", "batch"],
+            ),
+            _node(
+                "req:905-import-prose:FR-012",
+                "Requirement",
+                requirement_id="FR-012",
+                source_text="Reject malformed uploads",
+            ),
+            _node(
+                "req:905-import-prose:FR-013",
+                "Requirement",
+                requirement_id="FR-013",
+                source_text="Archive checksum remains deterministic",
+            ),
+            _node(
+                "req:905-import-prose:FR-014",
+                "Requirement",
+                requirement_id="FR-014",
+                source_text="Archive checksum remains deterministic",
+            ),
+            _node(
+                "task:905-import-prose:T-001",
+                "Task",
+                task_id="T-001",
+                target="Batch parser",
+            ),
+            _node(
+                "artifact:905-import-prose:unicode",
+                "Artifact",
+                path="docs/straße.md",
+                title="Straße",
+            ),
+        ),
+        (
+            _edge(
+                "req:905-import-prose:FR-012",
+                "DERIVED_FROM",
+                "artifact:905-import-prose:catalog",
+            ),
+            _edge(
+                "task:905-import-prose:T-001",
+                "IMPLEMENTS",
+                "req:905-import-prose:FR-012",
+            ),
+        ),
+    )
+
+
+@pytest.mark.unit
+def test_query_ranks_exact_id_identity_phrase_and_property_matches(
+    query_model: GraphReadModel,
+) -> None:
+    from echelon.graph_traversal import query_graph
+
+    exact_id = query_graph(query_model, "REQ:905-IMPORT-PROSE:fr-012")
+    prefixed_exact_id = query_graph(
+        query_model, "ARTIFACT:905-IMPORT-PROSE:unicode"
+    )
+    identity = query_graph(query_model, "fr-012")
+    phrase = query_graph(query_model, "Import, validation!")
+    properties = query_graph(query_model, "batch parser")
+
+    assert exact_id.nodes[0]["id"] == "req:905-import-prose:FR-012"
+    assert prefixed_exact_id.nodes[0]["id"] == "artifact:905-import-prose:unicode"
+    assert identity.nodes[0]["id"] == "req:905-import-prose:FR-012"
+    assert phrase.nodes[0]["id"] == "artifact:905-import-prose:catalog"
+    assert [node["id"] for node in properties.nodes[:2]] == [
+        "task:905-import-prose:T-001",
+        "artifact:905-import-prose:catalog",
+    ]
+
+
+@pytest.mark.unit
+def test_query_infers_plural_type_and_keeps_seed_only_in_evidence_path(
+    query_model: GraphReadModel,
+) -> None:
+    from echelon.graph_traversal import query_graph
+
+    result = query_graph(
+        query_model,
+        "which requirements depend on import validation?",
+        depth=1,
+    )
+
+    assert [node["id"] for node in result.nodes] == [
+        "req:905-import-prose:FR-012",
+    ]
+    assert result.paths[0].node_ids == (
+        "artifact:905-import-prose:catalog",
+        "req:905-import-prose:FR-012",
+    )
+    assert result.paths[0].steps[0].type == "DERIVED_FROM"
+    assert result.paths[0].steps[0].direction == "in"
+    assert all(node["type"] == "Requirement" for node in result.nodes)
+    assert "artifact:905-import-prose:catalog" not in {
+        str(node["id"]) for node in result.nodes
+    }
+
+
+@pytest.mark.unit
+def test_query_explicit_type_precedes_inference_and_absent_type_is_empty(
+    query_model: GraphReadModel,
+) -> None:
+    from echelon.graph_traversal import query_graph
+
+    explicit = query_graph(
+        query_model,
+        "requirements import validation",
+        node_type="artifact",
+    )
+    absent = query_graph(query_model, "import validation", node_type="Decision")
+
+    assert [node["id"] for node in explicit.nodes] == [
+        "artifact:905-import-prose:catalog"
+    ]
+    assert absent.nodes == ()
+    assert absent.edges == ()
+    assert absent.paths == ()
+
+
+@pytest.mark.unit
+def test_query_is_unicode_casefolded_deterministic_and_visibly_limited(
+    query_model: GraphReadModel,
+) -> None:
+    from echelon.graph_traversal import query_graph
+
+    unicode_match = query_graph(query_model, "STRASSE")
+    tied = query_graph(
+        query_model,
+        "ARCHIVE CHECKSUM",
+        node_type="requirements",
+        limit=1,
+    )
+
+    assert unicode_match.nodes[0]["id"] == "artifact:905-import-prose:unicode"
+    assert [node["id"] for node in tied.nodes] == [
+        "req:905-import-prose:FR-013"
+    ]
+    assert tied.truncated is True
+
+
+@pytest.mark.unit
+def test_query_empty_stopwords_no_matches_and_depth_bounds_are_successful(
+    query_model: GraphReadModel,
+) -> None:
+    from echelon.graph_traversal import query_graph
+
+    for result in (
+        query_graph(query_model, "which and the?"),
+        query_graph(query_model, "missing vocabulary"),
+        query_graph(query_model, "import validation", depth=1, node_type="Task"),
+    ):
+        assert result.nodes == ()
+        assert result.edges == ()
+        assert result.paths == ()
+        assert result.truncated is False
+
+    with pytest.raises(ValueError, match="depth"):
+        query_graph(query_model, "import", depth=0)
+    with pytest.raises(ValueError, match="limit"):
+        query_graph(query_model, "import", limit=0)
+
+
+@pytest.fixture
+def impact_model() -> GraphReadModel:
+    nodes = (
+        _node("workspace:current", "Workspace"),
+        _node("spec:old", "Spec"),
+        _node("spec:new", "Spec"),
+        _node("req:one", "Requirement"),
+        _node("req:two", "Requirement"),
+        _node("task:one", "Task"),
+        _node("artifact:source", "Artifact"),
+        _node("artifact:verified", "Artifact"),
+        _node("deferral:req", "Deferral"),
+        _node("deferral:task", "Deferral"),
+        _node("drawer:one", "MemPalaceDrawer"),
+        _node("amendment:one", "Amendment"),
+        _node("source:app", "SourceRoot"),
+        _node("excluded", "Other"),
+    )
+    edges = (
+        _edge("workspace:current", "CONTAINS_SPEC", "spec:old"),
+        _edge("spec:new", "SUPERSEDES", "spec:old"),
+        _edge("spec:old", "SUPERSEDES", "spec:new"),
+        _edge("spec:old", "HAS_REQUIREMENT", "req:one"),
+        _edge("spec:old", "AMENDED_BY", "amendment:one"),
+        _edge("spec:old", "TARGETS", "source:app"),
+        _edge("req:one", "DERIVED_FROM", "artifact:source"),
+        _edge("task:one", "IMPLEMENTS", "req:one"),
+        _edge("req:one", "VERIFIED_BY", "artifact:verified"),
+        _edge("req:one", "DEFERRED_BY", "deferral:req"),
+        _edge("task:one", "DEFERRED_BY", "deferral:task"),
+        _edge("artifact:source", "STORED_AS", "drawer:one"),
+        _edge("req:one", "STORED_AS", "drawer:one"),
+        _edge("req:one", "UNAPPROVED", "excluded"),
+        _edge("req:two", "IMPLEMENTS", "req:one"),
+        _edge("req:one", "IMPLEMENTS", "req:two"),
+    )
+    return _typed_model(nodes, edges)
+
+
+@pytest.mark.unit
+def test_impact_default_follows_only_the_approved_typed_directions(
+    impact_model: GraphReadModel,
+) -> None:
+    from echelon.graph_traversal import impact
+
+    cases = {
+        "workspace:current": {"spec:old"},
+        "spec:old": {
+            "amendment:one",
+            "req:one",
+            "source:app",
+            "spec:new",
+        },
+        "artifact:source": {"drawer:one", "req:one"},
+        "req:one": {
+            "artifact:verified",
+            "deferral:req",
+            "drawer:one",
+            "task:one",
+        },
+        "task:one": {"deferral:task"},
+    }
+
+    for start, expected in cases.items():
+        result = impact(impact_model, start, max_depth=1)
+        assert {str(node["id"]) for node in result.nodes} == expected
+        assert start not in {str(node["id"]) for node in result.nodes}
+
+
+@pytest.mark.unit
+def test_impact_is_cycle_safe_uses_shortest_paths_and_marks_depth_truncation(
+    impact_model: GraphReadModel,
+) -> None:
+    from echelon.graph_traversal import impact
+
+    result = impact(impact_model, "artifact:source", max_depth=2)
+    cycle = impact(impact_model, "spec:old", max_depth=10)
+
+    paths = {path.node_ids[-1]: path for path in result.paths}
+    assert paths["drawer:one"].node_ids == ("artifact:source", "drawer:one")
+    assert paths["task:one"].node_ids == (
+        "artifact:source",
+        "req:one",
+        "task:one",
+    )
+    assert len(paths) == len(result.nodes)
+    assert result.truncated is True
+    assert [
+        path.node_ids for path in cycle.paths if path.node_ids[-1] == "spec:new"
+    ] == [("spec:old", "spec:new")]
+    assert cycle.truncated is False
+
+
+@pytest.mark.unit
+def test_impact_all_relations_is_explicit_both_direction_escape_hatch(
+    impact_model: GraphReadModel,
+) -> None:
+    from echelon.graph_traversal import impact
+
+    default = impact(impact_model, "req:one", max_depth=1)
+    unrestricted = impact(
+        impact_model, "req:one", max_depth=1, all_relations=True
+    )
+
+    assert "excluded" not in {str(node["id"]) for node in default.nodes}
+    assert "excluded" in {str(node["id"]) for node in unrestricted.nodes}
+    excluded_path = next(
+        path for path in unrestricted.paths if path.node_ids[-1] == "excluded"
+    )
+    assert excluded_path.steps[0].direction == "out"
+
+
+@pytest.mark.unit
+def test_impact_rejects_nonpositive_depth() -> None:
+    from echelon.graph_traversal import impact
+
+    with pytest.raises(ValueError, match="depth"):
+        impact(_model(("a",), ()), "a", max_depth=0)
