@@ -258,7 +258,7 @@ def _projection_findings(stored: Mapping[str, object]) -> list[GraphFinding]:
             or not source_text
             or not isinstance(source_path, str)
             or not source_path
-            or not isinstance(source_line, int)
+            or type(source_line) is not int
             or source_line <= 0
         ):
             break

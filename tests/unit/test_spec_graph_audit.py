@@ -217,6 +217,10 @@ def test_audit_passes_for_matching_current_graph(
             lambda payload, requirement: requirement["properties"].pop("source_text"),
             "graph requirement projection is stale",
         ),
+        (
+            lambda payload, requirement: requirement["properties"].__setitem__("source_line", True),
+            "graph requirement projection is stale",
+        ),
     ],
 )
 def test_audit_reports_stale_requirement_projection(

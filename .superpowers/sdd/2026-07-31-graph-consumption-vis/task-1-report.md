@@ -49,3 +49,18 @@ Reviewed the final diff against the task brief:
 ## Concerns
 
 - The worktree did not contain its own `.venv`, so verification used the repository-managed environment at `/Users/michalbachorik/work/echelon_r/echelon/.venv/bin/python`. This matched the project’s Python 3.11 environment and did not affect test coverage.
+
+## Fix Round 1
+
+### Changed Files
+
+- `src/echelon/spec_graph_audit.py`
+- `tests/unit/test_spec_graph_audit.py`
+- `.superpowers/sdd/2026-07-31-graph-consumption-vis/task-1-report.md`
+
+### RED/GREEN Evidence
+
+1. Added a failing projection-audit regression case for persisted `node_projection_version = 2` with `Requirement.properties.source_line = True`.
+2. Ran `/Users/michalbachorik/work/echelon_r/echelon/.venv/bin/python -m pytest tests/unit/test_spec_graph_audit.py -q` and observed the expected red state: `test_audit_reports_stale_requirement_projection[...]` failed because the audit incorrectly returned `pass`.
+3. Tightened projection validation from `isinstance(source_line, int)` semantics to an exact `int` type check so booleans are rejected.
+4. Ran `/Users/michalbachorik/work/echelon_r/echelon/.venv/bin/python -m pytest tests/unit/test_spec_graph.py tests/unit/test_spec_graph_audit.py tests/unit/test_workspace_graph.py -q` and observed the green state: `76 passed`.
