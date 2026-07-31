@@ -4348,6 +4348,55 @@ class TestHumanInputDecisionStateCAS:
         assert "escalation_question" not in blocked
         assert "escalation_options" not in blocked
 
+    def test_failure_diagnostic_cleans_stale_resolved_recovery(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r1", "greenfield", "msg", 0, "init")
+        request = _human_input_request(
+            source_kind="human_gate",
+            source_state_revision=store.load()["state_revision"],
+        )
+        awaiting = store.set_human_input_decision(
+            request,
+            initial_status="awaiting_human",
+        )
+        stale_recovery = deepcopy(awaiting["recovery_instruction"])
+        resolved = store.apply_human_input_state_resolution(
+            awaiting["blocked_decision"]["id"],
+            expected_state_revision=awaiting["state_revision"],
+            resolution=HumanInputResolution(
+                selected_option_id="approve",
+                answer_text=None,
+                resolved_by="user",
+            ),
+            state_updates={"status": "running", "phase": "phase3-plan2"},
+            state_removals=(),
+        )
+        legacy = deepcopy(resolved)
+        legacy["recovery_instruction"] = stale_recovery
+        store._path.write_text(json.dumps(legacy), encoding="utf-8")
+
+        persisted = store.merge_advance_failure_diagnostic(
+            from_phase="phase3-plan2",
+            expected_state_revision=resolved["state_revision"],
+            expected_previous_dispatch_sha256=None,
+            updates={
+                "status": "blocked",
+                "controller_contract_error": {"message": "contract failed"},
+            },
+        )
+
+        blocked = store.load()
+        assert persisted is True
+        assert blocked["status"] == "blocked"
+        assert blocked["controller_contract_error"] == {
+            "message": "contract failed",
+        }
+        assert blocked["blocked_decision"] == resolved["blocked_decision"]
+        assert "recovery_instruction" not in blocked
+
     def test_human_input_resolution_detaches_updates_before_validation(
         self,
         tmp_path,

@@ -902,8 +902,15 @@ def _validate_human_input_authority_write(
             json_path="$.blocked_decision",
             validator="human_input_authority",
         )
-    if current.get("recovery_instruction") != candidate.get(
-        "recovery_instruction"
+    canonical_terminal_recovery_removal = (
+        isinstance(candidate_decision, Mapping)
+        and candidate_decision.get("status") == "resolved"
+        and candidate.get("recovery_instruction") is None
+    )
+    if (
+        not canonical_terminal_recovery_removal
+        and current.get("recovery_instruction")
+        != candidate.get("recovery_instruction")
     ):
         raise StateAdvanceError(
             "generic state writes cannot mutate schema-v2 recovery authority",
@@ -2723,6 +2730,12 @@ class SquadStateStore:
                 return False
             next_state = deepcopy(state)
             next_state.update(deepcopy(updates))
+            decision = next_state.get("blocked_decision")
+            if (
+                _is_human_input_decision_v2(decision)
+                and decision.get("status") == "resolved"
+            ):
+                next_state.pop("recovery_instruction", None)
             next_state["token_usage"] = (
                 int(next_state.get("token_usage") or 0)
                 + token_usage_delta
