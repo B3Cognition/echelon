@@ -44,7 +44,7 @@ def explain_node(model: GraphReadModel, node_id: str, limit: int = 50) -> GraphR
     """Return one node together with its directly incident relationships."""
     selected_id = resolve_node_id(model, node_id)
     _validate_limit(limit)
-    adjacent = _adjacent(model, selected_id, "both")
+    adjacent = _unique_relationships(_adjacent(model, selected_id, "both"))
     returned = adjacent[:limit]
     return _result(
         model,
@@ -66,7 +66,7 @@ def neighbors(
     selected_id = resolve_node_id(model, node_id)
     _validate_direction(direction)
     _validate_limit(limit)
-    adjacent = _adjacent(model, selected_id, direction)
+    adjacent = _unique_relationships(_adjacent(model, selected_id, direction))
     if relation is not None:
         normalized_relation = relation.casefold()
         adjacent = tuple(
@@ -88,7 +88,7 @@ def shortest_path(
     target_id: str,
     max_hops: int = 8,
 ) -> GraphResult:
-    """Return all deterministically ordered shortest paths up to ``max_hops``."""
+    """Return one deterministic shortest path up to ``max_hops``."""
     source = resolve_node_id(model, source_id)
     target = resolve_node_id(model, target_id)
     if source == target:
@@ -99,28 +99,29 @@ def shortest_path(
         [(source, GraphPath((source,), ()))]
     )
     visited_depth = {source: 0}
-    shortest_depth: int | None = None
-    paths: list[GraphPath] = []
-
     while queue:
         current_id, current_path = queue.popleft()
         depth = len(current_path.steps)
-        if shortest_depth is not None and depth > shortest_depth:
-            break
         if current_id == target:
-            shortest_depth = depth
-            paths.append(current_path)
-            continue
-        if shortest_depth is not None or depth >= max_hops:
+            edge_index = _edge_index(model)
+            path_edges = tuple(
+                edge_index[_step_identity(step)] for step in current_path.steps
+            )
+            return _result(
+                model,
+                current_path.node_ids,
+                path_edges,
+                (current_path,),
+            )
+        if depth >= max_hops:
             continue
 
         for adjacent in _adjacent(model, current_id, "both", path_order=True):
             next_depth = depth + 1
             previous_depth = visited_depth.get(adjacent.node_id)
-            if previous_depth is not None and previous_depth < next_depth:
+            if previous_depth is not None and previous_depth <= next_depth:
                 continue
-            if previous_depth is None or next_depth < previous_depth:
-                visited_depth[adjacent.node_id] = next_depth
+            visited_depth[adjacent.node_id] = next_depth
             queue.append(
                 (
                     adjacent.node_id,
@@ -131,17 +132,7 @@ def shortest_path(
                 )
             )
 
-    path_tuple = tuple(paths)
-    path_node_ids = tuple(
-        node_id for path in path_tuple for node_id in path.node_ids
-    )
-    edge_index = _edge_index(model)
-    path_edges = tuple(
-        edge_index[_step_identity(step)]
-        for path in path_tuple
-        for step in path.steps
-    )
-    return _result(model, path_node_ids, path_edges, path_tuple)
+    return _result(model, (), (), ())
 
 
 def _adjacent(
@@ -182,6 +173,18 @@ def _path_step(edge: Mapping[str, object], direction: str) -> PathStep:
         direction=direction,
         properties=cast(Mapping[str, object], edge["properties"]),
     )
+
+
+def _unique_relationships(adjacent: Iterable[_Adjacent]) -> tuple[_Adjacent, ...]:
+    seen: set[tuple[str, str, str]] = set()
+    unique: list[_Adjacent] = []
+    for item in adjacent:
+        identity = _edge_identity(item.edge)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        unique.append(item)
+    return tuple(unique)
 
 
 def _neighbor_adjacent_sort_key(item: _Adjacent) -> tuple[object, ...]:

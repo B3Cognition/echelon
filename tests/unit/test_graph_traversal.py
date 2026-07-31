@@ -110,6 +110,21 @@ def test_neighbors_filter_stored_edge_arrows_case_insensitively_before_limiting(
 
 
 @pytest.mark.unit
+def test_explain_and_neighbors_deduplicate_self_loop_before_limit_and_truncation() -> None:
+    from echelon.graph_traversal import explain_node, neighbors
+
+    model = _model(("a",), (_edge("a", "LOOP", "a"),))
+
+    explained = explain_node(model, "a", limit=1)
+    adjacent = neighbors(model, "a", limit=1)
+
+    for result in (explained, adjacent):
+        assert [node["id"] for node in result.nodes] == ["a"]
+        assert _identities(result.edges) == [("a", "LOOP", "a")]
+        assert result.truncated is False
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ("direction", "limit", "message"),
     [
@@ -129,27 +144,45 @@ def test_neighbors_rejects_invalid_direction_or_limit(
 
 
 @pytest.mark.unit
-def test_shortest_path_returns_deterministic_equal_shortest_branches_from_shuffled_indexes() -> None:
+def test_explain_rejects_nonpositive_limit() -> None:
+    from echelon.graph_traversal import explain_node
+
+    model = _model(("a",), ())
+
+    with pytest.raises(ValueError, match="limit"):
+        explain_node(model, "a", limit=0)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "edge_order",
+    [
+        (0, 1, 2, 3, 4, 5),
+        (5, 4, 3, 2, 1, 0),
+        (2, 5, 0, 4, 1, 3),
+    ],
+)
+def test_shortest_path_selects_one_canonical_equal_shortest_branch_across_shuffled_indexes(
+    edge_order: tuple[int, ...],
+) -> None:
     from echelon.graph_traversal import shortest_path
 
+    edges = (
+        _edge("right", "ROUTE", "target"),
+        _edge("left", "CYCLE", "right"),
+        _edge("source", "ROUTE", "right"),
+        _edge("right", "CYCLE", "left"),
+        _edge("left", "ROUTE", "target"),
+        _edge("source", "ROUTE", "left"),
+    )
     model = _model(
         ("source", "left", "right", "target", "isolated"),
-        (
-            _edge("right", "ROUTE", "target"),
-            _edge("left", "CYCLE", "right"),
-            _edge("source", "ROUTE", "right"),
-            _edge("right", "CYCLE", "left"),
-            _edge("left", "ROUTE", "target"),
-            _edge("source", "ROUTE", "left"),
-        ),
+        tuple(edges[index] for index in edge_order),
     )
 
     result = shortest_path(model, "source", "target")
 
-    assert [path.node_ids for path in result.paths] == [
-        ("source", "left", "target"),
-        ("source", "right", "target"),
-    ]
+    assert [path.node_ids for path in result.paths] == [("source", "left", "target")]
     assert [
         (step.source, step.type, step.target, step.direction)
         for step in result.paths[0].steps
@@ -157,12 +190,10 @@ def test_shortest_path_returns_deterministic_equal_shortest_branches_from_shuffl
         ("source", "ROUTE", "left", "out"),
         ("left", "ROUTE", "target", "out"),
     ]
-    assert [node["id"] for node in result.nodes] == ["left", "right", "source", "target"]
+    assert [node["id"] for node in result.nodes] == ["left", "source", "target"]
     assert _identities(result.edges) == [
         ("left", "ROUTE", "target"),
-        ("right", "ROUTE", "target"),
         ("source", "ROUTE", "left"),
-        ("source", "ROUTE", "right"),
     ]
 
 
@@ -182,10 +213,7 @@ def test_shortest_path_walks_reverse_edges_without_reversing_stored_arrows() -> 
 
     result = shortest_path(model, "target", "source")
 
-    assert [path.node_ids for path in result.paths] == [
-        ("target", "left", "source"),
-        ("target", "right", "source"),
-    ]
+    assert [path.node_ids for path in result.paths] == [("target", "left", "source")]
     assert [
         (step.source, step.type, step.target, step.direction)
         for step in result.paths[0].steps
@@ -211,10 +239,7 @@ def test_shortest_path_orders_mixed_direction_steps_by_relation_before_direction
 
     result = shortest_path(model, "source", "target")
 
-    assert [path.node_ids for path in result.paths] == [
-        ("source", "outgoing", "target"),
-        ("source", "incoming", "target"),
-    ]
+    assert [path.node_ids for path in result.paths] == [("source", "outgoing", "target")]
     assert result.paths[0].steps[0].direction == "out"
 
 
