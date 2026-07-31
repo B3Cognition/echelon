@@ -9,7 +9,12 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from echelon.spec_graph import GraphNode, SpecArtifactGraph, write_spec_graph
+from echelon.spec_graph import (
+    GraphEdge,
+    GraphNode,
+    SpecArtifactGraph,
+    write_spec_graph,
+)
 from echelon.spec_graph_audit import GraphFinding, SpecGraphAuditReport
 
 
@@ -23,6 +28,9 @@ def _sha256(value: bytes) -> str:
 
 
 def _graph(spec_id: str, *, marker: str | None = None) -> SpecArtifactGraph:
+    artifact_id = f"artifact:specs/{spec_id}/fixture-input.md"
+    requirement_id = f"req:{spec_id}:FR-fixture"
+    task_id = f"task:{spec_id}:T-fixture"
     nodes = [
         GraphNode(
             f"spec:{spec_id}",
@@ -32,7 +40,25 @@ def _graph(spec_id: str, *, marker: str | None = None) -> SpecArtifactGraph:
                 "path": f"specs/{spec_id}",
                 "lifecycle": "phase_a",
             },
-        )
+        ),
+        GraphNode(
+            artifact_id,
+            "Artifact",
+            {"path": f"specs/{spec_id}/fixture-input.md"},
+        ),
+        GraphNode(
+            requirement_id,
+            "Requirement",
+            {
+                "requirement_id": "FR-fixture",
+                "summary": "fixture import validation",
+            },
+        ),
+        GraphNode(
+            task_id,
+            "Task",
+            {"task_id": "T-fixture"},
+        ),
     ]
     if marker is not None:
         nodes.append(
@@ -47,7 +73,11 @@ def _graph(spec_id: str, *, marker: str | None = None) -> SpecArtifactGraph:
         generator_version="test",
         inputs=(),
         nodes=tuple(nodes),
-        edges=(),
+        edges=(
+            GraphEdge(f"spec:{spec_id}", "HAS_REQUIREMENT", requirement_id, {}),
+            GraphEdge(task_id, "IMPLEMENTS", requirement_id, {}),
+            GraphEdge(requirement_id, "VERIFIED_BY", artifact_id, {}),
+        ),
         memory_receipts=(),
     )
 
@@ -144,7 +174,9 @@ def test_workspace_graph_cli_repairs_stale_domains_and_keeps_failure_outputs(
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("echelon.workspace_graph.audit_spec_graph", _live_audit)
-    monkeypatch.setattr("echelon.workspace_graph_refresh.audit_re_memory", audit_re_memory)
+    monkeypatch.setattr(
+        "echelon.workspace_graph_refresh.audit_re_memory", audit_re_memory
+    )
     monkeypatch.setattr(
         "echelon.workspace_graph_refresh.mine_re_memory",
         lambda root, *, run_id: re_mines.append(run_id) or _StatusReport("complete"),
@@ -212,10 +244,22 @@ def test_workspace_graph_cli_repairs_stale_domains_and_keeps_failure_outputs(
         f"Workspace refresh refreshed: {memory_spec.name} evidence_memory (pass)"
         in refreshed.output
     )
-    assert f"Workspace refresh skipped: {graph_spec.name} requirements_memory (pass)" in refreshed.output
-    assert f"Workspace refresh refreshed: {graph_spec.name} spec_graph (pass)" in refreshed.output
+    assert (
+        f"Workspace refresh skipped: {graph_spec.name} requirements_memory (pass)"
+        in refreshed.output
+    )
+    assert (
+        f"Workspace refresh refreshed: {graph_spec.name} spec_graph (pass)"
+        in refreshed.output
+    )
 
-    graph_path = tmp_path / ".echelon" / "runtime" / "graph" / "workspace-artifact-graph.json"
+    graph_path = (
+        tmp_path
+        / ".echelon"
+        / "runtime"
+        / "graph"
+        / "workspace-artifact-graph.json"
+    )
     audit_path = graph_path.with_name("workspace-artifact-graph-audit.json")
     workspace_graph_bytes = graph_path.read_bytes()
     workspace_graph = json.loads(workspace_graph_bytes)
@@ -227,6 +271,84 @@ def test_workspace_graph_cli_repairs_stale_domains_and_keeps_failure_outputs(
             (tmp_path / member["graph_path"]).read_bytes()
         )
     assert workspace_audit["graph_hash"] == _sha256(workspace_graph_bytes)
+
+    requirement = next(
+        node for node in workspace_graph["nodes"] if node["type"] == "Requirement"
+    )
+    requirement_id = requirement["id"]
+    requirement_summary = requirement["properties"]["summary"]
+    requirement_edges = [
+        edge
+        for edge in workspace_graph["edges"]
+        if edge["source"] == requirement_id or edge["target"] == requirement_id
+    ]
+    artifact_id = next(
+        edge["target"]
+        for edge in requirement_edges
+        if edge["type"] == "VERIFIED_BY" and edge["source"] == requirement_id
+    )
+    task_id = next(
+        edge["source"]
+        for edge in requirement_edges
+        if edge["type"] == "IMPLEMENTS" and edge["target"] == requirement_id
+    )
+
+    query = runner.invoke(app, ["graph", "query", requirement_summary, "--json"])
+    assert query.exit_code == 0
+    query_payload = json.loads(query.output)
+    queried_requirement = next(
+        node for node in query_payload["nodes"] if node["id"] == requirement_id
+    )
+
+    explain = runner.invoke(
+        app, ["graph", "explain", queried_requirement["id"], "--json"]
+    )
+    path = runner.invoke(
+        app, ["graph", "path", queried_requirement["id"], artifact_id, "--json"]
+    )
+    neighbors = runner.invoke(app, ["graph", "neighbors", task_id, "--json"])
+    impact = runner.invoke(
+        app, ["graph", "impact", queried_requirement["id"], "--json"]
+    )
+
+    assert (
+        explain.exit_code == path.exit_code == neighbors.exit_code == impact.exit_code == 0
+    )
+    assert any(node["id"] == artifact_id for node in json.loads(path.output)["nodes"])
+    assert any(node["id"] == requirement_id for node in json.loads(neighbors.output)["nodes"])
+    assert any(node["id"] == task_id for node in json.loads(impact.output)["nodes"])
+
+    cytoscape_view = runner.invoke(
+        app,
+        [
+            "graph",
+            "workspace",
+            "view",
+            "--renderer",
+            "cytoscape",
+            "--no-open",
+        ],
+    )
+    vis_view = runner.invoke(
+        app,
+        ["graph", "workspace", "view", "--renderer", "vis", "--no-open"],
+    )
+    assert cytoscape_view.exit_code == vis_view.exit_code == 0
+    assert (graph_path.parent / "workspace.html").is_file()
+    assert (graph_path.parent / "workspace-vis.html").is_file()
+
+    member_graph_bytes = {
+        member["graph_path"]: (tmp_path / member["graph_path"]).read_bytes()
+        for member in members
+    }
+    repeated_refresh = runner.invoke(
+        app, ["graph", "workspace", "refresh", "--write"]
+    )
+    assert repeated_refresh.exit_code == 0
+    assert graph_path.read_bytes() == workspace_graph_bytes
+    assert {
+        path: (tmp_path / path).read_bytes() for path in member_graph_bytes
+    } == member_graph_bytes
 
     write_spec_graph(_graph(graph_spec.name, marker="changed-after-refresh"), graph_spec)
 
