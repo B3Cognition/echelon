@@ -243,7 +243,6 @@ def build_workspace_graph(project_root: Path) -> WorkspaceGraphBuildResult:
                     },
                 ),
                 spec_id,
-                normalized=False,
             )
             continue
 
@@ -261,7 +260,6 @@ def build_workspace_graph(project_root: Path) -> WorkspaceGraphBuildResult:
                 node_records,
                 GraphNode(normalized, node.type, properties),
                 spec_id,
-                normalized=normalized != node.id,
             )
         for edge in edges:
             _merge_edge(
@@ -589,14 +587,11 @@ def _merge_node(
     records: dict[str, tuple[GraphNode, set[str]]],
     node: GraphNode,
     spec_id: str,
-    *,
-    normalized: bool,
 ) -> None:
     existing = records.get(node.id)
     if existing is None:
         properties = dict(node.properties)
-        if normalized:
-            properties["member_specs"] = [spec_id]
+        properties["member_specs"] = [spec_id]
         records[node.id] = (GraphNode(node.id, node.type, properties), {spec_id})
         return
     current, member_specs = existing

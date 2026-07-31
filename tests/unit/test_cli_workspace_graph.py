@@ -13,6 +13,7 @@ from echelon.workspace_graph import (
     workspace_graph_path,
     write_workspace_graph,
 )
+from echelon.workspace_graph_audit import WorkspaceGraphFinding
 
 
 @dataclass(frozen=True)
@@ -32,7 +33,15 @@ class _Report:
     findings: tuple[object, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
-        return {"scope": "workspace", "status": self.status, "findings": []}
+        return {
+            "scope": "workspace",
+            "status": self.status,
+            "findings": [
+                finding.to_dict()
+                for finding in self.findings
+                if hasattr(finding, "to_dict")
+            ],
+        }
 
 
 @dataclass(frozen=True)
@@ -140,7 +149,7 @@ def test_workspace_refresh_uses_service_candidate_audit_and_exit_status(
     assert "Workspace graph audit unavailable" in result.output
 
 
-def _persisted_workspace_graph(tmp_path: Path) -> Path:
+def _persisted_workspace_graph(tmp_path: Path, *, placeholder_only: bool = False) -> Path:
     graph = WorkspaceArtifactGraph(
         workspace_name="demo",
         generator_version="test",
@@ -152,8 +161,8 @@ def _persisted_workspace_graph(tmp_path: Path) -> Path:
                 member_source_set_digest="sha256:source",
                 member_memory_state_digest="sha256:memory",
                 audit_hash="sha256:audit",
-                audit_status="pass",
-                included=True,
+                audit_status="unavailable" if placeholder_only else "pass",
+                included=not placeholder_only,
             ),
         ),
         inputs=(
@@ -213,6 +222,137 @@ def test_workspace_view_defaults_to_runtime_path_and_portfolio_lens(
     assert result.exit_code == 1
     assert output.is_file()
     assert '"initial_lens": "portfolio"' in output.read_text(encoding="utf-8")
+
+
+@pytest.mark.unit
+def test_workspace_view_vis_uses_renderer_specific_default_and_audit_findings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _persisted_workspace_graph(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    finding = WorkspaceGraphFinding(
+        "error",
+        "member_graph_stale",
+        "workspace member graph is stale",
+        "spec:001-demo",
+    )
+    monkeypatch.setattr(
+        "echelon.workspace_graph_audit.audit_workspace_graph",
+        lambda root: _Report("fail", (finding,)),
+    )
+    monkeypatch.setattr(
+        "echelon.graph_visualization.load_cytoscape_source",
+        lambda: pytest.fail("vis renderer must not load the Cytoscape asset"),
+    )
+    monkeypatch.setattr(
+        "webbrowser.open",
+        lambda url: pytest.fail("--no-open must keep the browser closed"),
+    )
+    _forbid_upstream_mutations(monkeypatch)
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(
+        app,
+        ["graph", "workspace", "view", "--renderer", "vis", "--no-open"],
+    )
+
+    output = tmp_path / ".echelon" / "runtime" / "graph" / "workspace-vis.html"
+    assert result.exit_code == 1
+    assert output.is_file()
+    html = output.read_text(encoding="utf-8")
+    assert '"initial_lens": "exceptions"' in html
+    assert '"code": "member_graph_stale"' in html
+    assert "vis-network" in html
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("renderer", ("cytoscape", "vis"))
+def test_workspace_view_renderer_honors_explicit_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    renderer: str,
+) -> None:
+    _persisted_workspace_graph(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "echelon.workspace_graph_audit.audit_workspace_graph",
+        lambda root: _Report("pass"),
+    )
+    _forbid_upstream_mutations(monkeypatch)
+    from echelon.cli_app import app
+
+    output = tmp_path / "reports" / f"workspace-{renderer}.html"
+    result = CliRunner().invoke(
+        app,
+        [
+            "graph",
+            "workspace",
+            "view",
+            "--renderer",
+            renderer,
+            "--no-open",
+            "--output",
+            str(output),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert output.is_file()
+
+
+@pytest.mark.unit
+def test_workspace_view_vis_retains_unavailable_exit_for_placeholder_graph(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _persisted_workspace_graph(tmp_path, placeholder_only=True)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "echelon.workspace_graph_audit.audit_workspace_graph",
+        lambda root: _Report("unavailable"),
+    )
+    _forbid_upstream_mutations(monkeypatch)
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(
+        app,
+        ["graph", "workspace", "view", "--renderer", "vis", "--no-open"],
+    )
+
+    output = tmp_path / ".echelon" / "runtime" / "graph" / "workspace-vis.html"
+    assert result.exit_code == 2
+    assert output.is_file()
+    assert '"initial_lens": "portfolio"' in output.read_text(encoding="utf-8")
+
+
+@pytest.mark.unit
+def test_workspace_view_rejects_unknown_renderer_before_writing_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _persisted_workspace_graph(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    from echelon.cli_app import app
+
+    output = tmp_path / "reports" / "workspace.html"
+    result = CliRunner().invoke(
+        app,
+        [
+            "graph",
+            "workspace",
+            "view",
+            "--renderer",
+            "unknown",
+            "--no-open",
+            "--output",
+            str(output),
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "unknown graph renderer" in result.stderr
+    assert not output.exists()
 
 
 @pytest.mark.unit
@@ -373,4 +513,30 @@ def test_workspace_view_warns_when_browser_open_fails(
     result = CliRunner().invoke(app, ["graph", "workspace", "view"])
 
     assert result.exit_code == 0
+    assert "warning: workspace graph viewer was not opened" in result.stderr
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("renderer", ("cytoscape", "vis"))
+def test_workspace_view_browser_failure_preserves_audit_exit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    renderer: str,
+) -> None:
+    _persisted_workspace_graph(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "echelon.workspace_graph_audit.audit_workspace_graph",
+        lambda root: _Report("fail"),
+    )
+    monkeypatch.setattr("webbrowser.open", lambda url: False)
+    _forbid_upstream_mutations(monkeypatch)
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(
+        app,
+        ["graph", "workspace", "view", "--renderer", renderer, "--open"],
+    )
+
+    assert result.exit_code == 1
     assert "warning: workspace graph viewer was not opened" in result.stderr

@@ -141,7 +141,7 @@ def current_support_row(snapshot) -> dict:
             "deterministic_identity_schema_version": 1,
             "wing": "demo-wing",
             "room": "implementation-plan",
-            "scope": "canonical",
+            "scope": "canonical-support",
             "canonical": True,
             "artifact_kind": "supporting-context",
             "artifact_path": snapshot.source,
@@ -193,8 +193,82 @@ def test_audit_passes_matching_exact_drawer(tmp_path: Path, monkeypatch) -> None
 
 
 @pytest.mark.unit
+def test_audit_ignores_separately_reconciled_spec_evidence_rows(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    spec_dir = make_spec(tmp_path)
+    from echelon.mempalace_audit import audit_spec_memory
+    from echelon.mempalace_requirements import load_canonical_spec_snapshot
+
+    snapshot = load_canonical_spec_snapshot(tmp_path, spec_dir)
+    rows = {
+        "drawer-fr-001": current_row(snapshot),
+        "drawer-evidence": {
+            "document": "EVID-001: Published verification evidence.",
+            "metadata": {
+                "artifact_kind": "spec-evidence",
+                "artifact_path": "specs/003-demo/evidence/manifest.json",
+                "canonical": True,
+                "scope": "spec-evidence",
+                "wing": "demo-wing",
+            },
+        },
+    }
+    monkeypatch.setattr(
+        "echelon.mempalace_audit.create_requirement_memory_adapter",
+        lambda project_root, run_id: FakeAdapter(FakeCollection(rows)),
+    )
+
+    report = audit_spec_memory(tmp_path, spec_dir)
+
+    assert report.status == "pass"
+    assert report.stale == []
+    assert report.non_canonical == []
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("artifact_kind", [None, "supporting-context"])
+def test_audit_does_not_exempt_evidence_scope_with_wrong_artifact_kind(
+    tmp_path: Path,
+    monkeypatch,
+    artifact_kind: str | None,
+) -> None:
+    spec_dir = make_spec(tmp_path)
+    from echelon.mempalace_audit import audit_spec_memory
+    from echelon.mempalace_requirements import load_canonical_spec_snapshot
+
+    snapshot = load_canonical_spec_snapshot(tmp_path, spec_dir)
+    invalid_metadata = {
+        "artifact_path": "specs/003-demo/spec.md",
+        "canonical": True,
+        "scope": "spec-evidence",
+        "wing": "demo-wing",
+    }
+    if artifact_kind is not None:
+        invalid_metadata["artifact_kind"] = artifact_kind
+    rows = {
+        "drawer-fr-001": current_row(snapshot),
+        "drawer-invalid-evidence": {
+            "document": "FR-999: Incorrectly scoped normal drawer.",
+            "metadata": invalid_metadata,
+        },
+    }
+    monkeypatch.setattr(
+        "echelon.mempalace_audit.create_requirement_memory_adapter",
+        lambda project_root, run_id: FakeAdapter(FakeCollection(rows)),
+    )
+
+    report = audit_spec_memory(tmp_path, spec_dir)
+
+    assert report.status == "fail"
+    assert report.stale == ["drawer-invalid-evidence"]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("persisted_scope", ("canonical", "canonical-support"))
 def test_audit_includes_support_artifact_rows_in_expected_set(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, persisted_scope: str
 ) -> None:
     spec_dir = make_spec(tmp_path)
     spec_dir.joinpath("plan.md").write_text(
@@ -208,9 +282,11 @@ def test_audit_includes_support_artifact_rows_in_expected_set(
 
     spec_snapshot = load_canonical_spec_snapshot(tmp_path, spec_dir)
     support_snapshot = load_supporting_artifact_snapshots(tmp_path, spec_dir)[0]
+    support_row = current_support_row(support_snapshot)
+    support_row["metadata"]["scope"] = persisted_scope
     rows = {
         "drawer-fr-001": current_row(spec_snapshot),
-        "drawer-plan-000": current_support_row(support_snapshot),
+        "drawer-plan-000": support_row,
     }
     monkeypatch.setattr(
         "echelon.mempalace_audit.create_requirement_memory_adapter",

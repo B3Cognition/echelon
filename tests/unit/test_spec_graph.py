@@ -206,8 +206,15 @@ def test_build_spec_graph_uses_only_canonical_spec_requirements(
         for item in payload["edges"]
     }
 
+    assert payload["node_projection_version"] == 2
     assert nodes["spec:001-demo"]["properties"]["lifecycle"] == "phase_a"
-    assert nodes["req:001-demo:FR-001"]["properties"]["category"] == "functional"
+    assert nodes["req:001-demo:FR-001"]["properties"] == {
+        "category": "functional",
+        "requirement_id": "FR-001",
+        "source_line": 3,
+        "source_path": "specs/001-demo/spec.md",
+        "source_text": "- **FR-001**: Build the report.",
+    }
     assert nodes["req:001-demo:AC-001"]["properties"]["category"] == "acceptance"
     assert "req:001-demo:NFR-999" not in nodes
     assert nodes["task:001-demo:T-001"]["properties"]["status"] == "PENDING"

@@ -296,6 +296,7 @@ def test_member_audits_control_partial_composition(
         "composition_status": "excluded",
         "member_audit_status": "fail",
         "exclusion_reason": "member_graph_stale",
+        "member_specs": ["002-beta"],
     }
     assert [member.included for member in result.graph.members] == [True, False]
     assert result.issues[0].subject_id == "spec:002-beta"
@@ -355,6 +356,77 @@ def test_member_receipts_preserve_graph_and_per_spec_digests(
         ("specs", "canonical_spec_set"),
         ("specs/001-alpha/spec-artifact-graph.json", "member_graph"),
         ("specs/001-alpha/spec.md", "workspace_spec"),
+    }
+
+
+@pytest.mark.unit
+def test_workspace_composition_preserves_requirement_projection_properties(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path)
+    alpha = _spec_dir(tmp_path, "001-alpha")
+    _write_member_graph(
+        alpha,
+        _member_graph(
+            "001-alpha",
+            extra_nodes=(
+                GraphNode(
+                    "req:001-alpha:FR-001",
+                    "Requirement",
+                    {
+                        "requirement_id": "FR-001",
+                        "category": "functional",
+                        "source_line": 3,
+                        "source_path": "specs/001-alpha/spec.md",
+                        "source_text": "- **FR-001**: Build the report.",
+                    },
+                ),
+                GraphNode(
+                    "task:001-alpha:T-001",
+                    "Task",
+                    {"task_id": "T-001", "status": "PENDING"},
+                ),
+            ),
+            extra_edges=(
+                GraphEdge(
+                    "spec:001-alpha",
+                    "HAS_REQUIREMENT",
+                    "req:001-alpha:FR-001",
+                    {},
+                ),
+                GraphEdge(
+                    "task:001-alpha:T-001",
+                    "IMPLEMENTS",
+                    "req:001-alpha:FR-001",
+                    {},
+                ),
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        "echelon.workspace_graph.audit_spec_graph",
+        lambda root, selector: _audit_for_current_graph(Path(selector)),
+    )
+
+    result = build_workspace_graph(tmp_path)
+    spec = next(node for node in result.graph.nodes if node.id == "spec:001-alpha")
+    requirement = next(node for node in result.graph.nodes if node.id == "req:001-alpha:FR-001")
+    task = next(node for node in result.graph.nodes if node.id == "task:001-alpha:T-001")
+
+    assert spec.properties["member_specs"] == ["001-alpha"]
+    assert requirement.properties == {
+        "requirement_id": "FR-001",
+        "category": "functional",
+        "source_line": 3,
+        "source_path": "specs/001-alpha/spec.md",
+        "source_text": "- **FR-001**: Build the report.",
+        "member_specs": ["001-alpha"],
+    }
+    assert task.properties == {
+        "task_id": "T-001",
+        "status": "PENDING",
+        "member_specs": ["001-alpha"],
     }
 
 
@@ -482,6 +554,7 @@ def test_unhealthy_member_graphs_become_placeholders_without_rebuilding(
             "composition_status": "excluded",
             "member_audit_status": "unavailable",
             "exclusion_reason": "member_graph_invalid",
+            "member_specs": ["001-alpha"],
         },
     )
     assert result.issues[0].subject_id == "spec:001-alpha"

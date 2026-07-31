@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from importlib.resources import files
 import json
 from pathlib import Path
 from typing import Mapping, Protocol
 
-from echelon.spec_graph import GRAPH_SCHEMA_VERSION
+from echelon.graph_read import GraphReadError, read_graph_document
 
 
 GRAPH_LENSES = ("all", "exceptions", "traceability", "memory", "delivery")
 CYTOSCAPE_ASSET = "assets/cytoscape-3.34.0.min.js"
+VIEW_DEGREE_CAP = 100
 
 _LENS_EDGE_TYPES = {
     "traceability": {"HAS_REQUIREMENT", "DERIVED_FROM"},
@@ -48,72 +50,36 @@ class GraphAuditReport(Protocol):
     def to_dict(self) -> dict[str, object]: ...
 
 
+@dataclass(frozen=True)
+class GraphViewPayload:
+    """Renderer-neutral presentation data derived from one graph and audit."""
+
+    scope: str
+    title: str
+    audit: Mapping[str, object]
+    lenses: tuple[str, ...]
+    initial_lens: str
+    nodes: tuple[Mapping[str, object], ...]
+    edges: tuple[Mapping[str, object], ...]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "scope": self.scope,
+            "title": self.title,
+            "audit": dict(self.audit),
+            "lenses": list(self.lenses),
+            "initial_lens": self.initial_lens,
+            "nodes": [dict(node) for node in self.nodes],
+            "edges": [dict(edge) for edge in self.edges],
+        }
+
+
 def load_graph_document(path: Path) -> dict[str, object]:
-    """Read and validate the persisted graph document used by view/export."""
+    """Read graph documents through the shared read-model validator."""
     try:
-        document = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError as exc:
-        raise GraphVisualizationError(f"graph artifact is missing: {path}") from exc
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise GraphVisualizationError(f"graph artifact is unreadable: {path}") from exc
-    if not isinstance(document, dict):
-        raise GraphVisualizationError("graph document must be an object")
-    if document.get("schema_version") != GRAPH_SCHEMA_VERSION:
-        raise GraphVisualizationError("unsupported graph schema version")
-    scope = _graph_scope(document)
-    if scope == "spec" and (
-        not isinstance(document.get("spec_id"), str) or not document["spec_id"]
-    ):
-        raise GraphVisualizationError("graph spec_id must be a non-empty string")
-    if scope == "workspace" and (
-        not isinstance(document.get("workspace_name"), str)
-        or not document["workspace_name"]
-    ):
-        raise GraphVisualizationError("graph workspace_name must be a non-empty string")
-    nodes = document.get("nodes")
-    edges = document.get("edges")
-    if not isinstance(nodes, list) or not isinstance(edges, list):
-        raise GraphVisualizationError("graph nodes and edges must be lists")
-
-    node_ids: set[str] = set()
-    for node in nodes:
-        if not isinstance(node, dict):
-            raise GraphVisualizationError("graph node must be an object")
-        node_id = node.get("id")
-        if not isinstance(node_id, str) or not node_id:
-            raise GraphVisualizationError("graph node id must be a non-empty string")
-        if node_id in node_ids:
-            raise GraphVisualizationError(f"duplicate graph node id: {node_id}")
-        if not isinstance(node.get("type"), str):
-            raise GraphVisualizationError(f"graph node type is invalid: {node_id}")
-        if not isinstance(node.get("properties"), dict):
-            raise GraphVisualizationError(f"graph node properties are invalid: {node_id}")
-        node_ids.add(node_id)
-
-    seen_edges: set[tuple[str, str, str]] = set()
-    for edge in edges:
-        if not isinstance(edge, dict):
-            raise GraphVisualizationError("graph edge must be an object")
-        source = edge.get("source")
-        edge_type = edge.get("type")
-        target = edge.get("target")
-        if not all(isinstance(value, str) and value for value in (source, edge_type, target)):
-            raise GraphVisualizationError("graph edge identity is invalid")
-        identity = (source, edge_type, target)
-        if identity in seen_edges:
-            raise GraphVisualizationError(
-                f"duplicate graph edge: {source} {edge_type} {target}"
-            )
-        if source not in node_ids or target not in node_ids:
-            raise GraphVisualizationError(
-                f"graph edge has missing endpoint: {source} {edge_type} {target}"
-            )
-        if not isinstance(edge.get("properties"), dict):
-            raise GraphVisualizationError(
-                f"graph edge properties are invalid: {source} {edge_type} {target}"
-            )
-        seen_edges.add(identity)
-    return document
+        return read_graph_document(path)
+    except GraphReadError as exc:
+        raise GraphVisualizationError(str(exc)) from exc
 
 
 def filter_graph(
@@ -237,6 +203,54 @@ def render_graph_dot(
     return "\n".join(lines) + "\n"
 
 
+def build_graph_view_payload(
+    document: Mapping[str, object],
+    audit: GraphAuditReport,
+    initial_lens: str,
+) -> GraphViewPayload:
+    """Build deterministic presentation data shared by graph renderers."""
+    lenses = _available_lenses(document)
+    if initial_lens not in lenses:
+        raise GraphVisualizationError(f"unknown graph lens: {initial_lens}")
+
+    filtered_by_lens = {
+        lens: filter_graph(document, audit, lens=lens)
+        for lens in lenses
+    }
+    all_graph = filtered_by_lens["all"]
+    node_lenses: dict[str, set[str]] = {}
+    edge_lenses: dict[tuple[str, str, str], set[str]] = {}
+    for lens, filtered in filtered_by_lens.items():
+        for node in filtered["nodes"]:
+            node_lenses.setdefault(str(node["id"]), set()).add(lens)
+        for edge in filtered["edges"]:
+            edge_lenses.setdefault(_edge_identity(edge), set()).add(lens)
+
+    degree_by_node = _node_degrees(all_graph["nodes"], all_graph["edges"])
+    exception_subject_ids = {
+        str(subject_id)
+        for finding in _audit_findings(audit)
+        if (subject_id := getattr(finding, "subject_id", None)) is not None
+    }
+    nodes = tuple(
+        _view_node(node, degree_by_node, node_lenses, exception_subject_ids)
+        for node in all_graph["nodes"]
+    )
+    edges = tuple(
+        _view_edge(edge, edge_lenses)
+        for edge in all_graph["edges"]
+    )
+    return GraphViewPayload(
+        scope=_graph_scope(document),
+        title=_graph_title(document),
+        audit=audit.to_dict(),
+        lenses=lenses,
+        initial_lens=initial_lens,
+        nodes=nodes,
+        edges=edges,
+    )
+
+
 def load_cytoscape_source() -> str:
     """Load the packaged browser bundle without network access."""
     try:
@@ -255,46 +269,15 @@ def render_graph_html(
     initial_lens: str,
 ) -> str:
     """Render one self-contained interactive HTML graph viewer."""
-    lenses = _available_lenses(document)
-    if initial_lens not in lenses:
-        raise GraphVisualizationError(f"unknown graph lens: {initial_lens}")
-    elements = _cytoscape_elements(filter_graph(document, audit, lens="all"))
-    node_ids = {
-        str(element["data"]["id"])
-        for element in elements
-        if element["group"] == "nodes"
-    }
-    payload = {
-        "scope": _graph_scope(document),
-        "title": _graph_title(document),
-        "audit": audit.to_dict(),
-        "initial_lens": initial_lens,
-        "lenses": lenses,
-        "lens_edge_types": {
-            lens: sorted(_LENS_EDGE_TYPES[lens])
-            for lens in lenses
-            if lens in _LENS_EDGE_TYPES
-        },
-        "lens_node_types": {
-            lens: sorted(_LENS_NODE_TYPES[lens])
-            for lens in lenses
-            if lens in _LENS_NODE_TYPES
-        },
-        "exception_subject_ids": sorted(
-            str(subject_id)
-            for finding in _audit_findings(audit)
-            if (subject_id := getattr(finding, "subject_id", None)) in node_ids
-        ),
-        "elements": elements,
-    }
-    payload_json = json.dumps(payload, indent=2, sort_keys=True).replace("</", r"<\/")
+    payload = build_graph_view_payload(document, audit, initial_lens)
+    payload_json = json.dumps(payload.to_dict(), indent=2, sort_keys=True).replace("</", r"<\/")
     return (
         _HTML_TEMPLATE.replace("__CYTOSCAPE_SOURCE__", cytoscape_source)
         .replace("__GRAPH_PAYLOAD__", payload_json)
         .replace(
             "__PORTFOLIO_OPTION__",
             '<option value="portfolio">Portfolio</option>'
-            if "portfolio" in lenses
+            if "portfolio" in payload.lenses
             else "",
         )
     )
@@ -358,6 +341,97 @@ def _node_label(node: Mapping[str, object]) -> str:
     return f"{node.get('type')}: {node.get('id')}"
 
 
+def _searchable_label(
+    *,
+    node_id: str,
+    node_type: str,
+    label: str,
+    properties: Mapping[str, object],
+) -> str:
+    return json.dumps(
+        {
+            "id": node_id,
+            "label": label,
+            "properties": dict(properties),
+            "type": node_type,
+        },
+        sort_keys=True,
+    )
+
+
+def _member_specs(properties: Mapping[str, object]) -> tuple[str, ...]:
+    value = properties.get("member_specs")
+    if not isinstance(value, (list, tuple)):
+        return ()
+    return tuple(sorted(str(item) for item in value))
+
+
+def _edge_identity(edge: Mapping[str, object]) -> tuple[str, str, str]:
+    return (
+        str(edge["source"]),
+        str(edge["type"]),
+        str(edge["target"]),
+    )
+
+
+def _node_degrees(
+    nodes: list[dict[str, object]],
+    edges: list[dict[str, object]],
+) -> dict[str, int]:
+    degrees = {str(node["id"]): 0 for node in nodes}
+    for edge in edges:
+        source, _, target = _edge_identity(edge)
+        degrees[source] += 1
+        if target != source:
+            degrees[target] += 1
+    return degrees
+
+
+def _view_node(
+    node: Mapping[str, object],
+    degree_by_node: Mapping[str, int],
+    node_lenses: Mapping[str, set[str]],
+    exception_subject_ids: set[str],
+) -> dict[str, object]:
+    node_id = str(node["id"])
+    node_type = str(node.get("type") or "Unknown")
+    raw_properties = node.get("properties")
+    properties = dict(raw_properties) if isinstance(raw_properties, Mapping) else {}
+    label = _node_label(node)
+    return {
+        "id": node_id,
+        "type": node_type,
+        "properties": properties,
+        "label": label,
+        "searchable_label": _searchable_label(
+            node_id=node_id,
+            node_type=node_type,
+            label=label,
+            properties=properties,
+        ),
+        "degree": min(degree_by_node[node_id], VIEW_DEGREE_CAP),
+        "member_specs": _member_specs(properties),
+        "exception": node_id in exception_subject_ids or _node_is_exception(node),
+        "lenses": tuple(sorted(node_lenses.get(node_id, set()))),
+    }
+
+
+def _view_edge(
+    edge: Mapping[str, object],
+    edge_lenses: Mapping[tuple[str, str, str], set[str]],
+) -> dict[str, object]:
+    source, edge_type, target = _edge_identity(edge)
+    raw_properties = edge.get("properties")
+    properties = dict(raw_properties) if isinstance(raw_properties, Mapping) else {}
+    return {
+        "source": source,
+        "type": edge_type,
+        "target": target,
+        "properties": properties,
+        "lenses": tuple(sorted(edge_lenses.get((source, edge_type, target), set()))),
+    }
+
+
 def _dot_escape(value: str) -> str:
     return (
         value.replace("\\", "\\\\")
@@ -365,42 +439,6 @@ def _dot_escape(value: str) -> str:
         .replace("\r", "")
         .replace("\n", "\\n")
     )
-
-
-def _cytoscape_elements(
-    filtered: Mapping[str, list[dict[str, object]]],
-) -> list[dict[str, object]]:
-    elements: list[dict[str, object]] = []
-    for node in filtered["nodes"]:
-        elements.append(
-            {
-                "group": "nodes",
-                "data": {
-                    "id": str(node["id"]),
-                    "type": str(node.get("type") or "Unknown"),
-                    "label": _node_label(node),
-                    "properties": node.get("properties", {}),
-                },
-            }
-        )
-    for edge in filtered["edges"]:
-        source = str(edge["source"])
-        edge_type = str(edge["type"])
-        target = str(edge["target"])
-        elements.append(
-            {
-                "group": "edges",
-                "data": {
-                    "id": f"{source}|{edge_type}|{target}",
-                    "source": source,
-                    "target": target,
-                    "type": edge_type,
-                    "label": edge_type,
-                    "properties": edge.get("properties", {}),
-                },
-            }
-        )
-    return elements
 
 
 _HTML_TEMPLATE = """<!doctype html>
@@ -539,54 +577,39 @@ _HTML_TEMPLATE = """<!doctype html>
         return lensSelect.value === "all" ? "cose" : "breadthfirst";
       }
 
-      function isException(node) {
-        const properties = node.data.properties || {};
-        return (
-          (properties.presence != null && properties.presence !== "present") ||
-          (properties.reconciliation_status != null && properties.reconciliation_status !== "pass")
-        );
-      }
-
       function lensElements() {
-        const nodes = payload.elements.filter((element) => element.group === "nodes");
-        const edges = payload.elements.filter((element) => element.group === "edges");
         const lens = lensSelect.value;
-        if (lens === "all") return payload.elements;
-
-        let selectedEdges;
-        const selectedIds = new Set();
-        if (lens === "exceptions") {
-          payload.exception_subject_ids.forEach((id) => selectedIds.add(id));
-          nodes.filter(isException).forEach((node) => selectedIds.add(node.data.id));
-          selectedEdges = edges.filter((edge) =>
-            selectedIds.has(edge.data.source) || selectedIds.has(edge.data.target)
-          );
-          selectedEdges.forEach((edge) => {
-            selectedIds.add(edge.data.source);
-            selectedIds.add(edge.data.target);
-          });
-          if (selectedIds.size === 0) {
-            nodes
-              .filter((node) => node.data.type === "Spec")
-              .forEach((node) => selectedIds.add(node.data.id));
-          }
-        } else {
-          const edgeTypes = new Set(payload.lens_edge_types[lens] || []);
-          const nodeTypes = new Set(payload.lens_node_types[lens] || []);
-          selectedEdges = edges.filter((edge) => edgeTypes.has(edge.data.type));
-          nodes
-            .filter((node) => nodeTypes.has(node.data.type))
-            .forEach((node) => selectedIds.add(node.data.id));
-          selectedEdges.forEach((edge) => {
-            selectedIds.add(edge.data.source);
-            selectedIds.add(edge.data.target);
-          });
-        }
         return [
-          ...nodes.filter((node) => selectedIds.has(node.data.id)),
-          ...selectedEdges.filter((edge) =>
-            selectedIds.has(edge.data.source) && selectedIds.has(edge.data.target)
-          ),
+          ...payload.nodes
+            .filter((node) => node.lenses.includes(lens))
+            .map((node) => ({
+              group: "nodes",
+              data: {
+                id: node.id,
+                type: node.type,
+                label: node.label,
+                properties: node.properties,
+                searchable_label: node.searchable_label,
+                degree: node.degree,
+                member_specs: node.member_specs,
+                exception: node.exception,
+                lenses: node.lenses,
+              },
+            })),
+          ...payload.edges
+            .filter((edge) => edge.lenses.includes(lens))
+            .map((edge) => ({
+              group: "edges",
+              data: {
+                id: `${edge.source}|${edge.type}|${edge.target}`,
+                source: edge.source,
+                target: edge.target,
+                type: edge.type,
+                label: edge.type,
+                properties: edge.properties,
+                lenses: edge.lenses,
+              },
+            })),
         ];
       }
 
@@ -636,7 +659,7 @@ _HTML_TEMPLATE = """<!doctype html>
           return;
         }
         cy.nodes().forEach((node) => {
-          if (!JSON.stringify(node.data()).toLowerCase().includes(query)) {
+          if (!node.data("searchable_label").toLowerCase().includes(query)) {
             node.addClass("faded");
           } else {
             node.addClass("labelled search-match");

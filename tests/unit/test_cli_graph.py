@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import webbrowser
 
 import pytest
 from typer.testing import CliRunner
@@ -55,7 +56,7 @@ def _audit(status: str = "pass") -> SpecGraphAuditReport:
 
 
 @pytest.mark.unit
-def test_graph_help_exposes_build_audit_and_refresh() -> None:
+def test_graph_help_exposes_build_audit_refresh_and_consumption_commands() -> None:
     from echelon.cli_app import app
 
     result = CliRunner().invoke(app, ["graph", "--help"])
@@ -65,6 +66,11 @@ def test_graph_help_exposes_build_audit_and_refresh() -> None:
     assert "audit" in result.output
     assert "refresh" in result.output
     assert "workspace" in result.output
+    assert "query" in result.output
+    assert "explain" in result.output
+    assert "path" in result.output
+    assert "neighbors" in result.output
+    assert "impact" in result.output
 
 
 @pytest.mark.unit
@@ -329,6 +335,182 @@ def test_graph_view_writes_offline_html_and_opens_browser(
     assert "window.ECHELON_GRAPH" in html
     assert '.version="3.34.0"' in html
     assert opened == [output.resolve().as_uri()]
+
+
+@pytest.mark.unit
+def test_graph_view_vis_uses_renderer_specific_default_and_shared_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _persist_graph(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "echelon.spec_graph_audit.audit_spec_graph",
+        lambda project_root, selector: _audit(),
+    )
+    monkeypatch.setattr(
+        "echelon.graph_visualization.load_cytoscape_source",
+        lambda: pytest.fail("vis renderer must not load the Cytoscape asset"),
+    )
+    monkeypatch.setattr(
+        "webbrowser.open",
+        lambda url: pytest.fail("--no-open must keep the browser closed"),
+    )
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(
+        app,
+        ["graph", "view", "001-demo", "--renderer", "ViS", "--no-open"],
+    )
+
+    output = tmp_path / ".echelon" / "graph" / "001-demo-vis.html"
+    assert result.exit_code == 0
+    assert output.is_file()
+    html = output.read_text(encoding="utf-8")
+    assert '"initial_lens": "traceability"' in html
+    assert 'id="graph-data"' in html
+    assert "vis-network" in html
+
+
+@pytest.mark.unit
+def test_graph_view_vis_defaults_to_exceptions_for_live_audit_findings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _persist_graph(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    report = SpecGraphAuditReport(
+        schema_version=1,
+        spec_id="001-demo",
+        graph_hash="sha256:graph",
+        status="fail",
+        findings=(
+            GraphFinding(
+                "error",
+                "requirement_task_missing",
+                "active requirement has no mapped task",
+                "spec:001-demo",
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        "echelon.spec_graph_audit.audit_spec_graph",
+        lambda project_root, selector: report,
+    )
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(
+        app,
+        ["graph", "view", "001-demo", "--renderer", "vis", "--no-open"],
+    )
+
+    output = tmp_path / ".echelon" / "graph" / "001-demo-vis.html"
+    assert result.exit_code == 1
+    assert '"initial_lens": "exceptions"' in output.read_text(encoding="utf-8")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("renderer", ("cytoscape", "vis"))
+def test_graph_view_renderer_honors_explicit_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    renderer: str,
+) -> None:
+    _persist_graph(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "echelon.spec_graph_audit.audit_spec_graph",
+        lambda project_root, selector: _audit(),
+    )
+    from echelon.cli_app import app
+
+    output = tmp_path / "reports" / f"{renderer}.html"
+    result = CliRunner().invoke(
+        app,
+        [
+            "graph",
+            "view",
+            "001-demo",
+            "--renderer",
+            renderer,
+            "--no-open",
+            "--output",
+            str(output),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert output.is_file()
+
+
+@pytest.mark.unit
+def test_graph_view_rejects_unknown_renderer_before_writing_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _persist_graph(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    from echelon.cli_app import app
+
+    output = tmp_path / "reports" / "graph.html"
+    result = CliRunner().invoke(
+        app,
+        [
+            "graph",
+            "view",
+            "001-demo",
+            "--renderer",
+            "unknown",
+            "--no-open",
+            "--output",
+            str(output),
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "unknown graph renderer" in result.stderr
+    assert not output.exists()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("renderer", "open_browser"),
+    (
+        ("cytoscape", lambda url: False),
+        (
+            "cytoscape",
+            lambda url: (_ for _ in ()).throw(webbrowser.Error("blocked")),
+        ),
+        ("vis", lambda url: False),
+        ("vis", lambda url: (_ for _ in ()).throw(webbrowser.Error("blocked"))),
+    ),
+)
+def test_graph_view_browser_failure_preserves_audit_exit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    renderer: str,
+    open_browser,
+) -> None:
+    _persist_graph(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "echelon.spec_graph_audit.audit_spec_graph",
+        lambda project_root, selector: _audit("fail"),
+    )
+    monkeypatch.setattr("webbrowser.open", open_browser)
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(
+        app,
+        ["graph", "view", "001-demo", "--renderer", renderer, "--open"],
+    )
+
+    assert result.exit_code == 1
+    output = tmp_path / ".echelon" / "graph" / (
+        "001-demo-vis.html" if renderer == "vis" else "001-demo.html"
+    )
+    assert output.is_file()
+    assert "warning: graph viewer was not opened" in result.stderr
 
 
 @pytest.mark.unit

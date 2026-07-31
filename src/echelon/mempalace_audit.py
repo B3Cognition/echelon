@@ -243,6 +243,11 @@ def _scan_spec_extras(
     for drawer_id, (_document, metadata) in parsed.rows.items():
         if drawer_id in expected_ids or not _points_to_spec(metadata, snapshot):
             continue
+        if (
+            metadata.get("scope") == "spec-evidence"
+            and metadata.get("artifact_kind") == "spec-evidence"
+        ):
+            continue
         artifact_path = metadata.get("artifact_path") or metadata.get(
             "source_file"
         )
@@ -444,7 +449,12 @@ def audit_spec_memory(
             _append_unique(wrong_wing, drawer_id)
         if metadata.get("room") != planned.room:
             _append_unique(wrong_room, drawer_id)
-        if metadata.get("scope") != "canonical" or metadata.get("canonical") is not True:
+        expected_scopes = (
+            {"canonical", "canonical-support"}
+            if planned.requirement_id.startswith("CTX-")
+            else {"canonical"}
+        )
+        if metadata.get("scope") not in expected_scopes or metadata.get("canonical") is not True:
             _append_unique(non_canonical, drawer_id)
         if (
             planned.requirement_id.startswith("CTX-")

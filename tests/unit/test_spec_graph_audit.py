@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -47,7 +48,9 @@ def _graph(
             {
                 "requirement_id": "FR-001",
                 "category": "functional",
+                "source_line": 3,
                 "source_path": "specs/001-demo/spec.md",
+                "source_text": "- **FR-001**: Build the report.",
             },
         ),
     ]
@@ -193,12 +196,129 @@ def test_audit_passes_for_matching_current_graph(
 
     assert report.status == "pass"
     assert report.findings == ()
+    assert classify_spec_graph_audit(report) == "current"
     assert report.graph_hash == (
         "sha256:"
         + hashlib.sha256(
             (spec_dir / "spec-artifact-graph.json").read_bytes()
         ).hexdigest()
     )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("mutate_payload", "expected_message"),
+    [
+        (
+            lambda payload, requirement: payload.pop("node_projection_version"),
+            "graph projection version 1 is stale",
+        ),
+        (
+            lambda payload, requirement: requirement["properties"].pop("source_text"),
+            "graph requirement projection is stale",
+        ),
+        (
+            lambda payload, requirement: requirement["properties"].__setitem__("source_line", True),
+            "graph requirement projection is stale",
+        ),
+    ],
+)
+def test_audit_reports_stale_requirement_projection(
+    tmp_path: Path,
+    monkeypatch,
+    mutate_payload,
+    expected_message: str,
+) -> None:
+    graph = _graph(
+        inputs=(
+            GraphInput(
+                "specs/001-demo/spec.md",
+                "sha256:spec",
+                "requirements_source",
+                True,
+            ),
+        ),
+    )
+    spec_dir = _write_current_graph(tmp_path, graph)
+    payload = json.loads((spec_dir / "spec-artifact-graph.json").read_text(encoding="utf-8"))
+    requirement = next(node for node in payload["nodes"] if node["type"] == "Requirement")
+    mutate_payload(payload, requirement)
+    (spec_dir / "spec-artifact-graph.json").write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "echelon.spec_graph_audit.build_spec_graph",
+        lambda project_root, selector: graph,
+    )
+
+    report = audit_spec_graph(tmp_path, spec_dir)
+    stale_findings = [
+        finding for finding in report.findings if finding.code == "graph_projection_stale"
+    ]
+
+    assert report.status == "fail"
+    assert len(stale_findings) == 1
+    assert stale_findings[0].message == expected_message
+    assert classify_spec_graph_audit(report) == "stale"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("projection_version", [True, 2.0, "2"])
+def test_audit_rejects_non_exact_int_projection_versions(
+    tmp_path: Path,
+    monkeypatch,
+    projection_version: object,
+) -> None:
+    graph = _graph()
+    spec_dir = _write_current_graph(tmp_path, graph)
+    graph_path = spec_dir / "spec-artifact-graph.json"
+    payload = json.loads(graph_path.read_text(encoding="utf-8"))
+    payload["node_projection_version"] = projection_version
+    graph_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "echelon.spec_graph_audit.build_spec_graph",
+        lambda project_root, selector: graph,
+    )
+
+    report = audit_spec_graph(tmp_path, spec_dir)
+
+    assert report.status == "fail"
+    assert [finding.code for finding in report.findings] == [
+        "graph_projection_stale"
+    ]
+
+
+@pytest.mark.unit
+def test_audit_reports_rebuildable_graph_body_stale_when_valid_body_differs(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    graph = _graph()
+    spec_dir = _write_current_graph(tmp_path, graph)
+    graph_path = spec_dir / "spec-artifact-graph.json"
+    payload = json.loads(graph_path.read_text(encoding="utf-8"))
+    spec_node = next(node for node in payload["nodes"] if node["type"] == "Spec")
+    spec_node["properties"]["path"] = "specs/001-relocated"
+    graph_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "echelon.spec_graph_audit.build_spec_graph",
+        lambda project_root, selector: graph,
+    )
+
+    report = audit_spec_graph(tmp_path, spec_dir)
+
+    assert report.status == "fail"
+    assert [(finding.code, finding.subject_id) for finding in report.findings] == [
+        ("graph_body_stale", None)
+    ]
+    assert classify_spec_graph_audit(report) == "stale"
 
 
 @pytest.mark.unit

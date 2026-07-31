@@ -392,6 +392,48 @@ placeholder-only graph is `unavailable`), then return that audit status. `pass`
 and `warn` exit `0`, `fail` exits `1`, and unavailable or missing/invalid
 persisted workspace state exits `2` without view/export output.
 
+#### Consume the workspace graph
+
+After publishing the applicable RE, specification, and evidence snapshots,
+audit their memory projections and repair the persisted workspace graph before
+using the read commands:
+
+```bash
+echelon spec memory audit <spec>
+echelon re memory audit
+echelon spec evidence memory audit <spec>
+echelon graph workspace refresh --write
+echelon graph query "which requirements depend on import validation?"
+echelon graph explain req:905-import-prose:FR-012
+echelon graph path req:905-import-prose:FR-012 artifact:specs/905-import-prose/inputs/catalog.json
+echelon graph neighbors task:905-import-prose:T-001
+echelon graph impact req:905-import-prose:FR-012
+echelon graph workspace view --renderer cytoscape
+echelon graph workspace view --renderer vis
+```
+
+`query`, `explain`, `path`, `neighbors`, and `impact` read the persisted
+workspace graph by default, which supports cross-spec paths. Add `--spec <id>`
+to any of those commands to read one persisted spec graph instead. Use `--json`
+for the common machine-readable envelope keys: `schema_version`, `scope`,
+`graph_hash`, `audit`, `command`, `request`, `nodes`, `edges`, `paths`,
+`truncated`.
+
+The read commands return `0` only for a clean passing audit. They return `1`
+with usable stale results and audit findings, or `2` without results when the
+persisted graph is missing, invalid, or cannot be read. They never mine memory,
+rebuild a graph, or repair state. Recover explicitly: refresh the stale RE,
+requirements, or evidence memory projection, then run `echelon graph workspace
+refresh --write` again.
+
+Workspace views are self-contained and work offline. The default Cytoscape
+renderer writes `.echelon/runtime/graph/workspace.html`; `--renderer vis`
+writes `.echelon/runtime/graph/workspace-vis.html`, so both can coexist. Add
+`--no-open` for automation. vis renders graphs through 5,000 nodes and 10,000
+edges; above either limit it writes a size message without a partial network,
+so use Cytoscape for the larger graph. The deferred extensions and their
+decision triggers live in the [graph consumption and vis renderer design](docs/superpowers/specs/2026-07-31-graph-consumption-vis-design.md#deferred-opportunities).
+
 ### Product inputs: requirements versus references
 
 `--input` is repeatable and deliberately separates product obligations from

@@ -9,7 +9,9 @@ import subprocess
 import pytest
 
 from echelon.graph_visualization import (
+    GraphViewPayload,
     GraphVisualizationError,
+    build_graph_view_payload,
     filter_graph,
     load_graph_document,
     render_graph_dot,
@@ -241,14 +243,12 @@ def test_workspace_html_embeds_one_filterable_payload_and_portfolio_lens() -> No
     assert '"title": "delivery-board"' in html
     assert 'value="portfolio"' in html
     assert '"views"' not in html
-    assert html.count('"elements"') == 1
+    assert html.count("window.ECHELON_GRAPH = ") == 1
     payload = _viewer_payload(html)
-    assert payload["lens_edge_types"]["portfolio"] == [
-        "CONTAINS_SPEC",
-        "SUPERSEDES",
-        "TARGETS",
-    ]
-    assert "payload.elements" in html
+    assert "portfolio" in next(
+        edge["lenses"] for edge in payload["edges"] if edge["type"] == "TARGETS"
+    )
+    assert "payload.nodes" in html
     assert "</script><script>alert(1)</script>" not in html
     assert r"<\/script><script>alert(1)<\/script>" in html
 
@@ -295,7 +295,7 @@ def test_workspace_viewer_ignores_unknown_exception_subjects() -> None:
     )
     payload = _viewer_payload(html)
 
-    assert payload["exception_subject_ids"] == []
+    assert not any(node["exception"] for node in payload["nodes"])
 
 
 @pytest.mark.unit
@@ -321,7 +321,33 @@ def test_portfolio_lens_keeps_isolated_workspace_spec_and_source_nodes() -> None
 
 
 @pytest.mark.unit
-def test_workspace_html_portfolio_rule_seeds_isolated_node_types() -> None:
+def test_workspace_payload_exposes_member_specs_and_portfolio_lens_membership() -> None:
+    document = _isolated_workspace_document()
+    document["nodes"][0]["properties"]["member_specs"] = ["002-beta", "001-alpha"]
+    payload = build_graph_view_payload(
+        document,
+        _audit(status="unavailable"),
+        initial_lens="portfolio",
+    )
+
+    assert isinstance(payload, GraphViewPayload)
+    assert payload.scope == "workspace"
+    assert payload.title == "delivery-board"
+    assert payload.lenses == (
+        "all",
+        "exceptions",
+        "traceability",
+        "memory",
+        "delivery",
+        "portfolio",
+    )
+    source = next(node for node in payload.nodes if node["id"] == "source:isolated-a")
+    assert source["member_specs"] == ("001-alpha", "002-beta")
+    assert source["lenses"] == ("all", "portfolio")
+
+
+@pytest.mark.unit
+def test_workspace_html_portfolio_lens_keeps_isolated_node_types() -> None:
     html = render_graph_html(
         _isolated_workspace_document(),
         _audit(status="unavailable"),
@@ -330,15 +356,10 @@ def test_workspace_html_portfolio_rule_seeds_isolated_node_types() -> None:
     )
     payload = _viewer_payload(html)
 
-    assert payload["lens_node_types"]["portfolio"] == [
-        "SourceRoot",
-        "Spec",
-        "Workspace",
-    ]
     assert {
-        element["data"]["id"]
-        for element in payload["elements"]
-        if element["group"] == "nodes"
+        node["id"]
+        for node in payload["nodes"]
+        if "portfolio" in node["lenses"]
     } == {
         "source:isolated-a",
         "source:isolated-b",
