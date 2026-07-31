@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import copy
+import json
 import re
+import subprocess
 
 import pytest
 
@@ -18,6 +20,7 @@ def _payload(
     *,
     nodes: tuple[dict[str, object], ...] | None = None,
     edges: tuple[dict[str, object], ...] | None = None,
+    initial_lens: str = "traceability",
 ) -> GraphViewPayload:
     return GraphViewPayload(
         scope="workspace",
@@ -34,7 +37,7 @@ def _payload(
             ],
         },
         lenses=("all", "exceptions", "traceability", "memory", "delivery", "portfolio"),
-        initial_lens="traceability",
+        initial_lens=initial_lens,
         nodes=nodes
         if nodes is not None
         else (
@@ -98,6 +101,114 @@ def _edge(index: int) -> dict[str, object]:
         "properties": {},
         "lenses": ("all",),
     }
+
+
+def _run_runtime(html: str, actions: str) -> dict[str, object]:
+    data_match = re.search(
+        r'<script id="graph-data" type="application/json">(.*?)</script>',
+        html,
+        flags=re.DOTALL,
+    )
+    scripts = re.findall(r"<script(?: [^>]*)?>(.*?)</script>", html, flags=re.DOTALL)
+    assert data_match is not None
+    assert scripts
+    harness = f"""
+const graphData = {json.dumps(data_match.group(1))};
+const runtimeSource = {json.dumps(scripts[-1])};
+
+class FakeElement {{
+  constructor(id = "", tagName = "div") {{
+    this.id = id;
+    this.tagName = tagName;
+    this.textContent = "";
+    this.className = "";
+    this.value = "";
+    this.checked = false;
+    this.type = "";
+    this.name = "";
+    this.style = {{}};
+    this.children = [];
+    this.listeners = {{}};
+    this.attributes = {{}};
+  }}
+  get firstChild() {{ return this.children[0] || null; }}
+  append(...children) {{
+    children.forEach((child) => {{ child.parent = this; this.children.push(child); }});
+  }}
+  removeChild(child) {{
+    this.children = this.children.filter((candidate) => candidate !== child);
+  }}
+  addEventListener(name, listener) {{ this.listeners[name] = listener; }}
+  setAttribute(name, value) {{ this.attributes[name] = String(value); }}
+  querySelectorAll(selector) {{
+    const descendants = [];
+    const visit = (element) => {{
+      element.children.forEach((child) => {{ descendants.push(child); visit(child); }});
+    }};
+    visit(this);
+    if (selector === 'input[type="checkbox"]') {{
+      return descendants.filter((element) => element.tagName === "input" && element.type === "checkbox");
+    }}
+    return [];
+  }}
+}}
+
+const elementIds = [
+  "graph-data", "graph-search", "graph-lens", "legend-filters", "graph-summary",
+  "selection-details", "incoming-neighbors", "outgoing-neighbors", "render-state",
+  "physics", "graph-title", "audit-status", "audit-findings", "network", "fit",
+  "reset", "group-type", "group-spec"
+];
+const elements = new Map(elementIds.map((id) => [id, new FakeElement(id)]));
+elements.get("graph-data").textContent = graphData;
+elements.get("group-type").name = "grouping";
+elements.get("group-type").value = "type";
+elements.get("group-spec").name = "grouping";
+elements.get("group-spec").value = "spec";
+
+globalThis.document = {{
+  getElementById(id) {{ return elements.get(id); }},
+  createElement(tagName) {{ return new FakeElement("", tagName); }},
+  querySelectorAll(selector) {{
+    if (selector === 'input[name="grouping"]') {{
+      return [elements.get("group-type"), elements.get("group-spec")];
+    }}
+    return [];
+  }}
+}};
+
+class FakeDataSet {{
+  constructor(items) {{ this.items = items; }}
+}}
+class FakeNetwork {{
+  constructor(container, data, options) {{
+    this.container = container;
+    this.data = data;
+    this.options = options;
+    this.handlers = {{}};
+    globalThis.runtimeNetwork = this;
+  }}
+  on(name, handler) {{ this.handlers[name] = handler; }}
+  setOptions(options) {{ this.lastOptions = options; }}
+  setData(data) {{ this.data = data; }}
+  selectNodes(nodeIds) {{ this.selectedNodeIds = nodeIds; }}
+  stopSimulation() {{}}
+  startSimulation() {{}}
+  fit() {{}}
+}}
+globalThis.vis = {{ DataSet: FakeDataSet, Network: FakeNetwork }};
+eval(runtimeSource);
+{actions}
+"""
+    completed = subprocess.run(
+        ["node"],
+        input=harness,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    return json.loads(completed.stdout)
 
 
 @pytest.mark.unit
@@ -180,9 +291,6 @@ def test_html_exposes_complete_accessible_operational_renderer_contract() -> Non
     assert "node.lenses.includes(activeLens)" in html
     assert "node.member_specs" in html
     assert "incoming" in html and "outgoing" in html
-    assert "Math.min(MAX_NODE_SIZE, Math.max(MIN_NODE_SIZE" in html
-    assert "const MIN_NODE_SIZE = 18;" in html
-    assert "const MAX_NODE_SIZE = 44;" in html
     assert "function colorForGroupKey(key)" in html
     assert "colorForGroupKey(key)" in html
     assert "#network { width: 100%; height: 100%; min-height: 420px;" in html
@@ -191,23 +299,202 @@ def test_html_exposes_complete_accessible_operational_renderer_contract() -> Non
 
 
 @pytest.mark.unit
-def test_exact_graph_limits_initialize_the_full_network() -> None:
+def test_degree_sizing_changes_effective_size_for_every_supported_node_type() -> None:
+    supported_types = (
+        "Spec",
+        "Requirement",
+        "Task",
+        "Artifact",
+        "MemPalaceDrawer",
+        "Amendment",
+        "Deferral",
+    )
+    nodes = tuple(
+        {
+            "id": f"{node_type}:{degree}",
+            "type": node_type,
+            "properties": {},
+            "label": f"{node_type}: {degree}",
+            "searchable_label": f"{node_type} {degree}",
+            "degree": degree,
+            "member_specs": (),
+            "exception": False,
+            "lenses": ("all",),
+        }
+        for node_type in supported_types
+        for degree in (0, 100)
+    )
+    html = render_vis_graph_html(
+        _payload(nodes=nodes, edges=(), initial_lens="all"),
+        "",
+    )
+
+    result = _run_runtime(
+        html,
+        """
+const emitted = Object.fromEntries(
+  runtimeNetwork.data.nodes.items.map((node) => [node.id, { shape: node.shape, size: node.size }])
+);
+process.stdout.write(JSON.stringify(emitted));
+""",
+    )
+
+    size_honoring_shapes = {
+        "diamond",
+        "dot",
+        "hexagon",
+        "square",
+        "star",
+        "triangle",
+        "triangleDown",
+    }
+    emitted_shapes = set()
+    for node_type in supported_types:
+        low = result[f"{node_type}:0"]
+        high = result[f"{node_type}:100"]
+        assert low["shape"] in size_honoring_shapes
+        assert high["shape"] == low["shape"]
+        assert 18 <= low["size"] < high["size"] <= 44
+        emitted_shapes.add(low["shape"])
+    assert len(emitted_shapes) == len(supported_types)
+
+
+@pytest.mark.unit
+def test_details_follow_lens_legend_and_search_visible_graph() -> None:
+    nodes = (
+        {
+            "id": "spec:demo",
+            "type": "Spec",
+            "properties": {"spec_id": "demo"},
+            "label": "Spec: demo",
+            "searchable_label": "spec demo",
+            "degree": 1,
+            "member_specs": (),
+            "exception": False,
+            "lenses": ("all", "traceability"),
+        },
+        {
+            "id": "req:demo:FR-001",
+            "type": "Requirement",
+            "properties": {"requirement_id": "FR-001"},
+            "label": "Requirement: FR-001",
+            "searchable_label": "requirement fr-001",
+            "degree": 2,
+            "member_specs": ("demo",),
+            "exception": False,
+            "lenses": ("all", "traceability", "delivery"),
+        },
+        {
+            "id": "task:demo:T-001",
+            "type": "Task",
+            "properties": {"task_id": "T-001"},
+            "label": "Task: T-001",
+            "searchable_label": "task t-001",
+            "degree": 1,
+            "member_specs": ("demo",),
+            "exception": False,
+            "lenses": ("all", "delivery"),
+        },
+    )
+    edges = (
+        {
+            "source": "spec:demo",
+            "type": "HAS_REQUIREMENT",
+            "target": "req:demo:FR-001",
+            "properties": {},
+            "lenses": ("all", "traceability"),
+        },
+        {
+            "source": "task:demo:T-001",
+            "type": "IMPLEMENTS",
+            "target": "req:demo:FR-001",
+            "properties": {},
+            "lenses": ("all", "delivery"),
+        },
+    )
+    html = render_vis_graph_html(
+        _payload(nodes=nodes, edges=edges, initial_lens="traceability"),
+        "",
+    )
+
+    result = _run_runtime(
+        html,
+        """
+const incomingText = () => elements.get("incoming-neighbors").children.map((item) => item.textContent);
+runtimeNetwork.handlers.selectNode({ nodes: ["req:demo:FR-001"] });
+const traceability = incomingText();
+
+elements.get("graph-lens").value = "delivery";
+elements.get("graph-lens").listeners.change();
+const delivery = incomingText();
+
+elements.get("graph-search").value = "requirement";
+elements.get("graph-search").listeners.input();
+const searchFiltered = incomingText();
+elements.get("graph-search").value = "";
+elements.get("graph-search").listeners.input();
+
+const taskLegend = elements.get("legend-filters").children
+  .map((label) => label.children[0])
+  .find((input) => input.value === "Task");
+taskLegend.checked = false;
+taskLegend.listeners.change();
+const legendFiltered = incomingText();
+
+process.stdout.write(JSON.stringify({ traceability, delivery, searchFiltered, legendFiltered }));
+""",
+    )
+
+    assert result == {
+        "traceability": ["HAS_REQUIREMENT: Spec: demo"],
+        "delivery": ["IMPLEMENTS: Task: T-001"],
+        "searchFiltered": ["None"],
+        "legendFiltered": ["None"],
+    }
+
+
+@pytest.mark.unit
+def test_exact_graph_limits_initialize_populated_datasets() -> None:
     at_node_limit = render_vis_graph_html(
-        _payload(nodes=tuple(_node(index) for index in range(VIS_MAX_NODES)), edges=()),
-        "window.vis = {};",
+        _payload(
+            nodes=tuple(_node(index) for index in range(VIS_MAX_NODES)),
+            edges=(),
+            initial_lens="all",
+        ),
+        "",
     )
     at_edge_limit = render_vis_graph_html(
         _payload(
             nodes=(_node(0), _node(1)),
             edges=tuple(_edge(index) for index in range(VIS_MAX_EDGES)),
+            initial_lens="all",
         ),
-        "window.vis = {};",
+        "",
     )
 
-    assert "new vis.Network(" in at_node_limit
-    assert '"id": "node:04999"' in at_node_limit
-    assert "new vis.Network(" in at_edge_limit
-    assert '"type": "LINK_09999"' in at_edge_limit
+    node_result = _run_runtime(
+        at_node_limit,
+        """
+process.stdout.write(JSON.stringify({
+  nodes: runtimeNetwork.data.nodes.items.length,
+  edges: runtimeNetwork.data.edges.items.length,
+  lastNode: runtimeNetwork.data.nodes.items.some((node) => node.id === "node:04999")
+}));
+""",
+    )
+    edge_result = _run_runtime(
+        at_edge_limit,
+        """
+process.stdout.write(JSON.stringify({
+  nodes: runtimeNetwork.data.nodes.items.length,
+  edges: runtimeNetwork.data.edges.items.length,
+  lastEdge: runtimeNetwork.data.edges.items.some((edge) => edge.label === "LINK_09999")
+}));
+""",
+    )
+
+    assert node_result == {"nodes": VIS_MAX_NODES, "edges": 0, "lastNode": True}
+    assert edge_result == {"nodes": 2, "edges": VIS_MAX_EDGES, "lastEdge": True}
 
 
 @pytest.mark.unit

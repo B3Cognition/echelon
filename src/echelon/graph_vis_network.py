@@ -223,8 +223,8 @@ _HTML_TEMPLATE = """<!doctype html>
         "#0369a1", "#4d7c0f", "#a21caf", "#c2410c", "#475569"
       ];
       const SHAPES = {
-        Spec: "box", Requirement: "box", Task: "box", Artifact: "square",
-        MemPalaceDrawer: "database", Amendment: "diamond", Deferral: "hexagon"
+        Spec: "dot", Requirement: "diamond", Task: "triangle", Artifact: "square",
+        MemPalaceDrawer: "star", Amendment: "triangleDown", Deferral: "hexagon"
       };
       const MIN_NODE_SIZE = 18;
       const MAX_NODE_SIZE = 44;
@@ -237,12 +237,12 @@ _HTML_TEMPLATE = """<!doctype html>
       const outgoingList = document.getElementById("outgoing-neighbors");
       const renderState = document.getElementById("render-state");
       const physicsButton = document.getElementById("physics");
-      const nodeById = new Map(payload.nodes.map((node) => [node.id, node]));
       const nodeTypes = [...new Set(payload.nodes.map((node) => node.type))].sort();
       const enabledTypes = new Set(nodeTypes);
       let grouping = "type";
       let physicsEnabled = true;
       let selectedNodeId = null;
+      let currentVisibleGraph = { nodes: [], edges: [] };
 
       document.getElementById("graph-title").textContent = payload.title;
       const auditStatus = document.getElementById("audit-status");
@@ -374,6 +374,7 @@ _HTML_TEMPLATE = """<!doctype html>
       }
 
       const initial = visibleGraph();
+      currentVisibleGraph = initial;
       const data = {
         nodes: new vis.DataSet(initial.nodes.map(networkNode)),
         edges: new vis.DataSet(initial.edges.map(networkEdge))
@@ -422,7 +423,10 @@ _HTML_TEMPLATE = """<!doctype html>
 
       function showSelection(nodeId) {
         selectedNodeId = nodeId;
-        const node = nodeById.get(nodeId);
+        const visibleNodeById = new Map(
+          currentVisibleGraph.nodes.map((node) => [node.id, node])
+        );
+        const node = visibleNodeById.get(nodeId);
         if (!node) return;
         selection.className = "";
         selection.textContent = JSON.stringify({
@@ -432,12 +436,12 @@ _HTML_TEMPLATE = """<!doctype html>
           member_specs: node.member_specs,
           properties: node.properties
         }, null, 2);
-        const incoming = payload.edges
+        const incoming = currentVisibleGraph.edges
           .filter((edge) => edge.target === nodeId)
-          .map((edge) => ({ edge, node: nodeById.get(edge.source) }));
-        const outgoing = payload.edges
+          .map((edge) => ({ edge, node: visibleNodeById.get(edge.source) }));
+        const outgoing = currentVisibleGraph.edges
           .filter((edge) => edge.source === nodeId)
-          .map((edge) => ({ edge, node: nodeById.get(edge.target) }));
+          .map((edge) => ({ edge, node: visibleNodeById.get(edge.target) }));
         populateNeighbors(incomingList, incoming);
         populateNeighbors(outgoingList, outgoing);
       }
@@ -452,6 +456,7 @@ _HTML_TEMPLATE = """<!doctype html>
 
       function rebuildData() {
         const filtered = visibleGraph();
+        currentVisibleGraph = filtered;
         network.setOptions({ groups: groupOptions(filtered.nodes) });
         network.setData({
           nodes: new vis.DataSet(filtered.nodes.map(networkNode)),
@@ -461,6 +466,7 @@ _HTML_TEMPLATE = """<!doctype html>
         summary.textContent = `${filtered.nodes.length} nodes / ${filtered.edges.length} edges`;
         if (selectedNodeId && filtered.nodes.some((node) => node.id === selectedNodeId)) {
           network.selectNodes([selectedNodeId]);
+          showSelection(selectedNodeId);
         } else {
           clearSelection();
         }
