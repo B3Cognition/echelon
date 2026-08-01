@@ -168,10 +168,22 @@ class TestAICodingCliProvider:
         cmd_passed = popen.call_args.args[0]
         assert "--dangerously-skip-permissions" in cmd_passed
 
-    def test_exec_prompt_disallows_claude_native_task_planning_tools(self, tmp_path):
+    def test_exec_prompt_allows_claude_native_task_planning_tools(self, tmp_path):
         with _patch_claude_popen() as popen:
             AICodingCliProvider(_config()).exec_prompt(str(tmp_path), "build this")
 
+        cmd_passed = popen.call_args.args[0]
+        assert "--disallowedTools" not in cmd_passed
+
+    def test_run_agent_result_disallows_claude_task_tools_for_canonical_execution(self, tmp_path):
+        with _patch_claude_popen() as popen:
+            result = AICodingCliProvider(_config()).run_agent_result(
+                str(tmp_path),
+                "build this",
+                request_metadata={"canonical_task_execution": True},
+            )
+
+        assert result.exit_code == 0
         cmd_passed = popen.call_args.args[0]
         assert "--disallowedTools" in cmd_passed
         disallowed = cmd_passed[cmd_passed.index("--disallowedTools") + 1]

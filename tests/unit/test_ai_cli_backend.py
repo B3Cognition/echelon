@@ -2973,6 +2973,77 @@ def test_claude_backend_uses_prompt_metadata_model(tmp_path) -> None:
     assert captured["cmd"][model_index + 1] == "claude-opus-4-1"
 
 
+def test_claude_backend_allows_task_tools_without_canonical_task_metadata(
+    tmp_path,
+) -> None:
+    backend = ClaudeCliBackend(_config("claude"))
+    captured = {}
+
+    class FakeProcess:
+        stdout = io.BytesIO(b"")
+        returncode = 0
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self) -> int:
+            return self.returncode
+
+    def fake_popen(cmd, **kwargs):
+        captured["command"] = cmd
+        return FakeProcess()
+
+    with patch("harness.ai_cli_backends.claude.subprocess.Popen", fake_popen):
+        result = backend.run_prompt(
+            CliRunRequest(
+                cwd=str(tmp_path),
+                prompt="Build this.",
+                env={},
+                timeout_s=10,
+                metadata={},
+            )
+        )
+
+    assert result.exit_code == 0
+    assert "--disallowedTools" not in captured["command"]
+
+
+def test_claude_backend_restricts_task_tools_for_canonical_task_execution(
+    tmp_path,
+) -> None:
+    backend = ClaudeCliBackend(_config("claude"))
+    captured = {}
+
+    class FakeProcess:
+        stdout = io.BytesIO(b"")
+        returncode = 0
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self) -> int:
+            return self.returncode
+
+    def fake_popen(cmd, **kwargs):
+        captured["command"] = cmd
+        return FakeProcess()
+
+    with patch("harness.ai_cli_backends.claude.subprocess.Popen", fake_popen):
+        result = backend.run_prompt(
+            CliRunRequest(
+                cwd=str(tmp_path),
+                prompt="Build this.",
+                env={},
+                timeout_s=10,
+                metadata={"canonical_task_execution": True},
+            )
+        )
+
+    assert result.exit_code == 0
+    disallowed_index = captured["command"].index("--disallowedTools")
+    assert captured["command"][disallowed_index + 1] == "TaskCreate,TaskUpdate"
+
+
 def test_claude_backend_preserves_response_model_from_stream(tmp_path) -> None:
     backend = ClaudeCliBackend(_config("claude"))
 

@@ -20,13 +20,16 @@ class ClaudeCliBackend:
         self._bin = shutil.which("claude") or "claude"
 
     def run_prompt(self, request: CliRunRequest) -> CliRunResult:
+        canonical_task_execution = (
+            request.metadata.get("canonical_task_execution") is True
+        )
         cmd = build_llm_cli_command(
             "claude",
             self._bin,
             request.prompt,
             self._config.llm.tool_policy,
             stream_json=True,
-            disallow_claude_task_tools=True,
+            disallow_claude_task_tools=canonical_task_execution,
         )
         model = _prompt_metadata_str(request, "model")
         if model:
