@@ -29,6 +29,10 @@ Thumbs.db
 !/specs/004-run-finalize-hardening/spec.md
 !/specs/004-run-finalize-hardening/plan.md
 !/specs/030-build-sue-challenge-script/
+!/specs/031-sue-validation-gates/
+!/specs/031-sue-validation-gates/spec.md
+!/specs/031-sue-validation-gates/checklists/
+!/specs/031-sue-validation-gates/checklists/requirements.md
 .github/*
 !.github/workflows/
 .specify/squad/
