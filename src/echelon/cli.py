@@ -8803,7 +8803,6 @@ def _is_spec_feature_branch(branch: str) -> bool:
 from harness.skill_loader import (
     find_skill as _find_skill_impl,
     build_skill_prompt as _build_skill_prompt_impl,
-    StreamEventPrinter as _StreamEventPrinter,
 )
 from harness.prosaic_prompt_loader import (
     ProsaicPromptLoadError,
@@ -8812,11 +8811,7 @@ from harness.prosaic_prompt_loader import (
 )
 from harness.config import load_config
 from harness.llm_provider import AICodingCliProvider
-from harness.llm_tool_policy import (
-    LlmToolPolicy,
-    build_llm_cli_command,
-    build_opencode_skill_command,
-)
+from harness.llm_tool_policy import build_opencode_skill_command
 from harness.provider_capability import ProviderCapability
 
 
@@ -8844,10 +8839,6 @@ def _load_prosaic_command(
 
 def _load_cli_config(project_dir: Path):
     return load_config(project_dir, squad_only=True)
-
-
-def _load_cli_tool_policy(project_dir: Path) -> LlmToolPolicy:
-    return _load_cli_config(project_dir).llm.tool_policy
 
 
 def _capability_label(capability: ProviderCapability) -> str:
@@ -8910,62 +8901,6 @@ def _skill_required_capability(command: str) -> ProviderCapability:
     return ProviderCapability.ARTIFACT
 
 
-def _print_event(event: dict, _printer: list = []) -> None:
-    # Lazy-init one printer per process; list used as mutable default container.
-    if not _printer:
-        _printer.append(_StreamEventPrinter())
-    _printer[0](event)
-
-
-def _run_claude_streaming(
-    bin_: str,
-    prompt: str,
-    project_dir: Path,
-    extra_args: list[str] | None = None,
-    tool_policy: LlmToolPolicy | None = None,
-    config_dir: str | None = None,
-) -> None:
-    """Invoke claude -p with stream-json output and print live progress to stdout."""
-    import json as _json
-
-    cmd = build_llm_cli_command(
-        "claude",
-        bin_,
-        prompt,
-        tool_policy or LlmToolPolicy(),
-        stream_json=True,
-    ) + (extra_args or [])
-
-    env = os.environ.copy()
-    if config_dir:
-        env["CLAUDE_CONFIG_DIR"] = os.path.expanduser(config_dir)
-
-    proc = subprocess.Popen(
-        cmd,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=None,  # inherit so errors are visible
-        cwd=str(project_dir),
-        env=env,
-    )
-    assert proc.stdin and proc.stdout
-    proc.stdin.write(prompt.encode("utf-8"))
-    proc.stdin.close()
-
-    for raw in proc.stdout:
-        line = raw.decode("utf-8", errors="replace").strip()
-        if not line:
-            continue
-        try:
-            _print_event(_json.loads(line))
-        except _json.JSONDecodeError:
-            print(line, flush=True)
-
-    proc.stdout.close()
-    proc.wait()
-    sys.exit(proc.returncode)
-
-
 def _skill_not_found_msg(skill_base: str, project_dir: Path, cli: str) -> str:
     if cli == "copilot":
         return (
@@ -9011,7 +8946,6 @@ def _dispatch_skill_command(command: str, args: list[str]) -> None:
     )
     try:
         config = _load_cli_config(project_dir)
-        tool_policy = config.llm.tool_policy
     except Exception as exc:
         print(f"echelon {command}: invalid LLM tool policy: {exc}", file=sys.stderr)
         sys.exit(1)
@@ -9025,35 +8959,25 @@ def _dispatch_skill_command(command: str, args: list[str]) -> None:
             print(_skill_not_found_msg(skill_base, project_dir, cli), file=sys.stderr)
             sys.exit(1)
 
-    bin_ = shutil.which(cli) or cli
     if cli == "opencode" and prompt is None:
-        cmd = build_opencode_skill_command(bin_, skill_base, arguments, tool_policy)
+        bin_ = shutil.which(cli) or cli
+        cmd = build_opencode_skill_command(
+            bin_, skill_base, arguments, config.llm.tool_policy
+        )
         result = subprocess.run(cmd, cwd=str(project_dir))
         sys.exit(result.returncode)
-    if prosaic_command is not None:
-        result = AICodingCliProvider(config).run_prompt_result(
-            str(project_dir),
-            prosaic_command.prompt,
-            request_metadata={"prompt_metadata": prosaic_command.frontmatter},
-        )
-        sys.exit(result.exit_code)
-    if cli == "claude":
-        # claude: use stream-json for live tool-call progress in the terminal
-        if prompt is None:
-            prompt = _build_prompt(skill_path, arguments)
-        _run_claude_streaming(
-            bin_,
-            prompt,
-            project_dir,
-            tool_policy=tool_policy,
-            config_dir=config.llm.config_dir,
-        )
-        return  # _run_claude_streaming calls sys.exit
 
     if prompt is None:
         prompt = _build_prompt(skill_path, arguments)
-    result_code = AICodingCliProvider(config).exec_prompt(str(project_dir), prompt)
-    sys.exit(result_code)
+    metadata = None
+    if prosaic_command is not None:
+        metadata = {"prompt_metadata": prosaic_command.frontmatter}
+    elif command == "build":
+        metadata = {"canonical_task_execution": True}
+    result = AICodingCliProvider(config).run_prompt_result(
+        str(project_dir), prompt, request_metadata=metadata
+    )
+    sys.exit(result.exit_code)
 
 
 def _require_codegen_installation() -> None:

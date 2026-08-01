@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-import io
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
 
 import pytest
 
 from echelon import cli
 from harness.config import HarnessConfig, LlmConfig
-from harness.llm_tool_policy import LlmToolPolicy
 from harness.provider_capability import (
     BUILD_PROVIDER_CAPABILITIES,
     CLI_PROVIDER_CAPABILITIES,
@@ -21,101 +18,7 @@ from harness.prosaic_prompt_loader import ProsaicCommandArtifact
 
 
 @pytest.mark.unit
-def test_run_claude_streaming_uses_default_tool_policy_without_dangerous_bypass(tmp_path: Path) -> None:
-    captured_cmd: list[str] = []
-
-    class FakeProcess:
-        stdin = io.BytesIO()
-        stdout = io.BytesIO(b'{"type":"result","is_error":false,"num_turns":0,"duration_ms":0}\n')
-        returncode = 0
-
-        def wait(self) -> int:
-            return self.returncode
-
-    def fake_popen(cmd, **kwargs):
-        captured_cmd.extend(cmd)
-        return FakeProcess()
-
-    with patch("echelon.cli.subprocess.Popen", side_effect=fake_popen), pytest.raises(SystemExit) as exc:
-        cli._run_claude_streaming(
-            "claude",
-            "Do the work.",
-            tmp_path,
-            tool_policy=LlmToolPolicy(),
-        )
-
-    assert exc.value.code == 0
-    assert "--dangerously-skip-permissions" not in captured_cmd
-    assert "--output-format" in captured_cmd
-
-
-@pytest.mark.unit
-def test_run_claude_streaming_uses_configured_claude_config_dir(tmp_path: Path) -> None:
-    captured_env: dict[str, str] = {}
-
-    class FakeProcess:
-        stdin = io.BytesIO()
-        stdout = io.BytesIO(b'{"type":"result","is_error":false,"num_turns":0,"duration_ms":0}\n')
-        returncode = 0
-
-        def wait(self) -> int:
-            return self.returncode
-
-    def fake_popen(cmd, **kwargs):
-        captured_env.update(kwargs["env"])
-        return FakeProcess()
-
-    with patch("echelon.cli.subprocess.Popen", side_effect=fake_popen), pytest.raises(SystemExit) as exc:
-        cli._run_claude_streaming(
-            "claude",
-            "Do the work.",
-            tmp_path,
-            config_dir="~/.claude-work",
-        )
-
-    assert exc.value.code == 0
-    assert captured_env["CLAUDE_CONFIG_DIR"] == str(Path.home() / ".claude-work")
-
-
-@pytest.mark.unit
-def test_dispatch_skill_command_passes_configured_claude_config_dir(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    skill_dir = tmp_path / ".claude" / "skills" / "speckit-echelon-reopen"
-    skill_dir.mkdir(parents=True)
-    (skill_dir / "skill.md").write_text(
-        "---\nname: echelon.reopen\n---\nreopen $ARGUMENTS\n",
-        encoding="utf-8",
-    )
-    config = HarnessConfig(
-        target_repo=".",
-        target_default_branch="main",
-        provider="docker",
-        llm=LlmConfig(cli="claude", config_dir="~/.claude-work"),
-    )
-    captured: dict[str, object] = {}
-
-    class FakeProvider:
-        def __init__(self, loaded_config):
-            assert loaded_config is config
-            self.capabilities = CLI_PROVIDER_CAPABILITIES
-
-    def fake_run_claude_streaming(*args, **kwargs):
-        captured.update(kwargs)
-
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("echelon.cli.load_config", lambda project_dir, squad_only=True: config)
-    monkeypatch.setattr("echelon.cli.AICodingCliProvider", FakeProvider)
-    monkeypatch.setattr("echelon.cli._run_claude_streaming", fake_run_claude_streaming)
-
-    cli._dispatch_skill_command("reopen", ["004-transform-selector-above-stat"])
-
-    assert captured["config_dir"] == "~/.claude-work"
-
-
-@pytest.mark.unit
-def test_dispatch_skill_command_without_prosaic_bundle_uses_legacy_codex_dispatch(
+def test_dispatch_skill_command_routes_legacy_claude_review_through_provider(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -129,46 +32,7 @@ def test_dispatch_skill_command_without_prosaic_bundle_uses_legacy_codex_dispatc
         target_repo=".",
         target_default_branch="main",
         provider="docker",
-        llm=LlmConfig(cli="codex"),
-    )
-    calls: list[tuple[str, str, dict[str, object]]] = []
-
-    class FakeProvider:
-        def __init__(self, loaded_config):
-            assert loaded_config is config
-            self.capabilities = CLI_PROVIDER_CAPABILITIES
-
-        def exec_prompt(self, worktree_path, prompt, **kwargs):
-            calls.append((worktree_path, prompt, kwargs))
-            return 0
-
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("ECHELON_LLM", "codex")
-    monkeypatch.setattr("echelon.cli.load_config", lambda project_dir, squad_only=True: config)
-    monkeypatch.setattr("echelon.cli.AICodingCliProvider", FakeProvider)
-
-    with pytest.raises(SystemExit) as exc:
-        cli._dispatch_skill_command("review", ["005", "pr_url=https://github.com/org/repo/pull/1"])
-
-    assert exc.value.code == 0
-    assert not (tmp_path / ".echelon" / "prosaic" / "commands").exists()
-    assert calls
-    assert calls[0][0] == str(tmp_path)
-    assert "review 005 pr_url=https://github.com/org/repo/pull/1" in calls[0][1]
-    assert calls[0][2] == {}
-
-
-@pytest.mark.unit
-def test_dispatch_skill_command_uses_project_prosaic_command_before_native_skill(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    (tmp_path / ".echelon" / "prosaic").mkdir(parents=True)
-    config = HarnessConfig(
-        target_repo=".",
-        target_default_branch="main",
-        provider="docker",
-        llm=LlmConfig(cli="codex"),
+        llm=LlmConfig(cli="claude", config_dir="~/.claude-work"),
     )
     calls: list[tuple[str, str, dict[str, object] | None]] = []
 
@@ -182,7 +46,88 @@ def test_dispatch_skill_command_uses_project_prosaic_command_before_native_skill
             return SimpleNamespace(exit_code=0)
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("ECHELON_LLM", "codex")
+    monkeypatch.setattr("echelon.cli.load_config", lambda project_dir, squad_only=True: config)
+    monkeypatch.setattr("echelon.cli.AICodingCliProvider", FakeProvider)
+
+    with pytest.raises(SystemExit) as exc:
+        cli._dispatch_skill_command("review", ["005"])
+
+    assert exc.value.code == 0
+    assert calls
+    assert calls[0][0] == str(tmp_path)
+    assert "review 005" in calls[0][1]
+    assert calls[0][2] is None
+
+
+@pytest.mark.unit
+def test_dispatch_skill_command_routes_legacy_build_with_canonical_execution_metadata(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    skill_dir = tmp_path / ".claude" / "skills" / "speckit-echelon-build"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "skill.md").write_text(
+        "---\nname: echelon.build\n---\nbuild $ARGUMENTS\n",
+        encoding="utf-8",
+    )
+    config = HarnessConfig(
+        target_repo=".",
+        target_default_branch="main",
+        provider="docker",
+        llm=LlmConfig(cli="claude"),
+    )
+    calls: list[tuple[str, str, dict[str, object] | None]] = []
+
+    class FakeProvider:
+        def __init__(self, loaded_config):
+            assert loaded_config is config
+            self.capabilities = CLI_PROVIDER_CAPABILITIES
+
+        def run_prompt_result(self, worktree_path, prompt, *, request_metadata=None):
+            calls.append((worktree_path, prompt, request_metadata))
+            return SimpleNamespace(exit_code=0)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ECHELON_LLM", "claude")
+    monkeypatch.setattr("echelon.cli.load_config", lambda project_dir, squad_only=True: config)
+    monkeypatch.setattr("echelon.cli.AICodingCliProvider", FakeProvider)
+
+    with pytest.raises(SystemExit) as exc:
+        cli._dispatch_skill_command("build", ["001-demo"])
+
+    assert exc.value.code == 0
+    assert not (tmp_path / ".echelon" / "prosaic" / "commands").exists()
+    assert calls
+    assert calls[0][0] == str(tmp_path)
+    assert "build 001-demo" in calls[0][1]
+    assert calls[0][2] == {"canonical_task_execution": True}
+
+
+@pytest.mark.unit
+def test_dispatch_skill_command_uses_project_prosaic_command_before_native_skill(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".echelon" / "prosaic").mkdir(parents=True)
+    config = HarnessConfig(
+        target_repo=".",
+        target_default_branch="main",
+        provider="docker",
+        llm=LlmConfig(cli="claude"),
+    )
+    calls: list[tuple[str, str, dict[str, object] | None]] = []
+
+    class FakeProvider:
+        def __init__(self, loaded_config):
+            assert loaded_config is config
+            self.capabilities = CLI_PROVIDER_CAPABILITIES
+
+        def run_prompt_result(self, worktree_path, prompt, *, request_metadata=None):
+            calls.append((worktree_path, prompt, request_metadata))
+            return SimpleNamespace(exit_code=0)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ECHELON_LLM", "claude")
     monkeypatch.setattr("echelon.cli.load_config", lambda project_dir, squad_only=True: config)
     monkeypatch.setattr("echelon.cli.AICodingCliProvider", FakeProvider)
     monkeypatch.setattr(
@@ -238,9 +183,9 @@ def test_dispatch_skill_command_routes_copilot_through_ai_cli_provider(monkeypat
             assert loaded_config is config
             self.capabilities = CLI_PROVIDER_CAPABILITIES
 
-        def exec_prompt(self, worktree_path, prompt):
-            calls.append((worktree_path, prompt))
-            return 0
+        def run_prompt_result(self, worktree_path, prompt, *, request_metadata=None):
+            calls.append((worktree_path, prompt, request_metadata))
+            return SimpleNamespace(exit_code=0)
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("ECHELON_LLM", "copilot")
@@ -254,6 +199,7 @@ def test_dispatch_skill_command_routes_copilot_through_ai_cli_provider(monkeypat
     assert calls
     assert calls[0][0] == str(tmp_path)
     assert "review 005 pr_url=https://github.com/org/repo/pull/1" in calls[0][1]
+    assert calls[0][2] is None
 
 
 @pytest.mark.unit
@@ -315,9 +261,9 @@ def test_dispatch_spec_skill_allows_artifact_only_provider(
             assert loaded_config is config
             self.capabilities = frozenset({ProviderCapability.ARTIFACT})
 
-        def exec_prompt(self, worktree_path, prompt):
-            calls.append((worktree_path, prompt))
-            return 0
+        def run_prompt_result(self, worktree_path, prompt, *, request_metadata=None):
+            calls.append((worktree_path, prompt, request_metadata))
+            return SimpleNamespace(exit_code=0)
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("ECHELON_LLM", "openai-compatible")
