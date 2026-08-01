@@ -32,6 +32,7 @@ from echelon.artifact_index import write_artifact_index
 from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_message
 from harness.build_result import BUILD_STATUS_FILENAME, ECHELON_RESULT_FILENAME
 from harness.config import HarnessConfig
+from harness.dirty_adjudicator import adjudicate_dirty_worktree
 from harness.documentation_gate import (
     DocumentationGateResult,
     evaluate_documentation_gate,
@@ -4235,6 +4236,32 @@ class RalphController:
                 strategy=self._strategy_id,
             ),
         )
+        adjudication = adjudicate_dirty_worktree(
+            Path(worktree_path),
+            llm_provider=self._llm_provider,
+        )
+        if adjudication.status != "skipped":
+            try:
+                state = self._state_store.read()
+                state["dirty_worktree_adjudication"] = adjudication.to_state_dict()
+                self._state_store.write(state)
+                self._append_dirty_adjudication_telemetry(
+                    adjudication.telemetry_event,
+                    state,
+                )
+            except Exception as state_exc:
+                logger.warning(
+                    "Could not persist dirty worktree adjudication: %s",
+                    state_exc,
+                )
+        if adjudication.blocked:
+            raise CommitPushError(
+                "Dirty worktree adjudication blocked commit: "
+                f"{adjudication.summary.get('blocked', 0)} blocked path(s), "
+                f"{adjudication.summary.get('left', 0)} unresolved path(s)",
+                branch=branch,
+                worktree_path=worktree_path,
+            )
         try:
             self._gitops.commit(worktree_path, message)
         except Exception as e:
@@ -4278,6 +4305,31 @@ class RalphController:
                 branch=branch,
                 worktree_path=worktree_path,
             ) from e
+
+    def _append_dirty_adjudication_telemetry(
+        self,
+        event: dict[str, object],
+        state: dict[str, Any],
+    ) -> None:
+        """Best-effort append of dirty adjudication evidence to run telemetry."""
+        try:
+            run_dir = self._state_store.state_dir.parent
+            telemetry_dir = run_dir / "telemetry"
+            telemetry_dir.mkdir(parents=True, exist_ok=True)
+            enriched = dict(event)
+            trace_id = state.get("telemetry_trace_id") or state.get("trace_id")
+            if isinstance(trace_id, str) and trace_id:
+                enriched["trace_id"] = trace_id
+            enriched["spec_id"] = self._spec_id
+            enriched["strategy_id"] = self._strategy_id
+            enriched["run_id"] = state.get("run_id") or self._build_id
+            with (telemetry_dir / "events.jsonl").open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(enriched, sort_keys=True, separators=(",", ":")))
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+        except Exception as exc:
+            logger.warning("Could not append dirty adjudication telemetry: %s", exc)
 
     def _merge_verified_branch(
         self,

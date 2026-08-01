@@ -12,6 +12,8 @@ import sys
 from pathlib import Path
 from typing import Any, Dict
 
+from harness.dirty_adjudicator import dirty_summary_text
+
 logger = logging.getLogger(__name__)
 
 
@@ -51,6 +53,9 @@ def show_status(base_dir: str = ".") -> Dict[str, Any]:
                     "pr_url": data.get("pr_url"),
                     "termination_reason": data.get("termination_reason"),
                     "escalation_file": data.get("escalation_file"),
+                    "dirty_worktree_adjudication": data.get(
+                        "dirty_worktree_adjudication"
+                    ),
                 }
             except (json.JSONDecodeError, Exception) as e:
                 strategies[sid] = {
@@ -85,6 +90,9 @@ def show_status(base_dir: str = ".") -> Dict[str, Any]:
         ]
         if info.get("pr_url"):
             val_lines.append(f"PR: {info['pr_url']}")
+        dirty_line = dirty_summary_text(info.get("dirty_worktree_adjudication"))
+        if dirty_line:
+            val_lines.append(dirty_line)
         if info.get("status") == "blocked" and info.get("escalation_file"):
             val_lines.append(f"blocked: see {info['escalation_file']}")
 

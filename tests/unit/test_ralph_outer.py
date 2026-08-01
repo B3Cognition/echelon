@@ -191,6 +191,26 @@ class SyntheticBuildProvider(SandboxProvider):
         self.destroyed = True
 
 
+class SyntheticDirtyBuildProvider(SyntheticBuildProvider):
+    """Synthetic provider that also leaves disposable cache output."""
+
+    def exec(
+        self,
+        handle: SandboxHandle,
+        cmd: str,
+        cwd: Optional[str] = None,
+        env: Optional[Dict[str, str]] = None,
+        timeout_ms: int = 1_200_000,
+    ) -> ExecResult:
+        result = super().exec(handle, cmd, cwd=cwd, env=env, timeout_ms=timeout_ms)
+        if "verify" not in cmd:
+            assert self.worktree is not None
+            cache = self.worktree / ".pytest_cache" / "v" / "cache"
+            cache.mkdir(parents=True)
+            (cache / "nodeids").write_text("tests/test_demo.py::test_demo\n", encoding="utf-8")
+        return result
+
+
 # === Fixtures ===
 
 
@@ -2241,6 +2261,91 @@ class TestOuterLoopConvergence:
             "target_synced": True,
             "target_repo": str(target),
         }
+
+    @pytest.mark.integration
+    def test_synthetic_run_adjudicates_dirty_build_outputs(
+        self, tmp_path: Path
+    ) -> None:
+        from harness.gitops import GitOpsManager
+
+        target = tmp_path / "sources" / "synthetic"
+        target.mkdir(parents=True)
+        subprocess.run(["git", "init", "-b", "main"], cwd=target, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=target,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"],
+            cwd=target,
+            check=True,
+        )
+        (target / "README.md").write_text("base\n", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=target, check=True)
+        subprocess.run(["git", "commit", "-m", "base"], cwd=target, check=True)
+        subprocess.run(
+            ["git", "config", "receive.denyCurrentBranch", "updateInstead"],
+            cwd=target,
+            check=True,
+        )
+
+        harness_root = tmp_path / "workspace"
+        harness_root.mkdir()
+        config = HarnessConfig(
+            target_repo=str(target),
+            target_default_branch="main",
+            provider="docker",
+            pr_host="none",
+        )
+        gitops = GitOpsManager(config=config, base_dir=str(harness_root))
+        gitops.clone_mirror(str(target))
+        gitops.sync_runtime_extension = MagicMock(return_value=None)
+
+        provider = SyntheticDirtyBuildProvider()
+        state_dir = harness_root / "runs" / "state"
+        state_store = StateStore(state_dir, "909", "default")
+        state_store.initialize("synthetic-run", "semi")
+        state_store.transition("running")
+
+        controller = RalphController(
+            provider=provider,
+            gitops=gitops,
+            state_store=state_store,
+            mode_controller=ModeController("semi"),
+            escalation_handler=EscalationHandler(str(harness_root / "runs")),
+            spec_id="909",
+            strategy_id="default",
+            config=config,
+        )
+
+        result = controller.run_loop(
+            max_outer=1,
+            max_inner=0,
+            token_budget=100_000,
+            build_command="synthetic build",
+        )
+
+        assert result.status == "converged"
+        assert (target / "built.txt").read_text(encoding="utf-8") == (
+            "synthetic delivery\n"
+        )
+        gitignore = (target / ".gitignore").read_text(encoding="utf-8")
+        assert "/.pytest_cache/v/cache/nodeids" in gitignore
+        assert not (target / ".pytest_cache").exists()
+        adjudication = state_store.read()["dirty_worktree_adjudication"]
+        assert adjudication["status"] == "applied"
+        assert adjudication["summary"]["committed"] == 1
+        assert adjudication["summary"]["ignored"] == 1
+        assert adjudication["telemetry_event"]["type"] == "dirty_adjudication.completed"
+        telemetry_rows = [
+            json.loads(line)
+            for line in (harness_root / "runs" / "telemetry" / "events.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        assert telemetry_rows[-1]["type"] == "dirty_adjudication.completed"
+        assert telemetry_rows[-1]["ignored"] == 1
 
     def test_convergence_writes_ready_to_land_status(self, tmp_path: Path) -> None:
         """Ralph owns the implemented-but-not-landed status transition."""
