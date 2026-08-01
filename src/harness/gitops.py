@@ -900,6 +900,8 @@ class GitOpsManager:
 
         FR-CI-001
         """
+        self._guard_default_branch_delivery_commit(worktree_path, message)
+
         # Stage all changes
         _run_git(["add", "-A"], cwd=worktree_path)
         secret_scan = scan_git_staged(worktree_path)
@@ -932,6 +934,50 @@ class GitOpsManager:
         sha = result.stdout.strip()
         logger.info("Committed in %s: %s", worktree_path, sha[:12])
         return sha
+
+    def _guard_default_branch_delivery_commit(
+        self,
+        worktree_path: str,
+        message: str,
+    ) -> None:
+        """Prevent evidence-only delivery commits from bypassing branch landing."""
+        default_branch = self.get_default_branch()
+        current = _run_git(
+            ["branch", "--show-current"],
+            cwd=worktree_path,
+            check=False,
+        )
+        if current.returncode != 0 or current.stdout.strip() != default_branch:
+            return
+
+        if _commit_trailer(message, "Echelon-Origin") != "delivery":
+            return
+        spec_id = _commit_trailer(message, "Echelon-Spec")
+        strategy = _commit_trailer(message, "Echelon-Strategy")
+        if not spec_id or not strategy:
+            return
+
+        pattern = f"refs/heads/harness/{spec_id}/{strategy}/iter-*"
+        branches = _run_git(
+            ["for-each-ref", "--format=%(refname:short)", pattern],
+            cwd=worktree_path,
+            check=False,
+        )
+        if branches.returncode != 0:
+            return
+        for branch in [line.strip() for line in branches.stdout.splitlines() if line.strip()]:
+            ancestor = _run_git(
+                ["merge-base", "--is-ancestor", branch, "HEAD"],
+                cwd=worktree_path,
+                check=False,
+            )
+            if ancestor.returncode != 0:
+                raise GitOpsError(
+                    "Refusing Echelon delivery commit on default branch "
+                    f"{default_branch}: unmerged harness branch {branch} exists. "
+                    "Merge the verified harness branch before committing evidence.",
+                    command="default branch delivery ancestry guard",
+                )
 
     # === Push Operations ===
 
@@ -1713,3 +1759,11 @@ def _normalize_git_url(url: str) -> Optional[str]:
         return os.path.realpath(url)
 
     return url.lower()
+
+
+def _commit_trailer(message: str, key: str) -> str:
+    prefix = f"{key}:"
+    for line in reversed(message.splitlines()):
+        if line.startswith(prefix):
+            return line.removeprefix(prefix).strip()
+    return ""

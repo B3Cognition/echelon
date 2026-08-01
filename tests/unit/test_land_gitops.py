@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_message
 from harness.config import HarnessConfig
 from harness.errors import GitOpsError
 from harness.gitops import GitOpsManager
@@ -166,6 +167,120 @@ class TestPushPreparedBranch:
             result = gitops.push_landed_default_branch(str(tmp_path), "main")
 
         assert result is False
+
+
+@pytest.mark.unit
+class TestCommitDefaultBranchAncestryGuard:
+    def test_refuses_delivery_evidence_commit_on_main_before_harness_branch_lands(
+        self, tmp_path
+    ) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)
+        (repo / "README.md").write_text("base\n", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-m", "base"], cwd=repo, check=True)
+
+        subprocess.run(
+            ["git", "checkout", "-b", "harness/910/default/iter-1"],
+            cwd=repo,
+            check=True,
+        )
+        (repo / "feature.txt").write_text("model_tier support\n", encoding="utf-8")
+        subprocess.run(["git", "add", "feature.txt"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-m", "feature"], cwd=repo, check=True)
+        subprocess.run(["git", "checkout", "main"], cwd=repo, check=True)
+
+        (repo / "test-results.json").write_text('{"fresh": true}\n', encoding="utf-8")
+        message = build_echelon_commit_message(
+            "chore: refresh evidence",
+            EchelonCommitMetadata(
+                origin="delivery",
+                action="verification-evidence",
+                spec_id="910",
+                strategy="default",
+            ),
+        )
+        gitops = GitOpsManager(
+            config=HarnessConfig(target_repo=str(repo), target_default_branch="main"),
+            base_dir=str(repo),
+        )
+
+        with pytest.raises(GitOpsError, match="unmerged harness branch"):
+            gitops.commit(str(repo), message)
+
+        head = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        assert head == "main"
+        status = subprocess.run(
+            ["git", "status", "--short"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        assert status == "?? test-results.json"
+
+    def test_allows_delivery_evidence_commit_after_harness_branch_lands(
+        self, tmp_path
+    ) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)
+        (repo / "README.md").write_text("base\n", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-m", "base"], cwd=repo, check=True)
+
+        subprocess.run(
+            ["git", "checkout", "-b", "harness/910/default/iter-1"],
+            cwd=repo,
+            check=True,
+        )
+        (repo / "feature.txt").write_text("model_tier support\n", encoding="utf-8")
+        subprocess.run(["git", "add", "feature.txt"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-m", "feature"], cwd=repo, check=True)
+        subprocess.run(["git", "checkout", "main"], cwd=repo, check=True)
+        subprocess.run(
+            ["git", "merge", "--no-ff", "harness/910/default/iter-1", "-m", "merge"],
+            cwd=repo,
+            check=True,
+        )
+
+        (repo / "test-results.json").write_text('{"fresh": true}\n', encoding="utf-8")
+        message = build_echelon_commit_message(
+            "chore: refresh evidence",
+            EchelonCommitMetadata(
+                origin="delivery",
+                action="verification-evidence",
+                spec_id="910",
+                strategy="default",
+            ),
+        )
+        gitops = GitOpsManager(
+            config=HarnessConfig(target_repo=str(repo), target_default_branch="main"),
+            base_dir=str(repo),
+        )
+
+        sha = gitops.commit(str(repo), message)
+
+        assert sha
+        log = subprocess.run(
+            ["git", "log", "-1", "--format=%s"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        assert log == "[skip ci] chore: refresh evidence"
 
 
 @pytest.mark.unit
