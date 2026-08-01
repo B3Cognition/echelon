@@ -61,9 +61,10 @@ def test_export_normalized_agents_uses_manifest_metadata_and_discards_native_fro
         "name": "speckit.echelon.chief",
         "description": "Canonical chief",
         "execution": "agent",
-        "capability": "balanced",
+        "model_tier": "balanced",
         "tools": "full",
     }
+    assert "capability:" not in chief_frontmatter
     assert "model:" not in chief_frontmatter
     assert chief_body == "# Chief\n"
     assert validator.read_text(encoding="utf-8").endswith("# Validator\n")
@@ -85,6 +86,12 @@ def test_export_normalized_prose_writes_manifest_defined_commands(tmp_path: Path
         "      description: Canonical bugfix\n"
         "      behavior:\n"
         "        execution: isolated\n"
+        "        capability: strong\n"
+        "        effort: high\n"
+        "        tools:\n"
+        "          - read\n"
+        "          - edit\n"
+        "        color: blue\n"
         "        invocation: automatic\n",
         encoding="utf-8",
     )
@@ -98,6 +105,10 @@ def test_export_normalized_prose_writes_manifest_defined_commands(tmp_path: Path
         "name": "speckit.echelon.bugfix",
         "description": "Canonical bugfix",
         "execution": "command",
+        "model_tier": "strong",
+        "effort": "high",
+        "tools": ["read", "edit"],
+        "color": "blue",
         "invocation": "automatic",
     }
     assert "model:" not in frontmatter

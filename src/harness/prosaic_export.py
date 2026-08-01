@@ -136,6 +136,9 @@ def _normalized_artifact(
     normalized_behavior = dict(behavior)
     if normalized_behavior.get("execution") == "isolated":
         normalized_behavior["execution"] = "command"
+    capability = normalized_behavior.pop("capability", None)
+    if capability is not None:
+        normalized_behavior["model_tier"] = capability
     frontmatter = {"name": name, "description": description, **normalized_behavior}
     artifact_id = name.removeprefix("speckit.") if artifact_id_from_name else source_file.stem
     return artifact_id, source_file, frontmatter
