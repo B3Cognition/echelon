@@ -179,6 +179,27 @@ def test_publish_one_copies_only_matching_committed_spec_and_retains_branch(
 
 
 @pytest.mark.unit
+def test_publish_strips_committed_spec_runtime_metadata(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    _create_spec_branch(
+        repo,
+        "001-first",
+        "# First\n",
+        extra_files={
+            "specs/001-first/.echelon/checkpoints.json": "{}\n",
+            "specs/001-first/.echelon/checkpoints.lock": "",
+            "specs/001-first/.echelon/local.json": "{}\n",
+        },
+    )
+
+    publish_specs(repo, identity="001")
+
+    assert not (repo / "specs/001-first/.echelon").exists()
+    assert (repo / "specs/001-first/.echelon-publication.json").is_file()
+    assert _git(repo, "status", "--short") == ""
+
+
+@pytest.mark.unit
 def test_publish_all_is_one_commit_and_republish_is_noop(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path)
     _create_spec_branch(repo, "001-first", "# First\n")
@@ -326,6 +347,26 @@ def test_publish_refuses_dirty_selected_spec_in_linked_worktree(
 
     with pytest.raises(SpecPublishError, match="001-first.*uncommitted"):
         publish_specs(repo, identity="001")
+
+
+@pytest.mark.unit
+def test_publish_allows_untracked_spec_runtime_metadata_in_source_worktree(
+    tmp_path: Path,
+) -> None:
+    repo = _init_repo(tmp_path)
+    _create_spec_branch(repo, "001-first", "# Committed\n")
+    linked = tmp_path / "first-worktree"
+    _git(repo, "worktree", "add", str(linked), "001-first")
+    runtime = linked / "specs/001-first/.echelon"
+    runtime.mkdir()
+    (runtime / "checkpoints.json").write_text("{}\n", encoding="utf-8")
+    (runtime / "checkpoints.lock").write_text("", encoding="utf-8")
+
+    result = publish_specs(repo, identity="001")
+
+    assert result.created_commit is True
+    assert not (repo / "specs/001-first/.echelon").exists()
+    assert _git(linked, "status", "--short") == "?? specs/001-first/.echelon/"
 
 
 @pytest.mark.unit

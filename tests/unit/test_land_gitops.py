@@ -269,7 +269,7 @@ class TestLocalMerge:
         subprocess.run(["git", "add", "built.txt"], cwd=feature_worktree, check=True)
         subprocess.run(["git", "commit", "-m", "build 909"], cwd=feature_worktree, check=True)
 
-        gitops.local_merge("harness/909/default/iter-1", "909")
+        result = gitops.local_merge("harness/909/default/iter-1", "909")
 
         contains = subprocess.run(
             ["git", "merge-base", "--is-ancestor", "harness/909/default/iter-1", "main"],
@@ -278,6 +278,184 @@ class TestLocalMerge:
         )
         assert contains.returncode == 0
         assert (target / "built.txt").read_text(encoding="utf-8") == "spec 909\n"
+        assert result["mirror_landed"] is True
+        assert result["pushed"] is True
+        assert result["target_synced"] is True
+
+    @pytest.mark.integration
+    def test_dirty_local_target_skips_checkout_sync_after_mirror_landing(
+        self, tmp_path
+    ) -> None:
+        target = tmp_path / "target"
+        target.mkdir()
+        subprocess.run(["git", "init", "-b", "main"], cwd=target, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=target,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"],
+            cwd=target,
+            check=True,
+        )
+        (target / "README.md").write_text("base\n", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=target, check=True)
+        subprocess.run(["git", "commit", "-m", "base"], cwd=target, check=True)
+        (target / "dirty.txt").write_text("do not overwrite\n", encoding="utf-8")
+
+        config = HarnessConfig(
+            target_repo=str(target),
+            target_default_branch="main",
+            provider="docker",
+        )
+        gitops = GitOpsManager(config=config, base_dir=str(tmp_path / "harness"))
+        gitops.clone_mirror(str(target))
+        mirror_main_before = subprocess.run(
+            ["git", "rev-parse", "main"],
+            cwd=gitops.mirror_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+        feature_worktree = tmp_path / "feature-worktree"
+        subprocess.run(
+            [
+                "git",
+                "worktree",
+                "add",
+                "-b",
+                "harness/909/default/iter-1",
+                str(feature_worktree),
+                "main",
+            ],
+            cwd=gitops.mirror_path,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=feature_worktree,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"],
+            cwd=feature_worktree,
+            check=True,
+        )
+        (feature_worktree / "built.txt").write_text("spec 909\n", encoding="utf-8")
+        subprocess.run(["git", "add", "built.txt"], cwd=feature_worktree, check=True)
+        subprocess.run(["git", "commit", "-m", "build 909"], cwd=feature_worktree, check=True)
+
+        result = gitops.local_merge("harness/909/default/iter-1", "909")
+
+        mirror_main_after = subprocess.run(
+            ["git", "rev-parse", "main"],
+            cwd=gitops.mirror_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        assert mirror_main_after != mirror_main_before
+        contains = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", "harness/909/default/iter-1", "main"],
+            cwd=gitops.mirror_path,
+            check=False,
+        )
+        assert contains.returncode == 0
+        assert not (target / "built.txt").exists()
+        assert (target / "dirty.txt").read_text(encoding="utf-8") == "do not overwrite\n"
+        assert result["mirror_landed"] is True
+        assert result["pushed"] is False
+        assert result["target_synced"] is False
+        assert result["target_sync_skipped"] is True
+        assert result["target_sync_skip_reason"] == "dirty_local_worktree"
+
+    @pytest.mark.integration
+    def test_failed_local_merge_push_rolls_back_mirror_default(
+        self, tmp_path
+    ) -> None:
+        target = tmp_path / "target"
+        target.mkdir()
+        subprocess.run(["git", "init", "-b", "main"], cwd=target, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=target,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"],
+            cwd=target,
+            check=True,
+        )
+        (target / "README.md").write_text("base\n", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=target, check=True)
+        subprocess.run(["git", "commit", "-m", "base"], cwd=target, check=True)
+
+        config = HarnessConfig(
+            target_repo=str(target),
+            target_default_branch="main",
+            provider="docker",
+        )
+        gitops = GitOpsManager(config=config, base_dir=str(tmp_path / "harness"))
+        gitops.clone_mirror(str(target))
+        mirror_main_before = subprocess.run(
+            ["git", "rev-parse", "main"],
+            cwd=gitops.mirror_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+        feature_worktree = tmp_path / "feature-worktree"
+        subprocess.run(
+            [
+                "git",
+                "worktree",
+                "add",
+                "-b",
+                "harness/909/default/iter-1",
+                str(feature_worktree),
+                "main",
+            ],
+            cwd=gitops.mirror_path,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=feature_worktree,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"],
+            cwd=feature_worktree,
+            check=True,
+        )
+        (feature_worktree / "built.txt").write_text("spec 909\n", encoding="utf-8")
+        subprocess.run(["git", "add", "built.txt"], cwd=feature_worktree, check=True)
+        subprocess.run(["git", "commit", "-m", "build 909"], cwd=feature_worktree, check=True)
+
+        import harness.gitops as gitops_module
+
+        original_run_git = gitops_module._run_git
+        with patch("harness.gitops._run_git") as run_git:
+            def fail_push(args, **kwargs):
+                if args == ["push", "upstream", "main"]:
+                    raise GitOpsError("remote rejected")
+                return original_run_git(args, **kwargs)
+
+            run_git.side_effect = fail_push
+            with pytest.raises(GitOpsError, match="remote rejected"):
+                gitops.local_merge("harness/909/default/iter-1", "909")
+
+        mirror_main_after = subprocess.run(
+            ["git", "rev-parse", "main"],
+            cwd=gitops.mirror_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        assert mirror_main_after == mirror_main_before
 
 
 @pytest.mark.unit

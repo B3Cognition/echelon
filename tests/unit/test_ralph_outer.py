@@ -2237,6 +2237,9 @@ class TestOuterLoopConvergence:
             "default_branch": "main",
             "verified": True,
             "pushed": True,
+            "mirror_landed": True,
+            "target_synced": True,
+            "target_repo": str(target),
         }
 
     def test_convergence_writes_ready_to_land_status(self, tmp_path: Path) -> None:

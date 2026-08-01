@@ -21,7 +21,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_message
 from harness.config import HarnessConfig
@@ -1475,10 +1475,15 @@ class GitOpsManager:
         except GitOpsError:
             return self._config.target_default_branch
 
-    def local_merge(self, push_branch: str, spec_id: str, spec_name: str = "") -> None:
+    def local_merge(
+        self, push_branch: str, spec_id: str, spec_name: str = ""
+    ) -> dict[str, Any]:
         """Merge push_branch into the default branch in the mirror, then push upstream.
 
         Used in degraded mode when no PR tool (gh/glab) is available.
+
+        Returns structured landing evidence. A dirty local checkout target may skip
+        checkout sync while still landing the verified branch in the harness mirror.
 
         Raises:
             GitOpsError: If checkout, merge, or push fails.
@@ -1495,6 +1500,34 @@ class GitOpsManager:
                 resolved = (self._base_dir / candidate).resolve()
                 if resolved.exists():
                     target_url = str(resolved)
+        local_worktree_target: Path | None = None
+        skip_target_push = False
+        target_path = Path(target_url)
+        if target_path.exists():
+            is_bare = _run_git(
+                ["rev-parse", "--is-bare-repository"],
+                cwd=str(target_path),
+                check=False,
+            )
+            if is_bare.returncode == 0 and is_bare.stdout.strip() != "true":
+                local_worktree_target = target_path
+                status = _run_git(
+                    ["status", "--porcelain"],
+                    cwd=str(target_path),
+                    check=False,
+                )
+                dirty = (
+                    status.stdout.strip()
+                    if status.returncode == 0 and isinstance(status.stdout, str)
+                    else ""
+                )
+                if dirty:
+                    skip_target_push = True
+                    logger.warning(
+                        "Local target worktree %s is dirty; degraded merge "
+                        "will land in the harness mirror and skip checkout sync",
+                        target_path,
+                    )
         try:
             _run_git(
                 ["remote", "add", "upstream", target_url],
@@ -1510,6 +1543,12 @@ class GitOpsManager:
         landing_parent.mkdir(parents=True, exist_ok=True)
         safe_label = re.sub(r"[^A-Za-z0-9._-]+", "-", f"{spec_id}-{push_branch}")
         landing_dir = landing_parent / f"land-{safe_label}-{os.getpid()}"
+        default_ref = f"refs/heads/{default_branch}"
+        original_default = _run_git(
+            ["rev-parse", default_ref],
+            cwd=str(self._mirror_path),
+        ).stdout.strip()
+        landing_created = False
 
         try:
             if landing_dir.exists():
@@ -1518,6 +1557,7 @@ class GitOpsManager:
                 ["worktree", "add", str(landing_dir), default_branch],
                 cwd=str(self._mirror_path),
             )
+            landing_created = True
             _run_git(
                 ["merge", "--no-ff", push_branch, "-m", f"merge: {label}"],
                 cwd=str(landing_dir),
@@ -1526,14 +1566,59 @@ class GitOpsManager:
                 ["merge-base", "--is-ancestor", push_branch, default_branch],
                 cwd=str(landing_dir),
             )
-            _run_git(["push", "upstream", default_branch], cwd=str(landing_dir))
-            logger.info("Local merge: %s → %s", push_branch, default_branch)
-        finally:
+            if skip_target_push:
+                logger.info(
+                    "Local merge: %s → %s in harness mirror; skipped dirty "
+                    "local target sync",
+                    push_branch,
+                    default_branch,
+                )
+                return {
+                    "mirror_landed": True,
+                    "pushed": False,
+                    "target_synced": False,
+                    "target_sync_skipped": True,
+                    "target_sync_skip_reason": "dirty_local_worktree",
+                    "target_repo": str(target_path),
+                }
+            else:
+                _run_git(["push", "upstream", default_branch], cwd=str(landing_dir))
+                if local_worktree_target is not None:
+                    logger.info(
+                        "Local merge: %s → %s and synced clean local target %s",
+                        push_branch,
+                        default_branch,
+                        local_worktree_target,
+                    )
+                else:
+                    logger.info("Local merge: %s → %s", push_branch, default_branch)
+                return {
+                    "mirror_landed": True,
+                    "pushed": True,
+                    "target_synced": True,
+                    "target_repo": target_url,
+                }
+        except Exception:
+            if landing_created:
+                _run_git(
+                    ["worktree", "remove", "--force", str(landing_dir)],
+                    cwd=str(self._mirror_path),
+                    check=False,
+                )
+                landing_created = False
             _run_git(
-                ["worktree", "remove", "--force", str(landing_dir)],
+                ["update-ref", default_ref, original_default],
                 cwd=str(self._mirror_path),
                 check=False,
             )
+            raise
+        finally:
+            if landing_created:
+                _run_git(
+                    ["worktree", "remove", "--force", str(landing_dir)],
+                    cwd=str(self._mirror_path),
+                    check=False,
+                )
             _run_git(["worktree", "prune"], cwd=str(self._mirror_path), check=False)
 
     # === Safety ===

@@ -27,6 +27,7 @@ from harness.config import get_full_resolved_config
 CANONICAL_SPEC_BRANCH_RE = re.compile(
     r"^(?P<number>\d{3,})-(?P<slug>[a-z0-9]+(?:-[a-z0-9]+)*)$"
 )
+SPEC_RUNTIME_DIR = ".echelon"
 
 
 class SpecPublishError(RuntimeError):
@@ -253,6 +254,15 @@ def _materialize_source(
             f"invalid Git archive for {source.branch}: {exc}"
         ) from exc
 
+    runtime_dir = destination / SPEC_RUNTIME_DIR
+    if runtime_dir.exists():
+        if runtime_dir.is_symlink() or not runtime_dir.is_dir():
+            raise SpecPublishError(
+                f"unsupported runtime metadata path {source.source_path}/"
+                f"{SPEC_RUNTIME_DIR} for {source.branch}"
+            )
+        shutil.rmtree(runtime_dir)
+
     manifest = {
         "schema_version": 1,
         "source_branch": source.branch,
@@ -349,6 +359,11 @@ def _validate_source_worktrees(
     worktrees: tuple[GitWorktree, ...],
 ) -> None:
     for source in sources:
+        pathspecs = (
+            source.source_path,
+            f":(exclude){source.source_path}/{SPEC_RUNTIME_DIR}",
+            f":(exclude){source.source_path}/{SPEC_RUNTIME_DIR}/**",
+        )
         for worktree in worktrees:
             if worktree.branch != source.branch:
                 continue
@@ -357,7 +372,7 @@ def _validate_source_worktrees(
                 "status",
                 "--porcelain",
                 "--",
-                source.source_path,
+                *pathspecs,
             ).stdout.strip()
             if dirty:
                 raise SpecPublishError(

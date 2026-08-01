@@ -4292,13 +4292,15 @@ class RalphController:
         default_branch = None
         try:
             default_branch = self._gitops.get_default_branch()
-            self._gitops.local_merge(branch, self._spec_id)
+            merge_result = self._gitops.local_merge(branch, self._spec_id)
+            merge_evidence = merge_result if isinstance(merge_result, dict) else {}
             evidence: Dict[str, Any] = {
                 "branch": branch,
                 "default_branch": default_branch,
                 "verified": True,
-                "pushed": True,
+                "pushed": bool(merge_evidence.pop("pushed", True)),
             }
+            evidence.update(merge_evidence)
             try:
                 state = self._state_store.read()
                 state["target_merge"] = evidence
