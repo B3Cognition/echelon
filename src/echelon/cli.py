@@ -8805,7 +8805,11 @@ from harness.skill_loader import (
     build_skill_prompt as _build_skill_prompt_impl,
     StreamEventPrinter as _StreamEventPrinter,
 )
-from harness.prosaic_prompt_loader import ProsaicPromptLoadError, ProsaicPromptLoader
+from harness.prosaic_prompt_loader import (
+    ProsaicPromptLoadError,
+    ProsaicPromptLoader,
+    RenderedProsaicCommand,
+)
 from harness.config import load_config
 from harness.llm_provider import AICodingCliProvider
 from harness.llm_tool_policy import (
@@ -8824,7 +8828,9 @@ def _build_prompt(skill_path: Path, arguments: str) -> str:
     return _build_skill_prompt_impl(skill_path, arguments)
 
 
-def _load_prosaic_command_prompt(skill_base: str, arguments: str, project_dir: Path) -> str | None:
+def _load_prosaic_command(
+    skill_base: str, arguments: str, project_dir: Path
+) -> RenderedProsaicCommand | None:
     """Load an installer-owned neutral command when the project has one."""
     try:
         artifact = ProsaicPromptLoader(project_dir).load_command(skill_base)
@@ -8833,7 +8839,7 @@ def _load_prosaic_command_prompt(skill_base: str, arguments: str, project_dir: P
         sys.exit(1)
     if artifact is None:
         return None
-    return ProsaicPromptLoader.render_command(artifact.body, arguments)
+    return ProsaicPromptLoader.render_command(artifact, arguments)
 
 
 def _load_cli_config(project_dir: Path):
@@ -9011,7 +9017,8 @@ def _dispatch_skill_command(command: str, args: list[str]) -> None:
         sys.exit(1)
     cli = config.llm.cli
 
-    prompt = _load_prosaic_command_prompt(skill_base, arguments, project_dir)
+    prosaic_command = _load_prosaic_command(skill_base, arguments, project_dir)
+    prompt = prosaic_command.prompt if prosaic_command is not None else None
     if prompt is None:
         skill_path = _find_skill(skill_base, project_dir, cli)
         if skill_path is None:
@@ -9023,7 +9030,14 @@ def _dispatch_skill_command(command: str, args: list[str]) -> None:
         cmd = build_opencode_skill_command(bin_, skill_base, arguments, tool_policy)
         result = subprocess.run(cmd, cwd=str(project_dir))
         sys.exit(result.returncode)
-    elif cli == "claude":
+    if prosaic_command is not None:
+        result = AICodingCliProvider(config).run_prompt_result(
+            str(project_dir),
+            prosaic_command.prompt,
+            request_metadata={"prompt_metadata": prosaic_command.frontmatter},
+        )
+        sys.exit(result.exit_code)
+    if cli == "claude":
         # claude: use stream-json for live tool-call progress in the terminal
         if prompt is None:
             prompt = _build_prompt(skill_path, arguments)
