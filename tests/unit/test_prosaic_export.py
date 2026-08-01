@@ -87,6 +87,7 @@ def test_export_normalized_prose_writes_manifest_defined_commands(tmp_path: Path
         "      behavior:\n"
         "        execution: isolated\n"
         "        capability: strong\n"
+        "        model: claude-sonnet-4-6\n"
         "        effort: high\n"
         "        tools:\n"
         "          - read\n"
