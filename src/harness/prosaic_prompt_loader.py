@@ -23,6 +23,14 @@ class ProsaicCommandArtifact:
     body: str
 
 
+@dataclass(frozen=True)
+class RenderedProsaicCommand:
+    """Rendered command prompt together with its provider metadata."""
+
+    prompt: str
+    frontmatter: dict[str, Any]
+
+
 class ProsaicPromptLoader:
     """Load commands from an installer-owned project Prosaic bundle."""
 
@@ -65,13 +73,19 @@ class ProsaicPromptLoader:
         return _parse_command_artifact(artifact_id, result.stdout)
 
     @staticmethod
-    def render_command(body: str, arguments: str) -> str:
+    def render_command(
+        artifact: ProsaicCommandArtifact, arguments: str
+    ) -> RenderedProsaicCommand:
         """Render neutral arguments into the provider prompt format."""
+        body = artifact.body
         if "{{args}}" in body:
             content = body.replace("{{args}}", arguments)
         else:
             content = f"{body}\n\n## Arguments\n{arguments}"
-        return COMMANDER_PREAMBLE + content
+        return RenderedProsaicCommand(
+            prompt=COMMANDER_PREAMBLE + content,
+            frontmatter=artifact.frontmatter,
+        )
 
 
 def _parse_command_artifact(

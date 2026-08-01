@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from harness.prosaic_prompt_loader import ProsaicPromptLoader
+from harness.prosaic_prompt_loader import ProsaicCommandArtifact, ProsaicPromptLoader
 
 
 @pytest.mark.unit
@@ -72,7 +72,23 @@ def test_load_command_returns_none_for_an_agent_only_prosaic_bundle(tmp_path: Pa
 
 @pytest.mark.unit
 def test_render_command_substitutes_neutral_arguments() -> None:
-    prompt = ProsaicPromptLoader.render_command("Fix {{args}}.", "the regression")
+    prompt = ProsaicPromptLoader.render_command(
+        ProsaicCommandArtifact(frontmatter={}, body="Fix {{args}}."),
+        "the regression",
+    ).prompt
 
     assert "Fix the regression." in prompt
     assert prompt.startswith("You were dispatched as a subagent")
+
+
+@pytest.mark.unit
+def test_render_command_preserves_artifact_metadata() -> None:
+    artifact = ProsaicCommandArtifact(
+        frontmatter={"model_tier": "balanced", "effort": "high", "color": "blue"},
+        body="Fix {{args}}.",
+    )
+
+    rendered = ProsaicPromptLoader.render_command(artifact, "the regression")
+
+    assert "Fix the regression." in rendered.prompt
+    assert rendered.frontmatter == artifact.frontmatter
