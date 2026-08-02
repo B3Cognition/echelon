@@ -17,6 +17,7 @@ from echelon.mempalace_requirements import (
 )
 from echelon.mempalace_memory_audit import audit_artifact_memory
 from harness.spec_frontmatter import read_frontmatter
+from kernel.spec_identity import spec_identity_aliases
 
 
 @dataclass(frozen=True)
@@ -398,16 +399,22 @@ def _resolve_verify_evidence_run_dir(
     spec_id: str,
     run_id: str | None,
 ) -> Path:
+    aliases = spec_identity_aliases(spec_id)
     if run_id:
         direct = project_root / "runs" / run_id
-        nested = direct / "verify-spec" / spec_id
-        candidates = [nested, direct]
+        candidates = [
+            direct / "verify-spec" / alias
+            for alias in aliases
+        ]
+        candidates.append(direct)
     else:
         runs = project_root / "runs"
         candidates = []
         if runs.is_dir():
-            candidates.extend(runs.glob(f"verify-spec-{spec_id}-*"))
-            candidates.extend(runs.glob(f"*/verify-spec/{spec_id}"))
+            for alias in aliases:
+                candidates.extend(runs.glob(f"verify-spec-{alias}-*"))
+                candidates.extend(runs.glob(f"*/verify-spec/{alias}"))
+    candidates = list(dict.fromkeys(candidates))
     complete = [
         path
         for path in candidates
@@ -417,7 +424,8 @@ def _resolve_verify_evidence_run_dir(
     ]
     if not complete:
         raise SpecMemoryError(
-            f"published verify evidence source not found for spec: {spec_id}"
+            "published verify evidence source not found for spec aliases: "
+            + ", ".join(aliases)
         )
     return sorted(
         complete,

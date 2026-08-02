@@ -94,6 +94,83 @@ def mark_spec_unlanded(spec_dir: Path) -> None:
     )
 
 
+def write_complete_verify_candidate(path: Path, marker: str) -> Path:
+    path.mkdir(parents=True)
+    path.joinpath("state.json").write_text("{}\n", encoding="utf-8")
+    path.joinpath("implementation-map.md").write_text(marker, encoding="utf-8")
+    return path
+
+
+@pytest.mark.unit
+def test_verify_evidence_resolver_falls_back_to_numeric_nested_run(
+    tmp_path: Path,
+) -> None:
+    from echelon.mempalace_spec_evidence import _resolve_verify_evidence_run_dir
+
+    expected = write_complete_verify_candidate(
+        tmp_path / "runs" / "build-old" / "verify-spec" / "906",
+        "old numeric evidence",
+    )
+
+    assert _resolve_verify_evidence_run_dir(
+        tmp_path,
+        "906-cli-output-styling",
+        "build-old",
+    ) == expected
+
+
+@pytest.mark.unit
+def test_verify_evidence_resolver_selects_latest_complete_alias_candidate(
+    tmp_path: Path,
+) -> None:
+    import os
+
+    from echelon.mempalace_spec_evidence import _resolve_verify_evidence_run_dir
+
+    numeric = write_complete_verify_candidate(
+        tmp_path / "runs" / "build-old" / "verify-spec" / "906",
+        "old numeric evidence",
+    )
+    canonical = write_complete_verify_candidate(
+        tmp_path
+        / "runs"
+        / "build-new"
+        / "verify-spec"
+        / "906-cli-output-styling",
+        "new canonical evidence",
+    )
+    os.utime(numeric / "implementation-map.md", (1, 1))
+    os.utime(canonical / "implementation-map.md", (2, 2))
+    incomplete = tmp_path / "runs" / "build-incomplete" / "verify-spec" / "906"
+    incomplete.mkdir(parents=True)
+    incomplete.joinpath("implementation-map.md").write_text(
+        "missing state",
+        encoding="utf-8",
+    )
+
+    assert _resolve_verify_evidence_run_dir(
+        tmp_path,
+        "906-cli-output-styling",
+        None,
+    ) == canonical
+
+
+@pytest.mark.unit
+def test_verify_evidence_resolver_error_lists_attempted_aliases(tmp_path: Path) -> None:
+    from echelon.mempalace_requirements import SpecMemoryError
+    from echelon.mempalace_spec_evidence import _resolve_verify_evidence_run_dir
+
+    with pytest.raises(
+        SpecMemoryError,
+        match="906-cli-output-styling, 906",
+    ):
+        _resolve_verify_evidence_run_dir(
+            tmp_path,
+            "906-cli-output-styling",
+            None,
+        )
+
+
 @pytest.mark.unit
 def test_publish_spec_evidence_package_rejects_unlanded_specs(
     tmp_path: Path,
