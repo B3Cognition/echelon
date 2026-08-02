@@ -122,6 +122,29 @@ def test_workspace_memory_list_rooms_outputs_facets(monkeypatch, tmp_path: Path)
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["memory", "search", "import prose"],
+        ["memory", "list-rooms"],
+        ["memory", "list-specs"],
+        ["memory", "list-kinds"],
+    ],
+)
+def test_workspace_memory_commands_bound_missing_config(
+    monkeypatch, tmp_path: Path, args: list[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(app, args)
+
+    assert result.exit_code == 2
+    assert "Echelon config is missing; run 'echelon workspace init'" in result.output
+    assert "Traceback" not in result.output
+
+
+@pytest.mark.unit
 def test_spec_memory_search_is_not_exposed() -> None:
     from echelon.cli_app import app
 

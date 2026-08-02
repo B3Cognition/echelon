@@ -14,6 +14,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
@@ -23,6 +24,8 @@ logger = logging.getLogger(__name__)
 
 WRITE_TIMEOUT_SECONDS = 2.0
 _SHA256_PATTERN = re.compile(r"\A[0-9a-f]{64}\Z")
+_RUNAWAY_HNSW_MIN_BYTES = 1024**3
+_RUNAWAY_HNSW_VECTOR_RATIO = 100
 
 try:
     from mempalace.miner import add_drawer  # type: ignore[import]
@@ -431,11 +434,13 @@ class MemPalaceWriter:
 
     def _get_collection(self):
         """Get the MemPalace ChromaDB collection."""
+        _reject_runaway_hnsw_index(self.ctx.palace_path)
         from mempalace.miner import get_collection  # type: ignore[import]
         return get_collection(self.ctx.palace_path)
 
     def get_collection_read_only(self):
         """Open the existing MemPalace collection without creating storage."""
+        _reject_runaway_hnsw_index(self.ctx.palace_path)
         from mempalace.miner import get_collection  # type: ignore[import]
         try:
             return get_collection(self.ctx.palace_path, create=False)
@@ -498,3 +503,32 @@ class MemPalaceWriter:
             collection.update(ids=[drawer_id], metadatas=[metadata])
         except ImportError:
             pass
+
+
+def _reject_runaway_hnsw_index(palace_path: str) -> None:
+    """Stop before Chroma loads a clearly corrupt, unbounded HNSW index."""
+    try:
+        segments = Path(palace_path).iterdir()
+        for segment in segments:
+            if not segment.is_dir():
+                continue
+            links = segment / "link_lists.bin"
+            vectors = segment / "data_level0.bin"
+            if not links.is_file() or not vectors.is_file():
+                continue
+            links_size = links.stat().st_size
+            vectors_size = max(vectors.stat().st_size, 1)
+            if (
+                links_size >= _RUNAWAY_HNSW_MIN_BYTES
+                and links_size > vectors_size * _RUNAWAY_HNSW_VECTOR_RATIO
+            ):
+                raise RuntimeError(
+                    "MemPalace vector index appears corrupt: "
+                    f"{links} is {links_size} bytes for {vectors_size} bytes of vectors; "
+                    "repair or restore the MemPalace index before retrying"
+                )
+    except RuntimeError:
+        raise
+    except OSError:
+        # Let the backend report ordinary missing or unreadable storage.
+        return

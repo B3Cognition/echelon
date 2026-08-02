@@ -591,7 +591,7 @@ def _print_plan(result: WorkspaceGitMigrationResult) -> None:
         print(f"  staged_paths: {', '.join(result.staged_paths) or '(none)'}")
         print(f"  committed: {result.committed}")
         if not result.committed:
-            print('Next: git commit -m "chore: initialize echelon workspace"')
+            print("Next: echelon workspace migrate --commit")
 
 
 def main(argv: list[str] | None = None) -> int:

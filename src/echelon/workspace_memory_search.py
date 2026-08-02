@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from echelon.mempalace_requirements import create_requirement_memory_adapter
+from echelon.mempalace_requirements import SpecMemoryError, create_requirement_memory_adapter
 
 MAX_MEMORY_SCAN_ROWS = 5_000
 DEFAULT_SEARCH_LIMIT = 10
@@ -89,7 +89,10 @@ def search_workspace_memory(
     if not query.strip():
         raise WorkspaceMemorySearchError("query must not be empty")
     bounded_limit = max(1, min(limit, 100))
-    adapter = create_requirement_memory_adapter(project_root, run_id="search")
+    try:
+        adapter = create_requirement_memory_adapter(project_root, run_id="search")
+    except SpecMemoryError as exc:
+        raise WorkspaceMemorySearchError(str(exc)) from exc
     collection = adapter.open_collection_read_only()
     where = _search_where(getattr(adapter, "wing"), room=room, kind=kind)
     try:
@@ -153,7 +156,10 @@ def search_workspace_memory(
 
 
 def list_workspace_memory_facets(project_root: Path) -> WorkspaceMemoryFacetReport:
-    adapter = create_requirement_memory_adapter(project_root, run_id="list")
+    try:
+        adapter = create_requirement_memory_adapter(project_root, run_id="list")
+    except SpecMemoryError as exc:
+        raise WorkspaceMemorySearchError(str(exc)) from exc
     collection = adapter.open_collection_read_only()
     rooms: dict[str, int] = {}
     specs: dict[str, int] = {}

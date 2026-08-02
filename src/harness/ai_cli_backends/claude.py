@@ -12,6 +12,14 @@ from harness.llm_tool_policy import build_llm_cli_command
 from harness.skill_loader import StreamEventPrinter
 
 
+_MODEL_TIER_TO_CLAUDE_MODEL = {
+    "fast": "haiku",
+    "balanced": "sonnet",
+    "strong": "opus",
+    "ultra": "fable",
+}
+
+
 class ClaudeCliBackend:
     name = "claude"
 
@@ -31,7 +39,9 @@ class ClaudeCliBackend:
             stream_json=True,
             disallow_claude_task_tools=canonical_task_execution,
         )
-        model = _prompt_metadata_str(request, "model")
+        model = _prompt_metadata_str(request, "model") or _claude_model_for_request(
+            request
+        )
         if model:
             cmd.extend(["--model", model])
         return self._run_stream_json(cmd, request)
@@ -169,3 +179,8 @@ def _prompt_metadata_str(request: CliRunRequest, key: str) -> str:
         return ""
     value = metadata.get(key)
     return value.strip() if isinstance(value, str) else ""
+
+
+def _claude_model_for_request(request: CliRunRequest) -> str:
+    tier = _prompt_metadata_str(request, "model_tier").lower()
+    return _MODEL_TIER_TO_CLAUDE_MODEL.get(tier, "")

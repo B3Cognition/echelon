@@ -2973,6 +2973,82 @@ def test_claude_backend_uses_prompt_metadata_model(tmp_path) -> None:
     assert captured["cmd"][model_index + 1] == "claude-opus-4-1"
 
 
+@pytest.mark.parametrize(
+    ("model_tier", "expected_model"),
+    [
+        ("fast", "haiku"),
+        ("balanced", "sonnet"),
+        ("strong", "opus"),
+        ("ultra", "fable"),
+    ],
+)
+def test_claude_backend_maps_neutral_model_tier_to_cli_model(
+    tmp_path, model_tier, expected_model
+) -> None:
+    backend = ClaudeCliBackend(_config("claude"))
+    captured = {}
+
+    class FakeProcess:
+        stdout = io.BytesIO(b"")
+        returncode = 0
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self) -> int:
+            return self.returncode
+
+    def fake_popen(command, **_kwargs):
+        captured["command"] = command
+        return FakeProcess()
+
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Build this.",
+        env={},
+        timeout_s=10,
+        metadata={"prompt_metadata": {"model_tier": model_tier}},
+    )
+
+    with patch("harness.ai_cli_backends.claude.subprocess.Popen", fake_popen):
+        backend.run_prompt(request)
+
+    command = captured["command"]
+    assert command[command.index("--model") + 1] == expected_model
+
+
+def test_claude_backend_ignores_unknown_model_tier(tmp_path) -> None:
+    backend = ClaudeCliBackend(_config("claude"))
+    captured = {}
+
+    class FakeProcess:
+        stdout = io.BytesIO(b"")
+        returncode = 0
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self) -> int:
+            return self.returncode
+
+    def fake_popen(command, **_kwargs):
+        captured["command"] = command
+        return FakeProcess()
+
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Build this.",
+        env={},
+        timeout_s=10,
+        metadata={"prompt_metadata": {"model_tier": "high"}},
+    )
+
+    with patch("harness.ai_cli_backends.claude.subprocess.Popen", fake_popen):
+        backend.run_prompt(request)
+
+    assert "--model" not in captured["command"]
+
+
 def test_claude_backend_allows_task_tools_without_canonical_task_metadata(
     tmp_path,
 ) -> None:

@@ -9,6 +9,7 @@ from echelon.workspace_git_migration import (
     MigrationError,
     build_migration_plan,
     doctor_workspace,
+    main,
     migrate_workspace,
 )
 
@@ -93,6 +94,20 @@ def test_migration_write_initializes_git_and_stages_only_workspace_files(
     assert ".specify" not in staged
     assert "specs/001-demo/spec.md" in staged
     assert not any(path.startswith("og-platform/") for path in staged)
+
+
+@pytest.mark.unit
+def test_migration_write_points_next_step_to_commit_command(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write_workspace(tmp_path)
+
+    exit_code = main([str(tmp_path), "--write"])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "Next: echelon workspace migrate --commit" in output
+    assert 'Next: git commit -m "chore: initialize echelon workspace"' not in output
 
 
 @pytest.mark.unit

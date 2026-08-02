@@ -495,6 +495,22 @@ def test_read_only_collection_open_never_requests_creation() -> None:
     get_collection.assert_called_once_with("/fake/palace", create=False)
 
 
+def test_read_only_collection_rejects_runaway_hnsw_index_before_chroma_open(
+    tmp_path,
+) -> None:
+    segment = tmp_path / "segment"
+    segment.mkdir()
+    (segment / "data_level0.bin").write_bytes(b"vectors")
+    with (segment / "link_lists.bin").open("wb") as handle:
+        handle.truncate(2 * 1024**3)
+    writer = MemPalaceWriter(
+        MemPalaceContext(wing="demo", run_id="audit", palace_path=str(tmp_path))
+    )
+
+    with pytest.raises(RuntimeError, match="vector index appears corrupt"):
+        writer.get_collection_read_only()
+
+
 def test_write_exact_classifies_non_backend_write_error_as_failed() -> None:
     writer = MemPalaceWriter(_make_ctx(wing="demo"))
     digest = "5" * 64
