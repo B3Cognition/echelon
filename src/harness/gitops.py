@@ -38,6 +38,7 @@ from harness.runtime_surface import (
     prune_delivery_workflow_definition,
 )
 from harness.secret_scan import scan_git_staged
+from kernel.spec_identity import spec_identity_aliases
 
 logger = logging.getLogger(__name__)
 
@@ -459,12 +460,13 @@ class GitOpsManager:
                 if branch.strip()
             ]
 
-        for pattern in (spec_id, f"{spec_id}-*"):
-            branches = _list_branches(pattern)
-            if branches:
-                chosen = branches[0]
-                logger.info("Found feature branch for spec %s: %s", spec_id, chosen)
-                return chosen
+        for alias in spec_identity_aliases(spec_id):
+            for pattern in (alias, f"{alias}-*"):
+                branches = _list_branches(pattern)
+                if branches:
+                    chosen = branches[0]
+                    logger.info("Found feature branch for spec %s: %s", spec_id, chosen)
+                    return chosen
 
         return None
 

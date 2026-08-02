@@ -454,12 +454,12 @@ class TestLand:
         assert warning is not None
         assert "no fulfillment report" in warning
 
-    def test_returns_true_when_feature_branch_not_found(self, tmp_path: Path) -> None:
+    def test_blocks_when_branch_and_spec_evidence_are_missing(self, tmp_path: Path) -> None:
         _init_repo(tmp_path)
         _commit(tmp_path, "README.md", "base\n", "base")
         gitops = _make_gitops(feature_branch=None)
         result = land("042", project_dir=tmp_path, gitops=gitops)
-        assert result is True
+        assert result is False
         gitops.merge_pr.assert_not_called()
         gitops.delete_remote_branch.assert_not_called()
 
@@ -650,7 +650,95 @@ class TestLand:
         )
         gitops = _make_gitops(feature_branch=None)
 
-        result = land("042", project_dir=tmp_path, gitops=gitops)
+        with (
+            patch("harness.land._cleanup_worktrees") as cleanup,
+            patch("harness.land._delete_harness_branches") as delete_harness,
+        ):
+            result = land("042", project_dir=tmp_path, gitops=gitops)
+
+        assert result is False
+        from harness.spec_frontmatter import read_frontmatter
+        assert read_frontmatter(spec_dir)["status"] == "ready_to_land"
+        cleanup.assert_not_called()
+        delete_harness.assert_not_called()
+
+    def test_no_branch_blocks_unmerged_verified_commit(self, tmp_path: Path) -> None:
+        _init_repo(tmp_path)
+        _commit(tmp_path, "README.md", "base\n", "base")
+        _git(tmp_path, "checkout", "-b", "verified-work")
+        verified = _commit(tmp_path, "feature.txt", "work\n", "verified work")
+        _git(tmp_path, "checkout", "main")
+        spec_dir = tmp_path / "specs" / "042-my-feature"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text(
+            "---\nstatus: ready_to_land\n---\n# Spec\n",
+            encoding="utf-8",
+        )
+        (spec_dir / "fulfillment-report.md").write_text(
+            f"---\nverified_commit: {verified}\n---\n"
+            "| ID | Status | Evidence |\n|---|---|---|\n"
+            "| FR-001 | IMPLEMENTED | src/a.py |\n",
+            encoding="utf-8",
+        )
+
+        with (
+            patch("harness.land._cleanup_worktrees") as cleanup,
+            patch("harness.land._delete_harness_branches") as delete_harness,
+        ):
+            result = land("042-my-feature", project_dir=tmp_path, gitops=_make_gitops(None))
+
+        assert result is False
+        from harness.spec_frontmatter import read_frontmatter
+        assert read_frontmatter(spec_dir)["status"] == "ready_to_land"
+        cleanup.assert_not_called()
+        delete_harness.assert_not_called()
+
+    def test_no_branch_finishes_when_verified_commit_is_on_main(
+        self, tmp_path: Path
+    ) -> None:
+        _init_repo(tmp_path)
+        verified = _commit(tmp_path, "README.md", "landed\n", "landed work")
+        spec_dir = tmp_path / "specs" / "042-my-feature"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text(
+            "---\nstatus: ready_to_land\n---\n# Spec\n",
+            encoding="utf-8",
+        )
+        (spec_dir / "fulfillment-report.md").write_text(
+            f"---\nverified_commit: {verified}\n---\n"
+            "| ID | Status | Evidence |\n|---|---|---|\n"
+            "| FR-001 | IMPLEMENTED | src/a.py |\n",
+            encoding="utf-8",
+        )
+
+        with (
+            patch("harness.land._cleanup_worktrees") as cleanup,
+            patch("harness.land._delete_harness_branches") as delete_harness,
+        ):
+            result = land("042-my-feature", project_dir=tmp_path, gitops=_make_gitops(None))
+
+        assert result is True
+        from harness.spec_frontmatter import read_frontmatter
+        assert read_frontmatter(spec_dir)["status"] == "landed"
+        cleanup.assert_called_once()
+        assert [call.args[0] for call in delete_harness.call_args_list] == [
+            "042-my-feature",
+            "042",
+        ]
+
+    def test_no_branch_keeps_legacy_landed_spec_idempotent(
+        self, tmp_path: Path
+    ) -> None:
+        _init_repo(tmp_path)
+        _commit(tmp_path, "README.md", "landed\n", "landed work")
+        spec_dir = tmp_path / "specs" / "042-my-feature"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text(
+            "---\nstatus: landed\n---\n# Spec\n",
+            encoding="utf-8",
+        )
+
+        result = land("042-my-feature", project_dir=tmp_path, gitops=_make_gitops(None))
 
         assert result is True
         from harness.spec_frontmatter import read_frontmatter
@@ -679,6 +767,31 @@ class TestLand:
         assert result is True
         gitops.merge_branch_into_default.assert_called_once_with(
             "harness/042/default/iter-3", str(tmp_path)
+        )
+
+    def test_slug_lands_numeric_legacy_harness_branch(self, tmp_path: Path) -> None:
+        _init_repo(tmp_path)
+        _commit(tmp_path, "README.md", "base\n", "base")
+        _git(tmp_path, "checkout", "-b", "harness/906/default/iter-3")
+        _commit(tmp_path, "feature.txt", "verified work\n", "legacy implementation")
+        _git(tmp_path, "checkout", "main")
+        gitops = _make_gitops(feature_branch=None)
+
+        with (
+            patch("harness.land._check_ready_before_land", return_value=True),
+            patch("harness.land._verify_before_land", return_value=True),
+            patch("harness.land._clean_generated_drift_before_direct_merge", return_value=True),
+            patch("harness.land._finish_landing", return_value=True),
+        ):
+            result = land(
+                "906-cli-output-styling",
+                project_dir=tmp_path,
+                gitops=gitops,
+            )
+
+        assert result is True
+        gitops.merge_branch_into_default.assert_called_once_with(
+            "harness/906/default/iter-3", str(tmp_path)
         )
 
     def test_blocks_ambiguous_legacy_harness_branch_selection(self, tmp_path: Path) -> None:

@@ -27,6 +27,7 @@ from kernel.fulfillment import (
     read_fulfillment_metadata,
     validate_deferred_scope_rows,
 )
+from kernel.spec_identity import spec_identity_aliases
 from harness.deferred_scope import active_entries, ledger_path
 
 logger = logging.getLogger(__name__)
@@ -460,23 +461,26 @@ def _find_latest_harness_branch(spec_id: str, project_dir: Path) -> str | None:
     than a conventional feature branch.  Landing must either merge that branch
     or stop; treating it as absent would silently discard verified work.
     """
-    result = _run_git(
-        ["branch", "--list", f"harness/{spec_id}/*/iter-*"],
-        cwd=str(project_dir),
-        check=False,
-    )
-    if result.returncode != 0:
-        raise RuntimeError("could not list legacy harness branches")
-
-    pattern = re.compile(
-        rf"^harness/{re.escape(spec_id)}/[^/]+/iter-(?P<iteration>\d+)$"
-    )
     candidates: list[tuple[int, str]] = []
-    for line in result.stdout.splitlines():
-        branch = line.strip()
-        match = pattern.fullmatch(branch)
-        if match:
-            candidates.append((int(match.group("iteration")), branch))
+    for alias in spec_identity_aliases(spec_id):
+        result = _run_git(
+            ["branch", "--list", f"harness/{alias}/*/iter-*"],
+            cwd=str(project_dir),
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError("could not list legacy harness branches")
+
+        pattern = re.compile(
+            rf"^harness/{re.escape(alias)}/[^/]+/iter-(?P<iteration>\d+)$"
+        )
+        for line in result.stdout.splitlines():
+            branch = line.strip()
+            match = pattern.fullmatch(branch)
+            if match:
+                candidates.append((int(match.group("iteration")), branch))
+        if candidates:
+            break
 
     if not candidates:
         return None
@@ -493,6 +497,71 @@ def _find_latest_harness_branch(spec_id: str, project_dir: Path) -> str | None:
 
     logger.info("Found latest legacy harness branch for spec %s: %s", spec_id, latest[0])
     return latest[0]
+
+
+def _finish_branchless_landing(
+    spec_id: str,
+    *,
+    wrapper_project_dir: Path,
+    project_dir: Path,
+    spec_dir: Path | None,
+    gitops: Any,
+) -> bool:
+    """Finish an already-merged landing only when positive evidence proves it."""
+    status = read_frontmatter(spec_dir).get("status") if spec_dir is not None else None
+    report = latest_fulfillment_report(spec_dir) if spec_dir is not None else None
+    metadata = read_fulfillment_metadata(report) if report is not None else {}
+    verified_commit = metadata.get("verified_commit")
+
+    if status == "landed" and not verified_commit:
+        logger.info("land: %s is already landed (legacy status evidence)", spec_id)
+        return True
+
+    problem: str
+    if status not in {"ready_to_land", "landed"}:
+        problem = f"spec status is {status or '(missing)'}, not ready_to_land or landed"
+    elif not isinstance(verified_commit, str) or not verified_commit:
+        problem = "no verified commit is recorded in the fulfillment report"
+    else:
+        default_branch = _land_default_branch(gitops)
+        ancestor = _run_git(
+            ["merge-base", "--is-ancestor", verified_commit, default_branch],
+            cwd=str(project_dir),
+            check=False,
+        )
+        if ancestor.returncode == 0:
+            _cleanup_worktrees(spec_id, wrapper_project_dir, gitops)
+            for alias in spec_identity_aliases(spec_id):
+                _delete_harness_branches(alias, project_dir)
+            if spec_dir is not None and status != "landed":
+                write_status(spec_dir, "landed")
+            _clear_landed_active_authoring_pointer(
+                wrapper_project_dir,
+                spec_id,
+                "",
+            )
+            logger.info(
+                "land: %s has no feature branch, but verified commit %s is on %s",
+                spec_id,
+                verified_commit,
+                default_branch,
+            )
+            return True
+        problem = (
+            f"verified commit {verified_commit} is not an ancestor of "
+            f"the default branch {default_branch}"
+        )
+
+    _banner(
+        "LAND - BRANCH NOT LANDED",
+        [
+            ("spec", spec_id),
+            ("problem", problem),
+            ("next step", "recover or merge the verified branch, then re-run land"),
+        ],
+        subtitle="Branch absence is not proof that verified work reached the default branch.",
+    )
+    return False
 
 
 def _block_different_active_authoring_spec(
@@ -606,13 +675,13 @@ def land(
             return False
 
     if feature_branch is None:
-        logger.info("land: %s — feature branch not found, already landed", spec_id)
-        _cleanup_worktrees(spec_id, wrapper_project_dir, gitops)
-        _delete_harness_branches(spec_id, project_dir)
-        if spec_dir:
-            write_status(spec_dir, "landed")
-        _clear_landed_active_authoring_pointer(wrapper_project_dir, spec_id, "")
-        return True
+        return _finish_branchless_landing(
+            spec_id,
+            wrapper_project_dir=wrapper_project_dir,
+            project_dir=project_dir,
+            spec_dir=spec_dir,
+            gitops=gitops,
+        )
 
     if _block_different_active_authoring_spec(
         wrapper_project_dir,
