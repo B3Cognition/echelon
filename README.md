@@ -308,6 +308,7 @@ the result, so the graph does not duplicate mining:
 # Publish canonical sources as they become available.
 echelon re publish <run-id>                 # optional brownfield context
 echelon spec publish <spec>                 # canonical spec on local default branch
+echelon spec verify <spec> --reconcile      # audit the declared target checkout
 echelon spec evidence publish <spec>        # normally after land
 
 # Reconcile each applicable canonical source with MemPalace.
@@ -319,6 +320,19 @@ echelon spec evidence memory refresh <spec> # when evidence is published
 echelon graph refresh <spec> --write
 echelon graph view <spec>
 ```
+
+`spec verify` accepts either a numeric selector or the canonical spec slug. It
+resolves the canonical spec, runs the complete fulfillment pipeline against the
+single declared target repository at its currently checked-out commit, and
+writes the report, provenance hashes, and verified ledger in the orchestration
+workspace. Use `--reconcile --dry-run` to preview deterministic bookkeeping
+repairs while still performing a fresh audit. Evidence publication recognizes
+both current canonical-slug verify runs and older numeric run directories.
+
+Landing uses the same selector aliases for conventional and legacy harness
+branches. If no branch exists, Echelon marks a spec landed only when its
+recorded verified commit is already an ancestor of the target default branch;
+branch absence alone is never treated as successful delivery.
 
 `graph refresh --write` is the normal shorthand for a persisted build followed
 by a persisted audit. Automation may run the stages separately:
@@ -1041,7 +1055,7 @@ This keeps commands readable and makes individual phases independently editable 
 | `echelon build <id>` | `speckit.echelon.build` | Build phase (agent-driven) |
 | `echelon codegen <id>` | `speckit.echelon.codegen` | Build phase via SOAR pipeline (alternative to build) |
 | `echelon review <id> [--pr-url <url>]` | `speckit.echelon.review` | PR review triage — groups blocking comments, runs DEBUGGER → SENTINEL → SPEC GUARD per group, writes `review-fix-{n}.md` + tasks, signals `review_fix_queued` to harness |
-| `echelon spec verify <id> [--reconcile] [--dry-run]` | `speckit.echelon.verify-spec` | Audit fulfillment; with `--reconcile`, apply deterministic task-progress bookkeeping fixes through harness helpers. Use `--reconcile --dry-run` to preview changes only |
+| `echelon spec verify <id> [--reconcile] [--dry-run]` | `speckit.echelon.verify-spec` | Run the complete fulfillment audit against the spec's single declared target checkout, stamp current-commit provenance, and write the verified ledger; `--reconcile` applies deterministic bookkeeping fixes and `--reconcile --dry-run` previews them |
 | `echelon spec defer <id> <ID...> --reason <reason> [--dry-run]` | — | Commit an auditable owner deferral for direct tasks or canonical FR/NFR/AC/SC requirements; displays mapped tasks and requirements that remain active |
 | `echelon spec plan <id> <ID...> [--dry-run]` | — | Restore matching deferred work to the planned scope, preserving the deferral ledger history |
 | `echelon spec reopen <id> [from=<report>]` | `speckit.echelon.reopen` | Reopen a spec from fulfillment gaps and append harness-ready `FG-T*` tasks |

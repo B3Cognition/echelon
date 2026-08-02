@@ -197,7 +197,7 @@ git commit -m "fix: require positive evidence for branchless landing"
 
 - [ ] **Step 1: Write failing runner tests for orchestration-owned workflow and flags**
 
-Add tests where the target checkout has no verify skill but the orchestration root does. Assert the generated prompt contains canonical `spec_dir`, deterministic phase content, and `--reconcile --dry-run`. Add a cache fixture and assert either flag causes a provider call.
+Add tests where the target checkout has no verify skill but the orchestration root does. Assert the generated prompt contains canonical `spec_dir`, deterministic phase content, and `--reconcile --dry-run`. Add a cache fixture and assert reconciliation causes a provider call, while standalone dry-run fails before dispatch.
 
 ```python
 result = runner.refresh(
@@ -221,10 +221,16 @@ Expected: tests fail because flags are unsupported and skill lookup is target-on
 
 - [ ] **Step 3: Extend the runner without changing its ownership**
 
-Add boolean parameters. Skip both the full-report cache and deterministic-artifact short path when either is true, because neither path executes requested reconciliation work. Resolve the verify skill and phases from the orchestration root when provided, pass that workflow root into prompt construction, and append flags to the verify arguments.
+Add boolean parameters. Reject `dry_run=True` when `reconcile=False` before any provider or artifact work. Skip both the full-report cache and deterministic-artifact short path for reconciliation, because neither path executes requested reconciliation work. Resolve the verify skill and phases from the orchestration root when provided, pass that workflow root into prompt construction, and append valid flags to the verify arguments.
 
 ```python
-force_execution = reconcile or dry_run
+if dry_run and not reconcile:
+    return FulfillmentRefreshResult(
+        status="failed",
+        exit_code=2,
+        reason="dry_run requires reconcile",
+    )
+force_execution = reconcile
 if not force_execution and _latest_full_report_matches_cache(...):
     return cached_result
 if not force_execution:

@@ -73,6 +73,12 @@ When no branch is found, landing uses positive evidence:
 An unreadable branch lookup remains a hard failure. Branch absence and lookup
 failure are never collapsed into the same state.
 
+Before an ancestor-backed branchless completion, Echelon runs the ordinary
+status and fulfillment readiness checks and compares recorded spec and
+implementation input hashes. Advancing `ready_to_land` requires both hashes;
+already-landed legacy state retains its idempotent exception. Cleanup is
+limited to build directories whose state identifies the selected spec.
+
 The blocking message identifies the missing branch and, when available, the
 verified commit that is absent from the default branch.
 
@@ -98,9 +104,11 @@ runner remains responsible for:
 - writing the verified fulfillment ledger;
 - returning cached/refreshed/failed status.
 
-`FulfillmentRunner` gains explicit `reconcile` and `dry_run` inputs. Either flag
-forces execution instead of a cache return because reconciliation may have
-requested side effects. The flags are forwarded to the embedded workflow.
+`FulfillmentRunner` gains explicit `reconcile` and `dry_run` inputs.
+Reconciliation forces execution instead of a cache return because it may have
+requested side effects. `dry_run` is valid only with `reconcile`; standalone
+dry-run fails before provider invocation or artifact mutation. Valid flags are
+forwarded to the embedded workflow.
 
 Skill and phase discovery may use the orchestration workspace even when the
 implementation target does not install Echelon command files. Implementation
@@ -122,8 +130,9 @@ runs/*/verify-spec/<canonical-slug>
 runs/*/verify-spec/<numeric-id>
 ```
 
-With `--from-run <run-id>`, candidates include both alias directories below the
-selected run plus the run directory itself for standalone verify runs.
+With `--from-run <run-id>`, complete alias directories below the selected run
+take precedence. The run directory itself is a fallback only for standalone
+verify runs whose state or generated directory name matches a spec alias.
 
 Candidates must contain `state.json` and at least one publishable verify
 artifact. Duplicate paths are removed. The latest valid candidate by artifact
@@ -162,7 +171,8 @@ modification time retains the current selection behavior.
 - orchestration provider/config and phase roots are used with target source;
 - successful refresh stamps current target commit and writes ledger;
 - failed refresh returns nonzero and does not stamp;
-- `--reconcile` and `--dry-run` bypass cache and reach the workflow.
+- `--reconcile` and `--reconcile --dry-run` bypass cache and reach the workflow;
+- standalone `--dry-run` fails without invoking the provider.
 
 ### Evidence
 
@@ -179,4 +189,3 @@ Update the CLI README and changelog to state:
 - verify automatically uses the declared target checkout;
 - branch absence is not sufficient landing evidence;
 - evidence publication reads legacy numeric verify runs.
-

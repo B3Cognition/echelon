@@ -172,6 +172,58 @@ def test_verify_evidence_resolver_error_lists_attempted_aliases(tmp_path: Path) 
 
 
 @pytest.mark.unit
+def test_explicit_run_prefers_matching_nested_candidate_over_newer_root(
+    tmp_path: Path,
+) -> None:
+    import os
+
+    from echelon.mempalace_spec_evidence import _resolve_verify_evidence_run_dir
+
+    run_root = write_complete_verify_candidate(
+        tmp_path / "runs" / "build-mixed",
+        "unrelated root evidence",
+    )
+    run_root.joinpath("state.json").write_text(
+        '{"spec_id":"other-spec"}\n',
+        encoding="utf-8",
+    )
+    nested = write_complete_verify_candidate(
+        run_root / "verify-spec" / "906",
+        "matching nested evidence",
+    )
+    os.utime(nested / "implementation-map.md", (1, 1))
+    os.utime(run_root / "implementation-map.md", (2, 2))
+
+    assert _resolve_verify_evidence_run_dir(
+        tmp_path,
+        "906-cli-output-styling",
+        "build-mixed",
+    ) == nested
+
+
+@pytest.mark.unit
+def test_explicit_standalone_run_requires_matching_identity(tmp_path: Path) -> None:
+    from echelon.mempalace_requirements import SpecMemoryError
+    from echelon.mempalace_spec_evidence import _resolve_verify_evidence_run_dir
+
+    run_root = write_complete_verify_candidate(
+        tmp_path / "runs" / "manual-run",
+        "unrelated evidence",
+    )
+    run_root.joinpath("state.json").write_text(
+        '{"spec_id":"other-spec"}\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SpecMemoryError):
+        _resolve_verify_evidence_run_dir(
+            tmp_path,
+            "906-cli-output-styling",
+            "manual-run",
+        )
+
+
+@pytest.mark.unit
 def test_publish_spec_evidence_package_rejects_unlanded_specs(
     tmp_path: Path,
 ) -> None:

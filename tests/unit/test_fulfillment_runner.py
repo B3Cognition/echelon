@@ -851,6 +851,25 @@ class TestFulfillmentRunner:
         assert "--reconcile" in prompt
         assert "--dry-run" in prompt
 
+    def test_refresh_rejects_dry_run_without_reconcile(self, tmp_path):
+        _write_verify_skill(tmp_path)
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        _write_spec_inputs(spec_dir)
+        provider = MagicMock()
+        provider.cli = "claude"
+
+        result = FulfillmentRunner(provider).refresh(
+            str(tmp_path),
+            "spec-001",
+            dry_run=True,
+        )
+
+        assert result.status == "failed"
+        assert result.exit_code == 2
+        assert result.reason == "dry_run requires reconcile"
+        provider.exec_prompt.assert_not_called()
+        assert not (spec_dir / "fulfillment-report.md").exists()
+
     def test_refresh_uses_cached_full_report_when_commit_and_spec_hash_match(self, tmp_path):
         _write_verify_skill(tmp_path)
         spec_dir = tmp_path / "specs" / "spec-001-demo"

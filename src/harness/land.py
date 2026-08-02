@@ -420,7 +420,10 @@ def find_pr_url(spec_id: str, state_dir: Path) -> Optional[str]:
         for state_file in sorted(state_dir.glob("*.json")):
             try:
                 data = json.loads(state_file.read_text(encoding="utf-8"))
-                if data.get("pr_url") and data.get("spec_id") == spec_id:
+                if data.get("pr_url") and _spec_id_matches(
+                    str(data.get("spec_id") or ""),
+                    spec_id,
+                ):
                     return data["pr_url"]
             except (json.JSONDecodeError, OSError):
                 continue
@@ -506,6 +509,7 @@ def _finish_branchless_landing(
     project_dir: Path,
     spec_dir: Path | None,
     gitops: Any,
+    options: LandOptions,
 ) -> bool:
     """Finish an already-merged landing only when positive evidence proves it."""
     status = read_frontmatter(spec_dir).get("status") if spec_dir is not None else None
@@ -524,6 +528,66 @@ def _finish_branchless_landing(
         problem = "no verified commit is recorded in the fulfillment report"
     else:
         default_branch = _land_default_branch(gitops)
+        if not _check_ready_before_land(
+            spec_id,
+            wrapper_project_dir,
+            options,
+            fulfillment_project_dir=project_dir,
+            fulfillment_ref=default_branch,
+        ):
+            return False
+
+        from harness.fulfillment_runner import (
+            _implementation_input_hash,
+            _spec_input_hash,
+        )
+
+        recorded_spec_hash = metadata.get("spec_input_hash")
+        current_spec_hash = _spec_input_hash(spec_dir)
+        recorded_implementation_hash = metadata.get("implementation_input_hash")
+        if status == "ready_to_land" and (
+            not isinstance(recorded_spec_hash, str)
+            or not recorded_spec_hash
+            or not isinstance(recorded_implementation_hash, str)
+            or not recorded_implementation_hash
+        ):
+            _banner(
+                "LAND - BRANCH NOT LANDED",
+                [
+                    ("spec", spec_id),
+                    ("problem", "fulfillment report is missing input hashes"),
+                    ("next step", f"rerun: echelon spec verify {spec_id}"),
+                ],
+                subtitle="Branchless status advancement requires complete provenance.",
+            )
+            return False
+        if recorded_spec_hash and recorded_spec_hash != current_spec_hash:
+            problem = "fulfillment report spec input hash is stale"
+            _banner(
+                "LAND - BRANCH NOT LANDED",
+                [
+                    ("spec", spec_id),
+                    ("problem", problem),
+                    ("next step", f"rerun: echelon spec verify {spec_id}"),
+                ],
+                subtitle="Branchless landing requires current fulfillment inputs.",
+            )
+            return False
+        if (
+            recorded_implementation_hash
+            and recorded_implementation_hash != _implementation_input_hash(project_dir)
+        ):
+            problem = "fulfillment report implementation input hash is stale"
+            _banner(
+                "LAND - BRANCH NOT LANDED",
+                [
+                    ("spec", spec_id),
+                    ("problem", problem),
+                    ("next step", f"rerun: echelon spec verify {spec_id}"),
+                ],
+                subtitle="Branchless landing requires current fulfillment inputs.",
+            )
+            return False
         ancestor = _run_git(
             ["merge-base", "--is-ancestor", verified_commit, default_branch],
             cwd=str(project_dir),
@@ -638,6 +702,7 @@ def land(
     wrapper_project_dir = project_dir
     spec_dir = find_spec_dir(spec_id, wrapper_project_dir)
     if spec_dir is not None:
+        spec_id = spec_dir.name
         project_dir = resolve_land_repo(wrapper_project_dir, spec_dir)
 
     try:
@@ -681,6 +746,7 @@ def land(
             project_dir=project_dir,
             spec_dir=spec_dir,
             gitops=gitops,
+            options=options,
         )
 
     if _block_different_active_authoring_spec(
@@ -1532,11 +1598,10 @@ def _clear_landed_active_authoring_pointer(
 
 
 def _spec_id_matches(active_spec: str, requested_spec: str) -> bool:
-    if active_spec == requested_spec:
-        return True
-    if requested_spec.isdigit():
-        return bool(re.match(rf"^{re.escape(requested_spec)}(?:-|$)", active_spec))
-    return False
+    return bool(
+        set(spec_identity_aliases(active_spec))
+        & set(spec_identity_aliases(requested_spec))
+    )
 
 
 def _land_default_branch(gitops: Any) -> str:
@@ -1576,6 +1641,8 @@ def _cleanup_worktrees(spec_id: str, project_dir: Path, gitops: Any) -> None:
     if not rd.exists():
         return
     for build in sorted(rd.glob("build-*/")):
+        if not _build_state_matches_spec(build / "state", spec_id):
+            continue
         worktree_base = build / "worktrees"
         if not worktree_base.exists():
             continue
@@ -1589,6 +1656,17 @@ def _cleanup_worktrees(spec_id: str, project_dir: Path, gitops: Any) -> None:
                         logger.info("land: removed worktree %s", iter_dir)
                     except Exception as e:  # noqa: BLE001
                         logger.warning("land: could not remove worktree %s: %s", iter_dir, e)
+
+
+def _build_state_matches_spec(state_dir: Path, spec_id: str) -> bool:
+    for state_file in sorted(state_dir.glob("*.json")):
+        try:
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if _spec_id_matches(str(state.get("spec_id") or ""), spec_id):
+            return True
+    return False
 
 
 def _delete_local_branch(branch: str, project_dir: str) -> None:

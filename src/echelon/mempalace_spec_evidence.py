@@ -402,11 +402,14 @@ def _resolve_verify_evidence_run_dir(
     aliases = spec_identity_aliases(spec_id)
     if run_id:
         direct = project_root / "runs" / run_id
-        candidates = [
+        nested_candidates = [
             direct / "verify-spec" / alias
             for alias in aliases
         ]
-        candidates.append(direct)
+        complete_nested = _complete_verify_evidence_candidates(nested_candidates)
+        if complete_nested:
+            return _latest_verify_evidence_candidate(complete_nested)
+        candidates = [direct] if _standalone_run_matches_spec(direct, aliases) else []
     else:
         runs = project_root / "runs"
         candidates = []
@@ -415,18 +418,29 @@ def _resolve_verify_evidence_run_dir(
                 candidates.extend(runs.glob(f"verify-spec-{alias}-*"))
                 candidates.extend(runs.glob(f"*/verify-spec/{alias}"))
     candidates = list(dict.fromkeys(candidates))
-    complete = [
-        path
-        for path in candidates
-        if path.is_dir()
-        and (path / "state.json").is_file()
-        and any((path / name).is_file() for name in PUBLISHED_VERIFY_EVIDENCE_ARTIFACTS)
-    ]
+    complete = _complete_verify_evidence_candidates(candidates)
     if not complete:
         raise SpecMemoryError(
             "published verify evidence source not found for spec aliases: "
             + ", ".join(aliases)
         )
+    return _latest_verify_evidence_candidate(complete)
+
+
+def _complete_verify_evidence_candidates(candidates: list[Path]) -> list[Path]:
+    return [
+        path
+        for path in candidates
+        if path.is_dir()
+        and (path / "state.json").is_file()
+        and any(
+            (path / name).is_file()
+            for name in PUBLISHED_VERIFY_EVIDENCE_ARTIFACTS
+        )
+    ]
+
+
+def _latest_verify_evidence_candidate(complete: list[Path]) -> Path:
     return sorted(
         complete,
         key=lambda path: max(
@@ -435,6 +449,26 @@ def _resolve_verify_evidence_run_dir(
             if (path / name).is_file()
         ),
     )[-1]
+
+
+def _standalone_run_matches_spec(
+    run_dir: Path,
+    aliases: tuple[str, ...],
+) -> bool:
+    state_path = run_dir / "state.json"
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    state_spec_id = str(state.get("spec_id") or "").strip()
+    if state_spec_id:
+        return bool(
+            set(spec_identity_aliases(state_spec_id)) & set(aliases)
+        )
+    return any(
+        run_dir.name == alias or run_dir.name.startswith(f"verify-spec-{alias}-")
+        for alias in aliases
+    )
 
 
 def _file_sha256(path: Path) -> str:

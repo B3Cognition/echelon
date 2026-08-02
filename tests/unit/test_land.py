@@ -696,6 +696,11 @@ class TestLand:
     def test_no_branch_finishes_when_verified_commit_is_on_main(
         self, tmp_path: Path
     ) -> None:
+        from harness.fulfillment_runner import (
+            _implementation_input_hash,
+            _spec_input_hash,
+        )
+
         _init_repo(tmp_path)
         verified = _commit(tmp_path, "README.md", "landed\n", "landed work")
         spec_dir = tmp_path / "specs" / "042-my-feature"
@@ -704,8 +709,14 @@ class TestLand:
             "---\nstatus: ready_to_land\n---\n# Spec\n",
             encoding="utf-8",
         )
+        spec_hash = _spec_input_hash(spec_dir)
+        implementation_hash = _implementation_input_hash(tmp_path)
         (spec_dir / "fulfillment-report.md").write_text(
-            f"---\nverified_commit: {verified}\n---\n"
+            "---\n"
+            f"verified_commit: {verified}\n"
+            f"spec_input_hash: {spec_hash}\n"
+            f"implementation_input_hash: {implementation_hash}\n"
+            "---\n"
             "| ID | Status | Evidence |\n|---|---|---|\n"
             "| FR-001 | IMPLEMENTED | src/a.py |\n",
             encoding="utf-8",
@@ -725,6 +736,93 @@ class TestLand:
             "042-my-feature",
             "042",
         ]
+
+    def test_no_branch_blocks_ready_spec_without_input_hashes(
+        self, tmp_path: Path
+    ) -> None:
+        _init_repo(tmp_path)
+        verified = _commit(tmp_path, "README.md", "landed\n", "landed work")
+        spec_dir = tmp_path / "specs" / "042-my-feature"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text(
+            "---\nstatus: ready_to_land\n---\n# Spec\n",
+            encoding="utf-8",
+        )
+        (spec_dir / "fulfillment-report.md").write_text(
+            f"---\nverified_commit: {verified}\n---\n"
+            "| ID | Status | Evidence |\n|---|---|---|\n"
+            "| FR-001 | IMPLEMENTED | src/a.py |\n",
+            encoding="utf-8",
+        )
+
+        result = land("042", project_dir=tmp_path, gitops=_make_gitops(None))
+
+        assert result is False
+        from harness.spec_frontmatter import read_frontmatter
+        assert read_frontmatter(spec_dir)["status"] == "ready_to_land"
+
+    def test_no_branch_blocks_fulfillment_gaps_on_main(self, tmp_path: Path) -> None:
+        _init_repo(tmp_path)
+        verified = _commit(tmp_path, "README.md", "landed\n", "landed work")
+        spec_dir = tmp_path / "specs" / "042-my-feature"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text(
+            "---\nstatus: ready_to_land\n---\n# Spec\n",
+            encoding="utf-8",
+        )
+        (spec_dir / "fulfillment-report.md").write_text(
+            f"---\nverified_commit: {verified}\n---\n"
+            "| ID | Status | Evidence |\n|---|---|---|\n"
+            "| FR-001 | PARTIAL | src/a.py |\n",
+            encoding="utf-8",
+        )
+
+        result = land("042", project_dir=tmp_path, gitops=_make_gitops(None))
+
+        assert result is False
+        from harness.spec_frontmatter import read_frontmatter
+        assert read_frontmatter(spec_dir)["status"] == "ready_to_land"
+
+    def test_no_branch_blocks_changed_spec_input_hash(self, tmp_path: Path) -> None:
+        _init_repo(tmp_path)
+        verified = _commit(tmp_path, "README.md", "landed\n", "landed work")
+        spec_dir = tmp_path / "specs" / "042-my-feature"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text(
+            "---\nstatus: ready_to_land\n---\n# Amended spec\n",
+            encoding="utf-8",
+        )
+        (spec_dir / "fulfillment-report.md").write_text(
+            f"---\nverified_commit: {verified}\nspec_input_hash: stale\n---\n"
+            "| ID | Status | Evidence |\n|---|---|---|\n"
+            "| FR-001 | IMPLEMENTED | src/a.py |\n",
+            encoding="utf-8",
+        )
+
+        result = land("042", project_dir=tmp_path, gitops=_make_gitops(None))
+
+        assert result is False
+        from harness.spec_frontmatter import read_frontmatter
+        assert read_frontmatter(spec_dir)["status"] == "ready_to_land"
+
+    def test_numeric_selector_uses_canonical_identity_for_branch_lookup(
+        self, tmp_path: Path
+    ) -> None:
+        spec_dir = tmp_path / "specs" / "906-cli-output-styling"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text(
+            "---\nstatus: ready_to_land\n---\n# Spec\n",
+            encoding="utf-8",
+        )
+        gitops = _make_gitops("906-cli-output-styling")
+
+        with patch("harness.land._check_ready_before_land", return_value=False):
+            result = land("906", project_dir=tmp_path, gitops=gitops)
+
+        assert result is False
+        gitops.find_feature_branch.assert_called_once_with(
+            "906-cli-output-styling"
+        )
 
     def test_no_branch_keeps_legacy_landed_spec_idempotent(
         self, tmp_path: Path
@@ -811,6 +909,22 @@ class TestLand:
     def test_cleans_up_worktrees(self, tmp_path: Path) -> None:
         worktree_dir = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
         worktree_dir.mkdir(parents=True)
+        _write_state(tmp_path / "runs" / "build-test" / "state", "042", "default", None)
+        unrelated = (
+            tmp_path
+            / "runs"
+            / "build-other"
+            / "worktrees"
+            / "default"
+            / "iter-0"
+        )
+        unrelated.mkdir(parents=True)
+        _write_state(
+            tmp_path / "runs" / "build-other" / "state",
+            "043-other",
+            "default",
+            None,
+        )
         gitops = _make_gitops()
         with patch("harness.land.prepare_feature_branch") as prepare:
             prepare.return_value = LandPrepareResult(status="prepared", branch="042-my-feature")

@@ -1043,6 +1043,26 @@ def test_spec_verify_returns_nonzero_for_failed_runner_status(
 
 
 @pytest.mark.unit
+def test_spec_verify_rejects_dry_run_without_reconcile(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from echelon.cli_app import app
+
+    spec_dir = tmp_path / "specs" / "906-cli-output-styling"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    result = CliRunner().invoke(
+        app,
+        ["spec", "verify", "906", "--dry-run"],
+    )
+
+    assert result.exit_code == 2
+    assert "--dry-run requires --reconcile" in result.output
+
+
+@pytest.mark.unit
 def test_top_level_skill_aliases_declare_common_arguments():
     build_help = invoke_help("build")
     review_help = invoke_help("review")

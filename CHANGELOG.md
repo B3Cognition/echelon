@@ -34,6 +34,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Spec lifecycle identity and verification** — Numeric selectors and
+  canonical spec slugs now resolve the same conventional branches, legacy
+  harness branches, and verification-evidence runs. Normal `echelon spec
+  verify` now executes through `FulfillmentRunner` against the spec's declared
+  target checkout, preserving deterministic phase embedding, provenance
+  hashes, cache behavior, artifact validation, and verified-ledger writes.
+
+- **Branchless landing safety** — A missing feature branch no longer implies
+  that delivery succeeded. Echelon now requires a landed legacy status or a
+  recorded verified commit already contained by the target default branch
+  before cleanup or lifecycle mutation.
+
+- **Legacy verification evidence discovery** — Evidence publication now reads
+  both canonical-slug and older numeric standalone or nested verify-run
+  directories, including explicit `--from-run` selection.
+
 - **Phase A bootstrap directory** — fresh spec starts now create the exact
   controller-owned run-local `spec_dir` recorded in state before CARTOGRAPHER
   runs, so first WHAT dispatches cannot fail with a missing spec directory.

@@ -139,6 +139,13 @@ class FulfillmentRunner:
         reconcile: bool = False,
         dry_run: bool = False,
     ) -> FulfillmentRefreshResult:
+        if dry_run and not reconcile:
+            return FulfillmentRefreshResult(
+                status="failed",
+                exit_code=2,
+                scope=scope,
+                reason="dry_run requires reconcile",
+            )
         worktree = Path(worktree_path)
         resolved_spec_dir = _resolve_spec_dir(
             spec_id,

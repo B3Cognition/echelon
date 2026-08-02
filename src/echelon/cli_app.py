@@ -3030,6 +3030,10 @@ def _run_spec_verify(
     from harness.llm_provider import AICodingCliProvider
     from harness.spec_frontmatter import find_spec_dir, read_targets
 
+    if dry_run and not reconcile:
+        typer.echo("spec verify: --dry-run requires --reconcile", err=True)
+        raise typer.Exit(code=2)
+
     workspace = project_root.resolve()
     spec_dir = find_spec_dir(selector, workspace)
     if spec_dir is None:
