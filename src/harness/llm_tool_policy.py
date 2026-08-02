@@ -71,6 +71,7 @@ def build_llm_cli_command(
     stream_json: bool = False,
     disallow_claude_task_tools: bool = False,
     codex_json: bool = False,
+    codex_model: str | None = None,
     output_last_message: str | None = None,
     opencode_json: bool = False,
     copilot_json: bool = False,
@@ -93,6 +94,8 @@ def build_llm_cli_command(
         cmd = [bin_, "exec"]
         if unsafe:
             cmd.append("--dangerously-bypass-approvals-and-sandbox")
+        if codex_model:
+            cmd += ["--model", codex_model]
         if codex_json:
             cmd.append("--json")
         if output_last_message:

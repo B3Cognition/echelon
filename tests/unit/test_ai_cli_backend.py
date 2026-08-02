@@ -3151,6 +3151,83 @@ def test_codex_backend_parses_jsonl_and_final_message_file(tmp_path) -> None:
     assert "echelon_result:" in result.stdout
 
 
+@pytest.mark.parametrize(
+    ("model_tier", "expected_model"),
+    [
+        ("fast", "gpt-5.6-luna"),
+        ("balanced", "gpt-5.6-terra"),
+        ("strong", "gpt-5.6-sol"),
+    ],
+)
+def test_codex_backend_maps_neutral_model_tier_to_cli_model(
+    tmp_path, model_tier, expected_model
+) -> None:
+    backend = CodexCliBackend(_config("codex"))
+    captured = {}
+
+    class FakeProcess:
+        stdout = io.BytesIO(b"")
+        stderr = io.BytesIO(b"")
+        returncode = 0
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self) -> int:
+            return self.returncode
+
+    def fake_popen(command, **_kwargs):
+        captured["command"] = command
+        return FakeProcess()
+
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Do work.",
+        env={},
+        timeout_s=10,
+        metadata={"prompt_metadata": {"model_tier": model_tier}},
+    )
+
+    with patch("harness.ai_cli_backends.codex.subprocess.Popen", fake_popen):
+        backend.run_prompt(request)
+
+    command = captured["command"]
+    assert command[command.index("--model") + 1] == expected_model
+
+
+def test_codex_backend_ignores_unknown_model_tier(tmp_path) -> None:
+    backend = CodexCliBackend(_config("codex"))
+    captured = {}
+
+    class FakeProcess:
+        stdout = io.BytesIO(b"")
+        stderr = io.BytesIO(b"")
+        returncode = 0
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self) -> int:
+            return self.returncode
+
+    def fake_popen(command, **_kwargs):
+        captured["command"] = command
+        return FakeProcess()
+
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Do work.",
+        env={},
+        timeout_s=10,
+        metadata={"prompt_metadata": {"model_tier": "high"}},
+    )
+
+    with patch("harness.ai_cli_backends.codex.subprocess.Popen", fake_popen):
+        backend.run_prompt(request)
+
+    assert "--model" not in captured["command"]
+
+
 def test_codex_backend_returns_on_task_complete_even_when_process_lingers(tmp_path) -> None:
     backend = CodexCliBackend(_config("codex"))
     final_message = tmp_path / "last-message.txt"

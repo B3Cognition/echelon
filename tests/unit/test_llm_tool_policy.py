@@ -87,6 +87,18 @@ def test_codex_command_can_request_json_and_output_last_message() -> None:
     assert cmd[-1].startswith("## Effective Host Tool Policy")
 
 
+def test_codex_command_can_request_a_specific_model() -> None:
+    cmd = build_llm_cli_command(
+        "codex",
+        "codex",
+        "Do the work.",
+        LlmToolPolicy(),
+        codex_model="gpt-5.6-terra",
+    )
+
+    assert cmd[:4] == ["codex", "exec", "--model", "gpt-5.6-terra"]
+
+
 def test_opencode_prompt_command_can_request_json() -> None:
     cmd = build_llm_cli_command(
         "opencode",

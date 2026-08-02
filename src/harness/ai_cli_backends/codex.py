@@ -13,6 +13,13 @@ from harness.config import HarnessConfig
 from harness.llm_tool_policy import build_llm_cli_command
 
 
+_MODEL_TIER_TO_CODEX_MODEL = {
+    "fast": "gpt-5.6-luna",
+    "balanced": "gpt-5.6-terra",
+    "strong": "gpt-5.6-sol",
+}
+
+
 class CodexCliBackend:
     name = "codex"
 
@@ -47,6 +54,7 @@ class CodexCliBackend:
             request.prompt,
             self._config.llm.tool_policy,
             codex_json=True,
+            codex_model=_codex_model_for_request(request),
             output_last_message=final_path or None,
         )
         proc = subprocess.Popen(
@@ -119,6 +127,16 @@ class CodexCliBackend:
             timed_out=timed_out,
             metadata={"task_complete": saw_task_complete},
         )
+
+
+def _codex_model_for_request(request: CliRunRequest) -> str | None:
+    metadata = request.metadata.get("prompt_metadata")
+    if not isinstance(metadata, dict):
+        return None
+    tier = metadata.get("model_tier")
+    if not isinstance(tier, str):
+        return None
+    return _MODEL_TIER_TO_CODEX_MODEL.get(tier.strip().lower())
 
 
 @dataclass(frozen=True)
