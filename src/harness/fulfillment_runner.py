@@ -136,6 +136,8 @@ class FulfillmentRunner:
         scope: str = "full",
         completed_task_ids: list[str] | tuple[str, ...] | None = None,
         changed_files: list[str] | tuple[str, ...] | None = None,
+        reconcile: bool = False,
+        dry_run: bool = False,
     ) -> FulfillmentRefreshResult:
         worktree = Path(worktree_path)
         resolved_spec_dir = _resolve_spec_dir(
@@ -177,7 +179,8 @@ class FulfillmentRunner:
                 spec_input_hash=spec_input_hash,
                 implementation_input_hash=implementation_input_hash,
             )
-        if _latest_full_report_matches_cache(
+        force_execution = reconcile or dry_run
+        if not force_execution and _latest_full_report_matches_cache(
             worktree,
             spec_id,
             spec_dir=resolved_spec_dir,
@@ -210,23 +213,24 @@ class FulfillmentRunner:
             orchestration_root=orchestration_root,
             spec_id=spec_id,
         )
-        direct_result = _try_direct_no_fallback_refresh(
-            worktree=worktree,
-            spec_id=spec_id,
-            spec_dir=resolved_spec_dir,
-            artifact_policy=artifact_policy,
-            commit=commit,
-            spec_input_hash=spec_input_hash,
-            implementation_input_hash=implementation_input_hash,
-            cache_key=cache_key,
-        )
-        if direct_result is not None:
-            return direct_result
+        if not force_execution:
+            direct_result = _try_direct_no_fallback_refresh(
+                worktree=worktree,
+                spec_id=spec_id,
+                spec_dir=resolved_spec_dir,
+                artifact_policy=artifact_policy,
+                commit=commit,
+                spec_input_hash=spec_input_hash,
+                implementation_input_hash=implementation_input_hash,
+                cache_key=cache_key,
+            )
+            if direct_result is not None:
+                return direct_result
 
-        skill_path = find_skill(
-            "echelon.verify-spec",
+        workflow_root, skill_path = _resolve_verify_spec_workflow(
             worktree,
-            self._prompt_executor.cli,
+            orchestration_root=orchestration_root,
+            cli=self._prompt_executor.cli,
         )
         if skill_path is None:
             return FulfillmentRefreshResult(
@@ -241,8 +245,12 @@ class FulfillmentRunner:
         arguments = spec_id
         if resolved_spec_dir is not None:
             arguments = f"{spec_id} spec_dir={resolved_spec_dir}"
+        if reconcile:
+            arguments += " --reconcile"
+        if dry_run:
+            arguments += " --dry-run"
 
-        prompt = _build_verify_spec_prompt(worktree, skill_path, arguments)
+        prompt = _build_verify_spec_prompt(workflow_root, skill_path, arguments)
         exit_code = self._prompt_executor.exec_prompt(worktree_path, prompt)
         artifact_write_violation = _verify_spec_artifact_write_violation(
             self._prompt_executor,
@@ -562,6 +570,24 @@ def _resolve_spec_dir(
         if spec_dir is not None:
             return spec_dir
     return find_spec_dir(spec_id, worktree)
+
+
+def _resolve_verify_spec_workflow(
+    worktree: Path,
+    *,
+    orchestration_root: Path | str | None,
+    cli: str,
+) -> tuple[Path, Path | None]:
+    roots: list[Path] = []
+    if orchestration_root is not None:
+        roots.append(Path(orchestration_root))
+    if worktree not in roots:
+        roots.append(worktree)
+    for root in roots:
+        skill_path = find_skill("echelon.verify-spec", root, cli)
+        if skill_path is not None:
+            return root, skill_path
+    return roots[0], None
 
 
 def _build_verify_spec_prompt(worktree: Path, skill_path: Path, arguments: str) -> str:

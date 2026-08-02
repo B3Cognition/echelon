@@ -791,6 +791,66 @@ class TestFulfillmentRunner:
         assert metadata["verified_commit"] == "abc123"
         assert metadata["verify_run_id"] == "spec-20260708-123456"
 
+    def test_polyrepo_refresh_uses_orchestration_workflow_and_forwards_reconcile(
+        self, tmp_path
+    ):
+        workspace = tmp_path / "workspace"
+        target = workspace / "sources" / "prosaic"
+        target.mkdir(parents=True)
+        _write_verify_skill(workspace)
+        phase_dir = (
+            workspace
+            / ".specify"
+            / "extensions"
+            / "echelon"
+            / "workflow"
+            / "phases"
+        )
+        phase_dir.mkdir(parents=True)
+        (phase_dir / "verify-spec-1-init.md").write_text(
+            "ORCHESTRATION_PHASE_SENTINEL\n",
+            encoding="utf-8",
+        )
+        spec_dir = workspace / "specs" / "906-cli-output-styling"
+        _write_spec_inputs(spec_dir)
+        _write_matching_audit(workspace, "906-cli-output-styling")
+        report = spec_dir / "fulfillment-report.md"
+        provider = MagicMock()
+        provider.cli = "claude"
+
+        def write_report(_worktree_path: str, _prompt: str) -> int:
+            _write_matching_report(report)
+            return 0
+
+        provider.exec_prompt.side_effect = write_report
+        runner = FulfillmentRunner(provider)
+
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"):
+            first = runner.refresh(
+                str(target),
+                "906-cli-output-styling",
+                spec_dir=spec_dir,
+                orchestration_root=workspace,
+            )
+            reconciled = runner.refresh(
+                str(target),
+                "906-cli-output-styling",
+                spec_dir=spec_dir,
+                orchestration_root=workspace,
+                reconcile=True,
+                dry_run=True,
+            )
+
+        assert first.status == "refreshed"
+        assert reconciled.status == "refreshed"
+        assert provider.exec_prompt.call_count == 2
+        worktree_path, prompt = provider.exec_prompt.call_args.args
+        assert worktree_path == str(target)
+        assert "ORCHESTRATION_PHASE_SENTINEL" in prompt
+        assert f"spec_dir={spec_dir}" in prompt
+        assert "--reconcile" in prompt
+        assert "--dry-run" in prompt
+
     def test_refresh_uses_cached_full_report_when_commit_and_spec_hash_match(self, tmp_path):
         _write_verify_skill(tmp_path)
         spec_dir = tmp_path / "specs" / "spec-001-demo"

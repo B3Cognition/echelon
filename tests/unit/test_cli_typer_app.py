@@ -936,6 +936,113 @@ def test_spec_skill_help_declares_common_arguments():
 
 
 @pytest.mark.unit
+def test_spec_verify_resolves_canonical_spec_and_declared_target(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from echelon.cli_app import run
+    from harness.fulfillment_runner import FulfillmentRefreshResult
+
+    target = tmp_path / "sources" / "prosaic"
+    target.mkdir(parents=True)
+    spec_dir = tmp_path / "specs" / "906-cli-output-styling"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text(
+        "---\ntargets:\n  - sources/prosaic\n---\n# Spec\n",
+        encoding="utf-8",
+    )
+    calls: list[dict[str, object]] = []
+
+    class FakeRunner:
+        def __init__(self, provider: object) -> None:
+            calls.append({"provider": provider})
+
+        def refresh(self, worktree_path: str, spec_id: str, **kwargs: object):
+            calls[-1].update(
+                {"worktree_path": worktree_path, "spec_id": spec_id, **kwargs}
+            )
+            return FulfillmentRefreshResult(
+                status="refreshed",
+                exit_code=0,
+                reason="full verify-spec completed",
+                report_path=str(spec_dir / "fulfillment-report.md"),
+            )
+
+    provider = object()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("harness.config.load_config", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr("harness.llm_provider.AICodingCliProvider", lambda _config: provider)
+    monkeypatch.setattr("harness.fulfillment_runner.FulfillmentRunner", FakeRunner)
+
+    run(["spec", "verify", "906", "--reconcile"])
+
+    assert calls == [
+        {
+            "provider": provider,
+            "worktree_path": str(target.resolve()),
+            "spec_id": "906-cli-output-styling",
+            "spec_dir": spec_dir.resolve(),
+            "orchestration_root": tmp_path.resolve(),
+            "reconcile": True,
+            "dry_run": False,
+        }
+    ]
+
+
+@pytest.mark.unit
+def test_spec_verify_rejects_multiple_targets_before_provider(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from echelon.cli_app import app
+
+    spec_dir = tmp_path / "specs" / "906-cli-output-styling"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text(
+        "---\ntargets:\n  - sources/a\n  - sources/b\n---\n# Spec\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    result = CliRunner().invoke(app, ["spec", "verify", "906"])
+
+    assert result.exit_code != 0
+    assert "exactly one target" in result.output
+
+
+@pytest.mark.unit
+def test_spec_verify_returns_nonzero_for_failed_runner_status(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from echelon.cli_app import app
+    from harness.fulfillment_runner import FulfillmentRefreshResult
+
+    spec_dir = tmp_path / "specs" / "906-cli-output-styling"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+
+    class FailedRunner:
+        def __init__(self, _provider: object) -> None:
+            pass
+
+        def refresh(self, *_args: object, **_kwargs: object):
+            return FulfillmentRefreshResult(
+                status="failed",
+                exit_code=0,
+                reason="artifact validation failed",
+            )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("harness.config.load_config", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr("harness.llm_provider.AICodingCliProvider", lambda _config: object())
+    monkeypatch.setattr("harness.fulfillment_runner.FulfillmentRunner", FailedRunner)
+
+    result = CliRunner().invoke(app, ["spec", "verify", "906"])
+
+    assert result.exit_code == 1
+    assert "status: failed" in result.output
+    assert "artifact validation failed" in result.output
+
+
+@pytest.mark.unit
 def test_top_level_skill_aliases_declare_common_arguments():
     build_help = invoke_help("build")
     review_help = invoke_help("review")

@@ -1240,12 +1240,13 @@ def root_verify_spec(
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview reconciliation changes only."),
 ) -> None:
     """Compatibility alias for spec verify."""
-    args = [spec_id, *_ctx_args(ctx)]
-    if reconcile:
-        args.append("--reconcile")
-    if dry_run:
-        args.append("--dry-run")
-    _dispatch_skill("verify-spec", args)
+    _reject_spec_verify_extra_args(ctx)
+    _run_spec_verify(
+        Path.cwd(),
+        spec_id,
+        reconcile=reconcile,
+        dry_run=dry_run,
+    )
 
 
 @app.command(
@@ -2998,14 +2999,74 @@ def spec_verify(
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview reconciliation changes only."),
 ) -> None:
     """Audit implementation against spec."""
-    from echelon import cli as legacy_cli
+    _reject_spec_verify_extra_args(ctx)
+    _run_spec_verify(
+        Path.cwd(),
+        spec_id,
+        reconcile=reconcile,
+        dry_run=dry_run,
+    )
 
-    args = [spec_id, *list(ctx.args)]
-    if reconcile:
-        args.append("--reconcile")
-    if dry_run:
-        args.append("--dry-run")
-    legacy_cli._dispatch_skill_command("verify-spec", args)
+
+def _reject_spec_verify_extra_args(ctx: typer.Context) -> None:
+    if not ctx.args:
+        return
+    typer.echo(
+        "spec verify: unsupported arguments: " + " ".join(ctx.args),
+        err=True,
+    )
+    raise typer.Exit(code=2)
+
+
+def _run_spec_verify(
+    project_root: Path,
+    selector: str,
+    *,
+    reconcile: bool,
+    dry_run: bool,
+) -> None:
+    from harness.config import load_config
+    from harness.fulfillment_runner import FulfillmentRunner
+    from harness.llm_provider import AICodingCliProvider
+    from harness.spec_frontmatter import find_spec_dir, read_targets
+
+    workspace = project_root.resolve()
+    spec_dir = find_spec_dir(selector, workspace)
+    if spec_dir is None:
+        typer.echo(f"spec verify: spec not found: {selector}", err=True)
+        raise typer.Exit(code=2)
+    spec_dir = spec_dir.resolve()
+
+    targets = read_targets(spec_dir)
+    if len(targets) > 1:
+        typer.echo("spec verify requires exactly one target repo", err=True)
+        raise typer.Exit(code=2)
+    target = workspace if not targets else (workspace / targets[0]).resolve()
+    if not target.is_dir():
+        typer.echo(f"spec verify: target repo not found: {targets[0]}", err=True)
+        raise typer.Exit(code=2)
+
+    provider = AICodingCliProvider(load_config(workspace, squad_only=True))
+    result = FulfillmentRunner(provider).refresh(
+        str(target),
+        spec_dir.name,
+        spec_dir=spec_dir,
+        orchestration_root=workspace,
+        reconcile=reconcile,
+        dry_run=dry_run,
+    )
+    typer.echo(f"status: {result.status}")
+    if result.reason:
+        typer.echo(f"reason: {result.reason}")
+    if result.report_path:
+        typer.echo(f"report: {result.report_path}")
+    if result.verified_ledger is not None:
+        ledger = " ".join(
+            f"{key}={value}" for key, value in result.verified_ledger.items()
+        )
+        typer.echo(f"ledger: {ledger}")
+    if not result.ok or result.status not in {"cached", "refreshed"}:
+        raise typer.Exit(code=result.exit_code or 1)
 
 
 @spec_app.command(
