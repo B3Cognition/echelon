@@ -394,12 +394,28 @@ def _prepare_transaction(
                 "No analyzable source files were present for this generation.\n",
                 encoding="utf-8",
             )
+            for name, title in (
+                ("architecture.md", "Architecture"),
+                ("contracts.md", "Contracts"),
+                ("components.md", "Components"),
+            ):
+                (durable_source / name).write_text(
+                    f"# {title}\n\n"
+                    f"Source path: `{source.path}`\n\n"
+                    "No analyzable source files were present for this generation.\n",
+                    encoding="utf-8",
+                )
             specs: list[str] = []
             source_status = "empty"
         else:
             staged_source = candidate.run_dir / "re" / "sources" / source_id
             durable_source.mkdir(parents=True)
             shutil.copy2(staged_source / "overview.md", durable_source / "overview.md")
+            shutil.copy2(staged_source / "architecture.md", durable_source / "architecture.md")
+            shutil.copy2(staged_source / "contracts.md", durable_source / "contracts.md")
+            shutil.copy2(staged_source / "components.md", durable_source / "components.md")
+            if (staged_source / "adrs").is_dir():
+                shutil.copytree(staged_source / "adrs", durable_source / "adrs")
             shutil.copytree(staged_source / "specs", durable_source / "specs")
             codegraph_summary = _copy_optional_source_artifact(
                 staged_source,
@@ -736,6 +752,12 @@ def _validate_refreshed_source(
         raise RePublicationValidationError(
             f"required source overview missing: {source_dir / 'overview.md'}"
         )
+    for name in ("architecture.md", "contracts.md", "components.md"):
+        path = source_dir / name
+        if not path.is_file() or not path.read_text(encoding="utf-8").strip():
+            raise RePublicationValidationError(
+                f"required source synthesis missing: {path}"
+            )
 
 
 def _raise_quality_failure(failure: ReSpecQualityFailure) -> None:
@@ -791,6 +813,9 @@ def _source_manifest(
         "publication_status": status,
         "cache_path": cache_path,
         "overview": f"re/sources/{source.id}/overview.md",
+        "architecture": f"re/sources/{source.id}/architecture.md",
+        "contracts": f"re/sources/{source.id}/contracts.md",
+        "components": f"re/sources/{source.id}/components.md",
         "specs": specs,
         "warnings": [],
     }
@@ -840,8 +865,11 @@ def _copy_heavy_source_artifacts(source: Path, destination: Path) -> None:
         relative = path.relative_to(source)
         if relative.parts[0] == "specs" or relative.as_posix() in {
             "overview.md",
+            "architecture.md",
+            "contracts.md",
+            "components.md",
             "manifest.json",
-        }:
+        } or relative.parts[0] == "adrs":
             continue
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)

@@ -242,6 +242,8 @@ def test_cmd_run_passes_repeatable_implementation_targets_and_ignore_re(
             "sources/api",
             "--target",
             "sources/web",
+            "--re-source",
+            "api",
             "--ignore-re",
             "--input=requirement:sources/PBS-E-45",
         ],
@@ -250,6 +252,7 @@ def test_cmd_run_passes_repeatable_implementation_targets_and_ignore_re(
     )
 
     assert captured["implementation_targets"] == ["sources/api", "sources/web"]
+    assert captured["re_sources"] == ["api"]
     assert "target_source" not in captured
     assert captured["ignore_re"] is True
     assert captured["product_inputs"].manifest_hash

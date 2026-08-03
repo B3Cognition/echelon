@@ -2256,7 +2256,7 @@ class ReExtractionController:
         if kind == "workspace-synthesis":
             return (
                 "\n## Controller-Owned Specification Target\n"
-                "Generate source overviews and workspace synthesis only. All required "
+                "Generate source overviews, source-owned synthesis, and workspace synthesis only. All required "
                 "source-domain specs have already been dispatched independently. Do not "
                 "create, rename, or rewrite any source-domain spec. Return an "
                 "`echelon_result` with `state_updates: {}`; lifecycle routing and "
@@ -3024,6 +3024,14 @@ class ReExtractionController:
             self._run_re_dir / "sources" / source.id / "overview.md"
             for source in plan.refresh_sources
         )
+        for source in plan.refresh_sources:
+            required.extend(
+                (
+                    self._run_re_dir / "sources" / source.id / "architecture.md",
+                    self._run_re_dir / "sources" / source.id / "contracts.md",
+                    self._run_re_dir / "sources" / source.id / "components.md",
+                )
+            )
         try:
             architecture = load_re_architecture_map(
                 self._run_re_dir / "workspace" / "architecture-map.json"

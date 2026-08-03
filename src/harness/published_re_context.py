@@ -8,10 +8,14 @@ import json
 import os
 import shutil
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any
 
 from harness.re_registry import canonical_re_artifacts, load_published_index
+
+_BRIEF_COMPONENT_CAP_BYTES = 24 * 1024
+_BRIEF_TOTAL_CAP_BYTES = 96 * 1024
+_MAX_TARGET_SELECTED_SOURCES = 3
 
 
 def attach_published_re_context(
@@ -19,6 +23,8 @@ def attach_published_re_context(
     run_dir: Path,
     *,
     ignore: bool,
+    implementation_targets: list[str] | None = None,
+    re_sources: list[str] | None = None,
 ) -> dict[str, object]:
     """Return an immutable run-local view of the latest registered RE context."""
     if ignore:
@@ -36,11 +42,26 @@ def attach_published_re_context(
     canonical = canonical_re_artifacts(root, index)
     snapshot_root = resolved_run / "context" / "published-re"
     artifacts = _snapshot_artifact_map(root, snapshot_root, canonical)
+    selected_sources, selection_reason = _select_re_sources(
+        index,
+        root,
+        implementation_targets or [],
+        re_sources or [],
+    )
+    rendered_briefings = _write_re_briefings(
+        snapshot_root,
+        artifacts,
+        selected_sources=selected_sources,
+    )
+    artifacts["rendered_briefings"] = rendered_briefings
     return {
         "status": "attached",
         "generation": index.generation,
         "publication_status": index.publication_status,
         "snapshot_root": str(snapshot_root),
+        "selected_sources": selected_sources,
+        "selection_reason": selection_reason,
+        "rendered_briefings": rendered_briefings,
         "artifacts": artifacts,
     }
 
@@ -197,3 +218,222 @@ def _replace_prefix(value: Any, old: Path, new: Path) -> Any:
     if isinstance(value, dict):
         return {key: _replace_prefix(item, old, new) for key, item in value.items()}
     return value
+
+
+def _select_re_sources(
+    index: object,
+    project_root: Path,
+    implementation_targets: list[str],
+    re_sources: list[str],
+) -> tuple[list[str], dict[str, str]]:
+    sources = getattr(index, "sources", {})
+    selected: list[str] = []
+    reasons: dict[str, str] = {}
+
+    def add(source_id: str, reason: str) -> None:
+        if source_id in sources and source_id not in selected:
+            selected.append(source_id)
+            reasons[source_id] = reason
+
+    for value in re_sources:
+        matched = _match_re_source_request(sources, project_root, value)
+        if matched:
+            add(matched, "explicit --re-source")
+
+    for value in implementation_targets:
+        matched = _match_implementation_target(sources, project_root, value)
+        if matched:
+            add(matched, "target matched published source path")
+        if len(selected) >= _MAX_TARGET_SELECTED_SOURCES and not re_sources:
+            break
+
+    return selected, reasons
+
+
+def _match_re_source_request(
+    sources: Mapping[str, object],
+    project_root: Path,
+    value: str,
+) -> str | None:
+    raw = str(value or "").strip().strip("/")
+    if not raw:
+        return None
+    if raw in sources:
+        return raw
+    parts = PurePath(raw).parts
+    if len(parts) >= 3 and parts[0] == "re" and parts[1] == "sources":
+        candidate = parts[2]
+        return candidate if candidate in sources else None
+    return _match_implementation_target(sources, project_root, raw)
+
+
+def _match_implementation_target(
+    sources: Mapping[str, object],
+    project_root: Path,
+    value: str,
+) -> str | None:
+    target = _normalize_target_ref(project_root, value)
+    if not target:
+        return None
+    for source_id, source in sorted(sources.items()):
+        if target == source_id:
+            return source_id
+        source_path = str(getattr(source, "source_path", "") or "").strip().strip("/")
+        if not source_path:
+            continue
+        if target == source_path or target.startswith(f"{source_path}/"):
+            return source_id
+    return None
+
+
+def _normalize_target_ref(project_root: Path, value: str) -> str:
+    raw = str(value or "").strip().strip("/")
+    if not raw:
+        return ""
+    path = Path(raw).expanduser()
+    if path.is_absolute():
+        try:
+            return path.resolve().relative_to(project_root).as_posix().strip("/")
+        except ValueError:
+            return path.resolve().as_posix().strip("/")
+    return PurePath(raw).as_posix().strip("/")
+
+
+def _write_re_briefings(
+    snapshot_root: Path,
+    artifacts: dict[str, object],
+    *,
+    selected_sources: list[str],
+) -> dict[str, object]:
+    workspace = snapshot_root / "RE-WORKSPACE-BRIEF.md"
+    workspace.write_text(_workspace_brief(snapshot_root, artifacts), encoding="utf-8")
+    sources: dict[str, str] = {}
+    for source_id in selected_sources:
+        path = snapshot_root / f"RE-SOURCE-{source_id}-BRIEF.md"
+        path.write_text(
+            _source_brief(snapshot_root, artifacts, source_id),
+            encoding="utf-8",
+        )
+        sources[source_id] = str(path)
+    return {"workspace": str(workspace), "sources": sources}
+
+
+def _workspace_brief(snapshot_root: Path, artifacts: Mapping[str, object]) -> str:
+    lines = [
+        "# Published RE Workspace Brief",
+        "",
+        "This deterministic briefing is assembled from registered published RE artifacts.",
+        "",
+    ]
+    for key, title in (
+        ("re_overview", "Workspace Overview"),
+        ("cross_repo", "Relationships"),
+        ("contracts", "Contracts"),
+        ("workspace_checklist", "Workspace Checklist"),
+        ("architecture_map", "Architecture Map"),
+        ("workspace_codegraph_summary", "Workspace CodeGraph Summary"),
+        ("domain_catalog", "Domain Catalog"),
+    ):
+        lines.extend(_artifact_section(snapshot_root, artifacts.get(key), title))
+    strategy = artifacts.get("workspace_strategy")
+    if isinstance(strategy, list):
+        for item in strategy:
+            lines.extend(_artifact_section(snapshot_root, item, "Workspace Strategy"))
+    source_manifests = artifacts.get("source_manifests")
+    if isinstance(source_manifests, dict):
+        lines.extend(["## Available Source RE", ""])
+        for source_id in sorted(source_manifests):
+            lines.append(f"- {source_id}")
+        lines.append("")
+    return _bounded_text("\n".join(lines).rstrip() + "\n", _BRIEF_TOTAL_CAP_BYTES)
+
+
+def _source_brief(
+    snapshot_root: Path,
+    artifacts: Mapping[str, object],
+    source_id: str,
+) -> str:
+    lines = [
+        f"# Published RE Source Brief: {source_id}",
+        "",
+        "This deterministic briefing is assembled from registered source-owned RE artifacts.",
+        "",
+    ]
+    source_root = snapshot_root / "sources" / source_id
+    lines.extend(_artifact_section(snapshot_root, source_root / "overview.md", "Source Overview"))
+    for key, title in (
+        ("source_architecture", "Source Architecture"),
+        ("source_contracts", "Source Contracts"),
+        ("source_components", "Source Components"),
+    ):
+        values = artifacts.get(key)
+        if isinstance(values, dict):
+            lines.extend(_artifact_section(snapshot_root, values.get(source_id), title))
+    source_adrs = artifacts.get("source_adrs")
+    if isinstance(source_adrs, dict):
+        raw_paths = source_adrs.get(source_id)
+        if isinstance(raw_paths, list):
+            for adr_path in raw_paths:
+                lines.extend(_artifact_section(snapshot_root, adr_path, "Source ADR"))
+    for spec in _source_spec_paths(snapshot_root, artifacts, source_id):
+        lines.extend(_artifact_section(snapshot_root, spec, "Source RE Spec"))
+    domain_manifests = artifacts.get("source_domain_manifests")
+    if isinstance(domain_manifests, dict):
+        lines.extend(
+            _artifact_section(snapshot_root, domain_manifests.get(source_id), "Domain Manifest")
+        )
+    supporting = artifacts.get("source_supporting_artifacts")
+    if isinstance(supporting, dict):
+        lines.extend(
+            _artifact_section(snapshot_root, supporting.get(source_id), "Supporting Artifacts")
+        )
+    lines.extend(
+        _artifact_section(
+            snapshot_root,
+            source_root / "codegraph-summary.json",
+            "CodeGraph Summary",
+        )
+    )
+    return _bounded_text("\n".join(lines).rstrip() + "\n", _BRIEF_TOTAL_CAP_BYTES)
+
+
+def _source_spec_paths(
+    snapshot_root: Path,
+    artifacts: Mapping[str, object],
+    source_id: str,
+) -> list[Path]:
+    specs = artifacts.get("re_specs")
+    if not isinstance(specs, list):
+        return []
+    source_prefix = (snapshot_root / "sources" / source_id / "specs").resolve()
+    paths: list[Path] = []
+    for item in specs:
+        if not isinstance(item, str):
+            continue
+        path = Path(item).resolve()
+        if path.is_file() and path.is_relative_to(source_prefix):
+            paths.append(path)
+    return sorted(paths)
+
+
+def _artifact_section(snapshot_root: Path, value: object, title: str) -> list[str]:
+    if not isinstance(value, (str, Path)):
+        return []
+    path = Path(value).resolve()
+    if not path.is_file() or not path.is_relative_to(snapshot_root):
+        return []
+    relative = path.relative_to(snapshot_root).as_posix()
+    try:
+        body = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    body = _bounded_text(body, _BRIEF_COMPONENT_CAP_BYTES).rstrip()
+    return [f"## {title}", "", f"# {relative}", body, ""]
+
+
+def _bounded_text(text: str, cap_bytes: int) -> str:
+    if len(text.encode("utf-8")) <= cap_bytes:
+        return text
+    notice = "\n[RE briefing truncated by Echelon context budget]\n"
+    available = max(0, cap_bytes - len(notice.encode("utf-8")))
+    return text.encode("utf-8")[:available].decode("utf-8", errors="ignore") + notice

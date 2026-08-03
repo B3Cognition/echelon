@@ -51,6 +51,12 @@ def _publish_source(root: Path, source_id: str, profile: ReFingerprintProfile) -
     spec.parent.mkdir(parents=True)
     spec.write_text("# Domain\n", encoding="utf-8")
     (source_re / "overview.md").write_text(f"# {source_id} context\n", encoding="utf-8")
+    (source_re / "architecture.md").write_text(f"# {source_id} architecture\n", encoding="utf-8")
+    (source_re / "contracts.md").write_text(f"# {source_id} contracts\n", encoding="utf-8")
+    (source_re / "components.md").write_text(f"# {source_id} components\n", encoding="utf-8")
+    adrs = source_re / "adrs"
+    adrs.mkdir()
+    (adrs / "ADR-001-source.md").write_text("# Source ADR\n", encoding="utf-8")
     _write_json(
         source_re / "domain-manifest.json",
         {"schema_version": 1, "source_id": source_id},
@@ -81,6 +87,9 @@ def _publish_source(root: Path, source_id: str, profile: ReFingerprintProfile) -
             "quality_contract_version": QUALITY_CONTRACT_VERSION,
             "publication_status": "complete",
             "overview": f"re/sources/{source_id}/overview.md",
+            "architecture": f"re/sources/{source_id}/architecture.md",
+            "contracts": f"re/sources/{source_id}/contracts.md",
+            "components": f"re/sources/{source_id}/components.md",
             "specs": [f"re/sources/{source_id}/specs/domain/spec.md"],
             "domain_manifest": f"re/sources/{source_id}/domain-manifest.json",
             "supporting_artifacts": f"re/sources/{source_id}/supporting-artifacts.md",
@@ -200,6 +209,26 @@ def test_squad_initialization_attaches_published_re_snapshot(tmp_path: Path) -> 
         "original-a": str(
             squad_dir / "context/published-re/sources/original-a/domain-manifest.json"
         )
+    }
+    assert context["artifacts"]["source_architecture"] == {
+        "original-a": str(
+            squad_dir / "context/published-re/sources/original-a/architecture.md"
+        )
+    }
+    assert context["artifacts"]["source_contracts"] == {
+        "original-a": str(
+            squad_dir / "context/published-re/sources/original-a/contracts.md"
+        )
+    }
+    assert context["artifacts"]["source_components"] == {
+        "original-a": str(
+            squad_dir / "context/published-re/sources/original-a/components.md"
+        )
+    }
+    assert context["artifacts"]["source_adrs"] == {
+        "original-a": [
+            str(squad_dir / "context/published-re/sources/original-a/adrs/ADR-001-source.md")
+        ]
     }
     assert context["artifacts"]["source_supporting_artifacts"] == {
         "original-a": str(

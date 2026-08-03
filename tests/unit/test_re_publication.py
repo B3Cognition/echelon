@@ -186,6 +186,24 @@ def write_valid_re_run(
                 f"# {source_id}\n\nVersion {version}.\n",
                 encoding="utf-8",
             )
+            (staged_source / "architecture.md").write_text(
+                f"# {source_id} Architecture\n\nVersion {version}.\n",
+                encoding="utf-8",
+            )
+            (staged_source / "contracts.md").write_text(
+                f"# {source_id} Contracts\n\nVersion {version}.\n",
+                encoding="utf-8",
+            )
+            (staged_source / "components.md").write_text(
+                f"# {source_id} Components\n\nVersion {version}.\n",
+                encoding="utf-8",
+            )
+            adrs = staged_source / "adrs"
+            adrs.mkdir(parents=True)
+            (adrs / "ADR-001-source-boundary.md").write_text(
+                "# Source Boundary ADR\n",
+                encoding="utf-8",
+            )
             spec = staged_source / "specs" / "001-re-domain" / "spec.md"
             spec.parent.mkdir(parents=True)
             spec.write_text(_deep_spec(source_id, version), encoding="utf-8")
@@ -306,6 +324,9 @@ def test_complete_two_source_publish_creates_one_generation(tmp_path: Path) -> N
     assert (tmp_path / "re/sources/web/specs/001-re-domain/spec.md").is_file()
     manifest = json.loads((tmp_path / "re/sources/api/manifest.json").read_text())
     assert manifest["domain_manifest"] == "re/sources/api/domain-manifest.json"
+    assert manifest["architecture"] == "re/sources/api/architecture.md"
+    assert manifest["contracts"] == "re/sources/api/contracts.md"
+    assert manifest["components"] == "re/sources/api/components.md"
     assert manifest["supporting_artifacts"] == "re/sources/api/supporting-artifacts.md"
     assert manifest["extraction_artifacts"] == {
         "analysis": "re/sources/api/analysis.json",
@@ -316,6 +337,10 @@ def test_complete_two_source_publish_creates_one_generation(tmp_path: Path) -> N
     assert manifest["codegraph_summary"] == "re/sources/api/codegraph-summary.json"
     assert manifest["codegraph_analysis"] == "re/sources/api/codegraph-analysis.json"
     assert (tmp_path / "re/sources/api/domain-manifest.json").is_file()
+    assert (tmp_path / "re/sources/api/architecture.md").is_file()
+    assert (tmp_path / "re/sources/api/contracts.md").is_file()
+    assert (tmp_path / "re/sources/api/components.md").is_file()
+    assert (tmp_path / "re/sources/api/adrs/ADR-001-source-boundary.md").is_file()
     assert (tmp_path / "re/sources/api/supporting-artifacts.md").is_file()
     assert json.loads((tmp_path / "re/sources/api/structure.json").read_text()) == {
         "source_id": "api",

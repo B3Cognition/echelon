@@ -806,6 +806,7 @@ class SquadController:
         squad_dir: Optional[Path] = None,
         ignore_re: bool = False,
         implementation_targets: list[str] | None = None,
+        re_sources: list[str] | None = None,
         product_inputs: object | None = None,
     ) -> None:
         existing_state = state_store.load()
@@ -848,6 +849,7 @@ class SquadController:
         self._squad_dir = squad_dir or state_store.squad_dir
         self._ignore_re = ignore_re
         self._implementation_targets = list(implementation_targets or [])
+        self._re_sources = list(re_sources or [])
         self._product_inputs = product_inputs
         self._evaluator = ConditionEvaluator()
         self._gate_config_cache: Optional[dict] = None
@@ -4757,6 +4759,8 @@ class SquadController:
                 self._project_root,
                 self._squad_dir,
                 ignore=self._ignore_re,
+                implementation_targets=self._implementation_targets,
+                re_sources=self._re_sources,
             )
         except Exception as exc:
             state["status"] = "blocked"

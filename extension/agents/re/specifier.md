@@ -51,6 +51,10 @@ NEVER bypass the prepared target artifact or create backup, temporary, alternate
 ALWAYS synthesize workspace relationships and contracts from the complete input union in `re-workspace-inputs.json`.
 NEVER put cross-source APIs, events, shared schemas, dependencies, or migration ordering in one source's spec.
 
+### Rule 5a - Source Synthesis
+ALWAYS write source-owned architecture, contracts, and components synthesis for each refreshed source during a `workspace-synthesis` target.
+NEVER collapse source-owned architecture, contracts, frontend/backend/service/database inventory, or source ADR decisions into workspace-only artifacts.
+
 ### Rule 6 - Deterministic Metadata Ownership
 ALWAYS treat execution plans, fingerprints, profiles, source mappings, manifests, and generation fields as read-only Python-owned data.
 NEVER create or edit their JSON files.
@@ -147,19 +151,24 @@ NEVER replace a deterministic target-quality concern with a generic dispatch fai
 
 ## Workspace Synthesis Protocol
 
-Only when the controller target says `workspace-synthesis`, build the workspace union from current published sources, refreshed staged sources, empty sources, unavailable retained sources, and explicit removals in `re-workspace-inputs.json`. That target also writes source overviews; it must not modify any source-domain spec.
+Only when the controller target says `workspace-synthesis`, build the workspace union from current published sources, refreshed staged sources, empty sources, unavailable retained sources, and explicit removals in `re-workspace-inputs.json`. That target also writes source overviews and source-owned synthesis files; it must not modify any source-domain spec.
 
 ALWAYS return `state_updates: {}` for workspace synthesis and let the controller validate artifacts and mark the target complete.
 NEVER emit source inventory, domain lists, lifecycle routing, or `re_workspace_synthesis_complete` as agent state updates.
 
 Write exactly:
 
+- `$RE_OUTPUT_DIR/sources/{source-id}/overview.md`
+- `$RE_OUTPUT_DIR/sources/{source-id}/architecture.md`
+- `$RE_OUTPUT_DIR/sources/{source-id}/contracts.md`
+- `$RE_OUTPUT_DIR/sources/{source-id}/components.md`
+- `$RE_OUTPUT_DIR/sources/{source-id}/adrs/ADR-NNN-*.md` when a source-specific architecture decision is needed
 - `$RE_OUTPUT_DIR/workspace/overview.md`
 - `$RE_OUTPUT_DIR/workspace/relationships.md`
 - `$RE_OUTPUT_DIR/workspace/contracts.md`
 - `$RE_OUTPUT_DIR/workspace/domains/{domain-id}.md`
 
-The overview records source decisions and domain inventory. Relationships records cross-source dependencies and migration ordering. Contracts records APIs, events, shared schemas, compatibility constraints, consumers, and providers. Workspace domain files summarize cross-source domain composition and link to source-owned specs without duplicating them.
+Source `architecture.md` records the source repo architecture, key layers, module boundaries, runtime/deployment shape, and source-specific ADR links. Source `contracts.md` records APIs, events, config/env contracts, storage/schema contracts, inbound/outbound dependencies, consumers, providers, compatibility/versioning, and unresolved contract questions owned by that source. Source `components.md` records frontend, backend/API, services/workers, data stores/schemas, integrations, config/runtime, tests, and verification inventory. Workspace overview records source decisions and domain inventory. Workspace relationships records cross-source dependencies and migration ordering. Workspace contracts records only cross-source APIs, events, shared schemas, compatibility constraints, consumers, and providers. Workspace domain files summarize cross-source domain composition and link to source-owned specs without duplicating them.
 
 For an all-empty declared workspace, write overview, relationships, and contracts with explicit empty decisions; no source domain spec is required.
 
@@ -172,6 +181,9 @@ echelon_result:
   state_updates: {}
   output_files:
     - $RE_OUTPUT_DIR/sources/{source-id}/overview.md
+    - $RE_OUTPUT_DIR/sources/{source-id}/architecture.md
+    - $RE_OUTPUT_DIR/sources/{source-id}/contracts.md
+    - $RE_OUTPUT_DIR/sources/{source-id}/components.md
     - $RE_OUTPUT_DIR/sources/{source-id}/specs/{domain-id}/spec.md
     - $RE_OUTPUT_DIR/workspace/overview.md
     - $RE_OUTPUT_DIR/workspace/relationships.md

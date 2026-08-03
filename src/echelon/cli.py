@@ -89,7 +89,7 @@ Commands:
 
   spec run <description> [--mode semi|banzai|guided] [--reset]
                     [--message <text>] [--next-phase <id>]
-                    [--target <source-id-or-path>]... [--init]
+                    [--target <source-id-or-path>]... [--re-source <source-id-or-re-path>]... [--init]
                     [--ignore-re]
                                             Run Phase A squad spec authoring.
   spec status                               Show current run state, artifacts, cost, and next action.
@@ -6098,6 +6098,7 @@ def _cmd_run(
         if value.strip()
     ]
     product_input_values: list[str] = []
+    re_sources: list[str] = []
     init_target = False
     ignore_re = False
     dirty_action = "refuse"
@@ -6132,6 +6133,18 @@ def _cmd_run(
             i += 2
         elif args[i].startswith("--target="):
             implementation_targets.append(args[i].split("=", 1)[1].strip())
+            i += 1
+        elif args[i] == "--re-source":
+            if i + 1 >= len(args):
+                print(
+                    "✗ echelon spec run: --re-source requires a published source id or re/sources path",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            re_sources.append(args[i + 1].strip())
+            i += 2
+        elif args[i].startswith("--re-source="):
+            re_sources.append(args[i].split("=", 1)[1].strip())
             i += 1
         elif args[i] == "--input":
             if i + 1 >= len(args):
@@ -6325,6 +6338,7 @@ def _cmd_run(
         squad_dir=squad_dir,
         ignore_re=ignore_re,
         implementation_targets=implementation_targets,
+        re_sources=re_sources,
         product_inputs=product_inputs,
     )
 
@@ -6341,6 +6355,7 @@ def _cmd_run(
         ("Task", (run_message[:80] + "…") if len(run_message) > 80 else run_message),
         ("Dir", str(squad_dir.name)),
         ("Implementation targets", ", ".join(implementation_targets)),
+        ("Published RE sources", ", ".join(re_sources) if re_sources else "auto"),
         ("Published RE", "ignored" if ignore_re else "latest"),
     ])
 
@@ -9590,7 +9605,7 @@ def _cmd_spec(args: list[str]) -> None:
             "Usage: echelon spec <subcommand> [args...]\n\n"
             "  run <description> [--mode semi|banzai|guided] [--reset]\n"
             "                    [--message <text>] [--next-phase <id>]\n"
-            "                    [--target <source-id-or-path>]... [--init]\n"
+            "                    [--target <source-id-or-path>]... [--re-source <source-id-or-re-path>]... [--init]\n"
             "                    [--ignore-re] [--stash | --discard --confirm]\n"
             "                                      Run Phase A squad spec authoring\n"
             "  status                              Show current run state and next action\n"

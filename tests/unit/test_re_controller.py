@@ -1703,7 +1703,7 @@ def test_source_local_semantic_repair_requeues_only_the_failing_source(
             phase = prompt.split("RE phase: ", 1)[1].split("\n", 1)[0]
             if (
                 phase == "re-extract-2-specify"
-                and "Generate source overviews and workspace synthesis only" in prompt
+                and "Generate source overviews, source-owned synthesis, and workspace synthesis only" in prompt
             ):
                 self.workspace_synthesis_count += 1
             if phase == "re-extract-2-specify" and "Source ID: `" in prompt:

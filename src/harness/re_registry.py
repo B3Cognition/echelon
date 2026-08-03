@@ -130,6 +130,10 @@ def canonical_re_artifacts(
     source_domain_manifests: dict[str, str] = {}
     source_supporting_artifacts: dict[str, str] = {}
     source_extraction_artifacts: dict[str, dict[str, str]] = {}
+    source_architecture: dict[str, str] = {}
+    source_contracts: dict[str, str] = {}
+    source_components: dict[str, str] = {}
+    source_adrs: dict[str, list[str]] = {}
 
     for source_id in sorted(index.sources):
         source = index.sources[source_id]
@@ -174,6 +178,18 @@ def canonical_re_artifacts(
             source_domain_manifests[source_id] = str(
                 _existing_registry_path(root, domain_manifest_value, "domain_manifest")
             )
+        for manifest_key, destination in (
+            ("architecture", source_architecture),
+            ("contracts", source_contracts),
+            ("components", source_components),
+        ):
+            raw_value = manifest.get(manifest_key)
+            if isinstance(raw_value, str) and raw_value.strip():
+                raw_value = raw_value.strip()
+                _require_prefix(raw_value, expected_prefix, manifest_key)
+                destination[source_id] = str(
+                    _existing_registry_path(root, raw_value, manifest_key)
+                )
         supporting_value = manifest.get("supporting_artifacts")
         if isinstance(supporting_value, str) and supporting_value.strip():
             supporting_value = supporting_value.strip()
@@ -188,6 +204,13 @@ def canonical_re_artifacts(
                 source_id,
                 extraction_value,
             )
+        adrs_dir = paths.sources / source_id / "adrs"
+        if adrs_dir.is_dir():
+            source_adrs[source_id] = [
+                str(path)
+                for path in sorted(adrs_dir.rglob("*.md"))
+                if path.is_file()
+            ]
 
         source_dirs.append(str(source_dir))
         source_manifests[source_id] = str(manifest_path)
@@ -224,6 +247,11 @@ def canonical_re_artifacts(
         re_contexts.append(str(workspace_checklist))
     re_contexts.extend(workspace_strategy)
     re_contexts.extend(codegraph_summaries)
+    re_contexts.extend(source_architecture.values())
+    re_contexts.extend(source_contracts.values())
+    re_contexts.extend(source_components.values())
+    for paths_for_source in source_adrs.values():
+        re_contexts.extend(paths_for_source)
     re_contexts.extend(source_domain_manifests.values())
     re_contexts.extend(source_supporting_artifacts.values())
     if domain_catalog.is_file():
@@ -255,6 +283,10 @@ def canonical_re_artifacts(
         "re_specs": specs,
         "codegraph_summaries": codegraph_summaries,
         "codegraph_analyses": codegraph_analyses,
+        "source_architecture": source_architecture,
+        "source_contracts": source_contracts,
+        "source_components": source_components,
+        "source_adrs": source_adrs,
         "source_domain_manifests": source_domain_manifests,
         "source_supporting_artifacts": source_supporting_artifacts,
         "source_extraction_artifacts": source_extraction_artifacts,

@@ -128,6 +128,17 @@ def _shared_agent_contract() -> str:
         "modulation for risk, confidence, pacing, and tone.\n"
         "- NEVER ignore endocrine state when it changes execution risk, confidence, "
         "or tone.\n"
+        "### Published Reverse Engineering First\n"
+        "- ALWAYS inspect the Published Reverse Engineering Context block when it is present.\n"
+        "- NEVER ignore Published Reverse Engineering Context and rely only on memory or broad source search.\n"
+        "- ALWAYS read the workspace RE briefing when `PUBLISHED_RE_STATUS=attached`.\n"
+        "- NEVER skip the workspace RE briefing during brownfield Phase A or architecture/planning phases.\n"
+        "- ALWAYS read matched source RE briefings before answering source-specific architecture, dependency, data-flow, domain, or implementation-location questions.\n"
+        "- NEVER answer those questions from raw source search alone when matched source RE is attached.\n"
+        "- ALWAYS consult CodeGraph summaries before raw source search for symbol, entry-point, dependency, or implementation-location questions.\n"
+        "- NEVER jump directly to full source spelunking when CodeGraph summary evidence is available.\n"
+        "- ALWAYS use only the run-local RE snapshot under `PUBLISHED_RE_SNAPSHOT_ROOT`.\n"
+        "- NEVER read or mutate the canonical `re/` tree from a spec run.\n\n"
         "### Output And Journal Ownership\n"
         "- ALWAYS end your response with an `echelon_result` block using the "
         "agent-specific or phase-specific schema in your prompt.\n"
@@ -931,6 +942,7 @@ def _render_published_re_context(state: dict) -> str:
         lines.append(f"PUBLISHED_RE_SNAPSHOT_ROOT={snapshot_root}")
     artifacts = context.get("artifacts")
     if status == "attached" and isinstance(artifacts, dict):
+        lines.extend(_render_published_re_briefings(context))
         lines.extend(
             [
                 "PUBLISHED_RE_ARTIFACTS:",
@@ -947,6 +959,44 @@ def _render_published_re_context(state: dict) -> str:
         lines.append("- No published RE context was available when this run started.")
     lines.append("")
     return "\n".join(lines)
+
+
+def _render_published_re_briefings(context: dict) -> list[str]:
+    """Inline deterministic RE briefings generated in the run-local snapshot."""
+    rendered = context.get("rendered_briefings")
+    if not isinstance(rendered, dict):
+        artifacts = context.get("artifacts")
+        rendered = (
+            artifacts.get("rendered_briefings")
+            if isinstance(artifacts, dict)
+            else None
+        )
+    if not isinstance(rendered, dict):
+        return []
+
+    lines: list[str] = []
+    workspace = rendered.get("workspace")
+    workspace_text = _read_re_briefing(workspace)
+    if workspace_text:
+        lines.extend(["## Published RE Workspace Briefing", workspace_text])
+
+    sources = rendered.get("sources")
+    if isinstance(sources, dict):
+        for source_id in sorted(sources):
+            source_text = _read_re_briefing(sources[source_id])
+            if source_text:
+                lines.extend([f"## Published RE Source Briefing: {source_id}", source_text])
+    return lines
+
+
+def _read_re_briefing(value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        return ""
+    path = Path(value)
+    try:
+        return path.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return ""
 
 
 _MANDATORY_PHASE_OUTPUTS: dict[str, tuple[str, ...]] = {
