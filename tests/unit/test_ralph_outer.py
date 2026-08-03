@@ -7795,7 +7795,7 @@ class TestVerifyCommandNeeded:
         )
 
         with patch("subprocess.run") as mock_sp:
-            mock_sp.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+            mock_sp.return_value = MagicMock(returncode=0, stdout=b"", stderr=b"")
             result = controller.run_loop(max_outer=1, max_inner=0,
                                          build_command="echelon codegen", build_prompt="x")
 

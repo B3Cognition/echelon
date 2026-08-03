@@ -64,6 +64,7 @@ class PublishedWorkspace:
     overview: str
     relationships: str
     contracts: str
+    codegraph_summary: str | None = None
 
 
 @dataclass(frozen=True)
@@ -124,6 +125,11 @@ def canonical_re_artifacts(
     source_manifests: dict[str, str] = {}
     source_overviews: list[str] = []
     specs: list[str] = []
+    codegraph_summaries: list[str] = []
+    codegraph_analyses: list[str] = []
+    source_domain_manifests: dict[str, str] = {}
+    source_supporting_artifacts: dict[str, str] = {}
+    source_extraction_artifacts: dict[str, dict[str, str]] = {}
 
     for source_id in sorted(index.sources):
         source = index.sources[source_id]
@@ -147,6 +153,42 @@ def canonical_re_artifacts(
             _require_prefix(spec_value, expected_prefix / "specs", "spec")
             specs.append(str(_existing_registry_path(root, spec_value, "spec")))
 
+        summary_value = manifest.get("codegraph_summary")
+        if isinstance(summary_value, str) and summary_value.strip():
+            summary_value = summary_value.strip()
+            _require_prefix(summary_value, expected_prefix, "codegraph_summary")
+            codegraph_summaries.append(
+                str(_existing_registry_path(root, summary_value, "codegraph_summary"))
+            )
+        analysis_value = manifest.get("codegraph_analysis")
+        if isinstance(analysis_value, str) and analysis_value.strip():
+            analysis_value = analysis_value.strip()
+            _require_prefix(analysis_value, expected_prefix, "codegraph_analysis")
+            codegraph_analyses.append(
+                str(_existing_registry_path(root, analysis_value, "codegraph_analysis"))
+            )
+        domain_manifest_value = manifest.get("domain_manifest")
+        if isinstance(domain_manifest_value, str) and domain_manifest_value.strip():
+            domain_manifest_value = domain_manifest_value.strip()
+            _require_prefix(domain_manifest_value, expected_prefix, "domain_manifest")
+            source_domain_manifests[source_id] = str(
+                _existing_registry_path(root, domain_manifest_value, "domain_manifest")
+            )
+        supporting_value = manifest.get("supporting_artifacts")
+        if isinstance(supporting_value, str) and supporting_value.strip():
+            supporting_value = supporting_value.strip()
+            _require_prefix(supporting_value, expected_prefix, "supporting_artifacts")
+            source_supporting_artifacts[source_id] = str(
+                _existing_registry_path(root, supporting_value, "supporting_artifacts")
+            )
+        extraction_value = manifest.get("extraction_artifacts")
+        if isinstance(extraction_value, dict):
+            source_extraction_artifacts[source_id] = _source_extraction_artifacts(
+                root,
+                source_id,
+                extraction_value,
+            )
+
         source_dirs.append(str(source_dir))
         source_manifests[source_id] = str(manifest_path)
         source_overviews.append(str(overview_path))
@@ -158,6 +200,12 @@ def canonical_re_artifacts(
     workspace_domains = paths.workspace / "domains"
     architecture_map = paths.workspace / "architecture-map.json"
     domain_catalog = paths.workspace / "domain-catalog.md"
+    workspace_checklist = paths.workspace / "checklist.md"
+    workspace_strategy = [
+        str(path)
+        for path in sorted((paths.workspace / "strategy").rglob("*.md"))
+        if path.is_file()
+    ]
     if workspace_domains.is_dir():
         specs.extend(
             str(path)
@@ -170,22 +218,68 @@ def canonical_re_artifacts(
         str(workspace_paths["relationships"]),
         str(workspace_paths["contracts"]),
     ]
+    if architecture_map.is_file():
+        re_contexts.append(str(architecture_map))
+    if workspace_checklist.is_file():
+        re_contexts.append(str(workspace_checklist))
+    re_contexts.extend(workspace_strategy)
+    re_contexts.extend(codegraph_summaries)
+    re_contexts.extend(source_domain_manifests.values())
+    re_contexts.extend(source_supporting_artifacts.values())
     if domain_catalog.is_file():
         re_contexts.append(str(domain_catalog))
+    workspace_codegraph_summary = None
+    if index.workspace.codegraph_summary:
+        workspace_codegraph_summary = str(
+            _existing_registry_path(
+                root,
+                index.workspace.codegraph_summary,
+                "workspace.codegraph_summary",
+            )
+        )
+        re_contexts.append(workspace_codegraph_summary)
     return {
         "manifest": str(paths.index),
         "source_index": str(paths.index),
         "workspace_manifest": str(workspace_paths["manifest"]),
         "architecture_map": str(architecture_map) if architecture_map.is_file() else None,
         "domain_catalog": str(domain_catalog) if domain_catalog.is_file() else None,
+        "workspace_checklist": str(workspace_checklist) if workspace_checklist.is_file() else None,
+        "workspace_strategy": workspace_strategy,
         "re_overview": str(workspace_paths["overview"]),
         "cross_repo": str(workspace_paths["relationships"]),
         "contracts": str(workspace_paths["contracts"]),
+        "workspace_codegraph_summary": workspace_codegraph_summary,
         "source_manifests": source_manifests,
         "per_repo": source_dirs,
         "re_specs": specs,
+        "codegraph_summaries": codegraph_summaries,
+        "codegraph_analyses": codegraph_analyses,
+        "source_domain_manifests": source_domain_manifests,
+        "source_supporting_artifacts": source_supporting_artifacts,
+        "source_extraction_artifacts": source_extraction_artifacts,
         "re_contexts": re_contexts,
     }
+
+
+def _source_extraction_artifacts(
+    workspace_root: Path,
+    source_id: str,
+    value: dict[Any, Any],
+) -> dict[str, str]:
+    expected_prefix = PurePosixPath(f"re/sources/{source_id}")
+    artifacts: dict[str, str] = {}
+    for key, raw_path in sorted(value.items()):
+        if not isinstance(key, str) or not isinstance(raw_path, str) or not raw_path.strip():
+            raise ReRegistryError(
+                f"source extraction artifacts must map names to paths: {source_id}"
+            )
+        raw_path = raw_path.strip()
+        _require_prefix(raw_path, expected_prefix, f"extraction_artifacts.{key}")
+        artifacts[key] = str(
+            _existing_registry_path(workspace_root, raw_path, f"extraction_artifacts.{key}")
+        )
+    return artifacts
 
 
 def published_source_is_usable(
@@ -339,6 +433,14 @@ def _parse_index(raw: Any) -> PublishedReIndex:
         if value != expected:
             raise ReRegistryError(f"workspace.{field} must be {expected}")
         workspace_values[field] = value
+    if isinstance(raw_workspace.get("codegraph_summary"), str):
+        value = _safe_relative_path(
+            raw_workspace["codegraph_summary"], "workspace.codegraph_summary"
+        )
+        expected = "re/workspace/codegraph-summary.json"
+        if value != expected:
+            raise ReRegistryError(f"workspace.codegraph_summary must be {expected}")
+        workspace_values["codegraph_summary"] = value
 
     raw_warnings = raw.get("warnings")
     if not isinstance(raw_warnings, list) or any(not isinstance(item, str) for item in raw_warnings):

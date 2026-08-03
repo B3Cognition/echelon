@@ -3319,6 +3319,21 @@ def _reset_quality_remediation_dispatch_counts(state: dict) -> None:
     state["phase_dispatch_counts"] = updated_counts
 
 
+def _current_qualitative_findings(state: Mapping[str, object]) -> list[dict[str, object]]:
+    """Return current SAGE findings that must survive remediation recovery."""
+    finding_routes = state.get("finding_routes")
+    findings = (
+        finding_routes.get("findings")
+        if isinstance(finding_routes, Mapping)
+        else None
+    )
+    return [
+        dict(finding)
+        for finding in findings
+        if isinstance(finding, Mapping)
+    ] if isinstance(findings, list) else []
+
+
 def _render_v2_decision_options(decision: dict[str, object]) -> str:
     options = decision.get("options")
     if not isinstance(options, list) or not options:
@@ -7476,6 +7491,7 @@ def _cmd_continue_impl(
         # Keep unrelated phase counters for observability, but reset every
         # authoring/quality phase that must run to verify this new artifact.
         _reset_quality_remediation_dispatch_counts(state)
+        qualitative_findings = _current_qualitative_findings(state)
         state["quality_gate_remediation"] = {
             "evidence": state.get("understanding_evidence"),
             "baseline_spec_sha256": _spec_markdown_sha256_for_state(
@@ -7486,7 +7502,12 @@ def _cmd_continue_impl(
             ) + 1 if isinstance(state.get("quality_gate_remediation"), dict) else 1,
             "reason": (
                 "All named issue resolutions are complete, but certified quality "
-                "gates still fail. Begin a fresh remediation cycle."
+                "review still fails. Begin a fresh remediation cycle."
+            ),
+            **(
+                {"qualitative_findings": qualitative_findings}
+                if qualitative_findings
+                else {}
             ),
         }
         _supersede_quality_guard_decision(state)

@@ -381,6 +381,11 @@ def _prepare_transaction(
         source = plan_by_id[source_id]
         durable_source = new_root / "sources" / source_id
         cache_relative = f".cache/sources/{source_id}/{source.fingerprint.value}"
+        codegraph_summary = None
+        codegraph_analysis = None
+        domain_manifest = None
+        supporting_artifacts = None
+        extraction_artifacts: dict[str, str] = {}
         if source_id in candidate.empty_sources:
             durable_source.mkdir(parents=True)
             (durable_source / "overview.md").write_text(
@@ -396,6 +401,41 @@ def _prepare_transaction(
             durable_source.mkdir(parents=True)
             shutil.copy2(staged_source / "overview.md", durable_source / "overview.md")
             shutil.copytree(staged_source / "specs", durable_source / "specs")
+            codegraph_summary = _copy_optional_source_artifact(
+                staged_source,
+                durable_source,
+                source_id,
+                "codegraph-summary.json",
+            )
+            codegraph_analysis = _copy_optional_source_artifact(
+                staged_source,
+                durable_source,
+                source_id,
+                "codegraph-analysis.json",
+            )
+            domain_manifest = _copy_optional_source_artifact(
+                staged_source,
+                durable_source,
+                source_id,
+                "domain-manifest.json",
+            )
+            supporting_artifacts = _copy_optional_source_artifact(
+                staged_source,
+                durable_source,
+                source_id,
+                "supporting-artifacts.md",
+            )
+            extraction_artifacts = _copy_optional_source_artifacts(
+                staged_source,
+                durable_source,
+                source_id,
+                {
+                    "analysis": "analysis.json",
+                    "configs": "configs.json",
+                    "dependencies": "dependencies.json",
+                    "structure": "structure.json",
+                },
+            )
             specs = [
                 f"re/sources/{source_id}/{path.relative_to(durable_source).as_posix()}"
                 for path in sorted((durable_source / "specs").glob("*/spec.md"))
@@ -424,6 +464,11 @@ def _prepare_transaction(
             status=source_status,
             cache_path=f"re/{cache_relative}",
             specs=specs,
+            codegraph_summary=codegraph_summary,
+            codegraph_analysis=codegraph_analysis,
+            domain_manifest=domain_manifest,
+            supporting_artifacts=supporting_artifacts,
+            extraction_artifacts=extraction_artifacts,
         )
         _write_json_atomic(durable_source / "manifest.json", manifest)
         source_records[source_id] = _index_source_record(source, source_status)
@@ -437,6 +482,10 @@ def _prepare_transaction(
 
     workspace_stage = new_root / "workspace"
     shutil.copytree(candidate.run_dir / "re" / "workspace", workspace_stage)
+    workspace_codegraph_summary = _copy_workspace_codegraph_summary(
+        candidate.run_dir / "re",
+        workspace_stage,
+    )
     workspace_manifest = {
         "schema_version": 1,
         "generation": generation,
@@ -486,6 +535,11 @@ def _prepare_transaction(
             "overview": "re/workspace/overview.md",
             "relationships": "re/workspace/relationships.md",
             "contracts": "re/workspace/contracts.md",
+            **(
+                {"codegraph_summary": workspace_codegraph_summary}
+                if workspace_codegraph_summary
+                else {}
+            ),
         },
         "warnings": list(candidate.warnings),
     }
@@ -718,8 +772,13 @@ def _source_manifest(
     status: str,
     cache_path: str,
     specs: list[str],
+    codegraph_summary: str | None = None,
+    codegraph_analysis: str | None = None,
+    domain_manifest: str | None = None,
+    supporting_artifacts: str | None = None,
+    extraction_artifacts: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    return {
+    manifest = {
         "schema_version": 1,
         "source_id": source.id,
         "source_path": source.path,
@@ -735,6 +794,17 @@ def _source_manifest(
         "specs": specs,
         "warnings": [],
     }
+    if codegraph_summary:
+        manifest["codegraph_summary"] = codegraph_summary
+    if codegraph_analysis:
+        manifest["codegraph_analysis"] = codegraph_analysis
+    if domain_manifest:
+        manifest["domain_manifest"] = domain_manifest
+    if supporting_artifacts:
+        manifest["supporting_artifacts"] = supporting_artifacts
+    if extraction_artifacts:
+        manifest["extraction_artifacts"] = dict(sorted(extraction_artifacts.items()))
+    return manifest
 
 
 def _index_source_record(source: RePlanSource, status: str) -> dict[str, Any]:
@@ -776,6 +846,50 @@ def _copy_heavy_source_artifacts(source: Path, destination: Path) -> None:
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, target)
+
+
+def _copy_optional_source_artifact(
+    staged_source: Path,
+    durable_source: Path,
+    source_id: str,
+    filename: str,
+) -> str | None:
+    source = staged_source / filename
+    if not source.is_file():
+        return None
+    shutil.copy2(source, durable_source / filename)
+    return f"re/sources/{source_id}/{filename}"
+
+
+def _copy_optional_source_artifacts(
+    staged_source: Path,
+    durable_source: Path,
+    source_id: str,
+    filenames: dict[str, str],
+) -> dict[str, str]:
+    return {
+        key: path
+        for key, filename in filenames.items()
+        if (
+            path := _copy_optional_source_artifact(
+                staged_source,
+                durable_source,
+                source_id,
+                filename,
+            )
+        )
+    }
+
+
+def _copy_workspace_codegraph_summary(run_re: Path, workspace_stage: Path) -> str | None:
+    for source in (
+        run_re / "workspace" / "codegraph-summary.json",
+        run_re / "codegraph-summary.json",
+    ):
+        if source.is_file():
+            shutil.copy2(source, workspace_stage / "codegraph-summary.json")
+            return "re/workspace/codegraph-summary.json"
+    return None
 
 
 def _inside_run_roots(workspace_root: Path, run_dir: Path) -> bool:

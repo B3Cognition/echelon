@@ -280,6 +280,20 @@ def _finish_run(run_dir: Path) -> None:
 @pytest.mark.unit
 def test_complete_two_source_publish_creates_one_generation(tmp_path: Path) -> None:
     run_dir = write_valid_re_run(tmp_path, ("web", "api"))
+    source_re = run_dir / "re" / "sources" / "api"
+    _write_json(source_re / "structure.json", {"source_id": "api", "structure": True})
+    _write_json(source_re / "dependencies.json", {"source_id": "api", "dependencies": True})
+    _write_json(source_re / "configs.json", {"source_id": "api", "configs": True})
+    (source_re / "supporting-artifacts.md").write_text(
+        "# Supporting Artifacts\n",
+        encoding="utf-8",
+    )
+    _write_json(source_re / "codegraph-summary.json", {"source_id": "api", "summary": True})
+    _write_json(source_re / "codegraph-analysis.json", {"source_id": "api", "analysis": True})
+    _write_json(
+        run_dir / "re" / "codegraph-summary.json",
+        {"workspace": True, "sources": ["api"]},
+    )
 
     result = publish_re_run(tmp_path, run_dir)
 
@@ -290,11 +304,41 @@ def test_complete_two_source_publish_creates_one_generation(tmp_path: Path) -> N
     assert set(index["sources"]) == {"api", "web"}
     assert json.loads((tmp_path / "re/sources/api/manifest.json").read_text())["source_id"] == "api"
     assert (tmp_path / "re/sources/web/specs/001-re-domain/spec.md").is_file()
+    manifest = json.loads((tmp_path / "re/sources/api/manifest.json").read_text())
+    assert manifest["domain_manifest"] == "re/sources/api/domain-manifest.json"
+    assert manifest["supporting_artifacts"] == "re/sources/api/supporting-artifacts.md"
+    assert manifest["extraction_artifacts"] == {
+        "analysis": "re/sources/api/analysis.json",
+        "configs": "re/sources/api/configs.json",
+        "dependencies": "re/sources/api/dependencies.json",
+        "structure": "re/sources/api/structure.json",
+    }
+    assert manifest["codegraph_summary"] == "re/sources/api/codegraph-summary.json"
+    assert manifest["codegraph_analysis"] == "re/sources/api/codegraph-analysis.json"
+    assert (tmp_path / "re/sources/api/domain-manifest.json").is_file()
+    assert (tmp_path / "re/sources/api/supporting-artifacts.md").is_file()
+    assert json.loads((tmp_path / "re/sources/api/structure.json").read_text()) == {
+        "source_id": "api",
+        "structure": True,
+    }
+    assert json.loads((tmp_path / "re/sources/api/codegraph-summary.json").read_text()) == {
+        "source_id": "api",
+        "summary": True,
+    }
+    assert json.loads((tmp_path / "re/sources/api/codegraph-analysis.json").read_text()) == {
+        "source_id": "api",
+        "analysis": True,
+    }
     fingerprint = index["sources"]["api"]["fingerprint"]
     assert (tmp_path / f"re/.cache/sources/api/{fingerprint}/analysis.json").is_file()
     assert (tmp_path / "re/workspace/contracts.md").is_file()
     assert (tmp_path / "re/workspace/architecture-map.json").is_file()
     assert (tmp_path / "re/workspace/domain-catalog.md").is_file()
+    assert index["workspace"]["codegraph_summary"] == "re/workspace/codegraph-summary.json"
+    assert json.loads((tmp_path / "re/workspace/codegraph-summary.json").read_text()) == {
+        "workspace": True,
+        "sources": ["api"],
+    }
 
 
 @pytest.mark.unit

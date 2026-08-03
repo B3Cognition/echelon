@@ -596,6 +596,7 @@ def test_status_uses_controller_recovery_instruction_for_next_command(
 
     output = capsys.readouterr().out
     assert "phase1-why2" in output
-    assert "echelon spec continue" in output
+    assert "inspect echelon spec status, then choose a recovery action" in output
+    assert "no runtime-sync recovery instruction was recorded" in output
     assert 'echelon spec resume "<your answer>"' not in output
     assert "echelon spec rewind" not in output

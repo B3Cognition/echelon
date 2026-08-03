@@ -3787,7 +3787,7 @@ class TestAgentResultIntegrity:
             save = store._save_unlocked
             injected = False
 
-            def fail_marker_save(state):
+            def fail_marker_save(state, **kwargs):
                 nonlocal injected
                 if (
                     not injected
@@ -3795,7 +3795,7 @@ class TestAgentResultIntegrity:
                 ):
                     injected = True
                     raise OSError("injected routing save failure")
-                return save(state)
+                return save(state, **kwargs)
 
             monkeypatch.setattr(
                 store,
@@ -5844,7 +5844,7 @@ class TestConsensusAcceptWithRiskRouting:
 
         consensus_result = SquadAgentResult(
             exit_code=0,
-            echelon_result={"verdict": "DONE", "state_updates": {}},
+            echelon_result={"verdict": "PASS", "state_updates": {}},
             raw_output="",
             duration_ms=0,
             timed_out=False,
@@ -5876,7 +5876,7 @@ class TestConsensusAcceptWithRiskRouting:
 
         consensus_result = SquadAgentResult(
             exit_code=0,
-            echelon_result={"verdict": "DONE", "state_updates": {}},
+            echelon_result={"verdict": "PASS", "state_updates": {}},
             raw_output="",
             duration_ms=0,
             timed_out=False,
@@ -8838,10 +8838,14 @@ class TestLexiconGateGuardDeterminism:
     """
 
     @staticmethod
-    def _result(updates: dict) -> SquadAgentResult:
+    def _result(
+        updates: dict,
+        *,
+        verdict: str = "PASS",
+    ) -> SquadAgentResult:
         return SquadAgentResult(
             exit_code=0,
-            echelon_result={"verdict": "DONE", "state_updates": updates},
+            echelon_result={"verdict": verdict, "state_updates": updates},
             raw_output="", duration_ms=0, timed_out=False,
         )
 
@@ -9600,7 +9604,10 @@ THEN: The dashboard is visible
             nxt = _evaluate_prepared_result(
                 ctrl,
                 node,
-                self._result({"evidence_resolution_status": "not_required"}),
+                self._result(
+                    {"evidence_resolution_status": "not_required"},
+                    verdict="DONE",
+                ),
             )
 
         assert nxt == "phase1-understanding"

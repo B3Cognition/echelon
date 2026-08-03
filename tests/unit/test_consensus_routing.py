@@ -64,7 +64,7 @@ def _runtime_route(tmp_path, state_updates, *, iteration=0):
     )
     consensus_result = SquadAgentResult(
         exit_code=0,
-        echelon_result={"verdict": "DONE", "state_updates": {}},
+        echelon_result={"verdict": "PASS", "state_updates": {}},
         raw_output="",
         duration_ms=0,
         timed_out=False,

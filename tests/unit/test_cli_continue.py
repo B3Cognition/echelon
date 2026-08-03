@@ -1572,6 +1572,67 @@ def test_quality_remediation_no_progress_retries_authoring_without_resolve() -> 
     assert action.command == "echelon spec continue"
 
 
+def test_continue_preserves_finding_routes_for_quality_remediation_retry(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    findings = [
+        {
+            "issue_id": "ISS-001",
+            "route": "spec_repair",
+            "rationale": "FR-033 contradicts FR-034.",
+        },
+        {
+            "issue_id": "ISS-002",
+            "route": "spec_repair",
+            "rationale": "AC-037 contradicts FR-038.",
+        },
+    ]
+    spec_dir = tmp_path / "runs" / "spec-test" / "specs" / "001-demo"
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "quality_gate_remediation_no_artifact_progress",
+            "spec_dir": str(spec_dir.relative_to(tmp_path)),
+            "user_message": "build feature",
+            "autonomy_mode": "semi",
+            "understanding_evidence": {
+                "phase": "phase1-why2",
+                "status": "completed",
+                "pass": True,
+                "failing_gates": [],
+                "path": "evidence/current.json",
+            },
+            "finding_routes": {"findings": findings},
+            "quality_gate_remediation": {"attempt": 1},
+        },
+    )
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text(
+        "# Spec\n\n**Status**: Planned\n\nFR-001: Existing requirement.\n",
+        encoding="utf-8",
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_run",
+        lambda args, project_root, ext_dir: calls.append(args),
+    )
+
+    _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
+
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == "phase1-what"
+    assert state["status"] == "running"
+    assert state["blocked_reason"] is None
+    remediation = state["quality_gate_remediation"]
+    assert remediation["attempt"] == 2
+    assert remediation["evidence"] == state["understanding_evidence"]
+    assert remediation["qualitative_findings"] == findings
+    assert calls == [["build feature", "--mode", "semi"]]
+
+
 def test_dispatch_cap_missing_published_evidence_retries_active_spec(
     tmp_path: Path,
 ) -> None:

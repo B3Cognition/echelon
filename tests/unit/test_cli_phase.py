@@ -50,8 +50,19 @@ def _seal_pending_v2_decision(
     *,
     status: str,
     autonomy_mode: str = "semi",
+    seed_constitution: bool = False,
 ) -> None:
     store = SquadStateStore(run_dir)
+    completed_phases = []
+    if seed_constitution:
+        project_root = run_dir.parents[1]
+        constitution = project_root / ".specify" / "memory" / "constitution.md"
+        constitution.parent.mkdir(parents=True, exist_ok=True)
+        constitution.write_text(
+            "# Constitution\n\nTest governance.\n",
+            encoding="utf-8",
+        )
+        completed_phases.append("phase1-constitution")
     store.initialize(
         "run-active",
         "greenfield",
@@ -128,6 +139,7 @@ def _seal_pending_v2_decision(
             "spec_id": "001-demo",
             "feature_branch": "main",
             "spec_dir": str(spec_dir),
+            "completed_phases": completed_phases,
             "blocked_decision": decision,
             "recovery_instruction": RecoveryInstruction(
                 kind=RecoveryKind.RESOLVE_DECISION,
@@ -227,7 +239,12 @@ def test_continue_resolves_eligible_v2_decisions_through_real_controller(
     run_dir.rename(switchable_run_dir)
     (tmp_path / "runs" / ".current").write_text("spec-001\n", encoding="utf-8")
     run_dir = switchable_run_dir
-    _seal_pending_v2_decision(run_dir, status="pending", autonomy_mode=autonomy_mode)
+    _seal_pending_v2_decision(
+        run_dir,
+        status="pending",
+        autonomy_mode=autonomy_mode,
+        seed_constitution=True,
+    )
 
     class PhysicalProvider:
         def __init__(self, _config: object) -> None:
