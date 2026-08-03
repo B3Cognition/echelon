@@ -5039,6 +5039,65 @@ class TestSquadControllerBasics:
             "understanding_evidence"
         ]
 
+    def test_failing_why2_carries_qualitative_findings_into_quality_remediation(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "semi", "msg", 0, "phase1-why2", max_iterations=5)
+        state = store.load()
+        state.update(
+            {
+                "issue_resolution_ledger": {
+                    "ISS-001": {"status": "validated"},
+                },
+                "understanding_evidence": {
+                    "phase": "phase1-why2",
+                    "status": "completed",
+                    "path": "evidence/current.json",
+                    "pass": True,
+                    "failing_gates": [],
+                },
+            }
+        )
+        store.save(state)
+        node = ctrl._graph.get("phase1-why2")
+        snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+        qualitative_findings = [
+            {
+                "issue_id": "ISS-001",
+                "route": "spec_repair",
+                "rationale": "FR-033 contradicts FR-034.",
+            },
+            {
+                "issue_id": "ISS-002",
+                "route": "spec_repair",
+                "rationale": "AC-037 contradicts FR-038.",
+            },
+        ]
+        prepared = ctrl._prepare_phase_result(
+            node,
+            SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "FAIL",
+                    "state_updates": {
+                        "evidence_resolution_status": "not_required",
+                        "finding_routes": {"findings": qualitative_findings},
+                    },
+                },
+                raw_output="", duration_ms=0, timed_out=False,
+            ),
+            snapshot,
+        )
+
+        next_phase, updates, human_input = ctrl._coordinate_why_transition_state(
+            node, prepared, snapshot
+        )
+
+        assert next_phase == "phase1-what"
+        assert human_input is None
+        remediation = updates["quality_gate_remediation"]
+        assert remediation["evidence"] == state["understanding_evidence"]
+        assert remediation["qualitative_findings"] == qualitative_findings
+
     def test_consecutive_why_escalation_gives_an_actionable_question(self, tmp_path):
         from echelon.cli import _classify_run_recovery
 

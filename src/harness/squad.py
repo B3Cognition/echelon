@@ -3145,29 +3145,16 @@ class SquadController:
             )
         )
         if marker_matches:
-            start = marker_matches[0].start()
-            end = start + len(section)
-            remainder = existing[end:]
-            if (
-                len(marker_matches) != 1
-                or existing[start:end] != section
-                or (
-                    remainder
-                    and not remainder.startswith("\n## Decision ")
-                )
-            ):
+            if existing != section:
                 os.close(directory_fd)
                 raise HumanInputPolicyError(
                     "clarification receipt conflicts with the resolution"
                 )
         else:
-            separator = "" if not existing or existing.endswith("\n\n") else (
-                "\n" if existing.endswith("\n") else "\n\n"
-            )
             try:
                 self._replace_clarification_receipts(
                     directory_fd,
-                    f"{existing}{separator}{section}",
+                    section,
                 )
             finally:
                 os.close(directory_fd)
@@ -8546,6 +8533,11 @@ class SquadController:
             for finding in findings
             if isinstance(finding, Mapping)
         } if isinstance(findings, list) else set()
+        qualitative_findings = [
+            dict(finding)
+            for finding in findings
+            if isinstance(finding, Mapping)
+        ] if isinstance(findings, list) else []
 
         # Once every controller-recorded issue decision is validated, SAGE's
         # historical prose must not create another manual issue-resolution or
@@ -8581,10 +8573,16 @@ class SquadController:
                     "evidence": state.get("understanding_evidence"),
                     "baseline_spec_sha256": self._spec_markdown_sha256(state),
                     "attempt": prior_attempt + 1,
+                    **(
+                        {"qualitative_findings": qualitative_findings}
+                        if qualitative_findings
+                        else {}
+                    ),
                     "reason": (
                         "All named issue resolutions are complete. Repair only the "
                         "current certified Understanding failures in formal "
-                        "requirements; historical SAGE issue prose is not actionable."
+                        "requirements and current SAGE qualitative findings; "
+                        "historical SAGE issue prose is not actionable."
                     ),
                 },
             }, None
@@ -8623,10 +8621,16 @@ class SquadController:
                         "evidence": state.get("understanding_evidence"),
                         "baseline_spec_sha256": self._spec_markdown_sha256(state),
                         "attempt": 1,
+                        **(
+                            {"qualitative_findings": qualitative_findings}
+                            if qualitative_findings
+                            else {}
+                        ),
                         "reason": (
                             "All named issue resolutions are complete, but certified "
-                            "quality gates still fail. Rewrite the specification to "
-                            "address the failed metric families as a fresh remediation cycle."
+                            "quality review still fails. Rewrite the specification to "
+                            "address the failed metric families and current SAGE "
+                            "qualitative findings as a fresh remediation cycle."
                         ),
                     },
                 }

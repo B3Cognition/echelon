@@ -2067,6 +2067,46 @@ def test_why3_staged_prompt_injects_certified_understanding_evidence(tmp_path):
     assert "Certified pass: `true`" in prompt
 
 
+def test_quality_remediation_prompt_includes_current_qualitative_findings(tmp_path):
+    ex = _executor(tmp_path)
+    node = PhaseNode(
+        id="phase1-what",
+        type="agent",
+        context_pack=[],
+    )
+    state = {
+        "squad_dir": str(tmp_path / "squad" / "run-test"),
+        "quality_gate_remediation": {
+            "evidence": {
+                "pass": True,
+                "failing_gates": [],
+            },
+            "qualitative_findings": [
+                {
+                    "issue_id": "ISS-001",
+                    "route": "spec_repair",
+                    "rationale": "FR-033 contradicts FR-034.",
+                },
+                {
+                    "issue_id": "ISS-002",
+                    "route": "spec_repair",
+                    "rationale": "AC-037 contradicts FR-038.",
+                },
+            ],
+        },
+    }
+
+    prompt = ex._assemble_prompt(node, state)
+
+    assert "## Current SAGE Qualitative Findings" in prompt
+    assert (
+        "Certified numeric failing gates: none; use the current SAGE "
+        "qualitative findings below as the repair checklist."
+    ) in prompt
+    assert "`ISS-001` (`spec_repair`): FR-033 contradicts FR-034." in prompt
+    assert "`ISS-002` (`spec_repair`): AC-037 contradicts FR-038." in prompt
+
+
 def test_blocked_validation_result_preserves_original_error(tmp_path):
     """Provider-created BLOCKED wrappers are harness-owned, not phase state writes."""
     ex = _executor(tmp_path)

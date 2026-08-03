@@ -587,18 +587,37 @@ def _render_controller_repair_context(state: dict) -> str:
                 # The evidence path is advisory context. The deterministic
                 # gate remains the source of truth if an old report is gone.
                 pass
+        qualitative_findings = quality_remediation.get("qualitative_findings")
+        rendered_qualitative_findings: list[str] = []
+        if isinstance(qualitative_findings, list):
+            for finding in qualitative_findings:
+                if not isinstance(finding, dict):
+                    continue
+                issue_id = str(finding.get("issue_id") or "unknown").strip()
+                route = str(finding.get("route") or "unknown").strip()
+                rationale = str(finding.get("rationale") or "").strip()
+                rendered = f"- `{issue_id}` (`{route}`)"
+                if rationale:
+                    rendered += f": {rationale}"
+                rendered_qualitative_findings.append(rendered)
         sections.extend([
             "## Controller Quality-Gate Remediation",
             "All previously named issue resolutions are complete, but the certified "
-            "Understanding gates still fail. This is a fresh remediation cycle, not "
-            "a request to repeat stale ISS findings.",
+            "Understanding review still fails. This is a fresh remediation cycle, "
+            "not a request to repeat stale ISS findings.",
             stale_issue_instruction,
             "Do NOT invoke any `echelon spec resolve`, `echelon spec continue`, "
             "or other Echelon CLI command. You are the authoring agent; edit the "
             "active spec directly.",
             f"Read the certified report at `{report}` before editing." if report else "Read the current certified Understanding report before editing.",
             "Certified failing gates: " + ", ".join(failed_gates)
-            if failed_gates else "Use the failing gates in the certified report as the repair checklist.",
+            if failed_gates
+            else (
+                "Certified numeric failing gates: none; use the current SAGE "
+                "qualitative findings below as the repair checklist."
+                if rendered_qualitative_findings
+                else "Use the failing gates in the certified report as the repair checklist."
+            ),
             "The Understanding gate scores only formal AC/FR/NFR requirement "
             "statements. Do not append diagrams, narrative, matrices, or test "
             "appendices as a substitute for editing those scored statements.",
@@ -620,6 +639,15 @@ def _render_controller_repair_context(state: dict) -> str:
             "specification remediation.",
             "",
         ])
+        if rendered_qualitative_findings:
+            sections.extend([
+                "## Current SAGE Qualitative Findings",
+                "Repair these current SAGE findings even when the certified numeric "
+                "Understanding gates pass; they are logical contradictions or "
+                "cross-artifact issues that metric-only evidence may not list.",
+                *rendered_qualitative_findings,
+                "",
+            ])
         for category, requirement_ids in weak_requirements.items():
             if requirement_ids:
                 sections.append(

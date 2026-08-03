@@ -1367,6 +1367,46 @@ def test_clarification_idempotent_after_state_save_interruption(
     store.apply_human_input_state_resolution.assert_called_once()
 
 
+def test_clarification_resolution_replaces_stale_prior_decision_receipts(
+    tmp_path: Path,
+) -> None:
+    policy = _free_text_policy(source_kind="legacy_recovery")
+    controller, store, _provider = _controller(
+        tmp_path,
+        autonomy_mode="guided",
+        policy=policy,
+    )
+    decision_id, revision = _seal_awaiting_human(
+        controller,
+        store,
+        policy,
+        question="Should the current exception be accepted?",
+    )
+    clarification_path = Path(store.load()["staging_dir"]) / "user-clarifications.md"
+    clarification_path.write_text(
+        "## Decision dec-stale\n\n"
+        "**Question:** Older escalation?\n\n"
+        "**Answer:** (c) authorize extra remediation\n",
+        encoding="utf-8",
+    )
+
+    assert controller.apply_human_input_resolution(
+        decision_id,
+        expected_state_revision=revision,
+        resolution=HumanInputResolution(
+            selected_option_id=None,
+            answer_text="(a) accept the exception",
+            resolved_by="user",
+        ),
+    )
+
+    receipt = clarification_path.read_text(encoding="utf-8")
+    assert f"## Decision {decision_id}" in receipt
+    assert "(a) accept the exception" in receipt
+    assert "dec-stale" not in receipt
+    assert "(c) authorize extra remediation" not in receipt
+
+
 def test_clarification_rejects_tampered_staging_root_without_outside_write(
     tmp_path: Path,
 ) -> None:

@@ -100,6 +100,9 @@ class PhaseNode:
                 allowed=allowed,
                 contract=self.controller_state_contract,
                 nested=agent_entry is not None,
+                check_overlap=not (
+                    agent_entry is not None and self.type == "staged_parallel"
+                ),
             )
         required = entry.get("required_state_updates", self.required_state_updates)
         value_types = entry.get("state_update_types", self.state_update_types)
