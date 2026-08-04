@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import shutil
 import subprocess
 
 import pytest
@@ -64,6 +65,7 @@ def _delivery_workspace(
                 "spec_id": "909-delivery-topology",
                 "verify_scope": verify_scope,
                 "status": "complete",
+                "completed_at": "2026-08-04T09:00:00+00:00",
             }
         )
         + "\n",
@@ -99,6 +101,36 @@ def _canonical_bytes(workspace: Path) -> dict[str, bytes]:
         for path in sorted(root.rglob("*"))
         if path.is_file()
     }
+
+
+def _copy_receipt_run(
+    workspace: Path,
+    source_run: Path,
+    name: str,
+    *,
+    source_id: object,
+    source_path: object,
+    completed_at: str,
+) -> Path:
+    copied = workspace / "runs" / name
+    shutil.copytree(source_run, copied)
+    state_path = copied / "state.json"
+    state = json.loads(state_path.read_text())
+    state.update({"status": "complete", "completed_at": completed_at})
+    state_path.write_text(json.dumps(state) + "\n", encoding="utf-8")
+    receipt_path = copied / "topology-receipt.json"
+    receipt = json.loads(receipt_path.read_text())
+    receipt["source_id"] = source_id
+    receipt["source_path"] = source_path
+    receipt["provenance"] = {
+        "kind": "delivery",
+        "run_dir": f"runs/{name}",
+    }
+    receipt_path.write_text(
+        json.dumps(receipt, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return copied
 
 
 @pytest.mark.unit
@@ -175,6 +207,131 @@ def test_reconciliation_rejects_unknown_and_ambiguous_source_mapping(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    ("newer_source_id", "newer_source_path"),
+    (
+        ("other", "sources/other"),
+        ({"malformed": True}, "sources/api"),
+    ),
+)
+def test_implicit_selection_skips_newer_receipt_for_wrong_or_malformed_source(
+    tmp_path: Path,
+    newer_source_id: object,
+    newer_source_path: object,
+) -> None:
+    from harness.topology_promotion import reconcile_landed_topology
+
+    workspace, source, _, run, head = _delivery_workspace(tmp_path)
+    state_path = run / "state.json"
+    state = json.loads(state_path.read_text())
+    state.update(
+        {"status": "complete", "completed_at": "2026-08-04T10:00:00+00:00"}
+    )
+    state_path.write_text(json.dumps(state) + "\n", encoding="utf-8")
+    _copy_receipt_run(
+        workspace,
+        run,
+        "verify-spec-909-newer-other-source",
+        source_id=newer_source_id,
+        source_path=newer_source_path,
+        completed_at="2026-08-04T12:00:00+00:00",
+    )
+
+    result = reconcile_landed_topology(
+        workspace,
+        "909-delivery-topology",
+        source,
+        head,
+    )
+
+    assert result.status == "current"
+    assert result.source_id == "api"
+
+
+@pytest.mark.unit
+def test_implicit_selection_uses_newest_completed_receipt_for_target_source(
+    tmp_path: Path,
+) -> None:
+    from harness.topology_promotion import reconcile_landed_topology
+
+    workspace, source, _, run, head = _delivery_workspace(tmp_path)
+    state_path = run / "state.json"
+    state = json.loads(state_path.read_text())
+    state.update(
+        {"status": "complete", "completed_at": "2026-08-04T10:00:00+00:00"}
+    )
+    state_path.write_text(json.dumps(state) + "\n", encoding="utf-8")
+    newest = _copy_receipt_run(
+        workspace,
+        run,
+        "verify-spec-909-newest-api",
+        source_id="api",
+        source_path="sources/api",
+        completed_at="2026-08-04T12:00:00+00:00",
+    )
+
+    result = reconcile_landed_topology(
+        workspace,
+        "909-delivery-topology",
+        source,
+        head,
+    )
+
+    assert result.status == "current"
+    canonical_receipt = json.loads(
+        (workspace / "re/topology/sources/api/receipt.json").read_text()
+    )
+    assert canonical_receipt["provenance"] == {
+        "kind": "delivery",
+        "run_id": newest.name,
+    }
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("source_id", "source_path"),
+    (
+        ("other", "sources/other"),
+        ({"malformed": True}, "sources/api"),
+    ),
+)
+def test_explicit_evidence_run_rejects_exact_source_mismatch(
+    tmp_path: Path,
+    source_id: object,
+    source_path: object,
+) -> None:
+    from harness.topology_promotion import reconcile_landed_topology
+
+    workspace, source, _, run, head = _delivery_workspace(tmp_path)
+    state_path = run / "state.json"
+    state = json.loads(state_path.read_text())
+    state.update(
+        {"status": "complete", "completed_at": "2026-08-04T10:00:00+00:00"}
+    )
+    state_path.write_text(json.dumps(state) + "\n", encoding="utf-8")
+    mismatched = _copy_receipt_run(
+        workspace,
+        run,
+        "verify-spec-909-explicit-other-source",
+        source_id=source_id,
+        source_path=source_path,
+        completed_at="2026-08-04T12:00:00+00:00",
+    )
+
+    result = reconcile_landed_topology(
+        workspace,
+        "909-delivery-topology",
+        source,
+        head,
+        evidence_run=mismatched,
+    )
+
+    assert result.status == "unavailable"
+    assert "source" in result.message
+    assert _canonical_bytes(workspace) == {}
+
+
+@pytest.mark.unit
 def test_exact_commit_and_full_fingerprint_promote_exact_provider_bytes(
     tmp_path: Path,
 ) -> None:
@@ -205,6 +362,102 @@ def test_exact_commit_and_full_fingerprint_promote_exact_provider_bytes(
     index = load_topology_index(workspace)
     assert index is not None
     assert index.sources["api"].providers["perlgraph"].status == "unsupported"
+
+
+@pytest.mark.unit
+def test_reconciliation_rejects_provider_swap_after_receipt_load(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import harness.topology_promotion as promotion
+
+    workspace, source, _, run, head = _delivery_workspace(tmp_path)
+    original_load = promotion._load_delivery_receipt
+
+    def load_then_swap(*args, **kwargs):
+        receipt = original_load(*args, **kwargs)
+        replacement = _codegraph()
+        replacement["generated_at"] = "swapped-after-receipt-load"
+        _write_json(run / "codegraph-analysis.json", replacement)
+        return receipt
+
+    monkeypatch.setattr(promotion, "_load_delivery_receipt", load_then_swap)
+
+    result = promotion.reconcile_landed_topology(
+        workspace,
+        "909-delivery-topology",
+        source,
+        head,
+        evidence_run=run,
+    )
+
+    assert result.status == "unavailable"
+    assert "hash" in result.message
+    assert _canonical_bytes(workspace) == {}
+
+
+@pytest.mark.unit
+def test_publication_owns_authenticated_bytes_after_candidate_construction(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import harness.topology_promotion as promotion
+
+    workspace, source, _, run, head = _delivery_workspace(tmp_path)
+    authenticated = (run / "codegraph-analysis.json").read_bytes()
+    publish = promotion.publish_topology_snapshots
+
+    def swap_then_publish(*args, **kwargs):
+        replacement = _codegraph()
+        replacement["generated_at"] = "swapped-after-candidate"
+        _write_json(run / "codegraph-analysis.json", replacement)
+        return publish(*args, **kwargs)
+
+    monkeypatch.setattr(promotion, "publish_topology_snapshots", swap_then_publish)
+
+    result = promotion.reconcile_landed_topology(
+        workspace,
+        "909-delivery-topology",
+        source,
+        head,
+        evidence_run=run,
+    )
+
+    assert result.status == "current"
+    assert (
+        workspace / "re/topology/sources/api/codegraph-analysis.json"
+    ).read_bytes() == authenticated
+
+
+@pytest.mark.unit
+def test_direct_promotion_rejects_matching_dirty_git_fingerprints(
+    tmp_path: Path,
+) -> None:
+    from harness.topology_evidence import write_topology_evidence_receipt
+    from harness.topology_promotion import reconcile_landed_topology
+
+    workspace, source, spec, run, head = _delivery_workspace(tmp_path)
+    (source / "src/app.py").write_text("def run():\n    return 2\n", encoding="utf-8")
+    write_topology_evidence_receipt(
+        source,
+        run,
+        spec,
+        workspace_root=workspace,
+        source_id="api",
+        source_root=source,
+    )
+
+    result = reconcile_landed_topology(
+        workspace,
+        "909-delivery-topology",
+        source,
+        head,
+        evidence_run=run,
+    )
+
+    assert result.status == "stale"
+    assert "clean" in result.message
+    assert _canonical_bytes(workspace) == {}
 
 
 @pytest.mark.unit

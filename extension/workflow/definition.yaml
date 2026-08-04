@@ -2293,6 +2293,7 @@ verify_spec:
         - "{verify_run_dir}/perlgraph-analysis.json"
         - "{verify_run_dir}/perlgraph-summary.json"
         - "{verify_run_dir}/perlgraph-error.txt"
+        - "{verify_run_dir}/topology-receipt.json"
       transitions:
         - to: verify-spec-2-progress-integrity
           condition: always
@@ -2357,7 +2358,7 @@ verify_spec:
       transitions:
         - to: verify-spec-6-reconcile
           condition: reconcile = true
-        - to: DONE
+        - to: verify-spec-7-finalize
           condition: always
 
     - id: verify-spec-6-reconcile
@@ -2375,6 +2376,16 @@ verify_spec:
         - "{verify_run_dir}/progress-reconciliation-plan.md"
         - "{verify_run_dir}/progress-reconciliation-applied.json"
         - "{verify_run_dir}/progress-reconciliation-applied.md"
+      transitions:
+        - to: verify-spec-7-finalize
+          condition: always
+
+    - id: verify-spec-7-finalize
+      label: "Verify Evidence Finalization"
+      spec_file: workflow/phases/verify-spec-7-finalize.md
+      type: commander_internal
+      outputs:
+        - "{verify_run_dir}/state.json"
       transitions:
         - to: DONE
           condition: always

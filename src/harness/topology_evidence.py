@@ -5,16 +5,15 @@ from __future__ import annotations
 import json
 import hashlib
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping
 
 from echelon.topology_provider import (
     TopologyProviderError,
-    load_provider_artifact,
     load_provider_document,
 )
 from echelon.topology_model import canonical_symbol_key
+from harness.durable_json import DurableJsonError, write_json_atomic
 from harness.re_fingerprint import SourceFingerprint
 from harness.re_fingerprint import fingerprint_source, resolve_re_fingerprint_profile
 from echelon.workspace_model import discover_workspace
@@ -42,6 +41,15 @@ class ProviderArtifactPaths:
     analysis: Path
     summary: Path
     error: Path | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderArtifactBytes:
+    """Provider bytes authenticated by the caller before validation."""
+
+    analysis: bytes | None = None
+    summary: bytes | None = None
+    unavailable_reason: Mapping[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,6 +102,8 @@ def write_topology_evidence_receipt(
         )
     source_path = manifest_matches[0].path
     state_path = run_dir / "state.json"
+    if state_path.is_symlink():
+        raise TopologyEvidenceError("verify-spec state destination is symlinked")
     try:
         state = json.loads(state_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -143,18 +153,20 @@ def write_topology_evidence_receipt(
         "providers": providers,
     }
     receipt_path = run_dir / "topology-receipt.json"
-    _write_json_atomic(receipt_path, receipt)
-    completed_at = state.get("completed_at")
-    if not isinstance(completed_at, str) or not completed_at:
-        completed_at = datetime.now(timezone.utc).isoformat()
+    try:
+        write_json_atomic(receipt_path, receipt)
+    except DurableJsonError as exc:
+        raise TopologyEvidenceError(str(exc)) from exc
     state.update(
         {
-            "completed_at": completed_at,
             "topology_evidence": status,
             "topology_receipt_path": str(receipt_path),
         }
     )
-    _write_json_atomic(state_path, state)
+    try:
+        write_json_atomic(state_path, state)
+    except DurableJsonError as exc:
+        raise TopologyEvidenceError(str(exc)) from exc
     return TopologyEvidenceReceiptResult(receipt_path, status, source_id)
 
 
@@ -272,15 +284,6 @@ def _run_artifact_receipt(path: Path, content: bytes) -> dict[str, str]:
     }
 
 
-def _write_json_atomic(path: Path, value: object) -> None:
-    temporary = path.with_name(f".{path.name}.tmp")
-    temporary.write_text(
-        json.dumps(value, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    temporary.replace(path)
-
-
 def build_topology_snapshot_candidate(
     source_id: str,
     source_path: str,
@@ -341,18 +344,13 @@ def build_topology_snapshot_candidate(
             ) from exc
 
         try:
-            loaded = load_provider_artifact(
-                analysis_path, provider=provider, source_id=source_id
-            )
             analysis = analysis_path.read_bytes()
             summary = summary_path.read_bytes()
-            summary_document = json.loads(summary)
-            validate_provider_summary(
+            provider_candidate = _validated_provider_candidate(
                 provider,
                 source_id,
-                document=json.loads(analysis),
-                loaded=loaded,
-                summary=summary_document,
+                analysis,
+                summary,
             )
         except TopologyProviderError as exc:
             raise TopologyEvidenceError(
@@ -367,16 +365,117 @@ def build_topology_snapshot_candidate(
                 f"invalid provider summary for {source_id}/{provider}: {exc}"
             ) from exc
 
-        raw_capabilities = _capabilities(analysis, provider)
-        providers.append(
-            TopologyProviderCandidate(
-                provider=provider,
-                analysis=analysis,
-                summary=summary,
-                capabilities=raw_capabilities,
-            )
-        )
+        providers.append(provider_candidate)
 
+    return _topology_evidence(
+        source_id,
+        source_path,
+        fingerprint,
+        provenance,
+        providers,
+        unavailable,
+    )
+
+
+def build_topology_snapshot_candidate_from_bytes(
+    source_id: str,
+    source_path: str,
+    fingerprint: SourceFingerprint,
+    provider_artifacts: Mapping[str, ProviderArtifactBytes],
+    provenance: Mapping[str, object],
+) -> TopologyEvidence:
+    """Validate caller-authenticated bytes without reopening provider files."""
+    if not isinstance(provider_artifacts, Mapping):
+        raise TopologyEvidenceError("provider artifacts must be a mapping")
+    providers: list[TopologyProviderCandidate] = []
+    unavailable: list[str] = []
+    for provider, artifacts in sorted(provider_artifacts.items()):
+        if provider not in _KNOWN_PROVIDERS:
+            raise TopologyEvidenceError(f"unsupported topology provider: {provider!r}")
+        if not isinstance(artifacts, ProviderArtifactBytes):
+            raise TopologyEvidenceError(f"provider artifacts are malformed: {provider}")
+        if artifacts.unavailable_reason is not None:
+            if artifacts.analysis is not None or artifacts.summary is not None:
+                raise TopologyEvidenceError(
+                    f"unavailable provider includes bytes: {source_id}/{provider}"
+                )
+            unavailable.append(provider)
+            providers.append(
+                TopologyProviderCandidate(
+                    provider=provider,
+                    unavailable_reason=dict(artifacts.unavailable_reason),
+                )
+            )
+            continue
+        if not isinstance(artifacts.analysis, bytes) or not isinstance(
+            artifacts.summary, bytes
+        ):
+            raise TopologyEvidenceError(
+                f"provider bytes are missing: {source_id}/{provider}"
+            )
+        try:
+            providers.append(
+                _validated_provider_candidate(
+                    provider,
+                    source_id,
+                    artifacts.analysis,
+                    artifacts.summary,
+                )
+            )
+        except TopologyProviderError as exc:
+            raise TopologyEvidenceError(
+                f"invalid provider analysis for {source_id}/{provider}: {exc}"
+            ) from exc
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise TopologyEvidenceError(
+                f"invalid provider summary for {source_id}/{provider}: {exc}"
+            ) from exc
+        except TopologyPublicationValidationError as exc:
+            raise TopologyEvidenceError(
+                f"invalid provider summary for {source_id}/{provider}: {exc}"
+            ) from exc
+
+    return _topology_evidence(
+        source_id,
+        source_path,
+        fingerprint,
+        provenance,
+        providers,
+        unavailable,
+    )
+
+
+def _validated_provider_candidate(
+    provider: str,
+    source_id: str,
+    analysis: bytes,
+    summary: bytes,
+) -> TopologyProviderCandidate:
+    document = json.loads(analysis)
+    loaded = load_provider_document(document, provider=provider, source_id=source_id)
+    validate_provider_summary(
+        provider,
+        source_id,
+        document=document,
+        loaded=loaded,
+        summary=json.loads(summary),
+    )
+    return TopologyProviderCandidate(
+        provider=provider,
+        analysis=analysis,
+        summary=summary,
+        capabilities=_capabilities(analysis, provider),
+    )
+
+
+def _topology_evidence(
+    source_id: str,
+    source_path: str,
+    fingerprint: SourceFingerprint,
+    provenance: Mapping[str, object],
+    providers: list[TopologyProviderCandidate],
+    unavailable: list[str],
+) -> TopologyEvidence:
     if not any(provider.unavailable_reason is None for provider in providers):
         raise TopologyEvidenceError(f"source has no usable provider evidence: {source_id}")
     return TopologyEvidence(

@@ -234,7 +234,8 @@ def test_delivery_commands_finalize_exact_run_local_topology_receipt(
             }
     state = json.loads((verify_run / "state.json").read_text())
     assert state["topology_evidence"] == "ready"
-    assert state["completed_at"]
+    assert state["status"] == "in_progress"
+    assert "completed_at" not in state
 
 
 def test_topology_receipt_is_written_when_both_providers_are_unavailable(

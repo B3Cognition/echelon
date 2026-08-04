@@ -114,6 +114,8 @@ def _matching_completion(
         return None
     if not isinstance(state, dict):
         return None
+    if state.get("status") != "complete":
+        return None
     state_spec_id = state.get("spec_id")
     if not isinstance(state_spec_id, str) or not (
         set(spec_identity_aliases(state_spec_id)) & set(aliases)

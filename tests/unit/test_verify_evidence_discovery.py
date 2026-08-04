@@ -161,3 +161,24 @@ def test_discovery_requires_every_declared_file(tmp_path: Path) -> None:
         required_files=("implementation-map.md", "requirement-audit.md"),
     ) == (complete,)
     assert incomplete.is_dir()
+
+
+@pytest.mark.unit
+def test_discovery_excludes_in_progress_run_even_with_completed_at(tmp_path: Path) -> None:
+    from harness.verify_evidence_discovery import discover_verify_evidence_runs
+
+    candidate = _write_candidate(
+        tmp_path / "runs/verify-spec-909-in-progress",
+        spec_id="909",
+        completed_at="2026-08-04T16:00:00+00:00",
+    )
+    state_path = candidate / "state.json"
+    state = json.loads(state_path.read_text())
+    state["status"] = "in_progress"
+    state_path.write_text(json.dumps(state) + "\n", encoding="utf-8")
+
+    assert discover_verify_evidence_runs(
+        tmp_path,
+        "909",
+        required_files=("topology-receipt.json",),
+    ) == ()

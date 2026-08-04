@@ -419,6 +419,94 @@ def test_delivery_receipt_never_attests_symlinked_provider_bytes(tmp_path: Path)
     assert receipt["providers"]["codegraph"]["artifacts"] == {}
 
 
+def _delivery_receipt_fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
+    workspace = tmp_path / "workspace"
+    source = workspace / "sources/api"
+    source.mkdir(parents=True)
+    (workspace / ".echelon").mkdir()
+    (workspace / ".echelon/config.yml").write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n",
+        encoding="utf-8",
+    )
+    spec = workspace / "specs/909-demo"
+    spec.mkdir(parents=True)
+    (spec / "spec.md").write_text("# Spec\n", encoding="utf-8")
+    run = workspace / "runs/verify-spec-909-durable"
+    run.mkdir(parents=True)
+    (run / "state.json").write_text(
+        json.dumps(
+            {
+                "spec_id": "909-demo",
+                "verify_scope": "full",
+                "status": "in_progress",
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return workspace, source, spec, run
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("destination", ("topology-receipt.json", "state.json"))
+def test_delivery_receipt_uses_unpredictable_temp_files_without_following_symlinks(
+    tmp_path: Path,
+    destination: str,
+) -> None:
+    from harness.topology_evidence import write_topology_evidence_receipt
+
+    workspace, source, spec, run = _delivery_receipt_fixture(tmp_path)
+    outside = tmp_path / f"outside-{destination}"
+    outside.write_text("sentinel\n", encoding="utf-8")
+    (run / f".{destination}.tmp").symlink_to(outside)
+
+    write_topology_evidence_receipt(
+        source,
+        run,
+        spec,
+        workspace_root=workspace,
+        source_id="api",
+        source_root=source,
+    )
+
+    assert outside.read_text(encoding="utf-8") == "sentinel\n"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("destination", ("topology-receipt.json", "state.json"))
+def test_delivery_receipt_rejects_symlinked_destinations_without_external_writes(
+    tmp_path: Path,
+    destination: str,
+) -> None:
+    from harness.topology_evidence import (
+        TopologyEvidenceError,
+        write_topology_evidence_receipt,
+    )
+
+    workspace, source, spec, run = _delivery_receipt_fixture(tmp_path)
+    outside = tmp_path / f"outside-{destination}"
+    if destination == "state.json":
+        outside.write_bytes((run / "state.json").read_bytes())
+        (run / "state.json").unlink()
+    else:
+        outside.write_text("sentinel\n", encoding="utf-8")
+    (run / destination).symlink_to(outside)
+    before = outside.read_bytes()
+
+    with pytest.raises(TopologyEvidenceError, match="symlink"):
+        write_topology_evidence_receipt(
+            source,
+            run,
+            spec,
+            workspace_root=workspace,
+            source_id="api",
+            source_root=source,
+        )
+
+    assert outside.read_bytes() == before
+
+
 @pytest.mark.unit
 def test_schema_one_codegraph_upgrades_only_when_display_endpoints_are_unique(
     tmp_path: Path,

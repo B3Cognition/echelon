@@ -65,6 +65,8 @@ This deterministic finalizer runs only after both providers. It always writes
 `{verify_run_dir}/topology-receipt.json`, including explicit unavailable or
 unsupported provider rows, and records `topology_evidence` as `ready`,
 `degraded`, or `unavailable` in `{verify_run_dir}/state.json`.
+It does not write `status` or `completed_at`; the final verify-spec lifecycle
+phase owns completion.
 
 ## Output
 

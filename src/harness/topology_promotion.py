@@ -5,8 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
+import stat
 import tempfile
 from typing import Mapping
 
@@ -21,9 +23,9 @@ from harness.re_fingerprint import (
 )
 from harness.spec_frontmatter import find_spec_dir, read_frontmatter
 from harness.topology_evidence import (
-    ProviderArtifactPaths,
+    ProviderArtifactBytes,
     TopologyEvidenceError,
-    build_topology_snapshot_candidate,
+    build_topology_snapshot_candidate_from_bytes,
     write_topology_evidence_receipt,
 )
 from harness.topology_publication import (
@@ -93,7 +95,7 @@ def reconcile_landed_topology(
             spec_dir.name,
             required_files=("topology-receipt.json",),
         )
-        selected = _select_evidence_run(runs, evidence_run)
+        selected = _select_evidence_run(runs, evidence_run, source)
         receipt = _load_delivery_receipt(
             workspace,
             selected,
@@ -120,6 +122,19 @@ def reconcile_landed_topology(
         candidate_run = selected
         candidate_receipt = receipt
         if analyzed_commit == default_head:
+            if (
+                receipt_fingerprint.kind != "git"
+                or current_fingerprint.kind != "git"
+                or receipt_fingerprint.dirty
+                or current_fingerprint.dirty
+                or receipt_fingerprint.git_head != default_head
+                or current_fingerprint.git_head != default_head
+            ):
+                return _failure(
+                    "stale",
+                    source,
+                    "direct topology promotion requires a clean default HEAD snapshot",
+                )
             if current_fingerprint != receipt_fingerprint:
                 return _failure("stale", source, "landed source fingerprint differs from verify receipt")
             provenance = {"kind": "delivery", "run_id": _evidence_run_id(selected)}
@@ -220,16 +235,40 @@ def capture_delivery_topology_evidence(
 def _select_evidence_run(
     runs: tuple[Path, ...],
     requested: Path | None,
+    source: SourceRoot,
 ) -> Path:
-    if requested is None:
-        if not runs:
-            raise TopologyPromotionError("completed topology evidence run was not found")
-        return runs[-1]
-    resolved = Path(requested).resolve()
-    for run in runs:
-        if run.resolve() == resolved:
+    if requested is not None:
+        resolved = Path(requested).resolve()
+        for run in runs:
+            if run.resolve() == resolved:
+                if _receipt_source_match(run, source) is not True:
+                    raise TopologyPromotionError(
+                        "requested topology evidence run has a source identity mismatch"
+                    )
+                return run
+        raise TopologyPromotionError("requested topology evidence run is not a strict verify run")
+    for run in reversed(runs):
+        if _receipt_source_match(run, source) is True:
             return run
-    raise TopologyPromotionError("requested topology evidence run is not a strict verify run")
+    raise TopologyPromotionError(
+        f"completed topology evidence run was not found for source {source.id}"
+    )
+
+
+def _receipt_source_match(run_dir: Path, source: SourceRoot) -> bool | None:
+    try:
+        document = json.loads(
+            (run_dir / "topology-receipt.json").read_text(encoding="utf-8")
+        )
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(document, dict):
+        return None
+    source_id = document.get("source_id")
+    source_path = document.get("source_path")
+    if not isinstance(source_id, str) or not isinstance(source_path, str):
+        return None
+    return source_id == source.id and source_path == source.path
 
 
 def _load_delivery_receipt(
@@ -298,11 +337,11 @@ def _load_delivery_receipt(
     if set(providers) != set(_PROVIDERS):
         raise TopologyPromotionError("topology receipt must describe both providers")
     for provider in _PROVIDERS:
-        _validate_receipt_provider(run_dir, provider, providers[provider])
+        _validate_receipt_provider(provider, providers[provider])
     return document
 
 
-def _validate_receipt_provider(run_dir: Path, provider: str, raw: object) -> None:
+def _validate_receipt_provider(provider: str, raw: object) -> None:
     row = _mapping(raw, f"{provider} receipt")
     status = row.get("status")
     if status == "unavailable":
@@ -331,14 +370,10 @@ def _validate_receipt_provider(run_dir: Path, provider: str, raw: object) -> Non
         expected_name = f"{provider}-{artifact}.json"
         if set(item) != {"path", "sha256"} or item.get("path") != expected_name:
             raise TopologyPromotionError(f"{provider} artifact path is invalid")
-        path = run_dir / expected_name
-        try:
-            content = path.read_bytes()
-        except OSError as exc:
-            raise TopologyPromotionError(f"{provider} artifact is missing") from exc
-        digest = "sha256:" + hashlib.sha256(content).hexdigest()
-        if item.get("sha256") != digest:
-            raise TopologyPromotionError(f"{provider} artifact hash mismatch")
+        if not isinstance(item.get("sha256"), str) or not re.fullmatch(
+            r"sha256:[0-9a-f]{64}", item["sha256"]
+        ):
+            raise TopologyPromotionError(f"{provider} artifact hash is invalid")
 
 
 def _candidate_from_receipt(
@@ -348,25 +383,76 @@ def _candidate_from_receipt(
     provenance: Mapping[str, object],
 ):
     providers = _mapping(receipt.get("providers"), "providers")
-    paths: dict[str, ProviderArtifactPaths] = {}
+    authenticated: dict[str, ProviderArtifactBytes] = {}
     for provider in _PROVIDERS:
         row = _mapping(providers[provider], f"{provider} receipt")
         if row.get("status") == "unavailable":
-            analysis = run_dir / f".__unavailable-{provider}-analysis.json"
-            summary = run_dir / f".__unavailable-{provider}-summary.json"
+            diagnostics = row.get("diagnostics")
+            reason = (
+                diagnostics[0]
+                if isinstance(diagnostics, list)
+                and diagnostics
+                and isinstance(diagnostics[0], dict)
+                else {"kind": "unavailable", "message": "provider unavailable"}
+            )
+            authenticated[provider] = ProviderArtifactBytes(
+                unavailable_reason=reason
+            )
         else:
-            analysis = run_dir / f"{provider}-analysis.json"
-            summary = run_dir / f"{provider}-summary.json"
-        paths[provider] = ProviderArtifactPaths(run_dir, analysis, summary)
-    return build_topology_snapshot_candidate(
+            artifacts = _mapping(row.get("artifacts"), f"{provider} artifacts")
+            authenticated[provider] = ProviderArtifactBytes(
+                analysis=_read_authenticated_provider_artifact(
+                    run_dir,
+                    provider,
+                    "analysis",
+                    artifacts["analysis"],
+                ),
+                summary=_read_authenticated_provider_artifact(
+                    run_dir,
+                    provider,
+                    "summary",
+                    artifacts["summary"],
+                ),
+            )
+    return build_topology_snapshot_candidate_from_bytes(
         source.id,
         source.path,
         SourceFingerprint.from_json_dict(
             _mapping(receipt.get("source_fingerprint"), "source fingerprint")
         ),
-        paths,
+        authenticated,
         provenance,
     )
+
+
+def _read_authenticated_provider_artifact(
+    run_dir: Path,
+    provider: str,
+    artifact: str,
+    raw_receipt: object,
+) -> bytes:
+    item = _mapping(raw_receipt, f"{provider} {artifact} artifact")
+    expected_name = f"{provider}-{artifact}.json"
+    path = run_dir / expected_name
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise TopologyPromotionError(f"{provider} artifact is missing or unsafe") from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise TopologyPromotionError(f"{provider} artifact is not a regular file")
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            content = handle.read()
+    except OSError as exc:
+        raise TopologyPromotionError(f"{provider} artifact cannot be read") from exc
+    finally:
+        os.close(descriptor)
+    digest = "sha256:" + hashlib.sha256(content).hexdigest()
+    if item.get("path") != expected_name or item.get("sha256") != digest:
+        raise TopologyPromotionError(f"{provider} artifact hash mismatch")
+    return content
 
 
 def _clear_capture_outputs(run_dir: Path) -> None:

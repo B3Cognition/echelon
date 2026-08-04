@@ -8,7 +8,7 @@ import sys
 
 import pytest
 
-from harness.verify_spec_run import init_verify_spec_run
+from harness.verify_spec_run import complete_verify_spec_run, init_verify_spec_run
 from harness.verify_spec_run import VerifySpecRunInitError
 
 
@@ -784,3 +784,31 @@ def test_init_verify_spec_run_cli_rejects_path_like_spec_id_cleanly(
     assert "Traceback" not in completed.stderr
     assert not (project / "runs").exists()
     assert not (tmp_path / "escape-20260709-170000").exists()
+
+
+def test_complete_verify_spec_run_owns_final_completion_timestamp(tmp_path: Path) -> None:
+    run = tmp_path / "runs/verify-spec-001"
+    run.mkdir(parents=True)
+    state_path = run / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "spec_id": "001-demo",
+                "status": "in_progress",
+                "topology_evidence": "ready",
+                "fulfillment_artifacts": "valid",
+                "reconcile": False,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    complete_verify_spec_run(
+        run,
+        completed_at="2026-08-04T17:00:00+00:00",
+    )
+
+    state = json.loads(state_path.read_text())
+    assert state["status"] == "complete"
+    assert state["completed_at"] == "2026-08-04T17:00:00+00:00"
