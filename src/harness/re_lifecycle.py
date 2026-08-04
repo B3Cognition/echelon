@@ -101,10 +101,10 @@ class ReLifecycleController:
         manifest = None
         resolved_target = ""
         if target_source.strip():
-            manifest = discover_workspace(self._project_root)
             try:
+                manifest = discover_workspace(self._project_root)
                 target = resolve_re_target_source(manifest.sources, target_source)
-            except RePlanError as exc:
+            except (OSError, ValueError) as exc:
                 raise ReLifecycleError(str(exc)) from exc
             if target is None:  # pragma: no cover - guarded by the non-empty selector.
                 raise ReLifecycleError("target source selector did not resolve")

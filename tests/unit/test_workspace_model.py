@@ -171,6 +171,49 @@ def test_declaration_loader_reports_legacy_config_provenance(tmp_path: Path) -> 
     assert declarations.mode == "explicit"
 
 
+@pytest.mark.parametrize(
+    ("provenance", "symlink_component"),
+    (
+        ("canonical", "file"),
+        ("canonical", "parent"),
+        ("legacy", "file"),
+        ("legacy", "parent"),
+    ),
+)
+def test_declaration_loader_rejects_symlinked_config_components(
+    tmp_path: Path,
+    provenance: str,
+    symlink_component: str,
+) -> None:
+    forbidden = tmp_path / "sources/web/config"
+    forbidden.mkdir(parents=True)
+    config_name = (
+        "config.yml"
+        if provenance == "canonical"
+        else "echelon-config.yml"
+    )
+    (forbidden / config_name).write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n",
+        encoding="utf-8",
+    )
+    relative = (
+        Path(".echelon/config.yml")
+        if provenance == "canonical"
+        else Path(".specify/extensions/echelon/echelon-config.yml")
+    )
+    config = tmp_path / relative
+    if symlink_component == "file":
+        config.parent.mkdir(parents=True)
+        config.symlink_to(forbidden / config_name)
+    elif provenance == "canonical":
+        (tmp_path / ".echelon").symlink_to(forbidden, target_is_directory=True)
+    else:
+        (tmp_path / ".specify").symlink_to(forbidden, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="unsafe workspace config path"):
+        load_workspace_source_declarations(tmp_path)
+
+
 def test_declaration_loader_supports_repo_and_null_or_missing_id_fallback(
     tmp_path: Path,
 ) -> None:

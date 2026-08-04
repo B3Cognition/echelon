@@ -300,6 +300,78 @@ def test_targeted_run_rejects_disappeared_declared_source_before_run_creation(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    ("provenance", "symlink_component"),
+    (
+        ("canonical", "file"),
+        ("canonical", "parent"),
+        ("legacy", "file"),
+        ("legacy", "parent"),
+    ),
+)
+def test_targeted_run_rejects_symlinked_config_before_dispatch_or_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    provenance: str,
+    symlink_component: str,
+) -> None:
+    target = tmp_path / "sources/api"
+    forbidden = tmp_path / "sources/web/config"
+    target.mkdir(parents=True)
+    forbidden.mkdir(parents=True)
+    (target / "app.py").write_text("pass\n", encoding="utf-8")
+    config_name = (
+        "config.yml"
+        if provenance == "canonical"
+        else "echelon-config.yml"
+    )
+    (forbidden / config_name).write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n"
+        "    - id: web\n      path: sources/web\n",
+        encoding="utf-8",
+    )
+    relative = (
+        Path(".echelon/config.yml")
+        if provenance == "canonical"
+        else Path(".specify/extensions/echelon/echelon-config.yml")
+    )
+    config = tmp_path / relative
+    if symlink_component == "file":
+        config.parent.mkdir(parents=True)
+        config.symlink_to(forbidden / config_name)
+    elif provenance == "canonical":
+        (tmp_path / ".echelon").symlink_to(forbidden, target_is_directory=True)
+    else:
+        (tmp_path / ".specify").symlink_to(forbidden, target_is_directory=True)
+
+    monkeypatch.setattr(
+        "harness.re_lifecycle.build_re_execution_plan",
+        lambda **kwargs: pytest.fail("unsafe config must be rejected before planning"),
+    )
+    monkeypatch.setattr(
+        "harness.re_lifecycle.materialize_re_run_context",
+        lambda **kwargs: pytest.fail("unsafe config must not materialize a run"),
+    )
+    provider_calls: list[bool] = []
+    controller = ReLifecycleController(
+        project_root=tmp_path,
+        extension_root=tmp_path / "extension",
+        provider_factory=lambda: provider_calls.append(True),
+    )
+
+    with pytest.raises(ReLifecycleError, match="unsafe workspace config path"):
+        controller.run(
+            policy="target-only",
+            target_source="api",
+            force_selected_refresh=True,
+        )
+
+    assert provider_calls == []
+    assert not (tmp_path / "runs").exists()
+    assert not (tmp_path / "re").exists()
+
+
+@pytest.mark.unit
 def test_targeted_run_rejects_overlapping_target_and_sibling_before_planning(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

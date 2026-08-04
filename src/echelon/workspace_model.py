@@ -5,6 +5,7 @@ import json
 import os
 import posixpath
 import re
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -224,20 +225,26 @@ def load_workspace_source_declarations(
 ) -> WorkspaceSourceDeclarations | None:
     """Parse source declarations and config provenance without reading source roots."""
     workspace_root = root.resolve()
-    canonical = workspace_root / CANONICAL_CONFIG_PATH
-    legacy = workspace_root / LEGACY_CONFIG_PATH
-    if canonical.exists():
-        config_path = canonical
+    canonical_bytes = _read_authenticated_config(
+        workspace_root, CANONICAL_CONFIG_PATH
+    )
+    if canonical_bytes is not None:
+        config_path = workspace_root / CANONICAL_CONFIG_PATH
         relative_path = CANONICAL_CONFIG_PATH.as_posix()
         provenance: WorkspaceConfigProvenance = "canonical"
-    elif legacy.exists():
-        config_path = legacy
+        config_bytes = canonical_bytes
+    else:
+        legacy_bytes = _read_authenticated_config(
+            workspace_root, LEGACY_CONFIG_PATH
+        )
+        if legacy_bytes is None:
+            return None
+        config_path = workspace_root / LEGACY_CONFIG_PATH
         relative_path = LEGACY_CONFIG_PATH.as_posix()
         provenance = "legacy"
-    else:
-        return None
+        config_bytes = legacy_bytes
 
-    raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    raw = yaml.safe_load(config_bytes.decode("utf-8"))
     if raw is None:
         raise ValueError("workspace config must be a mapping, not null")
     if not isinstance(raw, dict):
@@ -336,6 +343,91 @@ def load_workspace_source_declarations(
         config_path=config_path,
         config_relative_path=relative_path,
     )
+
+
+def _read_authenticated_config(root: Path, relative: Path) -> bytes | None:
+    """Read one regular config without following any descendant symlink."""
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    directory_flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    file_flags = os.O_RDONLY
+    file_flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    try:
+        current_fd = os.open(root, directory_flags)
+    except OSError as exc:
+        raise ValueError(f"unsafe workspace config root: {root}") from exc
+    try:
+        for component in relative.parts[:-1]:
+            try:
+                observed = os.stat(component, dir_fd=current_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                return None
+            except OSError as exc:
+                raise ValueError(
+                    f"unsafe workspace config path: {relative.as_posix()}"
+                ) from exc
+            if stat.S_ISLNK(observed.st_mode) or not stat.S_ISDIR(observed.st_mode):
+                raise ValueError(
+                    f"unsafe workspace config path: {relative.as_posix()}"
+                )
+            try:
+                next_fd = os.open(component, directory_flags, dir_fd=current_fd)
+            except OSError as exc:
+                raise ValueError(
+                    f"unsafe workspace config path: {relative.as_posix()}"
+                ) from exc
+            opened = os.fstat(next_fd)
+            if (
+                not stat.S_ISDIR(opened.st_mode)
+                or (opened.st_dev, opened.st_ino) != (observed.st_dev, observed.st_ino)
+            ):
+                os.close(next_fd)
+                raise ValueError(
+                    f"unsafe workspace config path: {relative.as_posix()}"
+                )
+            os.close(current_fd)
+            current_fd = next_fd
+
+        try:
+            observed = os.stat(relative.name, dir_fd=current_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            raise ValueError(
+                f"unsafe workspace config path: {relative.as_posix()}"
+            ) from exc
+        if stat.S_ISLNK(observed.st_mode) or not stat.S_ISREG(observed.st_mode):
+            raise ValueError(f"unsafe workspace config path: {relative.as_posix()}")
+        try:
+            config_fd = os.open(relative.name, file_flags, dir_fd=current_fd)
+        except OSError as exc:
+            raise ValueError(
+                f"unsafe workspace config path: {relative.as_posix()}"
+            ) from exc
+        try:
+            opened = os.fstat(config_fd)
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or (opened.st_dev, opened.st_ino) != (observed.st_dev, observed.st_ino)
+            ):
+                raise ValueError(
+                    f"unsafe workspace config path: {relative.as_posix()}"
+                )
+            with os.fdopen(os.dup(config_fd), "rb") as handle:
+                content = handle.read()
+            rebound = os.stat(relative.name, dir_fd=current_fd, follow_symlinks=False)
+            if (
+                stat.S_ISLNK(rebound.st_mode)
+                or (rebound.st_dev, rebound.st_ino, rebound.st_size, rebound.st_mtime_ns)
+                != (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns)
+            ):
+                raise ValueError(
+                    f"unsafe workspace config path: {relative.as_posix()}"
+                )
+            return content
+        finally:
+            os.close(config_fd)
+    finally:
+        os.close(current_fd)
 
 
 def _validate_declared_source_id(source_id: str, entry: str) -> None:

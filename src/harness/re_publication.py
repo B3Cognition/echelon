@@ -746,11 +746,6 @@ def _prepare_transaction(
             required_source_ids=required_topology_sources,
             allow_unavailable_bootstrap=unavailable_bootstrap,
             configured_sources=configured_sources,
-            config_relative_path=(
-                declarations.config_relative_path
-                if declarations is not None
-                else None
-            ),
         )
     except (
         TopologyEvidenceError,
