@@ -185,6 +185,18 @@ def test_descriptor_json_omits_source_id_for_workspace_scope() -> None:
     }
 
 
+def test_workspace_descriptor_json_omits_directly_supplied_source_id() -> None:
+    descriptor = ReArtifactDescriptor(
+        kind="re-overview",
+        path="re/workspace/overview.md",
+        sha256="sha256:" + "a" * 64,
+        scope="workspace",
+        source_id="api",
+    )
+
+    assert "source_id" not in descriptor.to_json_dict()
+
+
 def _write_descriptor_target(tmp_path: Path) -> tuple[Path, str]:
     root = tmp_path / "workspace-root"
     target = root / "re/sources/api/architecture.md"
@@ -267,6 +279,49 @@ def test_validate_descriptor_rejects_missing_file(tmp_path: Path) -> None:
             workspace_root=root,
             owner_scope="source",
             owner_source_id="api",
+        )
+
+
+def test_validate_descriptor_trusts_typed_kind_over_filename(tmp_path: Path) -> None:
+    root = tmp_path / "workspace-root"
+    target = root / "re/sources/api/renamed-output.bin"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"typed artifact\n")
+    raw = {
+        "kind": "re-architecture",
+        "path": "re/sources/api/renamed-output.bin",
+        "sha256": "sha256:" + hashlib.sha256(target.read_bytes()).hexdigest(),
+        "scope": "source",
+        "source_id": "api",
+        "future_field": "tolerated",
+    }
+
+    descriptor = validate_re_artifact_descriptor(
+        raw,
+        workspace_root=root,
+        owner_scope="source",
+        owner_source_id="api",
+    )
+
+    assert descriptor.kind == "re-architecture"
+    assert descriptor.path == "re/sources/api/renamed-output.bin"
+
+
+@pytest.mark.parametrize("source_id", [".", ".."])
+def test_validate_descriptor_rejects_noncanonical_source_id(
+    tmp_path: Path,
+    source_id: str,
+) -> None:
+    root, digest = _write_descriptor_target(tmp_path)
+    raw = _valid_source_descriptor(digest)
+    raw["source_id"] = source_id
+
+    with pytest.raises(ReArtifactCatalogError, match="source_id is not safe"):
+        validate_re_artifact_descriptor(
+            raw,
+            workspace_root=root,
+            owner_scope="source",
+            owner_source_id=source_id,
         )
 
 

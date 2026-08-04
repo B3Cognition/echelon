@@ -61,7 +61,7 @@ class ReArtifactDescriptor:
             "sha256": self.sha256,
             "scope": self.scope,
         }
-        if self.source_id is not None:
+        if self.scope != "workspace" and self.source_id is not None:
             payload["source_id"] = self.source_id
         return payload
 
@@ -134,8 +134,8 @@ def validate_re_artifact_descriptor(
     expected_prefix = _owner_prefix(owner_scope, owner_source_id)
     if not _has_prefix(normalized_path, expected_prefix):
         raise ReArtifactCatalogError("descriptor path does not match owner scope")
-    if classify_re_artifact(normalized_path, scope=owner_scope) != kind:
-        raise ReArtifactCatalogError("descriptor kind does not match artifact path")
+    if owner_scope == "source" and normalized_path.parts[2] != owner_source_id:
+        raise ReArtifactCatalogError("descriptor path does not match source owner")
 
     source_id: str | None
     if owner_scope == "source":
@@ -262,9 +262,17 @@ def _owner_prefix(scope: str, source_id: str | None) -> PurePosixPath:
         return PurePosixPath("re/workspace")
     if source_id is None:
         raise ReArtifactCatalogError("source owner requires source_id")
-    if not _SAFE_SOURCE_ID.fullmatch(source_id):
-        raise ReArtifactCatalogError("source_id is not safe")
+    _validate_source_id(source_id)
     return PurePosixPath("re/sources") / source_id
+
+
+def _validate_source_id(source_id: object) -> None:
+    if (
+        not isinstance(source_id, str)
+        or source_id in {".", ".."}
+        or not _SAFE_SOURCE_ID.fullmatch(source_id)
+    ):
+        raise ReArtifactCatalogError("source_id is not safe")
 
 
 def _validate_path(path: str) -> PurePosixPath:
