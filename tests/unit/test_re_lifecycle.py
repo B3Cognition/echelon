@@ -372,6 +372,40 @@ def test_targeted_run_rejects_symlinked_config_before_dispatch_or_mutation(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("provenance", ("canonical", "legacy"))
+def test_targeted_run_normalizes_malformed_config_before_dispatch(
+    tmp_path: Path,
+    provenance: str,
+) -> None:
+    config = (
+        tmp_path / ".echelon/config.yml"
+        if provenance == "canonical"
+        else tmp_path / ".specify/extensions/echelon/echelon-config.yml"
+    )
+    config.parent.mkdir(parents=True)
+    config.write_text("workspace:\n  sources: [api\n", encoding="utf-8")
+    provider_calls: list[bool] = []
+
+    with pytest.raises(
+        ReLifecycleError,
+        match=r"cannot parse workspace config .*config\.yml: invalid YAML",
+    ):
+        ReLifecycleController(
+            project_root=tmp_path,
+            extension_root=tmp_path / "extension",
+            provider_factory=lambda: provider_calls.append(True),
+        ).run(
+            policy="target-only",
+            target_source="api",
+            force_selected_refresh=True,
+        )
+
+    assert provider_calls == []
+    assert not (tmp_path / "runs").exists()
+    assert not (tmp_path / "re").exists()
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ("source_id", "source_path"),
     (("-api", "sources/api"), ("api", ".")),

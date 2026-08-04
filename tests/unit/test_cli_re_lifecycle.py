@@ -266,6 +266,45 @@ def test_re_refresh_cli_rejects_topology_incompatible_source_declarations(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("provenance", ("canonical", "legacy"))
+def test_re_refresh_cli_exits_two_for_malformed_workspace_yaml(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    provenance: str,
+) -> None:
+    from echelon.cli import _cmd_re_refresh
+    from harness.re_lifecycle import ReLifecycleController
+
+    config = (
+        tmp_path / ".echelon/config.yml"
+        if provenance == "canonical"
+        else tmp_path / ".specify/extensions/echelon/echelon-config.yml"
+    )
+    config.parent.mkdir(parents=True)
+    config.write_text("workspace:\n  sources: [api\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "echelon.cli._re_lifecycle_controller",
+        lambda root: ReLifecycleController(
+            project_root=root,
+            extension_root=tmp_path / "extension",
+            provider_factory=lambda: pytest.fail(
+                "malformed config must not construct provider"
+            ),
+        ),
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        _cmd_re_refresh(["--source", "api"])
+
+    assert exc.value.code == 2
+    assert "cannot parse workspace config" in capsys.readouterr().err
+    assert not (tmp_path / "runs").exists()
+    assert not (tmp_path / "re").exists()
+
+
+@pytest.mark.unit
 def test_re_run_routes_profile_and_hard_limit_overrides(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

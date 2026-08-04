@@ -216,6 +216,26 @@ def test_declaration_loader_rejects_symlinked_config_components(
         load_workspace_source_declarations(tmp_path)
 
 
+@pytest.mark.parametrize("provenance", ("canonical", "legacy"))
+def test_ordinary_discovery_normalizes_malformed_workspace_yaml(
+    tmp_path: Path,
+    provenance: str,
+) -> None:
+    config = (
+        tmp_path / ".echelon/config.yml"
+        if provenance == "canonical"
+        else tmp_path / ".specify/extensions/echelon/echelon-config.yml"
+    )
+    config.parent.mkdir(parents=True)
+    config.write_text("workspace:\n  sources: [api\n", encoding="utf-8")
+
+    with pytest.raises(
+        ValueError,
+        match=r"cannot parse workspace config .*config\.yml: invalid YAML",
+    ):
+        discover_workspace(tmp_path)
+
+
 def test_declaration_loader_supports_repo_and_null_or_missing_id_fallback(
     tmp_path: Path,
 ) -> None:

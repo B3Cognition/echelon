@@ -251,7 +251,12 @@ def load_workspace_source_declarations(
         provenance = "legacy"
         config_bytes = legacy_bytes
 
-    raw = yaml.safe_load(config_bytes.decode("utf-8"))
+    try:
+        raw = yaml.safe_load(config_bytes.decode("utf-8"))
+    except yaml.YAMLError as exc:
+        raise ValueError(
+            f"cannot parse workspace config {relative_path}: invalid YAML"
+        ) from exc
     config_sha256 = "sha256:" + hashlib.sha256(config_bytes).hexdigest()
     if raw is None:
         raise ValueError("workspace config must be a mapping, not null")

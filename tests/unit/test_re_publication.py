@@ -865,7 +865,7 @@ def test_targeted_topology_bootstrap_failure_rolls_back_semantic_and_topology(
 
 @pytest.mark.unit
 @pytest.mark.parametrize("provenance", ("canonical", "legacy"))
-@pytest.mark.parametrize("mutation", ("change", "remove", "replace"))
+@pytest.mark.parametrize("mutation", ("change", "remove", "replace", "malformed"))
 def test_targeted_publication_rolls_back_when_declarations_change_during_apply(
     tmp_path: Path,
     provenance: str,
@@ -921,11 +921,18 @@ def test_targeted_publication_rolls_back_when_declarations_change_during_apply(
             config.write_text(original_config + "# changed during apply\n", encoding="utf-8")
         elif mutation == "remove":
             config.unlink()
-        else:
+        elif mutation == "replace":
             replacement = config.with_name(config.name + ".replacement")
             replacement.write_text(
                 "workspace:\n  sources:\n    - id: api\n      path: sources/api-v2\n"
                 "    - id: web\n      path: sources/web\n",
+                encoding="utf-8",
+            )
+            replacement.replace(config)
+        else:
+            replacement = config.with_name(config.name + ".malformed")
+            replacement.write_text(
+                "workspace:\n  sources: [api\n",
                 encoding="utf-8",
             )
             replacement.replace(config)
@@ -942,6 +949,8 @@ def test_targeted_publication_rolls_back_when_declarations_change_during_apply(
         )
 
     assert _durable_snapshot(tmp_path) == before
+    if mutation == "malformed":
+        assert config.read_text(encoding="utf-8") == "workspace:\n  sources: [api\n"
     config.parent.mkdir(parents=True, exist_ok=True)
     config.write_text(original_config, encoding="utf-8")
     published = load_published_index(tmp_path)
