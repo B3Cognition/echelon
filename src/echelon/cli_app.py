@@ -8,6 +8,7 @@ Echelon normalize CLI contracts incrementally without rewriting harness logic.
 from __future__ import annotations
 
 import shlex
+from enum import Enum
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -112,6 +113,11 @@ graph_workspace_app = typer.Typer(
     help="Build, audit, refresh, and inspect the workspace artifact graph.",
     no_args_is_help=True,
 )
+topology_app = typer.Typer(
+    add_completion=False,
+    help="Audit and inspect canonical source topology.",
+    no_args_is_help=True,
+)
 memory_app = typer.Typer(
     add_completion=False,
     help="Search and inspect workspace memory in MemPalace.",
@@ -173,6 +179,7 @@ app.add_typer(delivery_app, name="delivery")
 app.add_typer(harness_app, name="harness", hidden=True)
 app.add_typer(llm_app, name="llm")
 app.add_typer(graph_app, name="graph")
+app.add_typer(topology_app, name="topology")
 app.add_typer(memory_app, name="memory")
 app.add_typer(re_app, name="re")
 app.add_typer(kb_app, name="kb")
@@ -186,6 +193,154 @@ delivery_app.add_typer(delivery_checkpoint_app, name="checkpoint")
 re_app.add_typer(re_memory_app, name="memory")
 spec_evidence_app.add_typer(spec_evidence_memory_app, name="memory")
 graph_app.add_typer(graph_workspace_app, name="workspace")
+
+
+class TopologyDirection(str, Enum):
+    """Accepted stored-edge directions for topology neighbors."""
+
+    incoming = "in"
+    outgoing = "out"
+    both = "both"
+
+
+def _emit_topology_result(result: object) -> None:
+    stdout = str(getattr(result, "stdout", ""))
+    stderr = str(getattr(result, "stderr", ""))
+    exit_code = int(getattr(result, "exit_code", 2))
+    if stdout:
+        typer.echo(stdout, nl=False)
+    if stderr:
+        typer.echo(stderr, err=True, nl=False)
+    if exit_code:
+        raise typer.Exit(code=exit_code)
+
+
+@topology_app.command("audit")
+def topology_audit(
+    source: Optional[str] = typer.Option(None, "--source", help="Audit one configured source ID."),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Audit canonical topology structure, providers, and live freshness."""
+    from echelon.topology_cli import audit_command
+
+    _emit_topology_result(audit_command(Path.cwd(), source=source, as_json=as_json))
+
+
+@topology_app.command("list-sources")
+def topology_list_sources(
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """List configured sources represented by canonical topology."""
+    from echelon.topology_cli import list_sources_command
+
+    _emit_topology_result(list_sources_command(Path.cwd(), as_json=as_json))
+
+
+@topology_app.command("search")
+def topology_search(
+    query: str = typer.Argument(..., help="Lexical node query."),
+    source: Optional[str] = typer.Option(None, "--source", help="Read one configured source ID."),
+    node_types: Optional[list[str]] = typer.Option(
+        None,
+        "--type",
+        help="Node type filter; repeat for multiple types.",
+    ),
+    limit: int = typer.Option(50, "--limit", min=1, max=500, help="Maximum result nodes."),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Search canonical topology nodes deterministically."""
+    from echelon.topology_cli import search_command
+
+    _emit_topology_result(
+        search_command(
+            Path.cwd(),
+            query,
+            source=source,
+            node_types=tuple(node_types or ()),
+            limit=limit,
+            as_json=as_json,
+        )
+    )
+
+
+@topology_app.command("explain")
+def topology_explain(
+    node: str = typer.Argument(..., help="Exact or unambiguous topology node selector."),
+    source: Optional[str] = typer.Option(None, "--source", help="Read one configured source ID."),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Explain one topology node and its direct relationships."""
+    from echelon.topology_cli import explain_command
+
+    _emit_topology_result(
+        explain_command(Path.cwd(), node, source=source, as_json=as_json)
+    )
+
+
+@topology_app.command("neighbors")
+def topology_neighbors(
+    node: str = typer.Argument(..., help="Exact or unambiguous topology node selector."),
+    source: Optional[str] = typer.Option(None, "--source", help="Read one configured source ID."),
+    direction: TopologyDirection = typer.Option(
+        TopologyDirection.both,
+        "--direction",
+        help="Stored edge direction: in, out, or both.",
+    ),
+    relations: Optional[list[str]] = typer.Option(
+        None,
+        "--relation",
+        help="Relationship filter; repeat for multiple types.",
+    ),
+    limit: int = typer.Option(50, "--limit", min=1, max=500, help="Maximum relationships."),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """List deterministic one-hop topology relationships."""
+    from echelon.topology_cli import neighbors_command
+
+    _emit_topology_result(
+        neighbors_command(
+            Path.cwd(),
+            node,
+            source=source,
+            direction=direction.value,
+            relations=tuple(relations or ()),
+            limit=limit,
+            as_json=as_json,
+        )
+    )
+
+
+@topology_app.command("impact")
+def topology_impact(
+    node: str = typer.Argument(..., help="Exact or unambiguous topology node selector."),
+    source: Optional[str] = typer.Option(None, "--source", help="Read one configured source ID."),
+    max_depth: int = typer.Option(
+        3,
+        "--max-depth",
+        min=1,
+        max=10,
+        help="Maximum impact depth.",
+    ),
+    relations: Optional[list[str]] = typer.Option(
+        None,
+        "--relation",
+        help="Relationship filter; repeat for multiple types.",
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Traverse deterministic affected topology paths."""
+    from echelon.topology_cli import impact_command
+
+    _emit_topology_result(
+        impact_command(
+            Path.cwd(),
+            node,
+            source=source,
+            max_depth=max_depth,
+            relations=tuple(relations or ()),
+            as_json=as_json,
+        )
+    )
 
 
 @admin_app.command("commands")
