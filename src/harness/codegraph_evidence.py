@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
+import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -177,11 +178,9 @@ def _analysis_is_usable(
         return False
     if counts["emitted_symbols"] != len(symbols) or counts["emitted_relationships"] != len(relationships):
         return False
-    symbol_keys = {
-        symbol.get("symbol_key")
-        for symbol in symbols
-        if isinstance(symbol, dict) and _is_symbol_key(symbol.get("symbol_key"))
-    }
+    if not all(_has_canonical_symbol_locator(symbol) for symbol in symbols):
+        return False
+    symbol_keys = {symbol["symbol_key"] for symbol in symbols}
     if len(symbol_keys) != len(symbols):
         return False
     if not all(
@@ -233,6 +232,37 @@ def _is_symbol_key(value: object) -> bool:
         and value.startswith("sha256:")
         and all(character in "0123456789abcdef" for character in value[7:])
     )
+
+
+def _has_canonical_symbol_locator(symbol: object) -> bool:
+    if not isinstance(symbol, dict):
+        return False
+    file_path = symbol.get("file_path")
+    qualified_name = symbol.get("qualified_name")
+    kind = symbol.get("kind")
+    signature = symbol.get("signature")
+    if not (
+        _is_normalized_source_path(file_path)
+        and isinstance(qualified_name, str)
+        and isinstance(kind, str)
+        and (signature is None or isinstance(signature, str))
+    ):
+        return False
+    locator = json.dumps(
+        [file_path, qualified_name, kind, signature or ""],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    expected_key = "sha256:" + hashlib.sha256(locator.encode("utf-8")).hexdigest()
+    return symbol.get("symbol_key") == expected_key
+
+
+def _is_normalized_source_path(value: object) -> bool:
+    if not isinstance(value, str) or not value or "\\" in value:
+        return False
+    if value.startswith("/") or (len(value) >= 3 and value[0].isalpha() and value[1:3] == ":/"):
+        return False
+    return all(part not in {"", ".", ".."} for part in value.split("/"))
 
 
 def _provider_failure(

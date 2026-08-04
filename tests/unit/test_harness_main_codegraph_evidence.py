@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import subprocess
 import sys
@@ -45,10 +46,19 @@ def _write_fake_bridge_at_runtime(runtime_dir: Path) -> Path:
         """
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 
 const args = process.argv.slice(2);
 const repoPath = args[args.indexOf("--repo-path") + 1];
 const outputPath = args[args.indexOf("--output-path") + 1];
+const symbolKey = (filePath, qualifiedName, kind) =>
+  `sha256:${crypto.createHash("sha256")
+    .update(JSON.stringify([filePath, qualifiedName, kind, ""]), "utf8")
+    .digest("hex")}`;
+const a = symbolKey("src/a.ts", "A", "function");
+const b = symbolKey("src/b.ts", "B", "function");
+const c = symbolKey("src/c.ts", "C", "class");
+const d = symbolKey("src/d.ts", "D", "class");
 
 fs.mkdirSync(path.dirname(outputPath), {recursive: true});
 fs.mkdirSync(path.join(repoPath, ".codegraph"), {recursive: true});
@@ -75,20 +85,20 @@ fs.writeFileSync(outputPath, JSON.stringify({
   language_coverage: {swift: 1},
   coverage: {files: 1},
   symbols: [
-    {symbol_key: "sha256:0000000000000000000000000000000000000000000000000000000000000001", qualified_name: "A", name: "A", file_path: "src/a.ts", line_start: 1, line_end: 1, kind: "function"},
-    {symbol_key: "sha256:0000000000000000000000000000000000000000000000000000000000000002", qualified_name: "B", name: "B", file_path: "src/b.ts", line_start: 1, line_end: 1, kind: "function"},
-    {symbol_key: "sha256:0000000000000000000000000000000000000000000000000000000000000003", qualified_name: "C", name: "C", file_path: "src/c.ts", line_start: 1, line_end: 1, kind: "class"},
-    {symbol_key: "sha256:0000000000000000000000000000000000000000000000000000000000000004", qualified_name: "D", name: "D", file_path: "src/d.ts", line_start: 1, line_end: 1, kind: "class"}
+    {symbol_key: a, qualified_name: "A", name: "A", file_path: "src/a.ts", line_start: 1, line_end: 1, kind: "function"},
+    {symbol_key: b, qualified_name: "B", name: "B", file_path: "src/b.ts", line_start: 1, line_end: 1, kind: "function"},
+    {symbol_key: c, qualified_name: "C", name: "C", file_path: "src/c.ts", line_start: 1, line_end: 1, kind: "class"},
+    {symbol_key: d, qualified_name: "D", name: "D", file_path: "src/d.ts", line_start: 1, line_end: 1, kind: "class"}
   ],
   relationships: [
-    {kind: "calls", source_key: "sha256:0000000000000000000000000000000000000000000000000000000000000001", target_key: "sha256:0000000000000000000000000000000000000000000000000000000000000002", source_name: "A", target_name: "B"},
-    {kind: "calls", source_key: "sha256:0000000000000000000000000000000000000000000000000000000000000001", target_key: "sha256:0000000000000000000000000000000000000000000000000000000000000003", source_name: "A", target_name: "C"},
-    {kind: "calls", source_key: "sha256:0000000000000000000000000000000000000000000000000000000000000004", target_key: "sha256:0000000000000000000000000000000000000000000000000000000000000002", source_name: "D", target_name: "B"}
+    {kind: "calls", source_key: a, target_key: b, source_name: "A", target_name: "B"},
+    {kind: "calls", source_key: a, target_key: c, source_name: "A", target_name: "C"},
+    {kind: "calls", source_key: d, target_key: b, source_name: "D", target_name: "B"}
   ],
   call_graph: [
-    {caller_key: "sha256:0000000000000000000000000000000000000000000000000000000000000001", callee_key: "sha256:0000000000000000000000000000000000000000000000000000000000000002", caller_name: "A", callee_name: "B"},
-    {caller_key: "sha256:0000000000000000000000000000000000000000000000000000000000000001", callee_key: "sha256:0000000000000000000000000000000000000000000000000000000000000003", caller_name: "A", callee_name: "C"},
-    {caller_key: "sha256:0000000000000000000000000000000000000000000000000000000000000004", callee_key: "sha256:0000000000000000000000000000000000000000000000000000000000000002", caller_name: "D", callee_name: "B"}
+    {caller_key: a, callee_key: b, caller_name: "A", callee_name: "B"},
+    {caller_key: a, callee_key: c, caller_name: "A", callee_name: "C"},
+    {caller_key: d, callee_key: b, caller_name: "D", callee_name: "B"}
   ],
   type_hierarchy: [],
   impact_radius: []
@@ -131,6 +141,79 @@ def test_analysis_is_usable_requires_complete_schema_two_artifact(tmp_path: Path
         encoding="utf-8",
     )
 
+    assert not _analysis_is_usable(analysis_path)
+
+
+def test_analysis_is_usable_rejects_noncanonical_symbol_locators(tmp_path: Path) -> None:
+    from harness.codegraph_evidence import _analysis_is_usable
+
+    def analysis_for(file_path: str, symbol_key: str) -> dict:
+        return {
+            "schema_version": 2,
+            "version": "2.0.0",
+            "tool": "codegraph",
+            "tool_version": "1.4.1",
+            "provider_status": "complete",
+            "complete": True,
+            "counts": {
+                "discovered_symbols": 1,
+                "emitted_symbols": 1,
+                "excluded_symbols": 0,
+                "discovered_relationships": 0,
+                "emitted_relationships": 0,
+                "excluded_relationships": 0,
+            },
+            "diagnostics": {"unresolved_relationships": []},
+            "symbols": [
+                {
+                    "symbol_key": symbol_key,
+                    "qualified_name": "demo.run",
+                    "name": "run",
+                    "kind": "function",
+                    "file_path": file_path,
+                    "line_start": 1,
+                    "line_end": 1,
+                }
+            ],
+            "relationships": [],
+            "call_graph": [],
+            "type_hierarchy": [],
+            "impact_radius": [],
+        }
+
+    def canonical_key(file_path: str) -> str:
+        locator = json.dumps(
+            [file_path, "demo.run", "function", ""],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        return "sha256:" + hashlib.sha256(locator.encode("utf-8")).hexdigest()
+
+    analysis_path = tmp_path / "codegraph-analysis.json"
+    analysis_path.write_text(
+        json.dumps(analysis_for("src/demo.py", canonical_key("src/demo.py"))),
+        encoding="utf-8",
+    )
+    assert _analysis_is_usable(analysis_path)
+
+    analysis_path.write_text(
+        json.dumps(analysis_for("src/demo.py", "sha256:" + "0" * 64)),
+        encoding="utf-8",
+    )
+    assert not _analysis_is_usable(analysis_path)
+
+    analysis_path.write_text(
+        json.dumps(
+            analysis_for("src/../demo.py", canonical_key("src/../demo.py"))
+        ),
+        encoding="utf-8",
+    )
+    assert not _analysis_is_usable(analysis_path)
+
+    analysis_path.write_text(
+        json.dumps(analysis_for("/tmp/demo.py", canonical_key("/tmp/demo.py"))),
+        encoding="utf-8",
+    )
     assert not _analysis_is_usable(analysis_path)
 
 

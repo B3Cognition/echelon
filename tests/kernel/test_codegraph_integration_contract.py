@@ -149,6 +149,48 @@ adapter.getImpactRadius(cg, [adapter.symbolKey(source)], 3).then((entries) => {
     assert completed.returncode == 0, completed.stderr
 
 
+def test_adapter_enforces_canonical_symbol_locator_contract(tmp_path: Path) -> None:
+    script = """
+const assert = require('assert');
+const adapter = require(process.argv[2]);
+(async () => {
+  const node = {
+    id: 'one', filePath: 'src\\\\lib\\\\demo.ts', qualifiedName: 'Demo::run',
+    kind: 'function', signature: '(value: string): void', startLine: 1, endLine: 2
+  };
+  assert.strictEqual(adapter.normalizeSourcePath(node.filePath), 'src/lib/demo.ts');
+  assert.strictEqual(
+    adapter.symbolKey(node),
+    'sha256:4c73745373df4a89cecb6bbadf524f2a1a5db321b3139332d926a916517cb131'
+  );
+  for (const invalidPath of ['/tmp/demo.ts', '../demo.ts', 'src/../demo.ts']) {
+    assert.throws(() => adapter.normalizeSourcePath(invalidPath), /contract error/);
+  }
+  const duplicate = {...node, id: 'two', filePath: 'src/lib/demo.ts'};
+  const cg = {getNodesByKind: (kind) => kind === 'function' ? [node, duplicate] : []};
+  await assert.rejects(adapter.getSymbols(cg), /duplicate canonical locator/);
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+"""
+
+    script_path = tmp_path / "adapter-symbol-contract.js"
+    script_path.write_text(script, encoding="utf-8")
+    completed = subprocess.run(
+        [
+            "node",
+            str(script_path),
+            str(CODEGRAPH_RUNTIME_DIR / "codegraph-adapter.js"),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+
 def test_shell_ci_uses_a_node_runtime_supported_by_codegraph_sdk():
     workflow = (EXT_ROOT / ".github" / "workflows" / "ci.yml").read_text()
 
