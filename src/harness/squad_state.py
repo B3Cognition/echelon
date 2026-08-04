@@ -2949,7 +2949,50 @@ class SquadStateStore:
                 validator="ownership",
             )
         updated_product_inputs = updates["product_inputs"]
+        updated_attachments = updates["product_input_attachments"]
         recovery = updates["add_input_recovery"]
+        recovery_keys = frozenset(
+            {
+                "schema_version",
+                "request_sha256",
+                "product_input_tree_hash",
+                "command",
+                "operation_id",
+                "attachment_ids",
+                "attachment_id",
+                "added_count",
+                "duplicate_count",
+                "original_declaration_count",
+                "attached_declaration_count",
+                "original_declarations",
+                "attached_declarations",
+                "attachment_ledger_entry",
+                "attachment_ledger_entry_sha256",
+                "product_input_attachments_sha256",
+                "previous_blocked_reason",
+                "previous_phase1_investigate_dispatch_count",
+            }
+        )
+        try:
+            entry_digest = hashlib.sha256(
+                json.dumps(
+                    recovery.get("attachment_ledger_entry"),
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ).encode("utf-8")
+            ).hexdigest()
+            attachments_digest = hashlib.sha256(
+                json.dumps(
+                    updated_attachments,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ).encode("utf-8")
+            ).hexdigest()
+        except (AttributeError, TypeError, UnicodeError):
+            entry_digest = ""
+            attachments_digest = ""
         if (
             type(updated_product_inputs) is not dict
             or updated_product_inputs.get("tree_hash")
@@ -2957,6 +3000,8 @@ class SquadStateStore:
             or updated_product_inputs.get("inputs_dir")
             != expected_mutation["inputs_dir"]
             or type(recovery) is not dict
+            or frozenset(recovery) != recovery_keys
+            or recovery.get("schema_version") != 3
             or recovery.get("request_sha256")
             != expected_mutation["request_sha256"]
             or recovery.get("product_input_tree_hash")
@@ -2967,6 +3012,25 @@ class SquadStateStore:
             != expected_mutation["added_count"]
             or recovery.get("duplicate_count")
             != expected_mutation["duplicate_count"]
+            or recovery.get("operation_id")
+            != expected_mutation["operation_id"]
+            or recovery.get("attachment_ids")
+            != [expected_mutation["attachment_id"]]
+            or type(recovery.get("original_declarations")) is not list
+            or recovery.get("original_declaration_count")
+            != len(recovery["original_declarations"])
+            or type(recovery.get("attached_declarations")) is not list
+            or recovery.get("attached_declaration_count")
+            != len(recovery["attached_declarations"])
+            or type(recovery.get("attachment_ledger_entry")) is not dict
+            or recovery["attachment_ledger_entry"].get("id")
+            != expected_mutation["attachment_id"]
+            or recovery["attachment_ledger_entry"].get("operation_id")
+            != expected_mutation["operation_id"]
+            or recovery.get("attachment_ledger_entry_sha256") != entry_digest
+            or type(updated_attachments) is not list
+            or recovery.get("product_input_attachments_sha256")
+            != attachments_digest
         ):
             raise StateAdvanceError(
                 "product input publication post-state is not receipt-bound",

@@ -645,6 +645,7 @@ def attach_product_input_revision(
     command: str,
     evidence_requests: Mapping[str, object] | None = None,
     pointer_inputs_dir: Path | None = None,
+    operation_id: str | None = None,
 ) -> ProductInputAttachmentResult:
     """Append one immutable evidence revision and rebuild aggregate indexes."""
     project_root = Path(project_root).resolve()
@@ -672,6 +673,11 @@ def attach_product_input_revision(
     normalized = tuple(_normalize_declaration(item) for item in declarations)
     if not normalized:
         raise ProductInputError("add-input requires at least one input declaration")
+    if operation_id is not None and (
+        type(operation_id) is not str
+        or re.fullmatch(r"[0-9a-f]{32}", operation_id) is None
+    ):
+        raise ProductInputError("add-input operation identity is invalid")
     existing_declarations = _attachment_declaration_keys(manifest, ledger)
     declaration_duplicates = [
         {
@@ -779,6 +785,8 @@ def attach_product_input_revision(
             project_root,
         ),
     }
+    if operation_id is not None:
+        attachment_entry["operation_id"] = operation_id
     ledger["attachments"].append(attachment_entry)
 
     _write_aggregate_product_inputs(

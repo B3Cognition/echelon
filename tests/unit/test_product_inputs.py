@@ -2181,9 +2181,9 @@ def test_controller_product_effect_rejects_copy_window_tree_mutation(
     assert not list((controller._squad_dir / ".publication-outbox").glob("*/manifest.json"))
     assert len(
         list(
-            (controller._squad_dir / ".publication-outbox").glob(
-                "*/work/product-inputs"
-            )
+                (controller._squad_dir / ".publication-outbox").glob(
+                    "*/work/product-inputs-old"
+                )
         )
     ) == 1
 
@@ -2216,6 +2216,44 @@ def test_controller_product_effect_prepares_exact_tree_hash_state_receipt(
         [path for path in visible[0].parent.rglob("*") if path.is_file()]
     )
     assert immutable_product_input_tree_digest(visible[0].parent) == old_hash
+
+
+def test_controller_product_effect_seals_exact_mixed_mode_old_tree(
+    tmp_path: Path,
+) -> None:
+    import stat
+
+    from echelon.product_inputs import immutable_product_input_tree_digest
+
+    controller, store, result, visible = _product_effect_staging_fixture(tmp_path)
+    inputs = visible[0].parent
+    private_dir = inputs / "private-tools"
+    private_dir.mkdir()
+    private_file = private_dir / "secret.bin"
+    executable = private_dir / "runner"
+    private_file.write_bytes(b"secret")
+    executable.write_bytes(b"#!/bin/sh\n")
+    private_dir.chmod(0o710)
+    private_file.chmod(0o600)
+    executable.chmod(0o751)
+    state = store.load()
+    state["product_inputs"]["tree_hash"] = immutable_product_input_tree_digest(inputs)
+    store.save(state)
+    old_hash = state["product_inputs"]["tree_hash"]
+
+    prepared = controller._prepare_external_phase_effects(
+        result,
+        "phase3-plan",
+        store.load(),
+        manual_phase_run=False,
+    )
+
+    assert prepared is not None
+    staged_old = prepared._transaction_root / "work/product-inputs-old"
+    assert immutable_product_input_tree_digest(staged_old) == old_hash
+    assert stat.S_IMODE((staged_old / "private-tools").stat().st_mode) == 0o710
+    assert stat.S_IMODE((staged_old / "private-tools/secret.bin").stat().st_mode) == 0o600
+    assert stat.S_IMODE((staged_old / "private-tools/runner").stat().st_mode) == 0o751
 
 
 def _authorize_controller_product_publication(controller, store, prepared) -> None:
@@ -2397,6 +2435,198 @@ def _install_publication_operation(project_root: Path, prepared, operation: dict
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(prepared._transaction_root / operation["staged"], target)
     target.chmod(int(postimage.get("mode", 0o600)))
+
+
+def _product_deletion_prefix_fixture(tmp_path: Path):
+    from echelon.product_input_transaction import (
+        add_complete_product_input_publication,
+        build_product_input_mutation,
+    )
+    from echelon.product_inputs import (
+        immutable_product_input_tree_digest,
+        parse_input_declaration,
+        resolve_product_inputs,
+    )
+    from harness.squad_publication import SquadPublicationTransaction
+    from harness.state_transaction_namespace import (
+        PENDING_EXTERNAL_PUBLICATION_KEY,
+        PRODUCT_INPUT_MUTATION_KEY,
+    )
+
+    project = tmp_path / "workspace"
+    source = project / "source.md"
+    source.parent.mkdir(parents=True)
+    source.write_text("source\n", encoding="utf-8")
+    run_dir = project / "runs/run-1"
+    resolution = resolve_product_inputs(
+        project,
+        run_dir,
+        [parse_input_declaration("reference:source.md")],
+    )
+    retained = resolution.inputs_dir / "retained-empty-parent"
+    retained.mkdir()
+    removed = retained / "remove.bin"
+    removed.write_bytes(b"remove")
+    retained.chmod(0o710)
+    removed.chmod(0o600)
+    product_inputs = resolution.state_payload(project)
+    product_inputs["tree_hash"] = immutable_product_input_tree_digest(
+        resolution.inputs_dir
+    )
+    old_hash = product_inputs["tree_hash"]
+    transaction = SquadPublicationTransaction.begin(
+        project,
+        run_dir,
+        "d" * 32,
+    )
+    staged_old = transaction.build_path("work/product-inputs-old")
+    staged_post = transaction.build_path("work/product-inputs")
+    shutil.copytree(resolution.inputs_dir, staged_old, copy_function=shutil.copy2)
+    shutil.copytree(staged_old, staged_post, copy_function=shutil.copy2)
+    (staged_post / "retained-empty-parent/remove.bin").unlink()
+    new_hash = immutable_product_input_tree_digest(staged_post)
+    owned = add_complete_product_input_publication(
+        transaction,
+        project,
+        resolution.inputs_dir,
+        staged_post,
+    )
+    manual_target = run_dir / "manual-note.txt"
+    manual_target.write_bytes(b"old-manual")
+    staged_manual = transaction.build_path("work/manual-note.txt")
+    staged_manual.write_bytes(b"new-manual")
+    transaction.add_write(
+        manual_target.relative_to(project),
+        staged_manual,
+        owned_paths={manual_target.relative_to(project)},
+    )
+    prepared = transaction.seal()
+    updated = dict(product_inputs)
+    updated["tree_hash"] = new_hash
+    mutation = build_product_input_mutation(
+        kind="controller_update",
+        marker=prepared.marker.to_dict(),
+        inputs_dir=resolution.inputs_dir.relative_to(project).as_posix(),
+        old_tree_hash=str(old_hash),
+        new_tree_hash=new_hash,
+        owned_paths=owned,
+    )
+    state = {
+        "product_inputs": updated,
+        PENDING_EXTERNAL_PUBLICATION_KEY: prepared.marker.to_dict(),
+        PRODUCT_INPUT_MUTATION_KEY: mutation,
+    }
+    operations = list(prepared._manifest["operations"])
+    delete_index = next(
+        index
+        for index, operation in enumerate(operations)
+        if operation["target"].endswith("retained-empty-parent/remove.bin")
+    )
+    for operation in operations[: delete_index + 1]:
+        _install_publication_operation(project, prepared, operation)
+    return project, resolution.inputs_dir, prepared, state
+
+
+def test_product_recovery_accepts_deletion_prefix_with_retained_empty_parent(
+    tmp_path: Path,
+) -> None:
+    import stat
+
+    from echelon.product_input_transaction import (
+        authenticate_pending_product_input_mutation,
+    )
+
+    project, inputs, prepared, state = _product_deletion_prefix_fixture(tmp_path)
+
+    authenticated = authenticate_pending_product_input_mutation(
+        project,
+        state,
+        prepared.marker.to_dict(),
+        prepared._manifest["operations"],
+        staged_inputs=prepared._transaction_root / "work/product-inputs",
+    )
+
+    assert authenticated is not None
+    retained = inputs / "retained-empty-parent"
+    assert retained.is_dir()
+    assert not list(retained.iterdir())
+    assert stat.S_IMODE(retained.stat().st_mode) == 0o710
+
+
+def test_product_recovery_rejects_missing_retained_empty_parent_without_writes(
+    tmp_path: Path,
+) -> None:
+    from echelon.product_input_transaction import (
+        ProductInputMutationError,
+        authenticate_pending_product_input_mutation,
+    )
+
+    project, inputs, prepared, state = _product_deletion_prefix_fixture(tmp_path)
+    (inputs / "retained-empty-parent").rmdir()
+    before = {
+        path.relative_to(inputs): path.read_bytes()
+        for path in inputs.rglob("*")
+        if path.is_file()
+    }
+
+    with pytest.raises(ProductInputMutationError, match="directory topology drift"):
+        authenticate_pending_product_input_mutation(
+            project,
+            state,
+            prepared.marker.to_dict(),
+            prepared._manifest["operations"],
+            staged_inputs=prepared._transaction_root / "work/product-inputs",
+        )
+
+    assert {
+        path.relative_to(inputs): path.read_bytes()
+        for path in inputs.rglob("*")
+        if path.is_file()
+    } == before
+
+
+def test_product_recovery_authenticates_nonpackage_operations_in_global_prefix(
+    tmp_path: Path,
+) -> None:
+    from echelon.product_input_transaction import (
+        ProductInputMutationError,
+        authenticate_pending_product_input_mutation,
+    )
+
+    project, inputs, prepared, state = _product_deletion_prefix_fixture(tmp_path)
+    nonpackage = next(
+        operation
+        for operation in prepared._manifest["operations"]
+        if operation["target"].endswith("manual-note.txt")
+    )
+    _install_publication_operation(project, prepared, nonpackage)
+    retained = inputs / "retained-empty-parent/remove.bin"
+    shutil.copyfile(
+        prepared._transaction_root
+        / "work/product-inputs-old/retained-empty-parent/remove.bin",
+        retained,
+    )
+    retained.chmod(0o600)
+    before = {
+        path.relative_to(inputs): path.read_bytes()
+        for path in inputs.rglob("*")
+        if path.is_file()
+    }
+
+    with pytest.raises(ProductInputMutationError, match="global prefix"):
+        authenticate_pending_product_input_mutation(
+            project,
+            state,
+            prepared.marker.to_dict(),
+            prepared._manifest["operations"],
+            staged_inputs=prepared._transaction_root / "work/product-inputs",
+        )
+
+    assert {
+        path.relative_to(inputs): path.read_bytes()
+        for path in inputs.rglob("*")
+        if path.is_file()
+    } == before
 
 
 def test_controller_product_effect_recovery_rejects_nonprefix_postimage_without_writes(

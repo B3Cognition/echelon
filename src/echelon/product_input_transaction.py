@@ -23,6 +23,10 @@ from harness.state_transaction_namespace import (
     validate_pending_external_publication,
     validate_product_input_mutation,
 )
+from harness.squad_publication import (
+    PublicationError,
+    authenticate_publication_prefix,
+)
 
 
 class ProductInputMutationError(RuntimeError):
@@ -335,6 +339,85 @@ def _current_file_image(path: Path) -> dict[str, object]:
     }
 
 
+def _package_directory_modes(root: Path) -> dict[str, int]:
+    try:
+        root_metadata = root.lstat()
+    except OSError as exc:
+        raise ProductInputMutationError("product input package root changed") from exc
+    if stat.S_ISLNK(root_metadata.st_mode) or not stat.S_ISDIR(root_metadata.st_mode):
+        raise ProductInputMutationError("product input package root changed")
+    directories = {".": stat.S_IMODE(root_metadata.st_mode)}
+    for path in sorted(root.rglob("*")):
+        try:
+            metadata = path.lstat()
+        except OSError as exc:
+            raise ProductInputMutationError(
+                "product input package directory changed"
+            ) from exc
+        if stat.S_ISLNK(metadata.st_mode):
+            raise ProductInputMutationError("product input package contains a symlink")
+        if stat.S_ISDIR(metadata.st_mode):
+            directories[path.relative_to(root).as_posix()] = stat.S_IMODE(
+                metadata.st_mode
+            )
+    return directories
+
+
+def restore_product_input_directory_modes(
+    staged_old_inputs: Path,
+    staged_inputs: Path,
+) -> None:
+    """Retain every old directory and mode; new publisher parents stay 0755."""
+    old_modes = _package_directory_modes(Path(staged_old_inputs))
+    post_root = Path(staged_inputs)
+    for relative, mode in sorted(
+        old_modes.items(),
+        key=lambda item: (-len(Path(item[0]).parts), item[0]),
+    ):
+        target = post_root if relative == "." else post_root / relative
+        try:
+            metadata = target.lstat()
+        except OSError as exc:
+            raise ProductInputMutationError(
+                "staged product input removed a retained directory"
+            ) from exc
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+            raise ProductInputMutationError(
+                "staged product input replaced a retained directory"
+            )
+        try:
+            target.chmod(mode)
+        except OSError as exc:
+            raise ProductInputMutationError(
+                "staged product input directory mode cannot be restored"
+            ) from exc
+
+
+def _expected_publisher_directories(
+    old_directories: Mapping[str, int],
+    operations: list[Mapping[str, object]],
+    *,
+    package_prefix: Path,
+    boundary: int,
+) -> dict[str, int]:
+    expected = dict(old_directories)
+    prefix_text = package_prefix.as_posix().rstrip("/") + "/"
+    for operation in operations[:boundary]:
+        target = operation.get("target")
+        if (
+            operation.get("action") != "write"
+            or type(target) is not str
+            or not target.startswith(prefix_text)
+        ):
+            continue
+        relative = Path(target[len(prefix_text):])
+        for parent in reversed(relative.parents):
+            if parent == Path("."):
+                continue
+            expected.setdefault(parent.as_posix(), 0o755)
+    return expected
+
+
 def authenticate_pending_product_input_mutation(
     project_root: Path,
     state: Mapping[str, object],
@@ -367,6 +450,12 @@ def authenticate_pending_product_input_mutation(
         validate_immutable_product_input_package(staged_inputs, product_inputs)
     except ProductInputError as exc:
         raise ProductInputMutationError(str(exc)) from exc
+    staged_old_inputs = staged_inputs.with_name("product-inputs-old")
+    try:
+        if immutable_product_input_tree_digest(staged_old_inputs) != mutation["old_tree_hash"]:
+            raise ProductInputMutationError("staged product input preimage changed")
+    except ProductInputError as exc:
+        raise ProductInputMutationError(str(exc)) from exc
     root = Path(project_root).resolve()
     inputs = Path(str(mutation["inputs_dir"]))
     if not inputs.is_absolute():
@@ -378,6 +467,13 @@ def authenticate_pending_product_input_mutation(
         package_prefix = inputs.relative_to(root)
     except ValueError as exc:  # pragma: no cover - guarded above
         raise ProductInputMutationError("product input mutation package escapes project root") from exc
+    try:
+        boundary = authenticate_publication_prefix(root, operations)
+    except PublicationError as exc:
+        raise ProductInputMutationError(
+            "product input publication is not an exact global prefix"
+        ) from exc
+    operation_list = list(operations)
     targets, by_relative = _operation_targets(
         operations,
         package_prefix=package_prefix,
@@ -388,6 +484,27 @@ def authenticate_pending_product_input_mutation(
         or path_count != mutation["owned_path_count"]
     ):
         raise ProductInputMutationError("product input mutation owned paths changed")
+    old_directories = _package_directory_modes(staged_old_inputs)
+    staged_post_directories = _package_directory_modes(staged_inputs)
+    expected_post_directories = _expected_publisher_directories(
+        old_directories,
+        operation_list,
+        package_prefix=package_prefix,
+        boundary=len(operation_list),
+    )
+    if staged_post_directories != expected_post_directories:
+        raise ProductInputMutationError(
+            "staged product input directory topology is not publishable"
+        )
+    current_directories = _package_directory_modes(inputs)
+    expected_current_directories = _expected_publisher_directories(
+        old_directories,
+        operation_list,
+        package_prefix=package_prefix,
+        boundary=boundary,
+    )
+    if current_directories != expected_current_directories:
+        raise ProductInputMutationError("product input package has directory topology drift")
     try:
         current_hash = immutable_product_input_tree_digest(inputs)
     except ProductInputError as exc:
@@ -398,48 +515,6 @@ def authenticate_pending_product_input_mutation(
     current_files = _package_files(inputs)
     if set(path.as_posix() for path in current_files) - set(by_relative):
         raise ProductInputMutationError("product input package has unowned drift")
-    expected_directories = {
-        parent.as_posix()
-        for relative, operation in by_relative.items()
-        if _current_file_image(inputs / relative)["kind"] == "file"
-        for parent in Path(relative).parents
-        if parent != Path(".")
-    }
-    actual_directories: set[str] = set()
-    try:
-        root_metadata = inputs.lstat()
-    except OSError as exc:
-        raise ProductInputMutationError("product input package root changed") from exc
-    if (
-        not stat.S_ISDIR(root_metadata.st_mode)
-        or stat.S_ISLNK(root_metadata.st_mode)
-        or stat.S_IMODE(root_metadata.st_mode) != 0o755
-    ):
-        raise ProductInputMutationError("product input package directory mode drift")
-    for path in sorted(inputs.rglob("*")):
-        metadata = path.lstat()
-        relative = path.relative_to(inputs).as_posix()
-        if stat.S_ISDIR(metadata.st_mode):
-            actual_directories.add(relative)
-            if stat.S_IMODE(metadata.st_mode) != 0o755:
-                raise ProductInputMutationError("product input package directory mode drift")
-    if actual_directories != expected_directories:
-        raise ProductInputMutationError("product input package has directory topology drift")
-    reached_preimage = False
-    for relative, operation in by_relative.items():
-        current = _current_file_image(inputs / relative)
-        preimage = dict(operation["preimage"])
-        postimage = dict(operation["postimage"])
-        if current == preimage == postimage:
-            continue
-        if current == preimage:
-            reached_preimage = True
-            continue
-        if current == postimage and not reached_preimage:
-            continue
-        if current != preimage and current != postimage:
-            raise ProductInputMutationError("product input package has partial target drift")
-        raise ProductInputMutationError("product input package is not an exact publication prefix")
     return mutation
 
 

@@ -8085,6 +8085,7 @@ def _cmd_repair_traceability_locked(
         build_product_input_mutation,
         product_input_tree_identity,
         require_product_input_mutation_postimage,
+        restore_product_input_directory_modes,
     )
     from echelon.product_inputs import (
         immutable_product_input_tree_digest,
@@ -8159,13 +8160,14 @@ def _cmd_repair_traceability_locked(
             squad_dir,
             uuid4().hex,
         )
+        staged_old_inputs = transaction.build_path("work/product-inputs-old")
         staged_inputs = transaction.build_path("work/product-inputs")
         prepared = None
         try:
             source_identity = product_input_tree_identity(inputs_dir)
             shutil.copytree(
                 inputs_dir,
-                staged_inputs,
+                staged_old_inputs,
                 symlinks=True,
                 copy_function=shutil.copy2,
             )
@@ -8177,17 +8179,31 @@ def _cmd_repair_traceability_locked(
                 )
                 != old_tree_hash
                 or product_input_tree_identity(inputs_dir) != source_identity
-                or immutable_product_input_tree_digest(staged_inputs)
+                or immutable_product_input_tree_digest(staged_old_inputs)
                 != old_tree_hash
             ):
                 raise ProductInputMutationError(
                     "product input package changed during repair staging"
+                )
+            shutil.copytree(
+                staged_old_inputs,
+                staged_inputs,
+                symlinks=True,
+                copy_function=shutil.copy2,
+            )
+            if immutable_product_input_tree_digest(staged_inputs) != old_tree_hash:
+                raise ProductInputMutationError(
+                    "staged product input preimage changed during repair staging"
                 )
             repair = repair_product_input_traceability(
                 staged_inputs / "traceability.json",
                 spec_dir / "tasks.md",
                 targets,
                 apply=True,
+            )
+            restore_product_input_directory_modes(
+                staged_old_inputs,
+                staged_inputs,
             )
             if repair.blockers or not repair.removed:
                 transaction.seal().discard()

@@ -323,6 +323,154 @@ def test_spec_add_input_completed_retry_authenticates_live_postimage(
         add_input_to_active_run(project, ["reference:sources/added.md"])
 
 
+def test_spec_add_input_rejects_forged_completed_receipt_without_ledger(
+    tmp_path: Path,
+) -> None:
+    from echelon.product_input_transaction import product_input_request_sha256
+    from echelon.product_inputs import (
+        ProductInputDeclaration,
+        parse_input_declaration,
+        resolve_product_inputs,
+    )
+    from echelon.spec_add_input import SpecAddInputError, add_input_to_active_run
+
+    project = tmp_path / "workspace"
+    source_root = project / "sources"
+    source_root.mkdir(parents=True)
+    (source_root / "base.md").write_text("base\n", encoding="utf-8")
+    (source_root / "added.md").write_text("added\n", encoding="utf-8")
+    resolution = resolve_product_inputs(
+        project,
+        project / "runs/run-1",
+        [parse_input_declaration("reference:sources/base.md")],
+    )
+    run_dir = _write_current_run(project, _base_state(resolution.inputs_dir))
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    declaration = ProductInputDeclaration("reference", "sources/added.md")
+    operation_id = "f" * 32
+    forged_entry = {
+        "id": "001",
+        "command": "echelon spec add-input",
+        "operation_id": operation_id,
+        "resources": [{}],
+        "duplicates": [],
+    }
+    evidence_digest = lambda value: hashlib.sha256(
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    state["add_input_recovery"] = {
+        "schema_version": 3,
+        "request_sha256": product_input_request_sha256(
+            "echelon spec add-input", [declaration]
+        ),
+        "product_input_tree_hash": state["product_inputs"]["tree_hash"],
+        "command": "echelon spec add-input",
+        "operation_id": operation_id,
+        "attachment_ids": ["001"],
+        "attachment_id": "001",
+        "added_count": 1,
+        "duplicate_count": 0,
+        "original_declaration_count": 1,
+        "attached_declaration_count": 1,
+        "original_declarations": [
+            {"role": "reference", "location": "sources/base"}
+        ],
+        "attached_declarations": [
+            {"role": "reference", "location": "sources/added.md"}
+        ],
+        "attachment_ledger_entry": forged_entry,
+        "attachment_ledger_entry_sha256": evidence_digest(forged_entry),
+        "product_input_attachments_sha256": evidence_digest([]),
+        "previous_blocked_reason": "investigation_access_required",
+        "previous_phase1_investigate_dispatch_count": 5,
+    }
+    (run_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+    with pytest.raises(SpecAddInputError, match="ledger"):
+        add_input_to_active_run(project, ["reference:sources/added.md"])
+
+
+@pytest.mark.parametrize(
+    "drift",
+    [
+        "attachment_id",
+        "declarations",
+        "declaration_count",
+        "count",
+        "operation_id",
+        "summary",
+        "ledger",
+    ],
+)
+def test_spec_add_input_completed_retry_binds_attachment_evidence(
+    tmp_path: Path,
+    drift: str,
+) -> None:
+    from echelon.product_inputs import (
+        immutable_product_input_tree_digest,
+        parse_input_declaration,
+        resolve_product_inputs,
+    )
+    from echelon.spec_add_input import SpecAddInputError, add_input_to_active_run
+
+    project = tmp_path / "workspace"
+    source_root = project / "sources"
+    source_root.mkdir(parents=True)
+    (source_root / "base.md").write_text("base\n", encoding="utf-8")
+    (source_root / "added.md").write_text("added\n", encoding="utf-8")
+    resolution = resolve_product_inputs(
+        project,
+        project / "runs/run-1",
+        [parse_input_declaration("reference:sources/base.md")],
+    )
+    run_dir = _write_current_run(project, _base_state(resolution.inputs_dir))
+    add_input_to_active_run(project, ["reference:sources/added.md"])
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    receipt = state["add_input_recovery"]
+    if drift == "attachment_id":
+        receipt["attachment_id"] = "999"
+        receipt["attachment_ids"] = ["999"]
+    elif drift == "declarations":
+        receipt["attached_declarations"][0]["location"] = "sources/forged.md"
+    elif drift == "declaration_count":
+        receipt["attached_declaration_count"] = 99
+    elif drift == "count":
+        receipt["added_count"] = 99
+    elif drift == "operation_id":
+        receipt["operation_id"] = "e" * 32
+        receipt["attachment_ledger_entry"]["operation_id"] = "e" * 32
+        receipt["attachment_ledger_entry_sha256"] = hashlib.sha256(
+            json.dumps(
+                receipt["attachment_ledger_entry"],
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()
+    elif drift == "summary":
+        state["product_input_attachments"] = []
+    else:
+        ledger_path = resolution.inputs_dir / "attachment-ledger.json"
+        ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+        ledger["attachments"][0]["command"] = "forged command"
+        ledger_path.write_text(
+            json.dumps(ledger, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        current_hash = immutable_product_input_tree_digest(resolution.inputs_dir)
+        state["product_inputs"]["tree_hash"] = current_hash
+        receipt["product_input_tree_hash"] = current_hash
+    (run_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+    with pytest.raises(SpecAddInputError):
+        add_input_to_active_run(project, ["reference:sources/added.md"])
+
+
 def test_spec_add_input_persists_only_logical_live_package_paths(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -375,6 +523,82 @@ def test_spec_add_input_persists_only_logical_live_package_paths(
     assert transient not in package_bytes
     assert transient not in b"\n".join(staged_bytes)
     assert str(resolution.inputs_dir).encode() in package_bytes
+
+
+def test_spec_add_input_publication_uses_canonical_directory_modes_under_umask(
+    tmp_path: Path,
+) -> None:
+    import os
+    import stat
+
+    from echelon.product_inputs import parse_input_declaration, resolve_product_inputs
+    from echelon.spec_add_input import add_input_to_active_run
+
+    project = tmp_path / "workspace"
+    source_root = project / "sources"
+    source_root.mkdir(parents=True)
+    (source_root / "base.md").write_text("base\n", encoding="utf-8")
+    (source_root / "added.md").write_text("added\n", encoding="utf-8")
+    resolution = resolve_product_inputs(
+        project,
+        project / "runs/run-1",
+        [parse_input_declaration("reference:sources/base.md")],
+    )
+    _write_current_run(project, _base_state(resolution.inputs_dir))
+
+    previous_umask = os.umask(0o077)
+    try:
+        add_input_to_active_run(project, ["reference:sources/added.md"])
+    finally:
+        os.umask(previous_umask)
+
+    assert stat.S_IMODE((resolution.inputs_dir / "attachments").stat().st_mode) == 0o755
+    assert stat.S_IMODE((resolution.inputs_dir / "attachments/001").stat().st_mode) == 0o755
+    assert stat.S_IMODE((resolution.inputs_dir / "attachments/001/snapshots").stat().st_mode) == 0o755
+
+
+def test_spec_add_input_preserves_existing_mixed_package_modes(
+    tmp_path: Path,
+) -> None:
+    import stat
+
+    from echelon.product_inputs import (
+        immutable_product_input_tree_digest,
+        parse_input_declaration,
+        resolve_product_inputs,
+    )
+    from echelon.spec_add_input import add_input_to_active_run
+
+    project = tmp_path / "workspace"
+    source_root = project / "sources"
+    source_root.mkdir(parents=True)
+    (source_root / "base.md").write_text("base\n", encoding="utf-8")
+    (source_root / "added.md").write_text("added\n", encoding="utf-8")
+    resolution = resolve_product_inputs(
+        project,
+        project / "runs/run-1",
+        [parse_input_declaration("reference:sources/base.md")],
+    )
+    mixed = resolution.inputs_dir / "private-tools"
+    mixed.mkdir()
+    private = mixed / "private.bin"
+    executable = mixed / "runner"
+    private.write_bytes(b"private")
+    executable.write_bytes(b"#!/bin/sh\n")
+    mixed.chmod(0o710)
+    private.chmod(0o600)
+    executable.chmod(0o751)
+    state = _base_state(resolution.inputs_dir)
+    state["product_inputs"]["tree_hash"] = immutable_product_input_tree_digest(
+        resolution.inputs_dir
+    )
+    _write_current_run(project, state)
+
+    add_input_to_active_run(project, ["reference:sources/added.md"])
+
+    assert stat.S_IMODE(mixed.stat().st_mode) == 0o710
+    assert stat.S_IMODE(private.stat().st_mode) == 0o600
+    assert stat.S_IMODE(executable.stat().st_mode) == 0o751
 
 
 def test_cmd_spec_add_input_parses_repeatable_inputs(monkeypatch, capsys) -> None:

@@ -2166,6 +2166,57 @@ class TestAgentResultIntegrity:
         return ctrl, store, result, active_spec_dir, published_spec_dir
 
     @staticmethod
+    def _attach_ready_phase_a_product_inputs(
+        tmp_path: Path,
+        ctrl: SquadController,
+        store: SquadStateStore,
+        active_spec_dir: Path,
+    ) -> tuple[Path, str]:
+        from echelon.product_inputs import (
+            apply_product_input_updates,
+            immutable_product_input_tree_digest,
+            parse_input_declaration,
+            resolve_product_inputs,
+        )
+
+        source = tmp_path / "requirements.md"
+        source.write_text("A normative product requirement.\n", encoding="utf-8")
+        resolution = resolve_product_inputs(
+            tmp_path,
+            ctrl._squad_dir,
+            [parse_input_declaration("requirement:requirements.md")],
+        )
+        unit_id = json.loads(
+            resolution.catalog_path.read_text(encoding="utf-8")
+        )["units"][0]["id"]
+        (active_spec_dir / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=build req=FR-001 "
+            "depends=none target=sources/app\n",
+            encoding="utf-8",
+        )
+        apply_product_input_updates(
+            resolution.traceability_path,
+            [
+                {
+                    "input_unit_id": unit_id,
+                    "disposition": "included",
+                    "rationale": "Mapped before final documentation.",
+                    "spec_ids": ["FR-001"],
+                    "task_ids": ["T-001"],
+                    "targets": ["sources/app"],
+                }
+            ],
+        )
+        product_inputs = resolution.state_payload(tmp_path)
+        product_inputs["tree_hash"] = immutable_product_input_tree_digest(
+            resolution.inputs_dir
+        )
+        state = store.load()
+        state["product_inputs"] = product_inputs
+        store.save(state)
+        return resolution.inputs_dir, str(product_inputs["tree_hash"])
+
+    @staticmethod
     def _visible_tree_bytes(root: Path) -> dict[str, bytes]:
         return {
             path.relative_to(root).as_posix(): path.read_bytes()
@@ -2450,6 +2501,234 @@ class TestAgentResultIntegrity:
         assert (published / "spec.md").read_text(encoding="utf-8").startswith(
             "# active spec.md"
         )
+
+    def test_phase4_read_only_product_inputs_use_authenticated_snapshot(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        from echelon.product_inputs import immutable_product_input_tree_digest
+
+        ctrl, store, result, active, published = (
+            self._phase_a_publication_staging_fixture(tmp_path)
+        )
+        _, expected_hash = self._attach_ready_phase_a_product_inputs(
+            tmp_path, ctrl, store, active
+        )
+
+        prepared = ctrl._prepare_external_phase_effects(
+            result,
+            "phase4-document",
+            store.load(),
+            manual_phase_run=False,
+        )
+
+        assert prepared is not None
+        snapshot = prepared._transaction_root / "work/product-inputs"
+        assert immutable_product_input_tree_digest(snapshot) == expected_hash
+        assert not (published / "inputs/manifest.json").exists()
+        prepared.publish()
+        assert immutable_product_input_tree_digest(published / "inputs") == expected_hash
+
+    def test_controller_tree_copy_preserves_all_modes_under_restrictive_umask(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        import os
+        import stat
+
+        ctrl, _ = _controller(tmp_path)
+        source = tmp_path / "mode-source"
+        nested = source / "private-bin"
+        nested.mkdir(parents=True)
+        private = nested / "private.txt"
+        executable = nested / "tool"
+        private.write_bytes(b"private")
+        executable.write_bytes(b"#!/bin/sh\n")
+        source.chmod(0o751)
+        nested.chmod(0o710)
+        private.chmod(0o600)
+        executable.chmod(0o751)
+        destination = tmp_path / "mode-destination"
+        previous_umask = os.umask(0o077)
+        try:
+            ctrl._copy_controller_tree(
+                source,
+                destination,
+                exclude_echelon=False,
+            )
+        finally:
+            os.umask(previous_umask)
+
+        assert stat.S_IMODE(destination.stat().st_mode) == 0o751
+        assert stat.S_IMODE((destination / "private-bin").stat().st_mode) == 0o710
+        assert stat.S_IMODE((destination / "private-bin/private.txt").stat().st_mode) == 0o600
+        assert stat.S_IMODE((destination / "private-bin/tool").stat().st_mode) == 0o751
+
+    def test_phase4_publication_repairs_mode_only_file_drift(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        import stat
+
+        ctrl, store, result, active, published = (
+            self._phase_a_publication_staging_fixture(tmp_path)
+        )
+        active_spec = active / "spec.md"
+        published_spec = published / "spec.md"
+        published_spec.write_bytes(active_spec.read_bytes())
+        active_spec.chmod(0o600)
+        published_spec.chmod(0o644)
+
+        prepared = ctrl._prepare_external_phase_effects(
+            result,
+            "phase4-document",
+            store.load(),
+            manual_phase_run=False,
+        )
+
+        assert prepared is not None
+        operation = next(
+            item
+            for item in prepared._manifest["operations"]
+            if item["target"] == "specs/001-themed-ascii-animation/spec.md"
+        )
+        assert operation["postimage"]["mode"] == 0o600
+        prepared.publish()
+        assert stat.S_IMODE(published_spec.stat().st_mode) == 0o600
+
+    @pytest.mark.parametrize("tamper", ["bytes", "mode"])
+    def test_phase4_rejects_unauthenticated_live_product_inputs_before_publish(
+        self,
+        tmp_path: Path,
+        tamper: str,
+    ) -> None:
+        from harness.squad import _ProductInputCommitError
+
+        ctrl, store, result, active, published = (
+            self._phase_a_publication_staging_fixture(tmp_path)
+        )
+        inputs, _ = self._attach_ready_phase_a_product_inputs(
+            tmp_path, ctrl, store, active
+        )
+        target = inputs / "manifest.json"
+        if tamper == "bytes":
+            target.write_bytes(target.read_bytes() + b" ")
+        else:
+            target.chmod(0o600)
+        before = self._visible_tree_bytes(published)
+
+        with pytest.raises(_ProductInputCommitError) as caught:
+            ctrl._prepare_external_phase_effects(
+                result,
+                "phase4-document",
+                store.load(),
+                manual_phase_run=False,
+            )
+
+        assert "tree hash drift" in caught.value.reason
+        assert self._visible_tree_bytes(published) == before
+
+    @pytest.mark.parametrize("race", ["source", "snapshot"])
+    def test_phase4_rejects_product_input_copy_race_before_publish(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        race: str,
+    ) -> None:
+        from harness.squad import _ProductInputCommitError
+
+        ctrl, store, result, active, published = (
+            self._phase_a_publication_staging_fixture(tmp_path)
+        )
+        inputs, _ = self._attach_ready_phase_a_product_inputs(
+            tmp_path, ctrl, store, active
+        )
+        before = self._visible_tree_bytes(published)
+        original_copy = ctrl._copy_controller_tree
+
+        def race_copy(source, destination, *, exclude_echelon):
+            copied = original_copy(
+                source, destination, exclude_echelon=exclude_echelon
+            )
+            if source == inputs and destination.name == "product-inputs":
+                target = (
+                    inputs / "manifest.json"
+                    if race == "source"
+                    else destination / "manifest.json"
+                )
+                target.write_bytes(target.read_bytes() + b" ")
+            return copied
+
+        monkeypatch.setattr(ctrl, "_copy_controller_tree", race_copy)
+
+        with pytest.raises(_ProductInputCommitError) as caught:
+            ctrl._prepare_external_phase_effects(
+                result,
+                "phase4-document",
+                store.load(),
+                manual_phase_run=False,
+            )
+
+        assert (
+            "changed during staging" in caught.value.reason
+            or "tree hash drift" in caught.value.reason
+        )
+        assert self._visible_tree_bytes(published) == before
+
+    @pytest.mark.parametrize("retry_tamper", [None, "bytes", "mode"])
+    def test_phase4_publication_retry_reauthenticates_live_product_inputs(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        retry_tamper: str | None,
+    ) -> None:
+        from echelon.product_inputs import immutable_product_input_tree_digest
+
+        ctrl, store, _, active, published = (
+            self._phase_a_publication_staging_fixture(tmp_path)
+        )
+        inputs, expected_hash = self._attach_ready_phase_a_product_inputs(
+            tmp_path, ctrl, store, active
+        )
+        state = store.load()
+        state["phase"] = "DONE"
+        state["status"] = "done"
+        store.save(state)
+        original_publish = PreparedSquadPublication.publish
+        calls = 0
+
+        def fail_first(publication, fault_hook=None):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise PublicationError("publish_io")
+            return original_publish(publication, fault_hook=fault_hook)
+
+        monkeypatch.setattr(
+            PreparedSquadPublication,
+            "publish",
+            fail_first,
+        )
+
+        readiness = ctrl._publish_terminal_phase_a_artifacts_if_available()
+        assert readiness is not None and not readiness.ready
+        before = self._visible_tree_bytes(published)
+        if retry_tamper == "bytes":
+            target = inputs / "manifest.json"
+            target.write_bytes(target.read_bytes() + b" ")
+        elif retry_tamper == "mode":
+            (inputs / "manifest.json").chmod(0o600)
+
+        recovery = ctrl._drain_pending_controller_completion()
+
+        if retry_tamper is None:
+            assert recovery.recovered
+            assert immutable_product_input_tree_digest(published / "inputs") == expected_hash
+            assert PENDING_EXTERNAL_PUBLICATION_KEY not in store.load()
+        else:
+            assert not recovery.recovered
+            assert self._visible_tree_bytes(published) == before
+            assert PENDING_EXTERNAL_PUBLICATION_KEY in store.load()
 
     def test_terminal_reconciliation_commits_marker_before_visible_write(
         self,

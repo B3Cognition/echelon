@@ -198,6 +198,105 @@ def test_seal_writes_a_canonical_sorted_exact_image_manifest(
     assert (project_root / "middle.txt").read_bytes() == b"remove me"
 
 
+def test_publish_creates_canonical_parent_modes_under_restrictive_umask(
+    tmp_path: Path,
+) -> None:
+    project_root, squad_dir = _roots(tmp_path)
+    transaction = SquadPublicationTransaction.begin(
+        project_root,
+        squad_dir,
+        TRANSACTION_ID,
+    )
+    staged = _staged_file(transaction, "build/result.txt", b"payload")
+    staged.chmod(0o751)
+    transaction.add_write(
+        Path("created/parents/result.txt"),
+        staged,
+        owned_paths={Path("created/parents/result.txt")},
+    )
+    prepared = transaction.seal()
+
+    previous_umask = os.umask(0o077)
+    try:
+        prepared.publish()
+    finally:
+        os.umask(previous_umask)
+
+    assert stat.S_IMODE((project_root / "created").stat().st_mode) == 0o755
+    assert stat.S_IMODE((project_root / "created/parents").stat().st_mode) == 0o755
+    assert stat.S_IMODE((project_root / "created/parents/result.txt").stat().st_mode) == 0o751
+
+
+def test_publication_control_directories_ignore_restrictive_umask(
+    tmp_path: Path,
+) -> None:
+    project_root, squad_dir = _roots(tmp_path)
+    previous_umask = os.umask(0o077)
+    try:
+        transaction = SquadPublicationTransaction.begin(
+            project_root,
+            squad_dir,
+            TRANSACTION_ID,
+        )
+        staged = _staged_file(transaction, "build/result.txt", b"payload")
+        transaction.add_write(
+            Path("result.txt"),
+            staged,
+            owned_paths={Path("result.txt")},
+        )
+        prepared = transaction.seal()
+        prepared.publish()
+    finally:
+        os.umask(previous_umask)
+
+    assert stat.S_IMODE((squad_dir / ".publication-outbox").stat().st_mode) == 0o755
+    assert stat.S_IMODE(
+        (squad_dir / ".publication-outbox" / TRANSACTION_ID).stat().st_mode
+    ) == 0o755
+    assert stat.S_IMODE((project_root / ".echelon/runtime").stat().st_mode) == 0o755
+
+
+def test_publish_rejects_later_postimage_before_earlier_preimage_without_writes(
+    tmp_path: Path,
+) -> None:
+    project_root, squad_dir = _roots(tmp_path)
+    transaction = SquadPublicationTransaction.begin(
+        project_root,
+        squad_dir,
+        TRANSACTION_ID,
+    )
+    owned = {Path("a.txt"), Path("b.txt"), Path("c.txt")}
+    staged: dict[str, Path] = {}
+    for name in ("a", "b", "c"):
+        target = project_root / f"{name}.txt"
+        target.write_bytes(f"old-{name}".encode())
+        stage = _staged_file(
+            transaction,
+            f"build/{name}.txt",
+            f"new-{name}".encode(),
+        )
+        staged[name] = stage
+        transaction.add_write(
+            Path(f"{name}.txt"),
+            stage,
+            owned_paths=owned,
+        )
+    prepared = transaction.seal()
+    (project_root / "c.txt").write_bytes(b"new-c")
+    (project_root / "c.txt").chmod(stat.S_IMODE(staged["c"].stat().st_mode))
+    before = {
+        path.name: (path.read_bytes(), stat.S_IMODE(path.stat().st_mode))
+        for path in project_root.glob("*.txt")
+    }
+
+    _assert_error_code("target_drift", prepared.publish)
+
+    assert {
+        path.name: (path.read_bytes(), stat.S_IMODE(path.stat().st_mode))
+        for path in project_root.glob("*.txt")
+    } == before
+
+
 def test_seal_flushes_stages_and_manifest_and_syncs_directories(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

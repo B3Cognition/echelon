@@ -664,6 +664,7 @@ def _open_parent_directory(
                         _directory_open_flags(),
                         dir_fd=current_fd,
                     )
+                    os.fchmod(next_fd, 0o755)
                     os.fsync(next_fd)
                 except FileExistsError:
                     try:
@@ -939,6 +940,39 @@ def _validate_manifest(
     }
 
 
+def authenticate_publication_prefix(
+    project_root: Path,
+    operations: object,
+) -> int:
+    """Require one global manifest-order post-prefix followed by preimages."""
+    if type(operations) is not list:
+        _raise("manifest_invalid")
+    lower_boundary = 0
+    upper_boundary = len(operations)
+    for index, operation in enumerate(operations):
+        if type(operation) is not dict:
+            _raise("manifest_invalid")
+        target = _normalize_relative_path(operation.get("target"))
+        preimage = _validate_image(operation.get("preimage"))
+        postimage = _validate_image(operation.get("postimage"))
+        current = _target_image(
+            Path(project_root),
+            target,
+            invalid_code="target_drift",
+        )
+        if current != preimage and current != postimage:
+            _raise("target_drift")
+        if preimage == postimage:
+            continue
+        if current == postimage:
+            lower_boundary = max(lower_boundary, index + 1)
+        else:
+            upper_boundary = min(upper_boundary, index)
+        if lower_boundary > upper_boundary:
+            _raise("target_drift")
+    return lower_boundary
+
+
 def _directory_identity(metadata: os.stat_result) -> tuple[int, int, int]:
     return (metadata.st_dev, metadata.st_ino, metadata.st_mode)
 
@@ -982,8 +1016,12 @@ def _open_or_create_control_directory(
     try:
         _verify_directory_entry(parent_fd, name, opened_fd)
         if created:
-            os.fsync(opened_fd)
-            os.fsync(parent_fd)
+            try:
+                os.fchmod(opened_fd, 0o755)
+                os.fsync(opened_fd)
+                os.fsync(parent_fd)
+            except OSError:
+                _raise("publish_io")
         return opened_fd
     except BaseException:
         os.close(opened_fd)
@@ -1730,6 +1768,10 @@ class PreparedSquadPublication:
             try:
                 operations = list(verified._manifest["operations"])
                 pinned.verify()
+                authenticate_publication_prefix(
+                    verified._project_root,
+                    operations,
+                )
                 for position, operation in enumerate(operations):
                     self._run_fault_hook(fault_hook, position)
                     pinned.verify()
@@ -1888,8 +1930,10 @@ class SquadPublicationTransaction:
             invalid_code="manifest_invalid",
         )
         try:
+            outbox_created = False
             try:
                 os.mkdir(_OUTBOX_DIRECTORY, dir_fd=squad_fd)
+                outbox_created = True
                 os.fsync(squad_fd)
             except FileExistsError:
                 pass
@@ -1902,6 +1946,11 @@ class SquadPublicationTransaction:
                 invalid_code="manifest_invalid",
             )
             try:
+                if outbox_created:
+                    try:
+                        os.fchmod(outbox_fd, 0o755)
+                    except OSError:
+                        _raise("publish_io")
                 try:
                     os.mkdir(validated_id, dir_fd=outbox_fd)
                 except FileExistsError:
@@ -1915,8 +1964,12 @@ class SquadPublicationTransaction:
                     invalid_code="publish_io",
                 )
                 try:
-                    os.fsync(transaction_fd)
-                    os.fsync(outbox_fd)
+                    try:
+                        os.fchmod(transaction_fd, 0o755)
+                        os.fsync(transaction_fd)
+                        os.fsync(outbox_fd)
+                    except OSError:
+                        _raise("publish_io")
                 except OSError:
                     _raise("publish_io")
                 finally:

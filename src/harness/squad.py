@@ -159,10 +159,12 @@ from echelon.product_input_transaction import (
     build_product_input_mutation,
     product_input_tree_identity,
     require_product_input_mutation_postimage,
+    restore_product_input_directory_modes,
 )
 from echelon.product_inputs import (
     ProductInputError,
     immutable_product_input_tree_digest,
+    validate_immutable_product_input_package,
 )
 from harness.prompt_markdown import read_prompt_markdown
 from harness.terminal import color_text
@@ -1781,6 +1783,17 @@ class SquadController:
                             self._squad_dir,
                             expected_publication,
                         )
+                        if (
+                            (
+                                route.get("from_phase") == "phase4-document"
+                                or origin == "terminal"
+                            )
+                            and PRODUCT_INPUT_MUTATION_KEY not in state
+                        ):
+                            self._authenticate_phase_a_product_input_snapshot(
+                                staged_publication,
+                                state,
+                            )
                         authenticate_pending_product_input_mutation(
                             self._project_root,
                             state,
@@ -5498,8 +5511,10 @@ class SquadController:
             source,
             exclude_echelon=exclude_echelon,
         )
+        source_root_mode = stat.S_IMODE(os.lstat(source).st_mode)
         destination.mkdir(parents=True, exist_ok=True)
         directories_to_copy: list[Path] = []
+        directory_modes: dict[Path, int] = {}
         for current, directories, _ in os.walk(
             source,
             topdown=True,
@@ -5517,6 +5532,9 @@ class SquadController:
                     continue
                 retained.append(name)
                 directories_to_copy.append(relative)
+                directory_modes[relative] = stat.S_IMODE(
+                    os.lstat(current_path / name).st_mode
+                )
             directories[:] = retained
         for relative in sorted(
             directories_to_copy,
@@ -5537,13 +5555,22 @@ class SquadController:
             existing = self._lstat_or_none(target)
             if existing is not None and stat.S_ISDIR(existing.st_mode):
                 shutil.rmtree(target)
-            elif existing is not None and (
-                stat.S_ISLNK(existing.st_mode)
-                or not stat.S_ISREG(existing.st_mode)
-            ):
-                raise OSError("virtual publication tree contains an unsafe file")
+            elif existing is not None:
+                if (
+                    stat.S_ISLNK(existing.st_mode)
+                    or not stat.S_ISREG(existing.st_mode)
+                ):
+                    raise OSError("virtual publication tree contains an unsafe file")
+                target.unlink()
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes((source / relative).read_bytes())
+            target.chmod(stat.S_IMODE(os.lstat(source / relative).st_mode))
+        for relative in sorted(
+            directories_to_copy,
+            key=lambda path: (-len(path.parts), path.as_posix()),
+        ):
+            (destination / relative).chmod(directory_modes[relative])
+        destination.chmod(source_root_mode)
         return files
 
     def _add_owned_file_diff(
@@ -5576,6 +5603,8 @@ class SquadController:
                     and stat.S_ISREG(target_metadata.st_mode)
                     and not stat.S_ISLNK(target_metadata.st_mode)
                     and target.read_bytes() == staged.read_bytes()
+                    and stat.S_IMODE(target_metadata.st_mode)
+                    == stat.S_IMODE(staged_metadata.st_mode)
                 ):
                     continue
                 transaction.add_write(
@@ -5678,12 +5707,12 @@ class SquadController:
             raise _ProductInputCommitError(
                 f"invalid product input updates: {exc}"
             ) from exc
-        virtual_inputs = transaction.build_path(
-            Path("work/product-inputs")
+        staged_old_inputs = transaction.build_path(
+            Path("work/product-inputs-old")
         )
         self._copy_controller_tree(
             source_inputs,
-            virtual_inputs,
+            staged_old_inputs,
             exclude_echelon=False,
         )
         try:
@@ -5695,7 +5724,7 @@ class SquadController:
                 )
                 != old_tree_hash
                 or product_input_tree_identity(source_inputs) != source_identity
-                or immutable_product_input_tree_digest(virtual_inputs)
+                or immutable_product_input_tree_digest(staged_old_inputs)
                 != old_tree_hash
             ):
                 raise ProductInputMutationError(
@@ -5704,6 +5733,24 @@ class SquadController:
         except (ProductInputError, ProductInputMutationError) as exc:
             raise _ProductInputCommitError(
                 f"invalid product input updates: product input package changed during staging: {exc}",
+                retain_stage=True,
+            ) from exc
+        virtual_inputs = transaction.build_path(
+            Path("work/product-inputs")
+        )
+        self._copy_controller_tree(
+            staged_old_inputs,
+            virtual_inputs,
+            exclude_echelon=False,
+        )
+        try:
+            if immutable_product_input_tree_digest(virtual_inputs) != old_tree_hash:
+                raise ProductInputMutationError(
+                    "staged product input preimage changed"
+                )
+        except (ProductInputError, ProductInputMutationError) as exc:
+            raise _ProductInputCommitError(
+                f"invalid product input updates: {exc}",
                 retain_stage=True,
             ) from exc
 
@@ -5738,6 +5785,10 @@ class SquadController:
             raise _ProductInputCommitError(error)
 
         try:
+            restore_product_input_directory_modes(
+                staged_old_inputs,
+                virtual_inputs,
+            )
             staged_tree_hash = immutable_product_input_tree_digest(
                 virtual_inputs
             )
@@ -5747,6 +5798,7 @@ class SquadController:
             ) from exc
         if staged_tree_hash == old_tree_hash:
             return 0, staged_state, None
+        staged_metadata["tree_hash"] = staged_tree_hash
         try:
             owned_paths = add_complete_product_input_publication(
                 transaction,
@@ -5843,6 +5895,8 @@ class SquadController:
         self,
         transaction: SquadPublicationTransaction,
         state: Mapping[str, object],
+        *,
+        product_inputs_source: Path | None = None,
     ) -> tuple[int, PhaseAReadinessResult]:
         detached_state = dict(state)
         active_spec_dir = self._active_phase_a_spec_dir(detached_state)
@@ -5913,7 +5967,11 @@ class SquadController:
                         ready_spec_dir=None,
                     ),
                 )
-            source_inputs = self._absolute_project_path(inputs_ref)
+            source_inputs = (
+                Path(product_inputs_source)
+                if product_inputs_source is not None
+                else self._absolute_project_path(inputs_ref)
+            )
             self._require_run_local_product_inputs(
                 source_inputs,
                 staged_path=transaction.build_path(
@@ -5939,6 +5997,7 @@ class SquadController:
         input_blockers = self._publish_product_input_evidence(
             virtual_spec_dir,
             detached_state,
+            source_override=product_inputs_source,
         )
         if input_blockers:
             return (
@@ -5994,6 +6053,106 @@ class SquadController:
             readiness,
         )
 
+    def _stage_authenticated_phase_a_product_inputs(
+        self,
+        transaction: SquadPublicationTransaction,
+        state: Mapping[str, object],
+    ) -> Path | None:
+        """Copy one exact authenticated live package for read-only Phase 4 use."""
+        metadata = state.get("product_inputs")
+        if not isinstance(metadata, dict) or not metadata:
+            return None
+        inputs_ref = str(metadata.get("inputs_dir") or "").strip()
+        if not inputs_ref:
+            raise _ProductInputCommitError(
+                "invalid product input updates: product input staging path is missing from run state"
+            )
+        source_inputs = self._absolute_project_path(inputs_ref)
+        self._require_run_local_product_inputs(source_inputs)
+        snapshot = transaction.build_path(Path("work/product-inputs"))
+        try:
+            expected_hash = authenticate_product_input_contract(
+                self._project_root,
+                metadata,
+                source_inputs,
+            )
+            source_identity = product_input_tree_identity(source_inputs)
+            self._copy_controller_tree(
+                source_inputs,
+                snapshot,
+                exclude_echelon=False,
+            )
+            if (
+                authenticate_product_input_contract(
+                    self._project_root,
+                    metadata,
+                    source_inputs,
+                )
+                != expected_hash
+                or product_input_tree_identity(source_inputs)
+                != source_identity
+                or immutable_product_input_tree_digest(snapshot)
+                != expected_hash
+            ):
+                raise ProductInputMutationError(
+                    "product input package changed during staging"
+                )
+            validate_immutable_product_input_package(snapshot, metadata)
+        except (OSError, ProductInputError, ProductInputMutationError) as exc:
+            reason = str(exc)
+            if "tree hash drift" not in reason:
+                reason = f"product input package changed during staging: {reason}"
+            raise _ProductInputCommitError(
+                f"invalid product input updates: {reason}",
+                retain_stage=True,
+            ) from exc
+        return snapshot
+
+    def _authenticate_phase_a_product_input_snapshot(
+        self,
+        prepared: PreparedSquadPublication,
+        state: Mapping[str, object],
+    ) -> None:
+        """Reauthenticate read-only Phase 4 source and its sealed snapshot."""
+        metadata = state.get("product_inputs")
+        if not isinstance(metadata, dict) or not metadata:
+            return
+        inputs_ref = str(metadata.get("inputs_dir") or "").strip()
+        if not inputs_ref:
+            raise ProductInputMutationError(
+                "product input staging path is missing from run state"
+            )
+        source_inputs = self._absolute_project_path(inputs_ref)
+        self._require_run_local_product_inputs(source_inputs)
+        expected_hash = authenticate_product_input_contract(
+            self._project_root,
+            metadata,
+            source_inputs,
+        )
+        snapshot = prepared._transaction_root / "work/product-inputs"
+        if immutable_product_input_tree_digest(snapshot) != expected_hash:
+            raise ProductInputMutationError(
+                "staged Phase 4 product input snapshot changed"
+            )
+        validate_immutable_product_input_package(snapshot, metadata)
+        active_spec_dir = self._active_phase_a_spec_dir(dict(state))
+        if active_spec_dir is None:
+            raise ProductInputMutationError("active Phase A spec directory is missing")
+        published = self._published_phase_a_spec_dir(
+            dict(state),
+            active_spec_dir,
+        )
+        staged_evidence = (
+            prepared._transaction_root
+            / "work/phase-a/specs"
+            / published.name
+            / "inputs"
+        )
+        if immutable_product_input_tree_digest(staged_evidence) != expected_hash:
+            raise ProductInputMutationError(
+                "staged Phase 4 published evidence changed"
+            )
+
     def _prepare_external_phase_effects(
         self,
         result: SquadAgentResult,
@@ -6028,9 +6187,18 @@ class SquadController:
                 )
                 operation_count += product_operations
             if needs_phase_a:
+                phase_a_product_inputs = (
+                    transaction.build_path(Path("work/product-inputs"))
+                    if product_plan is not None
+                    else self._stage_authenticated_phase_a_product_inputs(
+                        transaction,
+                        staged_state,
+                    )
+                )
                 phase_a_operations, readiness = self._stage_phase_a_effects(
                     transaction,
                     staged_state,
+                    product_inputs_source=phase_a_product_inputs,
                 )
                 if not readiness.ready:
                     raise _PhaseAReadinessCommitError(readiness)
@@ -6372,7 +6540,13 @@ class SquadController:
         self._phase_a_published_this_run = True
         return validate_phase_a_readiness(updated, [published_spec_dir])
 
-    def _publish_product_input_evidence(self, published_spec_dir: Path, state: dict) -> list[str]:
+    def _publish_product_input_evidence(
+        self,
+        published_spec_dir: Path,
+        state: dict,
+        *,
+        source_override: Path | None = None,
+    ) -> list[str]:
         """Publish safe run-local evidence and enforce the normative input chain."""
         metadata = state.get("product_inputs")
         if not isinstance(metadata, dict) or not metadata:
@@ -6380,7 +6554,7 @@ class SquadController:
         inputs_ref = str(metadata.get("inputs_dir") or "").strip()
         if not inputs_ref:
             return ["product input evidence path is missing from run state"]
-        source = Path(inputs_ref)
+        source = Path(source_override) if source_override is not None else Path(inputs_ref)
         if not source.is_absolute():
             source = self._project_root / source
         if not source.is_dir():
@@ -6388,7 +6562,11 @@ class SquadController:
         destination = published_spec_dir / "inputs"
         if destination.exists():
             shutil.rmtree(destination)
-        shutil.copytree(source, destination)
+        self._copy_controller_tree(
+            source,
+            destination,
+            exclude_echelon=False,
+        )
         from echelon.product_inputs import validate_product_input_traceability
         targets = [
             str(value).strip()
