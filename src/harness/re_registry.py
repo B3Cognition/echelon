@@ -169,12 +169,72 @@ def canonical_re_artifacts(
 
     for source_id in sorted(index.sources):
         source = index.sources[source_id]
+        manifest_path = _existing_registry_path(root, source.manifest, "manifest")
+        manifest = _read_object(manifest_path, "source manifest")
+        if manifest.get("schema_version") != RE_REGISTRY_SCHEMA_VERSION:
+            raise ReRegistryError(f"unsupported source manifest schema: {manifest_path}")
+        if manifest.get("source_id") != source_id:
+            raise ReRegistryError(f"source manifest ID mismatch: {manifest_path}")
+        expected_prefix = PurePosixPath(f"re/sources/{source_id}")
         source_manifests[source_id] = exact(
             source.manifest, f"source manifest {source_id}"
         )
-        source_overviews.append(
-            exact(f"re/sources/{source_id}/overview.md", f"source overview {source_id}")
-        )
+        overview = _required_string(manifest, "overview", str(manifest_path))
+        _require_prefix(overview, expected_prefix, "overview")
+        source_overviews.append(exact(overview, f"source overview {source_id}"))
+
+        raw_specs = manifest.get("specs")
+        if not isinstance(raw_specs, list) or any(
+            not isinstance(item, str) for item in raw_specs
+        ):
+            raise ReRegistryError(
+                f"source manifest specs must be a list of paths: {manifest_path}"
+            )
+        for spec in raw_specs:
+            _require_prefix(spec, expected_prefix / "specs", "spec")
+            specs.append(exact(spec, f"source spec {source_id}"))
+
+        for key, destination in (
+            ("architecture", source_architecture),
+            ("contracts", source_contracts),
+            ("components", source_components),
+            ("domain_manifest", source_domain_manifests),
+            ("supporting_artifacts", source_supporting_artifacts),
+        ):
+            value = manifest.get(key)
+            if isinstance(value, str) and value.strip():
+                value = value.strip()
+                _require_prefix(value, expected_prefix, key)
+                destination[source_id] = exact(value, f"source {key} {source_id}")
+
+        for key, destination in (
+            ("codegraph_summary", codegraph_summaries),
+            ("codegraph_analysis", codegraph_analyses),
+        ):
+            value = manifest.get(key)
+            if isinstance(value, str) and value.strip():
+                value = value.strip()
+                _require_prefix(value, expected_prefix, key)
+                destination.append(exact(value, f"source {key} {source_id}"))
+
+        extraction = manifest.get("extraction_artifacts")
+        if isinstance(extraction, dict):
+            selected: dict[str, str] = {}
+            for key, value in sorted(extraction.items()):
+                if (
+                    not isinstance(key, str)
+                    or not isinstance(value, str)
+                    or not value.strip()
+                ):
+                    raise ReRegistryError(
+                        f"source extraction artifacts must map names to paths: {source_id}"
+                    )
+                value = value.strip()
+                _require_prefix(value, expected_prefix, f"extraction_artifacts.{key}")
+                selected[key] = exact(
+                    value, f"source extraction_artifacts.{key} {source_id}"
+                )
+            source_extraction_artifacts[source_id] = selected
 
     source_rows = [
         descriptor for descriptor in descriptors if descriptor.scope == "source"
@@ -183,49 +243,15 @@ def canonical_re_artifacts(
         descriptor for descriptor in descriptors if descriptor.scope == "workspace"
     ]
     specs.extend(
-        absolute(row) for row in source_rows if row.kind == "re-generated-spec"
-    )
-    specs.extend(
         absolute(row)
         for row in workspace_rows
         if row.kind == "re-domain" and row.path.startswith("re/workspace/domains/")
     )
-    codegraph_summaries.extend(
-        absolute(row) for row in source_rows if row.kind == "re-codegraph-summary"
-    )
-    codegraph_analyses.extend(
-        absolute(row) for row in source_rows if row.kind == "re-codegraph-analysis"
-    )
-
-    extraction_kinds = {
-        "re-analysis": "analysis",
-        "re-configs": "configs",
-        "re-dependencies": "dependencies",
-        "re-structure": "structure",
-    }
-    source_destinations = {
-        "re-architecture": source_architecture,
-        "re-components": source_components,
-        "re-contracts": source_contracts,
-        "re-domain-manifest": source_domain_manifests,
-        "re-supporting-artifacts": source_supporting_artifacts,
-    }
     for source_id in sorted(index.sources):
         owned = [row for row in source_rows if row.source_id == source_id]
-        for kind, destination in source_destinations.items():
-            matches = [row for row in owned if row.kind == kind]
-            if matches:
-                destination[source_id] = absolute(matches[0])
         adrs = [absolute(row) for row in owned if row.kind == "re-decision"]
         if adrs:
             source_adrs[source_id] = adrs
-        extraction = {
-            extraction_kinds[row.kind]: absolute(row)
-            for row in owned
-            if row.kind in extraction_kinds
-        }
-        if extraction:
-            source_extraction_artifacts[source_id] = dict(sorted(extraction.items()))
 
     workspace_manifest = exact(index.workspace.manifest, "workspace.manifest")
     workspace_overview = exact(index.workspace.overview, "workspace.overview")
@@ -436,22 +462,14 @@ def _validate_registry_descriptor(
     owner_source_id: str | None,
 ) -> ReArtifactDescriptor:
     try:
-        descriptor = validate_re_artifact_descriptor(
+        return validate_re_artifact_descriptor(
             raw,
             workspace_root=workspace_root,
             owner_scope=owner_scope,
             owner_source_id=owner_source_id,
         )
-        expected_kind = classify_re_artifact(
-            PurePosixPath(descriptor.path), scope=owner_scope
-        )
     except ReArtifactCatalogError as exc:
         raise ReRegistryError(f"invalid artifact descriptor: {exc}") from exc
-    if descriptor.kind != expected_kind:
-        raise ReRegistryError(
-            f"artifact kind does not match path: {descriptor.path}"
-        )
-    return descriptor
 
 
 def _append_unique_descriptor(

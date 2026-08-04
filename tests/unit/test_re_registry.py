@@ -272,6 +272,155 @@ def test_canonical_re_artifact_descriptors_reads_complete_typed_catalog(
 
 
 @pytest.mark.unit
+def test_typed_custom_filename_kind_loads_and_projects_manifest_overview(
+    tmp_path: Path,
+) -> None:
+    _typed_publication(tmp_path)
+    source_root = tmp_path / "re" / "sources" / "api"
+    custom_overview = source_root / "docs" / "source-summary.md"
+    custom_overview.parent.mkdir()
+    custom_overview.write_text("# Custom API summary\n", encoding="utf-8")
+    manifest_path = source_root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["overview"] = "re/sources/api/docs/source-summary.md"
+    manifest["artifacts"].append(
+        _descriptor(
+            tmp_path,
+            "re/sources/api/docs/source-summary.md",
+            kind="re-overview",
+            scope="source",
+            source_id="api",
+        )
+    )
+    manifest["artifacts"].sort(key=lambda row: row["path"])
+    _write_json(manifest_path, manifest)
+    _rewrite_manifest_descriptor(tmp_path, scope="source")
+    index = load_published_index(tmp_path)
+    assert index is not None
+
+    descriptors = re_registry.canonical_re_artifact_descriptors(tmp_path, index)
+    artifacts = canonical_re_artifacts(tmp_path, index)
+
+    assert any(
+        descriptor.path == "re/sources/api/docs/source-summary.md"
+        and descriptor.kind == "re-overview"
+        for descriptor in descriptors
+    )
+    assert artifacts["re_contexts"][0] == str(custom_overview)
+
+
+@pytest.mark.unit
+def test_legacy_projection_preserves_nested_manifest_overview(
+    tmp_path: Path,
+) -> None:
+    _typed_publication(tmp_path)
+    source_root = tmp_path / "re" / "sources" / "api"
+    custom_overview = source_root / "docs" / "overview.md"
+    custom_overview.parent.mkdir()
+    custom_overview.write_text("# Nested API overview\n", encoding="utf-8")
+    analysis = source_root / "analysis.json"
+    _write_json(analysis, {"source_id": "api"})
+
+    source_manifest_path = source_root / "manifest.json"
+    source_manifest = json.loads(source_manifest_path.read_text(encoding="utf-8"))
+    source_manifest.pop("artifacts")
+    source_manifest["overview"] = "re/sources/api/docs/overview.md"
+    source_manifest["extraction_artifacts"] = {
+        "primary": "re/sources/api/analysis.json"
+    }
+    _write_json(source_manifest_path, source_manifest)
+    workspace_manifest_path = tmp_path / "re" / "workspace" / "manifest.json"
+    workspace_manifest = json.loads(
+        workspace_manifest_path.read_text(encoding="utf-8")
+    )
+    workspace_manifest.pop("artifacts")
+    _write_json(workspace_manifest_path, workspace_manifest)
+    index_payload = json.loads(
+        (tmp_path / "re" / "index.json").read_text(encoding="utf-8")
+    )
+    index_payload["sources"]["api"].pop("manifest_artifact")
+    index_payload["workspace"].pop("manifest_artifact")
+    _write_json(tmp_path / "re" / "index.json", index_payload)
+    index = load_published_index(tmp_path)
+    assert index is not None
+
+    descriptors = re_registry.canonical_re_artifact_descriptors(tmp_path, index)
+    artifacts = canonical_re_artifacts(tmp_path, index)
+
+    assert any(
+        descriptor.path == "re/sources/api/docs/overview.md"
+        for descriptor in descriptors
+    )
+    assert artifacts["re_contexts"][0] == str(custom_overview)
+    assert artifacts["source_extraction_artifacts"] == {
+        "api": {"primary": str(analysis)}
+    }
+
+
+@pytest.mark.unit
+def test_typed_projection_preserves_named_paths_with_duplicate_kinds(
+    tmp_path: Path,
+) -> None:
+    _typed_publication(tmp_path)
+    source_root = tmp_path / "re" / "sources" / "api"
+    first_architecture = source_root / "docs" / "first" / "architecture.md"
+    selected_architecture = source_root / "docs" / "selected" / "architecture.md"
+    first_analysis = source_root / "evidence" / "first" / "analysis.json"
+    selected_analysis = source_root / "evidence" / "selected" / "analysis.json"
+    for path, content in (
+        (first_architecture, "# First architecture\n"),
+        (selected_architecture, "# Selected architecture\n"),
+    ):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    for path in (first_analysis, selected_analysis):
+        _write_json(path, {"path": path.parent.name})
+
+    manifest_path = source_root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["architecture"] = "re/sources/api/docs/selected/architecture.md"
+    manifest["extraction_artifacts"] = {
+        "primary": "re/sources/api/evidence/selected/analysis.json"
+    }
+    for relative_path, kind in (
+        ("re/sources/api/docs/first/architecture.md", "re-architecture"),
+        ("re/sources/api/docs/selected/architecture.md", "re-architecture"),
+        ("re/sources/api/evidence/first/analysis.json", "re-analysis"),
+        ("re/sources/api/evidence/selected/analysis.json", "re-analysis"),
+    ):
+        manifest["artifacts"].append(
+            _descriptor(
+                tmp_path,
+                relative_path,
+                kind=kind,
+                scope="source",
+                source_id="api",
+            )
+        )
+    manifest["artifacts"].sort(key=lambda row: row["path"])
+    _write_json(manifest_path, manifest)
+    _rewrite_manifest_descriptor(tmp_path, scope="source")
+    index = load_published_index(tmp_path)
+    assert index is not None
+
+    descriptors = re_registry.canonical_re_artifact_descriptors(tmp_path, index)
+    artifacts = canonical_re_artifacts(tmp_path, index)
+
+    assert len(
+        [descriptor for descriptor in descriptors if descriptor.kind == "re-architecture"]
+    ) == 2
+    assert len(
+        [descriptor for descriptor in descriptors if descriptor.kind == "re-analysis"]
+    ) == 2
+    assert artifacts["source_architecture"] == {
+        "api": str(selected_architecture)
+    }
+    assert artifacts["source_extraction_artifacts"] == {
+        "api": {"primary": str(selected_analysis)}
+    }
+
+
+@pytest.mark.unit
 def test_canonical_re_artifact_descriptors_rejects_partial_typed_index(
     tmp_path: Path,
 ) -> None:
