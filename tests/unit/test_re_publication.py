@@ -385,6 +385,27 @@ def _finish_run(run_dir: Path) -> None:
     _write_json(run_dir / "state.json", state)
 
 
+def _mark_target_only(run_dir: Path, root: Path, target_source: str) -> None:
+    plan_path = run_dir / "re/re-execution-plan.json"
+    plan = _read_json(plan_path)
+    plan["policy"] = "target-only"
+    plan["requested_policy"] = "target-only"
+    plan["target_source"] = target_source
+    plan["forbidden_source_roots"] = [
+        str(root / source["path"])
+        for source in plan["sources"]
+        if source["id"] != target_source
+    ]
+    for source in plan["sources"]:
+        source["selected"] = source["id"] == target_source
+    _write_json(plan_path, plan)
+    source_index_path = run_dir / "re/re-source-index.json"
+    source_index = _read_json(source_index_path)
+    for source in source_index["sources"]:
+        source["selected"] = source["id"] == target_source
+    _write_json(source_index_path, source_index)
+
+
 def _assert_corrupt_catalog_blocks_publication(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -893,6 +914,90 @@ def test_targeted_topology_bootstrap_rejects_unusable_sibling_baseline_atomicall
     with pytest.raises(
         RePublicationValidationError,
         match="usable durable semantic baseline.*web",
+    ):
+        publish_re_run(tmp_path, run_2, expected_generation=1)
+
+    assert _durable_snapshot(tmp_path) == before
+    assert not (tmp_path / "re/topology/index.json").exists()
+
+
+@pytest.mark.unit
+def test_targeted_topology_bootstrap_supports_legacy_config_provenance(
+    tmp_path: Path,
+) -> None:
+    from echelon.topology_registry import load_topology_index
+
+    run_1 = write_valid_re_run(tmp_path, ("api", "web"), run_id="run-1")
+    publish_re_run(tmp_path, run_1)
+    _finish_run(run_1)
+    legacy_config = tmp_path / ".specify/extensions/echelon/echelon-config.yml"
+    legacy_config.parent.mkdir(parents=True)
+    legacy_config.write_text(
+        "workspace:\n  sources:\n    - id: api\n      repo: sources/api\n"
+        "    - id: web\n      repo: sources/web\n",
+        encoding="utf-8",
+    )
+    run_2 = write_valid_re_run(
+        tmp_path,
+        ("api", "web"),
+        run_id="run-2",
+        versions={"api": "v2", "web": "v1"},
+        actions={"api": "refresh", "web": "reuse"},
+    )
+    _mark_target_only(run_2, tmp_path, "api")
+    analysis = _topology_codegraph("api")
+    _write_json(run_2 / "re/sources/api/codegraph-analysis.json", analysis)
+    _write_json(
+        run_2 / "re/sources/api/codegraph-summary.json",
+        _topology_summary(analysis),
+    )
+
+    result = publish_re_run(tmp_path, run_2, expected_generation=1)
+
+    topology = load_topology_index(tmp_path)
+    assert result.topology_generation == 1
+    assert topology is not None
+    assert set(topology.sources) == {"api", "web"}
+    assert topology.sources["web"].providers["codegraph"].status == "unavailable"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "config_document",
+    (
+        "workspace:\n  git_role: orchestration\n  sources: []\n",
+        "workspace:\n  git_role: orchestration\ntelemetry:\n  enabled: true\n",
+    ),
+)
+def test_targeted_publication_rejects_implicit_or_empty_source_declarations(
+    tmp_path: Path,
+    config_document: str,
+) -> None:
+    run_1 = write_valid_re_run(tmp_path, ("api", "web"), run_id="run-1")
+    publish_re_run(tmp_path, run_1)
+    _finish_run(run_1)
+    before = _durable_snapshot(tmp_path)
+    config = tmp_path / ".echelon/config.yml"
+    config.parent.mkdir()
+    config.write_text(config_document, encoding="utf-8")
+    run_2 = write_valid_re_run(
+        tmp_path,
+        ("api", "web"),
+        run_id="run-2",
+        versions={"api": "v2", "web": "v1"},
+        actions={"api": "refresh", "web": "reuse"},
+    )
+    _mark_target_only(run_2, tmp_path, "api")
+    analysis = _topology_codegraph("api")
+    _write_json(run_2 / "re/sources/api/codegraph-analysis.json", analysis)
+    _write_json(
+        run_2 / "re/sources/api/codegraph-summary.json",
+        _topology_summary(analysis),
+    )
+
+    with pytest.raises(
+        RePublicationValidationError,
+        match="targeted refresh requires explicitly declared workspace sources",
     ):
         publish_re_run(tmp_path, run_2, expected_generation=1)
 

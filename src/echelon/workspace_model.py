@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import posixpath
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -12,6 +14,10 @@ import yaml
 from harness.config import CANONICAL_CONFIG_PATH, LEGACY_CONFIG_PATH
 
 GitRole = Literal["orchestration", "source"]
+WorkspaceConfigProvenance = Literal["canonical", "legacy"]
+WorkspaceDeclarationMode = Literal["explicit", "empty", "implicit"]
+
+_SAFE_SOURCE_ID = re.compile(r"^[A-Za-z0-9._-]+$")
 
 SOURCE_MARKERS = (
     "package.json",
@@ -98,6 +104,27 @@ class SourceRoot:
             project_markers=tuple(str(item) for item in data.get("project_markers", [])),
             source_file_count=int(data.get("source_file_count", 0)),
         )
+
+
+@dataclass(frozen=True)
+class WorkspaceSourceDeclaration:
+    id: str
+    path: str
+    git_role: GitRole = "source"
+
+
+@dataclass(frozen=True)
+class WorkspaceSourceDeclarations:
+    workspace_git_role: GitRole
+    sources: tuple[WorkspaceSourceDeclaration, ...]
+    mode: WorkspaceDeclarationMode
+    provenance: WorkspaceConfigProvenance
+    config_path: Path
+    config_relative_path: str
+
+    @property
+    def source_paths(self) -> dict[str, str]:
+        return {source.id: source.path for source in self.sources}
 
 
 @dataclass(frozen=True)
@@ -192,11 +219,22 @@ def _child_source_roots(root: Path) -> tuple[SourceRoot, ...]:
     return _source_roots_under(root, root) + _sources_directory_child_roots(root)
 
 
-def _configured_workspace(root: Path) -> WorkspaceManifest | None:
-    config_path = root / CANONICAL_CONFIG_PATH
-    if not config_path.exists():
-        config_path = root / LEGACY_CONFIG_PATH
-    if not config_path.exists():
+def load_workspace_source_declarations(
+    root: Path,
+) -> WorkspaceSourceDeclarations | None:
+    """Parse source declarations and config provenance without reading source roots."""
+    workspace_root = root.resolve()
+    canonical = workspace_root / CANONICAL_CONFIG_PATH
+    legacy = workspace_root / LEGACY_CONFIG_PATH
+    if canonical.exists():
+        config_path = canonical
+        relative_path = CANONICAL_CONFIG_PATH.as_posix()
+        provenance: WorkspaceConfigProvenance = "canonical"
+    elif legacy.exists():
+        config_path = legacy
+        relative_path = LEGACY_CONFIG_PATH.as_posix()
+        provenance = "legacy"
+    else:
         return None
 
     raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
@@ -212,33 +250,44 @@ def _configured_workspace(root: Path) -> WorkspaceManifest | None:
     else:
         workspace_raw = {}
 
+    sources_present = False
     if "sources" in raw:
         sources_raw = raw["sources"]
+        sources_present = True
     elif "sources" in workspace_raw:
         sources_raw = workspace_raw["sources"]
+        sources_present = True
     else:
-        return None
+        sources_raw = None
+    git_role_value = str(workspace_raw.get("git_role") or "orchestration")
+    workspace_git_role: GitRole = (
+        git_role_value
+        if git_role_value in {"orchestration", "source"}
+        else "orchestration"
+    )  # type: ignore[assignment]
+    if not sources_present:
+        return WorkspaceSourceDeclarations(
+            workspace_git_role=workspace_git_role,
+            sources=(),
+            mode="implicit",
+            provenance=provenance,
+            config_path=config_path,
+            config_relative_path=relative_path,
+        )
     if not isinstance(sources_raw, list):
         raise ValueError("workspace config sources must be a list")
-
-    git_role = str(workspace_raw.get("git_role") or "orchestration")
-    if git_role not in ("orchestration", "source"):
-        git_role = "orchestration"
-
     if not sources_raw:
-        discovered_sources = _sources_directory_child_roots(root)
-        if discovered_sources:
-            return WorkspaceManifest(
-                schema_version=1,
-                workspace=WorkspaceInfo(
-                    root=root,
-                    git_role=git_role,  # type: ignore[arg-type]
-                    git_present=has_git_marker(root),
-                ),
-                sources=discovered_sources,
-            )
+        return WorkspaceSourceDeclarations(
+            workspace_git_role=workspace_git_role,
+            sources=(),
+            mode="empty",
+            provenance=provenance,
+            config_path=config_path,
+            config_relative_path=relative_path,
+        )
 
-    sources: list[SourceRoot] = []
+    sources: list[WorkspaceSourceDeclaration] = []
+    seen_ids: set[str] = set()
     for index, item in enumerate(sources_raw):
         entry = f"workspace config sources entry {index + 1}"
         if isinstance(item, str):
@@ -267,15 +316,77 @@ def _configured_workspace(root: Path) -> WorkspaceManifest | None:
             source_git_role = "source" if item.get("git_role") != "orchestration" else "orchestration"
         else:
             raise ValueError(f"{entry} must be a string or mapping")
-        resolved_source = root if source_path == "." else (root / source_path)
+        _validate_declared_source_id(source_id, entry)
+        _validate_declared_source_path(source_path, entry)
+        if source_id in seen_ids:
+            raise ValueError(f"{entry} has duplicate source id: {source_id}")
+        seen_ids.add(source_id)
         sources.append(
-            SourceRoot(
+            WorkspaceSourceDeclaration(
                 id=source_id,
                 path=source_path,
-                git_present=has_git_marker(resolved_source),
                 git_role=source_git_role,
-                project_markers=project_markers(resolved_source) if resolved_source.exists() else (),
-                source_file_count=count_source_files(resolved_source) if resolved_source.exists() else 0,
+            )
+        )
+    return WorkspaceSourceDeclarations(
+        workspace_git_role=workspace_git_role,
+        sources=tuple(sources),
+        mode="explicit",
+        provenance=provenance,
+        config_path=config_path,
+        config_relative_path=relative_path,
+    )
+
+
+def _validate_declared_source_id(source_id: str, entry: str) -> None:
+    if not _SAFE_SOURCE_ID.fullmatch(source_id):
+        raise ValueError(f"{entry} has unsafe source id: {source_id!r}")
+
+
+def _validate_declared_source_path(source_path: str, entry: str) -> None:
+    if (
+        "\\" in source_path
+        or "\x00" in source_path
+        or source_path.startswith("/")
+        or re.match(r"^[A-Za-z]:/", source_path)
+        or any(part == ".." for part in source_path.split("/"))
+        or posixpath.normpath(source_path) != source_path
+    ):
+        raise ValueError(f"{entry} has unsafe source path: {source_path!r}")
+
+
+def _configured_workspace(root: Path) -> WorkspaceManifest | None:
+    declarations = load_workspace_source_declarations(root)
+    if declarations is None or declarations.mode == "implicit":
+        return None
+    if declarations.mode == "empty":
+        discovered_sources = _sources_directory_child_roots(root)
+        if discovered_sources:
+            return WorkspaceManifest(
+                schema_version=1,
+                workspace=WorkspaceInfo(
+                    root=root,
+                    git_role=declarations.workspace_git_role,
+                    git_present=has_git_marker(root),
+                ),
+                sources=discovered_sources,
+            )
+
+    sources: list[SourceRoot] = []
+    for declaration in declarations.sources:
+        resolved_source = root if declaration.path == "." else root / declaration.path
+        sources.append(
+            SourceRoot(
+                id=declaration.id,
+                path=declaration.path,
+                git_present=has_git_marker(resolved_source),
+                git_role=declaration.git_role,
+                project_markers=(
+                    project_markers(resolved_source) if resolved_source.exists() else ()
+                ),
+                source_file_count=(
+                    count_source_files(resolved_source) if resolved_source.exists() else 0
+                ),
             )
         )
 
@@ -283,7 +394,7 @@ def _configured_workspace(root: Path) -> WorkspaceManifest | None:
         schema_version=1,
         workspace=WorkspaceInfo(
             root=root,
-            git_role=git_role,  # type: ignore[arg-type]
+            git_role=declarations.workspace_git_role,
             git_present=has_git_marker(root),
         ),
         sources=tuple(sources),

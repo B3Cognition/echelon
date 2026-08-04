@@ -8,6 +8,7 @@ import pytest
 from echelon.workspace_model import (
     count_source_files,
     discover_workspace,
+    load_workspace_source_declarations,
     load_workspace_manifest,
 )
 
@@ -129,6 +130,94 @@ def test_configured_sources_override_auto_discovery(tmp_path: Path) -> None:
     assert [source.id for source in manifest.sources] == ["app"]
     assert [source.path for source in manifest.sources] == ["services/app"]
     assert "pyproject.toml" in manifest.sources[0].project_markers
+
+
+def test_declaration_loader_reports_canonical_config_without_reading_sources(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".echelon").mkdir()
+    (tmp_path / ".echelon/config.yml").write_text(
+        "workspace:\n  git_role: orchestration\n  sources:\n"
+        "    - id: api\n      path: sources/api\n",
+        encoding="utf-8",
+    )
+
+    declarations = load_workspace_source_declarations(tmp_path)
+
+    assert declarations is not None
+    assert declarations.provenance == "canonical"
+    assert declarations.config_relative_path == ".echelon/config.yml"
+    assert declarations.mode == "explicit"
+    assert [(source.id, source.path) for source in declarations.sources] == [
+        ("api", "sources/api")
+    ]
+
+
+def test_declaration_loader_reports_legacy_config_provenance(tmp_path: Path) -> None:
+    config = tmp_path / ".specify/extensions/echelon/echelon-config.yml"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n",
+        encoding="utf-8",
+    )
+
+    declarations = load_workspace_source_declarations(tmp_path)
+
+    assert declarations is not None
+    assert declarations.provenance == "legacy"
+    assert declarations.config_relative_path == (
+        ".specify/extensions/echelon/echelon-config.yml"
+    )
+    assert declarations.mode == "explicit"
+
+
+def test_declaration_loader_supports_repo_and_null_or_missing_id_fallback(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".echelon").mkdir()
+    (tmp_path / ".echelon/config.yml").write_text(
+        "sources:\n"
+        "  - repo: api\n"
+        "  - id: null\n    path: web\n"
+        "  - path: docs\n",
+        encoding="utf-8",
+    )
+
+    declarations = load_workspace_source_declarations(tmp_path)
+
+    assert declarations is not None
+    assert [(source.id, source.path) for source in declarations.sources] == [
+        ("api", "api"),
+        ("web", "web"),
+        ("docs", "docs"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("sources", "message"),
+    (
+        ("  - id: '../api'\n    path: sources/api\n", "unsafe source id"),
+        ("  - id: api\n    path: ../api\n", "unsafe source path"),
+        (
+            "  - id: api\n    path: sources/api\n"
+            "  - id: api\n    path: sources/web\n",
+            "duplicate source id",
+        ),
+    ),
+)
+def test_declaration_loader_rejects_unsafe_or_duplicate_sources(
+    tmp_path: Path,
+    sources: str,
+    message: str,
+) -> None:
+    (tmp_path / ".echelon").mkdir()
+    (tmp_path / ".echelon/config.yml").write_text(
+        "sources:\n" + sources,
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=message):
+        load_workspace_source_declarations(tmp_path)
 
 
 def test_configured_empty_sources_without_sources_directory_means_planning_only(

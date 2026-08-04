@@ -19,7 +19,10 @@ from echelon.topology_registry import (
     _read_json_bytes,
     load_topology_index,
 )
-from echelon.workspace_model import discover_workspace
+from echelon.workspace_model import (
+    discover_workspace,
+    load_workspace_source_declarations,
+)
 from harness.publication_transaction import (
     PublicationOperation,
     PublicationTransaction,
@@ -127,6 +130,7 @@ def stage_topology_snapshots(
     required_source_ids: tuple[str, ...] = (),
     allow_unavailable_bootstrap: bool = False,
     configured_sources: Mapping[str, str] | None = None,
+    config_relative_path: str | None = None,
 ) -> TopologyStagingResult | None:
     """Stage canonical topology without taking a lock or writing a journal.
 
@@ -152,6 +156,10 @@ def stage_topology_snapshots(
         if configured_sources is not None
         else _configured_sources(root)
     )
+    if config_relative_path is None:
+        declarations = load_workspace_source_declarations(root)
+        if declarations is not None:
+            config_relative_path = declarations.config_relative_path
     removed = set(removed_source_ids)
     try:
         current = load_topology_index(root, allow_removed_source_ids=removed)
@@ -207,6 +215,7 @@ def stage_topology_snapshots(
         current,
         generation,
         removed,
+        config_relative_path,
     )
     return TopologyStagingResult(generation, operations)
 
@@ -492,6 +501,7 @@ def _prepare_transaction(root: Path, stage_root: Path, candidates: tuple[_Prepar
     if stage_root.exists():
         shutil.rmtree(stage_root)
     (stage_root / "rollback").mkdir(parents=True)
+    declarations = load_workspace_source_declarations(root)
     operations = _stage_snapshot_tree(
         root,
         stage_root,
@@ -500,6 +510,7 @@ def _prepare_transaction(root: Path, stage_root: Path, candidates: tuple[_Prepar
         current,
         generation,
         set(),
+        declarations.config_relative_path if declarations is not None else None,
     )
     transaction = PublicationTransaction(
         workspace_root=root / "re", staging_root=stage_root, journal=stage_root / "rollback-journal.json", operations=operations, expected_generation=generation
@@ -516,6 +527,7 @@ def _stage_snapshot_tree(
     current: object,
     generation: int,
     removed_source_ids: set[str],
+    config_relative_path: str | None = None,
 ) -> tuple[PublicationOperation, ...]:
     new_root = stage_root / "new/re/topology"
     new_root.mkdir(parents=True, exist_ok=True)
@@ -589,14 +601,33 @@ def _stage_snapshot_tree(
     index_bytes = _json_bytes(index)
     (new_root / "index.json").write_bytes(index_bytes)
     operations.append(PublicationOperation(PurePosixPath("topology/index.json"), PurePosixPath("new/re/topology/index.json")))
-    _validate_staged_tree(root, stage_root, configured, current, rows)
+    _validate_staged_tree(
+        root,
+        stage_root,
+        configured,
+        current,
+        rows,
+        config_relative_path=config_relative_path,
+    )
     return tuple(operations)
 
 
-def _validate_staged_tree(root: Path, stage_root: Path, configured: Mapping[str, str], current: object, rows: Mapping[str, object]) -> None:
+def _validate_staged_tree(
+    root: Path,
+    stage_root: Path,
+    configured: Mapping[str, str],
+    current: object,
+    rows: Mapping[str, object],
+    *,
+    config_relative_path: str | None,
+) -> None:
     validation = stage_root / "validation"
-    (validation / ".echelon").mkdir(parents=True)
-    shutil.copy2(root / ".echelon/config.yml", validation / ".echelon/config.yml")
+    validation.mkdir(parents=True)
+    if config_relative_path is not None:
+        config_source = root / config_relative_path
+        config_destination = validation / config_relative_path
+        config_destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(config_source, config_destination)
     for source_path in configured.values():
         (validation / source_path).mkdir(parents=True, exist_ok=True)
     staged = stage_root / "new"
