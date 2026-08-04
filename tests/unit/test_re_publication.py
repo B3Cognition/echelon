@@ -1092,6 +1092,58 @@ def test_orphan_claim_metadata_interruption_does_not_permanently_block_recovery(
 
 
 @pytest.mark.unit
+def test_ownerless_recovery_lock_claim_blocks_publishers_and_recovers_after_death(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = ensure_re_layout(tmp_path)
+    (paths.root / "orphan").write_text("new\n", encoding="utf-8")
+    stage = paths.staging / "orphan"
+    backup = stage / "rollback/orphan"
+    backup.parent.mkdir(parents=True)
+    backup.write_text("old\n", encoding="utf-8")
+    _write_json(
+        stage / "rollback-journal.json",
+        {
+            "schema_version": 1,
+            "status": "replacing",
+            "operations": [
+                {
+                    "final": "orphan",
+                    "staged": "new/orphan",
+                    "backup": "rollback/orphan",
+                    "backed_up": True,
+                    "installed": True,
+                }
+            ],
+        },
+    )
+    original = re_lock._write_json_atomic
+
+    def interrupt_owner_install(path: Path, *args: object, **kwargs: object) -> None:
+        if path == paths.locks / "publish.lock/owner.json":
+            raise KeyboardInterrupt()
+        original(path, *args, **kwargs)
+
+    monkeypatch.setattr(re_lock, "_write_json_atomic", interrupt_owner_install)
+    with pytest.raises(KeyboardInterrupt):
+        recover_interrupted_publication(tmp_path, stale_after_seconds=0)
+    assert (paths.locks / "publish.lock").is_dir()
+    with pytest.raises(re_lock.RePublishRecoveryRequired, match="recovery claim"):
+        RePublishLock.acquire(tmp_path, "next", None)
+
+    monkeypatch.setattr(re_lock, "_write_json_atomic", original)
+    claim = next(paths.locks.glob(".publish-recovery-claim-*"))
+    owner = _read_json(claim / "owner.json")
+    owner["pid"] = 999_999_999
+    _write_json(claim / "owner.json", owner)
+
+    assert recover_interrupted_publication(tmp_path, stale_after_seconds=0)
+    assert (paths.root / "orphan").read_text(encoding="utf-8") == "old\n"
+    assert not (paths.locks / "publish.lock").exists()
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize("with_stale_lock", (False, True))
 def test_recovery_releases_lock_before_harmless_rolled_back_stage_cleanup(
     tmp_path: Path,

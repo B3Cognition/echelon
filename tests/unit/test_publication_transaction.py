@@ -279,3 +279,44 @@ def test_legacy_restored_original_and_missing_or_stray_backups_do_not_mutate(tmp
         rollback_publication_transaction(transaction3)
     assert (root / "first").read_text(encoding="utf-8") == "old\n"
     assert backup.read_text(encoding="utf-8") == "stray\n"
+
+
+@pytest.mark.unit
+def test_legacy_rollback_resumes_after_removing_installed_final(tmp_path: Path) -> None:
+    from harness.publication_transaction import PublicationTransaction, rollback_publication_transaction
+
+    root = tmp_path / "re"
+    root.mkdir()
+    stage = root / ".staging/legacy"
+    backup = stage / "rollback/first"
+    backup.parent.mkdir(parents=True)
+    backup.write_text("old\n", encoding="utf-8")
+    journal = stage / "rollback-journal.json"
+    journal.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "status": "rolling_back",
+                "operations": [
+                    {
+                        "final": "first",
+                        "staged": "new/first",
+                        "backup": "rollback/first",
+                        "backed_up": True,
+                        "installed": True,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    transaction = PublicationTransaction.from_journal(
+        workspace_root=root,
+        staging_root=stage,
+        journal=journal,
+    )
+    rollback_publication_transaction(transaction)
+
+    assert (root / "first").read_text(encoding="utf-8") == "old\n"
+    assert json.loads(journal.read_text(encoding="utf-8"))["status"] == "rolled_back"

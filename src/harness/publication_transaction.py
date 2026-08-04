@@ -283,7 +283,12 @@ def rollback_publication_transaction(transaction: PublicationTransaction) -> Non
             state["had_final"] = False
             write_publication_journal(transaction, "rolling_back")
             continue
-        if state.get("legacy") and backup_exists and not final_exists:
+        if state.get("legacy") and phase == "installed" and state.get("had_final") and not final_exists and backup_exists:
+            # Old rollback removed the installed final before it persisted the
+            # next boolean state. The original backup remains authoritative.
+            state["phase"] = "backed_up"
+            phase = "backed_up"
+        elif state.get("legacy") and backup_exists and not final_exists:
             if staged is not None and not (staged.exists() or staged.is_symlink()):
                 raise PublicationTransactionError(
                     "legacy rollback journal has an incoherent backup-rename state"

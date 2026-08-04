@@ -240,6 +240,58 @@ def test_orphan_claim_recheck_no_work_cleans_its_temporary_lock(
 
 
 @pytest.mark.unit
+def test_recovery_claim_never_replaces_an_empty_or_nonempty_publish_lock(
+    tmp_path: Path,
+) -> None:
+    paths = ensure_re_layout(tmp_path)
+    _write_json(
+        paths.staging / "orphan/rollback-journal.json",
+        {"schema_version": 1, "status": "replacing", "operations": []},
+    )
+    lock = paths.locks / "publish.lock"
+    lock.mkdir()
+
+    assert claim_orphan_publish_recovery(tmp_path) is None
+    assert lock.exists()
+    assert not (lock / "owner.json").exists()
+
+    _write_json(
+        lock / "owner.json",
+        {
+            "run_id": "publisher",
+            "run_dir": None,
+            "pid": os.getpid(),
+            "hostname": socket.gethostname(),
+            "acquired_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    assert claim_orphan_publish_recovery(tmp_path) is None
+    with pytest.raises(RePublishLocked, match="publisher"):
+        RePublishLock.acquire(tmp_path, "next", None)
+
+
+@pytest.mark.unit
+def test_two_orphan_recovery_claimants_have_one_exclusive_owner(tmp_path: Path) -> None:
+    paths = ensure_re_layout(tmp_path)
+    _write_json(
+        paths.staging / "orphan/rollback-journal.json",
+        {"schema_version": 1, "status": "replacing", "operations": []},
+    )
+
+    first = claim_orphan_publish_recovery(tmp_path)
+    second = claim_orphan_publish_recovery(tmp_path)
+
+    assert first is not None
+    assert second is None
+    assert json.loads((first.path / "owner.json").read_text(encoding="utf-8"))["run_id"] == "orphan"
+    _write_json(
+        paths.staging / "orphan/rollback-journal.json",
+        {"schema_version": 1, "status": "rolled_back", "operations": []},
+    )
+    first.release()
+
+
+@pytest.mark.unit
 def test_different_host_lock_must_exceed_stale_threshold(tmp_path: Path) -> None:
     lock_dir = _write_lock(
         tmp_path,

@@ -14,11 +14,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from harness.re_registry import ensure_re_layout
+from harness.re_registry import ReRegistryPaths, ensure_re_layout
 
 
 ACTIVE_RUN_STATUSES = frozenset({"running", "in_progress"})
 _SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9._-]+$")
+_RECOVERY_CLAIM_PREFIX = ".publish-recovery-claim-"
 
 
 class RePublishLocked(RuntimeError):
@@ -74,29 +75,29 @@ class RePublishLock:
             raise RePublicationActiveRun(other_runs)
 
         lock_path = paths.locks / "publish.lock"
+        _raise_for_active_recovery_claim(paths)
         try:
             lock_path.mkdir()
+            _fsync_directory(paths.locks)
         except FileExistsError as exc:
-            owner = _read_owner(lock_path, required=False)
-            raise RePublishLocked(str(owner.get("run_id") or "unknown")) from exc
-        pending = _pending_publication_journals(paths.staging)
-        if pending:
-            shutil.rmtree(lock_path)
-            raise RePublishRecoveryRequired(
-                f"rollback journal must be recovered before publication: {pending[0]}"
-            )
-
-        metadata = {
-            "run_id": owner_run_id,
-            "run_dir": str(owner_run_dir.resolve()) if owner_run_dir else None,
-            "pid": os.getpid(),
-            "hostname": socket.gethostname(),
-            "acquired_at": datetime.now(timezone.utc).isoformat(),
-        }
+            raise RePublishLocked(_publish_lock_owner_hint(lock_path, paths)) from exc
         try:
+            _raise_for_active_recovery_claim(paths)
+            pending = _pending_publication_journals(paths.staging)
+            if pending:
+                raise RePublishRecoveryRequired(
+                    f"rollback journal must be recovered before publication: {pending[0]}"
+                )
+            metadata = {
+                "run_id": owner_run_id,
+                "run_dir": str(owner_run_dir.resolve()) if owner_run_dir else None,
+                "pid": os.getpid(),
+                "hostname": socket.gethostname(),
+                "acquired_at": datetime.now(timezone.utc).isoformat(),
+            }
             _write_json_atomic(lock_path / "owner.json", metadata)
-        except Exception:
-            shutil.rmtree(lock_path)
+        except BaseException:
+            shutil.rmtree(lock_path, ignore_errors=True)
             raise
         return cls(path=lock_path, owner_run_id=owner_run_id, workspace_root=root)
 
@@ -230,7 +231,8 @@ def recover_stale_publish_lock(
 ) -> bool:
     """Remove a provably stale lock when no replacement rollback is pending."""
     root = workspace_root.resolve()
-    lock_path = ensure_re_layout(root).locks / "publish.lock"
+    paths = ensure_re_layout(root)
+    lock_path = paths.locks / "publish.lock"
     owner = recoverable_publish_lock_owner(
         root,
         stale_after_seconds=stale_after_seconds,
@@ -247,6 +249,7 @@ def recover_stale_publish_lock(
             )
 
     shutil.rmtree(lock_path)
+    _remove_recovery_claims(paths.locks, run_id)
     return True
 
 
@@ -268,51 +271,127 @@ def _pending_publication_journals(staging_root: Path) -> tuple[Path, ...]:
     return tuple(pending)
 
 
+def _recovery_claim_paths(locks_root: Path) -> tuple[Path, ...]:
+    claims: list[Path] = []
+    for path in sorted(locks_root.iterdir(), key=lambda item: item.name):
+        if not path.name.startswith(_RECOVERY_CLAIM_PREFIX):
+            continue
+        if path.is_symlink() or not path.is_dir():
+            raise RePublishRecoveryRequired("publication recovery claim path is unsafe")
+        claims.append(path)
+    return tuple(claims)
+
+
+def _claim_owner(claim_path: Path) -> dict[str, Any]:
+    owner = _read_owner(claim_path)
+    run_id = str(owner.get("run_id") or "")
+    if not _SAFE_RUN_ID.fullmatch(run_id):
+        raise RePublishRecoveryRequired("publication recovery claim run ID is malformed")
+    return owner
+
+
+def _raise_for_active_recovery_claim(paths: ReRegistryPaths) -> None:
+    active: list[Path] = []
+    for claim_path in _recovery_claim_paths(paths.locks):
+        owner = _claim_owner(claim_path)
+        journal = paths.staging / str(owner["run_id"]) / "rollback-journal.json"
+        if journal.is_file() and _read_json(journal).get("status") in {
+            "replacing",
+            "rolling_back",
+        }:
+            active.append(claim_path)
+        else:
+            shutil.rmtree(claim_path, ignore_errors=True)
+    if active:
+        raise RePublishRecoveryRequired(
+            f"rollback recovery claim must complete before publication: {active[0]}"
+        )
+
+
+def _publish_lock_owner_hint(lock_path: Path, paths: ReRegistryPaths) -> str:
+    owner = _read_owner(lock_path, required=False)
+    run_id = owner.get("run_id")
+    if isinstance(run_id, str) and run_id:
+        return run_id
+    for claim_path in _recovery_claim_paths(paths.locks):
+        try:
+            return str(_claim_owner(claim_path)["run_id"])
+        except RePublishRecoveryRequired:
+            continue
+    return "unknown"
+
+
+def _remove_recovery_claims(locks_root: Path, owner_run_id: str) -> None:
+    for claim_path in _recovery_claim_paths(locks_root):
+        owner = _read_owner(claim_path, required=False)
+        if owner.get("run_id") == owner_run_id:
+            shutil.rmtree(claim_path, ignore_errors=True)
+
+
 def claim_orphan_publish_recovery(workspace_root: Path) -> RePublishLock | None:
     """Atomically claim exactly one safe orphan journal for recovery."""
     root = workspace_root.resolve()
     paths = ensure_re_layout(root)
-    if not _pending_publication_journals(paths.staging):
+    initial_pending = _pending_publication_journals(paths.staging)
+    if not initial_pending:
         return None
+    if len(initial_pending) != 1:
+        raise RePublishRecoveryRequired("multiple orphan rollback journals require manual recovery")
+    initial_journal = initial_pending[0]
+    initial_stage = initial_journal.parent
+    if initial_stage.is_symlink() or not _SAFE_RUN_ID.fullmatch(initial_stage.name):
+        raise RePublishRecoveryRequired("orphan rollback journal path is unsafe")
     lock_path = paths.locks / "publish.lock"
-    claim_path = paths.locks / f".publish-recovery-claim-{uuid.uuid4().hex}"
+    claim_path = paths.locks / f"{_RECOVERY_CLAIM_PREFIX}{uuid.uuid4().hex}"
+    metadata = {
+        "run_id": initial_stage.name,
+        "run_dir": None,
+        "pid": os.getpid(),
+        "hostname": socket.gethostname(),
+        "acquired_at": datetime.now(timezone.utc).isoformat(),
+    }
     try:
         claim_path.mkdir()
+        _fsync_directory(paths.locks)
     except FileExistsError:
         return None
+    lock_acquired = False
+    owner_install_started = False
     try:
-        pending = _pending_publication_journals(paths.staging)
-        if len(pending) != 1:
-            if pending:
-                raise RePublishRecoveryRequired("multiple orphan rollback journals require manual recovery")
-            shutil.rmtree(claim_path)
-            return None
-        journal = pending[0]
-        stage = journal.parent
-        if stage.is_symlink() or not _SAFE_RUN_ID.fullmatch(stage.name):
-            raise RePublishRecoveryRequired("orphan rollback journal path is unsafe")
-        # Write and sync ownership before exposing the lock. A crash can leave
-        # only an unclaimed temporary directory, never an ownerless lock.
-        _write_json_atomic(
-            claim_path / "owner.json",
-            {
-                "run_id": stage.name,
-                "run_dir": None,
-                "pid": os.getpid(),
-                "hostname": socket.gethostname(),
-                "acquired_at": datetime.now(timezone.utc).isoformat(),
-            },
-        )
+        _write_json_atomic(claim_path / "owner.json", metadata)
         try:
-            os.replace(claim_path, lock_path)
+            lock_path.mkdir()
+            _fsync_directory(paths.locks)
+            lock_acquired = True
         except FileExistsError:
             shutil.rmtree(claim_path, ignore_errors=True)
             return None
-        _fsync_directory(paths.locks)
-        owner = RePublishLock(path=lock_path, owner_run_id=stage.name, workspace_root=root)
+        pending = _pending_publication_journals(paths.staging)
+        if len(pending) != 1 or pending[0].parent != initial_stage:
+            shutil.rmtree(lock_path, ignore_errors=True)
+            shutil.rmtree(claim_path, ignore_errors=True)
+            if pending:
+                raise RePublishRecoveryRequired("orphan rollback journals changed during claim")
+            return None
+        # The marker stays durable until this owner record has been installed.
+        owner_install_started = True
+        _write_json_atomic(lock_path / "owner.json", metadata)
+        shutil.rmtree(claim_path, ignore_errors=True)
+        owner = RePublishLock(
+            path=lock_path,
+            owner_run_id=initial_stage.name,
+            workspace_root=root,
+        )
         return owner
     except BaseException:
-        shutil.rmtree(claim_path, ignore_errors=True)
+        if lock_acquired and owner_install_started:
+            # The complete marker identifies an ownerless lock after an
+            # interruption between mkdir and owner.json installation.
+            _fsync_directory(paths.locks)
+        else:
+            if lock_acquired:
+                shutil.rmtree(lock_path, ignore_errors=True)
+            shutil.rmtree(claim_path, ignore_errors=True)
         raise
 
 
@@ -323,14 +402,33 @@ def recoverable_publish_lock_owner(
 ) -> dict[str, Any] | None:
     """Return inactive stale owner metadata without modifying the lock."""
     root = workspace_root.resolve()
-    lock_path = ensure_re_layout(root).locks / "publish.lock"
+    paths = ensure_re_layout(root)
+    lock_path = paths.locks / "publish.lock"
     if not lock_path.exists():
         return None
-    owner = _read_owner(lock_path)
+    owner_path = lock_path / "owner.json"
+    if owner_path.exists():
+        owner = _read_owner(lock_path)
+    else:
+        claims = _recovery_claim_paths(paths.locks)
+        if len(claims) != 1:
+            raise RePublishRecoveryRequired(
+                "ownerless publish lock requires exactly one recovery claim"
+            )
+        owner = _claim_owner(claims[0])
+    return _recoverable_owner(root, owner, stale_after_seconds=stale_after_seconds)
+
+
+def _recoverable_owner(
+    workspace_root: Path,
+    owner: dict[str, Any],
+    *,
+    stale_after_seconds: int,
+) -> dict[str, Any] | None:
     run_id = str(owner.get("run_id") or "")
     if not _SAFE_RUN_ID.fullmatch(run_id):
         raise RePublishRecoveryRequired(f"publish lock run ID is malformed: {run_id!r}")
-    if _owner_run_is_active(root, owner):
+    if _owner_run_is_active(workspace_root, owner):
         return None
 
     hostname = str(owner.get("hostname") or "")
