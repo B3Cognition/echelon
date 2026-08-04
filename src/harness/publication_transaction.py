@@ -383,6 +383,12 @@ def _normalize_raw_legacy_states(transaction: PublicationTransaction) -> None:
         elif not backup_exists and final_exists and phase == "pending" and staged is not None and not staged_exists:
             phase = "installed"
             had_final = False
+        elif phase == "installed" and not had_final and not final_exists and not backup_exists:
+            if staged_exists:
+                raise PublicationTransactionError(
+                    "legacy rollback journal has an incoherent no-original installed state"
+                )
+            phase = "pending"
         elif phase == "pending" and backup_exists and final_exists:
             raise PublicationTransactionError("legacy rollback journal has ambiguous final and backup paths")
 

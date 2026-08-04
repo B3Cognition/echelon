@@ -590,3 +590,112 @@ def test_invalid_raw_legacy_operation_prevents_any_normalization_or_mutation(
     assert (root / "second").read_text(encoding="utf-8") == "new-second\n"
     assert first_backup.read_text(encoding="utf-8") == "old-first\n"
     assert second_backup.read_text(encoding="utf-8") == "old-second\n"
+
+
+@pytest.mark.unit
+def test_raw_no_original_install_already_removed_normalizes_and_reloads(
+    tmp_path: Path,
+) -> None:
+    from harness.publication_transaction import (
+        PublicationTransaction,
+        rollback_publication_transaction,
+    )
+
+    root = tmp_path / "re"
+    root.mkdir()
+    stage = root / ".staging/legacy"
+    stage.mkdir(parents=True)
+    journal = stage / "rollback-journal.json"
+    journal.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "status": "replacing",
+                "operations": [
+                    {
+                        "final": "removed",
+                        "staged": "new/removed",
+                        "backup": "rollback/removed",
+                        "backed_up": False,
+                        "installed": True,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    transaction = PublicationTransaction.from_journal(
+        workspace_root=root,
+        staging_root=stage,
+        journal=journal,
+    )
+
+    class Interrupted(BaseException):
+        pass
+
+    def interrupt_after_normalization(point: str) -> None:
+        if point == "after_legacy_normalized":
+            raise Interrupted()
+
+    with pytest.raises(Interrupted):
+        rollback_publication_transaction(
+            transaction,
+            fault_hook=interrupt_after_normalization,
+        )
+
+    rewritten = json.loads(journal.read_text(encoding="utf-8"))
+    entry = rewritten["operations"][0]
+    assert entry["phase"] == "pending"
+    assert entry["had_final"] is False
+    assert entry["rollback_digest"] is None
+    resumed = PublicationTransaction.from_journal(
+        workspace_root=root,
+        staging_root=stage,
+        journal=journal,
+    )
+    rollback_publication_transaction(resumed)
+    assert json.loads(journal.read_text(encoding="utf-8"))["status"] == "rolled_back"
+
+
+@pytest.mark.unit
+def test_raw_no_original_install_with_staged_input_is_rejected_before_rewrite(
+    tmp_path: Path,
+) -> None:
+    from harness.publication_transaction import (
+        PublicationTransaction,
+        PublicationTransactionError,
+        rollback_publication_transaction,
+    )
+
+    root = tmp_path / "re"
+    root.mkdir()
+    stage = root / ".staging/legacy"
+    (stage / "new").mkdir(parents=True)
+    (stage / "new/removed").write_text("stale\n", encoding="utf-8")
+    journal = stage / "rollback-journal.json"
+    raw = {
+        "schema_version": 1,
+        "status": "replacing",
+        "operations": [
+            {
+                "final": "removed",
+                "staged": "new/removed",
+                "backup": "rollback/removed",
+                "backed_up": False,
+                "installed": True,
+            }
+        ],
+    }
+    journal.write_text(json.dumps(raw), encoding="utf-8")
+    before_journal = journal.read_bytes()
+    transaction = PublicationTransaction.from_journal(
+        workspace_root=root,
+        staging_root=stage,
+        journal=journal,
+    )
+
+    with pytest.raises(PublicationTransactionError, match="no-original"):
+        rollback_publication_transaction(transaction)
+
+    assert journal.read_bytes() == before_journal
+    assert (stage / "new/removed").read_text(encoding="utf-8") == "stale\n"
