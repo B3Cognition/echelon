@@ -175,4 +175,4 @@ echelon spec reopen {spec_id}
 
 ## Output
 
-Proceed to `DONE`.
+Proceed to `verify-spec-7-finalize`.

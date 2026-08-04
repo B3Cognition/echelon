@@ -51,21 +51,14 @@ def complete_verify_spec_run(
         raise VerifySpecRunInitError("verify state is malformed") from exc
     if not isinstance(state, dict):
         raise VerifySpecRunInitError("verify state must be a JSON object")
+    if state.get("status") not in {"in_progress", "complete"}:
+        raise VerifySpecRunInitError("verify state is not in progress or complete")
+    _validate_completion_evidence(state)
     if state.get("status") == "complete":
         if _completion_time(state.get("completed_at")) is None:
             raise VerifySpecRunInitError("completed verify state has no valid completed_at")
         return state_path
-    if state.get("status") != "in_progress":
-        raise VerifySpecRunInitError("verify state is not in progress")
-    if state.get("topology_evidence") not in {"ready", "degraded", "unavailable"}:
-        raise VerifySpecRunInitError("verify topology evidence is not finalized")
-    if state.get("fulfillment_artifacts") != "valid":
-        raise VerifySpecRunInitError("verify fulfillment artifacts are not valid")
-    if state.get("reconcile") is True and state.get("progress_reconciliation") not in {
-        "applied",
-        "dry_run",
-    }:
-        raise VerifySpecRunInitError("verify progress reconciliation is not finalized")
+
     timestamp = completed_at or datetime.now(timezone.utc).isoformat()
     if _completion_time(timestamp) is None:
         raise VerifySpecRunInitError("verify completion timestamp is invalid")
@@ -75,6 +68,18 @@ def complete_verify_spec_run(
     except DurableJsonError as exc:
         raise VerifySpecRunInitError(str(exc)) from exc
     return state_path
+
+
+def _validate_completion_evidence(state: dict[str, object]) -> None:
+    if state.get("topology_evidence") not in {"ready", "degraded", "unavailable"}:
+        raise VerifySpecRunInitError("verify topology evidence is not finalized")
+    if state.get("fulfillment_artifacts") != "valid":
+        raise VerifySpecRunInitError("verify fulfillment artifacts are not valid")
+    if state.get("reconcile") is True and state.get("progress_reconciliation") not in {
+        "applied",
+        "dry_run",
+    }:
+        raise VerifySpecRunInitError("verify progress reconciliation is not finalized")
 
 
 def _completion_time(value: object) -> datetime | None:

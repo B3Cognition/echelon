@@ -324,6 +324,23 @@ def test_verify_spec_final_lifecycle_owns_completion_state() -> None:
     assert "completed_at" in finalizer
 
 
+def test_verify_spec_reconciliation_routes_through_finalizer_in_prompt_and_definition() -> None:
+    definition = (ROOT / "extension" / "workflow" / "definition.yaml").read_text(
+        encoding="utf-8"
+    )
+    phase_six_definition = definition.split(
+        "    - id: verify-spec-6-reconcile", 1
+    )[1].split("    - id: verify-spec-7-finalize", 1)[0]
+    phase_six_prompt = (PHASE_DIR / "verify-spec-6-reconcile.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "to: verify-spec-7-finalize" in phase_six_definition
+    assert "to: DONE" not in phase_six_definition
+    assert "Proceed to `verify-spec-7-finalize`." in phase_six_prompt
+    assert "Proceed to `DONE`." not in phase_six_prompt
+
+
 def test_spec_guard_prompt_forbids_restatement_of_mechanical_rows() -> None:
     agent_dir = ROOT / "extension" / "agents" / "build"
     text = (agent_dir / "spec-guard.md").read_text(encoding="utf-8")

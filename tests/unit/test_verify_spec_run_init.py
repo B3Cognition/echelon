@@ -812,3 +812,63 @@ def test_complete_verify_spec_run_owns_final_completion_timestamp(tmp_path: Path
     state = json.loads(state_path.read_text())
     assert state["status"] == "complete"
     assert state["completed_at"] == "2026-08-04T17:00:00+00:00"
+
+
+@pytest.mark.parametrize(
+    "invalid_update",
+    (
+        {"topology_evidence": "pending"},
+        {"fulfillment_artifacts": "invalid"},
+        {"reconcile": True, "progress_reconciliation": "pending"},
+    ),
+)
+def test_complete_verify_spec_run_revalidates_forged_complete_state_without_mutation(
+    tmp_path: Path,
+    invalid_update: dict[str, object],
+) -> None:
+    run = tmp_path / "runs/verify-spec-001"
+    run.mkdir(parents=True)
+    state_path = run / "state.json"
+    state = {
+        "spec_id": "001-demo",
+        "status": "complete",
+        "completed_at": "2026-08-04T17:00:00+00:00",
+        "topology_evidence": "ready",
+        "fulfillment_artifacts": "valid",
+        "reconcile": False,
+    }
+    state.update(invalid_update)
+    state_path.write_text(json.dumps(state, sort_keys=True) + "\n", encoding="utf-8")
+    before = state_path.read_bytes()
+
+    with pytest.raises(VerifySpecRunInitError):
+        complete_verify_spec_run(run)
+
+    assert state_path.read_bytes() == before
+
+
+def test_complete_verify_spec_run_accepts_valid_complete_state_idempotently(
+    tmp_path: Path,
+) -> None:
+    run = tmp_path / "runs/verify-spec-001"
+    run.mkdir(parents=True)
+    state_path = run / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "spec_id": "001-demo",
+                "status": "complete",
+                "completed_at": "2026-08-04T17:00:00+00:00",
+                "topology_evidence": "ready",
+                "fulfillment_artifacts": "valid",
+                "reconcile": False,
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    before = state_path.read_bytes()
+
+    assert complete_verify_spec_run(run) == state_path
+    assert state_path.read_bytes() == before

@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import secrets
 import stat
-import tempfile
 
 
 class DurableJsonError(OSError):
@@ -14,64 +14,116 @@ class DurableJsonError(OSError):
 
 
 def write_json_atomic(path: Path, value: object) -> None:
-    """Fsync a securely-created sibling temp, replace, then fsync the parent."""
-    destination = Path(path)
+    """Replace JSON relative to a no-follow, securely walked parent fd."""
+    destination = Path(os.path.abspath(os.fspath(path)))
+    if not destination.name:
+        raise DurableJsonError("JSON destination has no filename")
+    content = (json.dumps(value, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    parent_fd = _open_parent_directory(destination.parent)
+    temporary_name: str | None = None
+    temporary_fd: int | None = None
     try:
-        metadata = os.lstat(destination)
-    except FileNotFoundError:
-        metadata = None
-    except OSError as exc:
-        raise DurableJsonError(f"cannot inspect JSON destination: {destination}") from exc
-    if metadata is not None:
-        if stat.S_ISLNK(metadata.st_mode):
-            raise DurableJsonError(f"JSON destination is symlinked: {destination}")
-        if not stat.S_ISREG(metadata.st_mode):
-            raise DurableJsonError(f"JSON destination is not a file: {destination}")
-
-    try:
-        descriptor, temporary_name = tempfile.mkstemp(
-            dir=str(destination.parent),
-            prefix=f".{destination.name}-",
-            suffix=".tmp",
+        _require_regular_destination(parent_fd, destination.name)
+        temporary_name, temporary_fd = _create_temporary(
+            parent_fd,
+            destination.name,
         )
-    except OSError as exc:
-        raise DurableJsonError(
-            f"cannot create JSON temporary file: {destination}"
-        ) from exc
-    temporary = Path(temporary_name)
-    open_descriptor: int | None = descriptor
-    try:
-        handle = os.fdopen(descriptor, "w", encoding="utf-8")
-        open_descriptor = None
-        with handle:
-            json.dump(value, handle, indent=2, sort_keys=True)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, destination)
-        directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-        directory_flags |= getattr(os, "O_NOFOLLOW", 0)
-        directory = os.open(destination.parent, directory_flags)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
-    except OSError as exc:
-        _cleanup_temporary(temporary)
-        raise DurableJsonError(f"cannot durably replace JSON: {destination}") from exc
-    except Exception:
-        _cleanup_temporary(temporary)
+        _write_all(temporary_fd, content)
+        os.fsync(temporary_fd)
+        os.close(temporary_fd)
+        temporary_fd = None
+
+        _require_regular_destination(parent_fd, destination.name)
+        os.replace(
+            temporary_name,
+            destination.name,
+            src_dir_fd=parent_fd,
+            dst_dir_fd=parent_fd,
+        )
+        temporary_name = None
+        os.fsync(parent_fd)
+    except DurableJsonError:
         raise
+    except OSError as exc:
+        raise DurableJsonError(f"cannot durably replace JSON: {destination}") from exc
     finally:
-        if open_descriptor is not None:
+        if temporary_fd is not None:
             try:
-                os.close(open_descriptor)
+                os.close(temporary_fd)
             except OSError:
                 pass
+        if temporary_name is not None:
+            try:
+                os.unlink(temporary_name, dir_fd=parent_fd)
+            except OSError:
+                pass
+        os.close(parent_fd)
 
 
-def _cleanup_temporary(path: Path) -> None:
+def _open_parent_directory(parent: Path) -> int:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
     try:
-        path.unlink(missing_ok=True)
-    except OSError:
-        pass
+        current_fd = os.open(parent.anchor or os.sep, flags)
+    except OSError as exc:
+        raise DurableJsonError(f"JSON directory is unsafe: {parent}") from exc
+    try:
+        components = parent.parts[1:] if parent.is_absolute() else parent.parts
+        for component in components:
+            try:
+                next_fd = os.open(component, flags, dir_fd=current_fd)
+            except OSError as exc:
+                raise DurableJsonError(f"JSON directory is unsafe: {parent}") from exc
+            try:
+                if not stat.S_ISDIR(os.fstat(next_fd).st_mode):
+                    raise DurableJsonError(f"JSON directory is unsafe: {parent}")
+            except Exception:
+                os.close(next_fd)
+                raise
+            os.close(current_fd)
+            current_fd = next_fd
+        if not stat.S_ISDIR(os.fstat(current_fd).st_mode):
+            raise DurableJsonError(f"JSON directory is unsafe: {parent}")
+        return current_fd
+    except Exception:
+        os.close(current_fd)
+        raise
+
+
+def _require_regular_destination(parent_fd: int, name: str) -> None:
+    try:
+        metadata = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise DurableJsonError(f"cannot inspect JSON destination: {name}") from exc
+    if stat.S_ISLNK(metadata.st_mode):
+        raise DurableJsonError(f"JSON destination is symlinked: {name}")
+    if not stat.S_ISREG(metadata.st_mode):
+        raise DurableJsonError(f"JSON destination is not a file: {name}")
+
+
+def _create_temporary(parent_fd: int, destination_name: str) -> tuple[str, int]:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    for _ in range(128):
+        name = f".{destination_name}-{secrets.token_hex(16)}.tmp"
+        try:
+            return name, os.open(name, flags, 0o600, dir_fd=parent_fd)
+        except FileExistsError:
+            continue
+        except OSError as exc:
+            raise DurableJsonError("cannot create JSON temporary file") from exc
+    raise DurableJsonError("cannot allocate unique JSON temporary file")
+
+
+def _write_all(descriptor: int, content: bytes) -> None:
+    remaining = memoryview(content)
+    while remaining:
+        try:
+            written = os.write(descriptor, remaining)
+        except OSError as exc:
+            raise DurableJsonError("cannot write JSON temporary file") from exc
+        if written <= 0:
+            raise DurableJsonError("cannot write JSON temporary file")
+        remaining = remaining[written:]
