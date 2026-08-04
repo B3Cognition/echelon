@@ -377,6 +377,7 @@ def _prepare_transaction(
             for source in current.sources.values()
         )
 
+    operations: list[dict[str, Any]] = []
     changed_source_ids = set(candidate.refreshed_sources + candidate.empty_sources)
     if current:
         reused_source_ids = (
@@ -385,12 +386,45 @@ def _prepare_transaction(
             - set(candidate.removed_sources)
         )
         for source_id in sorted(reused_source_ids):
+            source = current.sources[source_id]
+            durable_source = new_root / "re" / "sources" / source_id
             shutil.copytree(
                 workspace_root / "re" / "sources" / source_id,
-                new_root / "re" / "sources" / source_id,
+                durable_source,
             )
+            if source.manifest_artifact is None:
+                manifest_path = durable_source / "manifest.json"
+                manifest = _read_json(manifest_path)
+                manifest["artifacts"] = [
+                    descriptor.to_json_dict()
+                    for descriptor in build_re_artifact_catalog(
+                        durable_source,
+                        published_prefix=PurePosixPath(
+                            f"re/sources/{source_id}"
+                        ),
+                        scope="source",
+                        source_id=source_id,
+                    )
+                ]
+                _write_json_atomic(manifest_path, manifest)
+                source_records[source_id]["manifest_artifact"] = (
+                    _manifest_artifact(
+                        manifest_path,
+                        PurePosixPath(
+                            f"re/sources/{source_id}/manifest.json"
+                        ),
+                        scope="source",
+                        source_id=source_id,
+                    ).to_json_dict()
+                )
+                operations.append(
+                    _operation(
+                        stage_root,
+                        f"sources/{source_id}",
+                        staged=f"new/re/sources/{source_id}",
+                    )
+                )
 
-    operations: list[dict[str, Any]] = []
     for source_id in candidate.removed_sources:
         source_records.pop(source_id, None)
         operations.append(

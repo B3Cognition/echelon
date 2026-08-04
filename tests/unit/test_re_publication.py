@@ -311,6 +311,14 @@ def _durable_snapshot(root: Path) -> dict[str, bytes]:
     return result
 
 
+def _source_child_snapshot(source_dir: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(source_dir).as_posix(): path.read_bytes()
+        for path in sorted(source_dir.rglob("*"))
+        if path.is_file() and path.relative_to(source_dir).as_posix() != "manifest.json"
+    }
+
+
 def _finish_run(run_dir: Path) -> None:
     state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
     state["status"] = "done"
@@ -677,6 +685,79 @@ def test_one_source_refresh_preserves_unchanged_source_bytes(tmp_path: Path) -> 
     assert result.changed_sources == ("api",)
     assert _durable_snapshot(tmp_path)["sources/web/manifest.json"] == web_before
     assert "Version v2" in (tmp_path / "re/sources/api/overview.md").read_text()
+
+
+@pytest.mark.unit
+def test_legacy_reused_source_is_atomically_upgraded_to_typed_catalog(
+    tmp_path: Path,
+) -> None:
+    run_1 = write_valid_re_run(tmp_path, ("api",), run_id="run-1")
+    publish_re_run(tmp_path, run_1)
+    _finish_run(run_1)
+
+    source_dir = tmp_path / "re/sources/api"
+    source_manifest_path = source_dir / "manifest.json"
+    legacy_source_manifest = _read_json(source_manifest_path)
+    legacy_source_manifest.pop("artifacts")
+    legacy_source_manifest["legacy_extension"] = {"retained": True}
+    _write_json(source_manifest_path, legacy_source_manifest)
+
+    workspace_manifest_path = tmp_path / "re/workspace/manifest.json"
+    legacy_workspace_manifest = _read_json(workspace_manifest_path)
+    legacy_workspace_manifest.pop("artifacts")
+    _write_json(workspace_manifest_path, legacy_workspace_manifest)
+
+    index_path = tmp_path / "re/index.json"
+    legacy_index = _read_json(index_path)
+    legacy_index["sources"]["api"].pop("manifest_artifact")
+    legacy_index["workspace"].pop("manifest_artifact")
+    _write_json(index_path, legacy_index)
+
+    before = _durable_snapshot(tmp_path)
+    child_bytes_before = _source_child_snapshot(source_dir)
+    run_2 = write_valid_re_run(
+        tmp_path,
+        ("api",),
+        run_id="run-2",
+        actions={"api": "reuse"},
+    )
+
+    def fail_before_index(step: str) -> None:
+        if step == "before_index_replace":
+            raise OSError("injected legacy upgrade failure")
+
+    with pytest.raises(OSError, match="injected legacy upgrade failure"):
+        publish_re_run(
+            tmp_path,
+            run_2,
+            expected_generation=1,
+            fault_hook=fail_before_index,
+        )
+    assert _durable_snapshot(tmp_path) == before
+
+    result = publish_re_run(tmp_path, run_2, expected_generation=1)
+
+    assert result.generation == 2
+    assert _source_child_snapshot(source_dir) == child_bytes_before
+    typed_manifest = _read_json(source_manifest_path)
+    artifacts = typed_manifest.pop("artifacts")
+    assert typed_manifest == legacy_source_manifest
+    assert {row["path"] for row in artifacts} == _durable_artifact_paths(
+        source_dir,
+        "re/sources/api",
+    )
+    for descriptor in artifacts:
+        artifact_path = tmp_path / descriptor["path"]
+        assert descriptor["sha256"] == (
+            "sha256:" + hashlib.sha256(artifact_path.read_bytes()).hexdigest()
+        )
+
+    typed_index = _read_json(index_path)
+    manifest_artifact = typed_index["sources"]["api"]["manifest_artifact"]
+    assert manifest_artifact["kind"] == "re-source-manifest"
+    assert manifest_artifact["sha256"] == (
+        "sha256:" + hashlib.sha256(source_manifest_path.read_bytes()).hexdigest()
+    )
 
 
 @pytest.mark.unit
