@@ -694,3 +694,197 @@ def test_build_spec_graph_limits_re_memory_to_canonical_context(
     assert "drawer:001-demo:drawer-relationships" not in nodes
     assert "artifact:001-demo:re/workspace/overview.md" in nodes
     assert "artifact:001-demo:re/workspace/relationships.md" not in nodes
+
+
+@pytest.mark.unit
+def test_build_spec_graph_models_linked_re_source_topology(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    spec_dir = _canonical_spec(tmp_path)
+    source_root = tmp_path / "re" / "sources" / "api"
+    source_root.mkdir(parents=True)
+    artifacts = {
+        "manifest.json": json.dumps(
+            {
+                "source_id": "api",
+                "publication_status": "complete",
+                "fingerprint": "sha256:source",
+            }
+        )
+        + "\n",
+        "overview.md": "# API Overview\n",
+        "architecture.md": "# API Architecture\n",
+        "contracts.md": "# API Contracts\n",
+        "components.md": "# API Components\n",
+        "adrs/ADR-001-boundary.md": "Decision text without a heading.\n",
+        "codegraph-summary.json": '{"unknown_schema":{"entities":12}}\n',
+    }
+    context_rows = []
+    for relative, content in artifacts.items():
+        path = source_root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        context_rows.append(
+            {
+                "path": f"re/sources/api/{relative}",
+                "hash": "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest(),
+            }
+        )
+    _write_json(
+        spec_dir / "re-context.json",
+        {
+            "schema_version": 1,
+            "status": "attached",
+            "generation": 2,
+            "artifacts": context_rows,
+        },
+    )
+
+    class FakeAdapter:
+        wing = "demo-wing"
+
+        def plan_re_artifact_rows(self, content, *, source, artifact_metadata):
+            if source != "re/sources/api/architecture.md":
+                return []
+            return [
+                SimpleNamespace(
+                    drawer_id="drawer-re-architecture",
+                    requirement_id="RE-ARCH-001",
+                    room=artifact_metadata["room"],
+                    source=source,
+                    artifact_hash=artifact_metadata["artifact_hash"],
+                    canonical_spec_sha256="re-architecture-hash",
+                    requirement_content_sha256="re-architecture-content-hash",
+                )
+            ]
+
+    monkeypatch.setattr(
+        "echelon.mempalace_re.create_re_memory_adapter",
+        lambda project_root, run_id: FakeAdapter(),
+    )
+    monkeypatch.setattr(
+        "echelon.mempalace_re.audit_re_memory",
+        lambda project_root: SimpleNamespace(
+            schema_version=1,
+            wing="demo-wing",
+            status="pass",
+            artifact_count=len(artifacts),
+            expected_count=1,
+            present_current_count=1,
+            missing=[],
+            stale=[],
+            wrong_wing=[],
+            wrong_room=[],
+            duplicate=[],
+            non_canonical=[],
+            lifecycle_excluded=[],
+            errors=[],
+        ),
+    )
+
+    payload = build_spec_graph(tmp_path, spec_dir).to_dict()
+    nodes = {item["id"]: item for item in payload["nodes"]}
+    edges = {
+        (item["source"], item["type"], item["target"])
+        for item in payload["edges"]
+    }
+
+    source_id = "re-source:api"
+    decision_id = "decision:api:adrs/ADR-001-boundary.md"
+    architecture_id = "artifact:001-demo:re/sources/api/architecture.md"
+    contracts_id = "artifact:001-demo:re/sources/api/contracts.md"
+    components_id = "artifact:001-demo:re/sources/api/components.md"
+    adr_id = "artifact:001-demo:re/sources/api/adrs/ADR-001-boundary.md"
+    codegraph_id = "artifact:001-demo:re/sources/api/codegraph-summary.json"
+
+    assert nodes[source_id]["type"] == "ReverseEngineeringSource"
+    assert nodes[source_id]["properties"]["publication_status"] == "complete"
+    assert nodes[decision_id]["type"] == "Decision"
+    assert nodes[decision_id]["properties"]["title"] == "ADR-001-boundary"
+    assert nodes[architecture_id]["properties"]["re_artifact_kind"] == "architecture"
+    assert nodes[architecture_id]["properties"]["re_source_id"] == "api"
+    assert nodes[architecture_id]["properties"]["mining_status"] == "mined"
+    assert nodes[codegraph_id]["properties"]["mining_status"] == "eligible"
+    drawer_id = "drawer:001-demo:drawer-re-architecture"
+    assert nodes[drawer_id]["properties"]["artifact_kind"] == "re-architecture"
+    assert ("spec:001-demo", "USES_RE_SOURCE", source_id) in edges
+    assert (source_id, "DESCRIBED_BY", architecture_id) in edges
+    assert (source_id, "DECLARES_CONTRACTS_IN", contracts_id) in edges
+    assert (source_id, "CATALOGS_COMPONENTS_IN", components_id) in edges
+    assert (source_id, "SUMMARIZED_BY", codegraph_id) in edges
+    assert (source_id, "HAS_DECISION", decision_id) in edges
+    assert (decision_id, "DOCUMENTED_BY", adr_id) in edges
+    assert (architecture_id, "STORED_AS", drawer_id) in edges
+
+
+@pytest.mark.unit
+def test_build_spec_graph_models_linked_workspace_re_decision(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    spec_dir = _canonical_spec(tmp_path)
+    adr = tmp_path / "re" / "workspace" / "strategy" / "adrs" / "ADR-001-platform.md"
+    adr.parent.mkdir(parents=True)
+    adr.write_text("# Platform Boundary\n\nKeep services independent.\n", encoding="utf-8")
+    _write_json(
+        spec_dir / "re-context.json",
+        {
+            "schema_version": 1,
+            "status": "attached",
+            "generation": 2,
+            "artifacts": [
+                {
+                    "path": "re/workspace/strategy/adrs/ADR-001-platform.md",
+                    "hash": "sha256:" + hashlib.sha256(adr.read_bytes()).hexdigest(),
+                }
+            ],
+        },
+    )
+
+    class FakeAdapter:
+        wing = "demo-wing"
+
+        def plan_re_artifact_rows(self, content, *, source, artifact_metadata):
+            return []
+
+    monkeypatch.setattr(
+        "echelon.mempalace_re.create_re_memory_adapter",
+        lambda project_root, run_id: FakeAdapter(),
+    )
+    monkeypatch.setattr(
+        "echelon.mempalace_re.audit_re_memory",
+        lambda project_root: SimpleNamespace(
+            schema_version=1,
+            wing="demo-wing",
+            status="pass",
+            artifact_count=1,
+            expected_count=0,
+            present_current_count=0,
+            missing=[],
+            stale=[],
+            wrong_wing=[],
+            wrong_room=[],
+            duplicate=[],
+            non_canonical=[],
+            lifecycle_excluded=[],
+            errors=[],
+        ),
+    )
+
+    payload = build_spec_graph(tmp_path, spec_dir).to_dict()
+    nodes = {item["id"]: item for item in payload["nodes"]}
+    edges = {
+        (item["source"], item["type"], item["target"])
+        for item in payload["edges"]
+    }
+    artifact_id = (
+        "artifact:001-demo:re/workspace/strategy/adrs/ADR-001-platform.md"
+    )
+    decision_id = "decision:workspace:strategy/adrs/ADR-001-platform.md"
+
+    assert nodes[artifact_id]["properties"]["re_artifact_kind"] == "decision"
+    assert nodes[decision_id]["type"] == "Decision"
+    assert nodes[decision_id]["properties"]["title"] == "Platform Boundary"
+    assert ("spec:001-demo", "INFORMED_BY_DECISION", decision_id) in edges
+    assert (decision_id, "DOCUMENTED_BY", artifact_id) in edges

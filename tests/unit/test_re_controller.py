@@ -214,6 +214,29 @@ def test_semantic_audit_spec_fingerprint_invalidates_only_changed_domain(
 
 
 @pytest.mark.unit
+def test_semantic_audit_skips_domains_without_staged_specs(tmp_path: Path) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api", "web"))
+    missing_spec = run_dir / "re/sources/web/specs/001-re-domain/spec.md"
+    missing_spec.unlink()
+    controller = ReExtractionController(
+        provider=_ShallowSpecifierProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    )
+    plan = ReExecutionPlan.from_json_dict(
+        json.loads((run_dir / "re" / "re-execution-plan.json").read_text())
+    )
+
+    assert controller._semantic_validation_targets(plan) == [
+        {"source_id": "api", "domain_id": "001-re-domain"}
+    ]
+    assert controller._semantic_expected_domains(plan) == {
+        ("api", "001-re-domain")
+    }
+
+
+@pytest.mark.unit
 def test_semantic_audit_source_fingerprint_invalidates_affected_source(
     tmp_path: Path,
 ) -> None:
@@ -880,6 +903,11 @@ def test_source_local_domain_budget_records_partial_quality_debt_instead_of_bloc
     state = json.loads(state_path.read_text(encoding="utf-8"))
     assert state["re_source_states"]["api"]["status"] == "partial_quality_debt"
     assert state["re_quality_debt_sources"] == ["api"]
+    report_path = Path(
+        state["re_source_states"]["api"]["quality_debt_report"]
+    )
+    assert report_path == run_dir / "re/quality/sources/api.json"
+    assert json.loads(report_path.read_text(encoding="utf-8"))["source_id"] == "api"
 
 
 @pytest.mark.unit

@@ -109,6 +109,14 @@ class MemoryReceipt:
 
 
 @dataclass(frozen=True)
+class _ReArtifactDescriptor:
+    source_id: str
+    source_relative_path: str
+    artifact_kind: str
+    edge_type: str
+
+
+@dataclass(frozen=True)
 class SpecArtifactGraph:
     spec_id: str
     generator_version: str
@@ -247,6 +255,7 @@ def build_spec_graph(
         inputs,
         memory_receipts,
     )
+    _add_re_topology(root, spec_dir, nodes, edges)
 
     return SpecArtifactGraph(
         spec_id=spec_id,
@@ -326,6 +335,192 @@ def _add_artifact(
         required=_input_required(spec_dir, path),
     )
     return node_id
+
+
+def _add_re_topology(
+    root: Path,
+    spec_dir: Path,
+    nodes: dict[str, GraphNode],
+    edges: list[GraphEdge],
+) -> None:
+    stored_artifacts = {
+        edge.source for edge in edges if edge.type == "STORED_AS"
+    }
+    linked_artifacts = sorted(_linked_re_artifacts(root, spec_dir))
+    descriptors: list[tuple[Path, _ReArtifactDescriptor]] = []
+    for path in linked_artifacts:
+        descriptor = _describe_re_artifact(root, path)
+        if descriptor is not None:
+            descriptors.append((path, descriptor))
+
+    workspace_root = (root / "re" / "workspace").resolve()
+    workspace_adrs: list[tuple[Path, str]] = []
+    for path in linked_artifacts:
+        try:
+            relative = path.resolve().relative_to(workspace_root)
+        except ValueError:
+            continue
+        relative_path = relative.as_posix()
+        if relative_path.startswith("strategy/adrs/") and path.suffix.lower() == ".md":
+            workspace_adrs.append((path, relative_path))
+
+    for path, relative_path in workspace_adrs:
+        artifact_id = f"artifact:{spec_dir.name}:{_workspace_path(root, path)}"
+        artifact_node = nodes.get(artifact_id)
+        if artifact_node is None:
+            continue
+        properties = dict(artifact_node.properties)
+        properties.update(
+            {
+                "re_artifact_kind": "decision",
+                "re_scope": "workspace",
+                "mining_status": (
+                    "mined" if artifact_id in stored_artifacts else "eligible"
+                ),
+            }
+        )
+        nodes[artifact_id] = GraphNode(artifact_id, artifact_node.type, properties)
+        decision_id = f"decision:workspace:{relative_path}"
+        nodes[decision_id] = GraphNode(
+            decision_id,
+            "Decision",
+            {
+                "scope": "workspace",
+                "path": _workspace_path(root, path),
+                "title": _adr_title(path),
+            },
+        )
+        edges.append(
+            GraphEdge(
+                f"spec:{spec_dir.name}",
+                "INFORMED_BY_DECISION",
+                decision_id,
+                {},
+            )
+        )
+        edges.append(GraphEdge(decision_id, "DOCUMENTED_BY", artifact_id, {}))
+
+    if not descriptors:
+        return
+
+    by_source: dict[str, list[tuple[Path, _ReArtifactDescriptor]]] = {}
+    for path, descriptor in descriptors:
+        by_source.setdefault(descriptor.source_id, []).append((path, descriptor))
+        artifact_id = f"artifact:{spec_dir.name}:{_workspace_path(root, path)}"
+        artifact_node = nodes.get(artifact_id)
+        if artifact_node is None:
+            continue
+        properties = dict(artifact_node.properties)
+        properties.update(
+            {
+                "re_artifact_kind": descriptor.artifact_kind,
+                "re_source_id": descriptor.source_id,
+            }
+        )
+        if descriptor.artifact_kind != "reverse-engineering":
+            properties["mining_status"] = (
+                "mined" if artifact_id in stored_artifacts else "eligible"
+            )
+        nodes[artifact_id] = GraphNode(artifact_id, artifact_node.type, properties)
+
+    for source_id, source_artifacts in sorted(by_source.items()):
+        source_node_id = f"re-source:{source_id}"
+        source_properties: dict[str, object] = {"source_id": source_id}
+        manifest_entry = next(
+            (
+                (path, descriptor)
+                for path, descriptor in source_artifacts
+                if descriptor.source_relative_path == "manifest.json"
+            ),
+            None,
+        )
+        if manifest_entry is not None:
+            manifest_path = manifest_entry[0]
+            source_properties["manifest_path"] = _workspace_path(root, manifest_path)
+            try:
+                manifest = _read_json_object(manifest_path, "RE source manifest")
+            except SpecGraphError:
+                manifest = {}
+            for key in ("publication_status", "source_fingerprint"):
+                value = manifest.get(key)
+                if isinstance(value, str) and value:
+                    source_properties[key] = value
+        nodes[source_node_id] = GraphNode(
+            source_node_id,
+            "ReverseEngineeringSource",
+            source_properties,
+        )
+        edges.append(
+            GraphEdge(f"spec:{spec_dir.name}", "USES_RE_SOURCE", source_node_id, {})
+        )
+
+        for path, descriptor in source_artifacts:
+            artifact_id = f"artifact:{spec_dir.name}:{_workspace_path(root, path)}"
+            if artifact_id not in nodes:
+                continue
+            edges.append(GraphEdge(source_node_id, descriptor.edge_type, artifact_id, {}))
+            if descriptor.artifact_kind != "decision":
+                continue
+            decision_id = (
+                f"decision:{source_id}:{descriptor.source_relative_path}"
+            )
+            nodes[decision_id] = GraphNode(
+                decision_id,
+                "Decision",
+                {
+                    "source_id": source_id,
+                    "path": _workspace_path(root, path),
+                    "title": _adr_title(path),
+                },
+            )
+            edges.append(GraphEdge(source_node_id, "HAS_DECISION", decision_id, {}))
+            edges.append(GraphEdge(decision_id, "DOCUMENTED_BY", artifact_id, {}))
+
+
+def _describe_re_artifact(
+    root: Path,
+    path: Path,
+) -> _ReArtifactDescriptor | None:
+    sources_root = (root / "re" / "sources").resolve()
+    try:
+        relative = path.resolve().relative_to(sources_root)
+    except ValueError:
+        return None
+    if len(relative.parts) < 2:
+        return None
+    source_id = relative.parts[0]
+    source_relative = Path(*relative.parts[1:]).as_posix()
+    name = relative.name
+    if source_relative.startswith("adrs/") and relative.suffix.lower() == ".md":
+        return _ReArtifactDescriptor(
+            source_id, source_relative, "decision", "DECIDED_BY"
+        )
+    kinds = {
+        "overview.md": ("overview", "DESCRIBED_BY"),
+        "architecture.md": ("architecture", "DESCRIBED_BY"),
+        "contracts.md": ("contracts", "DECLARES_CONTRACTS_IN"),
+        "components.md": ("components", "CATALOGS_COMPONENTS_IN"),
+        "codegraph-summary.json": ("codegraph-summary", "SUMMARIZED_BY"),
+    }
+    artifact_kind, edge_type = kinds.get(
+        name, ("reverse-engineering", "EVIDENCED_BY")
+    )
+    return _ReArtifactDescriptor(
+        source_id, source_relative, artifact_kind, edge_type
+    )
+
+
+def _adr_title(path: Path) -> str:
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                title = stripped.lstrip("#").strip()
+                if title:
+                    return title
+    except (OSError, UnicodeError):
+        pass
+    return path.stem
 
 
 def _add_tasks(

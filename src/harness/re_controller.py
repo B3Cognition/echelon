@@ -267,7 +267,10 @@ class ReExtractionController:
                 if semantic_target is None:
                     aggregate = self._semantic_validation_payload(state, plan)
                     semantic_report, semantic_error = validate_semantic_quality_review(
-                        self._run_re_dir, plan, aggregate
+                        self._run_re_dir,
+                        plan,
+                        aggregate,
+                        expected_domains=self._semantic_expected_domains(plan),
                     )
                     if semantic_error is not None or semantic_report is None:
                         state["re_agent_result_detail"] = semantic_error or (
@@ -1521,6 +1524,16 @@ class ReExtractionController:
                 domain_manifest_path(self._run_re_dir, source.id)
             )
             for domain in manifest.domains:
+                spec_path = (
+                    self._run_re_dir
+                    / "sources"
+                    / source.id
+                    / "specs"
+                    / domain.domain_id
+                    / "spec.md"
+                )
+                if not spec_path.is_file():
+                    continue
                 targets.append(
                     {
                         "source_id": source.id,
@@ -1552,6 +1565,14 @@ class ReExtractionController:
         )
         spec_fingerprint = hashlib.sha256(spec_path.read_bytes()).hexdigest()
         return source_fingerprint, spec_fingerprint
+
+    def _semantic_expected_domains(
+        self, plan: ReExecutionPlan
+    ) -> set[tuple[str, str]]:
+        return {
+            (target["source_id"], target["domain_id"])
+            for target in self._semantic_validation_targets(plan)
+        }
 
     def _next_semantic_validation_target(
         self, state: dict, plan: ReExecutionPlan
@@ -2031,7 +2052,20 @@ class ReExtractionController:
                     if repair_count > self._source_budget(
                         state, "max_domain_repairs"
                     ):
-                        self._mark_active_source_partial(state, source_id, report_path)
+                        source_report = measure_source_quality(
+                            self._run_re_dir,
+                            plan,
+                            source_id,
+                            coverage_threshold=self._metric(
+                                state, "coverage_threshold"
+                            ),
+                        )
+                        source_report_path = write_re_source_quality_report(
+                            self._run_re_dir, source_report
+                        )
+                        self._mark_active_source_partial(
+                            state, source_id, source_report_path
+                        )
                         self._activate_next_source(state, plan)
                         return None
             if attempts > self._metric(state, "max_verify_expand_iterations"):

@@ -115,7 +115,11 @@ ROOT_RE_ARTIFACTS = {
 }
 
 SOURCE_RE_ARTIFACTS = {
+    "architecture.md",
+    "codegraph-summary.json",
+    "components.md",
     "configs.json",
+    "contracts.md",
     "dependencies.json",
     "domain-manifest.json",
     "manifest.json",
@@ -125,8 +129,20 @@ SOURCE_RE_ARTIFACTS = {
 
 WORKSPACE_RE_JSON_ARTIFACTS = {
     "architecture-map.json",
+    "codegraph-summary.json",
     "manifest.json",
 }
+
+RE_ARTIFACT_KINDS = frozenset(
+    {
+        "reverse-engineering",
+        "re-architecture",
+        "re-contracts",
+        "re-components",
+        "re-decision",
+        "re-codegraph-summary",
+    }
+)
 
 QUALITY_RE_ARTIFACTS = {
     "semantic-quality-review.json",
@@ -169,6 +185,35 @@ def _room_for_re_path(relative_to_re: Path) -> str:
     return "re-workspace-context"
 
 
+def _re_artifact_classification(relative_to_re: Path) -> tuple[str, str]:
+    """Return deterministic artifact kind and MemPalace room for a curated path."""
+    parts = relative_to_re.parts
+    name = relative_to_re.name
+    if parts and parts[0] == "sources":
+        if len(parts) >= 4 and parts[2] == "adrs" and relative_to_re.suffix == ".md":
+            return "re-decision", "re-source-decisions"
+        source_kinds = {
+            "architecture.md": ("re-architecture", "re-source-architecture"),
+            "contracts.md": ("re-contracts", "re-source-contracts"),
+            "components.md": ("re-components", "re-source-components"),
+            "codegraph-summary.json": (
+                "re-codegraph-summary",
+                "re-source-codegraph",
+            ),
+        }
+        if name in source_kinds:
+            return source_kinds[name]
+    if parts and parts[0] == "workspace" and name == "codegraph-summary.json":
+        return "re-codegraph-summary", "re-workspace-codegraph"
+    if (
+        len(parts) >= 4
+        and parts[:3] == ("workspace", "strategy", "adrs")
+        and relative_to_re.suffix.lower() == ".md"
+    ):
+        return "re-decision", "re-workspace-decisions"
+    return "reverse-engineering", _room_for_re_path(relative_to_re)
+
+
 def _is_curated_re_artifact(relative_to_re: Path) -> bool:
     parts = relative_to_re.parts
     if (
@@ -188,6 +233,8 @@ def _is_curated_re_artifact(relative_to_re: Path) -> bool:
     if parts[0] == "sources":
         if "specs" in parts:
             return name in {"spec.md", "checklist.md"}
+        if len(parts) >= 4 and parts[2] == "adrs":
+            return relative_to_re.suffix.lower() == ".md"
         return name in SOURCE_RE_ARTIFACTS
     if parts[0] == "quality":
         return name in QUALITY_RE_ARTIFACTS or (
@@ -211,7 +258,7 @@ def load_re_artifact_snapshots(project_root: Path) -> list[ReArtifactSnapshot]:
         except ValueError:
             source = f"re/{relative_to_re.as_posix()}"
         digest = artifact_hash(artifact)
-        room = _room_for_re_path(relative_to_re)
+        artifact_kind, room = _re_artifact_classification(relative_to_re)
         snapshots.append(
             ReArtifactSnapshot(
                 re_root=re_root,
@@ -221,7 +268,7 @@ def load_re_artifact_snapshots(project_root: Path) -> list[ReArtifactSnapshot]:
                 artifact_metadata={
                     "scope": "reverse-engineering",
                     "canonical": True,
-                    "artifact_kind": "reverse-engineering",
+                    "artifact_kind": artifact_kind,
                     "artifact_path": source,
                     "artifact_hash": digest,
                     "source_file": source,
@@ -312,6 +359,10 @@ def audit_re_memory(project_root: Path) -> ReMemoryAuditReport:
         snapshots=snapshots,
         adapter=adapter,
         artifact_kind="reverse-engineering",
+        artifact_kinds_by_source={
+            snapshot.source: str(snapshot.artifact_metadata["artifact_kind"])
+            for snapshot in snapshots
+        },
         scope="reverse-engineering",
         planner_name="plan_re_artifact_rows",
     )
@@ -355,7 +406,10 @@ def _cleanup_existing_re_drawers(adapter: object) -> list[str]:
             for drawer_id, metadata in zip(ids, metadatas)
             if isinstance(drawer_id, str)
             and isinstance(metadata, dict)
-            and metadata.get("artifact_kind") == "reverse-engineering"
+            and (
+                metadata.get("artifact_kind") in RE_ARTIFACT_KINDS
+                or metadata.get("scope") == "reverse-engineering"
+            )
             and metadata.get("wing") == getattr(adapter, "wing", "")
         ]
         if delete_ids:

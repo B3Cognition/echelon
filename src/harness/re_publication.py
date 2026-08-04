@@ -416,7 +416,11 @@ def _prepare_transaction(
             shutil.copy2(staged_source / "components.md", durable_source / "components.md")
             if (staged_source / "adrs").is_dir():
                 shutil.copytree(staged_source / "adrs", durable_source / "adrs")
-            shutil.copytree(staged_source / "specs", durable_source / "specs")
+            staged_specs = staged_source / "specs"
+            if staged_specs.is_dir():
+                shutil.copytree(staged_specs, durable_source / "specs")
+            else:
+                (durable_source / "specs").mkdir()
             codegraph_summary = _copy_optional_source_artifact(
                 staged_source,
                 durable_source,

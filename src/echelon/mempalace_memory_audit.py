@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import hashlib
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 from echelon.mempalace_requirements import SpecMemoryError
 
@@ -86,6 +86,7 @@ def audit_artifact_memory(
     snapshots: list[object],
     adapter: object,
     artifact_kind: str,
+    artifact_kinds_by_source: Mapping[str, str] | None = None,
     scope: str,
     spec_id: str | None = None,
     planner_name: str,
@@ -163,7 +164,9 @@ def audit_artifact_memory(
         if not _has_expected_identity(
             metadata,
             planned=planned,
-            artifact_kind=artifact_kind,
+            artifact_kind=(artifact_kinds_by_source or {}).get(
+                getattr(planned, "source"), artifact_kind
+            ),
             scope=scope,
             spec_id=spec_id,
         ):
@@ -188,7 +191,8 @@ def audit_artifact_memory(
             collection=collection,
             adapter=adapter,
             expected_rows=expected_rows,
-            artifact_kind=artifact_kind,
+            artifact_kinds={artifact_kind}
+            | set((artifact_kinds_by_source or {}).values()),
             spec_id=spec_id,
         )
     except (Exception, SystemExit) as exc:
@@ -339,7 +343,7 @@ def _scan_extras(
     collection: object,
     adapter: object,
     expected_rows: list[object],
-    artifact_kind: str,
+    artifact_kinds: set[str],
     spec_id: str | None,
 ) -> tuple[list[str], list[str], list[str], list[str]]:
     raw = collection.get(  # type: ignore[attr-defined]
@@ -357,7 +361,7 @@ def _scan_extras(
     for drawer_id, (_document, metadata) in parsed.rows.items():
         if drawer_id in expected_ids:
             continue
-        if metadata.get("artifact_kind") != artifact_kind:
+        if metadata.get("artifact_kind") not in artifact_kinds:
             continue
         if spec_id is not None and metadata.get("spec_id") != spec_id:
             continue

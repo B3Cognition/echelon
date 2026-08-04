@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 SOURCE_REFERENCE = re.compile(
-    r"`(?P<path>[^`\n:]+):(?P<start>\d+)(?:-(?P<end>\d+))?`"
+    r"`(?P<path>[^`\n:]+):(?P<start>\d+)(?:[-–—](?P<end>\d+))?`"
 )
 
 _KNOWN_EXTENSIONLESS_SOURCE_FILES = {

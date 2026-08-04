@@ -20,6 +20,7 @@ The curated RE artifact selector will additionally include:
 - `re/sources/<source>/contracts.md`
 - `re/sources/<source>/components.md`
 - `re/sources/<source>/adrs/**/*.md`
+- `re/workspace/strategy/adrs/**/*.md`
 - `re/sources/<source>/codegraph-summary.json`
 - `re/workspace/codegraph-summary.json`
 
@@ -31,6 +32,7 @@ Each snapshot retains the existing reverse-engineering scope and provenance whil
 | contracts | `re-contracts` | `re-source-contracts` |
 | components | `re-components` | `re-source-components` |
 | ADR | `re-decision` | `re-source-decisions` |
+| workspace ADR | `re-decision` | `re-workspace-decisions` |
 | source CodeGraph summary | `re-codegraph-summary` | `re-source-codegraph` |
 | workspace CodeGraph summary | `re-codegraph-summary` | `re-workspace-codegraph` |
 
@@ -62,6 +64,8 @@ Published RE files remain `Artifact` nodes. Their properties gain `re_artifact_k
 - `EVIDENCED_BY` for other attached RE files
 
 Each ADR file also creates a stable `Decision` node keyed by source ID plus relative ADR path. The source connects to it with `HAS_DECISION`, and the decision connects to its document with `DOCUMENTED_BY`. ADR title is read from the first Markdown heading when available; no deeper prose parsing is required.
+
+Workspace ADRs create stable `decision:workspace:<relative-path>` nodes. An attached spec connects to each with `INFORMED_BY_DECISION`, and the decision connects to its published document with `DOCUMENTED_BY`.
 
 CodeGraph summaries are structured JSON, but schemas may differ by producer version. This pass models the summary document and source relationship without expanding individual code entities. Entity expansion requires a separately versioned normalization contract.
 

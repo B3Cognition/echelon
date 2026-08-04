@@ -55,6 +55,77 @@ def test_preflight_accepts_exhaustively_scoped_claim(tmp_path: Path) -> None:
     assert check_semantic_preflight(spec, None) == ()
 
 
+def test_preflight_accepts_case_insensitive_exhaustive_scope(tmp_path: Path) -> None:
+    spec = tmp_path / "spec.md"
+    spec.write_text(
+        "## Requirements (Functional)\n\n"
+        "### FR-001: Forwarding\nEvery GET request is forwarded. "
+        "Evidence Scope: Exhaustive. `src/io.ts:4-12`\n\n"
+        + _coverage(),
+        encoding="utf-8",
+    )
+
+    assert check_semantic_preflight(spec, None) == ()
+
+
+def test_preflight_accepts_bold_exhaustive_scope_label(tmp_path: Path) -> None:
+    spec = tmp_path / "spec.md"
+    spec.write_text(
+        "## Requirements (Functional)\n\n"
+        "### FR-001: Forwarding\nEvery GET request is forwarded. "
+        "**Evidence Scope:** exhaustive. `src/io.ts:4-12`\n\n"
+        + _coverage(),
+        encoding="utf-8",
+    )
+
+    assert check_semantic_preflight(spec, None) == ()
+
+
+def test_preflight_accepts_emphasized_behavior_categories(tmp_path: Path) -> None:
+    spec = tmp_path / "spec.md"
+    spec.write_text(_coverage().replace("| public operations |", "| **public operations** |"), encoding="utf-8")
+
+    assert check_semantic_preflight(spec, None) == ()
+
+
+def test_preflight_reports_malformed_canonical_behavior_row(tmp_path: Path) -> None:
+    spec = tmp_path / "spec.md"
+    spec.write_text(
+        _coverage().replace(
+            "| tests | not-observed | none found | — |",
+            "| tests | not-observed | none found |",
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_semantic_preflight(spec, None)
+
+    assert [item.code for item in findings] == ["behavior_coverage_row_malformed"]
+    assert findings[0].message == (
+        "Behavior Coverage rows require Category, Status, Observed Scope, and "
+        "Source Evidence columns: tests"
+    )
+
+
+def test_preflight_reports_invalid_canonical_behavior_status(tmp_path: Path) -> None:
+    spec = tmp_path / "spec.md"
+    spec.write_text(
+        _coverage().replace(
+            "| evidence scope | observed |",
+            "| evidence scope | exhaustive |",
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_semantic_preflight(spec, None)
+
+    assert [item.code for item in findings] == ["behavior_coverage_status_invalid"]
+    assert findings[0].message == (
+        "Behavior Coverage status must be observed, not-observed, or "
+        "not-applicable: evidence scope=exhaustive"
+    )
+
+
 def test_host_port_literal_does_not_satisfy_source_evidence(tmp_path: Path) -> None:
     spec = tmp_path / "spec.md"
     spec.write_text(

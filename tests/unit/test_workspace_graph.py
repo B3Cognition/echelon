@@ -659,6 +659,68 @@ def test_merges_shared_identity_and_adds_workspace_relationships(
 
 
 @pytest.mark.unit
+def test_workspace_graph_deduplicates_re_source_topology(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path)
+    alpha = _spec_dir(tmp_path, "001-alpha")
+    beta = _spec_dir(tmp_path, "002-beta")
+    artifact_path = "re/sources/api/adrs/ADR-001-boundary.md"
+    decision_id = "decision:api:adrs/ADR-001-boundary.md"
+    source_node = GraphNode(
+        "re-source:api",
+        "ReverseEngineeringSource",
+        {"source_id": "api", "publication_status": "complete"},
+    )
+    decision_node = GraphNode(
+        decision_id,
+        "Decision",
+        {
+            "source_id": "api",
+            "path": artifact_path,
+            "title": "API Boundary",
+        },
+    )
+    for spec_dir in (alpha, beta):
+        spec_id = spec_dir.name
+        artifact_id = f"artifact:{spec_id}:{artifact_path}"
+        _write_member_graph(
+            spec_dir,
+            _member_graph(
+                spec_id,
+                artifact_path=artifact_path,
+                extra_nodes=(source_node, decision_node),
+                extra_edges=(
+                    GraphEdge(f"spec:{spec_id}", "USES_RE_SOURCE", "re-source:api", {}),
+                    GraphEdge("re-source:api", "HAS_DECISION", decision_id, {}),
+                    GraphEdge(decision_id, "DOCUMENTED_BY", artifact_id, {}),
+                ),
+            ),
+        )
+    monkeypatch.setattr(
+        "echelon.workspace_graph.audit_spec_graph",
+        lambda root, selector: _audit_for_current_graph(Path(selector)),
+    )
+
+    result = build_workspace_graph(tmp_path)
+    nodes = {node.id: node for node in result.graph.nodes}
+    edges = {(edge.source, edge.type, edge.target): edge for edge in result.graph.edges}
+
+    assert nodes["re-source:api"].properties["member_specs"] == [
+        "001-alpha",
+        "002-beta",
+    ]
+    assert nodes[decision_id].properties["member_specs"] == [
+        "001-alpha",
+        "002-beta",
+    ]
+    assert edges[("re-source:api", "HAS_DECISION", decision_id)].properties[
+        "member_specs"
+    ] == ["001-alpha", "002-beta"]
+
+
+@pytest.mark.unit
 def test_reports_unresolved_workspace_relationships(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

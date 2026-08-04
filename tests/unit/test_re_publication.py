@@ -533,6 +533,32 @@ def test_empty_source_publishes_manifest_without_specs(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_refresh_source_with_zero_domains_publishes_without_specs(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    run_re = run_dir / "re"
+    manifest_path = run_re / "sources/api/domain-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["domains"] = []
+    _write_json(manifest_path, manifest)
+    shutil.rmtree(run_re / "sources/api/specs")
+    plan = ReExecutionPlan.from_json_dict(
+        json.loads((run_re / "re-execution-plan.json").read_text(encoding="utf-8"))
+    )
+    architecture = build_re_architecture_map(plan, run_re_dir=run_re)
+    write_re_architecture_catalog(run_re, architecture)
+
+    result = publish_re_run(tmp_path, run_dir)
+
+    assert result.generation == 1
+    published = json.loads((tmp_path / "re/sources/api/manifest.json").read_text())
+    assert published["publication_status"] == "complete"
+    assert published["specs"] == []
+    assert (tmp_path / "re/sources/api/specs").is_dir()
+
+
+@pytest.mark.unit
 def test_generation_conflict_does_not_modify_publication(tmp_path: Path) -> None:
     run_1 = write_valid_re_run(tmp_path, ("api",), run_id="run-1")
     publish_re_run(tmp_path, run_1)

@@ -571,13 +571,22 @@ def _re_artifact_from_bytes(
     source: str,
     artifact_metadata: dict[str, Any],
 ) -> tuple[str, list[MinedRequirement]]:
+    artifact_kind = (
+        artifact_metadata.get("artifact_kind")
+        if isinstance(artifact_metadata, dict)
+        else None
+    )
     if (
         type(content) is not bytes
         or type(source) is not str
         or not source
         or type(artifact_metadata) is not dict
         or artifact_metadata.get("canonical") is not True
-        or artifact_metadata.get("artifact_kind") != "reverse-engineering"
+        or not isinstance(artifact_kind, str)
+        or not (
+            artifact_kind == "reverse-engineering"
+            or artifact_kind.startswith("re-")
+        )
         or artifact_metadata.get("scope") != "reverse-engineering"
     ):
         raise ValueError("invalid reverse-engineering mining input")
