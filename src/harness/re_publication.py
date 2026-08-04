@@ -434,6 +434,9 @@ def _prepare_transaction(
 
     operations: list[PublicationOperation] = []
     changed_source_ids = set(candidate.refreshed_sources + candidate.empty_sources)
+    preserve_reused_sources = bool(
+        candidate.plan.policy == "target-only" and candidate.plan.target_source
+    )
     if current:
         reused_source_ids = (
             set(current.sources)
@@ -447,6 +450,8 @@ def _prepare_transaction(
                 workspace_root / "re" / "sources" / source_id,
                 durable_source,
             )
+            if preserve_reused_sources:
+                continue
             topology_removed = _strip_legacy_topology_artifacts(durable_source)
             if source.manifest_artifact is None or topology_removed:
                 manifest_path = durable_source / "manifest.json"
@@ -701,7 +706,9 @@ def _prepare_transaction(
         topology_candidates = _topology_candidates(
             candidate,
             configured_ids,
-            migrate_legacy=topology_current is None,
+            migrate_legacy=(
+                topology_current is None and not preserve_reused_sources
+            ),
             workspace_root=workspace_root,
         )
         candidate_topology_ids = {item.source_id for item in topology_candidates}

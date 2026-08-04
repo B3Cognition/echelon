@@ -33,7 +33,7 @@ from harness.re_publication import (
     recover_interrupted_publication,
 )
 from harness.re_lock import RePublishLock
-from harness.re_registry import ensure_re_layout
+from harness.re_registry import ensure_re_layout, load_published_index
 from harness.re_registry import ReRegistryError
 
 
@@ -674,6 +674,73 @@ def test_targeted_publication_is_atomic_when_selected_source_disappears(
         publish_re_run(tmp_path, run_2, expected_generation=1)
 
     assert _durable_snapshot(tmp_path) == before
+
+
+@pytest.mark.unit
+def test_targeted_publication_does_not_migrate_legacy_reused_sibling(
+    tmp_path: Path,
+) -> None:
+    run_1 = write_valid_re_run(tmp_path, ("api", "web"), run_id="run-1")
+    analysis = _topology_codegraph("web")
+    _write_json(run_1 / "re/sources/web/codegraph-analysis.json", analysis)
+    _write_json(
+        run_1 / "re/sources/web/codegraph-summary.json",
+        _topology_summary(analysis),
+    )
+    publish_re_run(tmp_path, run_1)
+    _finish_run(run_1)
+
+    sibling = tmp_path / "re/sources/web"
+    sibling_semantic_before = {
+        path.relative_to(sibling).as_posix(): path.read_bytes()
+        for path in sorted(sibling.rglob("*"))
+        if path.is_file()
+    }
+    assert not (tmp_path / "re/topology/sources/web").exists()
+
+    config = tmp_path / ".echelon/config.yml"
+    config.parent.mkdir()
+    config.write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n"
+        "    - id: web\n      path: sources/web\n",
+        encoding="utf-8",
+    )
+    run_2 = write_valid_re_run(
+        tmp_path,
+        ("api", "web"),
+        run_id="run-2",
+        versions={"api": "v2", "web": "v1"},
+        actions={"api": "refresh", "web": "reuse"},
+    )
+    plan_path = run_2 / "re/re-execution-plan.json"
+    plan = _read_json(plan_path)
+    plan["policy"] = "target-only"
+    plan["requested_policy"] = "target-only"
+    plan["target_source"] = "api"
+    plan["forbidden_source_roots"] = [str(tmp_path / "sources/web")]
+    plan["sources"][1]["selected"] = False
+    _write_json(plan_path, plan)
+    source_index_path = run_2 / "re/re-source-index.json"
+    source_index = _read_json(source_index_path)
+    source_index["sources"][1]["selected"] = False
+    _write_json(source_index_path, source_index)
+    target_analysis = _topology_codegraph("api")
+    _write_json(run_2 / "re/sources/api/codegraph-analysis.json", target_analysis)
+    _write_json(
+        run_2 / "re/sources/api/codegraph-summary.json",
+        _topology_summary(target_analysis),
+    )
+
+    result = publish_re_run(tmp_path, run_2, expected_generation=1)
+
+    assert result.changed_sources == ("api",)
+    assert {
+        path.relative_to(sibling).as_posix(): path.read_bytes()
+        for path in sorted(sibling.rglob("*"))
+        if path.is_file()
+    } == sibling_semantic_before
+    assert not (tmp_path / "re/topology/sources/web").exists()
+    assert load_published_index(tmp_path) is not None
 
 
 @pytest.mark.unit

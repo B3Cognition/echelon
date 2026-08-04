@@ -1593,6 +1593,44 @@ def test_post_land_reports_topology_and_semantic_re_independently(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("audit_status", ("degraded", "invalid"))
+def test_post_land_preserves_exact_topology_audit_status(
+    tmp_path: Path,
+    caplog,
+    audit_status: str,
+) -> None:
+    from harness.land import _post_land_topology_reconciliation
+    from harness.topology_promotion import TopologyPromotionResult
+
+    source = tmp_path / "sources/api"
+    source.mkdir(parents=True)
+    _init_repo(source)
+    _commit(source, "src/app.py", "pass\n", "landed")
+    with (
+        patch(
+            "harness.topology_promotion.reconcile_landed_topology",
+            return_value=TopologyPromotionResult(
+                status="current",
+                source_id="api",
+                message="published",
+            ),
+        ),
+        patch(
+            "echelon.topology_audit.audit_topology",
+            return_value=SimpleNamespace(status=audit_status),
+        ),
+        patch(
+            "harness.land._landed_semantic_re_status",
+            return_value="current",
+        ),
+    ):
+        _post_land_topology_reconciliation("001-demo", tmp_path, source)
+
+    assert f"topology: {audit_status}" in caplog.text
+    assert "next: echelon re refresh --source api" in caplog.text
+
+
+@pytest.mark.unit
 def test_land_refuses_different_active_authoring_branch_without_git_mutation(
     tmp_path: Path,
 ) -> None:
