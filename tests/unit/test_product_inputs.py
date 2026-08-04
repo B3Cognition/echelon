@@ -146,6 +146,67 @@ def test_product_input_attachment_appends_revision_and_rebuilds_aggregate(tmp_pa
     assert ledger["attachments"][0]["linked_evidence_request_ids"] == ["ER-001"]
 
 
+def test_normal_product_input_state_persists_authenticated_full_tree_digest(
+    tmp_path: Path,
+) -> None:
+    from echelon.product_inputs import (
+        immutable_product_input_tree_digest,
+        parse_input_declaration,
+        resolve_product_inputs,
+    )
+
+    project = tmp_path / "workspace"
+    source = project / "requirements.md"
+    source.parent.mkdir(parents=True)
+    source.write_text("Authenticated input\n", encoding="utf-8")
+
+    resolution = resolve_product_inputs(
+        project,
+        project / "runs/run-1",
+        [parse_input_declaration("requirement:requirements.md")],
+    )
+    payload = resolution.state_payload(project)
+
+    assert payload["tree_hash"] == immutable_product_input_tree_digest(
+        resolution.inputs_dir
+    )
+
+
+def test_attachment_refreshes_authenticated_aggregate_tree_digest(
+    tmp_path: Path,
+) -> None:
+    from echelon.product_inputs import (
+        attach_product_input_revision,
+        immutable_product_input_tree_digest,
+        parse_input_declaration,
+        resolve_product_inputs,
+    )
+
+    project = tmp_path / "workspace"
+    base_source = project / "sources/base.md"
+    added_source = project / "sources/added.md"
+    base_source.parent.mkdir(parents=True)
+    base_source.write_text("Base evidence\n", encoding="utf-8")
+    added_source.write_text("Added evidence\n", encoding="utf-8")
+    base = resolve_product_inputs(
+        project,
+        project / "runs/run-1",
+        [parse_input_declaration("reference:sources/base.md")],
+    )
+    original = base.state_payload(project)
+
+    attachment = attach_product_input_revision(
+        project,
+        base.inputs_dir,
+        [parse_input_declaration("reference:sources/added.md")],
+        command="echelon spec add-input",
+    )
+    updated = attachment.state_product_inputs(project, original)
+
+    assert updated["tree_hash"] != original["tree_hash"]
+    assert updated["tree_hash"] == immutable_product_input_tree_digest(base.inputs_dir)
+
+
 def test_product_input_attachment_all_duplicate_source_is_idempotent(tmp_path: Path) -> None:
     from echelon.product_inputs import (
         attach_product_input_revision,
@@ -439,7 +500,7 @@ def test_clone_product_input_contract_rejects_manifest_and_snapshot_hash_drift(
     manifest = json.loads((baseline_run / "inputs" / "manifest.json").read_text())
     snapshot = baseline_run / "inputs" / manifest["resources"][0]["snapshot"]
     snapshot.write_text("tampered\n", encoding="utf-8")
-    with pytest.raises(ProductInputError, match="snapshot hash drift"):
+    with pytest.raises(ProductInputError, match="tree hash drift|snapshot hash drift"):
         clone_product_input_contract(
             project,
             state,
@@ -539,12 +600,95 @@ def test_clone_product_inputs_atomic_install_never_overwrites_racing_destination
     assert not list(replacement.glob(".inputs-clone-*"))
 
 
+def test_clone_product_inputs_durably_syncs_complete_tree_before_install(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import echelon.atomic_install as atomic_install
+    import echelon.durable_tree as durable_tree
+
+    from echelon.product_inputs import clone_product_input_contract
+
+    project, _baseline_run, state = _clone_product_input_fixture(tmp_path)
+    replacement = project / "runs/squad-retarget-durable-inputs"
+    destination = replacement / "inputs"
+    events: list[tuple[str, Path]] = []
+    original_sync = durable_tree.durably_sync_owned_tree
+    original_install = atomic_install.atomic_rename_no_replace
+
+    def sync(path: Path, **kwargs: object) -> None:
+        events.append(("sync", path))
+        original_sync(path, **kwargs)
+
+    def install(source: Path, target: Path) -> None:
+        events.append(("install", target))
+        original_install(source, target)
+
+    monkeypatch.setattr(durable_tree, "durably_sync_owned_tree", sync)
+    monkeypatch.setattr(atomic_install, "atomic_rename_no_replace", install)
+
+    clone_product_input_contract(project, state, replacement)
+
+    assert events[-2][0] == "sync"
+    assert events[-1] == ("install", destination)
+
+
+def test_product_input_resolution_uses_canonical_owned_directory_modes(
+    tmp_path: Path,
+) -> None:
+    from echelon.product_inputs import parse_input_declaration, resolve_product_inputs
+
+    project = tmp_path / "workspace"
+    source = project / "sources/nested/requirement.md"
+    source.parent.mkdir(parents=True)
+    source.write_text("Canonical modes\n", encoding="utf-8")
+
+    resolution = resolve_product_inputs(
+        project,
+        project / "runs/run-1",
+        [parse_input_declaration("requirement:sources")],
+    )
+
+    directories = [resolution.inputs_dir, *(
+        path for path in resolution.inputs_dir.rglob("*") if path.is_dir()
+    )]
+    assert all(path.stat().st_mode & 0o777 == 0o755 for path in directories)
+
+
+def test_product_input_tree_hash_rejects_directory_mode_tamper(
+    tmp_path: Path,
+) -> None:
+    from echelon.product_inputs import (
+        ProductInputError,
+        parse_input_declaration,
+        resolve_product_inputs,
+        validate_immutable_product_input_package,
+    )
+
+    project = tmp_path / "workspace"
+    source = project / "requirement.md"
+    source.parent.mkdir(parents=True)
+    source.write_text("Mode evidence\n", encoding="utf-8")
+    resolution = resolve_product_inputs(
+        project,
+        project / "runs/run-1",
+        [parse_input_declaration("requirement:requirement.md")],
+    )
+    contract = resolution.state_payload(project)
+    snapshots = resolution.inputs_dir / "snapshots"
+    snapshots.chmod(0o777)
+
+    with pytest.raises(ProductInputError, match="tree hash drift"):
+        validate_immutable_product_input_package(resolution.inputs_dir, contract)
+
+
 def test_cloned_product_input_contract_authenticates_every_package_byte(
     tmp_path: Path,
 ) -> None:
     from echelon.product_inputs import (
         ProductInputError,
         clone_product_input_contract,
+        immutable_product_input_tree_digest,
         validate_immutable_product_input_package,
     )
 
@@ -553,6 +697,11 @@ def test_cloned_product_input_contract_authenticates_every_package_byte(
     attachment = baseline_run / "inputs/attachments/001/manifest.json"
     attachment.parent.mkdir(parents=True)
     attachment.write_text('{"attachment": true}\n', encoding="utf-8")
+    product_inputs = state["product_inputs"]
+    assert isinstance(product_inputs, dict)
+    product_inputs["tree_hash"] = immutable_product_input_tree_digest(
+        baseline_run / "inputs"
+    )
     replacement_run = project / "runs/squad-retarget-tree"
     cloned = clone_product_input_contract(project, state, replacement_run)
     assert cloned["tree_hash"].startswith("sha256:")
@@ -598,6 +747,11 @@ def test_clone_product_input_contract_rejects_source_mutation_during_copy(
     project, baseline_run, state = _clone_product_input_fixture(tmp_path)
     victim = baseline_run / "inputs/unindexed.bin"
     victim.write_bytes(b"baseline")
+    state_product_inputs = state["product_inputs"]
+    assert isinstance(state_product_inputs, dict)
+    state_product_inputs["tree_hash"] = (
+        product_inputs.immutable_product_input_tree_digest(baseline_run / "inputs")
+    )
     outside = project / "outside.bin"
     outside.write_bytes(b"outside")
     original_copy = shutil.copy2

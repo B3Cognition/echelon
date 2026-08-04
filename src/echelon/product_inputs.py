@@ -17,7 +17,7 @@ from typing import Iterable, Mapping, Sequence
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
-from echelon import atomic_install
+from echelon import atomic_install, durable_tree
 from harness.secret_scan import scan_text
 from kernel.task_contract import parse_task_rows
 
@@ -80,6 +80,7 @@ class ProductInputResolution:
     traceability_path: Path
     traceability_markdown_path: Path
     manifest_hash: str
+    tree_hash: str
 
     def state_payload(self, project_root: Path) -> dict[str, object]:
         """Return JSON-safe, workspace-portable pointers for squad state."""
@@ -97,6 +98,7 @@ class ProductInputResolution:
             "traceability": _portable(self.traceability_path, project_root),
             "traceability_markdown": _portable(self.traceability_markdown_path, project_root),
             "manifest_hash": self.manifest_hash,
+            _TREE_HASH_KEY: self.tree_hash,
         }
 
 
@@ -110,12 +112,17 @@ class ProductInputAttachmentResult:
     added: tuple[dict[str, object], ...]
     duplicates: tuple[dict[str, object], ...]
     ledger_path: Path
+    tree_hash: str | None
 
     def state_product_inputs(
         self,
         project_root: Path,
         current_product_inputs: Mapping[str, object],
     ) -> dict[str, object]:
+        if self.tree_hash is None:
+            raise ProductInputError(
+                "product input attachment has no authenticated aggregate tree hash"
+            )
         updated = dict(current_product_inputs)
         updated.update({
             "inputs_dir": _portable(self.inputs_dir, project_root),
@@ -127,6 +134,7 @@ class ProductInputAttachmentResult:
             "traceability": _portable(self.inputs_dir / "traceability.json", project_root),
             "traceability_markdown": _portable(self.inputs_dir / "traceability.md", project_root),
             "manifest_hash": hashlib.sha256((self.inputs_dir / "manifest.json").read_bytes()).hexdigest(),
+            _TREE_HASH_KEY: self.tree_hash,
         })
         return updated
 
@@ -331,6 +339,18 @@ def immutable_product_input_tree_digest(inputs_dir: Path) -> str:
     return f"sha256:{digest.hexdigest()}"
 
 
+def _durably_finalize_product_input_tree(inputs_dir: Path) -> None:
+    try:
+        durable_tree.durably_sync_owned_tree(
+            inputs_dir,
+            normalize_directory_modes=True,
+        )
+    except (OSError, durable_tree.DurableTreeError) as exc:
+        raise ProductInputError(
+            f"cannot durably finalize product input package: {inputs_dir}"
+        ) from exc
+
+
 def _validated_package_file(inputs_dir: Path, value: object, *, label: str) -> Path:
     if not isinstance(value, str) or not value:
         raise ProductInputError(f"product input {label} is missing")
@@ -480,8 +500,8 @@ def clone_product_input_contract(
 
     source_root = source.resolve()
     validate_product_input_contract_pointers(root, raw, source_root)
+    source_tree_hash = _require_authenticated_product_input_tree_hash(source, raw)
     validate_immutable_product_input_package(source, raw)
-    source_tree_hash = immutable_product_input_tree_digest(source)
     replacement_candidate = Path(replacement_run_dir)
     if not replacement_candidate.is_absolute():
         replacement_candidate = root / replacement_candidate
@@ -515,6 +535,7 @@ def clone_product_input_contract(
         )
         if immutable_product_input_tree_digest(source) != source_tree_hash:
             raise ProductInputError("product input source mutated during clone")
+        _durably_finalize_product_input_tree(temporary)
         if immutable_product_input_tree_digest(temporary) != source_tree_hash:
             raise ProductInputError("product input clone bytes differ from baseline")
         validate_immutable_product_input_package(temporary, raw)
@@ -560,6 +581,7 @@ def project_cloned_product_input_contract(
     if source != verified / "inputs":
         raise ProductInputError("product input package is outside the verified baseline run")
     validate_product_input_contract_pointers(root, raw, source)
+    source_tree_hash = _require_authenticated_product_input_tree_hash(source, raw)
     validate_immutable_product_input_package(source, raw)
     projected = dict(raw)
     replacement = Path(replacement_run_dir).resolve()
@@ -570,8 +592,23 @@ def project_cloned_product_input_contract(
         projected[key] = _portable(
             destination / _PRODUCT_INPUT_POINTER_RELATIVE_PATHS[key], root
         )
-    projected[_TREE_HASH_KEY] = immutable_product_input_tree_digest(source)
+    projected[_TREE_HASH_KEY] = source_tree_hash
     return projected
+
+
+def _require_authenticated_product_input_tree_hash(
+    inputs_dir: Path,
+    product_inputs: Mapping[str, object],
+) -> str:
+    expected = product_inputs.get(_TREE_HASH_KEY)
+    if (
+        type(expected) is not str
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", expected) is None
+    ):
+        raise ProductInputError("baseline product input tree hash is missing or invalid")
+    if immutable_product_input_tree_digest(inputs_dir) != expected:
+        raise ProductInputError("baseline product input tree hash drift")
+    return expected
 
 
 def attach_product_input_revision(
@@ -626,6 +663,7 @@ def attach_product_input_revision(
             added=(),
             duplicates=tuple(declaration_duplicates),
             ledger_path=ledger_path,
+            tree_hash=None,
         )
 
     revision_dir = inputs_dir / "attachments" / attachment_id
@@ -680,6 +718,7 @@ def attach_product_input_revision(
             added=(),
             duplicates=duplicates,
             ledger_path=ledger_path,
+            tree_hash=None,
         )
 
     linked_request_ids = _linked_evidence_request_ids(
@@ -714,6 +753,7 @@ def attach_product_input_revision(
         attachment_id=attachment_id,
     )
     _write_json(ledger_path, ledger)
+    _durably_finalize_product_input_tree(inputs_dir)
     return ProductInputAttachmentResult(
         attachment_id=attachment_id,
         inputs_dir=inputs_dir,
@@ -721,6 +761,7 @@ def attach_product_input_revision(
         added=tuple(added_resources),
         duplicates=duplicates,
         ledger_path=ledger_path,
+        tree_hash=immutable_product_input_tree_digest(inputs_dir),
     )
 
 
@@ -877,6 +918,7 @@ def _resolve_product_inputs_to(
     _write_json(traceability_path, traceability)
     traceability_markdown_path = inputs_dir / "traceability.md"
     _write_traceability_markdown(traceability_markdown_path, traceability)
+    _durably_finalize_product_input_tree(inputs_dir)
     return ProductInputResolution(
         declarations=normalized,
         inputs_dir=inputs_dir,
@@ -888,6 +930,7 @@ def _resolve_product_inputs_to(
         traceability_path=traceability_path,
         traceability_markdown_path=traceability_markdown_path,
         manifest_hash=hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+        tree_hash=immutable_product_input_tree_digest(inputs_dir),
     )
 
 

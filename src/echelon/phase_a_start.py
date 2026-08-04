@@ -14,7 +14,7 @@ import tempfile
 from typing import Mapping
 from uuid import uuid4
 
-from echelon import atomic_install
+from echelon import atomic_install, durable_tree
 from echelon.git_helpers import GitHelperError, current_branch, run_git
 from echelon.product_inputs import (
     ProductInputError,
@@ -54,6 +54,7 @@ from echelon.spec_switch import (
     validate_spec_checkpoint,
 )
 from echelon.speckit_git import SpecKitGitOwnershipError, require_speckit_git_disabled
+from echelon.strict_json import loads_strict_json
 from echelon.target_normalization import normalize_target_set
 from harness.published_re_context import explicit_re_sources
 
@@ -82,10 +83,17 @@ class RetargetPhaseAStartOutcome:
 
 _SAFE_REPLACEMENT_RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _SAFE_OPERATION_ID = re.compile(r"^[A-Za-z0-9._-]+$")
-_RETARGET_STAGING_MARKER = ".echelon-retarget-bootstrap.json"
-_RETARGET_RESERVATION_KEYS = frozenset(
-    {"operation_id", "source_run", "target_run", "spec_id", "staging_name"}
+_CANONICAL_SPEC_ID = re.compile(
+    r"^(?P<number>\d{3,})-(?P<slug>[a-z0-9]+(?:-[a-z0-9]+)*)$"
 )
+_RETARGET_STAGING_MARKER = ".echelon-retarget-bootstrap.json"
+_RETARGET_OWNER_KEYS = frozenset(
+    {"operation_id", "source_run", "target_run", "spec_id"}
+)
+_RETARGET_RESERVATION_KEYS = frozenset(
+    {"schema_version", "owner", "staging_name"}
+)
+_RETARGET_MARKER_KEYS = frozenset({"schema_version", "owner"})
 _RETARGET_STAGING_NAME = re.compile(r"^\.retarget-run-[0-9a-f]{32}$")
 _RETARGET_CONTRACT_KEYS = frozenset(
     {
@@ -104,6 +112,7 @@ _RETARGET_CONTRACT_KEYS = frozenset(
 _MAX_RETARGET_ID_LENGTH = 256
 _MAX_RETARGET_TARGET_LENGTH = 1024
 _MAX_RETARGET_TARGETS = 128
+_CANONICAL_OWNED_DIRECTORY_MODE = 0o755
 
 
 def _load_state(run_dir: Path) -> dict[str, object]:
@@ -111,8 +120,8 @@ def _load_state(run_dir: Path) -> dict[str, object]:
     if state_path.is_symlink() or not state_path.is_file():
         raise PhaseAStartError(f"baseline state is not a regular file: {state_path}")
     try:
-        payload = json.loads(state_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        payload = loads_strict_json(state_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
         raise PhaseAStartError(f"cannot read baseline state {state_path}: {exc}") from exc
     if not isinstance(payload, dict):
         raise PhaseAStartError(f"baseline state must be a JSON object: {state_path}")
@@ -134,9 +143,19 @@ def _write_json_atomic(path: Path, payload: Mapping[str, object]) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary_path, path)
+        _sync_parent_directory(path.parent)
     except Exception:
         temporary_path.unlink(missing_ok=True)
         raise
+
+
+def _sync_parent_directory(path: Path) -> None:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def _write_retarget_prepared_state(
@@ -146,7 +165,10 @@ def _write_retarget_prepared_state(
     spec_id = str(prepared_state["spec_id"])
     run_spec_dir = run_dir / "specs" / spec_id
     run_spec_dir.mkdir(parents=True)
+    (run_dir / "specs").chmod(_CANONICAL_OWNED_DIRECTORY_MODE)
+    run_spec_dir.chmod(_CANONICAL_OWNED_DIRECTORY_MODE)
     (run_dir / "staging").mkdir()
+    (run_dir / "staging").chmod(_CANONICAL_OWNED_DIRECTORY_MODE)
     _write_json_atomic(run_dir / "state.json", prepared_state)
 
 
@@ -159,6 +181,33 @@ def _require_bounded_identity(value: object, *, field: str) -> str:
     ):
         raise PhaseAStartError(f"retarget contract has invalid {field}")
     return value
+
+
+def _json_values_exact(actual: object, expected: object) -> bool:
+    """Compare decoded JSON without Python's cross-type scalar equality."""
+
+    if type(actual) is not type(expected):
+        return False
+    if type(expected) is dict:
+        actual_dict = actual
+        expected_dict = expected
+        assert isinstance(actual_dict, dict) and isinstance(expected_dict, dict)
+        return (
+            set(actual_dict) == set(expected_dict)
+            and all(
+                _json_values_exact(actual_dict[key], expected_dict[key])
+                for key in expected_dict
+            )
+        )
+    if type(expected) is list:
+        actual_list = actual
+        expected_list = expected
+        assert isinstance(actual_list, list) and isinstance(expected_list, list)
+        return len(actual_list) == len(expected_list) and all(
+            _json_values_exact(actual_item, expected_item)
+            for actual_item, expected_item in zip(actual_list, expected_list)
+        )
+    return actual == expected
 
 
 def _require_canonical_targets(value: object, *, field: str) -> tuple[str, ...]:
@@ -368,12 +417,30 @@ def _retarget_staging_identity(
     replacement_run_id: str,
     operation_id: str,
 ) -> dict[str, object]:
-    return {
+    identity: dict[str, object] = {
         "operation_id": operation_id,
         "source_run": baseline.run_dir_name,
         "target_run": replacement_run_id,
         "spec_id": baseline.spec_id,
     }
+    _validate_retarget_owner(identity)
+    return identity
+
+
+def _validate_retarget_owner(owner: object) -> None:
+    if type(owner) is not dict or set(owner) != _RETARGET_OWNER_KEYS:
+        raise PhaseAStartError("retarget ownership artifact has invalid owner schema")
+    for field in _RETARGET_OWNER_KEYS:
+        value = owner[field]
+        if type(value) is not str or not value or len(value) > _MAX_RETARGET_ID_LENGTH:
+            raise PhaseAStartError(f"retarget ownership artifact has invalid {field}")
+    if _SAFE_OPERATION_ID.fullmatch(owner["operation_id"]) is None:
+        raise PhaseAStartError("retarget ownership artifact has invalid operation_id")
+    for field in ("source_run", "target_run"):
+        if _SAFE_REPLACEMENT_RUN_ID.fullmatch(owner[field]) is None:
+            raise PhaseAStartError(f"retarget ownership artifact has invalid {field}")
+    if _CANONICAL_SPEC_ID.fullmatch(owner["spec_id"]) is None:
+        raise PhaseAStartError("retarget ownership artifact has invalid spec_id")
 
 
 def _read_regular_json(path: Path, *, label: str) -> dict[str, object]:
@@ -405,8 +472,8 @@ def _read_regular_json(path: Path, *, label: str) -> dict[str, object]:
     finally:
         os.close(descriptor)
     try:
-        payload = json.loads(b"".join(chunks).decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        payload = loads_strict_json(b"".join(chunks).decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
         raise PhaseAStartError(f"{label} is malformed: {path}") from exc
     if type(payload) is not dict:
         raise PhaseAStartError(f"{label} must be a JSON object: {path}")
@@ -418,7 +485,11 @@ def _create_retarget_reservation(
     staging_identity: Mapping[str, object],
 ) -> dict[str, object]:
     staging_name = f".retarget-run-{uuid4().hex}"
-    payload = {**dict(staging_identity), "staging_name": staging_name}
+    payload = {
+        "schema_version": 1,
+        "owner": dict(staging_identity),
+        "staging_name": staging_name,
+    }
     temporary = reservation_path.parent / f".retarget-reservation-{uuid4().hex}.tmp"
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
     descriptor = os.open(temporary, flags, 0o600)
@@ -445,11 +516,12 @@ def _load_retarget_reservation(
     payload = _read_regular_json(reservation_path, label="retarget staging reservation")
     if set(payload) != _RETARGET_RESERVATION_KEYS:
         raise PhaseAStartError("retarget staging reservation has invalid keys")
-    for key, value in staging_identity.items():
-        if payload.get(key) != value:
-            raise PhaseAStartError(
-                f"retarget staging reservation mismatches {key}"
-            )
+    if not _json_values_exact(payload.get("schema_version"), 1):
+        raise PhaseAStartError("retarget staging reservation has invalid schema_version")
+    owner = payload.get("owner")
+    _validate_retarget_owner(owner)
+    if not _json_values_exact(owner, dict(staging_identity)):
+        raise PhaseAStartError("retarget staging reservation has mismatched owner")
     staging_name = payload.get("staging_name")
     if type(staging_name) is not str or _RETARGET_STAGING_NAME.fullmatch(staging_name) is None:
         raise PhaseAStartError("retarget staging reservation has invalid staging_name")
@@ -462,22 +534,22 @@ def _remove_retarget_reservation(
 ) -> None:
     _load_retarget_reservation(reservation_path, staging_identity)
     reservation_path.unlink()
-    directory_fd = os.open(reservation_path.parent, os.O_RDONLY)
-    try:
-        os.fsync(directory_fd)
-    finally:
-        os.close(directory_fd)
+    _sync_parent_directory(reservation_path.parent)
 
 
 def _create_retarget_staging_directory(staging_dir: Path) -> None:
-    staging_dir.mkdir()
+    staging_dir.mkdir(mode=_CANONICAL_OWNED_DIRECTORY_MODE)
+    staging_dir.chmod(_CANONICAL_OWNED_DIRECTORY_MODE)
 
 
 def _write_retarget_staging_marker(
     staging_dir: Path,
     staging_identity: Mapping[str, object],
 ) -> None:
-    _write_json_atomic(staging_dir / _RETARGET_STAGING_MARKER, staging_identity)
+    _write_json_atomic(
+        staging_dir / _RETARGET_STAGING_MARKER,
+        {"schema_version": 1, "owner": dict(staging_identity)},
+    )
 
 
 def _require_owned_retarget_staging(
@@ -493,13 +565,13 @@ def _require_owned_retarget_staging(
         raise PhaseAStartError(
             f"retarget staging directory has no ownership marker: {staging_dir}"
         )
-    try:
-        payload = json.loads(marker.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise PhaseAStartError(
-            f"cannot validate retarget staging ownership: {staging_dir}"
-        ) from exc
-    if payload != dict(expected_identity):
+    payload = _read_regular_json(marker, label="retarget staging ownership marker")
+    _validate_retarget_owner(payload.get("owner"))
+    if (
+        set(payload) != _RETARGET_MARKER_KEYS
+        or not _json_values_exact(payload.get("schema_version"), 1)
+        or not _json_values_exact(payload.get("owner"), dict(expected_identity))
+    ):
         raise PhaseAStartError(
             f"retarget staging directory has a different owner: {staging_dir}"
         )
@@ -513,11 +585,15 @@ def _install_prepared_retarget_run(
     if run_dir.exists() or run_dir.is_symlink():
         raise PhaseAStartError(f"replacement run directory already exists: {run_dir}")
     _require_owned_retarget_staging(staging_dir, staging_identity)
+    durable_tree.durably_sync_owned_tree(
+        staging_dir,
+        directory_mode=_CANONICAL_OWNED_DIRECTORY_MODE,
+        normalize_directory_modes=True,
+    )
     atomic_install.atomic_rename_no_replace(staging_dir, run_dir)
-    (run_dir / _RETARGET_STAGING_MARKER).unlink()
 
 
-def _discard_installed_retarget_marker(
+def _remove_installed_retarget_marker(
     run_dir: Path,
     staging_identity: Mapping[str, object],
 ) -> None:
@@ -526,6 +602,7 @@ def _discard_installed_retarget_marker(
         return
     _require_owned_retarget_staging(run_dir, staging_identity)
     marker.unlink()
+    _sync_parent_directory(run_dir)
 
 
 def _require_real_directory(path: Path, *, label: str) -> None:
@@ -535,6 +612,50 @@ def _require_real_directory(path: Path, *, label: str) -> None:
         raise PhaseAStartError(f"prepared run structure is missing {label}") from exc
     if path.is_symlink() or not stat.S_ISDIR(metadata.st_mode):
         raise PhaseAStartError(f"prepared run structure has invalid {label}")
+    if stat.S_IMODE(metadata.st_mode) != _CANONICAL_OWNED_DIRECTORY_MODE:
+        raise PhaseAStartError(f"prepared run structure has invalid {label} mode")
+
+
+def _require_canonical_baseline_paths(
+    root: Path,
+    baseline: SpecRun,
+    baseline_state: Mapping[str, object],
+) -> None:
+    base_name = baseline.run_dir.parent.name
+    if base_name not in {"runs", "squad"}:
+        raise PhaseAStartError("canonical baseline run directory is invalid")
+    expected_run_dir = root / base_name / baseline.run_dir_name
+    if (
+        baseline.run_dir != expected_run_dir
+        or expected_run_dir.is_symlink()
+        or not expected_run_dir.is_dir()
+    ):
+        raise PhaseAStartError("canonical baseline run directory is invalid")
+    expected_specs_dir = expected_run_dir / "specs"
+    expected_spec_dir = expected_specs_dir / baseline.spec_id
+    raw_spec_dir = baseline_state.get("spec_dir")
+    if (
+        type(raw_spec_dir) is not str
+        or raw_spec_dir != expected_spec_dir.relative_to(root).as_posix()
+        or baseline.spec_dir != expected_spec_dir
+        or expected_specs_dir.is_symlink()
+        or not expected_specs_dir.is_dir()
+        or expected_spec_dir.is_symlink()
+        or not expected_spec_dir.is_dir()
+    ):
+        raise PhaseAStartError("canonical baseline run-local spec directory is invalid")
+    expected_published_dir = root / "specs" / baseline.spec_id
+    raw_published_dir = baseline_state.get("published_spec_dir")
+    if (
+        type(raw_published_dir) is not str
+        or raw_published_dir != expected_published_dir.relative_to(root).as_posix()
+        or baseline.published_spec_dir != expected_published_dir
+        or expected_published_dir.parent.is_symlink()
+        or not expected_published_dir.parent.is_dir()
+        or expected_published_dir.is_symlink()
+        or not expected_published_dir.is_dir()
+    ):
+        raise PhaseAStartError("canonical baseline published spec directory is invalid")
 
 
 def _validate_prepared_run_structure(
@@ -542,6 +663,7 @@ def _validate_prepared_run_structure(
     *,
     spec_id: str,
     has_product_inputs: bool,
+    has_ownership_marker: bool,
 ) -> None:
     _require_real_directory(run_dir, label="run directory")
     specs_dir = run_dir / "specs"
@@ -551,6 +673,8 @@ def _validate_prepared_run_structure(
     _require_real_directory(spec_dir, label="run-local spec directory")
     _require_real_directory(staging_dir, label="staging directory")
     expected_top = {"state.json", "specs", "staging"}
+    if has_ownership_marker:
+        expected_top.add(_RETARGET_STAGING_MARKER)
     if has_product_inputs:
         _require_real_directory(run_dir / "inputs", label="product input directory")
         expected_top.add("inputs")
@@ -570,14 +694,16 @@ def _validate_existing_retarget_run(
     replacement_run_id: str,
     expected_state: Mapping[str, object],
     expected_product_inputs: Mapping[str, object],
+    has_ownership_marker: bool,
 ) -> SpecRun:
     _validate_prepared_run_structure(
         run_dir,
         spec_id=baseline.spec_id,
         has_product_inputs=bool(expected_product_inputs),
+        has_ownership_marker=has_ownership_marker,
     )
     state = _load_state(run_dir)
-    if state != dict(expected_state):
+    if not _json_values_exact(state, dict(expected_state)):
         raise PhaseAStartError("existing replacement prepared state postimage is mismatched")
     product_inputs = state.get("product_inputs")
     try:
@@ -637,6 +763,7 @@ def start_retarget_phase_a_spec(
     if baseline.published_spec_dir is None:
         raise PhaseAStartError("baseline run has no canonical published spec directory")
     baseline_state = _load_state(baseline.run_dir)
+    _require_canonical_baseline_paths(root, baseline, baseline_state)
     user_message = baseline_state.get("user_message")
     if not isinstance(user_message, str) or not user_message.strip():
         raise PhaseAStartError("baseline run is missing its original user message")
@@ -649,7 +776,13 @@ def start_retarget_phase_a_spec(
         if type(value) is not str or not value:
             raise PhaseAStartError(f"baseline run has invalid {field}")
     spec_number = baseline_state["spec_number"]
-    if not baseline.spec_id.startswith(f"{spec_number}-"):
+    parsed_spec = _CANONICAL_SPEC_ID.fullmatch(baseline.spec_id)
+    if (
+        len(baseline.spec_id) > _MAX_RETARGET_ID_LENGTH
+        or parsed_spec is None
+        or len(spec_number) > _MAX_RETARGET_ID_LENGTH
+        or spec_number != parsed_spec.group("number")
+    ):
         raise PhaseAStartError("baseline run has invalid spec_number binding")
     base_commit = baseline_state["phase_a_base_commit"]
     try:
@@ -757,7 +890,10 @@ def start_retarget_phase_a_spec(
             staging_identity,
         )
 
-    _discard_installed_retarget_marker(run_dir, staging_identity)
+    marker_path = run_dir / _RETARGET_STAGING_MARKER
+    has_ownership_marker = marker_path.exists() or marker_path.is_symlink()
+    if has_ownership_marker:
+        _require_owned_retarget_staging(run_dir, staging_identity)
     target = _validate_existing_retarget_run(
         root,
         run_dir,
@@ -765,7 +901,10 @@ def start_retarget_phase_a_spec(
         replacement_run_id=replacement_run_id,
         expected_state=expected_state,
         expected_product_inputs=expected_product_inputs,
+        has_ownership_marker=has_ownership_marker,
     )
+    if has_ownership_marker:
+        _remove_installed_retarget_marker(run_dir, staging_identity)
     try:
         intent = load_spec_switch_intent(root)
     except SpecLifecycleError as exc:

@@ -48,6 +48,7 @@ def _checkpoint_active_run(repo: Path) -> str:
     run_dir = repo / "runs" / "run-a"
     spec_dir = run_dir / "specs" / "001-spec-a"
     spec_dir.mkdir(parents=True)
+    (repo / "specs" / "001-spec-a").mkdir(parents=True)
     (spec_dir / "spec.md").write_text("# Spec A\n", encoding="utf-8")
     _git(repo, "add", str((spec_dir / "spec.md").relative_to(repo)))
     _git(repo, "commit", "-m", "checkpoint A")
@@ -1359,6 +1360,112 @@ def test_retarget_retry_requires_exact_prepared_state_postimage(
 
 @pytest.mark.parametrize(
     "mutation",
+    ["duplicate_top", "duplicate_nested", "bool_for_integer"],
+)
+def test_retarget_retry_uses_strict_type_exact_prepared_state_json(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    repo = _repo(tmp_path)
+    _checkpoint_active_run(repo)
+    baseline = resolve_active_spec_run(repo)
+    arguments = _retarget_arguments(
+        repo,
+        baseline,
+        replacement_run_id=f"squad-strict-state-{mutation}",
+        operation_id=f"rt-strict-state-{mutation}",
+    )
+    start_retarget_phase_a_spec(repo, **arguments)
+    state_path = repo / "runs" / str(arguments["replacement_run_id"]) / "state.json"
+    raw = state_path.read_text(encoding="utf-8")
+    if mutation == "duplicate_top":
+        run_id = arguments["replacement_run_id"]
+        raw = raw.replace(
+            f'"run_id": "{run_id}",',
+            f'"run_id": "{run_id}",\n  "run_id": "{run_id}",',
+            1,
+        )
+    elif mutation == "duplicate_nested":
+        raw = raw.replace(
+            '"status": "checkpointed",',
+            '"status": "checkpointed",\n    "status": "checkpointed",',
+            1,
+        )
+    else:
+        raw = raw.replace('"ignore_re": false,', '"ignore_re": 0,', 1)
+    state_path.write_text(raw, encoding="utf-8")
+    before = _tree_snapshot(repo / "runs")
+
+    with pytest.raises(PhaseAStartError):
+        start_retarget_phase_a_spec(repo, **arguments)
+
+    assert _tree_snapshot(repo / "runs") == before
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["duplicate_top", "duplicate_nested", "bool_for_integer"],
+)
+def test_retarget_retry_uses_strict_type_exact_reservation_json(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    import echelon.phase_a_start as phase_a_start
+
+    class InjectedCrash(BaseException):
+        pass
+
+    repo = _repo(tmp_path)
+    _checkpoint_active_run(repo)
+    baseline = resolve_active_spec_run(repo)
+    arguments = _retarget_arguments(
+        repo,
+        baseline,
+        replacement_run_id=f"squad-strict-sidecar-{mutation}",
+        operation_id=f"rt-strict-sidecar-{mutation}",
+    )
+    original_create = phase_a_start._create_retarget_staging_directory
+    monkeypatch.setattr(
+        phase_a_start,
+        "_create_retarget_staging_directory",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(InjectedCrash()),
+    )
+    with pytest.raises(InjectedCrash):
+        start_retarget_phase_a_spec(repo, **arguments)
+    monkeypatch.setattr(
+        phase_a_start,
+        "_create_retarget_staging_directory",
+        original_create,
+    )
+    reservation_path = next((repo / "runs").glob(".retarget-bootstrap-*.json"))
+    raw = reservation_path.read_text(encoding="utf-8")
+    if mutation == "duplicate_top":
+        raw = raw.replace(
+            '"schema_version": 1,',
+            '"schema_version": 1, "schema_version": 1,',
+            1,
+        )
+    elif mutation == "duplicate_nested":
+        operation_id = arguments["retarget_state"]["operation_id"]
+        raw = raw.replace(
+            f'"operation_id": "{operation_id}",',
+            f'"operation_id": "{operation_id}", "operation_id": "{operation_id}",',
+            1,
+        )
+    else:
+        raw = raw.replace('"schema_version": 1,', '"schema_version": true,', 1)
+    reservation_path.write_text(raw, encoding="utf-8")
+    before = _tree_snapshot(repo / "runs")
+
+    with pytest.raises(PhaseAStartError):
+        start_retarget_phase_a_spec(repo, **arguments)
+
+    assert _tree_snapshot(repo / "runs") == before
+
+
+@pytest.mark.parametrize(
+    "mutation",
     [
         "integer_operation",
         "missing_revision",
@@ -1445,6 +1552,51 @@ def test_retarget_authenticates_baseline_inputs_before_runs_mutation(
     assert _tree_snapshot(repo / "runs") == before
 
 
+@pytest.mark.parametrize("mutation", ["missing_hash", "invalid_hash", "unindexed_bytes"])
+def test_retarget_requires_persisted_baseline_input_tree_preimage_before_mutation(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    from echelon.product_inputs import parse_input_declaration, resolve_product_inputs
+
+    repo = _repo(tmp_path)
+    _checkpoint_active_run(repo)
+    baseline = resolve_active_spec_run(repo)
+    source = repo / "requirements.md"
+    source.write_text("Persisted preimage\n", encoding="utf-8")
+    resolution = resolve_product_inputs(
+        repo,
+        baseline.run_dir,
+        [parse_input_declaration("requirement:requirements.md")],
+    )
+    arguments = _retarget_arguments(
+        repo,
+        baseline,
+        replacement_run_id=f"squad-invalid-preimage-{mutation}",
+        operation_id=f"rt-invalid-preimage-{mutation}",
+    )
+    state_path = baseline.run_dir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    product_inputs = resolution.state_payload(repo)
+    if mutation == "missing_hash":
+        product_inputs.pop("tree_hash")
+    elif mutation == "invalid_hash":
+        product_inputs["tree_hash"] = "sha256:not-a-digest"
+    else:
+        (resolution.inputs_dir / "unindexed.txt").write_text(
+            "not represented by the persisted preimage\n",
+            encoding="utf-8",
+        )
+    state["product_inputs"] = product_inputs
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    before = _tree_snapshot(repo / "runs")
+
+    with pytest.raises(PhaseAStartError, match="tree hash"):
+        start_retarget_phase_a_spec(repo, **arguments)
+
+    assert _tree_snapshot(repo / "runs") == before
+
+
 @pytest.mark.parametrize(
     ("replacement_run_id", "replacement_targets"),
     [
@@ -1504,6 +1656,114 @@ def test_retarget_rejects_noncanonical_baseline_bindings_before_runs_mutation(
     before = _tree_snapshot(repo / "runs")
 
     with pytest.raises(PhaseAStartError, match=field):
+        start_retarget_phase_a_spec(repo, **arguments)
+
+    assert _tree_snapshot(repo / "runs") == before
+
+
+@pytest.mark.parametrize(
+    "binding",
+    [
+        "alternate_spec_dir",
+        "missing_spec_dir",
+        "symlink_spec_dir",
+        "alternate_published_dir",
+        "missing_published_dir",
+        "symlink_published_dir",
+    ],
+)
+def test_retarget_requires_exact_canonical_baseline_artifact_paths_before_mutation(
+    tmp_path: Path,
+    binding: str,
+) -> None:
+    repo = _repo(tmp_path)
+    _checkpoint_active_run(repo)
+    state_path = repo / "runs/run-a/state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    if binding in {"alternate_spec_dir", "missing_spec_dir", "symlink_spec_dir"}:
+        if binding == "alternate_spec_dir":
+            target = repo / "runs/run-a/alternate/001-spec-a"
+            target.mkdir(parents=True)
+            state["spec_dir"] = target.relative_to(repo).as_posix()
+        elif binding == "missing_spec_dir":
+            state["spec_dir"] = "runs/run-a/missing/001-spec-a"
+        else:
+            alias = repo / "runs/run-a/spec-alias"
+            alias.symlink_to(repo / "runs/run-a/specs/001-spec-a", target_is_directory=True)
+            state["spec_dir"] = alias.relative_to(repo).as_posix()
+    else:
+        if binding == "alternate_published_dir":
+            target = repo / "published/001-spec-a"
+            target.mkdir(parents=True)
+            state["published_spec_dir"] = target.relative_to(repo).as_posix()
+        elif binding == "missing_published_dir":
+            state["published_spec_dir"] = "specs/missing-001-spec-a"
+        else:
+            alias = repo / "published-spec-alias"
+            alias.symlink_to(repo / "specs/001-spec-a", target_is_directory=True)
+            state["published_spec_dir"] = alias.relative_to(repo).as_posix()
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    baseline = resolve_active_spec_run(repo)
+    arguments = _retarget_arguments(
+        repo,
+        baseline,
+        replacement_run_id=f"squad-invalid-binding-{binding}",
+        operation_id=f"rt-invalid-binding-{binding}",
+    )
+    before = _tree_snapshot(repo / "runs")
+
+    with pytest.raises(PhaseAStartError, match="canonical baseline"):
+        start_retarget_phase_a_spec(repo, **arguments)
+
+    assert _tree_snapshot(repo / "runs") == before
+
+
+def test_retarget_rejects_symlink_aliased_baseline_run_before_mutation(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path)
+    _checkpoint_active_run(repo)
+    source = repo / "runs/run-a"
+    hidden_source = repo / "runs/.source-run-a"
+    source.rename(hidden_source)
+    source.symlink_to(hidden_source, target_is_directory=True)
+    (repo / "runs/.current").write_text("run-a\n", encoding="utf-8")
+    baseline = resolve_active_spec_run(repo)
+    arguments = _retarget_arguments(
+        repo,
+        baseline,
+        replacement_run_id="squad-invalid-run-alias",
+        operation_id="rt-invalid-run-alias",
+    )
+    before = _tree_snapshot(repo / "runs")
+
+    with pytest.raises(PhaseAStartError, match="canonical baseline"):
+        start_retarget_phase_a_spec(repo, **arguments)
+
+    assert _tree_snapshot(repo / "runs") == before
+
+
+@pytest.mark.parametrize("spec_number", ["001-spec", "002", "0" * 300])
+def test_retarget_requires_exact_numeric_spec_prefix_before_runs_mutation(
+    tmp_path: Path,
+    spec_number: str,
+) -> None:
+    repo = _repo(tmp_path)
+    _checkpoint_active_run(repo)
+    baseline = resolve_active_spec_run(repo)
+    state_path = baseline.run_dir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["spec_number"] = spec_number
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    arguments = _retarget_arguments(
+        repo,
+        baseline,
+        replacement_run_id="squad-invalid-spec-prefix",
+        operation_id="rt-invalid-spec-prefix",
+    )
+    before = _tree_snapshot(repo / "runs")
+
+    with pytest.raises(PhaseAStartError, match="spec_number"):
         start_retarget_phase_a_spec(repo, **arguments)
 
     assert _tree_snapshot(repo / "runs") == before
@@ -1605,8 +1865,16 @@ def test_retarget_reservation_recovers_every_staging_crash_boundary(
     assert len(reservations) == 1
     assert reservations[0].is_file() and not reservations[0].is_symlink()
     reservation = json.loads(reservations[0].read_text(encoding="utf-8"))
-    assert reservation["operation_id"] == arguments["retarget_state"]["operation_id"]
-    assert reservation["target_run"] == arguments["replacement_run_id"]
+    assert reservation == {
+        "schema_version": 1,
+        "owner": {
+            "operation_id": arguments["retarget_state"]["operation_id"],
+            "source_run": baseline.run_dir_name,
+            "target_run": arguments["replacement_run_id"],
+            "spec_id": baseline.spec_id,
+        },
+        "staging_name": reservation["staging_name"],
+    }
     if original is sentinel:
         monkeypatch.delattr(phase_a_start, patched_name)
     else:
@@ -1658,3 +1926,281 @@ def test_retarget_retry_preserves_staging_without_ownership_reservation(
     start_retarget_phase_a_spec(repo, **arguments)
 
     assert abandoned.is_dir()
+
+
+@pytest.mark.parametrize("installed_mutation", ["missing_state", "tampered_state"])
+def test_retarget_retains_installed_ownership_evidence_until_postimage_validates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    installed_mutation: str,
+) -> None:
+    import echelon.phase_a_start as phase_a_start
+
+    class InjectedCrash(BaseException):
+        pass
+
+    repo = _repo(tmp_path)
+    _checkpoint_active_run(repo)
+    baseline = resolve_active_spec_run(repo)
+    arguments = _retarget_arguments(
+        repo,
+        baseline,
+        replacement_run_id="squad-retained-installed-evidence",
+        operation_id="rt-retained-installed-evidence",
+    )
+    original_install = phase_a_start._install_prepared_retarget_run
+
+    def install_then_tamper(*args: object, **kwargs: object) -> None:
+        original_install(*args, **kwargs)
+        run_dir = repo / "runs/squad-retained-installed-evidence"
+        state_path = run_dir / "state.json"
+        if installed_mutation == "missing_state":
+            state_path.unlink()
+        else:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["completed_phases"] = ["phase0-constitution"]
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    monkeypatch.setattr(
+        phase_a_start,
+        "_install_prepared_retarget_run",
+        install_then_tamper,
+    )
+    with pytest.raises(PhaseAStartError, match="prepared"):
+        start_retarget_phase_a_spec(repo, **arguments)
+    monkeypatch.setattr(
+        phase_a_start,
+        "_install_prepared_retarget_run",
+        original_install,
+    )
+
+    reservation_path = next((repo / "runs").glob(".retarget-bootstrap-*.json"))
+    run_dir = repo / "runs/squad-retained-installed-evidence"
+    marker_path = run_dir / ".echelon-retarget-bootstrap.json"
+    assert marker_path.is_file() and not marker_path.is_symlink()
+    assert json.loads(marker_path.read_text(encoding="utf-8")) == {
+        "schema_version": 1,
+        "owner": {
+            "operation_id": "rt-retained-installed-evidence",
+            "source_run": baseline.run_dir_name,
+            "target_run": "squad-retained-installed-evidence",
+            "spec_id": baseline.spec_id,
+        },
+    }
+    reservation_bytes = reservation_path.read_bytes()
+    marker_bytes = marker_path.read_bytes()
+
+    with pytest.raises(PhaseAStartError, match="prepared"):
+        start_retarget_phase_a_spec(repo, **arguments)
+
+    assert reservation_path.read_bytes() == reservation_bytes
+    assert marker_path.read_bytes() == marker_bytes
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["duplicate_top", "duplicate_nested", "bool_for_integer"],
+)
+def test_retarget_retry_uses_strict_type_exact_installed_marker_json(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    import echelon.phase_a_start as phase_a_start
+
+    repo = _repo(tmp_path)
+    _checkpoint_active_run(repo)
+    baseline = resolve_active_spec_run(repo)
+    arguments = _retarget_arguments(
+        repo,
+        baseline,
+        replacement_run_id=f"squad-strict-marker-{mutation}",
+        operation_id=f"rt-strict-marker-{mutation}",
+    )
+    original_install = phase_a_start._install_prepared_retarget_run
+    valid_state: bytes | None = None
+
+    def install_then_tamper(*args: object, **kwargs: object) -> None:
+        nonlocal valid_state
+        original_install(*args, **kwargs)
+        state_path = repo / "runs" / str(arguments["replacement_run_id"]) / "state.json"
+        valid_state = state_path.read_bytes()
+        state = json.loads(valid_state)
+        state["completed_phases"] = ["phase0-constitution"]
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    monkeypatch.setattr(
+        phase_a_start,
+        "_install_prepared_retarget_run",
+        install_then_tamper,
+    )
+    with pytest.raises(PhaseAStartError):
+        start_retarget_phase_a_spec(repo, **arguments)
+    monkeypatch.setattr(
+        phase_a_start,
+        "_install_prepared_retarget_run",
+        original_install,
+    )
+    assert valid_state is not None
+    run_dir = repo / "runs" / str(arguments["replacement_run_id"])
+    (run_dir / "state.json").write_bytes(valid_state)
+    marker_path = run_dir / ".echelon-retarget-bootstrap.json"
+    raw = marker_path.read_text(encoding="utf-8")
+    if mutation == "duplicate_top":
+        raw = raw.replace(
+            '"schema_version": 1,',
+            '"schema_version": 1, "schema_version": 1,',
+            1,
+        )
+    elif mutation == "duplicate_nested":
+        operation_id = arguments["retarget_state"]["operation_id"]
+        raw = raw.replace(
+            f'"operation_id": "{operation_id}",',
+            f'"operation_id": "{operation_id}", "operation_id": "{operation_id}",',
+            1,
+        )
+    else:
+        raw = raw.replace('"schema_version": 1,', '"schema_version": true,', 1)
+    marker_path.write_text(raw, encoding="utf-8")
+    reservation_path = next((repo / "runs").glob(".retarget-bootstrap-*.json"))
+    marker_bytes = marker_path.read_bytes()
+    reservation_bytes = reservation_path.read_bytes()
+
+    with pytest.raises(PhaseAStartError):
+        start_retarget_phase_a_spec(repo, **arguments)
+
+    assert marker_path.read_bytes() == marker_bytes
+    assert reservation_path.read_bytes() == reservation_bytes
+
+
+def test_retarget_state_atomic_replace_fsyncs_parent_after_rename(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import echelon.phase_a_start as phase_a_start
+
+    destination = tmp_path / "owned/state.json"
+    destination.parent.mkdir()
+    events: list[tuple[str, Path]] = []
+    original_replace = phase_a_start.os.replace
+
+    def replace(source: Path, target: Path) -> None:
+        original_replace(source, target)
+        events.append(("replace", Path(target)))
+
+    monkeypatch.setattr(phase_a_start.os, "replace", replace)
+    monkeypatch.setattr(
+        phase_a_start,
+        "_sync_parent_directory",
+        lambda path: events.append(("parent", Path(path))),
+        raising=False,
+    )
+
+    phase_a_start._write_json_atomic(destination, {"ready": True})
+
+    assert events == [("replace", destination), ("parent", destination.parent)]
+
+
+def test_retarget_durably_syncs_complete_run_before_atomic_install(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import echelon.atomic_install as atomic_install
+    import echelon.durable_tree as durable_tree
+
+    repo = _repo(tmp_path)
+    _checkpoint_active_run(repo)
+    baseline = resolve_active_spec_run(repo)
+    arguments = _retarget_arguments(
+        repo,
+        baseline,
+        replacement_run_id="squad-durable-run",
+        operation_id="rt-durable-run",
+    )
+    destination = repo / "runs/squad-durable-run"
+    events: list[tuple[str, Path]] = []
+    original_sync = durable_tree.durably_sync_owned_tree
+    original_install = atomic_install.atomic_rename_no_replace
+
+    def sync(path: Path, **kwargs: object) -> None:
+        events.append(("sync", path))
+        original_sync(path, **kwargs)
+
+    def install(source: Path, target: Path) -> None:
+        events.append(("install", target))
+        original_install(source, target)
+
+    monkeypatch.setattr(durable_tree, "durably_sync_owned_tree", sync)
+    monkeypatch.setattr(atomic_install, "atomic_rename_no_replace", install)
+
+    start_retarget_phase_a_spec(repo, **arguments)
+
+    install_index = events.index(("install", destination))
+    assert events[install_index - 1][0] == "sync"
+
+
+def test_retarget_durable_sync_failure_never_installs_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import echelon.atomic_install as atomic_install
+    import echelon.durable_tree as durable_tree
+
+    repo = _repo(tmp_path)
+    _checkpoint_active_run(repo)
+    baseline = resolve_active_spec_run(repo)
+    arguments = _retarget_arguments(
+        repo,
+        baseline,
+        replacement_run_id="squad-failed-durable-run",
+        operation_id="rt-failed-durable-run",
+    )
+    destination = repo / "runs/squad-failed-durable-run"
+    installed: list[Path] = []
+    original_install = atomic_install.atomic_rename_no_replace
+
+    def fail(_path: Path, **_kwargs: object) -> None:
+        raise OSError("injected durable sync failure")
+
+    def install(source: Path, target: Path) -> None:
+        installed.append(target)
+        original_install(source, target)
+
+    monkeypatch.setattr(durable_tree, "durably_sync_owned_tree", fail)
+    monkeypatch.setattr(atomic_install, "atomic_rename_no_replace", install)
+
+    with pytest.raises(OSError, match="injected durable sync failure"):
+        start_retarget_phase_a_spec(repo, **arguments)
+
+    assert destination not in installed
+    assert not destination.exists()
+
+
+@pytest.mark.parametrize("directory", ["specs", "spec", "staging"])
+def test_retarget_retry_rejects_noncanonical_owned_directory_mode(
+    tmp_path: Path,
+    directory: str,
+) -> None:
+    repo = _repo(tmp_path)
+    _checkpoint_active_run(repo)
+    baseline = resolve_active_spec_run(repo)
+    arguments = _retarget_arguments(
+        repo,
+        baseline,
+        replacement_run_id=f"squad-mode-{directory}",
+        operation_id=f"rt-mode-{directory}",
+    )
+    start_retarget_phase_a_spec(repo, **arguments)
+    run_dir = repo / "runs" / str(arguments["replacement_run_id"])
+    paths = {
+        "specs": run_dir / "specs",
+        "spec": run_dir / "specs" / baseline.spec_id,
+        "staging": run_dir / "staging",
+    }
+    paths[directory].chmod(0o777)
+    before = _tree_snapshot(repo / "runs")
+
+    with pytest.raises(PhaseAStartError, match="prepared run structure"):
+        start_retarget_phase_a_spec(repo, **arguments)
+
+    assert _tree_snapshot(repo / "runs") == before
