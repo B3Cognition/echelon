@@ -8,6 +8,7 @@ from collections.abc import Iterable
 
 PENDING_EXTERNAL_PUBLICATION_KEY = "pending_external_publication"
 PENDING_CONTROLLER_COMPLETION_KEY = "pending_controller_completion"
+PRODUCT_INPUT_MUTATION_KEY = "product_input_mutation"
 _PENDING_EXTERNAL_PUBLICATION_KEYS = frozenset(
     {
         "schema_version",
@@ -28,6 +29,25 @@ _PENDING_CONTROLLER_COMPLETION_KEYS = frozenset(
 )
 _TRANSACTION_ID_PATTERN = re.compile(r"\A[0-9a-f]{32}\Z")
 _MANIFEST_SHA256_PATTERN = re.compile(r"\A[0-9a-f]{64}\Z")
+_TREE_HASH_PATTERN = re.compile(r"\Asha256:[0-9a-f]{64}\Z")
+_ATTACHMENT_ID_PATTERN = re.compile(r"\A[0-9]{3,12}\Z")
+_PRODUCT_INPUT_MUTATION_KEYS = frozenset(
+    {
+        "schema_version",
+        "kind",
+        "operation_id",
+        "manifest_sha256",
+        "inputs_dir",
+        "old_tree_hash",
+        "new_tree_hash",
+        "owned_paths_sha256",
+        "owned_path_count",
+        "request_sha256",
+        "attachment_id",
+        "added_count",
+        "duplicate_count",
+    }
+)
 _COMPLETION_ORIGINS = frozenset({"routed", "terminal"})
 _COMPLETION_STEPS = frozenset(
     {
@@ -112,6 +132,7 @@ LIFECYCLE_AND_DIAGNOSTIC_KEYS = frozenset(
         PENDING_EXTERNAL_PUBLICATION_KEY,
         PENDING_CONTROLLER_COMPLETION_KEY,
         "external_publication_failure",
+        PRODUCT_INPUT_MUTATION_KEY,
     }
 )
 
@@ -182,6 +203,8 @@ TRUSTED_ROUTING_EFFECT_KEYS = frozenset(
         "quality_gate_remediation_no_artifact_progress",
         PENDING_EXTERNAL_PUBLICATION_KEY,
         PENDING_CONTROLLER_COMPLETION_KEY,
+        PRODUCT_INPUT_MUTATION_KEY,
+        "product_inputs",
         *PHASE_A_IDENTITY_KEYS,
     }
 )
@@ -194,6 +217,7 @@ TRUSTED_ROUTING_REMOVAL_KEYS = (
     - {
         PENDING_EXTERNAL_PUBLICATION_KEY,
         PENDING_CONTROLLER_COMPLETION_KEY,
+        PRODUCT_INPUT_MUTATION_KEY,
     }
 )
 
@@ -250,6 +274,94 @@ def validate_pending_external_publication(
         "transaction_id": transaction_id,
         "manifest_sha256": manifest_sha256,
     }
+
+
+def validate_product_input_mutation(value: object) -> dict[str, object]:
+    """Return one bounded, exact product-input mutation receipt."""
+    if (
+        type(value) is not dict
+        or frozenset(dict.keys(value)) != _PRODUCT_INPUT_MUTATION_KEYS
+    ):
+        raise ValueError("product input mutation must have exact fields")
+    mutation = dict(value)
+    if type(mutation["schema_version"]) is not int or mutation["schema_version"] != 1:
+        raise ValueError("product input mutation schema version is invalid")
+    kind = mutation["kind"]
+    if type(kind) is not str or kind not in {"controller_update", "add_input"}:
+        raise ValueError("product input mutation kind is invalid")
+    operation_id = mutation["operation_id"]
+    if (
+        type(operation_id) is not str
+        or _TRANSACTION_ID_PATTERN.fullmatch(operation_id) is None
+    ):
+        raise ValueError("product input mutation operation id is invalid")
+    for key in ("manifest_sha256", "owned_paths_sha256"):
+        digest = mutation[key]
+        if type(digest) is not str or _MANIFEST_SHA256_PATTERN.fullmatch(digest) is None:
+            raise ValueError(f"product input mutation {key} is invalid")
+    inputs_dir = mutation["inputs_dir"]
+    if (
+        type(inputs_dir) is not str
+        or not inputs_dir
+        or len(inputs_dir.encode("utf-8")) > 4096
+        or "\x00" in inputs_dir
+    ):
+        raise ValueError("product input mutation inputs directory is invalid")
+    for key in ("old_tree_hash", "new_tree_hash"):
+        digest = mutation[key]
+        if type(digest) is not str or _TREE_HASH_PATTERN.fullmatch(digest) is None:
+            raise ValueError(f"product input mutation {key} is invalid")
+    if mutation["old_tree_hash"] == mutation["new_tree_hash"]:
+        raise ValueError("product input mutation has no tree change")
+    owned_path_count = mutation["owned_path_count"]
+    if (
+        type(owned_path_count) is not int
+        or not 1 <= owned_path_count <= 100_000
+    ):
+        raise ValueError("product input mutation owned path count is invalid")
+    added_count = mutation["added_count"]
+    duplicate_count = mutation["duplicate_count"]
+    if (
+        type(added_count) is not int
+        or not 0 <= added_count <= 100_000
+        or type(duplicate_count) is not int
+        or not 0 <= duplicate_count <= 100_000
+    ):
+        raise ValueError("product input mutation result counts are invalid")
+    request_sha256 = mutation["request_sha256"]
+    attachment_id = mutation["attachment_id"]
+    if kind == "controller_update":
+        if (
+            request_sha256 is not None
+            or attachment_id is not None
+            or added_count != 0
+            or duplicate_count != 0
+        ):
+            raise ValueError("controller product input mutation receipt is invalid")
+    else:
+        if (
+            type(request_sha256) is not str
+            or _MANIFEST_SHA256_PATTERN.fullmatch(request_sha256) is None
+            or type(attachment_id) is not str
+            or _ATTACHMENT_ID_PATTERN.fullmatch(attachment_id) is None
+            or added_count <= 0
+        ):
+            raise ValueError("add-input product input mutation receipt is invalid")
+    return mutation
+
+
+def require_product_input_mutation_publication_binding(
+    mutation: object,
+    publication: object,
+) -> dict[str, object]:
+    validated = validate_product_input_mutation(mutation)
+    marker = validate_pending_external_publication(publication)
+    if (
+        validated["operation_id"] != marker["transaction_id"]
+        or validated["manifest_sha256"] != marker["manifest_sha256"]
+    ):
+        raise ValueError("product input mutation publication binding changed")
+    return validated
 
 
 def validate_pending_controller_completion(

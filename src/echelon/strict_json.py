@@ -17,5 +17,13 @@ def _object_without_duplicate_members(
     return result
 
 
+def _reject_nonfinite_constant(value: str) -> object:
+    raise ValueError(f"non-finite JSON constant: {value}")
+
+
 def loads_strict_json(value: str) -> object:
-    return json.loads(value, object_pairs_hook=_object_without_duplicate_members)
+    return json.loads(
+        value,
+        object_pairs_hook=_object_without_duplicate_members,
+        parse_constant=_reject_nonfinite_constant,
+    )

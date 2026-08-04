@@ -15,6 +15,15 @@ def _sync_descriptor(descriptor: int, _path: Path) -> None:
     os.fsync(descriptor)
 
 
+def _entry_identity(metadata: os.stat_result) -> tuple[int, int, int, int]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        stat.S_IFMT(metadata.st_mode),
+        stat.S_IMODE(metadata.st_mode),
+    )
+
+
 def durably_sync_owned_tree(
     root: Path,
     *,
@@ -33,9 +42,17 @@ def durably_sync_owned_tree(
     )
     file_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     try:
+        root_path_before = os.stat(tree_root, follow_symlinks=False)
         root_descriptor = os.open(tree_root, directory_flags)
     except OSError as exc:
         raise DurableTreeError(f"owned tree root is not a real directory: {tree_root}") from exc
+    root_opened = os.fstat(root_descriptor)
+    if (
+        not stat.S_ISDIR(root_path_before.st_mode)
+        or _entry_identity(root_path_before) != _entry_identity(root_opened)
+    ):
+        os.close(root_descriptor)
+        raise DurableTreeError(f"owned tree root was swapped: {tree_root}")
     entries_seen = 0
 
     def walk(descriptor: int, path: Path, depth: int) -> None:
@@ -84,6 +101,22 @@ def durably_sync_owned_tree(
                             f"owned tree directory was swapped: {child_path}"
                         )
                     walk(child_descriptor, child_path, depth + 1)
+                    try:
+                        rebound = os.stat(
+                            name,
+                            dir_fd=descriptor,
+                            follow_symlinks=False,
+                        )
+                    except OSError as exc:
+                        raise DurableTreeError(
+                            f"owned tree directory was swapped: {child_path}"
+                        ) from exc
+                    if _entry_identity(rebound) != _entry_identity(
+                        os.fstat(child_descriptor)
+                    ):
+                        raise DurableTreeError(
+                            f"owned tree directory was swapped: {child_path}"
+                        )
                 finally:
                     os.close(child_descriptor)
                 continue
@@ -128,5 +161,14 @@ def durably_sync_owned_tree(
 
     try:
         walk(root_descriptor, tree_root, 0)
+        root_after = os.fstat(root_descriptor)
+        try:
+            rebound_root = os.stat(tree_root, follow_symlinks=False)
+        except OSError as exc:
+            raise DurableTreeError(
+                f"owned tree root was swapped: {tree_root}"
+            ) from exc
+        if _entry_identity(rebound_root) != _entry_identity(root_after):
+            raise DurableTreeError(f"owned tree root was swapped: {tree_root}")
     finally:
         os.close(root_descriptor)

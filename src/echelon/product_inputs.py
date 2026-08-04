@@ -80,10 +80,14 @@ class ProductInputResolution:
     traceability_path: Path
     traceability_markdown_path: Path
     manifest_hash: str
-    tree_hash: str
+    tree_hash: str | None = None
 
     def state_payload(self, project_root: Path) -> dict[str, object]:
         """Return JSON-safe, workspace-portable pointers for squad state."""
+        tree_hash = _validated_tree_hash(
+            self.tree_hash,
+            label="product input resolution authenticated tree hash",
+        )
         return {
             "declarations": [
                 {"role": item.role, "location": item.location}
@@ -98,7 +102,7 @@ class ProductInputResolution:
             "traceability": _portable(self.traceability_path, project_root),
             "traceability_markdown": _portable(self.traceability_markdown_path, project_root),
             "manifest_hash": self.manifest_hash,
-            _TREE_HASH_KEY: self.tree_hash,
+            _TREE_HASH_KEY: tree_hash,
         }
 
 
@@ -112,17 +116,20 @@ class ProductInputAttachmentResult:
     added: tuple[dict[str, object], ...]
     duplicates: tuple[dict[str, object], ...]
     ledger_path: Path
-    tree_hash: str | None
+    tree_hash: str | None = None
 
     def state_product_inputs(
         self,
         project_root: Path,
         current_product_inputs: Mapping[str, object],
+        *,
+        package_dir: Path | None = None,
     ) -> dict[str, object]:
-        if self.tree_hash is None:
-            raise ProductInputError(
-                "product input attachment has no authenticated aggregate tree hash"
-            )
+        tree_hash = _validated_tree_hash(
+            self.tree_hash,
+            label="product input attachment authenticated aggregate tree hash",
+        )
+        package = Path(package_dir) if package_dir is not None else self.inputs_dir
         updated = dict(current_product_inputs)
         updated.update({
             "inputs_dir": _portable(self.inputs_dir, project_root),
@@ -133,15 +140,25 @@ class ProductInputAttachmentResult:
             "reference_context": _portable(self.inputs_dir / "reference-context.md", project_root),
             "traceability": _portable(self.inputs_dir / "traceability.json", project_root),
             "traceability_markdown": _portable(self.inputs_dir / "traceability.md", project_root),
-            "manifest_hash": hashlib.sha256((self.inputs_dir / "manifest.json").read_bytes()).hexdigest(),
-            _TREE_HASH_KEY: self.tree_hash,
+            "manifest_hash": hashlib.sha256((package / "manifest.json").read_bytes()).hexdigest(),
+            _TREE_HASH_KEY: tree_hash,
         })
         return updated
 
-    def state_attachments(self, project_root: Path) -> list[dict[str, object]]:
-        if not self.ledger_path.exists():
+    def state_attachments(
+        self,
+        project_root: Path,
+        *,
+        ledger_source_path: Path | None = None,
+    ) -> list[dict[str, object]]:
+        source = (
+            Path(ledger_source_path)
+            if ledger_source_path is not None
+            else self.ledger_path
+        )
+        if not source.exists():
             return []
-        ledger = _read_json_object(self.ledger_path, "product input attachment ledger")
+        ledger = _read_json_object(source, "product input attachment ledger")
         attachments = ledger.get("attachments")
         if not isinstance(attachments, list):
             return []
@@ -153,6 +170,12 @@ class ProductInputAttachmentResult:
             clone["ledger"] = _portable(self.ledger_path, project_root)
             normalized.append(clone)
         return normalized
+
+
+def _validated_tree_hash(value: object, *, label: str) -> str:
+    if type(value) is not str or re.fullmatch(r"sha256:[0-9a-f]{64}", value) is None:
+        raise ProductInputError(f"{label} is missing or invalid")
+    return value
 
 
 def parse_input_declaration(value: str) -> ProductInputDeclaration:
@@ -618,10 +641,16 @@ def attach_product_input_revision(
     *,
     command: str,
     evidence_requests: Mapping[str, object] | None = None,
+    pointer_inputs_dir: Path | None = None,
 ) -> ProductInputAttachmentResult:
     """Append one immutable evidence revision and rebuild aggregate indexes."""
     project_root = Path(project_root).resolve()
     inputs_dir = Path(inputs_dir)
+    pointer_inputs = (
+        Path(pointer_inputs_dir)
+        if pointer_inputs_dir is not None
+        else inputs_dir
+    )
     manifest_path = inputs_dir / "manifest.json"
     catalog_path = inputs_dir / "catalog.json"
     traceability_path = inputs_dir / "traceability.json"
@@ -658,12 +687,12 @@ def attach_product_input_revision(
     if not new_declarations:
         return ProductInputAttachmentResult(
             attachment_id=attachment_id,
-            inputs_dir=inputs_dir,
+            inputs_dir=pointer_inputs,
             revision=None,
             added=(),
             duplicates=tuple(declaration_duplicates),
-            ledger_path=ledger_path,
-            tree_hash=None,
+            ledger_path=pointer_inputs / "attachment-ledger.json",
+            tree_hash=immutable_product_input_tree_digest(inputs_dir),
         )
 
     revision_dir = inputs_dir / "attachments" / attachment_id
@@ -689,7 +718,7 @@ def attach_product_input_revision(
         _attachment_resource_summary(
             item,
             attachment_id=attachment_id,
-            inputs_dir=inputs_dir,
+            inputs_dir=pointer_inputs,
             project_root=project_root,
         )
         for item in accepted_resources
@@ -700,7 +729,7 @@ def attach_product_input_revision(
             **_attachment_resource_summary(
                 item,
                 attachment_id=attachment_id,
-                inputs_dir=inputs_dir,
+                inputs_dir=pointer_inputs,
                 project_root=project_root,
             ),
             "reason": "duplicate content",
@@ -713,12 +742,12 @@ def attach_product_input_revision(
         shutil.rmtree(revision_dir, ignore_errors=True)
         return ProductInputAttachmentResult(
             attachment_id=attachment_id,
-            inputs_dir=inputs_dir,
+            inputs_dir=pointer_inputs,
             revision=None,
             added=(),
             duplicates=duplicates,
-            ledger_path=ledger_path,
-            tree_hash=None,
+            ledger_path=pointer_inputs / "attachment-ledger.json",
+            tree_hash=immutable_product_input_tree_digest(inputs_dir),
         )
 
     linked_request_ids = _linked_evidence_request_ids(
@@ -737,8 +766,14 @@ def attach_product_input_revision(
         "resources": added_resources,
         "duplicates": list(duplicates),
         "linked_evidence_request_ids": linked_request_ids,
-        "revision_manifest": _portable(revision.manifest_path, project_root),
-        "revision_catalog": _portable(revision.catalog_path, project_root),
+        "revision_manifest": _portable(
+            pointer_inputs / "attachments" / attachment_id / "manifest.json",
+            project_root,
+        ),
+        "revision_catalog": _portable(
+            pointer_inputs / "attachments" / attachment_id / "catalog.json",
+            project_root,
+        ),
     }
     ledger["attachments"].append(attachment_entry)
 
@@ -756,11 +791,11 @@ def attach_product_input_revision(
     _durably_finalize_product_input_tree(inputs_dir)
     return ProductInputAttachmentResult(
         attachment_id=attachment_id,
-        inputs_dir=inputs_dir,
+        inputs_dir=pointer_inputs,
         revision=revision,
         added=tuple(added_resources),
         duplicates=duplicates,
-        ledger_path=ledger_path,
+        ledger_path=pointer_inputs / "attachment-ledger.json",
         tree_hash=immutable_product_input_tree_digest(inputs_dir),
     )
 

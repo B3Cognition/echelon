@@ -81,3 +81,54 @@ def test_durable_tree_fails_closed_when_any_fsync_fails(
         durable_tree.durably_sync_owned_tree(root)
 
     assert attempts == [payload]
+
+
+def test_durable_tree_rejects_root_rename_and_replacement_during_final_sync(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import echelon.durable_tree as durable_tree
+
+    root = tmp_path / "owned"
+    root.mkdir()
+    (root / "payload.txt").write_text("payload", encoding="utf-8")
+    displaced = tmp_path / "displaced"
+    original_sync = durable_tree._sync_descriptor
+
+    def replace_after_sync(descriptor: int, path: Path) -> None:
+        original_sync(descriptor, path)
+        if path == root:
+            root.rename(displaced)
+            root.mkdir()
+            (root / "replacement.txt").write_text("replacement", encoding="utf-8")
+
+    monkeypatch.setattr(durable_tree, "_sync_descriptor", replace_after_sync)
+
+    with pytest.raises(durable_tree.DurableTreeError, match="root.*swapped"):
+        durable_tree.durably_sync_owned_tree(root)
+
+
+def test_durable_tree_rejects_child_rename_and_replacement_after_recursion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import echelon.durable_tree as durable_tree
+
+    root = tmp_path / "owned"
+    child = root / "child"
+    child.mkdir(parents=True)
+    (child / "payload.txt").write_text("payload", encoding="utf-8")
+    displaced = root / "displaced"
+    original_sync = durable_tree._sync_descriptor
+
+    def replace_after_sync(descriptor: int, path: Path) -> None:
+        original_sync(descriptor, path)
+        if path == child:
+            child.rename(displaced)
+            child.mkdir()
+            (child / "replacement.txt").write_text("replacement", encoding="utf-8")
+
+    monkeypatch.setattr(durable_tree, "_sync_descriptor", replace_after_sync)
+
+    with pytest.raises(durable_tree.DurableTreeError, match="directory was swapped"):
+        durable_tree.durably_sync_owned_tree(root)

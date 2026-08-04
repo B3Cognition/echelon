@@ -20,8 +20,61 @@ class _EmptyPolicyGraph:
         return HumanInputPolicyRegistry(())
 
 
+def test_product_input_resolution_supports_legacy_direct_construction(
+    tmp_path: Path,
+) -> None:
+    from echelon.product_inputs import (
+        ProductInputDeclaration,
+        ProductInputError,
+        ProductInputResolution,
+    )
+
+    resolution = ProductInputResolution(
+        declarations=(ProductInputDeclaration("reference", "legacy.md"),),
+        inputs_dir=tmp_path / "inputs",
+        manifest_path=tmp_path / "inputs/manifest.json",
+        catalog_path=tmp_path / "inputs/catalog.json",
+        input_context_path=tmp_path / "inputs/input-context.md",
+        requirement_context_path=tmp_path / "inputs/requirement-context.md",
+        reference_context_path=tmp_path / "inputs/reference-context.md",
+        traceability_path=tmp_path / "inputs/traceability.json",
+        traceability_markdown_path=tmp_path / "inputs/traceability.md",
+        manifest_hash="0" * 64,
+    )
+
+    assert resolution.tree_hash is None
+    with pytest.raises(ProductInputError, match="authenticated tree hash"):
+        resolution.state_payload(tmp_path)
+
+
+def test_product_input_attachment_result_supports_legacy_direct_construction(
+    tmp_path: Path,
+) -> None:
+    from echelon.product_inputs import (
+        ProductInputAttachmentResult,
+        ProductInputError,
+    )
+
+    result = ProductInputAttachmentResult(
+        attachment_id="001",
+        inputs_dir=tmp_path / "inputs",
+        revision=None,
+        added=(),
+        duplicates=(),
+        ledger_path=tmp_path / "inputs/attachment-ledger.json",
+    )
+
+    assert result.tree_hash is None
+    with pytest.raises(ProductInputError, match="authenticated aggregate tree hash"):
+        result.state_product_inputs(tmp_path, {})
+
+
 def test_requirement_folder_is_snapshotted_with_stable_catalog(tmp_path: Path) -> None:
-    from echelon.product_inputs import parse_input_declaration, resolve_product_inputs
+    from echelon.product_inputs import (
+        immutable_product_input_tree_digest,
+        parse_input_declaration,
+        resolve_product_inputs,
+    )
 
     project = tmp_path / "workspace"
     product = project / "sources" / "PBS-E-45"
@@ -1830,7 +1883,11 @@ def test_phase_a_publication_copies_evidence_only_after_traceability_is_ready(tm
 def _product_effect_staging_fixture(
     tmp_path: Path,
 ):
-    from echelon.product_inputs import parse_input_declaration, resolve_product_inputs
+    from echelon.product_inputs import (
+        immutable_product_input_tree_digest,
+        parse_input_declaration,
+        resolve_product_inputs,
+    )
     from harness.squad import SquadController
     from harness.squad_provider import SquadAgentResult
     from harness.squad_state import SquadStateStore
@@ -1882,6 +1939,10 @@ def _product_effect_staging_fixture(
         "depends=none target=sources/web\n",
         encoding="utf-8",
     )
+    product_inputs = resolution.state_payload(project)
+    product_inputs["tree_hash"] = immutable_product_input_tree_digest(
+        resolution.inputs_dir
+    )
     store = SquadStateStore(run_dir)
     store.initialize(
         "run-1",
@@ -1890,7 +1951,7 @@ def _product_effect_staging_fixture(
         0,
         "phase3-plan",
         implementation_targets=["sources/web"],
-        product_inputs=resolution.state_payload(project),
+        product_inputs=product_inputs,
     )
     state = store.load()
     state["spec_dir"] = str(spec_dir.relative_to(project))
@@ -2052,9 +2113,232 @@ def test_product_effect_staging_changes_only_sealed_copies_until_publish(
     )
     assert [operation["target"] for operation in manifest["operations"]] == sorted(
         str(path.relative_to(controller._project_root)).replace("\\", "/")
-        for path in visible
+        for path in visible[0].parent.rglob("*")
+        if path.is_file()
     )
 
     prepared.publish()
 
     assert {path: path.read_bytes() for path in visible} != before
+
+
+def test_controller_product_effect_rejects_persisted_tree_tamper_before_staging(
+    tmp_path: Path,
+) -> None:
+    from harness.squad import _ProductInputCommitError
+
+    controller, store, result, visible = _product_effect_staging_fixture(tmp_path)
+    inputs_dir = visible[0].parent
+    (inputs_dir / "unindexed.bin").write_bytes(b"unindexed tamper")
+    before = {path: path.read_bytes() for path in visible}
+
+    with pytest.raises(_ProductInputCommitError) as caught:
+        controller._prepare_external_phase_effects(
+            result,
+            "phase3-plan",
+            store.load(),
+            manual_phase_run=False,
+        )
+
+    assert "tree hash drift" in caught.value.reason
+    assert {path: path.read_bytes() for path in visible} == before
+
+
+def test_controller_product_effect_prepares_exact_tree_hash_state_receipt(
+    tmp_path: Path,
+) -> None:
+    from echelon.product_inputs import immutable_product_input_tree_digest
+    from harness.state_transaction_namespace import PRODUCT_INPUT_MUTATION_KEY
+
+    controller, store, result, visible = _product_effect_staging_fixture(tmp_path)
+    old_hash = immutable_product_input_tree_digest(visible[0].parent)
+
+    prepared = controller._prepare_external_phase_effects(
+        result,
+        "phase3-plan",
+        store.load(),
+        manual_phase_run=False,
+    )
+    assert prepared is not None
+    updates = controller._product_input_publication_state_updates(prepared)
+    mutation = updates[PRODUCT_INPUT_MUTATION_KEY]
+
+    assert updates["product_inputs"]["tree_hash"] == mutation["new_tree_hash"]
+    assert mutation["old_tree_hash"] == old_hash
+    assert mutation["new_tree_hash"] != old_hash
+    assert mutation["kind"] == "controller_update"
+    assert mutation["operation_id"] == prepared.marker.transaction_id
+    assert mutation["owned_path_count"] == len(
+        [path for path in visible[0].parent.rglob("*") if path.is_file()]
+    )
+    assert immutable_product_input_tree_digest(visible[0].parent) == old_hash
+
+
+def _authorize_controller_product_publication(controller, store, prepared) -> None:
+    from harness.state_transaction_namespace import PENDING_EXTERNAL_PUBLICATION_KEY
+
+    state = store.load()
+    state.update(controller._product_input_publication_state_updates(prepared))
+    state[PENDING_EXTERNAL_PUBLICATION_KEY] = prepared.marker.to_dict()
+    store.save(state)
+
+
+def test_controller_product_effect_clean_publication_commits_hash_and_receipt(
+    tmp_path: Path,
+) -> None:
+    from echelon.product_inputs import immutable_product_input_tree_digest
+    from harness.state_transaction_namespace import (
+        PENDING_EXTERNAL_PUBLICATION_KEY,
+        PRODUCT_INPUT_MUTATION_KEY,
+    )
+
+    controller, store, result, visible = _product_effect_staging_fixture(tmp_path)
+    prepared = controller._prepare_external_phase_effects(
+        result,
+        "phase3-plan",
+        store.load(),
+        manual_phase_run=False,
+    )
+    assert prepared is not None
+    _authorize_controller_product_publication(controller, store, prepared)
+
+    assert controller._publish_and_finalize(
+        prepared,
+        prepared.marker.to_dict(),
+    )
+
+    state = store.load()
+    assert PENDING_EXTERNAL_PUBLICATION_KEY not in state
+    assert PRODUCT_INPUT_MUTATION_KEY not in state
+    assert state["product_inputs"]["tree_hash"] == (
+        immutable_product_input_tree_digest(visible[0].parent)
+    )
+
+
+@pytest.mark.parametrize("boundary", ["before_write", "partial_write"])
+def test_controller_product_effect_replays_exact_crash_prefix(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    boundary: str,
+) -> None:
+    from harness.squad_publication import PreparedSquadPublication
+    from harness.state_transaction_namespace import (
+        PENDING_EXTERNAL_PUBLICATION_KEY,
+        PRODUCT_INPUT_MUTATION_KEY,
+    )
+
+    controller, store, result, visible = _product_effect_staging_fixture(tmp_path)
+    prepared = controller._prepare_external_phase_effects(
+        result,
+        "phase3-plan",
+        store.load(),
+        manual_phase_run=False,
+    )
+    assert prepared is not None
+    _authorize_controller_product_publication(controller, store, prepared)
+    original_publish = PreparedSquadPublication.publish
+    operations = list(prepared._manifest["operations"])
+    changed = next(
+        index
+        for index, operation in enumerate(operations)
+        if operation["preimage"] != operation["postimage"]
+    )
+    fault_position = 0 if boundary == "before_write" else changed + 1
+
+    def crash_publish(self, fault_hook=None):
+        def crash(position: int) -> None:
+            if position == fault_position:
+                raise OSError("injected controller publication crash")
+
+        return original_publish(self, fault_hook=crash)
+
+    monkeypatch.setattr(PreparedSquadPublication, "publish", crash_publish)
+    assert not controller._publish_and_finalize(
+        prepared,
+        prepared.marker.to_dict(),
+    )
+    interrupted = store.load()
+    assert PENDING_EXTERNAL_PUBLICATION_KEY in interrupted
+    assert PRODUCT_INPUT_MUTATION_KEY in interrupted
+
+    monkeypatch.setattr(PreparedSquadPublication, "publish", original_publish)
+    assert controller._recover_pending_external_publication()
+    recovered = store.load()
+    assert PENDING_EXTERNAL_PUBLICATION_KEY not in recovered
+    assert PRODUCT_INPUT_MUTATION_KEY not in recovered
+    assert recovered["product_inputs"]["tree_hash"] != (
+        interrupted[PRODUCT_INPUT_MUTATION_KEY]["old_tree_hash"]
+    )
+
+
+def test_controller_product_effect_replays_after_postimage_before_state_finalize(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.product_inputs import immutable_product_input_tree_digest
+    from harness.state_transaction_namespace import (
+        PENDING_EXTERNAL_PUBLICATION_KEY,
+        PRODUCT_INPUT_MUTATION_KEY,
+    )
+
+    controller, store, result, visible = _product_effect_staging_fixture(tmp_path)
+    prepared = controller._prepare_external_phase_effects(
+        result,
+        "phase3-plan",
+        store.load(),
+        manual_phase_run=False,
+    )
+    assert prepared is not None
+    _authorize_controller_product_publication(controller, store, prepared)
+    original_complete = store.complete_external_publication
+    calls = 0
+
+    def crash_complete(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("injected state-finalize crash")
+        return original_complete(*args, **kwargs)
+
+    monkeypatch.setattr(store, "complete_external_publication", crash_complete)
+    assert not controller._publish_and_finalize(
+        prepared,
+        prepared.marker.to_dict(),
+    )
+    interrupted = store.load()
+    assert PENDING_EXTERNAL_PUBLICATION_KEY in interrupted
+    assert PRODUCT_INPUT_MUTATION_KEY in interrupted
+    assert immutable_product_input_tree_digest(visible[0].parent) == (
+        interrupted[PRODUCT_INPUT_MUTATION_KEY]["new_tree_hash"]
+    )
+
+    assert controller._recover_pending_external_publication()
+    recovered = store.load()
+    assert PENDING_EXTERNAL_PUBLICATION_KEY not in recovered
+    assert PRODUCT_INPUT_MUTATION_KEY not in recovered
+
+
+def test_controller_product_effect_recovery_rejects_unrelated_package_drift(
+    tmp_path: Path,
+) -> None:
+    from harness.state_transaction_namespace import (
+        PENDING_EXTERNAL_PUBLICATION_KEY,
+        PRODUCT_INPUT_MUTATION_KEY,
+    )
+
+    controller, store, result, visible = _product_effect_staging_fixture(tmp_path)
+    prepared = controller._prepare_external_phase_effects(
+        result,
+        "phase3-plan",
+        store.load(),
+        manual_phase_run=False,
+    )
+    assert prepared is not None
+    _authorize_controller_product_publication(controller, store, prepared)
+    (visible[0].parent / "unowned-drift.bin").write_bytes(b"tampered")
+
+    assert not controller._recover_pending_external_publication()
+    retained = store.load()
+    assert PENDING_EXTERNAL_PUBLICATION_KEY in retained
+    assert PRODUCT_INPUT_MUTATION_KEY in retained
+    assert retained["external_publication_failure"]["code"] == "target_drift"

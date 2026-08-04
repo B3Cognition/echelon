@@ -145,10 +145,23 @@ from harness.squad_state import (
 from harness.state_transaction_namespace import (
     PENDING_CONTROLLER_COMPLETION_KEY,
     PENDING_EXTERNAL_PUBLICATION_KEY,
+    PRODUCT_INPUT_MUTATION_KEY,
     STORE_OWNED_TRANSACTION_KEYS,
     TRUSTED_ROUTING_EFFECT_KEYS,
     validate_pending_controller_completion,
     validate_pending_external_publication,
+)
+from echelon.product_input_transaction import (
+    ProductInputMutationError,
+    add_complete_product_input_publication,
+    authenticate_pending_product_input_mutation,
+    authenticate_product_input_contract,
+    build_product_input_mutation,
+    require_product_input_mutation_postimage,
+)
+from echelon.product_inputs import (
+    ProductInputError,
+    immutable_product_input_tree_digest,
 )
 from harness.prompt_markdown import read_prompt_markdown
 from harness.terminal import color_text
@@ -779,6 +792,14 @@ class _PreparedControllerRouting:
 
 
 @dataclass(frozen=True)
+class _ProductInputPublicationPlan:
+    old_tree_hash: str
+    new_tree_hash: str
+    product_inputs: Mapping[str, object]
+    owned_paths: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class _HumanInputResolutionEffects:
     """Controller-owned effects returned by one closed resolution handler."""
 
@@ -851,6 +872,10 @@ class SquadController:
         self._implementation_targets = list(implementation_targets or [])
         self._re_sources = list(re_sources or [])
         self._product_inputs = product_inputs
+        self._prepared_product_input_updates: dict[
+            str,
+            dict[str, object],
+        ] = {}
         self._evaluator = ConditionEvaluator()
         self._gate_config_cache: Optional[dict] = None
         self._gov_config_cache: Optional[dict] = None
@@ -1689,10 +1714,13 @@ class SquadController:
                 return CompletionRecoveryOutcome(False)
         if PENDING_CONTROLLER_COMPLETION_KEY not in state:
             if PENDING_EXTERNAL_PUBLICATION_KEY in state:
-                self._record_controller_completion_failure_best_effort(
-                    None,
-                    "completion_missing",
-                )
+                if PRODUCT_INPUT_MUTATION_KEY in state:
+                    self._recover_pending_external_publication()
+                else:
+                    self._record_controller_completion_failure_best_effort(
+                        None,
+                        "completion_missing",
+                    )
             return CompletionRecoveryOutcome(False)
         raw_marker = state[PENDING_CONTROLLER_COMPLETION_KEY]
         try:
@@ -1751,7 +1779,26 @@ class SquadController:
                             self._squad_dir,
                             expected_publication,
                         )
+                        authenticate_pending_product_input_mutation(
+                            self._project_root,
+                            state,
+                            expected_publication,
+                            staged_publication._manifest["operations"],
+                        )
                         staged_publication.publish()
+                        verified_product_input_tree_hash = (
+                            require_product_input_mutation_postimage(
+                                self._project_root,
+                                state,
+                                expected_publication,
+                            )
+                        )
+                    except ProductInputMutationError:
+                        self._record_external_publication_failure_best_effort(
+                            expected_publication,
+                            "target_drift",
+                        )
+                        return outcome
                     except PublicationError as exc:
                         self._record_external_publication_failure_best_effort(
                             expected_publication,
@@ -1765,10 +1812,19 @@ class SquadController:
                         )
                         return outcome
                     try:
-                        self._state_store.handoff_external_publication(
-                            expected_publication,
-                            prepared,
-                        )
+                        if verified_product_input_tree_hash is None:
+                            self._state_store.handoff_external_publication(
+                                expected_publication,
+                                prepared,
+                            )
+                        else:
+                            self._state_store.handoff_external_publication(
+                                expected_publication,
+                                prepared,
+                                verified_product_input_tree_hash=(
+                                    verified_product_input_tree_hash
+                                ),
+                            )
                     except StateDurabilityError:
                         return outcome
                     except StateAdvanceError:
@@ -1805,6 +1861,10 @@ class SquadController:
                             "Could not discard handed-off publication stage",
                             exc_info=True,
                         )
+                    self._prepared_product_input_updates.pop(
+                        str(expected_publication["transaction_id"]),
+                        None,
+                    )
                     if route.get("from_phase") == "phase4-document":
                         self._phase_a_published_this_run = True
                 elif has_persisted_publication:
@@ -2002,7 +2062,27 @@ class SquadController:
         ):
             return False
         try:
+            state = self._state_store.load()
+            authenticate_pending_product_input_mutation(
+                self._project_root,
+                state,
+                expected_marker,
+                prepared._manifest["operations"],
+            )
             prepared.publish()
+            verified_product_input_tree_hash = (
+                require_product_input_mutation_postimage(
+                    self._project_root,
+                    state,
+                    expected_marker,
+                )
+            )
+        except ProductInputMutationError:
+            self._record_external_publication_failure_best_effort(
+                expected_marker,
+                "target_drift",
+            )
+            return False
         except PublicationError as exc:
             self._record_external_publication_failure_best_effort(
                 expected_marker,
@@ -2017,7 +2097,17 @@ class SquadController:
             return False
 
         try:
-            self._state_store.complete_external_publication(expected_marker)
+            if verified_product_input_tree_hash is None:
+                self._state_store.complete_external_publication(
+                    expected_marker
+                )
+            else:
+                self._state_store.complete_external_publication(
+                    expected_marker,
+                    verified_product_input_tree_hash=(
+                        verified_product_input_tree_hash
+                    ),
+                )
             cleared = self._state_store.load()
             if PENDING_EXTERNAL_PUBLICATION_KEY in cleared:
                 raise StateAdvanceError(
@@ -2051,6 +2141,10 @@ class SquadController:
                         "Could not discard completed external publication stage",
                         exc_info=True,
                     )
+                self._prepared_product_input_updates.pop(
+                    str(expected_marker["transaction_id"]),
+                    None,
+                )
                 return True
             self._record_external_publication_failure_best_effort(
                 expected_marker,
@@ -2065,6 +2159,10 @@ class SquadController:
                 "Could not discard completed external publication stage",
                 exc_info=True,
             )
+        self._prepared_product_input_updates.pop(
+            str(expected_marker["transaction_id"]),
+            None,
+        )
         return True
 
     def _recover_pending_external_publication(self) -> bool:
@@ -2146,6 +2244,10 @@ class SquadController:
                 "Could not discard unreferenced external publication stage",
                 exc_info=True,
             )
+        self._prepared_product_input_updates.pop(
+            str(marker.get("transaction_id") or ""),
+            None,
+        )
 
     @staticmethod
     def _human_input_options_from_decision(
@@ -4558,6 +4660,11 @@ class SquadController:
                 snapshot.state,
             )
             if prepared_publication is not None:
+                routing_updates.update(
+                    self._product_input_publication_state_updates(
+                        prepared_publication
+                    )
+                )
                 routing_updates[PENDING_EXTERNAL_PUBLICATION_KEY] = (
                     prepared_publication.marker.to_dict()
                 )
@@ -5018,6 +5125,11 @@ class SquadController:
             snapshot.state,
         )
         if prepared_publication is not None:
+            routing_updates.update(
+                self._product_input_publication_state_updates(
+                    prepared_publication
+                )
+            )
             routing_updates[PENDING_EXTERNAL_PUBLICATION_KEY] = (
                 prepared_publication.marker.to_dict()
             )
@@ -5526,14 +5638,18 @@ class SquadController:
         result: SquadAgentResult,
         phase: str,
         state: Mapping[str, object],
-    ) -> tuple[int, dict[str, object]]:
+    ) -> tuple[
+        int,
+        dict[str, object],
+        _ProductInputPublicationPlan | None,
+    ]:
         staged_state = dict(state)
         metadata = staged_state.get("product_inputs")
         if not isinstance(metadata, dict) or not metadata:
             error = self._apply_product_input_updates(result, phase, staged_state)
             if error:
                 raise _ProductInputCommitError(error)
-            return 0, staged_state
+            return 0, staged_state, None
 
         inputs_ref = str(metadata.get("inputs_dir") or "").strip()
         if not inputs_ref:
@@ -5542,6 +5658,16 @@ class SquadController:
             )
         source_inputs = self._absolute_project_path(inputs_ref)
         self._require_run_local_product_inputs(source_inputs)
+        try:
+            old_tree_hash = authenticate_product_input_contract(
+                self._project_root,
+                metadata,
+                source_inputs,
+            )
+        except ProductInputMutationError as exc:
+            raise _ProductInputCommitError(
+                f"invalid product input updates: {exc}"
+            ) from exc
         virtual_inputs = transaction.build_path(
             Path("work/product-inputs")
         )
@@ -5581,26 +5707,41 @@ class SquadController:
         if error:
             raise _ProductInputCommitError(error)
 
-        traceability = original_paths.get("traceability")
-        if traceability is None:
-            raise _ProductInputCommitError(
-                "product input traceability path is missing from run state"
+        try:
+            staged_tree_hash = immutable_product_input_tree_digest(
+                virtual_inputs
             )
-        owned_relative = {
-            traceability.relative_to(source_inputs),
-            traceability.with_suffix(".md").relative_to(source_inputs),
-        }
-        requirement_context = original_paths.get("requirement_context")
-        if requirement_context is not None:
-            owned_relative.add(requirement_context.relative_to(source_inputs))
-        return (
-            self._add_owned_file_diff(
+        except ProductInputError as exc:
+            raise _ProductInputCommitError(
+                f"invalid product input updates: {exc}"
+            ) from exc
+        if staged_tree_hash == old_tree_hash:
+            return 0, staged_state, None
+        try:
+            owned_paths = add_complete_product_input_publication(
                 transaction,
-                virtual_root=virtual_inputs,
-                target_root=source_inputs,
-                owned_relative_paths=owned_relative,
-            ),
+                self._project_root,
+                source_inputs,
+                virtual_inputs,
+            )
+            new_tree_hash = immutable_product_input_tree_digest(
+                virtual_inputs
+            )
+        except (OSError, ProductInputError, ProductInputMutationError) as exc:
+            raise _ProductInputCommitError(
+                f"invalid product input updates: {exc}"
+            ) from exc
+        persisted_metadata = dict(metadata)
+        persisted_metadata["tree_hash"] = new_tree_hash
+        return (
+            len(owned_paths),
             staged_state,
+            _ProductInputPublicationPlan(
+                old_tree_hash=old_tree_hash,
+                new_tree_hash=new_tree_hash,
+                product_inputs=persisted_metadata,
+                owned_paths=owned_paths,
+            ),
         )
 
     def _manual_publication_spec_dir(
@@ -5844,9 +5985,10 @@ class SquadController:
         )
         operation_count = 0
         staged_state = dict(state)
+        product_plan: _ProductInputPublicationPlan | None = None
         try:
             if needs_product:
-                product_operations, staged_state = (
+                product_operations, staged_state, product_plan = (
                     self._stage_product_input_effects(
                         transaction,
                         result,
@@ -5871,7 +6013,26 @@ class SquadController:
             if operation_count == 0:
                 self._discard_uncommitted_publication(transaction)
                 return None
-            return transaction.seal()
+            prepared = transaction.seal()
+            if product_plan is not None:
+                inputs_dir = str(
+                    product_plan.product_inputs.get("inputs_dir") or ""
+                )
+                mutation = build_product_input_mutation(
+                    kind="controller_update",
+                    marker=prepared.marker.to_dict(),
+                    inputs_dir=inputs_dir,
+                    old_tree_hash=product_plan.old_tree_hash,
+                    new_tree_hash=product_plan.new_tree_hash,
+                    owned_paths=product_plan.owned_paths,
+                )
+                self._prepared_product_input_updates[
+                    prepared.marker.transaction_id
+                ] = {
+                    "product_inputs": dict(product_plan.product_inputs),
+                    PRODUCT_INPUT_MUTATION_KEY: mutation,
+                }
+            return prepared
         except (_ProductInputCommitError, _PhaseAReadinessCommitError):
             self._discard_uncommitted_publication(transaction)
             raise
@@ -5884,6 +6045,16 @@ class SquadController:
             raise _ProductInputCommitError(
                 "invalid product input updates: staged preparation failed"
             ) from exc
+
+    def _product_input_publication_state_updates(
+        self,
+        prepared: PreparedSquadPublication,
+    ) -> dict[str, object]:
+        """Return the exact post-state and receipt bound to a sealed stage."""
+        updates = self._prepared_product_input_updates.get(
+            prepared.marker.transaction_id
+        )
+        return deepcopy(updates) if updates is not None else {}
 
     def _publish_manual_phase_artifacts(
         self,

@@ -52,11 +52,15 @@ from harness.state_transaction_namespace import (
     PENDING_CONTROLLER_COMPLETION_KEY,
     PENDING_EXTERNAL_PUBLICATION_KEY,
     PHASE_A_IDENTITY_KEYS,
+    PRODUCT_INPUT_MUTATION_KEY,
     PROVIDER_CONTROL_INTENT_KEYS,
+    require_product_input_mutation_publication_binding,
     store_owned_update_keys,
     validate_pending_controller_completion,
     validate_pending_external_publication,
+    validate_product_input_mutation,
 )
+from echelon.strict_json import loads_strict_json
 
 logger = logging.getLogger(__name__)
 
@@ -1258,6 +1262,50 @@ def _validate_routing_decision(
                 ),
                 validator="type",
             ) from exc
+    mutation_value = verified.transaction_state_updates.get(
+        PRODUCT_INPUT_MUTATION_KEY
+    )
+    product_inputs_update = verified.transaction_state_updates.get(
+        "product_inputs"
+    )
+    if mutation_value is not None:
+        try:
+            mutation = require_product_input_mutation_publication_binding(
+                mutation_value,
+                verified.transaction_state_updates.get(
+                    PENDING_EXTERNAL_PUBLICATION_KEY
+                ),
+            )
+        except ValueError as exc:
+            raise _prepared_result_error(
+                "product input mutation receipt is invalid",
+                json_path=(
+                    "$.transaction_state_updates."
+                    f"{PRODUCT_INPUT_MUTATION_KEY}"
+                ),
+                validator="type",
+            ) from exc
+        if (
+            type(product_inputs_update) is not dict
+            or product_inputs_update.get("tree_hash")
+            != mutation["new_tree_hash"]
+            or product_inputs_update.get("inputs_dir")
+            != mutation["inputs_dir"]
+        ):
+            raise _prepared_result_error(
+                "product input mutation state postimage is invalid",
+                json_path="$.transaction_state_updates.product_inputs",
+                validator="transaction_binding",
+            )
+        verified.transaction_state_updates[
+            PRODUCT_INPUT_MUTATION_KEY
+        ] = mutation
+    elif product_inputs_update is not None:
+        raise _prepared_result_error(
+            "product input state update has no mutation receipt",
+            json_path="$.transaction_state_updates.product_inputs",
+            validator="transaction_binding",
+        )
     return (
         result,
         verified.queued_state_updates,
@@ -1427,7 +1475,10 @@ class SquadStateStore:
     def _load_unlocked(self) -> dict:
         if not self._path.exists():
             return {}
-        return json.loads(self._path.read_text())
+        value = loads_strict_json(self._path.read_text())
+        if type(value) is not dict:
+            raise ValueError("squad state must be a JSON object")
+        return value
 
     def load(self) -> dict:
         with self._lock(exclusive=False):
@@ -1479,10 +1530,10 @@ class SquadStateStore:
                     stage="confirm",
                 )
             try:
-                observed = json.loads(content.decode("utf-8"))
+                observed = loads_strict_json(content.decode("utf-8"))
             except (
                 UnicodeDecodeError,
-                json.JSONDecodeError,
+                ValueError,
                 RecursionError,
             ) as exc:
                 raise StateDurabilityError(
@@ -1570,14 +1621,14 @@ class SquadStateStore:
             except OSError:
                 logger.warning("Could not write .bak file: %s", bak)
             try:
-                old_state = json.loads(old_text)
+                old_state = loads_strict_json(old_text)
                 if type(old_state) is dict:
                     current_state = old_state
                 self._check_monotonics(old_state, next_state)
                 old_revision = old_state.get("state_revision", 0)
                 if type(old_revision) is int and old_revision >= 0:
                     previous_revision = old_revision
-            except json.JSONDecodeError:
+            except ValueError:
                 pass
 
         _validate_human_input_authority_write(
@@ -2843,6 +2894,115 @@ class SquadStateStore:
                     validator="save",
                 ) from exc
 
+    def begin_product_input_publication(
+        self,
+        marker: object,
+        mutation: object,
+        *,
+        snapshot: RoutingStateSnapshot,
+        state_updates: dict[str, object],
+    ) -> None:
+        """Persist one exact add-input post-state and write-ahead receipt."""
+        try:
+            expected_marker = validate_pending_external_publication(marker)
+            expected_mutation = require_product_input_mutation_publication_binding(
+                mutation,
+                expected_marker,
+            )
+        except ValueError as exc:
+            raise StateAdvanceError(
+                "product input publication receipt is invalid",
+                json_path=f"$.{PRODUCT_INPUT_MUTATION_KEY}",
+                validator="type",
+            ) from exc
+        if expected_mutation["kind"] != "add_input":
+            raise StateAdvanceError(
+                "product input publication kind is invalid",
+                json_path=f"$.{PRODUCT_INPUT_MUTATION_KEY}.kind",
+                validator="enum",
+            )
+        if not isinstance(snapshot, RoutingStateSnapshot):
+            raise StateAdvanceError(
+                "product input publication snapshot is invalid",
+                json_path="$.routing_snapshot",
+                validator="type",
+            )
+        updates = deepcopy(state_updates)
+        expected_keys = frozenset(
+            {
+                "product_inputs",
+                "product_input_attachments",
+                "phase_dispatch_counts",
+                "status",
+                "phase",
+                "blocked_reason",
+                "escalation_question",
+                "escalation_resolved",
+                "escalation_resolver",
+                "add_input_recovery",
+            }
+        )
+        if type(updates) is not dict or frozenset(updates) != expected_keys:
+            raise StateAdvanceError(
+                "product input publication state update is not exact",
+                json_path="$.state_updates",
+                validator="ownership",
+            )
+        updated_product_inputs = updates["product_inputs"]
+        recovery = updates["add_input_recovery"]
+        if (
+            type(updated_product_inputs) is not dict
+            or updated_product_inputs.get("tree_hash")
+            != expected_mutation["new_tree_hash"]
+            or updated_product_inputs.get("inputs_dir")
+            != expected_mutation["inputs_dir"]
+            or type(recovery) is not dict
+            or recovery.get("request_sha256")
+            != expected_mutation["request_sha256"]
+            or recovery.get("attachment_id")
+            != expected_mutation["attachment_id"]
+            or recovery.get("added_count")
+            != expected_mutation["added_count"]
+            or recovery.get("duplicate_count")
+            != expected_mutation["duplicate_count"]
+        ):
+            raise StateAdvanceError(
+                "product input publication post-state is not receipt-bound",
+                json_path="$.state_updates.product_inputs",
+                validator="transaction_binding",
+            )
+        with self._lock(exclusive=True):
+            state = self._load_unlocked()
+            revision = state.get("state_revision", 0)
+            current_product_inputs = state.get("product_inputs")
+            if (
+                state.get("phase") != snapshot.phase
+                or type(revision) is not int
+                or revision != snapshot.state_revision
+                or _last_dispatch_sha256(state)
+                != snapshot.previous_dispatch_sha256
+                or PENDING_EXTERNAL_PUBLICATION_KEY in state
+                or PRODUCT_INPUT_MUTATION_KEY in state
+                or type(current_product_inputs) is not dict
+                or current_product_inputs.get("tree_hash")
+                != expected_mutation["old_tree_hash"]
+            ):
+                raise StateAdvanceError(
+                    "persisted state changed before product input publication",
+                    json_path="$.routing_snapshot",
+                    validator="stale_state",
+                )
+            desired = deepcopy(state)
+            desired.update(updates)
+            desired[PENDING_EXTERNAL_PUBLICATION_KEY] = expected_marker
+            desired[PRODUCT_INPUT_MUTATION_KEY] = expected_mutation
+            self._save_exact_state_unlocked(
+                state,
+                desired,
+                json_path=f"$.{PRODUCT_INPUT_MUTATION_KEY}",
+                error_message="atomic product input publication state save failed",
+            )
+
     def begin_terminal_controller_completion(
         self,
         prepared: PreparedControllerCompletion,
@@ -3124,7 +3284,54 @@ class SquadStateStore:
             state["blocked_reason"] = "external_publication_pending"
             self._save_unlocked(state)
 
-    def complete_external_publication(self, marker: object) -> None:
+    @staticmethod
+    def _complete_product_input_mutation(
+        state: dict[str, Any],
+        desired: dict[str, Any],
+        marker: dict[str, object],
+        verified_tree_hash: object,
+    ) -> None:
+        raw = state.get(PRODUCT_INPUT_MUTATION_KEY)
+        if raw is None:
+            if verified_tree_hash is not None:
+                raise StateAdvanceError(
+                    "unexpected product input postimage proof",
+                    json_path=f"$.{PRODUCT_INPUT_MUTATION_KEY}",
+                    validator="transaction_binding",
+                )
+            return
+        try:
+            mutation = require_product_input_mutation_publication_binding(
+                raw,
+                marker,
+            )
+        except ValueError as exc:
+            raise StateAdvanceError(
+                "persisted product input mutation is invalid",
+                json_path=f"$.{PRODUCT_INPUT_MUTATION_KEY}",
+                validator="state_contract",
+            ) from exc
+        product_inputs = state.get("product_inputs")
+        if (
+            type(verified_tree_hash) is not str
+            or verified_tree_hash != mutation["new_tree_hash"]
+            or type(product_inputs) is not dict
+            or product_inputs.get("tree_hash") != verified_tree_hash
+            or product_inputs.get("inputs_dir") != mutation["inputs_dir"]
+        ):
+            raise StateAdvanceError(
+                "product input mutation postimage is not verified",
+                json_path=f"$.{PRODUCT_INPUT_MUTATION_KEY}",
+                validator="transaction_binding",
+            )
+        desired.pop(PRODUCT_INPUT_MUTATION_KEY, None)
+
+    def complete_external_publication(
+        self,
+        marker: object,
+        *,
+        verified_product_input_tree_hash: str | None = None,
+    ) -> None:
         try:
             expected_marker = validate_pending_external_publication(marker)
         except ValueError as exc:
@@ -3145,10 +3352,17 @@ class SquadStateStore:
                     json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
                     validator="completion_binding",
                 )
-            if _EXTERNAL_PUBLICATION_FAILURE_KEY in state:
+            desired = deepcopy(state)
+            self._complete_product_input_mutation(
+                state,
+                desired,
+                expected_marker,
+                verified_product_input_tree_hash,
+            )
+            if _EXTERNAL_PUBLICATION_FAILURE_KEY in desired:
                 try:
                     diagnostic = _validate_external_publication_failure(
-                        state[_EXTERNAL_PUBLICATION_FAILURE_KEY]
+                        desired[_EXTERNAL_PUBLICATION_FAILURE_KEY]
                     )
                 except ValueError as exc:
                     raise StateAdvanceError(
@@ -3156,17 +3370,22 @@ class SquadStateStore:
                         json_path=f"$.{_EXTERNAL_PUBLICATION_FAILURE_KEY}",
                         validator="state_contract",
                     ) from exc
-                state["status"] = diagnostic["resume_status"]
+                desired["status"] = diagnostic["resume_status"]
                 resume_blocked_reason = diagnostic[
                     "resume_blocked_reason"
                 ]
                 if resume_blocked_reason is None:
-                    state.pop("blocked_reason", None)
+                    desired.pop("blocked_reason", None)
                 else:
-                    state["blocked_reason"] = resume_blocked_reason
-            state.pop(PENDING_EXTERNAL_PUBLICATION_KEY, None)
-            state.pop(_EXTERNAL_PUBLICATION_FAILURE_KEY, None)
-            self._save_unlocked(state)
+                    desired["blocked_reason"] = resume_blocked_reason
+            desired.pop(PENDING_EXTERNAL_PUBLICATION_KEY, None)
+            desired.pop(_EXTERNAL_PUBLICATION_FAILURE_KEY, None)
+            self._save_exact_state_unlocked(
+                state,
+                desired,
+                json_path=f"$.{PENDING_EXTERNAL_PUBLICATION_KEY}",
+                error_message="atomic external publication completion failed",
+            )
 
     def _save_exact_completion_state_unlocked(
         self,
@@ -3320,6 +3539,8 @@ class SquadStateStore:
         self,
         publication_marker: object,
         prepared: PreparedControllerCompletion,
+        *,
+        verified_product_input_tree_hash: str | None = None,
     ) -> None:
         try:
             expected_publication = validate_pending_external_publication(
@@ -3375,6 +3596,12 @@ class SquadStateStore:
                 intent,
             )
             desired = deepcopy(state)
+            self._complete_product_input_mutation(
+                state,
+                desired,
+                expected_publication,
+                verified_product_input_tree_hash,
+            )
             self._restore_failure_lifecycle(
                 desired,
                 diagnostic_key=_EXTERNAL_PUBLICATION_FAILURE_KEY,

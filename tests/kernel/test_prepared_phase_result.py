@@ -28,6 +28,7 @@ from harness.squad_provider import SquadAgentResult
 from harness.state_transaction_namespace import (
     PENDING_CONTROLLER_COMPLETION_KEY,
     PENDING_EXTERNAL_PUBLICATION_KEY,
+    PRODUCT_INPUT_MUTATION_KEY,
     STORE_OWNED_TRANSACTION_KEYS,
     TRUSTED_ROUTING_EFFECT_KEYS,
     TRUSTED_ROUTING_REMOVAL_KEYS,
@@ -587,6 +588,7 @@ def test_pending_completion_marker_has_controller_only_routing_authority() -> No
     assert PENDING_CONTROLLER_COMPLETION_KEY in STORE_OWNED_TRANSACTION_KEYS
     assert PENDING_CONTROLLER_COMPLETION_KEY in TRUSTED_ROUTING_EFFECT_KEYS
     assert PENDING_CONTROLLER_COMPLETION_KEY not in TRUSTED_ROUTING_REMOVAL_KEYS
+    assert PRODUCT_INPUT_MUTATION_KEY not in TRUSTED_ROUTING_REMOVAL_KEYS
 
     prepared = prepare_phase_result(
         PhaseNode(
