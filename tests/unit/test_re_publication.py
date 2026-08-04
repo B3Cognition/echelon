@@ -822,6 +822,48 @@ def test_generation_conflict_does_not_modify_publication(tmp_path: Path) -> None
 
 
 @pytest.mark.unit
+def test_same_run_republish_can_rebase_its_stale_generation(tmp_path: Path) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",), run_id="run-1")
+    first = publish_re_run(tmp_path, run_dir, expected_generation=0)
+
+    second = publish_re_run(
+        tmp_path,
+        run_dir,
+        expected_generation=0,
+        allow_same_run_republish=True,
+    )
+
+    assert first.generation == 1
+    assert second.generation == 2
+    index = _read_json(tmp_path / "re/index.json")
+    assert index["generation"] == 2
+    assert index["published_from_run"] == run_dir.name
+
+
+@pytest.mark.unit
+def test_stale_different_run_cannot_use_same_run_republish(tmp_path: Path) -> None:
+    run_1 = write_valid_re_run(tmp_path, ("api",), run_id="run-1")
+    publish_re_run(tmp_path, run_1, expected_generation=0)
+    before = _durable_snapshot(tmp_path)
+    run_2 = write_valid_re_run(
+        tmp_path,
+        ("api",),
+        run_id="run-2",
+        versions={"api": "v2"},
+    )
+
+    with pytest.raises(RePublicationConflict, match="expected generation 0"):
+        publish_re_run(
+            tmp_path,
+            run_2,
+            expected_generation=0,
+            allow_same_run_republish=True,
+        )
+
+    assert _durable_snapshot(tmp_path) == before
+
+
+@pytest.mark.unit
 def test_failure_before_index_replace_rolls_back_byte_for_byte(tmp_path: Path) -> None:
     run_1 = write_valid_re_run(tmp_path, ("api",), run_id="run-1")
     publish_re_run(tmp_path, run_1)

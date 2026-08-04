@@ -9673,6 +9673,7 @@ def _cmd_re_publish(args: list[str]) -> None:
             run_dir,
             allow_partial=allow_partial,
             expected_generation=int(lifecycle_state.get("expected_generation") or 0),
+            allow_same_run_republish=True,
         )
         if commit:
             _commit_re_publication(project_root, result.generation, run_git)

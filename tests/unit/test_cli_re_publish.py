@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+import json
 
 import pytest
 
@@ -81,6 +82,21 @@ def test_partial_publish_requires_explicit_override(tmp_path: Path, monkeypatch)
 
     _cmd_re_publish([run_dir.name, "--allow-partial"])
     assert (tmp_path / "re/index.json").is_file()
+
+
+def test_publish_republishes_the_run_that_owns_current_generation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",), run_id="run-1")
+    monkeypatch.chdir(tmp_path)
+
+    _cmd_re_publish([run_dir.name])
+    _cmd_re_publish([run_dir.name])
+
+    index = json.loads((tmp_path / "re/index.json").read_text(encoding="utf-8"))
+    assert index["generation"] == 2
+    assert index["published_from_run"] == run_dir.name
 
 
 @pytest.mark.parametrize("run_id", ["../outside", "a/b", ".", ""])

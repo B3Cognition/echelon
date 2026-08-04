@@ -275,6 +275,7 @@ def publish_re_run(
     allow_partial: bool = False,
     status_override: Literal["complete", "partial"] | None = None,
     expected_generation: int | None = None,
+    allow_same_run_republish: bool = False,
     fault_hook: Callable[[str], None] | None = None,
 ) -> RePublicationResult:
     """Validate and publish one RE generation as a rollback-capable transaction."""
@@ -289,7 +290,16 @@ def publish_re_run(
     with RePublishLock.acquire(root, candidate.run_id, candidate.run_dir):
         current = load_published_index(root)
         current_generation = current.generation if current else 0
-        if expected_generation is not None and current_generation != expected_generation:
+        same_run_republish = (
+            allow_same_run_republish
+            and current is not None
+            and current.published_from_run == candidate.run_id
+        )
+        if (
+            expected_generation is not None
+            and current_generation != expected_generation
+            and not same_run_republish
+        ):
             raise RePublicationConflict(
                 f"expected generation {expected_generation}, found {current_generation}"
             )
