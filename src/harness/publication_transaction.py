@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import shutil
 import tempfile
@@ -13,6 +14,9 @@ from typing import Any, Callable
 
 class PublicationTransactionError(RuntimeError):
     """Raised when a workspace artifact transaction is unsafe or incomplete."""
+
+
+_PHASES = frozenset({"pending", "backup_intent", "backed_up", "install_intent", "installed", "rollback_remove_intent", "restore_intent"})
 
 
 def _relative_path(value: PurePosixPath | str, field: str) -> PurePosixPath:
@@ -64,7 +68,7 @@ class PublicationTransaction:
     journal: Path
     operations: tuple[PublicationOperation, ...]
     expected_generation: int | None = None
-    _states: list[dict[str, bool]] = field(init=False, repr=False)
+    _states: list[dict[str, object]] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.workspace_root = self.workspace_root.resolve()
@@ -76,16 +80,39 @@ class PublicationTransaction:
             self.journal.relative_to(self.staging_root)
         except ValueError as exc:
             raise PublicationTransactionError("journal path is outside staging root") from exc
-        seen: set[PurePosixPath] = set()
+        if os.stat(self.workspace_root).st_dev != os.stat(self.staging_root).st_dev:
+            raise PublicationTransactionError("workspace and staging roots must share a filesystem")
+        finals: list[tuple[PurePosixPath, Path]] = []
+        staged: list[PurePosixPath] = []
+        backups: list[PurePosixPath] = []
         for operation in self.operations:
-            if operation.final in seen:
+            final_path = _contained(self.workspace_root, operation.final)
+            if _absolute_overlap(final_path, self.staging_root):
+                raise PublicationTransactionError("final path overlaps staging root")
+            if any(operation.final == previous for previous, _ in finals):
                 raise PublicationTransactionError("duplicate final publication operation")
-            seen.add(operation.final)
+            if any(_relative_overlap(operation.final, previous) for previous, _ in finals):
+                raise PublicationTransactionError("final publication operations overlap")
+            finals.append((operation.final, final_path))
             _contained(self.workspace_root, operation.final)
             _contained(self.staging_root, operation.backup)
+            if any(_relative_overlap(operation.backup, previous) for previous in backups):
+                raise PublicationTransactionError("backup publication operations overlap")
+            backups.append(operation.backup)
             if operation.staged is not None:
                 _contained(self.staging_root, operation.staged)
-        self._states = [{"backed_up": False, "installed": False} for _ in self.operations]
+                if any(_relative_overlap(operation.staged, previous) for previous in staged):
+                    raise PublicationTransactionError("staged publication operations overlap")
+                if any(_relative_overlap(operation.staged, backup) for backup in backups):
+                    raise PublicationTransactionError("staged and backup paths overlap")
+                staged.append(operation.staged)
+        for staged_path in staged:
+            if any(_relative_overlap(staged_path, backup) for backup in backups):
+                raise PublicationTransactionError("staged and backup paths overlap")
+        self._states = [
+            {"phase": "pending", "had_final": False, "staged_digest": _staged_digest(self.staging_root, operation.staged)}
+            for operation in self.operations
+        ]
 
     @classmethod
     def from_journal(
@@ -101,7 +128,7 @@ class PublicationTransaction:
         if not isinstance(entries, list):
             raise PublicationTransactionError("rollback journal operations must be a list")
         operations: list[PublicationOperation] = []
-        states: list[dict[str, bool]] = []
+        states: list[dict[str, object]] = []
         for entry in entries:
             if not isinstance(entry, dict):
                 raise PublicationTransactionError("rollback journal operation must be an object")
@@ -116,7 +143,16 @@ class PublicationTransaction:
             if not isinstance(backed_up, bool) or not isinstance(installed, bool):
                 raise PublicationTransactionError("rollback journal operation flags must be booleans")
             operations.append(operation)
-            states.append({"backed_up": backed_up, "installed": installed})
+            phase = entry.get("phase")
+            if phase is None:
+                phase = "installed" if installed else "backed_up" if backed_up else "pending"
+            if phase not in _PHASES:
+                raise PublicationTransactionError("rollback journal operation phase is malformed")
+            had_final = entry.get("had_final", backed_up)
+            staged_digest = entry.get("staged_digest")
+            if not isinstance(had_final, bool) or (staged_digest is not None and not isinstance(staged_digest, str)):
+                raise PublicationTransactionError("rollback journal operation state is malformed")
+            states.append({"phase": phase, "had_final": had_final, "staged_digest": staged_digest, "legacy": "phase" not in entry})
         transaction = cls(
             workspace_root=workspace_root,
             staging_root=staging_root,
@@ -128,7 +164,7 @@ class PublicationTransaction:
 
 
 def write_publication_journal(transaction: PublicationTransaction, status: str) -> None:
-    if status not in {"prepared", "replacing", "complete", "rolled_back"}:
+    if status not in {"prepared", "replacing", "rolling_back", "complete", "rolled_back"}:
         raise PublicationTransactionError(f"unknown transaction status: {status!r}")
     operations = []
     for operation, state in zip(transaction.operations, transaction._states, strict=True):
@@ -137,8 +173,11 @@ def write_publication_journal(transaction: PublicationTransaction, status: str) 
                 "final": operation.final.as_posix(),
                 "staged": operation.staged.as_posix() if operation.staged else None,
                 "backup": operation.backup.as_posix(),
-                "backed_up": state["backed_up"],
-                "installed": state["installed"],
+                "backed_up": state["phase"] in {"backed_up", "install_intent", "installed", "rollback_remove_intent", "restore_intent"},
+                "installed": state["phase"] in {"installed", "rollback_remove_intent"},
+                "phase": state["phase"],
+                "had_final": state["had_final"],
+                "staged_digest": state["staged_digest"],
             }
         )
     write_json_atomic(transaction.journal, {"schema_version": 1, "status": status, "operations": operations})
@@ -162,18 +201,35 @@ def apply_publication_transaction(
                 fault_hook(f"before_operation:{operation.final.as_posix()}")
             if final.exists() or final.is_symlink():
                 _contained(transaction.workspace_root, operation.final, exists=True)
+                transaction._states[index]["had_final"] = True
+                transaction._states[index]["phase"] = "backup_intent"
+                write_publication_journal(transaction, "replacing")
+                if fault_hook:
+                    fault_hook(f"after_backup_intent:{operation.final.as_posix()}")
                 backup.parent.mkdir(parents=True, exist_ok=True)
                 os.replace(final, backup)
-                transaction._states[index]["backed_up"] = True
+                _fsync_directory(final.parent)
+                _fsync_directory(backup.parent)
+                if fault_hook:
+                    fault_hook(f"after_backup_rename:{operation.final.as_posix()}")
+                transaction._states[index]["phase"] = "backed_up"
                 write_publication_journal(transaction, "replacing")
                 if fault_hook:
                     fault_hook(f"after_backup:{operation.final.as_posix()}")
             if staged is not None:
                 if fault_hook:
                     fault_hook(f"before_replace:{operation.final.as_posix()}")
+                transaction._states[index]["phase"] = "install_intent"
+                write_publication_journal(transaction, "replacing")
+                if fault_hook:
+                    fault_hook(f"after_install_intent:{operation.final.as_posix()}")
                 final.parent.mkdir(parents=True, exist_ok=True)
                 os.replace(staged, final)
-                transaction._states[index]["installed"] = True
+                _fsync_directory(final.parent)
+                _fsync_directory(staged.parent)
+                if fault_hook:
+                    fault_hook(f"after_install_rename:{operation.final.as_posix()}")
+                transaction._states[index]["phase"] = "installed"
                 write_publication_journal(transaction, "replacing")
                 if fault_hook:
                     fault_hook(f"after_replace:{operation.final.as_posix()}")
@@ -183,20 +239,49 @@ def apply_publication_transaction(
         raise
 
 
-def rollback_publication_transaction(transaction: PublicationTransaction) -> None:
+def rollback_publication_transaction(
+    transaction: PublicationTransaction, *, allow_unverified_installed: bool = False
+) -> None:
     """Idempotently restore only paths recorded as replaced by this transaction."""
+    write_publication_journal(transaction, "rolling_back")
     for index in range(len(transaction.operations) - 1, -1, -1):
         operation = transaction.operations[index]
         state = transaction._states[index]
         final = _contained(transaction.workspace_root, operation.final)
         backup = _contained(transaction.staging_root, operation.backup)
-        if state["installed"] and (final.exists() or final.is_symlink()):
+        phase = state["phase"]
+        if phase == "pending":
+            continue
+        final_exists = final.exists() or final.is_symlink()
+        backup_exists = backup.exists() or backup.is_symlink()
+        installed = phase in {"install_intent", "installed", "rollback_remove_intent"}
+        if final_exists and installed:
+            expected = state.get("staged_digest")
+            if (
+                not allow_unverified_installed
+                and not state.get("legacy")
+                and (not isinstance(expected, str) or _path_digest(final) != expected)
+            ):
+                raise PublicationTransactionError("rollback refuses to delete a final path not installed by this transaction")
+            state["phase"] = "rollback_remove_intent"
+            write_publication_journal(transaction, "rolling_back")
             _remove_path(final)
-            state["installed"] = False
-        if state["backed_up"] and (backup.exists() or backup.is_symlink()):
+            _fsync_directory(final.parent)
+            final_exists = False
+        elif final_exists and backup_exists:
+            raise PublicationTransactionError("rollback found an unrelated final path beside its backup")
+        if backup_exists:
+            state["phase"] = "restore_intent"
+            write_publication_journal(transaction, "rolling_back")
             final.parent.mkdir(parents=True, exist_ok=True)
             os.replace(backup, final)
-            state["backed_up"] = False
+            _fsync_directory(final.parent)
+            _fsync_directory(backup.parent)
+        elif state.get("had_final") and not final_exists:
+            raise PublicationTransactionError("rollback backup is missing after a replacement intent")
+        state["phase"] = "pending"
+        state["had_final"] = False
+        write_publication_journal(transaction, "rolling_back")
     write_publication_journal(transaction, "rolled_back")
 
 
@@ -217,9 +302,55 @@ def write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         Path(temporary).replace(path)
+        _fsync_directory(path.parent)
     except Exception:
         try:
             os.unlink(temporary)
         except OSError:
             pass
         raise
+
+
+def _relative_overlap(left: PurePosixPath, right: PurePosixPath) -> bool:
+    return left == right or left.is_relative_to(right) or right.is_relative_to(left)
+
+
+def _absolute_overlap(left: Path, right: Path) -> bool:
+    return left == right or left.is_relative_to(right) or right.is_relative_to(left)
+
+
+def _path_digest(path: Path) -> str:
+    digest = hashlib.sha256()
+    if path.is_symlink():
+        raise PublicationTransactionError("transaction artifacts must not be symlinks")
+    if path.is_file():
+        digest.update(b"file\0")
+        digest.update(path.read_bytes())
+    elif path.is_dir():
+        digest.update(b"dir\0")
+        for child in sorted(path.rglob("*"), key=lambda item: item.relative_to(path).as_posix()):
+            relative = child.relative_to(path).as_posix()
+            if child.is_symlink():
+                raise PublicationTransactionError("transaction artifacts must not contain symlinks")
+            digest.update(relative.encode("utf-8") + b"\0")
+            digest.update(b"d\0" if child.is_dir() else b"f\0")
+            if child.is_file():
+                digest.update(child.read_bytes())
+    else:
+        raise PublicationTransactionError(f"transaction staged artifact is missing: {path}")
+    return "sha256:" + digest.hexdigest()
+
+
+def _staged_digest(root: Path, relative: PurePosixPath | None) -> str | None:
+    if relative is None:
+        return None
+    path = _contained(root, relative)
+    return _path_digest(path) if path.exists() and not path.is_symlink() else None
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)

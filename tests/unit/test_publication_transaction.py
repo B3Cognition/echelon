@@ -108,3 +108,62 @@ def test_transaction_rejects_unsafe_recovery_journal(tmp_path: Path) -> None:
         PublicationTransaction.from_journal(
             workspace_root=tmp_path / "re", staging_root=stage, journal=journal
         )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("checkpoint", ("after_backup_intent:first", "after_backup_rename:first", "after_install_intent:first", "after_install_rename:first"))
+def test_crash_windows_leave_a_recoverable_write_ahead_journal(tmp_path: Path, checkpoint: str) -> None:
+    from harness.publication_transaction import (
+        PublicationTransaction,
+        apply_publication_transaction,
+        rollback_publication_transaction,
+    )
+
+    root = tmp_path / "re"
+    root.mkdir()
+    (root / "first").write_text("old-first\n", encoding="utf-8")
+    transaction = _transaction(tmp_path)
+
+    class Crash(BaseException):
+        pass
+
+    def crash(point: str) -> None:
+        if point == checkpoint:
+            raise Crash()
+
+    with pytest.raises(Crash):
+        apply_publication_transaction(transaction, fault_hook=crash)
+    recovered = PublicationTransaction.from_journal(
+        workspace_root=root, staging_root=transaction.staging_root, journal=transaction.journal
+    )
+    rollback_publication_transaction(recovered)
+    assert (root / "first").read_text(encoding="utf-8") == "old-first\n"
+
+
+@pytest.mark.unit
+def test_transaction_rejects_overlapping_and_staging_alias_paths(tmp_path: Path) -> None:
+    from harness.publication_transaction import PublicationOperation, PublicationTransaction, PublicationTransactionError
+
+    root = tmp_path / "re"
+    stage = root / ".staging/owner"
+    stage.mkdir(parents=True)
+    (stage / "new/a").parent.mkdir(parents=True)
+    (stage / "new/a").write_text("new\n", encoding="utf-8")
+    with pytest.raises(PublicationTransactionError, match="overlap"):
+        PublicationTransaction(root, stage, stage / "rollback-journal.json", (
+            PublicationOperation(PurePosixPath("sources"), None),
+            PublicationOperation(PurePosixPath("sources/api"), None),
+        ))
+    with pytest.raises(PublicationTransactionError, match="staging"):
+        PublicationTransaction(root, stage, stage / "rollback-journal.json", (
+            PublicationOperation(PurePosixPath(".staging/owner/unsafe"), None),
+        ))
+    with pytest.raises(PublicationTransactionError, match="overlap"):
+        PublicationTransaction(root, stage, stage / "rollback-journal.json", (
+            PublicationOperation(PurePosixPath("one"), PurePosixPath("new/a")),
+            PublicationOperation(PurePosixPath("two"), PurePosixPath("new/a/child")),
+        ))
+    with pytest.raises(PublicationTransactionError, match="backup"):
+        PublicationTransaction(root, stage, stage / "rollback-journal.json", (
+            PublicationOperation(PurePosixPath("one"), PurePosixPath("rollback/one")),
+        ))

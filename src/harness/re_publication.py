@@ -693,7 +693,7 @@ def _apply_transaction(
     def hook(point: str) -> None:
         if fault_hook is None:
             return
-        if point == "before_replace:index.json":
+        if point == "before_operation:index.json":
             fault_hook("before_index_replace")
         elif point == "after_replace:index.json":
             fault_hook("after_index_replace")
@@ -709,7 +709,7 @@ def _apply_transaction(
                 "installed RE index generation does not match transaction"
             )
     except Exception:
-        rollback_publication_transaction(transaction)
+        rollback_publication_transaction(transaction, allow_unverified_installed=True)
         raise
     shutil.rmtree(transaction.staging_root)
 

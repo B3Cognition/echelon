@@ -878,6 +878,7 @@ def test_failure_before_index_replace_rolls_back_byte_for_byte(tmp_path: Path) -
 
     def fail_before_index(step: str) -> None:
         if step == "before_index_replace":
+            assert (tmp_path / "re/index.json").read_bytes() == before["index.json"]
             raise OSError("injected failure")
 
     with pytest.raises(OSError, match="injected failure"):

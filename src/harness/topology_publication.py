@@ -113,7 +113,8 @@ def publish_topology_snapshots(
 ) -> TopologyPublicationResult:
     """Publish selected source snapshots as one rollback-capable generation."""
     root = Path(workspace_root).resolve()
-    prepared = _validate_candidates(root, candidates)
+    owner_root = _validate_owner_run_dir(root, owner_run_dir, candidates)
+    prepared = _validate_candidates(root, candidates, owner_root)
     paths = ensure_re_layout(root)
     with RePublishLock.acquire(root, owner_id, owner_run_dir):
         try:
@@ -144,10 +145,11 @@ def publish_topology_snapshots(
                 raise TopologyPublicationError("installed topology generation failed post-write validation")
         except Exception:
             rollback_publication_transaction(transaction)
-            raise
-        finally:
             if transaction.staging_root.exists():
                 shutil.rmtree(transaction.staging_root)
+            raise
+        else:
+            shutil.rmtree(transaction.staging_root)
     return TopologyPublicationResult(generation, root / "re/topology/index.json", tuple(sorted(selected)))
 
 
@@ -170,7 +172,7 @@ class _PreparedCandidate:
     providers: tuple[_PreparedProvider, ...]
 
 
-def _validate_candidates(root: Path, candidates: tuple[TopologySnapshotCandidate, ...]) -> tuple[_PreparedCandidate, ...]:
+def _validate_candidates(root: Path, candidates: tuple[TopologySnapshotCandidate, ...], owner_root: Path | None) -> tuple[_PreparedCandidate, ...]:
     configured = _configured_sources(root)
     if not candidates:
         raise TopologyPublicationValidationError("topology publication requires at least one source candidate")
@@ -198,11 +200,14 @@ def _validate_candidates(root: Path, candidates: tuple[TopologySnapshotCandidate
                     f"duplicate provider for source {candidate.source_id}: {provider.provider}"
                 )
             seen_providers.add(provider.provider)
-            analysis = _artifact_bytes(provider.analysis, "analysis")
-            summary = _artifact_bytes(provider.summary, "summary")
+            analysis = _artifact_bytes(provider.analysis, "analysis", owner_root)
+            summary = _artifact_bytes(provider.summary, "summary", owner_root)
             if not summary.strip():
                 raise TopologyPublicationValidationError("provider summary must not be empty")
             try:
+                summary_document = _read_json_bytes(summary, f"candidate {provider.provider} summary")
+                if not isinstance(summary_document, dict):
+                    raise TopologyRegistryError("provider summary must be a JSON object")
                 document = _read_json_bytes(analysis, f"candidate {provider.provider} analysis")
                 loaded = load_provider_document(document, provider=provider.provider, source_id=candidate.source_id)
             except (TopologyRegistryError, TopologyProviderError) as exc:
@@ -304,7 +309,7 @@ def _prepare_transaction(root: Path, stage_root: Path, candidates: tuple[_Prepar
     index_bytes = _json_bytes(index)
     (new_root / "index.json").write_bytes(index_bytes)
     operations.append(PublicationOperation(PurePosixPath("topology/index.json"), PurePosixPath("new/re/topology/index.json")))
-    _validate_staged_tree(root, stage_root, configured)
+    _validate_staged_tree(root, stage_root, configured, current, rows)
     transaction = PublicationTransaction(
         workspace_root=root / "re", staging_root=stage_root, journal=stage_root / "rollback-journal.json", operations=tuple(operations), expected_generation=generation
     )
@@ -312,31 +317,47 @@ def _prepare_transaction(root: Path, stage_root: Path, candidates: tuple[_Prepar
     return transaction
 
 
-def _validate_staged_tree(root: Path, stage_root: Path, configured: Mapping[str, str]) -> None:
+def _validate_staged_tree(root: Path, stage_root: Path, configured: Mapping[str, str], current: object, rows: Mapping[str, object]) -> None:
     validation = stage_root / "validation"
     (validation / ".echelon").mkdir(parents=True)
     shutil.copy2(root / ".echelon/config.yml", validation / ".echelon/config.yml")
     for source_path in configured.values():
         (validation / source_path).mkdir(parents=True, exist_ok=True)
-    existing = root / "re/topology"
-    if existing.is_dir():
-        shutil.copytree(existing, validation / "re/topology")
-    else:
-        (validation / "re/topology").mkdir(parents=True)
-    staged = stage_root / "new/re/topology"
-    for source in (staged / "sources").iterdir():
-        destination = validation / "re/topology/sources" / source.name
-        if destination.exists():
-            shutil.rmtree(destination)
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(source, destination)
-    shutil.copy2(staged / "index.json", validation / "re/topology/index.json")
+    staged = stage_root / "new"
+    for source_id, row in rows.items():
+        if not isinstance(row, dict):
+            raise TopologyPublicationValidationError("staged topology source row is malformed")
+        for artifact_path in _row_artifact_paths(row):
+            source = staged / artifact_path if (staged / artifact_path).is_file() else root / artifact_path
+            destination = validation / artifact_path
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
+    shutil.copy2(stage_root / "new/re/topology/index.json", validation / "re/topology/index.json")
     try:
         index = load_topology_index(validation)
         if index is None:
             raise TopologyRegistryError("topology index is missing")
     except TopologyRegistryError as exc:
         raise TopologyPublicationValidationError(f"staged topology publication is invalid: {exc}") from exc
+
+
+def _row_artifact_paths(row: Mapping[str, object]) -> tuple[str, ...]:
+    paths: list[str] = []
+    receipt = row.get("receipt")
+    if not isinstance(receipt, dict) or not isinstance(receipt.get("path"), str):
+        raise TopologyPublicationValidationError("staged topology receipt artifact is malformed")
+    paths.append(receipt["path"])
+    providers = row.get("providers")
+    if not isinstance(providers, dict):
+        raise TopologyPublicationValidationError("staged topology provider catalog is malformed")
+    for provider in providers.values():
+        if not isinstance(provider, dict) or not isinstance(provider.get("artifacts"), dict):
+            raise TopologyPublicationValidationError("staged topology provider artifacts are malformed")
+        for artifact in provider["artifacts"].values():
+            if not isinstance(artifact, dict) or not isinstance(artifact.get("path"), str):
+                raise TopologyPublicationValidationError("staged topology artifact path is malformed")
+            paths.append(artifact["path"])
+    return tuple(sorted(set(paths)))
 
 
 def _current_rows(root: Path, current: object) -> dict[str, object]:
@@ -353,6 +374,32 @@ def _current_rows(root: Path, current: object) -> dict[str, object]:
 
 def _configured_sources(root: Path) -> dict[str, str]:
     return {source.id: source.path for source in discover_workspace(root).sources}
+
+
+def _validate_owner_run_dir(
+    root: Path, owner_run_dir: Path | None, candidates: tuple[TopologySnapshotCandidate, ...]
+) -> Path | None:
+    needs_owner = any(
+        isinstance(value, Path)
+        for candidate in candidates
+        for provider in candidate.providers
+        for value in (provider.analysis, provider.summary)
+    )
+    if not needs_owner:
+        return None
+    if owner_run_dir is None:
+        raise TopologyPublicationValidationError(
+            "path-backed topology evidence requires an owner run directory"
+        )
+    try:
+        owner = owner_run_dir.resolve(strict=True)
+        if not owner.is_dir():
+            raise TopologyPublicationValidationError("owner run directory must be a directory")
+        if not any(owner.is_relative_to((root / name).resolve(strict=True)) for name in ("runs", "squad") if (root / name).is_dir()):
+            raise TopologyPublicationValidationError("owner run directory is outside workspace lifecycle roots")
+        return owner
+    except OSError as exc:
+        raise TopologyPublicationValidationError(f"owner run directory is invalid: {exc}") from exc
 
 
 def _validate_fingerprint_and_commit(candidate: TopologySnapshotCandidate) -> None:
@@ -373,15 +420,21 @@ def _validate_provenance(provenance: Mapping[str, object]) -> None:
         raise TopologyPublicationValidationError(f"invalid topology provenance: {exc}") from exc
 
 
-def _artifact_bytes(value: ArtifactInput, label: str) -> bytes:
+def _artifact_bytes(value: ArtifactInput, label: str, owner_root: Path | None) -> bytes:
     if isinstance(value, bytes):
         return value
-    if not isinstance(value, Path) or not value.is_file() or value.is_symlink():
+    if not isinstance(value, Path) or owner_root is None:
         raise TopologyPublicationValidationError(f"{label} artifact must be safe bytes or a regular file")
     try:
-        return value.read_bytes()
+        resolved = value.resolve(strict=True)
+        resolved.relative_to(owner_root)
+        if not resolved.is_file():
+            raise TopologyPublicationValidationError(f"{label} artifact must be a regular file")
+        return resolved.read_bytes()
     except OSError as exc:
         raise TopologyPublicationValidationError(f"cannot read {label} artifact: {exc}") from exc
+    except ValueError as exc:
+        raise TopologyPublicationValidationError(f"{label} artifact escapes owner run directory") from exc
 
 
 def _capabilities(raw: object) -> tuple[str, ...]:
