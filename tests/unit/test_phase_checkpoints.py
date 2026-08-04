@@ -776,6 +776,56 @@ def test_retarget_checkpoint_rejects_reported_reftable_before_initial_seal(
 
 
 @pytest.mark.parametrize(
+    ("returncode", "stdout", "stderr"),
+    [
+        pytest.param(0, "future-backend\n", "", id="unknown-successful-token"),
+        pytest.param(2, "", "fatal: backend probe failed\n", id="probe-error"),
+        pytest.param(0, "files\nfiles\n", "", id="multiline-duplicate"),
+        pytest.param(0, "", "", id="empty-modern-output"),
+        pytest.param(0, "files\n", "warning\n", id="stderr-response"),
+    ],
+)
+def test_retarget_checkpoint_rejects_untrustworthy_modern_backend_probe_before_initial_seal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    returncode: int,
+    stdout: str,
+    stderr: str,
+) -> None:
+    repo, spec_dir = _retarget_checkpoint_repo(tmp_path)
+    revision = _prepared_retarget_revision(spec_dir)
+    history_path = spec_dir / "retarget-history.json"
+    ledger_path = checkpoint_module.checkpoint_ledger_path(spec_dir)
+    history_before = history_path.read_bytes()
+    head_before = _git(repo, "rev-parse", "HEAD^{commit}")
+    real_run_git = checkpoint_module.run_git
+
+    def report_backend(project_root, *args, **kwargs):
+        if args == ("rev-parse", "--show-ref-format"):
+            return subprocess.CompletedProcess(
+                ["git", *args],
+                returncode,
+                stdout=stdout,
+                stderr=stderr,
+            )
+        return real_run_git(project_root, *args, **kwargs)
+
+    monkeypatch.setattr(checkpoint_module, "run_git", report_backend)
+
+    with pytest.raises(PhaseCheckpointError, match="determine Git ref storage"):
+        commit_retarget_checkpoint(
+            project_root=repo,
+            spec_dir=spec_dir,
+            run_id="squad-base",
+            revision_id=revision.revision_id,
+        )
+
+    assert history_path.read_bytes() == history_before
+    assert not ledger_path.exists()
+    assert _git(repo, "rev-parse", "HEAD^{commit}") == head_before
+
+
+@pytest.mark.parametrize(
     ("config_result", "message"),
     [
         ((0, "reftable\n"), "ref storage.*reftable"),

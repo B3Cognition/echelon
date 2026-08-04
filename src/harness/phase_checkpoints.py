@@ -1628,8 +1628,21 @@ def _current_git_head(project_root: Path) -> str:
     return head
 
 
-def _require_files_ref_storage(project_root: Path) -> None:
-    """Fail closed unless Git authoritatively identifies the files backend."""
+def _single_line_ref_storage_value(output: str) -> str | None:
+    if output.endswith("\r\n"):
+        line = output[:-2]
+    elif output.endswith("\n"):
+        line = output[:-1]
+    else:
+        line = output
+    if "\r" in line or "\n" in line:
+        return None
+    value = line.strip(" \t")
+    return value or None
+
+
+def _git_ref_storage_backend(project_root: Path) -> str:
+    """Return an authoritative Git ref backend or fail closed."""
 
     try:
         format_probe = run_git(
@@ -1651,33 +1664,56 @@ def _require_files_ref_storage(project_root: Path) -> None:
             "could not determine Git ref storage backend"
         ) from exc
 
-    reported = format_probe.stdout.strip()
-    if format_probe.returncode != 0 or reported not in {"files", "reftable"}:
-        reported = ""
+    legacy_probe = (
+        format_probe.returncode == 0
+        and format_probe.stdout == "--show-ref-format\n"
+        and not format_probe.stderr
+    )
+    reported = _single_line_ref_storage_value(format_probe.stdout)
+    if not legacy_probe and (
+        format_probe.returncode != 0
+        or format_probe.stderr
+        or reported not in {"files", "reftable"}
+    ):
+        raise PhaseCheckpointError(
+            "could not determine Git ref storage backend"
+        )
 
-    if config_probe.returncode == 1 and not config_probe.stdout:
-        configured = "files"
+    if (
+        config_probe.returncode == 1
+        and not config_probe.stdout
+        and not config_probe.stderr
+    ):
+        configured = None
     elif config_probe.returncode == 0:
-        configured_values = config_probe.stdout.splitlines()
-        if (
-            len(configured_values) != 1
-            or configured_values[0] not in {"files", "reftable"}
-        ):
+        configured = _single_line_ref_storage_value(config_probe.stdout)
+        if config_probe.stderr or configured not in {"files", "reftable"}:
             raise PhaseCheckpointError(
                 "could not determine Git ref storage backend"
             )
-        configured = configured_values[0]
     else:
         raise PhaseCheckpointError(
             "could not determine Git ref storage backend"
         )
 
-    if reported and reported != configured:
+    if legacy_probe:
+        return configured or "files"
+    if configured is not None and reported != configured:
         raise PhaseCheckpointError(
             "ambiguous Git ref storage backend: "
             f"rev-parse={reported}, config={configured}"
         )
-    backend = reported or configured
+    if reported is None:
+        raise PhaseCheckpointError(
+            "could not determine Git ref storage backend"
+        )
+    return reported
+
+
+def _require_files_ref_storage(project_root: Path) -> None:
+    """Fail closed unless Git authoritatively identifies the files backend."""
+
+    backend = _git_ref_storage_backend(project_root)
     if backend != "files":
         raise PhaseCheckpointError(
             f"unsupported Git ref storage backend: {backend}"
