@@ -486,6 +486,76 @@ def test_rewind_mutation_refuses_shared_spec_mutation_owner(
     assert (run_dir / "state.json").read_bytes() == state_before
 
 
+def test_confirming_rewind_refuses_when_active_run_changes_before_lock(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    from echelon.spec_lifecycle import SpecMutationLock
+
+    old_run = _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "phase2-decide",
+            "spec_id": "004-transform-selector",
+            "spec_dir": "specs/004-transform-selector",
+        },
+    )
+    old_spec = tmp_path / "specs" / "004-transform-selector"
+    old_spec.mkdir(parents=True)
+    _record_checkpoints(old_spec, "phase1-what")
+    old_state_before = (old_run / "state.json").read_bytes()
+
+    new_run = tmp_path / "runs" / "spec-new-active"
+    new_run.mkdir()
+    (new_run / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "phase": "phase2-decide",
+                "spec_id": "005-new-active",
+                "spec_dir": "specs/005-new-active",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    original_acquire = SpecMutationLock.acquire.__func__
+
+    def switch_before_acquire(cls, project_root, spec_id, operation_id):
+        (tmp_path / "runs" / ".current").write_text(
+            new_run.name,
+            encoding="utf-8",
+        )
+        return original_acquire(cls, project_root, spec_id, operation_id)
+
+    monkeypatch.setattr(
+        SpecMutationLock,
+        "acquire",
+        classmethod(switch_before_acquire),
+    )
+    monkeypatch.setattr(
+        "echelon.rewind.prepare_rewind",
+        lambda **_kwargs: RewindResult(
+            applied=True,
+            spec_id=old_spec.name,
+            checkpoint_id="phase1-what",
+            from_commit="1234567",
+            to_commit="abcdef0",
+            backup_ref="backup",
+            message="applied",
+        ),
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        _cmd_rewind(["phase1-what", "--confirm"], project_root=tmp_path)
+
+    assert exc.value.code == 1
+    assert "active run changed" in capsys.readouterr().err.lower()
+    assert (old_run / "state.json").read_bytes() == old_state_before
+
+
 def test_rewind_reconstructs_primary_predecessors_for_the_roadmap() -> None:
     """A checkpoint ledger is sparse; the roadmap still needs its prior phases."""
     rewound = _reset_rewind_state(

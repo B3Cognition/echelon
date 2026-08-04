@@ -11,9 +11,34 @@ import pytest
 from echelon.spec_retarget import (
     RetargetEligibilityError,
     RetargetEvidence,
+    _delivery_state_paths,
     classify_retarget,
     collect_retarget_evidence,
 )
+
+
+@pytest.mark.unit
+def test_delivery_evidence_includes_target_scoped_harness_builds(
+    tmp_path: Path,
+) -> None:
+    state_path = (
+        tmp_path
+        / "runs"
+        / "targets"
+        / "api"
+        / "runs"
+        / "build-001"
+        / "state.json"
+    )
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(
+        json.dumps({"spec_id": "001-demo", "status": "preparing"}),
+        encoding="utf-8",
+    )
+
+    assert _delivery_state_paths(tmp_path, "001-demo") == (
+        "runs/targets/api/runs/build-001/state.json",
+    )
 
 
 def eligible_evidence(tmp_path: Path) -> RetargetEvidence:

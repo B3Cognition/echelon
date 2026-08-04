@@ -508,6 +508,44 @@ class TestHarnessRunTaskFormatErrors:
 
         assert len(observed_build_ids) == 1
 
+    def test_delivery_preparation_fsyncs_build_and_runs_directories(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        import echelon.cli as cli
+
+        events: list[tuple[str, Path]] = []
+        state_path = tmp_path / "runs" / "build-test" / "state.json"
+
+        def write_state(path: Path, _payload) -> None:
+            path.parent.mkdir(parents=True)
+            path.write_text("{}\n", encoding="utf-8")
+            events.append(("write", path))
+
+        monkeypatch.setattr(
+            "harness.lexicon_gate_io.write_json_atomic",
+            write_state,
+        )
+        monkeypatch.setattr(
+            cli,
+            "_fsync_directory",
+            lambda path: events.append(("fsync", path)),
+            raising=False,
+        )
+
+        cli._write_delivery_preparation_state(
+            state_path,
+            {"spec_id": "003-test"},
+        )
+
+        assert events == [
+            ("write", state_path),
+            ("fsync", state_path.parent),
+            ("fsync", state_path.parent.parent),
+            ("fsync", state_path.parent.parent.parent),
+        ]
+
     def test_harness_run_forwards_loop_options_to_run_intent(
         self,
         tmp_path: Path,
@@ -663,6 +701,111 @@ class TestHarnessTargetPreflight:
         assert target.source_root == source.resolve()
         assert target.source_id == "og-platform"
         assert target.source_git_role == "source"
+
+    def test_orchestrator_parent_does_not_create_orphan_preparing_build(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        root = tmp_path
+        spec_dir = root / "specs" / "001-feature"
+        _write_phase_a_build_inputs(spec_dir)
+        (spec_dir / "spec.md").write_text(
+            "---\ntargets:\n  - sources/api\n---\n# Feature\n",
+            encoding="utf-8",
+        )
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=foundation req=INFRA "
+            "depends=none target=sources/api\n",
+            encoding="utf-8",
+        )
+        target = root / "sources" / "api"
+        (target / ".git").mkdir(parents=True)
+        monkeypatch.chdir(root)
+
+        from echelon.cli import HarnessWorkspaceTarget, _cmd_harness_run
+
+        monkeypatch.setattr(
+            "echelon.cli._resolve_harness_workspace_target",
+            lambda *_args, **_kwargs: HarnessWorkspaceTarget(
+                workspace_root=root.resolve(),
+                workspace_git_role="orchestration",
+                source_root=target.resolve(),
+                source_id="api",
+                source_git_role="source",
+            ),
+        )
+        with patch("echelon.orchestrator.run_multi_target", return_value=0) as mock_run:
+            with pytest.raises(SystemExit) as exc:
+                _cmd_harness_run(["001"])
+
+        assert exc.value.code == 0
+        mock_run.assert_called_once()
+        assert not list((root / "runs").glob("build-*"))
+
+    def test_target_child_prepares_and_runs_in_same_build_root(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        root = tmp_path
+        target = root / "sources" / "api"
+        (target / ".git").mkdir(parents=True)
+        (target / "package.json").write_text("{}\n", encoding="utf-8")
+        spec_dir = root / "specs" / "001-feature"
+        _write_phase_a_build_inputs(spec_dir)
+        (spec_dir / "spec.md").write_text(
+            "---\ntargets:\n  - sources/api\n---\n# Feature\n",
+            encoding="utf-8",
+        )
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=foundation req=INFRA "
+            "depends=none target=sources/api\n",
+            encoding="utf-8",
+        )
+        config_file = root / ".echelon" / "config.yml"
+        config_file.parent.mkdir(parents=True)
+        config_file.write_text("harness:\n  target_repo: sources/api\n", encoding="utf-8")
+        harness_base = root / "runs" / "targets" / "api"
+        mirror = harness_base / "runs" / "mirror.git"
+        mirror.mkdir(parents=True)
+
+        monkeypatch.chdir(target)
+        monkeypatch.setenv("ECHELON_POLYREPO_ROOT", str(root))
+        monkeypatch.setenv("ECHELON_TARGET_REPO_PATH", str(target))
+        monkeypatch.setenv("ECHELON_TARGET_REPO_NAME", "api")
+        monkeypatch.setattr("echelon.cli._sync_polyrepo_runtime_extension", lambda *_: None)
+        monkeypatch.setattr(
+            "echelon.cli._apply_target_verify_command_detection",
+            lambda *_args, **_kwargs: None,
+        )
+
+        observed: list[str] = []
+
+        def observe_run(*_args, **kwargs) -> None:
+            build_id = kwargs["resume_build_id"]
+            observed.append(build_id)
+            assert Path(kwargs["base_dir"]) == harness_base
+            evidence_path = harness_base / "runs" / build_id / "state.json"
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            assert evidence["build_id"] == build_id
+            assert evidence["spec_id"] == "001-feature"
+
+        with patch("harness.config.load_config") as mock_cfg, \
+             patch("harness.paths.mirror_path", return_value=mirror), \
+             patch("harness.gitops.GitOpsManager"), \
+             patch("harness.docker_provider.DockerWorktreeProvider"), \
+             patch("harness.skills.run_skill.run", side_effect=observe_run):
+            mock_cfg.return_value = MagicMock(
+                buffer_limit_bytes=1024 * 1024,
+                target_repo=str(target),
+            )
+            from echelon.cli import _cmd_harness_run
+
+            _cmd_harness_run(["001"])
+
+        assert len(observed) == 1
+        assert not list((root / "runs").glob("build-*"))
 
     def test_delivery_without_declared_target_stops_before_source_detection(
         self,

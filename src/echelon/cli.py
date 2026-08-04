@@ -1822,14 +1822,36 @@ def _workspace_target_dispatch_metadata(target: HarnessWorkspaceTarget) -> dict[
     }
 
 
+def _fsync_directory(path: Path) -> None:
+    """Persist directory-entry changes needed by the delivery safety boundary."""
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _write_delivery_preparation_state(
+    state_path: Path,
+    payload: Mapping[str, object],
+) -> None:
+    """Atomically write Phase B evidence and persist every new directory entry."""
+    from harness.lexicon_gate_io import write_json_atomic
+
+    write_json_atomic(state_path, payload)
+    _fsync_directory(state_path.parent)
+    _fsync_directory(state_path.parent.parent)
+    _fsync_directory(state_path.parent.parent.parent)
+
+
 def _prepare_delivery_build_state(
     *,
     project_root: Path,
+    harness_base_dir: Path,
     spec_id: str,
     spec_dir: Path,
 ) -> str:
     """Create durable Phase B evidence under the per-spec mutation lease."""
-    from harness.lexicon_gate_io import write_json_atomic
     from harness.paths import build_dir, make_build_id
     from echelon.spec_lifecycle import (
         PhaseAExecutionLock,
@@ -1843,8 +1865,8 @@ def _prepare_delivery_build_state(
             with PhaseAExecutionLock.acquire(project_root, operation_id):
                 _block_if_harness_phase_a_not_ready(spec_dir, spec_id)
                 build_id = make_build_id()
-                write_json_atomic(
-                    build_dir(project_root, build_id) / "state.json",
+                _write_delivery_preparation_state(
+                    build_dir(harness_base_dir, build_id) / "state.json",
                     {
                         "schema_version": 1,
                         "spec_id": spec_id,
@@ -2006,11 +2028,6 @@ def _cmd_harness_run(
                     direct_target_path = workspace_target.source_root
                 else:
                     target = validate_single_target([target_rel], polyrepo_root)
-                    _prepare_delivery_build_state(
-                        project_root=polyrepo_root,
-                        spec_id=resolved_spec_id,
-                        spec_dir=spec_dir,
-                    )
                     sys.exit(run_multi_target(
                         spec_id,
                         [target],
@@ -2040,11 +2057,6 @@ def _cmd_harness_run(
                     "source_ids": source_ids,
                     "source_git_roles": source_git_roles,
                 }
-                _prepare_delivery_build_state(
-                    project_root=polyrepo_root,
-                    spec_id=resolved_spec_id,
-                    spec_dir=spec_dir,
-                )
                 sys.exit(run_multi_target(spec_id, targets, args[1:], **dispatch_metadata))
 
         if not target_env and direct_target_path is None:
@@ -2159,6 +2171,7 @@ def _cmd_harness_run(
     assert spec_dir is not None
     delivery_build_id = _prepare_delivery_build_state(
         project_root=spec_dir.parent.parent,
+        harness_base_dir=harness_base_dir,
         spec_id=spec_dir.name,
         spec_dir=spec_dir,
     )
@@ -7834,6 +7847,7 @@ def _cmd_rewind(
     )
 
     operation_id = f"rewind-{os.getpid()}"
+    expected_spec_id = spec_dir.name
     try:
         with (
             SpecMutationLock.acquire(project_root, spec_dir.name, operation_id)
@@ -7841,7 +7855,60 @@ def _cmd_rewind(
             else nullcontext()
         ):
             with PhaseAExecutionLock.acquire(project_root, operation_id):
-                with SpecRunExecutionLock.acquire(squad_dir, operation_id):
+                locked_squad_dir = _find_current_run_dir(project_root)
+                if locked_squad_dir != squad_dir:
+                    print(
+                        "✗ Cannot rewind because the active run changed before "
+                        "the mutation lease was acquired. Retry against the new active run.",
+                        file=sys.stderr,
+                    )
+                    raise SystemExit(1)
+                with SpecRunExecutionLock.acquire(locked_squad_dir, operation_id):
+                    if _find_current_run_dir(project_root) != locked_squad_dir:
+                        print(
+                            "✗ Cannot rewind because the active run changed while "
+                            "the execution lease was being acquired. Retry.",
+                            file=sys.stderr,
+                        )
+                        raise SystemExit(1)
+
+                    store = SquadStateStore(locked_squad_dir)
+                    state = store.load()
+                    spec_dir, spec_dir_ref = _normalize_rewind_spec_dir(
+                        project_root,
+                        state,
+                    )
+                    if spec_dir is None or spec_dir_ref is None:
+                        raise RewindError(
+                            "could not resolve the canonical spec directory from "
+                            "the locked state.json snapshot"
+                        )
+                    if spec_dir.name != expected_spec_id:
+                        print(
+                            "✗ Cannot rewind because the active spec identity changed "
+                            "before the mutation lease was acquired. Retry.",
+                            file=sys.stderr,
+                        )
+                        raise SystemExit(1)
+                    ledger = load_checkpoint_ledger(spec_dir)
+                    try:
+                        checkpoint = resolve_checkpoint(
+                            ledger,
+                            target,
+                            commit=checkpoint_commit,
+                        )
+                    except (KeyError, ValueError) as exc:
+                        available = checkpoint_targets(ledger)
+                        reason = str(exc.args[0]) if exc.args else (
+                            f"checkpoint not found for spec {ledger.spec_id}: {target}"
+                        )
+                        suffix = (
+                            f"\nAvailable checkpoints: {', '.join(available)}"
+                            if available
+                            else "\nNo checkpoints are recorded for this spec."
+                        )
+                        raise RewindError(reason + suffix) from exc
+
                     result = prepare_rewind(
                         project_root=project_root,
                         spec=spec_dir.name,

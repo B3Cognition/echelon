@@ -288,7 +288,16 @@ def _delivery_state_paths(project_root: Path, spec_id: str) -> tuple[str, ...]:
     if not runs.is_dir():
         return ()
     paths: list[str] = []
-    for build_dir in sorted(runs.glob("build-*")):
+    build_dirs = list(runs.glob("build-*"))
+    target_runs = runs / "targets"
+    if target_runs.is_dir() and not target_runs.is_symlink():
+        for target_dir in sorted(target_runs.iterdir()):
+            if not target_dir.is_dir() or target_dir.is_symlink():
+                continue
+            scoped_runs = target_dir / "runs"
+            if scoped_runs.is_dir() and not scoped_runs.is_symlink():
+                build_dirs.extend(scoped_runs.glob("build-*"))
+    for build_dir in sorted(build_dirs):
         if not build_dir.is_dir() or build_dir.is_symlink():
             continue
         candidates = [build_dir / "state.json"]
