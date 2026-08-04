@@ -7,7 +7,9 @@ import mimetypes
 import os
 import re
 import shutil
+import stat
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,6 +26,26 @@ _TEXT_SUFFIXES = frozenset({".md", ".txt", ".json", ".yaml", ".yml", ".csv", ".t
 _ASSET_SUFFIXES = frozenset({".pdf", ".png", ".jpg", ".jpeg", ".webp", ".svg"})
 _SECRET_FILENAMES = frozenset({".env", "secrets.env", "credentials", "credentials.json", ".npmrc", ".pypirc", "id_rsa", "id_ed25519"})
 _SECRET_SUFFIXES = frozenset({".pem", ".key", ".p12", ".pfx"})
+_PRODUCT_INPUT_POINTERS = (
+    "inputs_dir",
+    "manifest",
+    "catalog",
+    "input_context",
+    "requirement_context",
+    "reference_context",
+    "traceability",
+    "traceability_markdown",
+)
+_PRODUCT_INPUT_POINTER_RELATIVE_PATHS = {
+    "inputs_dir": Path("."),
+    "manifest": Path("manifest.json"),
+    "catalog": Path("catalog.json"),
+    "input_context": Path("input-context.md"),
+    "requirement_context": Path("requirement-context.md"),
+    "reference_context": Path("reference-context.md"),
+    "traceability": Path("traceability.json"),
+    "traceability_markdown": Path("traceability.md"),
+}
 
 
 class ProductInputError(ValueError):
@@ -161,6 +183,229 @@ def resolve_product_input_revision(
         declarations,
         replace_existing=False,
     )
+
+
+def _resolve_project_path(project_root: Path, value: str) -> Path:
+    root = Path(project_root).resolve()
+    candidate = Path(value)
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    if candidate.is_symlink():
+        raise ProductInputError(f"product input path must not be a symlink: {value}")
+    try:
+        resolved = candidate.resolve(strict=True)
+    except OSError as exc:
+        raise ProductInputError(f"product input path is unavailable: {value}") from exc
+    if not resolved.is_relative_to(root):
+        raise ProductInputError(f"product input path escapes project root: {value}")
+    return resolved
+
+
+def _assert_regular_package_tree(inputs_dir: Path) -> None:
+    try:
+        root_mode = inputs_dir.lstat().st_mode
+    except OSError as exc:
+        raise ProductInputError(f"product input package is unavailable: {inputs_dir}") from exc
+    if stat.S_ISLNK(root_mode) or not stat.S_ISDIR(root_mode):
+        raise ProductInputError(f"product input package must be a regular directory: {inputs_dir}")
+    for current, directory_names, file_names in os.walk(inputs_dir, followlinks=False):
+        current_path = Path(current)
+        for name in [*directory_names, *file_names]:
+            path = current_path / name
+            try:
+                mode = path.lstat().st_mode
+            except OSError as exc:
+                raise ProductInputError(f"product input package entry is unavailable: {path}") from exc
+            if stat.S_ISLNK(mode):
+                raise ProductInputError(f"product input package contains a symlink: {path}")
+            if name in directory_names:
+                if not stat.S_ISDIR(mode):
+                    raise ProductInputError(f"product input package entry is not a directory: {path}")
+            elif not stat.S_ISREG(mode):
+                raise ProductInputError(f"product input package entry is not a regular file: {path}")
+
+
+def _validated_package_file(inputs_dir: Path, value: object, *, label: str) -> Path:
+    if not isinstance(value, str) or not value:
+        raise ProductInputError(f"product input {label} is missing")
+    relative = Path(value)
+    if relative.is_absolute():
+        raise ProductInputError(f"product input {label} must be package-relative")
+    path = inputs_dir / relative
+    try:
+        resolved = path.resolve(strict=True)
+    except OSError as exc:
+        raise ProductInputError(f"product input {label} is unavailable: {value}") from exc
+    if not resolved.is_relative_to(inputs_dir.resolve()):
+        raise ProductInputError(f"product input {label} escapes the immutable package")
+    if path.is_symlink() or not resolved.is_file():
+        raise ProductInputError(f"product input {label} is not a regular file")
+    return resolved
+
+
+def _validate_snapshot_digests(
+    inputs_dir: Path,
+    rows: object,
+    *,
+    label: str,
+) -> None:
+    if not isinstance(rows, list):
+        raise ProductInputError(f"product input {label} must be a list")
+    for row in rows:
+        if not isinstance(row, Mapping):
+            raise ProductInputError(f"product input {label} contains a non-object entry")
+        snapshot = row.get("snapshot")
+        digest = row.get("sha256")
+        if not isinstance(snapshot, str) or not snapshot:
+            if label == "catalog units":
+                raise ProductInputError("product input catalog unit is missing its snapshot")
+            continue
+        if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+            raise ProductInputError(f"product input {label} has an invalid sha256 digest")
+        path = _validated_package_file(inputs_dir, snapshot, label=f"{label} snapshot")
+        content = path.read_bytes()
+        if hashlib.sha256(content).hexdigest() != digest:
+            raise ProductInputError(f"product input {label} snapshot hash drift: {snapshot}")
+        size_bytes = row.get("size_bytes")
+        if isinstance(size_bytes, int) and not isinstance(size_bytes, bool) and size_bytes != len(content):
+            raise ProductInputError(f"product input {label} snapshot size drift: {snapshot}")
+
+
+def validate_immutable_product_input_package(
+    inputs_dir: Path,
+    product_inputs: Mapping[str, object],
+) -> None:
+    """Fail closed when immutable aggregate input bytes no longer match their indexes."""
+
+    package = Path(inputs_dir).resolve()
+    _assert_regular_package_tree(package)
+    manifest = _read_json_object(package / "manifest.json", "product input manifest")
+    catalog = _read_json_object(package / "catalog.json", "product input catalog")
+    expected_manifest_hash = product_inputs.get("manifest_hash")
+    if (
+        not isinstance(expected_manifest_hash, str)
+        or re.fullmatch(r"[0-9a-f]{64}", expected_manifest_hash) is None
+        or hashlib.sha256((package / "manifest.json").read_bytes()).hexdigest()
+        != expected_manifest_hash
+    ):
+        raise ProductInputError("product input manifest hash drift")
+    _validate_snapshot_digests(
+        package,
+        manifest.get("resources"),
+        label="manifest resources",
+    )
+    _validate_snapshot_digests(
+        package,
+        catalog.get("units"),
+        label="catalog units",
+    )
+
+
+def validate_product_input_contract_pointers(
+    project_root: Path,
+    product_inputs: Mapping[str, object],
+    inputs_dir: Path,
+) -> None:
+    """Require every persisted pointer to name its canonical package entry."""
+
+    root = Path(project_root).resolve()
+    package_candidate = Path(inputs_dir)
+    if not package_candidate.is_absolute():
+        package_candidate = root / package_candidate
+    if package_candidate.is_symlink():
+        raise ProductInputError("product input package pointer must not be a symlink")
+    package = package_candidate.resolve()
+    if not package.is_relative_to(root):
+        raise ProductInputError("product input package pointer escapes project root")
+    for key in _PRODUCT_INPUT_POINTERS:
+        value = product_inputs.get(key)
+        if not isinstance(value, str) or not value:
+            raise ProductInputError(f"product input {key} pointer is missing")
+        observed = _resolve_project_path(root, value)
+        expected = (package / _PRODUCT_INPUT_POINTER_RELATIVE_PATHS[key]).resolve()
+        if observed != expected:
+            raise ProductInputError(
+                f"product input {key} pointer does not name its canonical package entry"
+            )
+
+
+def clone_product_input_contract(
+    project_root: Path,
+    source_state: Mapping[str, object],
+    replacement_run_dir: Path,
+    *,
+    baseline_run_dir: Path | None = None,
+) -> dict[str, object]:
+    """Clone one baseline run's aggregate immutable evidence without re-resolving inputs."""
+
+    raw = source_state.get("product_inputs")
+    if not isinstance(raw, Mapping) or not raw:
+        return {}
+    root = Path(project_root).resolve()
+    source = _resolve_project_path(root, str(raw.get("inputs_dir") or ""))
+    spec_ref = source_state.get("spec_dir")
+    if not isinstance(spec_ref, str) or not spec_ref:
+        raise ProductInputError("baseline state is missing its run-local spec directory")
+    baseline_spec_dir = _resolve_project_path(root, spec_ref)
+    state_run_dir = baseline_spec_dir.parent.parent
+    if baseline_spec_dir.parent.name != "specs":
+        raise ProductInputError("baseline spec directory is not run-local")
+    if baseline_run_dir is not None:
+        verified_run_dir = _resolve_project_path(root, str(baseline_run_dir))
+        if state_run_dir != verified_run_dir:
+            raise ProductInputError(
+                "product input package does not belong to the verified baseline run"
+            )
+    else:
+        verified_run_dir = state_run_dir
+    if source != verified_run_dir / "inputs":
+        raise ProductInputError("product input package is outside the baseline run")
+
+    source_root = source.resolve()
+    validate_product_input_contract_pointers(root, raw, source_root)
+    validate_immutable_product_input_package(source, raw)
+    replacement_candidate = Path(replacement_run_dir)
+    if not replacement_candidate.is_absolute():
+        replacement_candidate = root / replacement_candidate
+    if replacement_candidate.is_symlink():
+        raise ProductInputError("replacement run directory must not be a symlink")
+    replacement = replacement_candidate.resolve()
+    if not replacement.is_relative_to(root):
+        raise ProductInputError("replacement run directory must be inside the project root")
+    destination = replacement / "inputs"
+    replacement.mkdir(parents=True, exist_ok=True)
+    if destination.exists() or destination.is_symlink():
+        raise ProductInputError(f"replacement product input destination already exists: {destination}")
+
+    temporary = Path(tempfile.mkdtemp(prefix=".inputs-clone-", dir=str(replacement)))
+    temporary.rmdir()
+    try:
+        shutil.copytree(
+            source,
+            temporary,
+            copy_function=shutil.copy2,
+            symlinks=True,
+        )
+        validate_immutable_product_input_package(temporary, raw)
+        os.replace(temporary, destination)
+        directory_fd = os.open(replacement, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except Exception:
+        shutil.rmtree(temporary, ignore_errors=True)
+        raise
+
+    cloned = dict(raw)
+    for key in _PRODUCT_INPUT_POINTERS:
+        cloned[key] = _portable(
+            destination / _PRODUCT_INPUT_POINTER_RELATIVE_PATHS[key],
+            root,
+        )
+    validate_product_input_contract_pointers(root, cloned, destination)
+    validate_immutable_product_input_package(destination, cloned)
+    return cloned
 
 
 def attach_product_input_revision(

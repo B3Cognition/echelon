@@ -4250,6 +4250,13 @@ class SquadController:
                     "phase_a_default_branch",
                     "phase_a_base_commit",
                     "specify_feature_directory",
+                    "user_message",
+                    "autonomy_mode",
+                    "implementation_targets",
+                    "retarget",
+                    "product_inputs",
+                    "ignore_re",
+                    "requested_re_sources",
                 )
                 if key in existing
             }
@@ -4268,8 +4275,14 @@ class SquadController:
                 product_inputs=(
                     self._product_inputs.state_payload(self._project_root)
                     if self._product_inputs is not None
-                    else None
+                    else (
+                        dict(prepared_identity["product_inputs"])
+                        if isinstance(prepared_identity.get("product_inputs"), Mapping)
+                        else None
+                    )
                 ),
+                ignore_re=self._ignore_re,
+                requested_re_sources=self._re_sources,
             )
             if prepared_identity:
                 initialized = self._state_store.load()
@@ -4754,13 +4767,27 @@ class SquadController:
     def _attach_published_re_context(self) -> None:
         """Snapshot the latest durable RE publication for this spec run."""
         state = self._state_store.load()
+        persisted_ignore = state.get("ignore_re")
+        ignore_re = persisted_ignore if isinstance(persisted_ignore, bool) else self._ignore_re
+        persisted_targets = state.get("implementation_targets")
+        implementation_targets = (
+            [str(value) for value in persisted_targets]
+            if isinstance(persisted_targets, list)
+            else self._implementation_targets
+        )
+        persisted_sources = state.get("requested_re_sources")
+        re_sources = (
+            [str(value) for value in persisted_sources]
+            if isinstance(persisted_sources, list)
+            else self._re_sources
+        )
         try:
             context = attach_published_re_context(
                 self._project_root,
                 self._squad_dir,
-                ignore=self._ignore_re,
-                implementation_targets=self._implementation_targets,
-                re_sources=self._re_sources,
+                ignore=ignore_re,
+                implementation_targets=implementation_targets,
+                re_sources=re_sources,
             )
         except Exception as exc:
             state["status"] = "blocked"

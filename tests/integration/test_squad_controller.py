@@ -3967,6 +3967,88 @@ class TestCartographerResumeGuard:
 
 
 class TestSquadControllerBasics:
+    def test_prepared_identity_preserves_retarget_inputs_and_re_policy(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        ctrl._implementation_targets = ["apps/web"]
+        replacement_dir = store.squad_dir
+        prepared_product_inputs = {
+            "inputs_dir": "squad/run-test/inputs",
+            "manifest": "squad/run-test/inputs/manifest.json",
+            "manifest_hash": "a" * 64,
+        }
+        prepared_retarget = {
+            "operation_id": "rt-controller-1",
+            "baseline_run_id": "squad-base",
+            "replacement_run_id": "run-test",
+            "status": "checkpointed",
+        }
+        prepared = {
+            "run_id": "run-test",
+            "status": "preparing",
+            "phase": "phase0-constitution",
+            "user_message": "Original request",
+            "autonomy_mode": "autonomous",
+            "implementation_targets": ["apps/web"],
+            "spec_id": "001-demo",
+            "spec_number": "001",
+            "spec_dir": "squad/run-test/specs/001-demo",
+            "published_spec_dir": "specs/001-demo",
+            "feature_branch": "001-demo",
+            "phase_a_default_branch": "main",
+            "phase_a_base_commit": "b" * 40,
+            "specify_feature_directory": "squad/run-test/specs/001-demo",
+            "retarget": prepared_retarget,
+            "product_inputs": prepared_product_inputs,
+            "ignore_re": False,
+            "requested_re_sources": ["api"],
+        }
+        store.save(prepared)
+        baseline_state = tmp_path / "squad" / "squad-base" / "state.json"
+        baseline_state.parent.mkdir(parents=True)
+        baseline_state.write_text('{"immutable": true}\n', encoding="utf-8")
+        captured: dict[str, object] = {}
+
+        def capture_re_context(
+            project_root: Path,
+            run_dir: Path,
+            *,
+            ignore: bool,
+            implementation_targets: list[str] | None = None,
+            re_sources: list[str] | None = None,
+        ) -> dict[str, object]:
+            captured.update(
+                {
+                    "project_root": project_root,
+                    "run_dir": run_dir,
+                    "ignore": ignore,
+                    "implementation_targets": implementation_targets,
+                    "re_sources": re_sources,
+                }
+            )
+            return {"status": "absent", "generation": 0, "artifacts": {}}
+
+        monkeypatch.setattr(squad_module, "attach_published_re_context", capture_re_context)
+        monkeypatch.setattr(ctrl, "_publish_terminal_phase_a_artifacts_if_available", lambda: None)
+
+        result = ctrl.run("replacement argument must not win", "semi", next_phase_override="DONE")
+
+        state = store.load()
+        assert result.status == "done"
+        assert state["run_id"] == "run-test"
+        assert state["retarget"] == prepared_retarget
+        assert state["product_inputs"] == prepared_product_inputs
+        assert state["ignore_re"] is False
+        assert state["requested_re_sources"] == ["api"]
+        assert state["user_message"] == "Original request"
+        assert state["autonomy_mode"] == "autonomous"
+        assert captured["implementation_targets"] == ["apps/web"]
+        assert captured["re_sources"] == ["api"]
+        assert baseline_state.read_text(encoding="utf-8") == '{"immutable": true}\n'
+
     def test_generation_change_does_not_mutate_attached_spec_context(self, tmp_path, monkeypatch):
         _disable_lexicon_gate(tmp_path)
         provider = _mock_quality_first_flow_provider()

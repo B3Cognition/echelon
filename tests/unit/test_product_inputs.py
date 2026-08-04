@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import types
@@ -208,6 +210,292 @@ def test_product_input_attachment_duplicate_content_is_reported_without_duplicat
     assert result.duplicates[0]["reason"] == "duplicate content"
     catalog = json.loads((base.inputs_dir / "catalog.json").read_text(encoding="utf-8"))
     assert len(catalog["units"]) == 1
+
+
+def test_clone_product_input_contract_copies_complete_package_and_rebases_pointers(
+    tmp_path: Path,
+) -> None:
+    from echelon.product_inputs import (
+        attach_product_input_revision,
+        clone_product_input_contract,
+        parse_input_declaration,
+        resolve_product_inputs,
+    )
+
+    project = tmp_path / "workspace"
+    baseline_run = project / "runs" / "squad-base"
+    (baseline_run / "specs" / "001-demo").mkdir(parents=True)
+    base_source = project / "sources" / "base"
+    added_source = project / "sources" / "added"
+    base_source.mkdir(parents=True)
+    added_source.mkdir(parents=True)
+    (base_source / "brief.md").write_text("Original requirement\n", encoding="utf-8")
+    (added_source / "diagram.svg").write_text("<svg>attachment</svg>\n", encoding="utf-8")
+    resolution = resolve_product_inputs(
+        project,
+        baseline_run,
+        [parse_input_declaration("requirement:sources/base")],
+    )
+    attachment = attach_product_input_revision(
+        project,
+        resolution.inputs_dir,
+        [parse_input_declaration("reference:sources/added")],
+        command="echelon spec add-input",
+    )
+    product_inputs = attachment.state_product_inputs(
+        project,
+        resolution.state_payload(project),
+    )
+    source_state = {
+        "spec_dir": "runs/squad-base/specs/001-demo",
+        "product_inputs": product_inputs,
+    }
+    source_files = {
+        path.relative_to(resolution.inputs_dir).as_posix(): path.read_bytes()
+        for path in resolution.inputs_dir.rglob("*")
+        if path.is_file()
+    }
+
+    cloned = clone_product_input_contract(
+        project,
+        source_state,
+        project / "runs" / "squad-retarget",
+    )
+
+    destination = project / "runs" / "squad-retarget" / "inputs"
+    cloned_files = {
+        path.relative_to(destination).as_posix(): path.read_bytes()
+        for path in destination.rglob("*")
+        if path.is_file()
+    }
+    assert cloned_files == source_files
+    assert "attachments/001/manifest.json" in cloned_files
+    assert cloned["inputs_dir"] == "runs/squad-retarget/inputs"
+    assert cloned["manifest"] == "runs/squad-retarget/inputs/manifest.json"
+    assert cloned["traceability"] == "runs/squad-retarget/inputs/traceability.json"
+    assert cloned["declarations"] == product_inputs["declarations"]
+
+
+def _clone_product_input_fixture(tmp_path: Path) -> tuple[Path, Path, dict[str, object]]:
+    from echelon.product_inputs import parse_input_declaration, resolve_product_inputs
+
+    project = tmp_path / "workspace"
+    baseline_run = project / "runs" / "squad-base"
+    (baseline_run / "specs" / "001-demo").mkdir(parents=True)
+    source = project / "requirements.md"
+    source.write_text("Immutable requirement\n", encoding="utf-8")
+    resolution = resolve_product_inputs(
+        project,
+        baseline_run,
+        [parse_input_declaration("requirement:requirements.md")],
+    )
+    state: dict[str, object] = {
+        "spec_dir": "runs/squad-base/specs/001-demo",
+        "product_inputs": resolution.state_payload(project),
+    }
+    return project, baseline_run, state
+
+
+def test_clone_product_input_contract_rejects_wrong_in_package_pointer(
+    tmp_path: Path,
+) -> None:
+    from echelon.product_inputs import ProductInputError, clone_product_input_contract
+
+    project, _baseline_run, state = _clone_product_input_fixture(tmp_path)
+    product_inputs = dict(state["product_inputs"])
+    product_inputs["catalog"] = product_inputs["manifest"]
+    state["product_inputs"] = product_inputs
+
+    with pytest.raises(ProductInputError, match="catalog pointer"):
+        clone_product_input_contract(
+            project,
+            state,
+            project / "runs" / "squad-retarget",
+        )
+
+
+def test_clone_product_input_contract_rejects_symlinks_and_nonregular_files(
+    tmp_path: Path,
+) -> None:
+    from echelon.product_inputs import ProductInputError, clone_product_input_contract
+
+    project, baseline_run, state = _clone_product_input_fixture(tmp_path)
+    package = baseline_run / "inputs"
+    (package / "escape-link").symlink_to(project / "requirements.md")
+
+    with pytest.raises(ProductInputError, match="symlink"):
+        clone_product_input_contract(
+            project,
+            state,
+            project / "runs" / "squad-retarget",
+        )
+
+    (package / "escape-link").unlink()
+    fifo = package / "named-pipe"
+    os.mkfifo(fifo)
+    with pytest.raises(ProductInputError, match="regular file"):
+        clone_product_input_contract(
+            project,
+            state,
+            project / "runs" / "squad-retarget",
+        )
+
+
+def test_clone_product_input_contract_rejects_outside_baseline_package_and_pointer(
+    tmp_path: Path,
+) -> None:
+    from echelon.product_inputs import ProductInputError, clone_product_input_contract
+
+    project, baseline_run, state = _clone_product_input_fixture(tmp_path)
+    outside = project / "outside-inputs"
+    shutil.copytree(baseline_run / "inputs", outside)
+    outside_state = json.loads(json.dumps(state))
+    outside_inputs = outside_state["product_inputs"]
+    assert isinstance(outside_inputs, dict)
+    outside_inputs["inputs_dir"] = "outside-inputs"
+    for key in (
+        "manifest",
+        "catalog",
+        "input_context",
+        "requirement_context",
+        "reference_context",
+        "traceability",
+        "traceability_markdown",
+    ):
+        outside_inputs[key] = f"outside-inputs/{Path(str(outside_inputs[key])).name}"
+
+    with pytest.raises(ProductInputError, match="outside the baseline run"):
+        clone_product_input_contract(
+            project,
+            outside_state,
+            project / "runs" / "squad-retarget-outside",
+        )
+
+    pointer_state = json.loads(json.dumps(state))
+    pointer_inputs = pointer_state["product_inputs"]
+    assert isinstance(pointer_inputs, dict)
+    pointer_inputs["catalog"] = "requirements.md"
+    with pytest.raises(ProductInputError, match="catalog pointer"):
+        clone_product_input_contract(
+            project,
+            pointer_state,
+            project / "runs" / "squad-retarget-pointer",
+        )
+
+
+def test_clone_product_input_contract_binds_source_to_verified_baseline_run(
+    tmp_path: Path,
+) -> None:
+    from echelon.product_inputs import ProductInputError, clone_product_input_contract
+
+    project, baseline_run, state = _clone_product_input_fixture(tmp_path)
+    other_run = project / "runs" / "squad-other"
+    (other_run / "specs" / "999-other").mkdir(parents=True)
+    shutil.copytree(baseline_run / "inputs", other_run / "inputs")
+    forged = json.loads(json.dumps(state))
+    forged["spec_dir"] = "runs/squad-other/specs/999-other"
+    forged_inputs = forged["product_inputs"]
+    assert isinstance(forged_inputs, dict)
+    for key, value in tuple(forged_inputs.items()):
+        if key == "inputs_dir":
+            forged_inputs[key] = "runs/squad-other/inputs"
+        elif key in {
+            "manifest",
+            "catalog",
+            "input_context",
+            "requirement_context",
+            "reference_context",
+            "traceability",
+            "traceability_markdown",
+        }:
+            forged_inputs[key] = f"runs/squad-other/inputs/{Path(str(value)).name}"
+
+    with pytest.raises(ProductInputError, match="verified baseline run"):
+        clone_product_input_contract(
+            project,
+            forged,
+            project / "runs" / "squad-retarget-forged",
+            baseline_run_dir=baseline_run,
+        )
+
+
+def test_clone_product_input_contract_rejects_manifest_and_snapshot_hash_drift(
+    tmp_path: Path,
+) -> None:
+    from echelon.product_inputs import ProductInputError, clone_product_input_contract
+
+    project, baseline_run, state = _clone_product_input_fixture(tmp_path)
+    manifest_state = json.loads(json.dumps(state))
+    manifest_inputs = manifest_state["product_inputs"]
+    assert isinstance(manifest_inputs, dict)
+    manifest_inputs["manifest_hash"] = "0" * 64
+    with pytest.raises(ProductInputError, match="manifest hash drift"):
+        clone_product_input_contract(
+            project,
+            manifest_state,
+            project / "runs" / "squad-retarget-manifest",
+        )
+
+    manifest = json.loads((baseline_run / "inputs" / "manifest.json").read_text())
+    snapshot = baseline_run / "inputs" / manifest["resources"][0]["snapshot"]
+    snapshot.write_text("tampered\n", encoding="utf-8")
+    with pytest.raises(ProductInputError, match="snapshot hash drift"):
+        clone_product_input_contract(
+            project,
+            state,
+            project / "runs" / "squad-retarget-snapshot",
+        )
+
+
+def test_clone_product_input_contract_refuses_collision_and_cleans_failed_copy_for_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.product_inputs import ProductInputError, clone_product_input_contract
+
+    project, _baseline_run, state = _clone_product_input_fixture(tmp_path)
+    collision_run = project / "runs" / "squad-retarget-collision"
+    (collision_run / "inputs").mkdir(parents=True)
+    with pytest.raises(ProductInputError, match="already exists"):
+        clone_product_input_contract(project, state, collision_run)
+
+    retry_run = project / "runs" / "squad-retarget-retry"
+    original_copy2 = shutil.copy2
+    calls = 0
+
+    def fail_once(source: object, destination: object, *args: object, **kwargs: object):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("injected copy failure")
+        return original_copy2(source, destination, *args, **kwargs)
+
+    monkeypatch.setattr("echelon.product_inputs.shutil.copy2", fail_once)
+    with pytest.raises(OSError, match="injected copy failure"):
+        clone_product_input_contract(project, state, retry_run)
+    assert not (retry_run / "inputs").exists()
+    assert not list(retry_run.glob(".inputs-clone-*"))
+
+    monkeypatch.setattr("echelon.product_inputs.shutil.copy2", original_copy2)
+    cloned = clone_product_input_contract(project, state, retry_run)
+    assert cloned["inputs_dir"] == "runs/squad-retarget-retry/inputs"
+
+
+def test_clone_product_input_contract_rejects_symlinked_replacement_run(
+    tmp_path: Path,
+) -> None:
+    from echelon.product_inputs import ProductInputError, clone_product_input_contract
+
+    project, _baseline_run, state = _clone_product_input_fixture(tmp_path)
+    actual_run = project / "runs" / "unexpected-run"
+    actual_run.mkdir(parents=True)
+    replacement_run = project / "runs" / "squad-retarget-symlink"
+    replacement_run.symlink_to(actual_run, target_is_directory=True)
+
+    with pytest.raises(ProductInputError, match="replacement run directory"):
+        clone_product_input_contract(project, state, replacement_run)
+
+    assert not (actual_run / "inputs").exists()
 
 
 def test_product_input_revision_refuses_to_replace_existing_evidence(tmp_path: Path) -> None:

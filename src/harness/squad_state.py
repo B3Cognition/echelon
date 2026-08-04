@@ -2225,6 +2225,8 @@ class SquadStateStore:
         autonomy_mode: str = "semi",
         implementation_targets: list[str] | None = None,
         product_inputs: dict[str, object] | None = None,
+        ignore_re: bool = False,
+        requested_re_sources: list[str] | None = None,
     ) -> None:
         if autonomy_mode == "semi" and mode in AUTONOMY_MODES and mode not in PROJECT_MODES:
             autonomy_mode = mode
@@ -2245,6 +2247,8 @@ class SquadStateStore:
             "user_message": user_message,
             "implementation_targets": list(implementation_targets or []),
             "product_inputs": dict(product_inputs or {}),
+            "ignore_re": ignore_re,
+            "requested_re_sources": list(requested_re_sources or []),
             "created_at": ts,
             "updated_at": ts,
             "last_dispatch": None,

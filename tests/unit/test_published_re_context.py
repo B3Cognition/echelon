@@ -10,6 +10,7 @@ from echelon.spec_graph import build_spec_graph
 from harness.re_artifacts import SUPPORTED_RE_ARTIFACT_KINDS
 from harness.published_re_context import (
     attach_published_re_context,
+    explicit_re_sources,
     write_canonical_re_context,
 )
 from harness.squad_executors import _render_published_re_context
@@ -449,6 +450,37 @@ def test_attach_published_re_context_selects_explicit_re_source(tmp_path: Path) 
 
     assert context["selected_sources"] == ["api"]
     assert context["selection_reason"] == {"api": "explicit --re-source"}
+
+
+@pytest.mark.unit
+def test_retarget_reuses_explicit_sources_and_recomputes_automatic_sources(
+    tmp_path: Path,
+) -> None:
+    _publish_fixture(tmp_path)
+    _add_source_to_publication(tmp_path, "web")
+    prior = {
+        "status": "attached",
+        "selected_sources": ["api", "legacy"],
+        "selection_reason": {
+            "api": "explicit --re-source",
+            "legacy": "target matched published source path",
+        },
+    }
+
+    assert explicit_re_sources(prior) == ("api",)
+    context = attach_published_re_context(
+        tmp_path,
+        tmp_path / "runs" / "squad-retarget",
+        ignore=False,
+        implementation_targets=["sources/web"],
+        re_sources=list(explicit_re_sources(prior)),
+    )
+
+    assert context["selected_sources"] == ["api", "web"]
+    assert context["selection_reason"] == {
+        "api": "explicit --re-source",
+        "web": "target matched published source path",
+    }
 
 
 @pytest.mark.unit

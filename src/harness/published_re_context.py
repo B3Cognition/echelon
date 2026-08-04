@@ -62,6 +62,21 @@ REGISTERED_ONLY_KINDS = frozenset(
 _OMIT = object()
 
 
+def explicit_re_sources(context: Mapping[str, object]) -> tuple[str, ...]:
+    """Recover only source selections explicitly requested by the operator."""
+
+    selected = context.get("selected_sources")
+    reasons = context.get("selection_reason")
+    if not isinstance(selected, list) or not isinstance(reasons, Mapping):
+        return ()
+    return tuple(
+        source
+        for source in selected
+        if isinstance(source, str)
+        and reasons.get(source) == "explicit --re-source"
+    )
+
+
 def attach_published_re_context(
     project_root: Path,
     run_dir: Path,
