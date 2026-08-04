@@ -19,6 +19,18 @@ def test_re_run_help_exposes_clean_reconstruction_switch() -> None:
 
 
 @pytest.mark.unit
+def test_re_refresh_help_requires_one_source_selector() -> None:
+    from echelon.cli_app import app
+
+    help_result = CliRunner().invoke(app, ["re", "refresh", "--help"])
+    missing_result = CliRunner().invoke(app, ["re", "refresh"])
+
+    assert help_result.exit_code == 0
+    assert "--source" in help_result.output
+    assert missing_result.exit_code == 2
+
+
+@pytest.mark.unit
 def test_re_continue_prints_controller_summary_before_provider_dispatch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -146,6 +158,9 @@ def test_re_lifecycle_typed_commands_route_options(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(
         "echelon.cli._cmd_re_resume", lambda args: calls.append(("resume", args))
     )
+    monkeypatch.setattr(
+        "echelon.cli._cmd_re_refresh", lambda args: calls.append(("refresh", args))
+    )
     runner = CliRunner()
 
     assert runner.invoke(
@@ -157,12 +172,52 @@ def test_re_lifecycle_typed_commands_route_options(monkeypatch: pytest.MonkeyPat
         app,
         ["re", "resume", "Use v2", "--re-max-inner", "11"],
     ).exit_code == 0
+    assert runner.invoke(app, ["re", "refresh", "--source", "api"]).exit_code == 0
 
     assert calls == [
         ("run", ["--re-policy", "refresh-all", "--re-max-inner", "9", "--reset"]),
         ("continue", ["--re-max-inner", "10"]),
         ("resume", ["Use v2", "--re-max-inner", "11"]),
+        ("refresh", ["--source", "api"]),
     ]
+
+
+@pytest.mark.unit
+def test_re_refresh_runs_target_only_and_publishes_completed_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.cli import _cmd_re_refresh
+
+    observed: dict[str, object] = {}
+
+    class FakeController:
+        def run(self, **kwargs: object) -> SimpleNamespace:
+            observed.update(kwargs)
+            return SimpleNamespace(
+                status="done",
+                run_id="re-20260804-120000-000001",
+                generation=4,
+                no_work=False,
+            )
+
+    published: list[list[str]] = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "echelon.cli._re_lifecycle_controller", lambda _root: FakeController()
+    )
+    monkeypatch.setattr(
+        "echelon.cli._cmd_re_publish", lambda args: published.append(args)
+    )
+
+    _cmd_re_refresh(["--source", "api"])
+
+    assert observed == {
+        "policy": "target-only",
+        "target_source": "api",
+        "force_selected_refresh": True,
+    }
+    assert published == [["re-20260804-120000-000001"]]
 
 
 @pytest.mark.unit

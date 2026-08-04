@@ -901,6 +901,18 @@ def re_run(
     _legacy_cli()._cmd_re_run(args)
 
 
+@re_app.command("refresh")
+def re_refresh(
+    source: str = typer.Option(
+        ...,
+        "--source",
+        help="Declared workspace source ID to refresh and publish.",
+    ),
+) -> None:
+    """Refresh and publish semantic RE and topology for one source."""
+    _legacy_cli()._cmd_re_refresh(["--source", source])
+
+
 @re_app.command("continue")
 def re_continue(
     re_max_inner: Optional[int] = typer.Option(

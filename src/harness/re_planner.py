@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Mapping
 
 from echelon.workspace_model import SourceRoot, WorkspaceManifest
@@ -252,6 +252,7 @@ def build_re_execution_plan(
     profile: ReFingerprintProfile,
     published_index: PublishedReIndex | None = None,
     cache_root: Path | None = None,
+    force_selected_refresh: bool = False,
 ) -> ReExecutionPlan:
     """Build a per-source RE execution plan."""
     root = project_root.resolve()
@@ -259,8 +260,12 @@ def build_re_execution_plan(
     source_ids = [source.id for source in manifest.sources]
     if len(source_ids) != len(set(source_ids)):
         raise RePlanError("duplicate source IDs in workspace manifest")
-    target = _resolve_target_source(manifest.sources, target_source)
+    target = resolve_re_target_source(manifest.sources, target_source)
     policy = resolve_re_policy(target.id if target is not None else "", requested_policy)
+    if force_selected_refresh and (target is None or policy != "target-only"):
+        raise RePlanError(
+            "force_selected_refresh requires target-only policy and one target source"
+        )
     target_empty = target is not None and _source_empty(target)
     forbidden_roots: list[str] = []
     planned: list[RePlanSource] = []
@@ -269,7 +274,14 @@ def build_re_execution_plan(
         absolute_path = _source_absolute_path(root, source)
         source_exists = absolute_path.exists()
         published = published_index.sources.get(source.id) if published_index else None
-        if not source_exists and published is not None:
+        forced_reuse = bool(
+            force_selected_refresh
+            and policy == "target-only"
+            and target is not None
+            and source.id != target.id
+            and published is not None
+        )
+        if forced_reuse or (not source_exists and published is not None):
             fingerprint = SourceFingerprint(
                 value=published.fingerprint,
                 kind="file-tree",
@@ -294,22 +306,39 @@ def build_re_execution_plan(
             )
         )
         selected = _source_selected(policy, source, target)
-        if policy == "target-changed" and target_empty and target is not None and source.id != target.id:
+        if (
+            policy == "target-changed"
+            and target_empty
+            and target is not None
+            and source.id != target.id
+        ):
             selected = False
         if not selected:
-            action: RePlanAction = "exclude"
+            if forced_reuse:
+                action: RePlanAction = "reuse"
+            elif force_selected_refresh and policy == "target-only":
+                action = "missing"
+            else:
+                action = "exclude"
         elif policy == "none":
             action = "exclude"
             selected = False
         elif not source_exists:
             action = "missing"
         elif source_empty:
-            action = "reuse" if current else "skip-empty"
+            action = "skip-empty" if force_selected_refresh or not current else "reuse"
+        elif force_selected_refresh:
+            action = "refresh"
         elif policy == "refresh-all":
             action = "refresh"
         elif policy == "cached-only" and not current:
             action = "missing"
-        elif policy == "target-changed" and target is not None and source.id != target.id and not current:
+        elif (
+            policy == "target-changed"
+            and target is not None
+            and source.id != target.id
+            and not current
+        ):
             action = "missing"
         elif current:
             action = "reuse"
@@ -329,17 +358,25 @@ def build_re_execution_plan(
                 cache_path=str(cache_source_dir(cache_root, source.id, fingerprint)),
                 dirty=fingerprint.dirty,
                 selected=selected,
-                classification=_source_classification(
-                    source_exists=source_exists,
-                    source_empty=source_empty,
-                    current=current,
+                classification=(
+                    "current"
+                    if forced_reuse
+                    else _source_classification(
+                        source_exists=source_exists,
+                        source_empty=source_empty,
+                        current=current,
+                    )
                 ),
             )
         )
 
     removed_sources = (
         tuple(sorted(set(published_index.sources) - set(source_ids)))
-        if published_index is not None and policy != "none"
+        if (
+            published_index is not None
+            and policy != "none"
+            and not force_selected_refresh
+        )
         else ()
     )
     analysis_required = any(source.action == "refresh" for source in planned)
@@ -360,16 +397,29 @@ def build_re_execution_plan(
     )
 
 
-def _resolve_target_source(
+def resolve_re_target_source(
     sources: tuple[SourceRoot, ...],
     target_source: str,
 ) -> SourceRoot | None:
     raw = target_source.strip()
     if not raw:
         return None
-    for source in sources:
-        if raw in {source.id, source.path}:
-            return source
+    selector = PurePosixPath(raw)
+    if (
+        "\\" in raw
+        or "\x00" in raw
+        or selector.is_absolute()
+        or any(part == ".." for part in selector.parts)
+    ):
+        raise RePlanError(f"unsafe target source selector: {raw!r}")
+    matches = tuple(source for source in sources if raw in {source.id, source.path})
+    if len(matches) > 1:
+        candidates = ", ".join(sorted(source.id for source in matches))
+        raise RePlanError(
+            f"ambiguous target source {raw!r}; matches declared sources: {candidates}"
+        )
+    if matches:
+        return matches[0]
     raise RePlanError(f"target source {raw!r} is not declared in workspace sources")
 
 

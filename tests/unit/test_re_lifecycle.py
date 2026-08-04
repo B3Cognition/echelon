@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from echelon.workspace_model import WorkspaceInfo, WorkspaceManifest
+from echelon.workspace_model import SourceRoot, WorkspaceInfo, WorkspaceManifest
 from harness.re_fingerprint import ReFingerprintProfile
 from harness.re_lifecycle import (
     ReLifecycleController,
@@ -21,6 +21,27 @@ def _empty_manifest(root: Path) -> WorkspaceManifest:
         schema_version=1,
         workspace=WorkspaceInfo(root=root, git_role="orchestration", git_present=False),
         sources=(),
+    )
+
+
+def _manifest_with_source(
+    root: Path,
+    source_id: str,
+    *,
+    source_file_count: int = 1,
+) -> WorkspaceManifest:
+    return WorkspaceManifest(
+        schema_version=1,
+        workspace=WorkspaceInfo(root=root, git_role="orchestration", git_present=False),
+        sources=(
+            SourceRoot(
+                id=source_id,
+                path=f"sources/{source_id}",
+                git_present=False,
+                project_markers=(),
+                source_file_count=source_file_count,
+            ),
+        ),
     )
 
 
@@ -86,6 +107,10 @@ def test_changed_current_plan_exits_before_provider_creation(
     monkeypatch.setattr(
         "harness.re_lifecycle.build_re_execution_plan", lambda **kwargs: plan
     )
+    monkeypatch.setattr(
+        "harness.re_lifecycle.materialize_re_run_context",
+        lambda **kwargs: pytest.fail("current changed plan must not materialize a run"),
+    )
     provider_calls: list[bool] = []
 
     controller = ReLifecycleController(
@@ -99,6 +124,138 @@ def test_changed_current_plan_exits_before_provider_creation(
     assert result.no_work is True
     assert provider_calls == []
     assert not (tmp_path / "runs" / ".current-re").exists()
+
+
+@pytest.mark.unit
+def test_changed_current_publication_does_not_blanket_refresh_reusable_sources(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile = ReFingerprintProfile()
+    plan = ReExecutionPlan(
+        policy="changed",
+        requested_policy="changed",
+        target_source="",
+        sources=(),
+        forbidden_source_roots=[],
+        profile=profile,
+        analysis_required=False,
+        workspace_synthesis_required=False,
+        publication_required=False,
+    )
+    monkeypatch.setattr("harness.re_lifecycle.discover_workspace", _empty_manifest)
+    monkeypatch.setattr(
+        "harness.re_lifecycle.resolve_re_fingerprint_profile", lambda root: profile
+    )
+    monkeypatch.setattr(
+        "harness.re_lifecycle.load_published_index",
+        lambda root: type("Published", (), {"generation": 7})(),
+    )
+    monkeypatch.setattr(
+        "harness.re_lifecycle.build_re_execution_plan", lambda **kwargs: plan
+    )
+    monkeypatch.setattr(
+        "harness.re_lifecycle.materialize_re_run_context",
+        lambda **kwargs: pytest.fail("current changed plan must not materialize a run"),
+    )
+    provider_calls: list[bool] = []
+
+    result = ReLifecycleController(
+        project_root=tmp_path,
+        extension_root=tmp_path / "extension",
+        provider_factory=lambda: provider_calls.append(True),
+    ).run(policy="changed")
+
+    assert result.status == "done"
+    assert result.no_work is True
+    assert result.generation == 7
+    assert provider_calls == []
+    assert not (tmp_path / "runs" / ".current-re").exists()
+
+
+@pytest.mark.unit
+def test_targeted_run_passes_selected_force_semantics_to_planner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "sources/api"
+    source.mkdir(parents=True)
+    (source / "app.py").write_text("pass\n", encoding="utf-8")
+    profile = ReFingerprintProfile()
+    plan = ReExecutionPlan(
+        policy="target-only",
+        requested_policy="target-only",
+        target_source="api",
+        sources=(),
+        forbidden_source_roots=[],
+        profile=profile,
+        analysis_required=False,
+        workspace_synthesis_required=False,
+        publication_required=False,
+    )
+    observed: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "harness.re_lifecycle.discover_workspace",
+        lambda root: _manifest_with_source(root, "api"),
+    )
+    monkeypatch.setattr(
+        "harness.re_lifecycle.resolve_re_fingerprint_profile", lambda root: profile
+    )
+    monkeypatch.setattr("harness.re_lifecycle.load_published_index", lambda root: None)
+
+    def build_plan(**kwargs: object) -> ReExecutionPlan:
+        observed.update(kwargs)
+        return plan
+
+    monkeypatch.setattr("harness.re_lifecycle.build_re_execution_plan", build_plan)
+
+    result = ReLifecycleController(
+        project_root=tmp_path,
+        extension_root=tmp_path / "extension",
+        provider_factory=object,
+    ).run(
+        policy="target-only",
+        target_source="api",
+        force_selected_refresh=True,
+    )
+
+    assert result.status == "done"
+    assert result.no_work is True
+    assert observed["target_source"] == "api"
+    assert observed["requested_policy"] == "target-only"
+    assert observed["force_selected_refresh"] is True
+
+
+@pytest.mark.unit
+def test_targeted_run_rejects_disappeared_declared_source_before_run_creation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile = ReFingerprintProfile()
+    monkeypatch.setattr(
+        "harness.re_lifecycle.discover_workspace",
+        lambda root: _manifest_with_source(root, "api"),
+    )
+    monkeypatch.setattr(
+        "harness.re_lifecycle.resolve_re_fingerprint_profile", lambda root: profile
+    )
+    monkeypatch.setattr("harness.re_lifecycle.load_published_index", lambda root: None)
+
+    controller = ReLifecycleController(
+        project_root=tmp_path,
+        extension_root=tmp_path / "extension",
+        provider_factory=object,
+    )
+
+    with pytest.raises(ReLifecycleError, match="selected source api is unavailable"):
+        controller.run(
+            policy="target-only",
+            target_source="api",
+            force_selected_refresh=True,
+        )
+
+    assert not (tmp_path / "runs").exists()
 
 
 @pytest.mark.unit

@@ -141,6 +141,7 @@ def validate_re_run(
         raise RePublicationValidationError(f"invalid RE execution plan: {exc}") from exc
     if not plan.publication_required:
         raise RePublicationValidationError("RE execution plan does not require publication")
+    _validate_target_source_available(root, plan)
     partial_sources = _partial_quality_debt_sources(run_re, re_state, plan)
     if status == "complete" and partial_sources:
         if allow_partial and status_override is None:
@@ -1028,6 +1029,39 @@ def _validate_current_source(
     ):
         raise RePublicationValidationError(
             f"current source fingerprint/profile mismatch for {source.id}"
+        )
+
+
+def _validate_target_source_available(
+    workspace_root: Path,
+    plan: ReExecutionPlan,
+) -> None:
+    if plan.policy != "target-only" or not plan.target_source:
+        return
+    try:
+        matches = [
+            source
+            for source in discover_workspace(workspace_root).sources
+            if source.id == plan.target_source
+        ]
+    except (OSError, ValueError) as exc:
+        raise RePublicationValidationError(
+            f"cannot resolve selected source {plan.target_source}: {exc}"
+        ) from exc
+    planned = next(
+        (source for source in plan.sources if source.id == plan.target_source),
+        None,
+    )
+    if len(matches) != 1 or planned is None or matches[0].path != planned.path:
+        raise RePublicationValidationError(
+            f"selected source {plan.target_source} is no longer declared"
+        )
+    source_path = Path(matches[0].path)
+    if not source_path.is_absolute():
+        source_path = workspace_root / source_path
+    if not source_path.exists():
+        raise RePublicationValidationError(
+            f"selected source {plan.target_source} is unavailable: {source_path}"
         )
 
 

@@ -282,6 +282,143 @@ def test_target_only_selects_target_and_forbids_sibling_roots(tmp_path: Path) ->
     ]
 
 
+def test_force_selected_refresh_reuses_current_siblings_and_resynthesizes_workspace(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "workspace"
+    for source_id in ("api", "web", "worker"):
+        _write_source(root, source_id)
+    profile = ReFingerprintProfile()
+    for source_id in ("api", "web", "worker"):
+        _publish_source(root, source_id, profile)
+
+    plan = build_re_execution_plan(
+        project_root=root,
+        manifest=_manifest(root, "api", "web", "worker"),
+        target_source="api",
+        requested_policy="target-only",
+        profile=profile,
+        published_index=load_published_index(root),
+        force_selected_refresh=True,
+    )
+
+    assert {source.id: source.action for source in plan.sources} == {
+        "api": "refresh",
+        "web": "reuse",
+        "worker": "reuse",
+    }
+    assert {source.id: source.selected for source in plan.sources} == {
+        "api": True,
+        "web": False,
+        "worker": False,
+    }
+    assert plan.forbidden_source_roots == [
+        str(root / "sources" / "web"),
+        str(root / "sources" / "worker"),
+    ]
+    assert plan.analysis_required is True
+    assert plan.workspace_synthesis_required is True
+    assert plan.publication_required is True
+
+
+def test_force_selected_refresh_uses_skip_empty_without_selecting_siblings(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "workspace"
+    _write_empty_source(root, "docs")
+    _write_source(root, "api")
+
+    plan = build_re_execution_plan(
+        project_root=root,
+        manifest=_manifest_with_counts(root, {"docs": 0, "api": 1}),
+        target_source="docs",
+        requested_policy="target-only",
+        profile=ReFingerprintProfile(),
+        force_selected_refresh=True,
+    )
+
+    assert {source.id: source.action for source in plan.sources} == {
+        "docs": "skip-empty",
+        "api": "missing",
+    }
+    assert plan.analysis_required is False
+    assert plan.workspace_synthesis_required is True
+    assert plan.publication_required is True
+
+
+def test_force_selected_refresh_rejects_ambiguous_source_selector(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "workspace"
+    _write_source(root, "api")
+    _write_source(root, "legacy")
+    manifest = WorkspaceManifest(
+        schema_version=1,
+        workspace=WorkspaceInfo(root=root, git_role="orchestration", git_present=True),
+        sources=(
+            SourceRoot(
+                id="api",
+                path="sources/api",
+                git_present=False,
+                project_markers=("package.json",),
+                source_file_count=1,
+            ),
+            SourceRoot(
+                id="legacy",
+                path="api",
+                git_present=False,
+                project_markers=("package.json",),
+                source_file_count=1,
+            ),
+        ),
+    )
+
+    with pytest.raises(RePlanError, match="ambiguous target source"):
+        build_re_execution_plan(
+            project_root=root,
+            manifest=manifest,
+            target_source="api",
+            requested_policy="target-only",
+            profile=ReFingerprintProfile(),
+            force_selected_refresh=True,
+        )
+
+
+def test_force_selected_refresh_rejects_unsafe_source_selector(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    _write_source(root, "api")
+
+    with pytest.raises(RePlanError, match="unsafe target source"):
+        build_re_execution_plan(
+            project_root=root,
+            manifest=_manifest(root, "api"),
+            target_source="../api",
+            requested_policy="target-only",
+            profile=ReFingerprintProfile(),
+            force_selected_refresh=True,
+        )
+
+
+def test_refresh_all_still_refreshes_every_current_source(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    for source_id in ("api", "web"):
+        _write_source(root, source_id)
+    profile = ReFingerprintProfile()
+    for source_id in ("api", "web"):
+        _publish_source(root, source_id, profile)
+
+    plan = build_re_execution_plan(
+        project_root=root,
+        manifest=_manifest(root, "api", "web"),
+        target_source="",
+        requested_policy="refresh-all",
+        profile=profile,
+        published_index=load_published_index(root),
+    )
+
+    assert [source.action for source in plan.sources] == ["refresh", "refresh"]
+
+
 def test_re_execution_plan_round_trips_exact_profile_and_fingerprints(tmp_path: Path) -> None:
     root = tmp_path / "workspace"
     _write_source(root, "api")

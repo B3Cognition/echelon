@@ -90,6 +90,17 @@ def test_re_publish_help_declares_manual_safety_flags():
 
 
 @pytest.mark.unit
+def test_re_help_exposes_explicit_one_source_refresh():
+    group = invoke_help("re")
+    refresh = invoke_help("re", "refresh")
+
+    assert group.exit_code == 0
+    assert "refresh" in group.output
+    assert refresh.exit_code == 0
+    assert "--source" in refresh.output
+
+
+@pytest.mark.unit
 def test_spec_rewind_help_declares_a_ledger_checkpoint_target():
     result = invoke_help("spec", "rewind")
 

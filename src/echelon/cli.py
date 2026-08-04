@@ -123,6 +123,7 @@ Commands:
   re run [--re-policy none|cached-only|changed|refresh-all]
                     [--re-max-inner <n>] [--reset]
                                             Run or reuse workspace reverse engineering.
+  re refresh --source <source-id>           Refresh and publish one declared source.
   re continue [--re-max-inner <n>]           Continue the active RE run.
   re resume <answer> [--re-max-inner <n>]    Resume blocked RE with a human answer.
   re publish <run-id> [--allow-partial] [--commit]
@@ -9782,6 +9783,47 @@ def _cmd_re_run(args: list[str]) -> None:
         print(f"echelon re run: {exc}", file=sys.stderr)
         raise SystemExit(2) from exc
     _print_re_lifecycle_result(result)
+
+
+def _cmd_re_refresh(args: list[str]) -> None:
+    """Refresh and publish one declared source through the normal RE transaction."""
+    from harness.re_lifecycle import ReLifecycleError
+
+    source = ""
+    index = 0
+    try:
+        while index < len(args):
+            arg = args[index]
+            if arg == "--source":
+                if index + 1 >= len(args) or source:
+                    raise ValueError("--source requires exactly one source ID")
+                source = args[index + 1].strip()
+                index += 2
+            elif arg.startswith("--source="):
+                if source:
+                    raise ValueError("--source requires exactly one source ID")
+                source = arg.split("=", 1)[1].strip()
+                index += 1
+            else:
+                raise ValueError(f"unknown option {arg!r}")
+        if not source:
+            raise ValueError("--source requires exactly one source ID")
+        result = _re_lifecycle_controller(Path.cwd()).run(
+            policy="target-only",
+            target_source=source,
+            force_selected_refresh=True,
+        )
+    except (ReLifecycleError, ValueError) as exc:
+        print(f"echelon re refresh: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
+
+    if str(getattr(result, "status", "failed")) != "done":
+        _print_re_lifecycle_result(result)
+        return
+    run_id = str(getattr(result, "run_id", ""))
+    if bool(getattr(result, "no_work", False)) or not run_id:
+        raise SystemExit("echelon re refresh: targeted refresh produced no publishable run")
+    _cmd_re_publish([run_id])
 
 
 def _cmd_re_continue(args: list[str]) -> None:

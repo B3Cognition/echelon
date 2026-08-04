@@ -6,7 +6,6 @@ import json
 import os
 import re
 import tempfile
-from dataclasses import replace
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,7 +19,12 @@ from harness.blocked_decision import (
 from harness.re_controller import ReExtractionController
 from harness.re_fingerprint import ReFingerprintProfile, resolve_re_fingerprint_profile
 from harness.re_materializer import materialize_re_run_context
-from harness.re_planner import build_re_execution_plan
+from harness.re_planner import (
+    ReExecutionPlan,
+    RePlanError,
+    build_re_execution_plan,
+    resolve_re_target_source,
+)
 from harness.re_profiles import migrate_legacy_re_profile, resolve_re_execution_profile
 from harness.re_registry import load_published_index
 from kernel.re_state import init_re_state
@@ -83,6 +87,8 @@ class ReLifecycleController:
         self,
         *,
         policy: str = "",
+        target_source: str = "",
+        force_selected_refresh: bool = False,
         re_max_inner: int | None = None,
         reset: bool = False,
         profile_name: str | None = None,
@@ -92,6 +98,24 @@ class ReLifecycleController:
     ) -> ReLifecycleResult:
         if re_max_inner is not None and re_max_inner < 1:
             raise ReLifecycleError("--re-max-inner requires a positive integer")
+        manifest = None
+        resolved_target = ""
+        if target_source.strip():
+            manifest = discover_workspace(self._project_root)
+            try:
+                target = resolve_re_target_source(manifest.sources, target_source)
+            except RePlanError as exc:
+                raise ReLifecycleError(str(exc)) from exc
+            if target is None:  # pragma: no cover - guarded by the non-empty selector.
+                raise ReLifecycleError("target source selector did not resolve")
+            resolved_target = target.id
+            target_path = Path(target.path)
+            if not target_path.is_absolute():
+                target_path = self._project_root / target_path
+            if not target_path.exists():
+                raise ReLifecycleError(
+                    f"selected source {resolved_target} is unavailable: {target_path}"
+                )
         if reset:
             marker = self._project_root / "runs" / ".current-re"
             marker.unlink(missing_ok=True)
@@ -100,9 +124,11 @@ class ReLifecycleController:
             if current is not None:
                 state = self._load_state(current)
                 if state.get("status") != "done":
+                    if resolved_target:
+                        self._validate_active_target(current, resolved_target)
                     return self._execute_run(current, state, re_max_inner=re_max_inner)
 
-        manifest = discover_workspace(self._project_root)
+        manifest = manifest or discover_workspace(self._project_root)
         try:
             execution_profile = resolve_re_execution_profile(
                 self._project_root,
@@ -114,30 +140,28 @@ class ReLifecycleController:
             raise ReLifecycleError(str(exc)) from exc
         profile = resolve_re_fingerprint_profile(self._project_root)
         published = load_published_index(self._project_root)
-        plan = build_re_execution_plan(
-            project_root=self._project_root,
-            manifest=manifest,
-            target_source="",
-            requested_policy=policy,
-            profile=profile,
-            published_index=published,
-        )
-        if published is not None and plan.policy not in {"none", "cached-only"}:
-            # A fresh RE run is an improvement pass over the one durable
-            # baseline.  It never inherits budgets or counters from its run.
-            plan = replace(
-                plan,
-                sources=tuple(
-                    replace(source, action="refresh", classification="refresh")
-                    if source.action == "reuse" or not reuse_published
-                    else source
-                    for source in plan.sources
-                ),
-                analysis_required=True,
-                workspace_synthesis_required=True,
-                publication_required=True,
+        try:
+            plan = build_re_execution_plan(
+                project_root=self._project_root,
+                manifest=manifest,
+                target_source=resolved_target,
+                requested_policy=policy,
+                profile=profile,
+                published_index=published if reuse_published else None,
+                force_selected_refresh=force_selected_refresh,
             )
+        except RePlanError as exc:
+            raise ReLifecycleError(str(exc)) from exc
         missing = sorted(source.id for source in plan.sources if source.action == "missing")
+        if force_selected_refresh and resolved_target in missing:
+            raise ReLifecycleError(
+                f"selected source {resolved_target} is unavailable"
+            )
+        if force_selected_refresh and missing:
+            return ReLifecycleResult(
+                status="blocked",
+                blocked_reason="target-only missing published RE: " + ", ".join(missing),
+            )
         if plan.policy == "cached-only" and missing:
             return ReLifecycleResult(
                 status="blocked",
@@ -166,6 +190,8 @@ class ReLifecycleController:
             "phase": "re-extract-0-preflight",
             "requested_re_policy": policy,
             "re_policy": plan.policy,
+            "target_source": plan.target_source,
+            "force_selected_refresh": force_selected_refresh,
             "expected_generation": expected_generation,
             "extraction_complete": False,
             "publication_complete": False,
@@ -183,6 +209,22 @@ class ReLifecycleController:
             run_dir, re_max_inner, execution_profile.to_json_dict()
         )
         return self._execute_run(run_dir, state, re_max_inner=re_max_inner)
+
+    def _validate_active_target(self, run_dir: Path, source_id: str) -> None:
+        try:
+            plan = ReExecutionPlan.from_json_dict(
+                self._load_json(run_dir / "re" / "re-execution-plan.json")
+            )
+        except (OSError, ValueError) as exc:
+            raise ReLifecycleError(
+                f"cannot validate active targeted RE run {run_dir.name}: {exc}"
+            ) from exc
+        if plan.policy != "target-only" or plan.target_source != source_id:
+            raise ReLifecycleError(
+                f"active RE run {run_dir.name} targets "
+                f"{plan.target_source or 'the workspace'}, not {source_id}; "
+                "continue or publish it before refreshing another source"
+            )
 
     def continue_run(self, re_max_inner: int | None = None) -> ReLifecycleResult:
         if re_max_inner is not None and re_max_inner < 1:

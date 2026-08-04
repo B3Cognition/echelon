@@ -6,6 +6,7 @@ import shlex
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -1532,18 +1533,63 @@ def test_post_land_topology_failure_is_nonfatal_with_source_refresh_guidance(
     source.mkdir(parents=True)
     _init_repo(source)
     head = _commit(source, "src/app.py", "pass\n", "landed")
-    with patch(
-        "harness.topology_promotion.reconcile_landed_topology",
-        return_value=TopologyPromotionResult(
-            status="stale",
-            source_id="api",
-            message="expected generation 1, found 2",
+    with (
+        patch(
+            "harness.topology_promotion.reconcile_landed_topology",
+            return_value=TopologyPromotionResult(
+                status="stale",
+                source_id="api",
+                message="expected generation 1, found 2",
+            ),
+        ),
+        patch(
+            "echelon.topology_audit.audit_topology",
+            return_value=SimpleNamespace(status="stale"),
         ),
     ):
         _post_land_topology_reconciliation("001-demo", tmp_path, source)
 
     assert "topology: stale" in caplog.text
     assert "next: echelon re refresh --source api" in caplog.text
+
+
+@pytest.mark.unit
+def test_post_land_reports_topology_and_semantic_re_independently(
+    tmp_path: Path,
+    caplog,
+) -> None:
+    from harness.land import _post_land_topology_reconciliation
+    from harness.topology_promotion import TopologyPromotionResult
+
+    source = tmp_path / "sources/api"
+    caplog.set_level("INFO")
+    source.mkdir(parents=True)
+    _init_repo(source)
+    _commit(source, "src/app.py", "pass\n", "landed")
+    with (
+        patch(
+            "harness.topology_promotion.reconcile_landed_topology",
+            return_value=TopologyPromotionResult(
+                status="current",
+                source_id="api",
+                message="published",
+            ),
+        ),
+        patch(
+            "echelon.topology_audit.audit_topology",
+            return_value=SimpleNamespace(status="stale"),
+        ),
+        patch(
+            "harness.land._landed_semantic_re_status",
+            return_value="current",
+            create=True,
+        ),
+    ):
+        _post_land_topology_reconciliation("001-demo", tmp_path, source)
+
+    assert "topology: stale" in caplog.text
+    assert "semantic RE: current" in caplog.text
+    assert caplog.text.count("next: echelon re refresh --source api") == 1
 
 
 @pytest.mark.unit
