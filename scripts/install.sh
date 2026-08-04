@@ -231,7 +231,7 @@ elif ! command -v npm &>/dev/null; then
 elif [ ! -f "$CODEGRAPH_SOURCE_DIR/package-lock.json" ]; then
   echo "  ⚠ package-lock.json not found at $CODEGRAPH_SOURCE_DIR; skipping CodeGraph bridge deps."
 else
-  _refresh_node_runtime "$CODEGRAPH_SOURCE_DIR" "$CODEGRAPH_NODE_DIR" vendor dist
+  _refresh_node_runtime "$CODEGRAPH_SOURCE_DIR" "$CODEGRAPH_NODE_DIR" dist
   _npm_ci_in_runtime "$CODEGRAPH_NODE_DIR" --ignore-scripts --no-audit --no-fund --prefer-offline --silent
   echo "  ✓ CodeGraph bridge dependencies installed → $CODEGRAPH_NODE_DIR/node_modules"
 fi

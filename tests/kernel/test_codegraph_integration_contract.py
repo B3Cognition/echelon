@@ -28,9 +28,10 @@ def test_install_script_installs_codegraph_in_shared_runtime_with_npm_ci():
     )
     assert 'CODEGRAPH_NODE_DIR="$NODE_RUNTIME_ROOT/codegraph"' in install_script
     assert (
-        '_refresh_node_runtime "$CODEGRAPH_SOURCE_DIR" "$CODEGRAPH_NODE_DIR" vendor dist'
+        '_refresh_node_runtime "$CODEGRAPH_SOURCE_DIR" "$CODEGRAPH_NODE_DIR" dist'
         in install_script
     )
+    assert not (CODEGRAPH_RUNTIME_DIR / "vendor").exists()
     assert '_npm_ci_in_runtime "$CODEGRAPH_NODE_DIR"' in install_script
     assert "CodeGraph bridge" in install_script
     assert 'npm ci --prefix "$CODEGRAPH_NODE_DIR"' not in install_script
