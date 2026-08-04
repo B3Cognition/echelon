@@ -26,26 +26,58 @@ def _write_fixture(tmp_path: Path, codegraph_symbols: list[dict]) -> tuple[Path,
     )
 
     analysis = tmp_path / "codegraph-analysis.json"
+    symbols = [
+        {
+            **symbol,
+            "symbol_key": symbol.get("symbol_key", f"sha256:{index:064x}"),
+        }
+        for index, symbol in enumerate(codegraph_symbols, start=1)
+    ]
+    symbol_keys = {symbol["qualified_name"]: symbol["symbol_key"] for symbol in symbols}
+    route_test = "EngineWiringTests::test_routeResolver_drawsKeysFromDeck_FR004"
+    route_source = "RouteResolver::resolve"
+    has_route_call = route_test in symbol_keys and route_source in symbol_keys
     analysis.write_text(
         json.dumps(
             {
-                "version": 1,
-                "symbols": codegraph_symbols,
-                "call_graph": [
-                    {
-                        "caller": "EngineWiringTests::test_routeResolver_drawsKeysFromDeck_FR004",
-                        "callee": "RouteResolver::resolve",
-                    }
-                ],
-                "impact_radius": [
-                    {
-                        "symbol": "RouteResolver::resolve",
-                        "affected": [
-                            "EngineWiringTests::test_routeResolver_drawsKeysFromDeck_FR004"
-                        ],
-                        "depth": 3,
-                    }
-                ],
+                "schema_version": 2,
+                "tool": "codegraph",
+                "tool_version": "1.4.1",
+                "provider_status": "complete",
+                "complete": True,
+                "counts": {
+                    "discovered_symbols": len(symbols),
+                    "emitted_symbols": len(symbols),
+                    "excluded_symbols": 0,
+                    "discovered_relationships": int(has_route_call),
+                    "emitted_relationships": int(has_route_call),
+                    "excluded_relationships": 0,
+                },
+                "diagnostics": {"unresolved_relationships": []},
+                "symbols": symbols,
+                "call_graph": (
+                    [
+                        {
+                            "caller_key": symbol_keys[route_test],
+                            "callee_key": symbol_keys[route_source],
+                            "caller_name": route_test,
+                            "callee_name": route_source,
+                        }
+                    ]
+                    if has_route_call
+                    else []
+                ),
+                "impact_radius": (
+                    [
+                        {
+                            "symbol_key": symbol_keys[route_source],
+                            "affected_keys": [symbol_keys[route_test]],
+                            "depth": 3,
+                        }
+                    ]
+                    if has_route_call
+                    else []
+                ),
             }
         )
         + "\n",
@@ -68,6 +100,63 @@ def _write_fixture(tmp_path: Path, codegraph_symbols: list[dict]) -> tuple[Path,
         encoding="utf-8",
     )
     return audit, analysis, tasks
+
+
+def test_call_graph_evidence_uses_exact_symbol_keys_for_duplicate_names(
+    tmp_path: Path,
+) -> None:
+    audit = tmp_path / "requirement-audit.md"
+    audit.write_text(
+        "\n".join(
+            [
+                "# Requirement Audit",
+                "",
+                "| ID | Category | Source | Requirement | Acceptance Signal |",
+                "| --- | --- | --- | --- | --- |",
+                "| FR-070 | functional | spec.md#requirements | Job dispatch stays bounded. | test_job_dispatch_FR070 verifies bounded dispatch. |",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    source_a_key = "sha256:" + "a" * 64
+    source_b_key = "sha256:" + "b" * 64
+    test_key = "sha256:" + "c" * 64
+    analysis = tmp_path / "codegraph-analysis.json"
+    analysis.write_text(
+        json.dumps(
+            {
+                "symbols": [
+                    {"symbol_key": source_a_key, "kind": "function", "qualified_name": "Worker::execute", "name": "execute", "file_path": "src/a.py"},
+                    {"symbol_key": source_b_key, "kind": "function", "qualified_name": "Worker::execute", "name": "execute", "file_path": "src/b.py"},
+                    {"symbol_key": test_key, "kind": "function", "qualified_name": "JobTests::test_job_dispatch_FR070", "name": "test_job_dispatch_FR070", "file_path": "tests/test_jobs.py"},
+                ],
+                "call_graph": [
+                    {"caller_key": test_key, "callee_key": source_b_key}
+                ],
+                "impact_radius": [],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    tasks = tmp_path / "tasks.md"
+    tasks.write_text(
+        "- [ ] T-070 complexity=standard phase=runtime req=FR-070 depends=none\n",
+        encoding="utf-8",
+    )
+    out_json = tmp_path / "codegraph-evidence-map.json"
+    out_md = tmp_path / "codegraph-evidence-map.md"
+
+    write_codegraph_evidence_map(audit, analysis, tasks, out_json, out_md)
+
+    candidates = json.loads(out_json.read_text(encoding="utf-8"))["requirements"][0][
+        "codegraph_candidates"
+    ]
+    sources = [candidate for candidate in candidates if candidate["symbol_role"] == "source"]
+    assert [(candidate["file"], candidate["symbol_key"]) for candidate in sources] == [
+        ("src/b.py", source_b_key)
+    ]
 
 
 def _run_harness(args: list[str]) -> subprocess.CompletedProcess[str]:
@@ -196,12 +285,14 @@ def test_codegraph_evidence_map_does_not_substring_match_short_acronyms(tmp_path
             {
                 "symbols": [
                     {
+                        "symbol_key": "sha256:" + "1" * 64,
                         "kind": "class",
                         "qualified_name": "StarArrivalView",
                         "name": "StarArrivalView",
                         "file_path": "NavigationalPortal/Features/Flight/StarArrivalView.swift",
                     },
                     {
+                        "symbol_key": "sha256:" + "2" * 64,
                         "kind": "struct",
                         "qualified_name": "CardView",
                         "name": "CardView",
@@ -258,12 +349,14 @@ def test_term_match_only_source_and_test_stays_in_fallback_queue(tmp_path: Path)
             {
                 "symbols": [
                     {
+                        "symbol_key": "sha256:" + "3" * 64,
                         "kind": "class",
                         "qualified_name": "Frame",
                         "name": "Frame",
                         "file_path": "src/asciianim/frame.py",
                     },
                     {
+                        "symbol_key": "sha256:" + "4" * 64,
                         "kind": "method",
                         "qualified_name": "ThemeTests::test_frame_theme_rendering",
                         "name": "test_frame_theme_rendering",
@@ -321,12 +414,14 @@ def test_requirement_anchored_test_lifts_called_implementation_symbol(tmp_path: 
             {
                 "symbols": [
                     {
+                        "symbol_key": "sha256:" + "3" * 64,
                         "kind": "method",
                         "qualified_name": "asciianim.engine.Engine::run",
                         "name": "run",
                         "file_path": "src/asciianim/engine.py",
                     },
                     {
+                        "symbol_key": "sha256:" + "4" * 64,
                         "kind": "function",
                         "qualified_name": "tests.test_cli::test_FR021_piped_duration",
                         "name": "test_FR021_piped_duration",
@@ -335,8 +430,10 @@ def test_requirement_anchored_test_lifts_called_implementation_symbol(tmp_path: 
                 ],
                 "call_graph": [
                     {
-                        "caller": "tests.test_cli::test_FR021_piped_duration",
-                        "callee": "asciianim.engine.Engine::run",
+                        "caller_key": "sha256:" + "4" * 64,
+                        "callee_key": "sha256:" + "3" * 64,
+                        "caller_name": "tests.test_cli::test_FR021_piped_duration",
+                        "callee_name": "asciianim.engine.Engine::run",
                     }
                 ],
                 "impact_radius": [],
@@ -404,12 +501,14 @@ def test_runtime_threshold_assertion_only_evidence_is_not_high_confidence(tmp_pa
             {
                 "symbols": [
                     {
+                        "symbol_key": "sha256:" + "5" * 64,
                         "kind": "method",
                         "qualified_name": "ReleaseCandidateGate::assertNFR001FrameRate60fps",
                         "name": "assertNFR001FrameRate60fps",
                         "file_path": "Packages/Engine/Sources/Telemetry/ReleaseCandidateGate.swift",
                     },
                     {
+                        "symbol_key": "sha256:" + "6" * 64,
                         "kind": "method",
                         "qualified_name": "ReleaseCandidateGateTests::test_NFR001_FrameRate60fps_releaseCandidateGate",
                         "name": "test_NFR001_FrameRate60fps_releaseCandidateGate",

@@ -53,19 +53,45 @@ const outputPath = args[args.indexOf("--output-path") + 1];
 fs.mkdirSync(path.dirname(outputPath), {recursive: true});
 fs.mkdirSync(path.join(repoPath, ".codegraph"), {recursive: true});
 fs.writeFileSync(outputPath, JSON.stringify({
-  version: "1.0.0",
+  schema_version: 2,
+  version: "2.0.0",
+  tool: "codegraph",
+  tool_version: "1.4.1",
+  provider_status: "complete",
+  complete: true,
+  counts: {
+    discovered_symbols: 4,
+    emitted_symbols: 4,
+    excluded_symbols: 0,
+    discovered_relationships: 3,
+    emitted_relationships: 3,
+    excluded_relationships: 0
+  },
+  diagnostics: {unresolved_relationships: []},
   generated_at: "2026-06-05T00:00:00Z",
   repo_path: repoPath,
   supported: true,
   index_stats: {index_state: "ready"},
   language_coverage: {swift: 1},
   coverage: {files: 1},
-  symbols: [{kind: "function"}, {kind: "function"}, {kind: "class"}],
+  symbols: [
+    {symbol_key: "sha256:0000000000000000000000000000000000000000000000000000000000000001", qualified_name: "A", name: "A", file_path: "src/a.ts", line_start: 1, line_end: 1, kind: "function"},
+    {symbol_key: "sha256:0000000000000000000000000000000000000000000000000000000000000002", qualified_name: "B", name: "B", file_path: "src/b.ts", line_start: 1, line_end: 1, kind: "function"},
+    {symbol_key: "sha256:0000000000000000000000000000000000000000000000000000000000000003", qualified_name: "C", name: "C", file_path: "src/c.ts", line_start: 1, line_end: 1, kind: "class"},
+    {symbol_key: "sha256:0000000000000000000000000000000000000000000000000000000000000004", qualified_name: "D", name: "D", file_path: "src/d.ts", line_start: 1, line_end: 1, kind: "class"}
+  ],
+  relationships: [
+    {kind: "calls", source_key: "sha256:0000000000000000000000000000000000000000000000000000000000000001", target_key: "sha256:0000000000000000000000000000000000000000000000000000000000000002", source_name: "A", target_name: "B"},
+    {kind: "calls", source_key: "sha256:0000000000000000000000000000000000000000000000000000000000000001", target_key: "sha256:0000000000000000000000000000000000000000000000000000000000000003", source_name: "A", target_name: "C"},
+    {kind: "calls", source_key: "sha256:0000000000000000000000000000000000000000000000000000000000000004", target_key: "sha256:0000000000000000000000000000000000000000000000000000000000000002", source_name: "D", target_name: "B"}
+  ],
   call_graph: [
-    {caller: "A", callee: "B"},
-    {caller: "A", callee: "C"},
-    {caller: "D", callee: "B"}
-  ]
+    {caller_key: "sha256:0000000000000000000000000000000000000000000000000000000000000001", callee_key: "sha256:0000000000000000000000000000000000000000000000000000000000000002", caller_name: "A", callee_name: "B"},
+    {caller_key: "sha256:0000000000000000000000000000000000000000000000000000000000000001", callee_key: "sha256:0000000000000000000000000000000000000000000000000000000000000003", caller_name: "A", callee_name: "C"},
+    {caller_key: "sha256:0000000000000000000000000000000000000000000000000000000000000004", callee_key: "sha256:0000000000000000000000000000000000000000000000000000000000000002", caller_name: "D", callee_name: "B"}
+  ],
+  type_hierarchy: [],
+  impact_radius: []
 }));
 """.lstrip(),
         encoding="utf-8",
@@ -94,6 +120,18 @@ def _write_verify_state(verify_run_dir: Path) -> None:
         json.dumps({"structural_evidence": "pending"}),
         encoding="utf-8",
     )
+
+
+def test_analysis_is_usable_requires_complete_schema_two_artifact(tmp_path: Path) -> None:
+    from harness.codegraph_evidence import _analysis_is_usable
+
+    analysis_path = tmp_path / "codegraph-analysis.json"
+    analysis_path.write_text(
+        json.dumps({"symbols": []}),
+        encoding="utf-8",
+    )
+
+    assert not _analysis_is_usable(analysis_path)
 
 
 def _write_fake_codegraph_cli(bin_dir: Path, *, success: bool) -> Path:

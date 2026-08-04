@@ -109,6 +109,7 @@ class RequirementRow:
 
 @dataclass(frozen=True)
 class SymbolRecord:
+    symbol_key: str
     symbol: str
     name: str
     kind: str
@@ -240,10 +241,14 @@ def _parse_symbols(analysis: dict[str, Any]) -> list[SymbolRecord]:
         file_path = str(raw.get("file_path") or raw.get("qualified_name") or "")
         name = str(raw.get("name") or "")
         qualified = str(raw.get("qualified_name") or name or file_path)
+        symbol_key = str(raw.get("symbol_key") or "").strip()
+        if not symbol_key:
+            continue
         searchable = " ".join([qualified, name, file_path])
         tokens = frozenset(_tokens(searchable, keep_acronyms=True))
         symbols.append(
             SymbolRecord(
+                symbol_key=symbol_key,
                 symbol=qualified,
                 name=name,
                 kind=str(raw.get("kind") or "unknown"),
@@ -266,19 +271,17 @@ def _parse_call_edges(analysis: dict[str, Any]) -> dict[str, set[str]]:
     for raw in raw_edges:
         if not isinstance(raw, dict):
             continue
-        caller = str(raw.get("caller") or "").strip()
-        callee = str(raw.get("callee") or "").strip()
+        caller = str(raw.get("caller_key") or "").strip()
+        callee = str(raw.get("callee_key") or "").strip()
         if caller and callee:
             by_caller[caller].add(callee)
     return by_caller
 
 
-def _index_symbols(symbols: list[SymbolRecord]) -> dict[str, list[SymbolRecord]]:
-    by_key: dict[str, list[SymbolRecord]] = defaultdict(list)
+def _index_symbols(symbols: list[SymbolRecord]) -> dict[str, SymbolRecord]:
+    by_key: dict[str, SymbolRecord] = {}
     for symbol in symbols:
-        for key in {symbol.symbol, symbol.name}:
-            if key:
-                by_key[key].append(symbol)
+        by_key[symbol.symbol_key] = symbol
     return by_key
 
 
@@ -288,7 +291,7 @@ def _map_requirement(
     task_ids: list[str],
     coverage_text: str,
     call_edges: dict[str, set[str]],
-    symbols_by_key: dict[str, list[SymbolRecord]],
+    symbols_by_key: dict[str, SymbolRecord],
 ) -> dict[str, Any]:
     id_variants = _requirement_id_variants(row.id)
     query_text = " ".join([row.id, row.requirement, row.acceptance_signal])
@@ -354,23 +357,24 @@ def _map_requirement(
 def _called_implementation_evidence(
     tests: list[dict[str, Any]],
     call_edges: dict[str, set[str]],
-    symbols_by_key: dict[str, list[SymbolRecord]],
+    symbols_by_key: dict[str, SymbolRecord],
 ) -> list[dict[str, Any]]:
     evidence: list[dict[str, Any]] = []
     for test in tests:
-        test_symbol = str(test.get("symbol") or "")
-        if not test_symbol:
+        test_symbol_key = str(test.get("symbol_key") or "")
+        if not test_symbol_key:
             continue
-        for callee in sorted(call_edges.get(test_symbol, set())):
-            for symbol in symbols_by_key.get(callee, []):
-                if symbol.is_test:
-                    continue
-                evidence.append(
-                    _candidate_evidence(
-                        symbol,
-                        reasons=[f"call_graph_from_test:{test_symbol}"],
-                    )
+        test_symbol_name = str(test.get("symbol") or test_symbol_key)
+        for callee_key in sorted(call_edges.get(test_symbol_key, set())):
+            symbol = symbols_by_key.get(callee_key)
+            if symbol is None or symbol.is_test:
+                continue
+            evidence.append(
+                _candidate_evidence(
+                    symbol,
+                    reasons=[f"call_graph_from_test:{test_symbol_name}"],
                 )
+            )
     return evidence
 
 
@@ -475,6 +479,7 @@ def _evidence_strength(evidence_kind: str) -> str:
 
 def _candidate_evidence(symbol: SymbolRecord, reasons: list[str]) -> dict[str, Any]:
     return {
+        "symbol_key": symbol.symbol_key,
         "symbol": symbol.symbol,
         "kind": symbol.kind,
         "file": symbol.file_path,
@@ -586,9 +591,9 @@ def _optional_int(value: Any) -> int | None:
 
 
 def _dedupe_evidence(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    by_key: dict[tuple[str, str, int | None], dict[str, Any]] = {}
+    by_key: dict[str, dict[str, Any]] = {}
     for item in sorted(items, key=_evidence_sort_key):
-        key = (str(item["symbol"]), str(item["file"]), item.get("line_start"))
+        key = str(item["symbol_key"])
         if key in by_key:
             existing = by_key[key]
             reasons = list(existing.get("match_reasons") or existing.get("reasons") or [])

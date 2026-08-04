@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -66,6 +67,86 @@ def test_codegraph_runtime_is_pinned_to_current_supported_release():
     assert f'require("{CODEGRAPH_PACKAGE}")' in adapter
     assert "vendor/codegraph" not in adapter
     assert f'CODEGRAPH_CLI_VERSION="{CODEGRAPH_VERSION}"' in install_script
+
+
+def test_bridge_emits_more_than_ten_thousand_symbols_without_truncation(
+    tmp_path: Path,
+) -> None:
+    script = """
+const bridge = require(process.argv[2]);
+const symbols = Array.from({length: 10001}, (_, i) => ({
+  symbol_key: `sha256:${String(i).padStart(64, '0')}`,
+  qualified_name: `f${i}`,
+  name: `f${i}`,
+  kind: 'function',
+  file_path: `src/f${i}.ts`,
+  line_start: 1,
+  line_end: 1
+}));
+const out = bridge.assembleAnalysisOutput({
+  repoPath: process.cwd(), symbols, relationships: [], callGraph: [],
+  typeHierarchy: [], impactRadius: [], publicSymbols: symbols,
+  indexStats: {}, extractionSummary: {languages: [], unsupported_languages: [], total_extracted: 10001}
+});
+if (
+  out.symbols.length !== 10001 ||
+  !out.complete ||
+  out.counts.discovered_symbols !== 10001 ||
+  out.counts.emitted_symbols !== 10001
+) process.exit(1);
+"""
+
+    script_path = tmp_path / "bridge-contract.js"
+    script_path.write_text(script, encoding="utf-8")
+    completed = subprocess.run(
+        [
+            "node",
+            str(script_path),
+            str(CODEGRAPH_RUNTIME_DIR / "codegraph-bridge.js"),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_bridge_does_not_expose_or_apply_symbol_limits() -> None:
+    bridge = (CODEGRAPH_RUNTIME_DIR / "codegraph-bridge.js").read_text()
+
+    for removed_symbol in ("--max-symbols", "DEFAULT_MAX_SYMBOLS", "truncateSymbols"):
+        assert removed_symbol not in bridge
+
+
+def test_adapter_preserves_exact_impact_keys_for_zero_node_id(tmp_path: Path) -> None:
+    script = """
+const adapter = require(process.argv[2]);
+const source = {id: 0, filePath: 'src/source.ts', qualifiedName: 'Source::run', kind: 'function', startLine: 1, endLine: 2};
+const target = {id: 1, filePath: 'src/target.ts', qualifiedName: 'Target::run', kind: 'function', startLine: 1, endLine: 2};
+const cg = {
+  getNodesByKind: (kind) => kind === 'function' ? [source, target] : [],
+  getImpactRadius: (nodeId) => nodeId === 0 ? {nodes: new Map([[0, source], [1, target]])} : null
+};
+adapter.getImpactRadius(cg, [adapter.symbolKey(source)], 3).then((entries) => {
+  if (entries[0].symbol_name !== 'Source::run' || entries[0].affected_keys[0] !== adapter.symbolKey(target)) process.exit(1);
+});
+"""
+
+    script_path = tmp_path / "adapter-impact-contract.js"
+    script_path.write_text(script, encoding="utf-8")
+    completed = subprocess.run(
+        [
+            "node",
+            str(script_path),
+            str(CODEGRAPH_RUNTIME_DIR / "codegraph-adapter.js"),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
 
 
 def test_shell_ci_uses_a_node_runtime_supported_by_codegraph_sdk():

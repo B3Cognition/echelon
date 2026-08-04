@@ -138,7 +138,80 @@ def _analysis_is_usable(
         data = json.loads(analysis_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
-    if not isinstance(data, dict) or not isinstance(data.get("symbols"), list):
+    if not isinstance(data, dict):
+        return False
+    if (
+        data.get("schema_version") != 2
+        or data.get("version") != "2.0.0"
+        or data.get("tool") != "codegraph"
+        or data.get("tool_version") != "1.4.1"
+        or data.get("provider_status") != "complete"
+        or data.get("complete") is not True
+    ):
+        return False
+    symbols = data.get("symbols")
+    relationships = data.get("relationships")
+    call_graph = data.get("call_graph")
+    type_hierarchy = data.get("type_hierarchy")
+    impact_radius = data.get("impact_radius")
+    counts = data.get("counts")
+    diagnostics = data.get("diagnostics")
+    if not all(
+        isinstance(collection, list)
+        for collection in (symbols, relationships, call_graph, type_hierarchy, impact_radius)
+    ):
+        return False
+    if not isinstance(counts, dict) or not isinstance(diagnostics, dict):
+        return False
+    if not isinstance(diagnostics.get("unresolved_relationships"), list):
+        return False
+    count_fields = (
+        "discovered_symbols",
+        "emitted_symbols",
+        "excluded_symbols",
+        "discovered_relationships",
+        "emitted_relationships",
+        "excluded_relationships",
+    )
+    if any(not isinstance(counts.get(field), int) for field in count_fields):
+        return False
+    if counts["emitted_symbols"] != len(symbols) or counts["emitted_relationships"] != len(relationships):
+        return False
+    symbol_keys = {
+        symbol.get("symbol_key")
+        for symbol in symbols
+        if isinstance(symbol, dict) and _is_symbol_key(symbol.get("symbol_key"))
+    }
+    if len(symbol_keys) != len(symbols):
+        return False
+    if not all(
+        isinstance(relationship, dict)
+        and relationship.get("source_key") in symbol_keys
+        and relationship.get("target_key") in symbol_keys
+        for relationship in relationships
+    ):
+        return False
+    if not all(
+        isinstance(edge, dict)
+        and edge.get("caller_key") in symbol_keys
+        and edge.get("callee_key") in symbol_keys
+        for edge in call_graph
+    ):
+        return False
+    if not all(
+        isinstance(edge, dict)
+        and edge.get("child_key") in symbol_keys
+        and edge.get("parent_key") in symbol_keys
+        for edge in type_hierarchy
+    ):
+        return False
+    if not all(
+        isinstance(entry, dict)
+        and entry.get("symbol_key") in symbol_keys
+        and isinstance(entry.get("affected_keys"), list)
+        and all(key in symbol_keys for key in entry["affected_keys"])
+        for entry in impact_radius
+    ):
         return False
     if expected_repo_path is None:
         return True
@@ -151,6 +224,15 @@ def _analysis_is_usable(
     except OSError:
         return False
     return actual == expected
+
+
+def _is_symbol_key(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 71
+        and value.startswith("sha256:")
+        and all(character in "0123456789abcdef" for character in value[7:])
+    )
 
 
 def _provider_failure(
@@ -230,11 +312,22 @@ def _write_summary(analysis_path: Path, summary_path: Path) -> None:
         for symbol in symbols
         if isinstance(symbol, dict)
     )
+    names_by_key = {
+        str(symbol.get("symbol_key")): str(
+            symbol.get("qualified_name") or symbol.get("name") or "unknown"
+        )
+        for symbol in symbols
+        if isinstance(symbol, dict) and isinstance(symbol.get("symbol_key"), str)
+    }
     callers = Counter(
-        str(edge.get("caller") or "unknown") for edge in calls if isinstance(edge, dict)
+        str(edge.get("caller_name") or names_by_key.get(str(edge.get("caller_key"))) or "unknown")
+        for edge in calls
+        if isinstance(edge, dict)
     )
     callees = Counter(
-        str(edge.get("callee") or "unknown") for edge in calls if isinstance(edge, dict)
+        str(edge.get("callee_name") or names_by_key.get(str(edge.get("callee_key"))) or "unknown")
+        for edge in calls
+        if isinstance(edge, dict)
     )
     index_stats = data.get("index_stats") if isinstance(data.get("index_stats"), dict) else {}
 

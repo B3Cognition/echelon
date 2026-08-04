@@ -21,18 +21,56 @@ exports.getPublicSymbols = getPublicSymbols;
 exports.getIndexStats = getIndexStats;
 exports.getExtractionSummary = getExtractionSummary;
 exports.closeIndex = closeIndex;
+exports.normalizeSourcePath = normalizeSourcePath;
+exports.symbolKey = symbolKey;
 const index_1 = require("@colbymchenry/codegraph");
+const crypto = require("crypto");
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
+const NODE_KINDS = [
+    'file', 'module', 'class', 'struct', 'interface', 'trait', 'protocol',
+    'function', 'method', 'property', 'field', 'variable', 'constant',
+    'enum', 'enum_member', 'type_alias', 'namespace', 'parameter',
+    'import', 'export', 'route', 'component',
+];
+function normalizeSourcePath(filePath) {
+    if (typeof filePath !== 'string' || filePath.length === 0) {
+        throw new Error('[codegraph-adapter] contract error: symbol file path is required');
+    }
+    const normalized = filePath.replace(/\\/g, '/');
+    if (normalized.startsWith('/') || /^[A-Za-z]:\//.test(normalized)) {
+        throw new Error(`[codegraph-adapter] contract error: absolute symbol file path: ${filePath}`);
+    }
+    const segments = normalized.split('/');
+    if (segments.some((segment) => segment === '..')) {
+        throw new Error(`[codegraph-adapter] contract error: traversing symbol file path: ${filePath}`);
+    }
+    const sourceRelative = segments.filter((segment) => segment && segment !== '.').join('/');
+    if (!sourceRelative) {
+        throw new Error(`[codegraph-adapter] contract error: empty symbol file path: ${filePath}`);
+    }
+    return sourceRelative;
+}
+function symbolKey(node) {
+    const locator = [
+        normalizeSourcePath(node.filePath),
+        String(node.qualifiedName),
+        String(node.kind),
+        node.signature == null ? '' : String(node.signature),
+    ];
+    return `sha256:${crypto.createHash('sha256')
+        .update(JSON.stringify(locator), 'utf8').digest('hex')}`;
+}
 /** Map CodeGraph Node to integration OutputSymbol (camelCase → snake_case). */
 function nodeToOutputSymbol(n) {
     // Build object with only defined optional fields so JSON.stringify omits nulls
     return {
+        symbol_key: symbolKey(n),
         qualified_name: n.qualifiedName,
         name: n.name,
         kind: n.kind,
-        file_path: n.filePath,
+        file_path: normalizeSourcePath(n.filePath),
         line_start: n.startLine,
         line_end: n.endLine,
         // Optional fields: only include when non-null to avoid null values in JSON
@@ -43,13 +81,43 @@ function nodeToOutputSymbol(n) {
     };
 }
 /** Map CodeGraph Edge to integration Relationship. */
-function edgeToRelationship(edge, sourceQualifiedName, targetQualifiedName) {
+function edgeToRelationship(edge, source, target) {
     return {
-        source: sourceQualifiedName,
-        target: targetQualifiedName,
         kind: edge.kind,
-        file_path: undefined,
+        ...(source ? { source_key: source.symbol_key, source_name: source.qualified_name } : {}),
+        ...(target ? { target_key: target.symbol_key, target_name: target.qualified_name } : {}),
+        ...(edge.filePath != null ? { file_path: normalizeSourcePath(edge.filePath) } : {}),
     };
+}
+function collectNativeNodeData(cg) {
+    const nodes = [];
+    const seenNodeIds = new Set();
+    const keyToNodeId = new Map();
+    const symbolByNodeId = new Map();
+    for (const kind of NODE_KINDS) {
+        let nativeNodes;
+        try {
+            nativeNodes = cg.getNodesByKind(kind);
+        }
+        catch {
+            nativeNodes = [];
+        }
+        for (const node of nativeNodes) {
+            if (seenNodeIds.has(node.id)) {
+                continue;
+            }
+            seenNodeIds.add(node.id);
+            const symbol = nodeToOutputSymbol(node);
+            const existingNodeId = keyToNodeId.get(symbol.symbol_key);
+            if (existingNodeId !== undefined && existingNodeId !== node.id) {
+                throw new Error(`[codegraph-adapter] contract error: duplicate canonical locator for native nodes ${existingNodeId} and ${node.id}`);
+            }
+            keyToNodeId.set(symbol.symbol_key, node.id);
+            symbolByNodeId.set(node.id, symbol);
+            nodes.push(node);
+        }
+    }
+    return { nodes, keyToNodeId, symbolByNodeId };
 }
 // ---------------------------------------------------------------------------
 // Adapter public API
@@ -158,30 +226,7 @@ async function openIndex(repoPath) {
  * Uses getNodesByKind for each kind to avoid the internal-only getAllNodes().
  */
 async function getSymbols(cg) {
-    const allKinds = [
-        'file', 'module', 'class', 'struct', 'interface', 'trait', 'protocol',
-        'function', 'method', 'property', 'field', 'variable', 'constant',
-        'enum', 'enum_member', 'type_alias', 'namespace', 'parameter',
-        'import', 'export', 'route', 'component',
-    ];
-    const seen = new Set();
-    const symbols = [];
-    for (const kind of allKinds) {
-        let nodes;
-        try {
-            nodes = cg.getNodesByKind(kind);
-        }
-        catch {
-            nodes = [];
-        }
-        for (const n of nodes) {
-            if (!seen.has(n.id)) {
-                seen.add(n.id);
-                symbols.push(nodeToOutputSymbol(n));
-            }
-        }
-    }
-    return symbols;
+    return [...collectNativeNodeData(cg).symbolByNodeId.values()];
 }
 /**
  * 5. getRelationships
@@ -191,55 +236,23 @@ async function getSymbols(cg) {
  * source+target+kind identity.
  */
 async function getRelationships(cg) {
-    const symbols = await getSymbols(cg);
-    // Build a qualified-name lookup from node ids — we'll need it to resolve
-    // source/target qualified names from edge source/target ids.
-    const idToQualifiedName = new Map();
-    for (const kind of [
-        'file', 'module', 'class', 'struct', 'interface', 'trait', 'protocol',
-        'function', 'method', 'property', 'field', 'variable', 'constant',
-        'enum', 'enum_member', 'type_alias', 'namespace', 'parameter',
-        'import', 'export', 'route', 'component',
-    ]) {
-        try {
-            const nodes = cg.getNodesByKind(kind);
-            for (const n of nodes) {
-                idToQualifiedName.set(n.id, n.qualifiedName);
-            }
-        }
-        catch {
-            // ignore missing kinds
-        }
-    }
+    const { nodes, symbolByNodeId } = collectNativeNodeData(cg);
     const seen = new Set();
     const relationships = [];
-    for (const sym of symbols) {
-        // Find the node id corresponding to this qualified name
-        let nodeId;
-        for (const [id, qn] of idToQualifiedName) {
-            if (qn === sym.qualified_name) {
-                nodeId = id;
-                break;
-            }
-        }
-        if (!nodeId)
-            continue;
+    for (const node of nodes) {
         let edges;
         try {
-            edges = cg.getOutgoingEdges(nodeId);
+            edges = cg.getOutgoingEdges(node.id);
         }
         catch {
             continue;
         }
         for (const edge of edges) {
-            const targetQN = idToQualifiedName.get(edge.target);
-            if (!targetQN)
-                continue;
             const dedupeKey = `${edge.source}|${edge.target}|${edge.kind}`;
             if (seen.has(dedupeKey))
                 continue;
             seen.add(dedupeKey);
-            relationships.push(edgeToRelationship(edge, sym.qualified_name, targetQN));
+            relationships.push(edgeToRelationship(edge, symbolByNodeId.get(edge.source), symbolByNodeId.get(edge.target)));
         }
     }
     return relationships;
@@ -252,8 +265,13 @@ async function getRelationships(cg) {
 async function getCallGraph(cg) {
     const relationships = await getRelationships(cg);
     return relationships
-        .filter((r) => r.kind === 'calls')
-        .map((r) => ({ caller: r.source, callee: r.target }));
+        .filter((r) => r.kind === 'calls' && r.source_key && r.target_key)
+        .map((r) => ({
+        caller_key: r.source_key,
+        callee_key: r.target_key,
+        ...(r.source_name ? { caller_name: r.source_name } : {}),
+        ...(r.target_name ? { callee_name: r.target_name } : {}),
+    }));
 }
 /**
  * 7. getTypeHierarchy
@@ -263,51 +281,33 @@ async function getCallGraph(cg) {
 async function getTypeHierarchy(cg) {
     const relationships = await getRelationships(cg);
     return relationships
-        .filter((r) => r.kind === 'extends' || r.kind === 'implements')
+        .filter((r) => (r.kind === 'extends' || r.kind === 'implements') && r.source_key && r.target_key)
         .map((r) => ({
-        child: r.source,
-        parent: r.target,
+        child_key: r.source_key,
+        parent_key: r.target_key,
+        ...(r.source_name ? { child_name: r.source_name } : {}),
+        ...(r.target_name ? { parent_name: r.target_name } : {}),
         kind: r.kind,
     }));
 }
 /**
  * 8. getImpactRadius
  *
- * Computes transitive impact radius for a set of symbol qualified names.
+ * Computes transitive impact radius for a set of exact symbol keys.
  * Enforces depth max 10.
  *
  * @param cg       CodeGraph instance.
- * @param symbols  Qualified names of the symbols to analyse.
+ * @param symbols  Exact symbol keys of the symbols to analyse.
  * @param depth    Traversal depth (1-10). Clamped to 10.
  */
 async function getImpactRadius(cg, symbols, depth) {
     const clampedDepth = Math.min(Math.max(1, depth), 10);
-    // Build id→qualifiedName and qualifiedName→id maps
-    const allKinds = [
-        'file', 'module', 'class', 'struct', 'interface', 'trait', 'protocol',
-        'function', 'method', 'property', 'field', 'variable', 'constant',
-        'enum', 'enum_member', 'type_alias', 'namespace', 'parameter',
-        'import', 'export', 'route', 'component',
-    ];
-    const qnToId = new Map();
-    const idToQn = new Map();
-    for (const kind of allKinds) {
-        try {
-            const nodes = cg.getNodesByKind(kind);
-            for (const n of nodes) {
-                qnToId.set(n.qualifiedName, n.id);
-                idToQn.set(n.id, n.qualifiedName);
-            }
-        }
-        catch {
-            // ignore
-        }
-    }
+    const { keyToNodeId, symbolByNodeId } = collectNativeNodeData(cg);
     const results = [];
-    for (const symbolQN of symbols) {
-        const nodeId = qnToId.get(symbolQN);
-        if (!nodeId) {
-            results.push({ symbol: symbolQN, affected: [], depth: clampedDepth });
+    for (const requestedSymbolKey of symbols) {
+        const nodeId = keyToNodeId.get(requestedSymbolKey);
+        if (nodeId === undefined) {
+            results.push({ symbol_key: requestedSymbolKey, affected_keys: [], depth: clampedDepth });
             continue;
         }
         let subgraph;
@@ -315,17 +315,29 @@ async function getImpactRadius(cg, symbols, depth) {
             subgraph = cg.getImpactRadius(nodeId, clampedDepth);
         }
         catch {
-            results.push({ symbol: symbolQN, affected: [], depth: clampedDepth });
+            results.push({ symbol_key: requestedSymbolKey, affected_keys: [], depth: clampedDepth });
             continue;
         }
         // Subgraph.nodes is Map<string, Node>
-        const affected = [];
-        for (const [id, n] of subgraph.nodes) {
+        const affectedKeys = [];
+        const affectedNames = [];
+        for (const [id] of subgraph.nodes) {
             if (id !== nodeId) {
-                affected.push(n.qualifiedName);
+                const affected = symbolByNodeId.get(id);
+                if (affected) {
+                    affectedKeys.push(affected.symbol_key);
+                    affectedNames.push(affected.qualified_name);
+                }
             }
         }
-        results.push({ symbol: symbolQN, affected, depth: clampedDepth });
+        const source = symbolByNodeId.get(nodeId);
+        results.push({
+            symbol_key: requestedSymbolKey,
+            ...(source ? { symbol_name: source.qualified_name } : {}),
+            affected_keys: affectedKeys,
+            affected_names: affectedNames,
+            depth: clampedDepth,
+        });
     }
     return results;
 }

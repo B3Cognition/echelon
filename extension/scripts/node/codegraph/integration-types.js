@@ -7,4 +7,7 @@
  * re-* LLM command templates. Each field maps field-for-field to contracts/analysis-schema.json.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.CODEGRAPH_SCHEMA_VERSION = 2;
+exports.CODEGRAPH_TOOL = "codegraph";
+exports.CODEGRAPH_TOOL_VERSION = "1.4.1";
 //# sourceMappingURL=integration-types.js.map
