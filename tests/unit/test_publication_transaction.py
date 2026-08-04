@@ -453,3 +453,140 @@ def test_rewritten_legacy_journal_rejects_forged_deletion_states(tmp_path: Path)
     with pytest.raises(PublicationTransactionError, match="refuses"):
         rollback_publication_transaction(transaction)
     assert (root / "first").read_text(encoding="utf-8") == "unrelated\n"
+
+
+@pytest.mark.unit
+def test_raw_legacy_normalization_reloads_all_operations_after_first_journal_write(
+    tmp_path: Path,
+) -> None:
+    from harness.publication_transaction import (
+        PublicationTransaction,
+        rollback_publication_transaction,
+    )
+
+    root = tmp_path / "re"
+    root.mkdir()
+    (root / "first").write_text("new-first\n", encoding="utf-8")
+    (root / "second").write_text("new-second\n", encoding="utf-8")
+    stage = root / ".staging/legacy"
+    first_backup = stage / "rollback/first"
+    first_backup.parent.mkdir(parents=True)
+    first_backup.write_text("old-first\n", encoding="utf-8")
+    journal = stage / "rollback-journal.json"
+    journal.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "status": "replacing",
+                "operations": [
+                    {
+                        "final": "first",
+                        "staged": "new/first",
+                        "backup": "rollback/first",
+                        "backed_up": True,
+                        "installed": True,
+                    },
+                    {
+                        "final": "second",
+                        "staged": "new/second",
+                        "backup": "rollback/second",
+                        "backed_up": False,
+                        "installed": False,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    transaction = PublicationTransaction.from_journal(
+        workspace_root=root,
+        staging_root=stage,
+        journal=journal,
+    )
+
+    class Interrupted(BaseException):
+        pass
+
+    def interrupt_after_normalization(point: str) -> None:
+        if point == "after_legacy_normalized":
+            raise Interrupted()
+
+    with pytest.raises(Interrupted):
+        rollback_publication_transaction(
+            transaction,
+            fault_hook=interrupt_after_normalization,
+        )
+
+    rewritten = json.loads(journal.read_text(encoding="utf-8"))
+    assert rewritten["status"] == "rolling_back"
+    assert all(row["legacy"] is True for row in rewritten["operations"])
+    assert all(row["rollback_digest"] for row in rewritten["operations"])
+    resumed = PublicationTransaction.from_journal(
+        workspace_root=root,
+        staging_root=stage,
+        journal=journal,
+    )
+    rollback_publication_transaction(resumed)
+
+    assert (root / "first").read_text(encoding="utf-8") == "old-first\n"
+    assert not (root / "second").exists()
+    assert json.loads(journal.read_text(encoding="utf-8"))["status"] == "rolled_back"
+
+
+@pytest.mark.unit
+def test_invalid_raw_legacy_operation_prevents_any_normalization_or_mutation(
+    tmp_path: Path,
+) -> None:
+    from harness.publication_transaction import (
+        PublicationTransaction,
+        PublicationTransactionError,
+        rollback_publication_transaction,
+    )
+
+    root = tmp_path / "re"
+    root.mkdir()
+    (root / "first").write_text("new-first\n", encoding="utf-8")
+    (root / "second").write_text("new-second\n", encoding="utf-8")
+    stage = root / ".staging/legacy"
+    first_backup = stage / "rollback/first"
+    second_backup = stage / "rollback/second"
+    first_backup.parent.mkdir(parents=True)
+    first_backup.write_text("old-first\n", encoding="utf-8")
+    second_backup.write_text("old-second\n", encoding="utf-8")
+    journal = stage / "rollback-journal.json"
+    raw = {
+        "schema_version": 1,
+        "status": "replacing",
+        "operations": [
+            {
+                "final": "first",
+                "staged": "new/first",
+                "backup": "rollback/first",
+                "backed_up": True,
+                "installed": True,
+            },
+            {
+                "final": "second",
+                "staged": "new/second",
+                "backup": "rollback/second",
+                "backed_up": False,
+                "installed": False,
+            },
+        ],
+    }
+    journal.write_text(json.dumps(raw), encoding="utf-8")
+    before_journal = journal.read_bytes()
+    transaction = PublicationTransaction.from_journal(
+        workspace_root=root,
+        staging_root=stage,
+        journal=journal,
+    )
+
+    with pytest.raises(PublicationTransactionError, match="ambiguous"):
+        rollback_publication_transaction(transaction)
+
+    assert journal.read_bytes() == before_journal
+    assert (root / "first").read_text(encoding="utf-8") == "new-first\n"
+    assert (root / "second").read_text(encoding="utf-8") == "new-second\n"
+    assert first_backup.read_text(encoding="utf-8") == "old-first\n"
+    assert second_backup.read_text(encoding="utf-8") == "old-second\n"

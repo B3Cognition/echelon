@@ -289,7 +289,12 @@ def rollback_publication_transaction(
     fault_hook: Callable[[str], None] | None = None,
 ) -> None:
     """Idempotently restore only paths recorded as replaced by this transaction."""
-    if not any(state.get("raw_legacy") for state in transaction._states):
+    if any(state.get("raw_legacy") for state in transaction._states):
+        _normalize_raw_legacy_states(transaction)
+        write_publication_journal(transaction, "rolling_back")
+        if fault_hook:
+            fault_hook("after_legacy_normalized")
+    else:
         write_publication_journal(transaction, "rolling_back")
     for index in range(len(transaction.operations) - 1, -1, -1):
         operation = transaction.operations[index]
@@ -300,42 +305,7 @@ def rollback_publication_transaction(
         phase = state["phase"]
         final_exists = final.exists() or final.is_symlink()
         backup_exists = backup.exists() or backup.is_symlink()
-        if state.get("legacy") and phase == "installed" and state.get("had_final") and final_exists and not backup_exists:
-            # A legacy rollback may have restored the original just before its
-            # boolean journal update; it is already safe and must be retained.
-            state["phase"] = "pending"
-            state["had_final"] = False
-            state["raw_legacy"] = False
-            write_publication_journal(transaction, "rolling_back")
-            continue
-        if state.get("legacy") and phase in {"installed", "restore_intent"} and state.get("had_final") and not final_exists and backup_exists:
-            # Old rollback removed the installed final before it persisted the
-            # next boolean state. The original backup remains authoritative.
-            state["phase"] = "backed_up"
-            phase = "backed_up"
-            state["raw_legacy"] = False
-        elif state.get("legacy") and backup_exists and not final_exists:
-            if staged is not None and not (staged.exists() or staged.is_symlink()):
-                raise PublicationTransactionError(
-                    "legacy rollback journal has an incoherent backup-rename state"
-                )
-            state["phase"] = "backed_up"
-            state["had_final"] = True
-            phase = "backed_up"
-            state["raw_legacy"] = False
-        elif state.get("legacy") and backup_exists and final_exists and phase == "backed_up" and staged is not None and not (staged.exists() or staged.is_symlink()):
-            state["phase"] = "installed"
-            phase = "installed"
-        elif state.get("legacy") and not backup_exists and final_exists and phase == "pending" and staged is not None and not (staged.exists() or staged.is_symlink()):
-            state["phase"] = "installed"
-            state["had_final"] = False
-            phase = "installed"
-        elif state.get("legacy") and phase == "pending" and backup_exists and final_exists:
-            raise PublicationTransactionError("legacy rollback journal has ambiguous final and backup paths")
         if phase == "pending":
-            if state.get("raw_legacy"):
-                state["raw_legacy"] = False
-                write_publication_journal(transaction, "rolling_back")
             continue
         installed = phase in {"install_intent", "installed", "rollback_remove_intent"}
         if state.get("had_final") and installed and final_exists and not backup_exists:
@@ -344,10 +314,6 @@ def rollback_publication_transaction(
             raise PublicationTransactionError("rollback found a stray backup for a no-original operation")
         if final_exists and installed:
             if state.get("legacy"):
-                if state.get("raw_legacy"):
-                    state["rollback_digest"] = _path_digest(final)
-                    state["raw_legacy"] = False
-                    write_publication_journal(transaction, "rolling_back")
                 expected = state.get("rollback_digest")
             else:
                 expected = state.get("staged_digest")
@@ -362,8 +328,6 @@ def rollback_publication_transaction(
             raise PublicationTransactionError("rollback found an unrelated final path beside its backup")
         if backup_exists:
             state["phase"] = "restore_intent"
-            if state.get("raw_legacy"):
-                state["raw_legacy"] = False
             write_publication_journal(transaction, "rolling_back")
             if fault_hook:
                 fault_hook(f"before_restore:{operation.final.as_posix()}")
@@ -375,9 +339,75 @@ def rollback_publication_transaction(
             raise PublicationTransactionError("rollback backup is missing after a replacement intent")
         state["phase"] = "pending"
         state["had_final"] = False
-        state["raw_legacy"] = False
         write_publication_journal(transaction, "rolling_back")
     write_publication_journal(transaction, "rolled_back")
+
+
+def _normalize_raw_legacy_states(transaction: PublicationTransaction) -> None:
+    """Convert all boolean-only legacy entries into one reloadable state set."""
+    normalized: list[dict[str, object]] = []
+    for operation, current in zip(transaction.operations, transaction._states, strict=True):
+        if not current.get("raw_legacy"):
+            normalized.append(dict(current))
+            continue
+        final = _contained(transaction.workspace_root, operation.final)
+        backup = _contained(transaction.staging_root, operation.backup)
+        staged = (
+            _contained(transaction.staging_root, operation.staged)
+            if operation.staged is not None
+            else None
+        )
+        final_exists = final.exists() or final.is_symlink()
+        backup_exists = backup.exists() or backup.is_symlink()
+        staged_exists = staged is not None and (staged.exists() or staged.is_symlink())
+        phase = current["phase"]
+        had_final = bool(current["had_final"])
+        rollback_digest: str | None = None
+
+        if phase == "installed" and had_final and final_exists and not backup_exists:
+            # The old rollback had already restored the original bytes.
+            phase = "pending"
+            had_final = False
+        elif phase == "installed" and had_final and not final_exists and backup_exists:
+            # The old rollback had removed the installed bytes and left backup.
+            phase = "backed_up"
+        elif backup_exists and not final_exists:
+            if staged is not None and not staged_exists:
+                raise PublicationTransactionError(
+                    "legacy rollback journal has an incoherent backup-rename state"
+                )
+            phase = "backed_up"
+            had_final = True
+        elif backup_exists and final_exists and phase == "backed_up" and staged is not None and not staged_exists:
+            phase = "installed"
+        elif not backup_exists and final_exists and phase == "pending" and staged is not None and not staged_exists:
+            phase = "installed"
+            had_final = False
+        elif phase == "pending" and backup_exists and final_exists:
+            raise PublicationTransactionError("legacy rollback journal has ambiguous final and backup paths")
+
+        installed = phase in {"install_intent", "installed", "rollback_remove_intent"}
+        if had_final and installed and final_exists and not backup_exists:
+            raise PublicationTransactionError("rollback required backup is missing before final removal")
+        if not had_final and backup_exists:
+            raise PublicationTransactionError("rollback found a stray backup for a no-original operation")
+        if final_exists and installed:
+            rollback_digest = _path_digest(final)
+        elif final_exists and backup_exists:
+            raise PublicationTransactionError("rollback found an unrelated final path beside its backup")
+        if had_final and not final_exists and not backup_exists:
+            raise PublicationTransactionError("rollback backup is missing after a replacement intent")
+
+        normalized.append(
+            {
+                **current,
+                "phase": phase,
+                "had_final": had_final,
+                "rollback_digest": rollback_digest,
+                "raw_legacy": False,
+            }
+        )
+    transaction._states = normalized
 
 
 def _remove_path(path: Path) -> None:
