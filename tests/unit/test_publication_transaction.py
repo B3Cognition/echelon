@@ -167,3 +167,54 @@ def test_transaction_rejects_overlapping_and_staging_alias_paths(tmp_path: Path)
         PublicationTransaction(root, stage, stage / "rollback-journal.json", (
             PublicationOperation(PurePosixPath("one"), PurePosixPath("rollback/one")),
         ))
+    with pytest.raises(PublicationTransactionError, match="journal"):
+        PublicationTransaction(root, stage, stage / "new/a", (
+            PublicationOperation(PurePosixPath("one"), PurePosixPath("new/a")),
+        ))
+
+
+@pytest.mark.unit
+def test_transaction_rejects_tampered_staged_artifact_before_install(tmp_path: Path) -> None:
+    from harness.publication_transaction import apply_publication_transaction
+
+    root = tmp_path / "re"
+    root.mkdir()
+    (root / "first").write_text("old-first\n", encoding="utf-8")
+    transaction = _transaction(tmp_path)
+    (transaction.staging_root / "new/first").write_text("tampered\n", encoding="utf-8")
+    with pytest.raises(Exception, match="staged artifact"):
+        apply_publication_transaction(transaction)
+    assert (root / "first").read_text(encoding="utf-8") == "old-first\n"
+
+
+@pytest.mark.unit
+def test_legacy_journal_restores_backup_after_rename_before_boolean_persistence(tmp_path: Path) -> None:
+    from harness.publication_transaction import PublicationTransaction, rollback_publication_transaction
+
+    root = tmp_path / "re"
+    root.mkdir()
+    stage = root / ".staging/legacy"
+    backup = stage / "rollback/first"
+    backup.parent.mkdir(parents=True)
+    backup.write_text("old-first\n", encoding="utf-8")
+    journal = stage / "rollback-journal.json"
+    journal.write_text('{"schema_version":1,"status":"replacing","operations":[{"final":"first","staged":"new/first","backup":"rollback/first","backed_up":false,"installed":false}]}', encoding="utf-8")
+    transaction = PublicationTransaction.from_journal(workspace_root=root, staging_root=stage, journal=journal)
+    rollback_publication_transaction(transaction)
+    assert (root / "first").read_text(encoding="utf-8") == "old-first\n"
+
+
+@pytest.mark.unit
+def test_rollback_refuses_unrelated_replacement_and_preserves_journal(tmp_path: Path) -> None:
+    from harness.publication_transaction import apply_publication_transaction, rollback_publication_transaction, PublicationTransactionError
+
+    root = tmp_path / "re"
+    root.mkdir()
+    (root / "first").write_text("old-first\n", encoding="utf-8")
+    transaction = _transaction(tmp_path)
+    apply_publication_transaction(transaction)
+    (root / "first").write_text("unrelated\n", encoding="utf-8")
+    with pytest.raises(PublicationTransactionError, match="refuses"):
+        rollback_publication_transaction(transaction)
+    assert (root / "first").read_text(encoding="utf-8") == "unrelated\n"
+    assert transaction.journal.is_file()

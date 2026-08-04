@@ -55,6 +55,7 @@ class RePublishRecoveryRequired(RuntimeError):
 class RePublishLock:
     path: Path
     owner_run_id: str
+    workspace_root: Path
 
     @classmethod
     def acquire(
@@ -77,6 +78,12 @@ class RePublishLock:
         except FileExistsError as exc:
             owner = _read_owner(lock_path, required=False)
             raise RePublishLocked(str(owner.get("run_id") or "unknown")) from exc
+        pending = _pending_publication_journals(paths.staging)
+        if pending:
+            shutil.rmtree(lock_path)
+            raise RePublishRecoveryRequired(
+                f"rollback journal must be recovered before publication: {pending[0]}"
+            )
 
         metadata = {
             "run_id": owner_run_id,
@@ -90,7 +97,7 @@ class RePublishLock:
         except Exception:
             shutil.rmtree(lock_path)
             raise
-        return cls(path=lock_path, owner_run_id=owner_run_id)
+        return cls(path=lock_path, owner_run_id=owner_run_id, workspace_root=root)
 
     def release(self) -> None:
         if not self.path.exists():
@@ -98,13 +105,18 @@ class RePublishLock:
         owner = _read_owner(self.path)
         if owner.get("run_id") != self.owner_run_id:
             raise RePublishLocked(str(owner.get("run_id") or "unknown"))
+        if _owner_has_pending_journal(self.workspace_root, self.owner_run_id):
+            raise RePublishRecoveryRequired(
+                "rollback journal must be recovered before removing publication lock"
+            )
         shutil.rmtree(self.path)
 
     def __enter__(self) -> "RePublishLock":
         return self
 
     def __exit__(self, *_exc: object) -> None:
-        self.release()
+        if not _owner_has_pending_journal(self.workspace_root, self.owner_run_id):
+            self.release()
 
 
 @dataclass
@@ -228,13 +240,31 @@ def recover_stale_publish_lock(
     journal = ensure_re_layout(root).staging / run_id / "rollback-journal.json"
     if journal.is_file():
         journal_data = _read_json(journal)
-        if journal_data.get("status") == "replacing":
+        if journal_data.get("status") in {"replacing", "rolling_back"}:
             raise RePublishRecoveryRequired(
                 f"rollback journal must be recovered before removing lock: {journal}"
             )
 
     shutil.rmtree(lock_path)
     return True
+
+
+def _owner_has_pending_journal(workspace_root: Path, owner_run_id: str) -> bool:
+    journal = ensure_re_layout(workspace_root).staging / owner_run_id / "rollback-journal.json"
+    if not journal.is_file():
+        return False
+    return _read_json(journal).get("status") in {"replacing", "rolling_back"}
+
+
+def _pending_publication_journals(staging_root: Path) -> tuple[Path, ...]:
+    pending: list[Path] = []
+    if not staging_root.is_dir():
+        return ()
+    for candidate in sorted(staging_root.iterdir(), key=lambda path: path.name):
+        journal = candidate / "rollback-journal.json"
+        if journal.is_file() and _read_json(journal).get("status") in {"replacing", "rolling_back"}:
+            pending.append(journal)
+    return tuple(pending)
 
 
 def recoverable_publish_lock_owner(

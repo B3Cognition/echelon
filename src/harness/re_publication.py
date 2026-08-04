@@ -345,7 +345,7 @@ def recover_interrupted_publication(
     stage_root = paths.staging / run_id
     journal = stage_root / "rollback-journal.json"
     data = _read_json(journal)
-    if data.get("status") != "replacing":
+    if data.get("status") not in {"replacing", "rolling_back"}:
         return recover_stale_publish_lock(
             root,
             stale_after_seconds=stale_after_seconds,
@@ -376,7 +376,7 @@ def _prepare_transaction(
     journal = stage_root / "rollback-journal.json"
     if journal.is_file():
         journal_data = _read_json(journal)
-        if journal_data.get("status") == "replacing":
+        if journal_data.get("status") in {"replacing", "rolling_back"}:
             raise RePublicationError(f"unfinished publication transaction exists: {journal}")
     if stage_root.exists():
         shutil.rmtree(stage_root)
@@ -709,7 +709,7 @@ def _apply_transaction(
                 "installed RE index generation does not match transaction"
             )
     except Exception:
-        rollback_publication_transaction(transaction, allow_unverified_installed=True)
+        rollback_publication_transaction(transaction)
         raise
     shutil.rmtree(transaction.staging_root)
 

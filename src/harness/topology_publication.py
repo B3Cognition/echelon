@@ -245,7 +245,7 @@ def _prepare_transaction(root: Path, stage_root: Path, candidates: tuple[_Prepar
             raise TopologyPublicationValidationError(
                 f"cannot inspect existing topology transaction: {exc}"
             ) from exc
-        if isinstance(prior, dict) and prior.get("status") == "replacing":
+        if isinstance(prior, dict) and prior.get("status") in {"replacing", "rolling_back"}:
             raise TopologyPublicationError(
                 f"unfinished topology publication transaction exists: {journal}"
             )
@@ -395,10 +395,22 @@ def _validate_owner_run_dir(
         owner = owner_run_dir.resolve(strict=True)
         if not owner.is_dir():
             raise TopologyPublicationValidationError("owner run directory must be a directory")
-        if not any(owner.is_relative_to((root / name).resolve(strict=True)) for name in ("runs", "squad") if (root / name).is_dir()):
+        lifecycle_roots: list[Path] = []
+        for name in ("runs", "squad"):
+            candidate = root / name
+            if not candidate.exists():
+                continue
+            if candidate.is_symlink() or not candidate.is_dir():
+                raise TopologyPublicationValidationError(
+                    f"workspace lifecycle root is unsafe: {candidate}"
+                )
+            resolved = candidate.resolve(strict=True)
+            resolved.relative_to(root)
+            lifecycle_roots.append(resolved)
+        if not any(owner.is_relative_to(candidate) for candidate in lifecycle_roots):
             raise TopologyPublicationValidationError("owner run directory is outside workspace lifecycle roots")
         return owner
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         raise TopologyPublicationValidationError(f"owner run directory is invalid: {exc}") from exc
 
 

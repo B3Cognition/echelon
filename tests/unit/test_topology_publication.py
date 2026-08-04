@@ -174,6 +174,25 @@ def test_topology_accepts_unsupported_provider_evidence_and_rejects_future_recei
 
 
 @pytest.mark.unit
+def test_topology_accepts_explicit_empty_provider_evidence(tmp_path: Path) -> None:
+    from dataclasses import replace
+    from harness.topology_publication import TopologyProviderCandidate, publish_topology_snapshots
+    from echelon.topology_registry import load_topology_index
+
+    _workspace(tmp_path, ("api",))
+    empty = json.loads(_perl_unsupported())
+    empty["provider_status"] = "empty"
+    empty["supported"] = True
+    empty["counts"]["discovered_files"] = 1
+    empty["counts"]["emitted_files"] = 1
+    candidate = replace(_candidate("api"), providers=(TopologyProviderCandidate("perlgraph", json.dumps(empty).encode(), b"{}"),))
+    publish_topology_snapshots(tmp_path, (candidate,), owner_id="run-1", owner_run_dir=None)
+    index = load_topology_index(tmp_path)
+    assert index is not None
+    assert index.sources["api"].providers["perlgraph"].status == "empty"
+
+
+@pytest.mark.unit
 def test_topology_path_evidence_must_stay_in_its_owner_run(tmp_path: Path) -> None:
     from dataclasses import replace
     from harness.topology_publication import TopologyProviderCandidate, TopologyPublicationValidationError, publish_topology_snapshots
@@ -202,7 +221,27 @@ def test_topology_path_evidence_must_stay_in_its_owner_run(tmp_path: Path) -> No
 
 
 @pytest.mark.unit
-def test_topology_base_exception_preserves_staging_recovery_evidence(tmp_path: Path) -> None:
+def test_topology_rejects_symlinked_lifecycle_root(tmp_path: Path) -> None:
+    from dataclasses import replace
+    from harness.topology_publication import TopologyProviderCandidate, TopologyPublicationValidationError, publish_topology_snapshots
+
+    _workspace(tmp_path, ("api",))
+    outside = tmp_path / "outside-runs/run-1"
+    outside.mkdir(parents=True)
+    (outside / "analysis.json").write_bytes(_analysis())
+    (outside / "summary.json").write_bytes(b"{}")
+    (tmp_path / "runs").symlink_to(tmp_path / "outside-runs", target_is_directory=True)
+    candidate = replace(_candidate("api"), providers=(TopologyProviderCandidate("codegraph", outside / "analysis.json", outside / "summary.json"),))
+    with pytest.raises(TopologyPublicationValidationError, match="unsafe"):
+        publish_topology_snapshots(tmp_path, (candidate,), owner_id="run-1", owner_run_dir=outside)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("checkpoint", ("after_backup_intent", "after_backup_rename", "after_install_rename"))
+def test_topology_base_exception_preserves_staging_recovery_evidence(
+    tmp_path: Path, checkpoint: str
+) -> None:
+    from harness.re_lock import RePublishLocked
     from harness.topology_publication import publish_topology_snapshots
 
     _workspace(tmp_path, ("api",))
@@ -212,7 +251,7 @@ def test_topology_base_exception_preserves_staging_recovery_evidence(tmp_path: P
         pass
 
     def crash(point: str) -> None:
-        if point == "after_backup_intent:topology/sources/api":
+        if point == f"{checkpoint}:topology/sources/api":
             raise Crash()
 
     with pytest.raises(Crash):
@@ -220,3 +259,5 @@ def test_topology_base_exception_preserves_staging_recovery_evidence(tmp_path: P
     journal = tmp_path / "re/.staging/run-2/rollback-journal.json"
     assert journal.is_file()
     assert json.loads(journal.read_text(encoding="utf-8"))["status"] == "replacing"
+    with pytest.raises(RePublishLocked, match="run-2"):
+        publish_topology_snapshots(tmp_path, (_candidate("api", "3"),), owner_id="run-3", owner_run_dir=None, expected_generation=1)

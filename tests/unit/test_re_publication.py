@@ -1030,7 +1030,7 @@ def test_stale_interrupted_replacement_restores_backup(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
-def test_invalid_installed_index_rolls_back_before_cleanup(tmp_path: Path) -> None:
+def test_invalid_installed_index_rolls_back_before_cleanup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     run_1 = write_valid_re_run(tmp_path, ("api",), run_id="run-1")
     publish_re_run(tmp_path, run_1)
     _finish_run(run_1)
@@ -1042,16 +1042,20 @@ def test_invalid_installed_index_rolls_back_before_cleanup(tmp_path: Path) -> No
         versions={"api": "v2"},
     )
 
-    def corrupt_index(step: str) -> None:
-        if step == "after_index_replace":
-            (tmp_path / "re/index.json").write_text("not json\n", encoding="utf-8")
+    original = re_publication.PublishedReIndex.from_path
 
-    with pytest.raises(ReRegistryError, match="cannot read RE index"):
+    def reject_installed_index(path: Path):
+        if path == tmp_path / "re/index.json":
+            raise ReRegistryError("injected installed index validation failure")
+        return original(path)
+
+    monkeypatch.setattr(re_publication.PublishedReIndex, "from_path", reject_installed_index)
+
+    with pytest.raises(ReRegistryError, match="injected installed index"):
         publish_re_run(
             tmp_path,
             run_2,
             expected_generation=1,
-            fault_hook=corrupt_index,
         )
 
     assert _durable_snapshot(tmp_path) == before

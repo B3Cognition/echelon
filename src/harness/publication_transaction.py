@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import hashlib
 import os
+import re
 import shutil
 import tempfile
 from dataclasses import dataclass, field
@@ -17,6 +18,7 @@ class PublicationTransactionError(RuntimeError):
 
 
 _PHASES = frozenset({"pending", "backup_intent", "backed_up", "install_intent", "installed", "rollback_remove_intent", "restore_intent"})
+_DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 
 
 def _relative_path(value: PurePosixPath | str, field: str) -> PurePosixPath:
@@ -68,6 +70,7 @@ class PublicationTransaction:
     journal: Path
     operations: tuple[PublicationOperation, ...]
     expected_generation: int | None = None
+    _recovery_mode: bool = field(default=False, repr=False)
     _states: list[dict[str, object]] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -109,8 +112,11 @@ class PublicationTransaction:
         for staged_path in staged:
             if any(_relative_overlap(staged_path, backup) for backup in backups):
                 raise PublicationTransactionError("staged and backup paths overlap")
+        journal_relative = PurePosixPath(self.journal.relative_to(self.staging_root).as_posix())
+        if any(_relative_overlap(journal_relative, path) for path in [*staged, *backups]):
+            raise PublicationTransactionError("journal path overlaps a staged or backup artifact")
         self._states = [
-            {"phase": "pending", "had_final": False, "staged_digest": _staged_digest(self.staging_root, operation.staged)}
+            {"phase": "pending", "had_final": False, "staged_digest": _staged_digest(self.staging_root, operation.staged, required=not self._recovery_mode)}
             for operation in self.operations
         ]
 
@@ -144,20 +150,32 @@ class PublicationTransaction:
                 raise PublicationTransactionError("rollback journal operation flags must be booleans")
             operations.append(operation)
             phase = entry.get("phase")
-            if phase is None:
+            legacy = phase is None
+            if legacy:
                 phase = "installed" if installed else "backed_up" if backed_up else "pending"
-            if phase not in _PHASES:
+            if not isinstance(phase, str) or phase not in _PHASES:
                 raise PublicationTransactionError("rollback journal operation phase is malformed")
             had_final = entry.get("had_final", backed_up)
             staged_digest = entry.get("staged_digest")
-            if not isinstance(had_final, bool) or (staged_digest is not None and not isinstance(staged_digest, str)):
+            if not isinstance(had_final, bool) or (staged_digest is not None and (not isinstance(staged_digest, str) or not _DIGEST.fullmatch(staged_digest))):
                 raise PublicationTransactionError("rollback journal operation state is malformed")
-            states.append({"phase": phase, "had_final": had_final, "staged_digest": staged_digest, "legacy": "phase" not in entry})
+            if not legacy:
+                expected_backed_up = had_final and phase in {"backed_up", "install_intent", "installed", "rollback_remove_intent", "restore_intent"}
+                expected_installed = phase in {"installed", "rollback_remove_intent"}
+                if backed_up != expected_backed_up or installed != expected_installed:
+                    raise PublicationTransactionError("rollback journal operation flags contradict its phase")
+                if phase == "pending" and had_final:
+                    raise PublicationTransactionError("rollback journal pending operation cannot have a final backup")
+                if operation.staged is None and staged_digest is not None:
+                    raise PublicationTransactionError("rollback journal deletion operation has a staged digest")
+                if operation.staged is not None and staged_digest is None:
+                    raise PublicationTransactionError("rollback journal staged operation has no digest")
+            states.append({"phase": phase, "had_final": had_final, "staged_digest": staged_digest, "legacy": legacy})
         transaction = cls(
             workspace_root=workspace_root,
             staging_root=staging_root,
             journal=journal,
-            operations=tuple(operations),
+            operations=tuple(operations), _recovery_mode=True,
         )
         transaction._states = states
         return transaction
@@ -173,7 +191,7 @@ def write_publication_journal(transaction: PublicationTransaction, status: str) 
                 "final": operation.final.as_posix(),
                 "staged": operation.staged.as_posix() if operation.staged else None,
                 "backup": operation.backup.as_posix(),
-                "backed_up": state["phase"] in {"backed_up", "install_intent", "installed", "rollback_remove_intent", "restore_intent"},
+                "backed_up": state["had_final"] and state["phase"] in {"backed_up", "install_intent", "installed", "rollback_remove_intent", "restore_intent"},
                 "installed": state["phase"] in {"installed", "rollback_remove_intent"},
                 "phase": state["phase"],
                 "had_final": state["had_final"],
@@ -223,6 +241,9 @@ def apply_publication_transaction(
                 write_publication_journal(transaction, "replacing")
                 if fault_hook:
                     fault_hook(f"after_install_intent:{operation.final.as_posix()}")
+                expected_digest = transaction._states[index].get("staged_digest")
+                if not isinstance(expected_digest, str) or _path_digest(staged) != expected_digest:
+                    raise PublicationTransactionError("staged artifact changed before install")
                 final.parent.mkdir(parents=True, exist_ok=True)
                 os.replace(staged, final)
                 _fsync_directory(final.parent)
@@ -239,9 +260,7 @@ def apply_publication_transaction(
         raise
 
 
-def rollback_publication_transaction(
-    transaction: PublicationTransaction, *, allow_unverified_installed: bool = False
-) -> None:
+def rollback_publication_transaction(transaction: PublicationTransaction) -> None:
     """Idempotently restore only paths recorded as replaced by this transaction."""
     write_publication_journal(transaction, "rolling_back")
     for index in range(len(transaction.operations) - 1, -1, -1):
@@ -250,17 +269,21 @@ def rollback_publication_transaction(
         final = _contained(transaction.workspace_root, operation.final)
         backup = _contained(transaction.staging_root, operation.backup)
         phase = state["phase"]
-        if phase == "pending":
-            continue
         final_exists = final.exists() or final.is_symlink()
         backup_exists = backup.exists() or backup.is_symlink()
+        if state.get("legacy") and backup_exists and not final_exists:
+            state["phase"] = "backed_up"
+            state["had_final"] = True
+            phase = "backed_up"
+        elif state.get("legacy") and phase == "pending" and backup_exists and final_exists:
+            raise PublicationTransactionError("legacy rollback journal has ambiguous final and backup paths")
+        if phase == "pending":
+            continue
         installed = phase in {"install_intent", "installed", "rollback_remove_intent"}
         if final_exists and installed:
             expected = state.get("staged_digest")
-            if (
-                not allow_unverified_installed
-                and not state.get("legacy")
-                and (not isinstance(expected, str) or _path_digest(final) != expected)
+            if not state.get("legacy") and (
+                not isinstance(expected, str) or _path_digest(final) != expected
             ):
                 raise PublicationTransactionError("rollback refuses to delete a final path not installed by this transaction")
             state["phase"] = "rollback_remove_intent"
@@ -341,11 +364,17 @@ def _path_digest(path: Path) -> str:
     return "sha256:" + digest.hexdigest()
 
 
-def _staged_digest(root: Path, relative: PurePosixPath | None) -> str | None:
+def _staged_digest(
+    root: Path, relative: PurePosixPath | None, *, required: bool
+) -> str | None:
     if relative is None:
         return None
     path = _contained(root, relative)
-    return _path_digest(path) if path.exists() and not path.is_symlink() else None
+    if not path.exists() or path.is_symlink():
+        if required:
+            raise PublicationTransactionError("staged artifact is missing or symlinked")
+        return None
+    return _path_digest(path)
 
 
 def _fsync_directory(path: Path) -> None:

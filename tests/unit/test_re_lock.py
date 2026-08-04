@@ -182,6 +182,31 @@ def test_stale_lock_recovery_refuses_unfinished_rollback(tmp_path: Path) -> None
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("status", ("replacing", "rolling_back"))
+def test_pending_journal_keeps_owner_lock_and_blocks_a_second_publisher(
+    tmp_path: Path, status: str
+) -> None:
+    with RePublishLock.acquire(tmp_path, "run-a", None) as lock:
+        _write_json(
+            tmp_path / "re/.staging/run-a/rollback-journal.json",
+            {"schema_version": 1, "status": status, "operations": []},
+        )
+    assert lock.path.exists()
+    with pytest.raises(RePublishLocked, match="run-a"):
+        RePublishLock.acquire(tmp_path, "run-b", None)
+
+
+@pytest.mark.unit
+def test_orphan_pending_journal_blocks_new_publication(tmp_path: Path) -> None:
+    _write_json(
+        tmp_path / "re/.staging/orphan/rollback-journal.json",
+        {"schema_version": 1, "status": "replacing", "operations": []},
+    )
+    with pytest.raises(RePublishRecoveryRequired, match="rollback journal"):
+        RePublishLock.acquire(tmp_path, "run-next", None)
+
+
+@pytest.mark.unit
 def test_different_host_lock_must_exceed_stale_threshold(tmp_path: Path) -> None:
     lock_dir = _write_lock(
         tmp_path,
