@@ -125,7 +125,8 @@ def test_run_analysis_writes_perlgraph_artifacts() -> None:
     assert '"$REPO_OUTPUT/perlgraph-summary.json"' in run_analysis
     assert '"$OUTPUT_DIR/perlgraph-analysis.json"' in run_analysis
     assert '"$OUTPUT_DIR/perlgraph-summary.json"' in run_analysis
-    assert "write_polyrepo_perlgraph_summary()" in run_analysis
+    assert "write_polyrepo_perlgraph_summary()" not in run_analysis
+    assert "index_state" not in run_analysis
 
 
 def test_re_controller_tracks_perlgraph_artifacts(tmp_path) -> None:

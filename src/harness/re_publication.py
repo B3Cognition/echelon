@@ -333,7 +333,12 @@ def publish_re_run(
         transaction, topology_generation = _prepare_transaction(
             root, paths, candidate, current, generation
         )
-        _apply_transaction(transaction, paths, fault_hook=fault_hook)
+        _apply_transaction(
+            transaction,
+            paths,
+            topology_generation=topology_generation,
+            fault_hook=fault_hook,
+        )
         published = PublishedReIndex.from_path(paths.index)
         if published.generation != generation:
             raise RePublicationError("published RE generation failed post-write validation")
@@ -608,10 +613,6 @@ def _prepare_transaction(
 
     workspace_stage = new_root / "re" / "workspace"
     shutil.copytree(candidate.run_dir / "re" / "workspace", workspace_stage)
-    workspace_codegraph_summary = _copy_workspace_codegraph_summary(
-        candidate.run_dir / "re",
-        workspace_stage,
-    )
     workspace_manifest = {
         "schema_version": 1,
         "generation": generation,
@@ -675,11 +676,6 @@ def _prepare_transaction(
             "overview": "re/workspace/overview.md",
             "relationships": "re/workspace/relationships.md",
             "contracts": "re/workspace/contracts.md",
-            **(
-                {"codegraph_summary": workspace_codegraph_summary}
-                if workspace_codegraph_summary
-                else {}
-            ),
         },
         "warnings": list(candidate.warnings),
     }
@@ -694,22 +690,34 @@ def _prepare_transaction(
             workspace_root,
             allow_removed_source_ids=candidate.removed_sources,
         )
+        required_topology_sources = tuple(
+            sorted(
+                configured_ids
+                & set(candidate.refreshed_sources + candidate.empty_sources)
+            )
+        )
+        topology_candidates = _topology_candidates(
+            candidate,
+            configured_ids,
+            migrate_legacy=topology_current is None,
+            workspace_root=workspace_root,
+        )
+        candidate_topology_ids = {item.source_id for item in topology_candidates}
+        if (
+            topology_current is None
+            and candidate_topology_ids != configured_ids
+            and set(required_topology_sources)
+            <= candidate_topology_ids
+        ):
+            # Optional legacy evidence cannot create a partial first authority.
+            topology_candidates = ()
+            required_topology_sources = ()
         topology = stage_topology_snapshots(
             workspace_root,
             stage_root,
-            _topology_candidates(
-                candidate,
-                configured_ids,
-                migrate_legacy=topology_current is None,
-                workspace_root=workspace_root,
-            ),
+            topology_candidates,
             removed_source_ids=candidate.removed_sources,
-            required_source_ids=tuple(
-                sorted(
-                    configured_ids
-                    & set(candidate.refreshed_sources + candidate.empty_sources)
-                )
-            ),
+            required_source_ids=required_topology_sources,
         )
     except (
         TopologyEvidenceError,
@@ -739,6 +747,7 @@ def _apply_transaction(
     transaction: PublicationTransaction,
     registry: ReRegistryPaths,
     *,
+    topology_generation: int | None,
     fault_hook: Callable[[str], None] | None,
 ) -> None:
     def hook(point: str) -> None:
@@ -748,6 +757,10 @@ def _apply_transaction(
             fault_hook("before_index_replace")
         elif point == "after_replace:index.json":
             fault_hook("after_index_replace")
+        else:
+            # Keep the established semantic aliases while exposing the shared
+            # transaction's topology operation points to fault-injection tests.
+            fault_hook(point)
 
     try:
         apply_publication_transaction(transaction, fault_hook=hook)
@@ -759,6 +772,16 @@ def _apply_transaction(
             raise RePublicationError(
                 "installed RE index generation does not match transaction"
             )
+        if topology_generation is not None:
+            topology = load_topology_index(registry.root.parent)
+            if topology is None or topology.generation != topology_generation:
+                raise RePublicationError(
+                    "installed topology generation does not match transaction"
+                )
+            # The strict loader re-hashes every receipt and provider analysis.
+            from echelon.topology_registry import load_published_topology
+
+            load_published_topology(registry.root.parent)
     except Exception:
         rollback_publication_transaction(transaction)
         raise
@@ -1013,24 +1036,26 @@ def _topology_candidates(
                 owner_dir=output,
                 analysis=output / f"{provider}-analysis.json",
                 summary=output / f"{provider}-summary.json",
+                error=output / f"{provider}-error.json",
             )
             for provider in ("codegraph", "perlgraph")
         }
-        if not any(
-            path.is_file()
-            for artifact in paths.values()
-            for path in (artifact.analysis, artifact.summary)
-        ):
-            continue
-        snapshots.append(
-            build_topology_snapshot_candidate(
-                source.id,
-                source.path,
-                source.fingerprint,
-                paths,
-                provenance,
-            ).candidate
-        )
+        try:
+            snapshots.append(
+                build_topology_snapshot_candidate(
+                    source.id,
+                    source.path,
+                    source.fingerprint,
+                    paths,
+                    provenance,
+                ).candidate
+            )
+        except TopologyEvidenceError as exc:
+            if "no usable provider evidence" in str(exc):
+                raise TopologyEvidenceError(
+                    f"no usable topology evidence for refreshed source: {source.id}"
+                ) from exc
+            raise
     for source_id in candidate.empty_sources:
         if source_id not in configured_source_ids:
             continue
@@ -1048,16 +1073,18 @@ def _topology_candidates(
             if source.action != "reuse" or source.id not in configured_source_ids:
                 continue
             output = workspace_root / "re" / "sources" / source.id
-            manifest = _read_json(output / "manifest.json")
-            if manifest.get("source_fingerprint") != source.fingerprint.value:
-                raise RePublicationValidationError(
-                    f"legacy topology source fingerprint mismatch for {source.id}"
-                )
+            try:
+                manifest = _read_json(output / "manifest.json")
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not _legacy_manifest_matches_source(manifest, source):
+                continue
             paths = {
                 provider: ProviderArtifactPaths(
                     owner_dir=output,
                     analysis=output / f"{provider}-analysis.json",
                     summary=output / f"{provider}-summary.json",
+                    error=output / f"{provider}-error.json",
                 )
                 for provider in ("codegraph", "perlgraph")
             }
@@ -1081,16 +1108,38 @@ def _topology_candidates(
                 continue
             if not _all_present_schema_two(paths):
                 continue
-            snapshots.append(
-                build_topology_snapshot_candidate(
-                    source.id,
-                    source.path,
-                    source.fingerprint,
-                    paths,
-                    provenance,
-                ).candidate
-            )
+            try:
+                snapshots.append(
+                    build_topology_snapshot_candidate(
+                        source.id,
+                        source.path,
+                        source.fingerprint,
+                        paths,
+                        provenance,
+                    ).candidate
+                )
+            except TopologyEvidenceError:
+                # Reused legacy bytes are optional migration evidence. Their
+                # corruption cannot invalidate an independently valid semantic RE.
+                continue
     return tuple(snapshots)
+
+
+def _legacy_manifest_matches_source(manifest: object, source: RePlanSource) -> bool:
+    """Authenticate old provider bytes against every semantic capture field."""
+    if not isinstance(manifest, dict):
+        return False
+    fingerprint = source.fingerprint
+    inferred_kind = "git" if manifest.get("git_head") is not None else "file-tree"
+    return (
+        manifest.get("source_id") == source.id
+        and manifest.get("source_path") == source.path
+        and manifest.get("source_fingerprint") == fingerprint.value
+        and manifest.get("profile_hash") == fingerprint.profile_hash
+        and manifest.get("dirty") is fingerprint.dirty
+        and inferred_kind == fingerprint.kind
+        and manifest.get("git_head") == fingerprint.git_head
+    )
 
 
 def _all_present_schema_two(paths: dict[str, ProviderArtifactPaths]) -> bool:
@@ -1280,17 +1329,6 @@ def _copy_optional_source_artifacts(
             )
         )
     }
-
-
-def _copy_workspace_codegraph_summary(run_re: Path, workspace_stage: Path) -> str | None:
-    for source in (
-        run_re / "workspace" / "codegraph-summary.json",
-        run_re / "codegraph-summary.json",
-    ):
-        if source.is_file():
-            shutil.copy2(source, workspace_stage / "codegraph-summary.json")
-            return "re/workspace/codegraph-summary.json"
-    return None
 
 
 def _inside_run_roots(workspace_root: Path, run_dir: Path) -> bool:

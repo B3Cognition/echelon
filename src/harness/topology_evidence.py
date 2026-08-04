@@ -34,6 +34,7 @@ class ProviderArtifactPaths:
     owner_dir: Path
     analysis: Path
     summary: Path
+    error: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,11 +67,33 @@ def build_topology_snapshot_candidate(
             raise TopologyEvidenceError(f"unsupported topology provider: {provider!r}")
         if not isinstance(paths, ProviderArtifactPaths):
             raise TopologyEvidenceError(f"provider artifacts are malformed: {provider}")
+        if paths.error is not None:
+            try:
+                error_path = _contained_provider_file(paths.owner_dir, paths.error)
+                reason = _provider_error_reason(error_path)
+            except FileNotFoundError:
+                reason = None
+            except (OSError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise TopologyEvidenceError(
+                    f"invalid provider error evidence for {source_id}/{provider}: {exc}"
+                ) from exc
+            if reason is not None:
+                unavailable.append(provider)
+                providers.append(
+                    TopologyProviderCandidate(provider=provider, unavailable_reason=reason)
+                )
+                continue
         try:
             analysis_path = _contained_provider_file(paths.owner_dir, paths.analysis)
             summary_path = _contained_provider_file(paths.owner_dir, paths.summary)
         except FileNotFoundError:
             unavailable.append(provider)
+            providers.append(
+                TopologyProviderCandidate(
+                    provider=provider,
+                    unavailable_reason={"kind": "missing", "message": "provider analysis or summary is missing"},
+                )
+            )
             continue
         except OSError as exc:
             raise TopologyEvidenceError(
@@ -109,7 +132,7 @@ def build_topology_snapshot_candidate(
             )
         )
 
-    if not providers:
+    if not any(provider.unavailable_reason is None for provider in providers):
         raise TopologyEvidenceError(f"source has no usable provider evidence: {source_id}")
     return TopologyEvidence(
         candidate=TopologySnapshotCandidate(
@@ -206,7 +229,19 @@ def upgrade_legacy_codegraph_candidate(
         return None
     symbols_raw = legacy.get("symbols")
     relationships_raw = legacy.get("relationships", [])
-    if not isinstance(symbols_raw, list) or not isinstance(relationships_raw, list):
+    call_graph_raw = legacy.get("call_graph", [])
+    type_hierarchy_raw = legacy.get("type_hierarchy", [])
+    impact_radius_raw = legacy.get("impact_radius", [])
+    if not all(
+        isinstance(value, list)
+        for value in (
+            symbols_raw,
+            relationships_raw,
+            call_graph_raw,
+            type_hierarchy_raw,
+            impact_radius_raw,
+        )
+    ):
         return None
     symbols: list[dict[str, object]] = []
     aliases: dict[str, list[str]] = {}
@@ -242,28 +277,54 @@ def upgrade_legacy_codegraph_candidate(
             aliases.setdefault(alias, []).append(key)
     if len({symbol["symbol_key"] for symbol in symbols}) != len(symbols):
         return None
+    def resolve(raw: Mapping[str, object], *names: str) -> tuple[str, str] | None:
+        for name in names:
+            value = raw.get(name)
+            if not isinstance(value, str):
+                continue
+            matches = aliases.get(value, [])
+            if len(matches) != 1:
+                return None
+            return value, matches[0]
+        return None
+
     relationships: list[dict[str, object]] = []
     for raw in relationships_raw:
         if not isinstance(raw, dict):
             return None
-        source = raw.get("source")
-        target = raw.get("target")
+        source = resolve(raw, "source", "source_name")
+        target = resolve(raw, "target", "target_name")
         kind = raw.get("kind")
-        if not isinstance(source, str) or not isinstance(target, str) or not isinstance(kind, str):
-            return None
-        source_keys = aliases.get(source, [])
-        target_keys = aliases.get(target, [])
-        if len(source_keys) != 1 or len(target_keys) != 1:
+        if source is None or target is None or not isinstance(kind, str):
             return None
         relationships.append(
             {
                 "kind": kind,
-                "source_key": source_keys[0],
-                "target_key": target_keys[0],
-                "source_name": source,
-                "target_name": target,
+                "source_key": source[1],
+                "target_key": target[1],
+                "source_name": source[0],
+                "target_name": target[0],
             }
         )
+    call_graph = _upgrade_legacy_projection(
+        call_graph_raw,
+        resolve,
+        ("caller", "caller_name", "source", "source_name"),
+        ("callee", "callee_name", "target", "target_name"),
+        "caller_key",
+        "callee_key",
+    )
+    type_hierarchy = _upgrade_legacy_projection(
+        type_hierarchy_raw,
+        resolve,
+        ("child", "child_name", "source", "source_name"),
+        ("parent", "parent_name", "target", "target_name"),
+        "child_key",
+        "parent_key",
+    )
+    impact_radius = _upgrade_legacy_impact_projection(impact_radius_raw, resolve)
+    if call_graph is None or type_hierarchy is None or impact_radius is None:
+        return None
     analysis = json.dumps(
         {
             "schema_version": 2,
@@ -285,9 +346,9 @@ def upgrade_legacy_codegraph_candidate(
             "diagnostics": {"unresolved_relationships": []},
             "symbols": symbols,
             "relationships": relationships,
-            "call_graph": [],
-            "type_hierarchy": [],
-            "impact_radius": [],
+            "call_graph": call_graph,
+            "type_hierarchy": type_hierarchy,
+            "impact_radius": impact_radius,
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -310,6 +371,70 @@ def upgrade_legacy_codegraph_candidate(
         ),
         unavailable_providers=(),
     )
+
+
+def _provider_error_reason(path: Path) -> dict[str, object]:
+    """Read an explicit provider failure without promoting any provider bytes."""
+    document = json.loads(path.read_bytes())
+    if not isinstance(document, dict):
+        raise ValueError("provider error must be a JSON object")
+    kind = document.get("kind")
+    message = document.get("message")
+    if not isinstance(kind, str) or not kind or not isinstance(message, str) or not message:
+        raise ValueError("provider error requires kind and message")
+    return dict(document)
+
+
+def _upgrade_legacy_projection(
+    entries: list[object],
+    resolve: object,
+    source_fields: tuple[str, ...],
+    target_fields: tuple[str, ...],
+    source_key: str,
+    target_key: str,
+) -> list[dict[str, object]] | None:
+    """Preserve native projection fields while replacing display endpoints exactly."""
+    if not callable(resolve):
+        return None
+    upgraded: list[dict[str, object]] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            return None
+        source = resolve(entry, *source_fields)
+        target = resolve(entry, *target_fields)
+        if source is None or target is None:
+            return None
+        row = dict(entry)
+        row[source_key] = source[1]
+        row[target_key] = target[1]
+        upgraded.append(row)
+    return upgraded
+
+
+def _upgrade_legacy_impact_projection(
+    entries: list[object], resolve: object
+) -> list[dict[str, object]] | None:
+    if not callable(resolve):
+        return None
+    upgraded: list[dict[str, object]] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            return None
+        symbol = resolve(entry, "symbol", "symbol_name", "source", "source_name")
+        values = entry.get("affected", entry.get("affected_names", entry.get("affected_symbols")))
+        if symbol is None or not isinstance(values, list) or any(not isinstance(value, str) for value in values):
+            return None
+        affected: list[str] = []
+        for value in values:
+            target = resolve({"target": value}, "target")
+            if target is None:
+                return None
+            affected.append(target[1])
+        row = dict(entry)
+        row["symbol_key"] = symbol[1]
+        row["affected_keys"] = affected
+        upgraded.append(row)
+    return upgraded
 
 
 def _contained_provider_file(owner_dir: Path, path: Path) -> Path:

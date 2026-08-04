@@ -248,13 +248,45 @@ def test_re_state_accepts_codegraph_analysis_artifact_updates():
     )
 
 
-def test_run_analysis_writes_compact_codegraph_summary():
+def test_run_analysis_requests_provider_owned_schema_two_codegraph_summary():
     run_analysis = (
         EXT_ROOT / "extension" / "scripts" / "bash" / "re" / "run-analysis.sh"
     ).read_text()
 
-    assert "write_codegraph_summary()" in run_analysis
+    bridge = (CODEGRAPH_RUNTIME_DIR / "codegraph-bridge.js").read_text()
+    assert "--summary-path" in run_analysis
+    assert "assembleSummary(output)" in bridge
+    assert "provider_status: output.provider_status" in bridge
+    assert "counts: output.counts" in bridge
+    assert "diagnostics: output.diagnostics" in bridge
+    assert "cp \"$analysis_path\" \"$summary_path\"" not in run_analysis
     assert "codegraph-summary.json" in run_analysis
+
+
+def test_bridge_compact_summary_carries_schema_two_provider_fields(tmp_path: Path) -> None:
+    script = """
+const bridge = require(process.argv[2]);
+const summary = bridge.assembleSummary({
+  schema_version: 2, tool: 'codegraph', tool_version: '1.4.1',
+  provider_status: 'complete', complete: true,
+  counts: {discovered_symbols: 1, emitted_symbols: 1},
+  diagnostics: {unresolved_relationships: []}, symbols: [{name: 'not-a-summary'}]
+});
+if (summary.schema_version !== 2 || summary.tool !== 'codegraph' ||
+    summary.provider_status !== 'complete' || !summary.complete ||
+    summary.counts.emitted_symbols !== 1 || !Array.isArray(summary.diagnostics.unresolved_relationships) ||
+    'symbols' in summary) process.exit(1);
+"""
+    script_path = tmp_path / "summary-contract.js"
+    script_path.write_text(script, encoding="utf-8")
+    completed = subprocess.run(
+        ["node", str(script_path), str(CODEGRAPH_RUNTIME_DIR / "codegraph-bridge.js")],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
 
 
 def test_run_analysis_polyrepo_writes_per_repo_codegraph_artifacts():
@@ -264,8 +296,8 @@ def test_run_analysis_polyrepo_writes_per_repo_codegraph_artifacts():
 
     assert '"$REPO_OUTPUT/codegraph-analysis.json"' in run_analysis
     assert '"$REPO_OUTPUT/codegraph-summary.json"' in run_analysis
-    assert "write_polyrepo_codegraph_summary()" in run_analysis
-    assert '"mode": "polyrepo"' in run_analysis
+    assert "write_polyrepo_codegraph_summary()" not in run_analysis
+    assert "index_state" not in run_analysis
 
 
 def test_re_controller_tracks_codegraph_artifacts(tmp_path):

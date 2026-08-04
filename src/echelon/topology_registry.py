@@ -92,7 +92,10 @@ class TopologyProviderReceipt:
             if artifact.name != name:
                 raise TopologyRegistryError("topology artifact map key does not match artifact name")
             artifacts[name] = artifact
-        if "analysis" not in artifacts:
+        if self.status == "unavailable":
+            if self.complete or artifacts or self.artifact_schema_version is not None or self.tool_version is not None or self.capabilities or self.counts:
+                raise TopologyRegistryError("unavailable provider must contain only a structured diagnostic")
+        elif "analysis" not in artifacts:
             raise TopologyRegistryError(f"topology provider {provider} has no analysis artifact")
         if self.artifact_schema_version is not None and (
             not isinstance(self.artifact_schema_version, int)
@@ -235,6 +238,9 @@ def load_published_topology(
         artifact_paths[source.source_id] = {}
         statuses[source.source_id] = {}
         for provider_name, provider_receipt in source.providers.items():
+            if provider_receipt.status == "unavailable":
+                statuses[source.source_id][provider_name] = "unavailable"
+                continue
             for artifact in provider_receipt.artifacts.values():
                 raw = _read_hashed_artifact(root, source.source_id, artifact)
                 if artifact.name != "analysis":
@@ -269,7 +275,11 @@ def load_published_topology(
                 artifact_paths[source.source_id][provider_name] = artifact.path
                 statuses[source.source_id][provider_name] = loaded.status
         loaded_names = set(receipt_hashes[source.source_id])
-        if loaded_names != set(source.providers):
+        expected_loaded = {
+            provider for provider, receipt in source.providers.items()
+            if receipt.status != "unavailable"
+        }
+        if loaded_names != expected_loaded:
             raise TopologyRegistryError(
                 f"selected source did not load every authoritative provider: {source.source_id}"
             )
@@ -400,6 +410,21 @@ def _parse_providers(
         provider = _provider(provider_name)
         row = _object(data[provider_name], f"provider {source_id}/{provider}")
         base = {"status", "complete", "artifacts"}
+        unavailable = row.get("status") == "unavailable"
+        if unavailable:
+            _exact_keys(row, base | ({"diagnostics"} if detailed else set()), f"provider {source_id}/{provider}")
+            diagnostics_data = row.get("diagnostics", [])
+            if not isinstance(diagnostics_data, list) or (detailed and not diagnostics_data):
+                raise TopologyRegistryError("unavailable provider diagnostics must be a non-empty list")
+            receipt = TopologyProviderReceipt(
+                provider=provider,
+                status="unavailable",
+                complete=_bool(row.get("complete"), "provider complete"),
+                artifacts={},
+                diagnostics=tuple(diagnostics_data),
+            )
+            providers[provider] = receipt
+            continue
         detailed_keys = base | {"artifact_schema_version", "tool_version", "capabilities", "counts", "diagnostics"}
         _exact_keys(row, detailed_keys if detailed else base, f"provider {source_id}/{provider}")
         artifacts_data = _object(row.get("artifacts"), f"provider artifacts {source_id}/{provider}")

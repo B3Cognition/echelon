@@ -91,6 +91,38 @@ def test_audit_reports_degraded_provider_without_marking_snapshot_invalid(
 
 
 @pytest.mark.unit
+def test_audit_reports_structurally_valid_unavailable_provider_as_degraded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    index = build_topology(tmp_path)
+    receipt_path = tmp_path / index["sources"]["api"]["receipt"]["path"]  # type: ignore[index]
+    receipt = json.loads(receipt_path.read_text())
+    unavailable = {
+        "status": "unavailable",
+        "complete": False,
+        "artifacts": {},
+        "diagnostics": [{"kind": "missing", "message": "provider output missing"}],
+    }
+    receipt["providers"]["codegraph"] = unavailable
+    receipt_sha = _write_json(receipt_path, receipt)
+    index["sources"]["api"]["receipt"]["sha256"] = receipt_sha  # type: ignore[index]
+    index["sources"]["api"]["providers"]["codegraph"] = {
+        "status": "unavailable", "complete": False, "artifacts": {}
+    }  # type: ignore[index]
+    _write_json(tmp_path / "re/topology/index.json", index)
+    from harness.re_fingerprint import SourceFingerprint
+    from echelon.topology_audit import audit_topology
+
+    fingerprint = SourceFingerprint("0" * 64, "git", False, "1" * 64, "0123456789abcdef0123456789abcdef01234567")
+    monkeypatch.setattr("echelon.topology_audit.resolve_re_fingerprint_profile", lambda root: object())
+    monkeypatch.setattr("echelon.topology_audit.fingerprint_source", lambda path, profile: fingerprint)
+    report = audit_topology(tmp_path)
+
+    assert report.status == "degraded"
+    assert report.findings[0].provider == "codegraph"
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize("case", ("malformed", "removed", "duplicate_key", "bad_endpoint", "count_mismatch"))
 def test_audit_reports_structural_contract_failures_as_invalid(
     tmp_path: Path, case: str

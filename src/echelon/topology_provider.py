@@ -36,7 +36,7 @@ DEFAULT_LIMIT = 50
 MAX_LIMIT = 500
 DEFAULT_IMPACT_DEPTH = 3
 MAX_IMPACT_DEPTH = 10
-NORMALIZED_STATUSES = frozenset({"ready", "degraded", "empty", "unsupported"})
+NORMALIZED_STATUSES = frozenset({"ready", "degraded", "empty", "unsupported", "unavailable"})
 IMPACT_DIRECTIONS: Mapping[str, str] = MappingProxyType(
     {
         "CONTAINS": "out",
@@ -1195,6 +1195,18 @@ def _validate_explicit_provider_provenance(
             for source_id, provider_entries in entries.items()
             for provider in provider_entries
         }
+        if label == "statuses":
+            unavailable = {
+                (source_id, provider)
+                for source_id, provider_entries in entries.items()
+                for provider, status in provider_entries.items()
+                if status == "unavailable"
+            }
+            if actual != expected | unavailable:
+                raise TopologyProviderError(
+                    f"provider provenance {label} must match loaded and unavailable providers"
+                )
+            continue
         if actual != expected:
             raise TopologyProviderError(
                 f"provider provenance {label} must exactly match loaded providers"

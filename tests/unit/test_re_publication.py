@@ -16,6 +16,7 @@ import pytest
 import harness.re_lock as re_lock
 import harness.re_publication as re_publication
 from harness.re_artifacts import ReArtifactDescriptor
+from harness.publication_transaction import PublicationTransactionError
 from harness.re_architecture import build_re_architecture_map, write_re_architecture_catalog
 from harness.re_quality_gate import (
     QUALITY_CONTRACT_VERSION,
@@ -26,6 +27,7 @@ from harness.re_fingerprint import ReFingerprintProfile, SourceFingerprint
 from harness.re_planner import ReExecutionPlan, RePlanSource
 from harness.re_publication import (
     RePublicationConflict,
+    RePublicationError,
     RePublicationValidationError,
     publish_re_run,
     recover_interrupted_publication,
@@ -474,11 +476,8 @@ def test_complete_two_source_publish_creates_generation_with_typed_artifact_cata
     assert (tmp_path / "re/workspace/contracts.md").is_file()
     assert (tmp_path / "re/workspace/architecture-map.json").is_file()
     assert (tmp_path / "re/workspace/domain-catalog.md").is_file()
-    assert index["workspace"]["codegraph_summary"] == "re/workspace/codegraph-summary.json"
-    assert json.loads((tmp_path / "re/workspace/codegraph-summary.json").read_text()) == {
-        "workspace": True,
-        "sources": ["api"],
-    }
+    assert "codegraph_summary" not in index["workspace"]
+    assert not (tmp_path / "re/workspace/codegraph-summary.json").exists()
     source_manifest = _read_json(tmp_path / "re/sources/api/manifest.json")
     assert source_manifest["artifacts"] == sorted(
         source_manifest["artifacts"], key=lambda row: row["path"]
@@ -546,6 +545,58 @@ def test_publication_stages_semantic_and_topology_authorities_together(tmp_path:
 
 
 @pytest.mark.unit
+def test_configured_refresh_without_provider_evidence_is_atomic_failure(tmp_path: Path) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    (tmp_path / ".echelon").mkdir()
+    (tmp_path / ".echelon" / "config.yml").write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RePublicationValidationError, match="no usable topology evidence"):
+        publish_re_run(tmp_path, run_dir)
+
+    assert not (tmp_path / "re/index.json").exists()
+    assert not (tmp_path / "re/topology/index.json").exists()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("topology_target", ("topology/index.json", "topology/sources/api"))
+def test_topology_staging_corruption_rolls_back_both_authorities(
+    tmp_path: Path,
+    topology_target: str,
+) -> None:
+    config = tmp_path / ".echelon/config.yml"
+    config.parent.mkdir()
+    config.write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n",
+        encoding="utf-8",
+    )
+    run_1 = write_valid_re_run(tmp_path, ("api",), run_id="run-1")
+    _write_json(run_1 / "re/sources/api/codegraph-analysis.json", _topology_codegraph("api"))
+    _write_json(run_1 / "re/sources/api/codegraph-summary.json", {"provider": "codegraph"})
+    publish_re_run(tmp_path, run_1)
+    _finish_run(run_1)
+    before = _durable_snapshot(tmp_path)
+
+    run_2 = write_valid_re_run(tmp_path, ("api",), run_id="run-2", versions={"api": "v2"})
+    _write_json(run_2 / "re/sources/api/codegraph-analysis.json", _topology_codegraph("api"))
+    _write_json(run_2 / "re/sources/api/codegraph-summary.json", {"provider": "codegraph"})
+
+    def corrupt_topology_index(step: str) -> None:
+        if step == f"after_backup:{topology_target}":
+            staged = tmp_path / "re/.staging/run-2/new/re" / topology_target
+            if staged.is_dir():
+                staged = staged / "receipt.json"
+            staged.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(PublicationTransactionError, match="staged artifact changed before install"):
+        publish_re_run(tmp_path, run_2, expected_generation=1, fault_hook=corrupt_topology_index)
+
+    assert _durable_snapshot(tmp_path) == before
+
+
+@pytest.mark.unit
 def test_removing_a_configured_source_removes_its_topology_in_the_same_publication(
     tmp_path: Path,
 ) -> None:
@@ -592,15 +643,15 @@ def test_reuse_migrates_valid_schema_two_provider_artifacts_from_legacy_semantic
 ) -> None:
     from echelon.topology_registry import load_topology_index
 
+    run_1 = write_valid_re_run(tmp_path, ("api",), run_id="run-1")
+    publish_re_run(tmp_path, run_1)
+    _finish_run(run_1)
     config = tmp_path / ".echelon" / "config.yml"
     config.parent.mkdir()
     config.write_text(
         "workspace:\n  sources:\n    - id: api\n      path: sources/api\n",
         encoding="utf-8",
     )
-    run_1 = write_valid_re_run(tmp_path, ("api",), run_id="run-1")
-    publish_re_run(tmp_path, run_1)
-    _finish_run(run_1)
     legacy = tmp_path / "re/sources/api"
     _write_json(legacy / "codegraph-analysis.json", _topology_codegraph("api"))
     _write_json(legacy / "codegraph-summary.json", {"provider": "codegraph"})
@@ -618,6 +669,95 @@ def test_reuse_migrates_valid_schema_two_provider_artifacts_from_legacy_semantic
     assert topology is not None and set(topology.sources) == {"api"}
     assert not (legacy / "codegraph-analysis.json").exists()
     assert (tmp_path / "re/topology/sources/api/codegraph-analysis.json").is_file()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "field,value",
+    (
+        ("source_fingerprint", "f" * 64),
+        ("profile_hash", "e" * 64),
+        ("dirty", True),
+        ("source_path", "sources/other"),
+        ("git_head", "0123456789abcdef0123456789abcdef01234567"),
+    ),
+)
+def test_untrusted_legacy_topology_bytes_do_not_block_semantic_republish(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    run_1 = write_valid_re_run(tmp_path, ("api",), run_id="run-1")
+    publish_re_run(tmp_path, run_1)
+    _finish_run(run_1)
+    config = tmp_path / ".echelon/config.yml"
+    config.parent.mkdir()
+    config.write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n",
+        encoding="utf-8",
+    )
+    legacy = tmp_path / "re/sources/api"
+    _write_json(legacy / "codegraph-analysis.json", _topology_codegraph("api"))
+    _write_json(legacy / "codegraph-summary.json", {"provider": "codegraph"})
+    manifest = _read_json(legacy / "manifest.json")
+    manifest[field] = value
+    _write_json(legacy / "manifest.json", manifest)
+    index = _read_json(tmp_path / "re/index.json")
+    index["sources"]["api"]["manifest_artifact"]["sha256"] = "sha256:" + hashlib.sha256(
+        (legacy / "manifest.json").read_bytes()
+    ).hexdigest()
+    _write_json(tmp_path / "re/index.json", index)
+
+    run_2 = write_valid_re_run(tmp_path, ("api",), run_id="run-2", actions={"api": "reuse"})
+    result = publish_re_run(tmp_path, run_2, expected_generation=1)
+
+    assert result.generation == 2
+    assert result.topology_generation is None
+    assert not (tmp_path / "re/topology/index.json").exists()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("legacy_case", ("malformed", "ambiguous-schema-one"))
+def test_optional_reused_legacy_failures_skip_first_topology_but_publish_semantic_re(
+    tmp_path: Path, legacy_case: str
+) -> None:
+    run_1 = write_valid_re_run(tmp_path, ("api", "web"), run_id="run-1")
+    publish_re_run(tmp_path, run_1)
+    _finish_run(run_1)
+    config = tmp_path / ".echelon/config.yml"
+    config.parent.mkdir()
+    config.write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n    - id: web\n      path: sources/web\n",
+        encoding="utf-8",
+    )
+    legacy = tmp_path / "re/sources/web"
+    _write_json(legacy / "codegraph-summary.json", {"legacy": True})
+    if legacy_case == "malformed":
+        (legacy / "codegraph-analysis.json").write_text("{", encoding="utf-8")
+    else:
+        _write_json(
+            legacy / "codegraph-analysis.json",
+            {
+                "symbols": [
+                    {"file_path": "a.py", "qualified_name": "duplicate", "kind": "function", "line_start": 1, "line_end": 1},
+                    {"file_path": "b.py", "qualified_name": "duplicate", "kind": "function", "line_start": 1, "line_end": 1},
+                ],
+                "relationships": [{"kind": "calls", "source": "duplicate", "target": "duplicate"}],
+            },
+        )
+    run_2 = write_valid_re_run(
+        tmp_path,
+        ("api", "web"),
+        run_id="run-2",
+        versions={"api": "v2", "web": "v1"},
+        actions={"api": "refresh", "web": "reuse"},
+    )
+    _write_json(run_2 / "re/sources/api/codegraph-analysis.json", _topology_codegraph("api"))
+    _write_json(run_2 / "re/sources/api/codegraph-summary.json", {"provider": "codegraph"})
+
+    result = publish_re_run(tmp_path, run_2, expected_generation=1)
+
+    assert result.generation == 2
+    assert result.topology_generation is None
+    assert not (tmp_path / "re/topology/index.json").exists()
 
 
 @pytest.mark.unit

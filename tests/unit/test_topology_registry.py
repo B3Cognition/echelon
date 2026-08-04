@@ -417,6 +417,31 @@ def test_registry_accepts_all_unsupported_completed_provider_evidence(tmp_path: 
 
 
 @pytest.mark.unit
+def test_registry_rejects_malformed_unavailable_provider_row(tmp_path: Path) -> None:
+    index = build_topology(tmp_path)
+    receipt_path = tmp_path / index["sources"]["api"]["receipt"]["path"]  # type: ignore[index]
+    receipt = json.loads(receipt_path.read_text())
+    receipt["providers"]["codegraph"] = {
+        "status": "unavailable",
+        "complete": False,
+        "artifacts": {},
+        "diagnostics": [],
+    }
+    receipt_sha = _write_json(receipt_path, receipt)
+    index["sources"]["api"]["receipt"]["sha256"] = receipt_sha  # type: ignore[index]
+    index["sources"]["api"]["providers"]["codegraph"] = {
+        "status": "unavailable",
+        "complete": False,
+        "artifacts": {"analysis": {"path": "re/topology/sources/api/codegraph-analysis.json", "sha256": _sha(b"bad")}},
+    }  # type: ignore[index]
+    _write_json(tmp_path / "re/topology/index.json", index)
+    from echelon.topology_registry import TopologyRegistryError, load_topology_index
+
+    with pytest.raises(TopologyRegistryError, match="unavailable"):
+        load_topology_index(tmp_path)
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     "mutate",
     (

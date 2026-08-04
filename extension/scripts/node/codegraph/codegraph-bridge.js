@@ -48,6 +48,7 @@ exports.parseArgs = parseArgs;
 exports.usageMessage = usageMessage;
 exports.atomicWrite = atomicWrite;
 exports.assembleAnalysisOutput = assembleAnalysisOutput;
+exports.assembleSummary = assembleSummary;
 exports.runBridge = runBridge;
 const path = __importStar(require("path"));
 const fs = __importStar(require("fs"));
@@ -80,6 +81,7 @@ function parseArgs(argv) {
     const command = args[0] && !args[0].startsWith('--') ? args[0] : 'analyze';
     let repoPathRaw;
     let outputPathRaw;
+    let summaryPathRaw;
     let languagesRaw;
     let depthRaw;
     for (let i = 0; i < args.length; i++) {
@@ -89,6 +91,9 @@ function parseArgs(argv) {
         }
         else if (arg === '--output-path' || arg.startsWith('--output-path=')) {
             outputPathRaw = arg.includes('=') ? arg.split('=').slice(1).join('=') : args[++i];
+        }
+        else if (arg === '--summary-path' || arg.startsWith('--summary-path=')) {
+            summaryPathRaw = arg.includes('=') ? arg.split('=').slice(1).join('=') : args[++i];
         }
         else if (arg === '--languages' || arg.startsWith('--languages=')) {
             languagesRaw = arg.includes('=') ? arg.split('=').slice(1).join('=') : args[++i];
@@ -127,11 +132,12 @@ function parseArgs(argv) {
     const outputPath = outputPathRaw
         ? path.resolve(outputPathRaw)
         : path.join(repoPath, exports.DEFAULT_OUTPUT_RELATIVE);
+    const summaryPath = summaryPathRaw ? path.resolve(summaryPathRaw) : undefined;
     // Parse --languages
     const languages = languagesRaw && languagesRaw.trim().length > 0
         ? languagesRaw.split(',').map(l => l.trim()).filter(l => l.length > 0)
         : undefined;
-    return { command, repoPath, outputPath, languages, depth };
+    return { command, repoPath, outputPath, summaryPath, languages, depth };
 }
 // ---------------------------------------------------------------------------
 // UsageError — signals argument validation failure (exit 1)
@@ -152,11 +158,12 @@ function usageMessage() {
 Options:
   --repo-path <path>       Required. Absolute or relative path to the repository.
   --output-path <path>     Output JSON path. Default: <repo-path>/${exports.DEFAULT_OUTPUT_RELATIVE}
+  --summary-path <path>    Optional provider summary JSON path.
   --languages <list>       Comma-separated list of languages to extract (e.g. typescript,python).
   --depth <n>              Impact radius traversal depth (${exports.MIN_DEPTH}-${exports.MAX_DEPTH}). Default: ${exports.DEFAULT_DEPTH}.
 
 Exit codes:
-  0  Success (or partial extraction — check index_stats.index_state)
+  0  Success (or partial extraction — check provider_status and complete)
   1  Invalid arguments or missing dependency
   2  System error (index build failure, write failure, timeout)
 `;
@@ -277,6 +284,18 @@ function assembleAnalysisOutput(params) {
     };
     return output;
 }
+/** Build the provider-owned receipt without copying the full graph artifact. */
+function assembleSummary(output) {
+    return {
+        schema_version: output.schema_version,
+        tool: output.tool,
+        tool_version: output.tool_version,
+        provider_status: output.provider_status,
+        complete: output.complete,
+        counts: output.counts,
+        diagnostics: output.diagnostics,
+    };
+}
 
 function hasSymbolKey(value) {
     return typeof value === 'string' && /^sha256:[0-9a-f]{64}$/.test(value);
@@ -381,7 +400,7 @@ async function main() {
         }
         throw err;
     }
-    const { repoPath, outputPath, languages, depth } = parsed;
+    const { repoPath, outputPath, summaryPath, languages, depth } = parsed;
     // Timeout guard (T015)
     let timeoutId;
     const timeoutPromise = new Promise((_, reject) => {
@@ -392,7 +411,7 @@ async function main() {
     });
     try {
         await Promise.race([
-            runBridge(repoPath, outputPath, languages, depth),
+            runBridge(repoPath, outputPath, languages, depth, summaryPath),
             timeoutPromise,
         ]);
         clearTimeout(timeoutId);
@@ -409,7 +428,7 @@ async function main() {
  * Full bridge orchestration pipeline.
  * Exported for integration testing.
  */
-async function runBridge(repoPath, outputPath, languages, depth) {
+async function runBridge(repoPath, outputPath, languages, depth, summaryPath) {
     // Step 1: Grammar init
     process.stderr.write('[codegraph-bridge] INFO: grammar init: starting\n');
     try {
@@ -487,10 +506,13 @@ async function runBridge(repoPath, outputPath, languages, depth) {
     }
     // Step 14: Close index
     await adapter.closeIndex(cg);
-    // Step 15: Atomic write
+    // Step 15: Atomic writes
     process.stderr.write(`[codegraph-bridge] INFO: writing output: ${outputPath}\n`);
     try {
         await atomicWrite(outputPath, json);
+        if (summaryPath) {
+            await atomicWrite(summaryPath, JSON.stringify(assembleSummary(output), null, 2));
+        }
     }
     catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

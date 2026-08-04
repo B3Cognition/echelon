@@ -52,9 +52,10 @@ class TopologyProviderCandidate:
     """Explicit curated provider inputs for one source snapshot."""
 
     provider: str
-    analysis: ArtifactInput
-    summary: ArtifactInput
+    analysis: ArtifactInput | None = None
+    summary: ArtifactInput | None = None
     capabilities: tuple[str, ...] = ()
+    unavailable_reason: Mapping[str, object] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.provider, str) or not self.provider:
@@ -64,6 +65,13 @@ class TopologyProviderCandidate:
         ):
             raise TopologyPublicationValidationError("provider capabilities must be a tuple of strings")
         object.__setattr__(self, "capabilities", tuple(sorted(set(self.capabilities))))
+        unavailable = self.unavailable_reason is not None
+        if unavailable and (self.analysis is not None or self.summary is not None or self.capabilities):
+            raise TopologyPublicationValidationError("unavailable provider cannot carry artifacts or capabilities")
+        if not unavailable and (self.analysis is None or self.summary is None):
+            raise TopologyPublicationValidationError("provider candidate requires analysis and summary")
+        if unavailable and not isinstance(self.unavailable_reason, Mapping):
+            raise TopologyPublicationValidationError("unavailable provider requires structured reason")
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,17 +143,11 @@ def stage_topology_snapshots(
         raise TopologyPublicationValidationError(
             f"current topology publication is structurally invalid: {exc}"
         ) from exc
-    if current is None and not prepared:
-        return None
     selected = {item.candidate.source_id for item in prepared}
     required = set(required_source_ids)
     if not required <= set(configured):
         raise TopologyPublicationValidationError(
             "required topology source is not configured in workspace"
-        )
-    if current is None and selected != set(configured):
-        raise TopologyPublicationValidationError(
-            "first topology publication must cover every configured workspace source"
         )
     if current is not None and not selected <= set(configured):
         raise TopologyPublicationValidationError("candidate source is not configured in workspace")
@@ -154,6 +156,17 @@ def stage_topology_snapshots(
         raise TopologyPublicationValidationError(
             f"refreshed source has no usable topology evidence: {missing}"
         )
+    if current is None and required and not required <= selected:
+        missing = ", ".join(sorted(required - selected))
+        raise TopologyPublicationValidationError(
+            f"refreshed source has no usable topology evidence: {missing}"
+        )
+    if current is None and selected and selected != set(configured):
+        raise TopologyPublicationValidationError(
+            "first topology publication must cover every configured workspace source"
+        )
+    if current is None and not prepared:
+        return None
     if not prepared and not removed:
         return None
     generation = (current.generation if current else 0) + 1
@@ -223,11 +236,11 @@ def publish_topology_snapshots(
 @dataclass(frozen=True, slots=True)
 class _PreparedProvider:
     provider: str
-    analysis: bytes
-    summary: bytes
+    analysis: bytes | None
+    summary: bytes | None
     status: str
     complete: bool
-    tool_version: str
+    tool_version: str | None
     capabilities: tuple[str, ...]
     counts: Mapping[str, int]
     diagnostics: tuple[object, ...]
@@ -267,6 +280,24 @@ def _validate_candidates(root: Path, candidates: tuple[TopologySnapshotCandidate
                     f"duplicate provider for source {candidate.source_id}: {provider.provider}"
                 )
             seen_providers.add(provider.provider)
+            if provider.unavailable_reason is not None:
+                reason = dict(provider.unavailable_reason)
+                if not reason or not isinstance(reason.get("kind"), str) or not isinstance(reason.get("message"), str):
+                    raise TopologyPublicationValidationError("unavailable provider reason is malformed")
+                providers.append(
+                    _PreparedProvider(
+                        provider=provider.provider,
+                        analysis=None,
+                        summary=None,
+                        status="unavailable",
+                        complete=False,
+                        tool_version=None,
+                        capabilities=(),
+                        counts={},
+                        diagnostics=(reason,),
+                    )
+                )
+                continue
             analysis = _artifact_bytes(provider.analysis, "analysis", owner_root)
             summary = _artifact_bytes(provider.summary, "summary", owner_root)
             if not summary.strip():
@@ -314,6 +345,10 @@ def _validate_candidates(root: Path, candidates: tuple[TopologySnapshotCandidate
                 )
             _validate_provider_receipt_candidate(candidate.source_id, prepared_provider)
             providers.append(prepared_provider)
+        if not any(provider.status != "unavailable" for provider in providers):
+            raise TopologyPublicationValidationError(
+                f"source has no usable providers: {candidate.source_id}"
+            )
         prepared.append(_PreparedCandidate(candidate, tuple(sorted(providers, key=lambda item: item.provider))))
     return tuple(sorted(prepared, key=lambda item: item.candidate.source_id))
 
@@ -374,6 +409,18 @@ def _stage_snapshot_tree(
         provider_rows: dict[str, object] = {}
         receipt_providers: dict[str, object] = {}
         for provider in prepared.providers:
+            if provider.status == "unavailable":
+                base = {
+                    "status": "unavailable",
+                    "complete": False,
+                    "artifacts": {},
+                }
+                provider_rows[provider.provider] = base
+                receipt_providers[provider.provider] = {
+                    **base,
+                    "diagnostics": list(provider.diagnostics),
+                }
+                continue
             analysis_name = f"{provider.provider}-analysis.json"
             summary_name = f"{provider.provider}-summary.json"
             analysis_path = source_root / analysis_name
@@ -581,6 +628,15 @@ def _validate_provider_receipt_candidate(
 ) -> None:
     """Apply the strict receipt metadata contract before the publication lock."""
     try:
+        if provider.status == "unavailable":
+            TopologyProviderReceipt(
+                provider=provider.provider,
+                status="unavailable",
+                complete=False,
+                artifacts={},
+                diagnostics=provider.diagnostics,
+            )
+            return
         artifacts = {
             "analysis": TopologyArtifactReceipt(
                 "analysis",
