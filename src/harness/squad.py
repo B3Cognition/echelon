@@ -1141,9 +1141,24 @@ class SquadController:
         try:
             ctx = MemPalaceContext.from_project(self._project_root, run_id=run_id or "squad-context")
             reader = MemPalaceReader(ctx)
-            return list(reader.search_requirements(query, n_results=10))
+            drawers = list(reader.search_requirements(query, n_results=10))
         except (Exception, SystemExit):
             return []
+        state = self._state_store.load()
+        retarget = state.get("retarget")
+        if (
+            isinstance(retarget, Mapping)
+            and retarget.get("memory_excluded") is True
+        ):
+            from echelon.mempalace_retarget import (
+                exclude_retarget_spec_drawers,
+            )
+
+            return exclude_retarget_spec_drawers(
+                drawers,
+                str(state.get("spec_id") or ""),
+            )
+        return drawers
 
     def _completion_timing_parameters(
         self,

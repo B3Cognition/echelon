@@ -23,9 +23,15 @@ class FakeCollection:
         self.calls = []
         self.deleted_ids = []
 
-    def get(self, ids=None, where=None, include=None, limit=None):
+    def get(self, ids=None, where=None, include=None, limit=None, offset=None):
         self.calls.append(
-            {"ids": ids, "where": where, "include": include, "limit": limit}
+            {
+                "ids": ids,
+                "where": where,
+                "include": include,
+                "limit": limit,
+                "offset": offset,
+            }
         )
         if ids is not None:
             found = [(drawer_id, self.rows[drawer_id]) for drawer_id in ids if drawer_id in self.rows]
@@ -35,7 +41,7 @@ class FakeCollection:
                 for drawer_id, row in self.rows.items()
                 if where is None
                 or all(row.get("metadata", {}).get(key) == value for key, value in where.items())
-            ][:limit]
+            ][offset or 0 : (offset or 0) + limit if limit is not None else None]
         return {
             "ids": [drawer_id for drawer_id, _row in found],
             "documents": [row["document"] for _drawer_id, row in found],
@@ -637,6 +643,32 @@ def test_write_audit_reports_are_stable(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_write_audit_reports_rejects_symlinked_report_target(tmp_path: Path) -> None:
+    from echelon.mempalace_audit import SpecMemoryAuditReport, write_audit_reports
+
+    spec_dir = tmp_path / "specs" / "003-demo"
+    spec_dir.mkdir(parents=True)
+    unrelated = tmp_path / "unrelated.json"
+    unrelated.write_text("preserve me\n", encoding="utf-8")
+    (spec_dir / "mempalace-audit.json").symlink_to(unrelated)
+    report = SpecMemoryAuditReport(
+        schema_version=1,
+        spec_id="003-demo",
+        spec_dir=str(spec_dir),
+        wing="demo-wing",
+        palace_path=".mempalace",
+        status="pass",
+        expected_count=1,
+        present_current_count=1,
+    )
+
+    with pytest.raises(OSError, match="regular file"):
+        write_audit_reports(report, spec_dir)
+
+    assert unrelated.read_text(encoding="utf-8") == "preserve me\n"
+
+
+@pytest.mark.unit
 def test_audit_rejects_corrupted_document_and_stable_metadata(tmp_path: Path, monkeypatch) -> None:
     spec_dir = make_spec(tmp_path)
     from echelon.mempalace_requirements import load_canonical_spec_snapshot
@@ -878,3 +910,61 @@ def test_audit_bounds_planner_fault_as_deterministic_failure(
 
     assert report.status == "fail"
     assert report.errors == [fault_type.__name__]
+
+
+@pytest.mark.unit
+def test_complete_scan_reads_every_page_and_verifies_stable_order() -> None:
+    rows = {
+        f"drawer-{index}": {
+            "document": f"document {index}",
+            "metadata": {"wing": "demo-wing", "position": index},
+        }
+        for index in range(5)
+    }
+    collection = FakeCollection(rows)
+    from echelon.mempalace_audit import scan_wing_rows_complete
+
+    result = scan_wing_rows_complete(
+        collection,
+        wing="demo-wing",
+        page_size=2,
+        maximum_rows=10,
+    )
+
+    assert list(result) == [f"drawer-{index}" for index in range(5)]
+    assert [call["offset"] for call in collection.calls] == [
+        0,
+        2,
+        4,
+        5,
+        0,
+        2,
+        4,
+        5,
+    ]
+
+
+@pytest.mark.unit
+def test_complete_scan_rejects_a_short_truncated_page() -> None:
+    class TruncatedCollection:
+        def get(self, *, where, include, limit, offset):
+            rows = {
+                0: ("drawer-a", "a"),
+                1: ("drawer-b", "b"),
+            }
+            selected = [rows[offset]] if offset in rows else []
+            return {
+                "ids": [drawer_id for drawer_id, _document in selected],
+                "documents": [document for _drawer_id, document in selected],
+                "metadatas": [{"wing": "demo-wing"} for _row in selected],
+            }
+
+    from echelon.mempalace_audit import SpecMemoryError, scan_wing_rows_complete
+
+    with pytest.raises(SpecMemoryError, match="truncated"):
+        scan_wing_rows_complete(
+            TruncatedCollection(),
+            wing="demo-wing",
+            page_size=2,
+            maximum_rows=10,
+        )

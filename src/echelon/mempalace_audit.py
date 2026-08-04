@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import hashlib
 import json
+import os
 from pathlib import Path
+import tempfile
 from typing import Any
 
 from echelon.context_reconciliation import reconcile_drawers
@@ -133,6 +135,126 @@ def _as_collection_rows(raw: object) -> _ParsedCollectionRows:
         else:
             result[drawer_id] = (document, metadata)
     return _ParsedCollectionRows(rows=result, malformed=malformed)
+
+
+def _scan_wing_rows_once(
+    collection: object,
+    *,
+    wing: str,
+    page_size: int,
+    maximum_rows: int,
+) -> tuple[dict[str, tuple[str, dict[str, Any]]], tuple[str, ...]]:
+    rows: dict[str, tuple[str, dict[str, Any]]] = {}
+    order: list[str] = []
+    offset = 0
+    while True:
+        request_limit = min(page_size, maximum_rows - offset)
+        if request_limit == 0:
+            request_limit = 1
+        try:
+            raw = collection.get(  # type: ignore[attr-defined]
+                where={"wing": wing},
+                include=["documents", "metadatas"],
+                limit=request_limit,
+                offset=offset,
+            )
+        except TypeError as exc:
+            raise SpecMemoryError(
+                "MemPalace complete scan does not support bounded pagination"
+            ) from exc
+        parsed = _as_collection_rows(raw)
+        if parsed.malformed:
+            raise SpecMemoryError(
+                "MemPalace complete scan returned malformed or duplicate drawer rows"
+            )
+        page = parsed.rows
+        if len(page) > request_limit:
+            raise SpecMemoryError(
+                "MemPalace complete scan returned more rows than requested"
+            )
+        if any(metadata.get("wing") != wing for _document, metadata in page.values()):
+            raise SpecMemoryError(
+                "MemPalace complete scan returned a row from another wing"
+            )
+        overlap = set(rows).intersection(page)
+        if overlap:
+            raise SpecMemoryError(
+                "MemPalace complete scan pagination returned duplicate drawer IDs"
+            )
+        if offset == maximum_rows:
+            if page:
+                raise SpecMemoryError(
+                    "MemPalace complete scan exceeded the bounded row limit"
+                )
+            return rows, tuple(order)
+        if not page:
+            return rows, tuple(order)
+        rows.update(page)
+        order.extend(page)
+        count = len(page)
+        offset += count
+        if count < request_limit:
+            try:
+                probe = collection.get(  # type: ignore[attr-defined]
+                    where={"wing": wing},
+                    include=["documents", "metadatas"],
+                    limit=1,
+                    offset=offset,
+                )
+            except TypeError as exc:
+                raise SpecMemoryError(
+                    "MemPalace complete scan does not support bounded pagination"
+                ) from exc
+            probe_rows = _as_collection_rows(probe)
+            if probe_rows.malformed:
+                raise SpecMemoryError(
+                    "MemPalace complete scan returned malformed probe rows"
+                )
+            if probe_rows.rows:
+                raise SpecMemoryError(
+                    "MemPalace complete scan detected a truncated page"
+                )
+            return rows, tuple(order)
+
+
+def scan_wing_rows_complete(
+    collection: object,
+    *,
+    wing: str,
+    page_size: int = 512,
+    maximum_rows: int = MAX_AUDIT_SCAN_ROWS,
+) -> dict[str, tuple[str, dict[str, Any]]]:
+    """Read a bounded wing twice and reject incomplete or unstable pagination."""
+    if (
+        type(wing) is not str
+        or not wing
+        or type(page_size) is not int
+        or page_size <= 0
+        or type(maximum_rows) is not int
+        or maximum_rows <= 0
+    ):
+        raise SpecMemoryError("invalid MemPalace complete scan parameters")
+    first, first_order = _scan_wing_rows_once(
+        collection,
+        wing=wing,
+        page_size=page_size,
+        maximum_rows=maximum_rows,
+    )
+    second, second_order = _scan_wing_rows_once(
+        collection,
+        wing=wing,
+        page_size=page_size,
+        maximum_rows=maximum_rows,
+    )
+    if first_order != second_order:
+        raise SpecMemoryError(
+            "MemPalace complete scan order changed during pagination"
+        )
+    if first != second:
+        raise SpecMemoryError(
+            "MemPalace complete scan rows changed during pagination"
+        )
+    return first
 
 
 def _unavailable_report(
@@ -554,9 +676,45 @@ def render_audit_markdown(report: SpecMemoryAuditReport) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _write_text_durable_atomic(path: Path, content: str) -> None:
+    parent = path.parent
+    if parent.is_symlink() or not parent.is_dir():
+        raise OSError("MemPalace report parent must be a real directory")
+    if os.path.lexists(path) and (path.is_symlink() or not path.is_file()):
+        raise OSError("MemPalace report target must be a regular file")
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=parent,
+    )
+    temporary = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, 0o644)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            descriptor = -1
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        directory_fd = os.open(parent, directory_flags)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        if os.path.lexists(temporary):
+            os.unlink(temporary)
+
+
 def write_audit_reports(report: SpecMemoryAuditReport, spec_dir: Path) -> tuple[Path, Path]:
     json_path = spec_dir / "mempalace-audit.json"
     md_path = spec_dir / "mempalace-audit.md"
-    json_path.write_text(json.dumps(report.to_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    md_path.write_text(render_audit_markdown(report), encoding="utf-8")
+    _write_text_durable_atomic(
+        json_path,
+        json.dumps(report.to_dict(), indent=2, sort_keys=True) + "\n",
+    )
+    _write_text_durable_atomic(md_path, render_audit_markdown(report))
     return json_path, md_path

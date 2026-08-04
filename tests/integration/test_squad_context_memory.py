@@ -6,7 +6,10 @@ import json
 import sys
 from pathlib import Path
 import subprocess
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 EXT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(EXT_ROOT) not in sys.path:
@@ -386,3 +389,119 @@ def test_context_metadata_publication_staging_defers_mining(
     assert metadata.requirements[0].artifact_path == (
         "specs/001-photo-album/spec.md"
     )
+
+
+def _context_drawers():
+    from codegen.memory.mempalace_reader import DrawerResult
+
+    return [
+        DrawerResult(
+            drawer_id="selected",
+            content="selected old requirement",
+            room="functional-requirements",
+            wing="demo",
+            distance=0.1,
+            metadata={
+                "spec_id": "001-demo",
+                "artifact_path": "specs/001-demo/spec.md",
+            },
+        ),
+        DrawerResult(
+            drawer_id="workspace-re",
+            content="workspace RE fact",
+            room="re-workspace-context",
+            wing="demo",
+            distance=0.2,
+            metadata={"artifact_path": "re/workspace/overview.md"},
+        ),
+        DrawerResult(
+            drawer_id="other-spec",
+            content="other requirement",
+            room="functional-requirements",
+            wing="demo",
+            distance=0.3,
+            metadata={
+                "spec_id": "002-other",
+                "artifact_path": "specs/002-other/spec.md",
+            },
+        ),
+    ]
+
+
+@pytest.mark.integration
+def test_retarget_replacement_context_excludes_only_selected_spec_drawers(
+    tmp_path: Path,
+) -> None:
+    ctrl, store = _controller(tmp_path)
+    store.initialize("run-test", "banzai", "msg", 0, "phase0-constitution")
+    state = store.load()
+    state["spec_id"] = "001-demo"
+    state["retarget"] = {"memory_excluded": True}
+    store.save(state)
+    source_drawers = _context_drawers()
+    original = list(source_drawers)
+
+    with patch(
+        "codegen.memory.context.MemPalaceContext.from_project",
+        return_value=SimpleNamespace(wing="demo", palace_path=".mempalace"),
+    ), patch(
+        "codegen.memory.mempalace_reader.MemPalaceReader.search_requirements",
+        return_value=source_drawers,
+    ):
+        result = ctrl._retrieve_mempalace_context_drawers("query", "run-test")
+
+    assert [drawer.drawer_id for drawer in result] == [
+        "workspace-re",
+        "other-spec",
+    ]
+    assert source_drawers == original
+
+
+@pytest.mark.integration
+def test_normal_context_preserves_selected_spec_drawers(tmp_path: Path) -> None:
+    ctrl, store = _controller(tmp_path)
+    store.initialize("run-test", "banzai", "msg", 0, "phase0-constitution")
+    state = store.load()
+    state["spec_id"] = "001-demo"
+    state["retarget"] = {"memory_excluded": False}
+    store.save(state)
+    source_drawers = _context_drawers()
+
+    with patch(
+        "codegen.memory.context.MemPalaceContext.from_project",
+        return_value=SimpleNamespace(wing="demo", palace_path=".mempalace"),
+    ), patch(
+        "codegen.memory.mempalace_reader.MemPalaceReader.search_requirements",
+        return_value=source_drawers,
+    ):
+        result = ctrl._retrieve_mempalace_context_drawers("query", "run-test")
+
+    assert [drawer.drawer_id for drawer in result] == [
+        "selected",
+        "workspace-re",
+        "other-spec",
+    ]
+
+
+@pytest.mark.integration
+def test_retarget_replacement_context_rejects_contradictory_metadata(
+    tmp_path: Path,
+) -> None:
+    ctrl, store = _controller(tmp_path)
+    store.initialize("run-test", "banzai", "msg", 0, "phase0-constitution")
+    state = store.load()
+    state["spec_id"] = "001-demo"
+    state["retarget"] = {"memory_excluded": True}
+    store.save(state)
+    contradictory = _context_drawers()[:1]
+    contradictory[0].metadata["spec_id"] = "002-other"
+
+    with patch(
+        "codegen.memory.context.MemPalaceContext.from_project",
+        return_value=SimpleNamespace(wing="demo", palace_path=".mempalace"),
+    ), patch(
+        "codegen.memory.mempalace_reader.MemPalaceReader.search_requirements",
+        return_value=contradictory,
+    ):
+        with pytest.raises(RuntimeError, match="ownership metadata"):
+            ctrl._retrieve_mempalace_context_drawers("query", "run-test")
