@@ -4,11 +4,15 @@ import hashlib
 import json
 import shutil
 import socket
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from typing import Callable
 
 import pytest
 
+import harness.re_publication as re_publication
+from harness.re_artifacts import ReArtifactDescriptor
 from harness.re_architecture import build_re_architecture_map, write_re_architecture_catalog
 from harness.re_quality_gate import (
     QUALITY_CONTRACT_VERSION,
@@ -30,6 +34,24 @@ from harness.re_registry import ReRegistryError
 def _write_json(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _read_json(path: Path) -> dict[str, object]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _descriptor(manifest: dict[str, object], path: str) -> dict[str, str]:
+    artifacts = manifest["artifacts"]
+    assert isinstance(artifacts, list)
+    return next(row for row in artifacts if row["path"] == path)
+
+
+def _durable_artifact_paths(directory: Path, prefix: str) -> set[str]:
+    return {
+        f"{prefix}/{path.relative_to(directory).as_posix()}"
+        for path in directory.rglob("*")
+        if path.is_file() and path.relative_to(directory).as_posix() != "manifest.json"
+    }
 
 
 def _fingerprint(source_id: str, version: str, profile: ReFingerprintProfile) -> SourceFingerprint:
@@ -295,8 +317,55 @@ def _finish_run(run_dir: Path) -> None:
     _write_json(run_dir / "state.json", state)
 
 
+def _assert_corrupt_catalog_blocks_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutate: Callable[
+        [Path, tuple[ReArtifactDescriptor, ...]],
+        tuple[ReArtifactDescriptor, ...],
+    ],
+    *,
+    match: str,
+) -> None:
+    run_1 = write_valid_re_run(tmp_path, ("api",), run_id="run-1")
+    publish_re_run(tmp_path, run_1)
+    _finish_run(run_1)
+    before = _durable_snapshot(tmp_path)
+    run_2 = write_valid_re_run(
+        tmp_path,
+        ("api",),
+        run_id="run-2",
+        versions={"api": "v2"},
+    )
+    build_catalog = re_publication.build_re_artifact_catalog
+
+    def corrupt_catalog(
+        directory: Path,
+        *,
+        published_prefix: PurePosixPath,
+        scope: str,
+        source_id: str | None = None,
+    ) -> tuple[ReArtifactDescriptor, ...]:
+        rows = build_catalog(
+            directory,
+            published_prefix=published_prefix,
+            scope=scope,
+            source_id=source_id,
+        )
+        return mutate(directory, rows) if source_id == "api" else rows
+
+    monkeypatch.setattr(re_publication, "build_re_artifact_catalog", corrupt_catalog)
+
+    with pytest.raises(RePublicationValidationError, match=match):
+        publish_re_run(tmp_path, run_2, expected_generation=1)
+
+    assert _durable_snapshot(tmp_path) == before
+
+
 @pytest.mark.unit
-def test_complete_two_source_publish_creates_one_generation(tmp_path: Path) -> None:
+def test_complete_two_source_publish_creates_generation_with_typed_artifact_catalog(
+    tmp_path: Path,
+) -> None:
     run_dir = write_valid_re_run(tmp_path, ("web", "api"))
     source_re = run_dir / "re" / "sources" / "api"
     _write_json(source_re / "structure.json", {"source_id": "api", "structure": True})
@@ -364,6 +433,101 @@ def test_complete_two_source_publish_creates_one_generation(tmp_path: Path) -> N
         "workspace": True,
         "sources": ["api"],
     }
+    source_manifest = _read_json(tmp_path / "re/sources/api/manifest.json")
+    assert source_manifest["artifacts"] == sorted(
+        source_manifest["artifacts"], key=lambda row: row["path"]
+    )
+    assert _descriptor(source_manifest, "re/sources/api/architecture.md")["kind"] == (
+        "re-architecture"
+    )
+    assert _descriptor(
+        source_manifest, "re/sources/api/adrs/ADR-001-source-boundary.md"
+    )["kind"] == "re-decision"
+    assert {row["path"] for row in source_manifest["artifacts"]} == (
+        _durable_artifact_paths(tmp_path / "re/sources/api", "re/sources/api")
+    )
+
+    workspace_manifest = _read_json(tmp_path / "re/workspace/manifest.json")
+    assert workspace_manifest["artifacts"] == sorted(
+        workspace_manifest["artifacts"], key=lambda row: row["path"]
+    )
+    assert {row["path"] for row in workspace_manifest["artifacts"]} == (
+        _durable_artifact_paths(tmp_path / "re/workspace", "re/workspace")
+    )
+    assert index["sources"]["api"]["manifest_artifact"]["kind"] == (
+        "re-source-manifest"
+    )
+    assert index["workspace"]["manifest_artifact"]["kind"] == (
+        "re-workspace-manifest"
+    )
+
+
+@pytest.mark.unit
+def test_publication_rejects_omitted_catalog_file_atomically(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _assert_corrupt_catalog_blocks_publication(
+        tmp_path,
+        monkeypatch,
+        lambda _directory, rows: rows[1:],
+        match="catalog inventory does not match durable files",
+    )
+
+
+@pytest.mark.unit
+def test_publication_rejects_duplicate_catalog_path_atomically(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _assert_corrupt_catalog_blocks_publication(
+        tmp_path,
+        monkeypatch,
+        lambda _directory, rows: rows + (rows[0],),
+        match="duplicate artifact path",
+    )
+
+
+@pytest.mark.unit
+def test_publication_rejects_unsupported_catalog_kind_atomically(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def replace_kind(
+        _directory: Path,
+        rows: tuple[ReArtifactDescriptor, ...],
+    ) -> tuple[ReArtifactDescriptor, ...]:
+        return (replace(rows[0], kind="not-supported"), *rows[1:])
+
+    _assert_corrupt_catalog_blocks_publication(
+        tmp_path,
+        monkeypatch,
+        replace_kind,
+        match="unsupported artifact kind",
+    )
+
+
+@pytest.mark.unit
+def test_publication_rejects_bytes_modified_after_cataloging_atomically(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def modify_bytes(
+        directory: Path,
+        rows: tuple[ReArtifactDescriptor, ...],
+    ) -> tuple[ReArtifactDescriptor, ...]:
+        (directory / "overview.md").write_text(
+            "modified after cataloging\n",
+            encoding="utf-8",
+        )
+        return rows
+
+    _assert_corrupt_catalog_blocks_publication(
+        tmp_path,
+        monkeypatch,
+        modify_bytes,
+        match="artifact hash mismatch",
+    )
 
 
 @pytest.mark.unit

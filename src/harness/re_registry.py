@@ -8,6 +8,11 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from harness.re_artifacts import (
+    ReArtifactCatalogError,
+    ReArtifactDescriptor,
+    validate_re_artifact_descriptor,
+)
 
 RE_REGISTRY_SCHEMA_VERSION = 1
 _SAFE_SOURCE_ID = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -56,6 +61,7 @@ class PublishedSource:
     profile_hash: str
     status: str
     manifest: str
+    manifest_artifact: ReArtifactDescriptor | None = None
 
 
 @dataclass(frozen=True)
@@ -65,6 +71,7 @@ class PublishedWorkspace:
     relationships: str
     contracts: str
     codegraph_summary: str | None = None
+    manifest_artifact: ReArtifactDescriptor | None = None
 
 
 @dataclass(frozen=True)
@@ -84,7 +91,7 @@ class PublishedReIndex:
             raw = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise ReRegistryError(f"cannot read RE index {path}: {exc}") from exc
-        return _parse_index(raw)
+        return _parse_index(raw, workspace_root=path.resolve().parent.parent)
 
 
 def ensure_re_layout(workspace_root: Path) -> ReRegistryPaths:
@@ -401,7 +408,7 @@ def published_source_is_current(
     )
 
 
-def _parse_index(raw: Any) -> PublishedReIndex:
+def _parse_index(raw: Any, *, workspace_root: Path) -> PublishedReIndex:
     if not isinstance(raw, dict):
         raise ReRegistryError("RE index must be a JSON object")
     schema_version = _required_int(raw, "schema_version", "RE index")
@@ -451,12 +458,20 @@ def _parse_index(raw: Any) -> PublishedReIndex:
             profile_hash=_required_string(source_raw, "profile_hash", source_id),
             status=status,
             manifest=manifest,
+            manifest_artifact=_parse_manifest_artifact(
+                source_raw.get("manifest_artifact"),
+                workspace_root=workspace_root,
+                owner_scope="source",
+                owner_source_id=source_id,
+                expected_path=expected_manifest,
+                expected_kind="re-source-manifest",
+            ),
         )
 
     raw_workspace = raw.get("workspace")
     if not isinstance(raw_workspace, dict):
         raise ReRegistryError("RE index workspace must be an object")
-    workspace_values: dict[str, str] = {}
+    workspace_values: dict[str, Any] = {}
     for field in _WORKSPACE_FIELDS:
         value = _safe_relative_path(
             _required_string(raw_workspace, field, "workspace"), f"workspace.{field}"
@@ -473,6 +488,14 @@ def _parse_index(raw: Any) -> PublishedReIndex:
         if value != expected:
             raise ReRegistryError(f"workspace.codegraph_summary must be {expected}")
         workspace_values["codegraph_summary"] = value
+    workspace_values["manifest_artifact"] = _parse_manifest_artifact(
+        raw_workspace.get("manifest_artifact"),
+        workspace_root=workspace_root,
+        owner_scope="workspace",
+        owner_source_id=None,
+        expected_path="re/workspace/manifest.json",
+        expected_kind="re-workspace-manifest",
+    )
 
     raw_warnings = raw.get("warnings")
     if not isinstance(raw_warnings, list) or any(not isinstance(item, str) for item in raw_warnings):
@@ -488,6 +511,31 @@ def _parse_index(raw: Any) -> PublishedReIndex:
         workspace=PublishedWorkspace(**workspace_values),
         warnings=tuple(raw_warnings),
     )
+
+
+def _parse_manifest_artifact(
+    raw: object,
+    *,
+    workspace_root: Path,
+    owner_scope: str,
+    owner_source_id: str | None,
+    expected_path: str,
+    expected_kind: str,
+) -> ReArtifactDescriptor | None:
+    if raw is None:
+        return None
+    try:
+        descriptor = validate_re_artifact_descriptor(
+            raw,
+            workspace_root=workspace_root,
+            owner_scope=owner_scope,
+            owner_source_id=owner_source_id,
+        )
+    except ReArtifactCatalogError as exc:
+        raise ReRegistryError(f"invalid manifest_artifact: {exc}") from exc
+    if descriptor.path != expected_path or descriptor.kind != expected_kind:
+        raise ReRegistryError("manifest_artifact does not describe the owner manifest")
+    return descriptor
 
 
 def _required_string(data: dict[str, Any], key: str, context: str) -> str:

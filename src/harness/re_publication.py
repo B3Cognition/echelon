@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -12,6 +13,13 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Literal
 
+from harness.re_artifacts import (
+    ReArtifactCatalogError,
+    ReArtifactDescriptor,
+    build_re_artifact_catalog,
+    classify_re_artifact,
+    validate_re_artifact_descriptor,
+)
 from harness.re_architecture import validate_re_architecture_catalog
 from harness.re_lock import (
     RePublishLock,
@@ -369,6 +377,19 @@ def _prepare_transaction(
             for source in current.sources.values()
         )
 
+    changed_source_ids = set(candidate.refreshed_sources + candidate.empty_sources)
+    if current:
+        reused_source_ids = (
+            set(current.sources)
+            - changed_source_ids
+            - set(candidate.removed_sources)
+        )
+        for source_id in sorted(reused_source_ids):
+            shutil.copytree(
+                workspace_root / "re" / "sources" / source_id,
+                new_root / "re" / "sources" / source_id,
+            )
+
     operations: list[dict[str, Any]] = []
     for source_id in candidate.removed_sources:
         source_records.pop(source_id, None)
@@ -379,7 +400,7 @@ def _prepare_transaction(
     plan_by_id = {source.id: source for source in candidate.plan.sources}
     for source_id in sorted(candidate.refreshed_sources + candidate.empty_sources):
         source = plan_by_id[source_id]
-        durable_source = new_root / "sources" / source_id
+        durable_source = new_root / "re" / "sources" / source_id
         cache_relative = f".cache/sources/{source_id}/{source.fingerprint.value}"
         codegraph_summary = None
         codegraph_analysis = None
@@ -463,7 +484,7 @@ def _prepare_transaction(
             source_status = (
                 "partial" if source_id in candidate.partial_sources else "complete"
             )
-            cache_stage = new_root / cache_relative
+            cache_stage = new_root / "re" / cache_relative
             _copy_heavy_source_artifacts(staged_source, cache_stage)
             _write_json_atomic(
                 cache_stage / "cache-manifest.json",
@@ -475,7 +496,7 @@ def _prepare_transaction(
                 },
             )
             operations.append(
-                _operation(stage_root, cache_relative, staged=f"new/{cache_relative}")
+                _operation(stage_root, cache_relative, staged=f"new/re/{cache_relative}")
             )
 
         manifest = _source_manifest(
@@ -489,18 +510,36 @@ def _prepare_transaction(
             domain_manifest=domain_manifest,
             supporting_artifacts=supporting_artifacts,
             extraction_artifacts=extraction_artifacts,
+            artifacts=[
+                descriptor.to_json_dict()
+                for descriptor in build_re_artifact_catalog(
+                    durable_source,
+                    published_prefix=PurePosixPath(f"re/sources/{source_id}"),
+                    scope="source",
+                    source_id=source_id,
+                )
+            ],
         )
         _write_json_atomic(durable_source / "manifest.json", manifest)
-        source_records[source_id] = _index_source_record(source, source_status)
+        source_records[source_id] = _index_source_record(
+            source,
+            source_status,
+            manifest_artifact=_manifest_artifact(
+                durable_source / "manifest.json",
+                PurePosixPath(f"re/sources/{source_id}/manifest.json"),
+                scope="source",
+                source_id=source_id,
+            ),
+        )
         operations.append(
             _operation(
                 stage_root,
                 f"sources/{source_id}",
-                staged=f"new/sources/{source_id}",
+                staged=f"new/re/sources/{source_id}",
             )
         )
 
-    workspace_stage = new_root / "workspace"
+    workspace_stage = new_root / "re" / "workspace"
     shutil.copytree(candidate.run_dir / "re" / "workspace", workspace_stage)
     workspace_codegraph_summary = _copy_workspace_codegraph_summary(
         candidate.run_dir / "re",
@@ -519,9 +558,22 @@ def _prepare_transaction(
             }
             for source_id, record in sorted(source_records.items())
         ],
+        "artifacts": [
+            descriptor.to_json_dict()
+            for descriptor in build_re_artifact_catalog(
+                workspace_stage,
+                published_prefix=PurePosixPath("re/workspace"),
+                scope="workspace",
+            )
+        ],
     }
     _write_json_atomic(workspace_stage / "manifest.json", workspace_manifest)
-    operations.append(_operation(stage_root, "workspace", staged="new/workspace"))
+    workspace_manifest_artifact = _manifest_artifact(
+        workspace_stage / "manifest.json",
+        PurePosixPath("re/workspace/manifest.json"),
+        scope="workspace",
+    )
+    operations.append(_operation(stage_root, "workspace", staged="new/re/workspace"))
 
     controller_state = _read_json(candidate.run_dir / "re" / "state.json")
     execution_profile = controller_state.get("re_execution_profile")
@@ -552,6 +604,7 @@ def _prepare_transaction(
         "sources": dict(sorted(source_records.items())),
         "workspace": {
             "manifest": "re/workspace/manifest.json",
+            "manifest_artifact": workspace_manifest_artifact.to_json_dict(),
             "overview": "re/workspace/overview.md",
             "relationships": "re/workspace/relationships.md",
             "contracts": "re/workspace/contracts.md",
@@ -563,14 +616,20 @@ def _prepare_transaction(
         },
         "warnings": list(candidate.warnings),
     }
-    _write_json_atomic(new_root / "index.json", index_payload)
-    operations.append(_operation(stage_root, "index.json", staged="new/index.json"))
+    staged_index = new_root / "re" / "index.json"
+    _write_json_atomic(staged_index, index_payload)
+    operations.append(_operation(stage_root, "index.json", staged="new/re/index.json"))
     transaction = _Transaction(
         root=stage_root,
         journal=journal,
         operations=operations,
         expected_generation=generation,
     )
+    try:
+        _validate_prepared_publication(new_root)
+    except Exception:
+        shutil.rmtree(stage_root)
+        raise
     _write_journal(transaction, "prepared")
     return transaction
 
@@ -658,6 +717,95 @@ def _write_journal(transaction: _Transaction, status: str) -> None:
             "operations": transaction.operations,
         },
     )
+
+
+def _validate_prepared_publication(workspace_root: Path) -> None:
+    try:
+        index = PublishedReIndex.from_path(workspace_root / "re" / "index.json")
+    except ReRegistryError as exc:
+        raise RePublicationValidationError(
+            f"staged RE index is invalid: {exc}"
+        ) from exc
+
+    for source_id, source in sorted(index.sources.items()):
+        if source.manifest_artifact is None:
+            raise RePublicationValidationError(
+                f"source manifest_artifact is missing: {source_id}"
+            )
+        source_dir = workspace_root / "re" / "sources" / source_id
+        _validate_artifact_catalog(
+            _read_json(source_dir / "manifest.json"),
+            directory=source_dir,
+            workspace_root=workspace_root,
+            published_prefix=PurePosixPath(f"re/sources/{source_id}"),
+            scope="source",
+            source_id=source_id,
+        )
+
+    if index.workspace.manifest_artifact is None:
+        raise RePublicationValidationError("workspace manifest_artifact is missing")
+    workspace_dir = workspace_root / "re" / "workspace"
+    _validate_artifact_catalog(
+        _read_json(workspace_dir / "manifest.json"),
+        directory=workspace_dir,
+        workspace_root=workspace_root,
+        published_prefix=PurePosixPath("re/workspace"),
+        scope="workspace",
+        source_id=None,
+    )
+
+
+def _validate_artifact_catalog(
+    manifest: dict[str, Any],
+    *,
+    directory: Path,
+    workspace_root: Path,
+    published_prefix: PurePosixPath,
+    scope: str,
+    source_id: str | None,
+) -> None:
+    raw_artifacts = manifest.get("artifacts")
+    if not isinstance(raw_artifacts, list):
+        raise RePublicationValidationError("artifact catalog must be a list")
+
+    paths: list[str] = []
+    seen_paths: set[str] = set()
+    for raw in raw_artifacts:
+        try:
+            descriptor = validate_re_artifact_descriptor(
+                raw,
+                workspace_root=workspace_root,
+                owner_scope=scope,
+                owner_source_id=source_id,
+            )
+            expected_kind = classify_re_artifact(
+                PurePosixPath(descriptor.path),
+                scope=scope,
+            )
+        except ReArtifactCatalogError as exc:
+            raise RePublicationValidationError(str(exc)) from exc
+        if descriptor.path in seen_paths:
+            raise RePublicationValidationError(
+                f"duplicate artifact path: {descriptor.path}"
+            )
+        if descriptor.kind != expected_kind:
+            raise RePublicationValidationError(
+                f"artifact kind does not match path: {descriptor.path}"
+            )
+        seen_paths.add(descriptor.path)
+        paths.append(descriptor.path)
+
+    if paths != sorted(paths):
+        raise RePublicationValidationError("artifact catalog paths are not sorted")
+    expected_paths = {
+        (published_prefix / path.relative_to(directory).as_posix()).as_posix()
+        for path in directory.rglob("*")
+        if path.is_file() and path.relative_to(directory).as_posix() != "manifest.json"
+    }
+    if seen_paths != expected_paths or len(paths) != len(expected_paths):
+        raise RePublicationValidationError(
+            "catalog inventory does not match durable files"
+        )
 
 
 def _validate_source_index(path: Path, plan: ReExecutionPlan) -> None:
@@ -798,6 +946,7 @@ def _source_manifest(
     status: str,
     cache_path: str,
     specs: list[str],
+    artifacts: list[dict[str, str]],
     codegraph_summary: str | None = None,
     codegraph_analysis: str | None = None,
     domain_manifest: str | None = None,
@@ -821,6 +970,7 @@ def _source_manifest(
         "contracts": f"re/sources/{source.id}/contracts.md",
         "components": f"re/sources/{source.id}/components.md",
         "specs": specs,
+        "artifacts": artifacts,
         "warnings": [],
     }
     if codegraph_summary:
@@ -836,7 +986,12 @@ def _source_manifest(
     return manifest
 
 
-def _index_source_record(source: RePlanSource, status: str) -> dict[str, Any]:
+def _index_source_record(
+    source: RePlanSource,
+    status: str,
+    *,
+    manifest_artifact: ReArtifactDescriptor,
+) -> dict[str, Any]:
     return {
         "path": source.path,
         "published_path": f"re/sources/{source.id}",
@@ -844,20 +999,37 @@ def _index_source_record(source: RePlanSource, status: str) -> dict[str, Any]:
         "profile_hash": source.fingerprint.profile_hash,
         "status": status,
         "manifest": f"re/sources/{source.id}/manifest.json",
+        "manifest_artifact": manifest_artifact.to_json_dict(),
     }
 
 
 def source_id_to_json(source: PublishedSource) -> tuple[str, dict[str, Any]]:
-    return (
-        source.source_id,
-        {
-            "path": source.source_path,
-            "published_path": source.published_path,
-            "fingerprint": source.fingerprint,
-            "profile_hash": source.profile_hash,
-            "status": source.status,
-            "manifest": source.manifest,
-        },
+    payload: dict[str, Any] = {
+        "path": source.source_path,
+        "published_path": source.published_path,
+        "fingerprint": source.fingerprint,
+        "profile_hash": source.profile_hash,
+        "status": source.status,
+        "manifest": source.manifest,
+    }
+    if source.manifest_artifact is not None:
+        payload["manifest_artifact"] = source.manifest_artifact.to_json_dict()
+    return source.source_id, payload
+
+
+def _manifest_artifact(
+    path: Path,
+    published_path: PurePosixPath,
+    *,
+    scope: str,
+    source_id: str | None = None,
+) -> ReArtifactDescriptor:
+    return ReArtifactDescriptor(
+        kind=classify_re_artifact(published_path, scope=scope),
+        path=published_path.as_posix(),
+        sha256="sha256:" + hashlib.sha256(path.read_bytes()).hexdigest(),
+        scope=scope,
+        source_id=source_id,
     )
 
 
