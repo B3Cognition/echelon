@@ -460,3 +460,50 @@ def test_registry_rejects_dirty_file_tree_fingerprint(tmp_path: Path) -> None:
 
     with pytest.raises(TopologyRegistryError, match="file-tree"):
         load_topology_index(tmp_path)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("schema_version", (True, "1", 2))
+@pytest.mark.parametrize("published_at", ("yesterday", "2026-08-04T12:00:00"))
+def test_topology_index_direct_construction_enforces_parsed_scalar_contract(
+    schema_version: object, published_at: str
+) -> None:
+    from echelon.topology_registry import TopologyIndex, TopologyRegistryError
+
+    with pytest.raises(TopologyRegistryError):
+        TopologyIndex(
+            schema_version=schema_version,  # type: ignore[arg-type]
+            generation=1,
+            published_at=published_at,
+            sources={},
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "name",
+    ("/private/summary", "C:\\private\\summary", "\\\\server\\share", "../summary", "nested/summary"),
+)
+def test_topology_artifact_receipt_rejects_unsafe_names(name: str) -> None:
+    from echelon.topology_registry import TopologyArtifactReceipt, TopologyRegistryError
+
+    with pytest.raises(TopologyRegistryError):
+        TopologyArtifactReceipt(
+            name=name,
+            path="re/topology/sources/api/summary.json",
+            sha256="sha256:" + "a" * 64,
+        )
+
+
+@pytest.mark.unit
+def test_registry_rejects_unsafe_artifact_map_key_before_filesystem_use(tmp_path: Path) -> None:
+    index = build_topology(tmp_path)
+    index["sources"]["api"]["providers"]["codegraph"]["artifacts"]["/private/summary"] = {  # type: ignore[index]
+        "path": "re/topology/sources/api/codegraph-summary.json",
+        "sha256": "sha256:" + "a" * 64,
+    }
+    _write_json(tmp_path / "re/topology/index.json", index)
+    from echelon.topology_registry import TopologyRegistryError, load_topology_index
+
+    with pytest.raises(TopologyRegistryError, match="artifact name"):
+        load_topology_index(tmp_path)

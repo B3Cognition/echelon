@@ -52,8 +52,7 @@ class TopologyArtifactReceipt:
     sha256: str
 
     def __post_init__(self) -> None:
-        if not isinstance(self.name, str) or not self.name:
-            raise TopologyRegistryError("topology artifact name must be non-empty")
+        _artifact_name(self.name)
         try:
             object.__setattr__(self, "path", normalize_source_path(self.path))
         except TopologyValidationError as exc:
@@ -87,7 +86,8 @@ class TopologyProviderReceipt:
             raise TopologyRegistryError("topology provider complete must be a boolean")
         artifacts: dict[str, TopologyArtifactReceipt] = {}
         for name, artifact in self.artifacts.items():
-            if not isinstance(name, str) or not name or not isinstance(artifact, TopologyArtifactReceipt):
+            _artifact_name(name)
+            if not isinstance(artifact, TopologyArtifactReceipt):
                 raise TopologyRegistryError("topology provider artifacts must map names to receipts")
             if artifact.name != name:
                 raise TopologyRegistryError("topology artifact map key does not match artifact name")
@@ -172,14 +172,12 @@ class TopologyIndex:
     sources: Mapping[str, TopologySourceRecord]
 
     def __post_init__(self) -> None:
-        if self.schema_version != 1:
-            raise TopologyRegistryError("unsupported topology index schema version")
+        _schema_version({"schema_version": self.schema_version}, "topology index")
         try:
             generation = validate_generation(self.generation)
         except TopologyValidationError as exc:
             raise TopologyRegistryError(str(exc)) from exc
-        if not isinstance(self.published_at, str) or not self.published_at:
-            raise TopologyRegistryError("topology index published_at must be a non-empty string")
+        object.__setattr__(self, "published_at", _published_at(self.published_at))
         sources: dict[str, TopologySourceRecord] = {}
         for source_id, source in self.sources.items():
             if not isinstance(source, TopologySourceRecord) or source.source_id != source_id:
@@ -377,9 +375,10 @@ def _parse_providers(
         detailed_keys = base | {"artifact_schema_version", "tool_version", "capabilities", "counts", "diagnostics"}
         _exact_keys(row, detailed_keys if detailed else base, f"provider {source_id}/{provider}")
         artifacts_data = _object(row.get("artifacts"), f"provider artifacts {source_id}/{provider}")
+        artifact_names = sorted(_artifact_name(name) for name in artifacts_data)
         artifacts = {
-            name: _parse_artifact(value, name, source_id)
-            for name, value in sorted(artifacts_data.items())
+            name: _parse_artifact(artifacts_data[name], name, source_id)
+            for name in artifact_names
         }
         if detailed:
             capabilities_data = row.get("capabilities")
@@ -464,6 +463,12 @@ def _parse_artifact(value: object, name: str, source_id: str) -> TopologyArtifac
     if not artifact.path.startswith(f"re/topology/sources/{source_id}/"):
         raise TopologyRegistryError(f"topology artifact is outside its exact source directory: {artifact.path}")
     return artifact
+
+
+def _artifact_name(value: object) -> str:
+    if not isinstance(value, str) or not _RUN_ID.fullmatch(value):
+        raise TopologyRegistryError("topology artifact name must be a safe identifier")
+    return value
 
 
 def _configured_sources(root: Path, sources: Iterable[object]) -> dict[str, str]:
