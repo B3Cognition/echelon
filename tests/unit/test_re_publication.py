@@ -680,6 +680,9 @@ def test_targeted_publication_is_atomic_when_selected_source_disappears(
 def test_targeted_publication_does_not_migrate_legacy_reused_sibling(
     tmp_path: Path,
 ) -> None:
+    from echelon.topology_audit import audit_topology
+    from echelon.topology_registry import load_published_topology, load_topology_index
+
     run_1 = write_valid_re_run(tmp_path, ("api", "web"), run_id="run-1")
     analysis = _topology_codegraph("web")
     _write_json(run_1 / "re/sources/web/codegraph-analysis.json", analysis)
@@ -739,8 +742,153 @@ def test_targeted_publication_does_not_migrate_legacy_reused_sibling(
         for path in sorted(sibling.rglob("*"))
         if path.is_file()
     } == sibling_semantic_before
-    assert not (tmp_path / "re/topology/sources/web").exists()
+    topology = load_topology_index(tmp_path)
+    assert result.topology_generation == 1
+    assert topology is not None
+    assert set(topology.sources) == {"api", "web"}
+    assert topology.sources["api"].providers["codegraph"].status == "ready"
+    assert topology.sources["web"].providers["codegraph"].status == "unavailable"
+    assert (tmp_path / "re/topology/sources/api/codegraph-analysis.json").is_file()
+    assert (tmp_path / "re/topology/sources/api/codegraph-summary.json").is_file()
+    assert (tmp_path / "re/topology/sources/api/receipt.json").is_file()
+    sibling_receipt = _read_json(tmp_path / "re/topology/sources/web/receipt.json")
+    assert sibling_receipt["providers"]["codegraph"]["status"] == "unavailable"
+    assert sibling_receipt["providers"]["codegraph"]["diagnostics"] == [
+        {
+            "kind": "bootstrap",
+            "message": "topology unavailable until this source is explicitly refreshed",
+        }
+    ]
+    assert not (tmp_path / "re/topology/sources/web/codegraph-analysis.json").exists()
+    published_topology = load_published_topology(tmp_path)
+    assert published_topology.receipt("web").provider_statuses == {
+        "codegraph": "unavailable"
+    }
+    assert audit_topology(tmp_path).status in {"degraded", "stale"}
     assert load_published_index(tmp_path) is not None
+
+
+@pytest.mark.unit
+def test_targeted_topology_bootstrap_failure_rolls_back_semantic_and_topology(
+    tmp_path: Path,
+) -> None:
+    run_1 = write_valid_re_run(tmp_path, ("api", "web"), run_id="run-1")
+    publish_re_run(tmp_path, run_1)
+    _finish_run(run_1)
+    before = _durable_snapshot(tmp_path)
+
+    config = tmp_path / ".echelon/config.yml"
+    config.parent.mkdir()
+    config.write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n"
+        "    - id: web\n      path: sources/web\n",
+        encoding="utf-8",
+    )
+    run_2 = write_valid_re_run(
+        tmp_path,
+        ("api", "web"),
+        run_id="run-2",
+        versions={"api": "v2", "web": "v1"},
+        actions={"api": "refresh", "web": "reuse"},
+    )
+    plan_path = run_2 / "re/re-execution-plan.json"
+    plan = _read_json(plan_path)
+    plan["policy"] = "target-only"
+    plan["requested_policy"] = "target-only"
+    plan["target_source"] = "api"
+    plan["forbidden_source_roots"] = [str(tmp_path / "sources/web")]
+    plan["sources"][1]["selected"] = False
+    _write_json(plan_path, plan)
+    source_index_path = run_2 / "re/re-source-index.json"
+    source_index = _read_json(source_index_path)
+    source_index["sources"][1]["selected"] = False
+    _write_json(source_index_path, source_index)
+    analysis = _topology_codegraph("api")
+    _write_json(run_2 / "re/sources/api/codegraph-analysis.json", analysis)
+    _write_json(
+        run_2 / "re/sources/api/codegraph-summary.json",
+        _topology_summary(analysis),
+    )
+
+    def fail_after_sibling_receipt(step: str) -> None:
+        if step == "after_replace:topology/sources/web":
+            raise OSError("injected topology bootstrap failure")
+
+    with pytest.raises(OSError, match="injected topology bootstrap failure"):
+        publish_re_run(
+            tmp_path,
+            run_2,
+            expected_generation=1,
+            fault_hook=fail_after_sibling_receipt,
+        )
+
+    assert _durable_snapshot(tmp_path) == before
+    assert not (tmp_path / "re/topology/index.json").exists()
+    assert not (tmp_path / "re/topology/sources/api").exists()
+    assert not (tmp_path / "re/topology/sources/web").exists()
+
+
+@pytest.mark.unit
+def test_targeted_topology_bootstrap_rejects_unusable_sibling_baseline_atomically(
+    tmp_path: Path,
+) -> None:
+    run_1 = write_valid_re_run(tmp_path, ("api", "web"), run_id="run-1")
+    publish_re_run(tmp_path, run_1)
+    _finish_run(run_1)
+
+    sibling_manifest_path = tmp_path / "re/sources/web/manifest.json"
+    sibling_manifest = _read_json(sibling_manifest_path)
+    sibling_manifest["specs"] = []
+    _write_json(sibling_manifest_path, sibling_manifest)
+    semantic_index_path = tmp_path / "re/index.json"
+    semantic_index = _read_json(semantic_index_path)
+    semantic_index["sources"]["web"]["manifest_artifact"]["sha256"] = (
+        "sha256:" + hashlib.sha256(sibling_manifest_path.read_bytes()).hexdigest()
+    )
+    _write_json(semantic_index_path, semantic_index)
+    before = _durable_snapshot(tmp_path)
+
+    config = tmp_path / ".echelon/config.yml"
+    config.parent.mkdir()
+    config.write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n"
+        "    - id: web\n      path: sources/web\n",
+        encoding="utf-8",
+    )
+    run_2 = write_valid_re_run(
+        tmp_path,
+        ("api", "web"),
+        run_id="run-2",
+        versions={"api": "v2", "web": "v1"},
+        actions={"api": "refresh", "web": "reuse"},
+    )
+    plan_path = run_2 / "re/re-execution-plan.json"
+    plan = _read_json(plan_path)
+    plan["policy"] = "target-only"
+    plan["requested_policy"] = "target-only"
+    plan["target_source"] = "api"
+    plan["forbidden_source_roots"] = [str(tmp_path / "sources/web")]
+    plan["sources"][1]["selected"] = False
+    _write_json(plan_path, plan)
+    source_index_path = run_2 / "re/re-source-index.json"
+    source_index = _read_json(source_index_path)
+    source_index["sources"][1]["selected"] = False
+    _write_json(source_index_path, source_index)
+    analysis = _topology_codegraph("api")
+    _write_json(run_2 / "re/sources/api/codegraph-analysis.json", analysis)
+    _write_json(
+        run_2 / "re/sources/api/codegraph-summary.json",
+        _topology_summary(analysis),
+    )
+
+    with pytest.raises(
+        RePublicationValidationError,
+        match="usable durable semantic baseline.*web",
+    ):
+        publish_re_run(tmp_path, run_2, expected_generation=1)
+
+    assert _durable_snapshot(tmp_path) == before
+    assert not (tmp_path / "re/topology/index.json").exists()
 
 
 @pytest.mark.unit
@@ -999,7 +1147,7 @@ def test_untrusted_legacy_topology_bytes_do_not_block_semantic_republish(
 
 @pytest.mark.unit
 @pytest.mark.parametrize("legacy_case", ("malformed", "ambiguous-schema-one"))
-def test_optional_reused_legacy_failures_skip_first_topology_but_publish_semantic_re(
+def test_optional_reused_legacy_failures_reject_partial_first_topology_atomically(
     tmp_path: Path, legacy_case: str
 ) -> None:
     run_1 = write_valid_re_run(tmp_path, ("api", "web"), run_id="run-1")
@@ -1026,6 +1174,7 @@ def test_optional_reused_legacy_failures_skip_first_topology_but_publish_semanti
                 "relationships": [{"kind": "calls", "source": "duplicate", "target": "duplicate"}],
             },
         )
+    before = _durable_snapshot(tmp_path)
     run_2 = write_valid_re_run(
         tmp_path,
         ("api", "web"),
@@ -1036,10 +1185,13 @@ def test_optional_reused_legacy_failures_skip_first_topology_but_publish_semanti
     _write_json(run_2 / "re/sources/api/codegraph-analysis.json", _topology_codegraph("api"))
     _write_json(run_2 / "re/sources/api/codegraph-summary.json", _topology_summary(_topology_codegraph("api")))
 
-    result = publish_re_run(tmp_path, run_2, expected_generation=1)
+    with pytest.raises(
+        RePublicationValidationError,
+        match="first topology publication must cover every configured",
+    ):
+        publish_re_run(tmp_path, run_2, expected_generation=1)
 
-    assert result.generation == 2
-    assert result.topology_generation is None
+    assert _durable_snapshot(tmp_path) == before
     assert not (tmp_path / "re/topology/index.json").exists()
 
 

@@ -57,6 +57,7 @@ from harness.re_registry import (
     canonical_re_artifacts,
     ensure_re_layout,
     load_published_index,
+    published_source_is_usable,
 )
 from harness.topology_evidence import (
     ProviderArtifactPaths,
@@ -67,6 +68,7 @@ from harness.topology_evidence import (
     upgrade_legacy_codegraph_candidate,
 )
 from harness.topology_publication import (
+    TopologyProviderCandidate,
     TopologyPublicationValidationError,
     TopologySnapshotCandidate,
     stage_topology_snapshots,
@@ -711,22 +713,24 @@ def _prepare_transaction(
             ),
             workspace_root=workspace_root,
         )
-        candidate_topology_ids = {item.source_id for item in topology_candidates}
-        if (
-            topology_current is None
-            and candidate_topology_ids != configured_ids
-            and set(required_topology_sources)
-            <= candidate_topology_ids
-        ):
-            # Optional legacy evidence cannot create a partial first authority.
-            topology_candidates = ()
-            required_topology_sources = ()
+        unavailable_bootstrap = bool(
+            topology_current is None and preserve_reused_sources
+        )
+        if unavailable_bootstrap:
+            topology_candidates = _bootstrap_targeted_topology_candidates(
+                workspace_root,
+                candidate,
+                current,
+                configured_ids,
+                topology_candidates,
+            )
         topology = stage_topology_snapshots(
             workspace_root,
             stage_root,
             topology_candidates,
             removed_source_ids=candidate.removed_sources,
             required_source_ids=required_topology_sources,
+            allow_unavailable_bootstrap=unavailable_bootstrap,
         )
     except (
         TopologyEvidenceError,
@@ -1070,6 +1074,63 @@ def _validate_target_source_available(
         raise RePublicationValidationError(
             f"selected source {plan.target_source} is unavailable: {source_path}"
         )
+
+
+def _bootstrap_targeted_topology_candidates(
+    workspace_root: Path,
+    candidate: RePublicationCandidate,
+    current: PublishedReIndex | None,
+    configured_source_ids: set[str],
+    selected_candidates: tuple[TopologySnapshotCandidate, ...],
+) -> tuple[TopologySnapshotCandidate, ...]:
+    """Complete an absent topology authority from durable semantic identities."""
+    candidates = {item.source_id: item for item in selected_candidates}
+    planned = {source.id: source for source in candidate.plan.sources}
+    for source_id in sorted(configured_source_ids - set(candidates)):
+        source = planned.get(source_id)
+        published = current.sources.get(source_id) if current is not None else None
+        if (
+            source is None
+            or source.action != "reuse"
+            or published is None
+            or published.source_path != source.path
+            or published.fingerprint != source.fingerprint.value
+            or published.profile_hash != source.fingerprint.profile_hash
+            or published.status not in {"complete", "empty"}
+            or not published_source_is_usable(
+                workspace_root,
+                current,
+                source_id,
+                expect_empty=published.status == "empty",
+            )
+        ):
+            raise TopologyPublicationValidationError(
+                "cannot bootstrap topology without a usable durable semantic "
+                f"baseline for sibling source: {source_id}"
+            )
+        candidates[source_id] = TopologySnapshotCandidate(
+            source_id=source_id,
+            source_path=source.path,
+            source_fingerprint=source.fingerprint,
+            analyzed_commit=source.fingerprint.git_head,
+            provenance={"kind": "re", "run_id": candidate.run_id},
+            providers=(
+                TopologyProviderCandidate(
+                    provider="codegraph",
+                    unavailable_reason={
+                        "kind": "bootstrap",
+                        "message": (
+                            "topology unavailable until this source is explicitly refreshed"
+                        ),
+                    },
+                ),
+            ),
+        )
+    if set(candidates) != configured_source_ids:
+        raise TopologyPublicationValidationError(
+            "targeted topology bootstrap does not cover every configured source"
+        )
+    return tuple(candidates[source_id] for source_id in sorted(candidates))
 
 
 def _topology_candidates(

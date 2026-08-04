@@ -125,6 +125,7 @@ def stage_topology_snapshots(
     *,
     removed_source_ids: tuple[str, ...] = (),
     required_source_ids: tuple[str, ...] = (),
+    allow_unavailable_bootstrap: bool = False,
 ) -> TopologyStagingResult | None:
     """Stage canonical topology without taking a lock or writing a journal.
 
@@ -134,7 +135,16 @@ def stage_topology_snapshots(
     """
     root = Path(workspace_root).resolve()
     stage_root = Path(stage_root).resolve()
-    prepared = _validate_candidates(root, candidates, None) if candidates else ()
+    prepared = (
+        _validate_candidates(
+            root,
+            candidates,
+            None,
+            allow_all_unavailable=allow_unavailable_bootstrap,
+        )
+        if candidates
+        else ()
+    )
     configured = _configured_sources(root)
     removed = set(removed_source_ids)
     try:
@@ -143,6 +153,19 @@ def stage_topology_snapshots(
         raise TopologyPublicationValidationError(
             f"current topology publication is structurally invalid: {exc}"
         ) from exc
+    if allow_unavailable_bootstrap:
+        if current is not None:
+            raise TopologyPublicationValidationError(
+                "unavailable topology bootstrap requires an absent authority"
+            )
+        if not any(
+            provider.status != "unavailable"
+            for candidate in prepared
+            for provider in candidate.providers
+        ):
+            raise TopologyPublicationValidationError(
+                "unavailable topology bootstrap requires selected source evidence"
+            )
     selected = {item.candidate.source_id for item in prepared}
     required = set(required_source_ids)
     if not required <= set(configured):
@@ -325,7 +348,13 @@ def _summary_diagnostics(provider: str, document: Mapping[str, object]) -> objec
     }
 
 
-def _validate_candidates(root: Path, candidates: tuple[TopologySnapshotCandidate, ...], owner_root: Path | None) -> tuple[_PreparedCandidate, ...]:
+def _validate_candidates(
+    root: Path,
+    candidates: tuple[TopologySnapshotCandidate, ...],
+    owner_root: Path | None,
+    *,
+    allow_all_unavailable: bool = False,
+) -> tuple[_PreparedCandidate, ...]:
     configured = _configured_sources(root)
     if not candidates:
         raise TopologyPublicationValidationError("topology publication requires at least one source candidate")
@@ -425,7 +454,10 @@ def _validate_candidates(root: Path, candidates: tuple[TopologySnapshotCandidate
                 )
             _validate_provider_receipt_candidate(candidate.source_id, prepared_provider)
             providers.append(prepared_provider)
-        if not any(provider.status != "unavailable" for provider in providers):
+        if (
+            not allow_all_unavailable
+            and not any(provider.status != "unavailable" for provider in providers)
+        ):
             raise TopologyPublicationValidationError(
                 f"source has no usable providers: {candidate.source_id}"
             )
