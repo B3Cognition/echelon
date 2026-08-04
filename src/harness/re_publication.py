@@ -13,6 +13,8 @@ from typing import Any, Callable, Literal
 
 from echelon.topology_registry import (
     TopologyRegistryError,
+    _load_topology_index_for_configured_sources,
+    load_published_topology_from_index,
     load_topology_index,
 )
 from echelon.workspace_model import (
@@ -338,13 +340,14 @@ def publish_re_run(
                 f"expected generation {expected_generation}, found {current_generation}"
             )
         generation = current_generation + 1
-        transaction, topology_generation = _prepare_transaction(
+        transaction, topology_generation, topology_configured_sources = _prepare_transaction(
             root, paths, candidate, current, generation
         )
         _apply_transaction(
             transaction,
             paths,
             topology_generation=topology_generation,
+            topology_configured_sources=topology_configured_sources,
             fault_hook=fault_hook,
         )
         published = PublishedReIndex.from_path(paths.index)
@@ -417,7 +420,7 @@ def _prepare_transaction(
     candidate: RePublicationCandidate,
     current: PublishedReIndex | None,
     generation: int,
-) -> tuple[PublicationTransaction, int | None]:
+) -> tuple[PublicationTransaction, int | None, dict[str, str] | None]:
     stage_root = paths.staging / candidate.run_id
     journal = stage_root / "rollback-journal.json"
     if journal.is_file():
@@ -770,7 +773,11 @@ def _prepare_transaction(
         shutil.rmtree(stage_root)
         raise
     write_publication_journal(transaction, "prepared")
-    return transaction, topology.generation if topology is not None else None
+    return (
+        transaction,
+        topology.generation if topology is not None else None,
+        configured_sources if preserve_reused_sources else None,
+    )
 
 
 def _apply_transaction(
@@ -778,6 +785,7 @@ def _apply_transaction(
     registry: ReRegistryPaths,
     *,
     topology_generation: int | None,
+    topology_configured_sources: dict[str, str] | None,
     fault_hook: Callable[[str], None] | None,
 ) -> None:
     def hook(point: str) -> None:
@@ -807,15 +815,20 @@ def _apply_transaction(
                 "installed RE index generation does not match transaction"
             )
         if topology_generation is not None:
-            topology = load_topology_index(registry.root.parent)
+            topology = (
+                _load_topology_index_for_configured_sources(
+                    registry.root.parent,
+                    topology_configured_sources,
+                )
+                if topology_configured_sources is not None
+                else load_topology_index(registry.root.parent)
+            )
             if topology is None or topology.generation != topology_generation:
                 raise RePublicationError(
                     "installed topology generation does not match transaction"
                 )
-            # The strict loader re-hashes every receipt and provider analysis.
-            from echelon.topology_registry import load_published_topology
-
-            load_published_topology(registry.root.parent)
+            # Re-hash provider bytes from the already validated immutable index.
+            load_published_topology_from_index(registry.root.parent, topology)
     except Exception:
         # This is the narrow post-install validation window. The same fixed
         # claim is still held, every operation is journaled as installed, and

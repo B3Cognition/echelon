@@ -755,16 +755,21 @@ def test_targeted_publication_does_not_migrate_legacy_reused_sibling(
         run_2 / "re/sources/api/codegraph-summary.json",
         _topology_summary(target_analysis),
     )
-    monkeypatch.setattr(
-        "harness.re_publication.discover_workspace",
-        lambda root: pytest.fail("targeted bootstrap read live sibling roots"),
-    )
-    monkeypatch.setattr(
-        "harness.topology_publication.discover_workspace",
-        lambda root: pytest.fail("topology staging read live sibling roots"),
-    )
+    with monkeypatch.context() as no_discovery:
+        no_discovery.setattr(
+            "harness.re_publication.discover_workspace",
+            lambda root: pytest.fail("targeted bootstrap read live sibling roots"),
+        )
+        no_discovery.setattr(
+            "harness.topology_publication.discover_workspace",
+            lambda root: pytest.fail("topology staging read live sibling roots"),
+        )
+        no_discovery.setattr(
+            "echelon.topology_registry.discover_workspace",
+            lambda root: pytest.fail("topology registry read live sibling roots"),
+        )
 
-    result = publish_re_run(tmp_path, run_2, expected_generation=1)
+        result = publish_re_run(tmp_path, run_2, expected_generation=1)
 
     assert result.changed_sources == ("api",)
     assert {

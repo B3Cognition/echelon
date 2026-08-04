@@ -16,6 +16,7 @@ from echelon.topology_registry import (
     TopologyArtifactReceipt,
     TopologyProviderReceipt,
     TopologyRegistryError,
+    _load_topology_index_for_configured_sources,
     _read_json_bytes,
     load_topology_index,
 )
@@ -162,7 +163,15 @@ def stage_topology_snapshots(
             config_relative_path = declarations.config_relative_path
     removed = set(removed_source_ids)
     try:
-        current = load_topology_index(root, allow_removed_source_ids=removed)
+        current = (
+            _load_topology_index_for_configured_sources(
+                root,
+                configured,
+                allow_removed_source_ids=removed,
+            )
+            if configured_sources is not None
+            else load_topology_index(root, allow_removed_source_ids=removed)
+        )
     except TopologyRegistryError as exc:
         raise TopologyPublicationValidationError(
             f"current topology publication is structurally invalid: {exc}"
@@ -641,7 +650,7 @@ def _validate_staged_tree(
             shutil.copy2(source, destination)
     shutil.copy2(stage_root / "new/re/topology/index.json", validation / "re/topology/index.json")
     try:
-        index = load_topology_index(validation)
+        index = _load_topology_index_for_configured_sources(validation, configured)
         if index is None:
             raise TopologyRegistryError("topology index is missing")
     except TopologyRegistryError as exc:

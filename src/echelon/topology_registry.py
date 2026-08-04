@@ -204,6 +204,34 @@ def load_topology_index(
     """
     root = Path(project_root).resolve()
     allowed_removed = frozenset(validate_source_id(value) for value in allow_removed_source_ids)
+    return _load_topology_index(root, allowed_removed=allowed_removed)
+
+
+def _load_topology_index_for_configured_sources(
+    project_root: Path,
+    configured_sources: Mapping[str, str],
+    *,
+    allow_removed_source_ids: Iterable[str] = (),
+) -> TopologyIndex | None:
+    """Load topology against authenticated declarations without workspace discovery."""
+    root = Path(project_root).resolve()
+    allowed_removed = frozenset(
+        validate_source_id(value) for value in allow_removed_source_ids
+    )
+    configured = _configured_source_declarations(configured_sources)
+    return _load_topology_index(
+        root,
+        allowed_removed=allowed_removed,
+        configured_sources=configured,
+    )
+
+
+def _load_topology_index(
+    root: Path,
+    *,
+    allowed_removed: frozenset[str],
+    configured_sources: Mapping[str, str] | None = None,
+) -> TopologyIndex | None:
     path = root / _INDEX_PATH
     if not path.exists() and not path.is_symlink():
         return None
@@ -211,7 +239,12 @@ def load_topology_index(
         raise TopologyRegistryError(f"unsafe topology index: {_INDEX_PATH}")
     document = _read_json(path, "topology index")
     try:
-        return _parse_index(root, document, allowed_removed)
+        return _parse_index(
+            root,
+            document,
+            allowed_removed,
+            configured_sources=configured_sources,
+        )
     except TopologyRegistryError:
         raise
     except (TypeError, ValueError, KeyError) as exc:
@@ -310,6 +343,8 @@ def _parse_index(
     root: Path,
     document: object,
     allowed_removed: frozenset[str] = frozenset(),
+    *,
+    configured_sources: Mapping[str, str] | None = None,
 ) -> TopologyIndex:
     data = _object(document, "topology index")
     _exact_keys(data, {"schema_version", "generation", "published_at", "sources"}, "topology index")
@@ -317,8 +352,11 @@ def _parse_index(
     generation = _positive_int(data, "generation")
     published_at = _published_at(data.get("published_at"))
     sources_data = _object(data.get("sources"), "topology index sources")
-    manifest = discover_workspace(root)
-    configured = _configured_sources(root, manifest.sources)
+    if configured_sources is None:
+        manifest = discover_workspace(root)
+        configured = _configured_sources(root, manifest.sources)
+    else:
+        configured = dict(configured_sources)
     if set(sources_data) != set(configured) | set(allowed_removed):
         missing = sorted(set(configured) - set(sources_data))
         unknown = sorted(set(sources_data) - set(configured) - set(allowed_removed))
@@ -547,6 +585,23 @@ def _configured_sources(root: Path, sources: Iterable[object]) -> dict[str, str]
             raise TopologyRegistryError(
                 f"configured source path escapes workspace: {source_id} -> {source_path}"
             ) from exc
+        if source_id in configured:
+            raise TopologyRegistryError(f"workspace has duplicate source ID: {source_id}")
+        configured[source_id] = source_path
+    return configured
+
+
+def _configured_source_declarations(
+    sources: Mapping[str, str],
+) -> dict[str, str]:
+    if not isinstance(sources, Mapping):
+        raise TopologyRegistryError("configured topology sources must be a mapping")
+    configured: dict[str, str] = {}
+    for raw_source_id, raw_source_path in sources.items():
+        source_id = _source_id(raw_source_id)
+        source_path = _source_path(
+            raw_source_path, f"workspace source {source_id}"
+        )
         if source_id in configured:
             raise TopologyRegistryError(f"workspace has duplicate source ID: {source_id}")
         configured[source_id] = source_path
