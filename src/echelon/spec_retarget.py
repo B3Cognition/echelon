@@ -8,6 +8,8 @@ import re
 import shlex
 from typing import Any, Iterable, Mapping
 
+import yaml
+
 from echelon.artifact_index import artifact_definitions
 from echelon.git_helpers import GitHelperError, current_branch, worktree_dirty_paths
 from echelon.spec_lifecycle import (
@@ -15,7 +17,7 @@ from echelon.spec_lifecycle import (
     resolve_active_spec_run,
     resolve_spec_run,
 )
-from harness.spec_frontmatter import read_frontmatter, read_target_entries
+from harness.spec_frontmatter import read_frontmatter
 
 
 class RetargetError(RuntimeError):
@@ -72,6 +74,7 @@ class RetargetEligibility:
 _POST_PHASE_A_STATUSES = frozenset(
     {"in-progress", "implemented", "ready_to_land", "landed"}
 )
+_PRE_DELIVERY_STATUSES = frozenset({"planned"})
 _COMPLETED_TASK = re.compile(r"^\s*-\s*\[[xX]\]\s+([A-Za-z0-9][A-Za-z0-9_.-]*)")
 _RECOVERABLE_RE_STATUSES = frozenset({"attached", "absent", "ignored"})
 _HISTORY_FILES = ("run-history.json", "harness-run-history.json")
@@ -85,17 +88,20 @@ def classify_retarget(evidence: RetargetEvidence) -> RetargetEligibility:
     """
 
     reasons: list[str] = []
+    canonical_targets = _normalized_targets(evidence.canonical_targets)
+    state_targets = _normalized_targets(evidence.state_targets)
+    replacement_targets = _normalized_targets(evidence.replacement_targets)
     active_matches = (
         evidence.active_run_id == evidence.run_id
         and evidence.current_branch == evidence.feature_branch
     )
     if not active_matches:
         reasons.append("retarget_active_spec_mismatch")
-    if evidence.state_targets != evidence.canonical_targets:
+    if state_targets != canonical_targets:
         reasons.append("retarget_target_contract_mismatch")
-    if not evidence.replacement_targets:
+    if not replacement_targets:
         reasons.append("retarget_target_set_empty")
-    elif evidence.replacement_targets == evidence.canonical_targets:
+    elif replacement_targets == canonical_targets:
         reasons.append("retarget_target_set_unchanged")
     if (
         evidence.phase_b_history
@@ -105,6 +111,8 @@ def classify_retarget(evidence: RetargetEvidence) -> RetargetEligibility:
         or evidence.lifecycle_status in _POST_PHASE_A_STATUSES
     ):
         reasons.append("retarget_delivery_already_started")
+    elif evidence.lifecycle_status not in _PRE_DELIVERY_STATUSES:
+        reasons.append("retarget_lifecycle_ambiguous")
     if evidence.selected_spec_dirty_paths:
         reasons.append("retarget_selected_spec_dirty")
     if not evidence.original_user_message or not evidence.product_inputs_recoverable:
@@ -119,7 +127,7 @@ def classify_retarget(evidence: RetargetEvidence) -> RetargetEligibility:
             evidence.original_user_message,
             *(
                 token
-                for target in evidence.replacement_targets
+                for target in replacement_targets
                 for token in ("--target", target)
             ),
         ]
@@ -151,7 +159,7 @@ def collect_retarget_evidence(project_root: Path, spec_id: str) -> RetargetEvide
     except (SpecLifecycleError, GitHelperError) as exc:
         raise RetargetEligibilityError(str(exc)) from exc
 
-    if run.spec_id != selected_id and run.feature_branch != selected_id:
+    if run.spec_id != selected_id or run.feature_branch != selected_id:
         raise RetargetEligibilityError(
             f"selected spec identity does not agree with requested spec: {selected_id!r}"
         )
@@ -197,9 +205,31 @@ def _read_json_object(path: Path) -> dict[str, Any]:
 def _canonical_targets(spec_dir: Path) -> tuple[str, ...]:
     """Use targets.yml only; frontmatter fallback is not a retarget contract."""
 
-    if not (spec_dir / "targets.yml").is_file():
+    path = spec_dir / "targets.yml"
+    if not path.is_file():
         return ()
-    return _normalized_targets(entry.get("path") for entry in read_target_entries(spec_dir))
+    try:
+        payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, yaml.YAMLError):
+        return ()
+    if not isinstance(payload, dict) or not isinstance(payload.get("targets"), list):
+        return ()
+    raw_targets = payload["targets"]
+    if not raw_targets:
+        return ()
+    paths: list[str] = []
+    for entry in raw_targets:
+        if isinstance(entry, str):
+            candidate = entry
+        elif isinstance(entry, Mapping) and isinstance(entry.get("path"), str):
+            candidate = entry["path"]
+        else:
+            return ()
+        normalized = _normalized_targets((candidate,))
+        if not normalized:
+            return ()
+        paths.append(normalized[0])
+    return _normalized_targets(paths)
 
 
 def _state_targets(state: Mapping[str, object]) -> tuple[str, ...]:
