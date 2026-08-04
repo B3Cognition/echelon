@@ -16,6 +16,7 @@ from echelon.git_helpers import GitHelperError, current_branch, run_git
 from echelon.product_inputs import (
     ProductInputError,
     clone_product_input_contract,
+    project_cloned_product_input_contract,
     validate_immutable_product_input_package,
     validate_product_input_contract_pointers,
 )
@@ -30,6 +31,7 @@ from echelon.spec_lifecycle import (
     SpecLifecycleError,
     SpecLifecycleLock,
     SpecRun,
+    SpecSwitchIntent,
     activate_initial_spec_run,
     begin_spec_switch,
     commit_spec_switch_pointer,
@@ -76,6 +78,8 @@ class RetargetPhaseAStartOutcome:
 
 
 _SAFE_REPLACEMENT_RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_SAFE_OPERATION_ID = re.compile(r"^[A-Za-z0-9._-]+$")
+_RETARGET_STAGING_MARKER = ".echelon-retarget-bootstrap.json"
 
 
 def _load_state(run_dir: Path) -> dict[str, object]:
@@ -124,8 +128,10 @@ def _write_retarget_prepared_state(
     product_inputs: Mapping[str, object],
     ignore_re: bool,
     requested_re_sources: tuple[str, ...],
+    installed_run_dir: Path | None = None,
 ) -> None:
     run_spec_dir = run_dir / "specs" / baseline.spec_id
+    installed_spec_dir = (installed_run_dir or run_dir) / "specs" / baseline.spec_id
     run_spec_dir.mkdir(parents=True)
     (run_dir / "staging").mkdir()
     retarget = dict(retarget_state)
@@ -155,12 +161,12 @@ def _write_retarget_prepared_state(
         "requested_re_sources": list(requested_re_sources),
         "spec_id": baseline.spec_id,
         "spec_number": spec_number,
-        "spec_dir": run_spec_dir.relative_to(root).as_posix(),
+        "spec_dir": installed_spec_dir.relative_to(root).as_posix(),
         "published_spec_dir": published_spec_dir.relative_to(root).as_posix(),
         "feature_branch": baseline.feature_branch,
         "phase_a_default_branch": str(baseline_state.get("phase_a_default_branch") or ""),
         "phase_a_base_commit": str(baseline_state.get("phase_a_base_commit") or ""),
-        "specify_feature_directory": run_spec_dir.relative_to(root).as_posix(),
+        "specify_feature_directory": installed_spec_dir.relative_to(root).as_posix(),
         "retarget": retarget,
     }
     _write_json_atomic(run_dir / "state.json", payload)
@@ -194,11 +200,14 @@ def _recover_original_re_policy(
             raise PhaseAStartError(
                 "baseline run has malformed original reverse-engineering source selections"
             )
-        requested = tuple(raw_sources)
-    elif isinstance(prior_context, Mapping):
-        requested = explicit_re_sources(prior_context)
+        requested = tuple(dict.fromkeys(raw_sources))
     elif ignore_re:
         requested = ()
+    elif isinstance(prior_context, Mapping):
+        try:
+            requested = explicit_re_sources(prior_context)
+        except ValueError as exc:
+            raise PhaseAStartError(str(exc)) from exc
     else:
         raise PhaseAStartError(
             "baseline run is missing its original reverse-engineering source selections"
@@ -224,6 +233,116 @@ def _require_retarget_git_position(
             f"{observed_branch!r} at {observed_commit}"
         )
     return observed_branch
+
+
+def _require_matching_retarget_intent(
+    intent: SpecSwitchIntent,
+    *,
+    baseline: SpecRun,
+    target: SpecRun,
+    operation_id: str,
+    allowed_stages: frozenset[str],
+) -> None:
+    expected = {
+        "operation_id": operation_id,
+        "source_run": baseline.run_dir_name,
+        "target_run": target.run_dir_name,
+        "source_branch": baseline.feature_branch,
+        "target_branch": target.feature_branch,
+    }
+    for field, value in expected.items():
+        if getattr(intent, field) != value:
+            raise PhaseAStartError(f"retarget switch intent identity mismatches {field}")
+    if intent.stage not in allowed_stages:
+        raise PhaseAStartError(
+            f"retarget switch intent stage {intent.stage!r} is not valid for this retry"
+        )
+
+
+def _retarget_staging_path(
+    root: Path,
+    *,
+    replacement_run_id: str,
+    operation_id: str,
+) -> Path:
+    return root / "runs" / f".retarget-bootstrap-{operation_id}-{replacement_run_id}"
+
+
+def _retarget_staging_identity(
+    *,
+    baseline: SpecRun,
+    replacement_run_id: str,
+    operation_id: str,
+) -> dict[str, object]:
+    return {
+        "operation_id": operation_id,
+        "source_run": baseline.run_dir_name,
+        "target_run": replacement_run_id,
+        "spec_id": baseline.spec_id,
+    }
+
+
+def _require_owned_retarget_staging(
+    staging_dir: Path,
+    expected_identity: Mapping[str, object],
+) -> None:
+    if staging_dir.is_symlink() or not staging_dir.is_dir():
+        raise PhaseAStartError(
+            f"retarget staging path is not an owned directory: {staging_dir}"
+        )
+    marker = staging_dir / _RETARGET_STAGING_MARKER
+    if marker.is_symlink() or not marker.is_file():
+        raise PhaseAStartError(
+            f"retarget staging directory has no ownership marker: {staging_dir}"
+        )
+    try:
+        payload = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise PhaseAStartError(
+            f"cannot validate retarget staging ownership: {staging_dir}"
+        ) from exc
+    if payload != dict(expected_identity):
+        raise PhaseAStartError(
+            f"retarget staging directory has a different owner: {staging_dir}"
+        )
+
+
+def _remove_owned_retarget_staging(
+    staging_dir: Path,
+    expected_identity: Mapping[str, object],
+) -> None:
+    if not staging_dir.exists() and not staging_dir.is_symlink():
+        return
+    _require_owned_retarget_staging(staging_dir, expected_identity)
+    shutil.rmtree(staging_dir)
+
+
+def _install_prepared_retarget_run(
+    run_dir: Path,
+    staging_dir: Path,
+    staging_identity: Mapping[str, object],
+) -> None:
+    if run_dir.exists() or run_dir.is_symlink():
+        raise PhaseAStartError(f"replacement run directory already exists: {run_dir}")
+    _require_owned_retarget_staging(staging_dir, staging_identity)
+    os.replace(staging_dir, run_dir)
+    directory_fd = os.open(run_dir.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+    (run_dir / _RETARGET_STAGING_MARKER).unlink()
+
+
+def _discard_installed_retarget_marker(
+    run_dir: Path,
+    staging_identity: Mapping[str, object],
+) -> None:
+    marker = run_dir / _RETARGET_STAGING_MARKER
+    if not marker.exists() and not marker.is_symlink():
+        return
+    _require_owned_retarget_staging(run_dir, staging_identity)
+    marker.unlink()
 
 
 def _validate_existing_retarget_run(
@@ -279,21 +398,25 @@ def _validate_existing_retarget_run(
         if retarget.get(key) != value:
             raise PhaseAStartError(f"existing replacement run has mismatched retarget {key}")
     product_inputs = state.get("product_inputs")
-    if isinstance(product_inputs, Mapping) and product_inputs:
-        expected_inputs = run_dir / "inputs"
-        raw_inputs_dir = product_inputs.get("inputs_dir")
-        if not isinstance(raw_inputs_dir, str):
-            raise PhaseAStartError("existing replacement run has invalid product inputs")
-        candidate = Path(raw_inputs_dir)
-        if not candidate.is_absolute():
-            candidate = root / candidate
-        if candidate.resolve() != expected_inputs.resolve():
-            raise PhaseAStartError("existing replacement product inputs point outside the run")
-        try:
+    try:
+        expected_product_inputs = project_cloned_product_input_contract(
+            root,
+            baseline_state,
+            run_dir,
+            baseline_run_dir=baseline.run_dir,
+        )
+        if isinstance(product_inputs, Mapping) and product_inputs:
+            expected_inputs = run_dir / "inputs"
             validate_product_input_contract_pointers(root, product_inputs, expected_inputs)
             validate_immutable_product_input_package(expected_inputs, product_inputs)
-        except ProductInputError as exc:
-            raise PhaseAStartError(str(exc)) from exc
+        if product_inputs != expected_product_inputs:
+            raise PhaseAStartError("existing replacement run has mismatched product inputs")
+        if not expected_product_inputs and (
+            (run_dir / "inputs").exists() or (run_dir / "inputs").is_symlink()
+        ):
+            raise PhaseAStartError("existing replacement run has unexpected product inputs")
+    except ProductInputError as exc:
+        raise PhaseAStartError(str(exc)) from exc
     return resolve_spec_run(root, replacement_run_id)
 
 
@@ -306,7 +429,12 @@ def start_retarget_phase_a_spec(
     replacement_targets: tuple[str, ...],
     retarget_state: Mapping[str, object],
 ) -> RetargetPhaseAStartOutcome:
-    """Create and select a new run for the same spec identity and Git branch."""
+    """Create and select a new run for the same spec identity and Git branch.
+
+    The caller must hold ``SpecMutationLock`` for ``baseline.spec_id`` and this
+    operation ID across the entire call.  This routine deliberately composes
+    the inner durable switch transaction without reacquiring that outer lock.
+    """
 
     root = Path(project_root).resolve()
     if _SAFE_REPLACEMENT_RUN_ID.fullmatch(replacement_run_id) is None:
@@ -315,8 +443,8 @@ def start_retarget_phase_a_spec(
     if not normalized_targets:
         raise PhaseAStartError("replacement target set must not be empty")
     operation_id = str(retarget_state.get("operation_id") or "")
-    if not operation_id:
-        raise PhaseAStartError("retarget operation ID is missing")
+    if _SAFE_OPERATION_ID.fullmatch(operation_id) is None:
+        raise PhaseAStartError(f"unsafe retarget operation ID: {operation_id!r}")
 
     canonical_baseline = resolve_spec_run(root, baseline.run_dir_name)
     if canonical_baseline != baseline:
@@ -347,90 +475,39 @@ def start_retarget_phase_a_spec(
     )
 
     run_dir = root / "runs" / replacement_run_id
+    staging_dir = _retarget_staging_path(
+        root,
+        replacement_run_id=replacement_run_id,
+        operation_id=operation_id,
+    )
+    staging_identity = _retarget_staging_identity(
+        baseline=baseline,
+        replacement_run_id=replacement_run_id,
+        operation_id=operation_id,
+    )
     active = resolve_active_spec_run(root)
-    if active != baseline:
-        if active.run_dir != run_dir.resolve():
-            raise PhaseAStartError("active run drifted from the retarget baseline")
-        target = _validate_existing_retarget_run(
-            root,
-            run_dir,
-            baseline=baseline,
-            replacement_run_id=replacement_run_id,
-            checkpoint_commit=resolved_checkpoint,
-            replacement_targets=normalized_targets,
-            operation_id=operation_id,
-            baseline_state=baseline_state,
-            ignore_re=ignore_re,
-            requested_re_sources=requested_re_sources,
+    if active != baseline and active.run_dir != run_dir.resolve():
+        raise PhaseAStartError("active run drifted from the retarget baseline")
+
+    if staging_dir.exists() or staging_dir.is_symlink():
+        _remove_owned_retarget_staging(staging_dir, staging_identity)
+
+    if not run_dir.exists() and not run_dir.is_symlink():
+        staging_dir.mkdir()
+        _write_json_atomic(
+            staging_dir / _RETARGET_STAGING_MARKER,
+            staging_identity,
         )
-        intent = load_spec_switch_intent(root)
-        if intent is not None:
-            if intent.operation_id != operation_id or intent.stage != "checked_out":
-                raise PhaseAStartError("existing replacement switch intent is inconsistent")
-            observed = _require_retarget_git_position(
-                root,
-                expected_branch=baseline.feature_branch,
-                expected_commit=resolved_checkpoint,
-            )
-            target = commit_spec_switch_pointer(
-                root,
-                operation_id,
-                observed_branch=observed,
-            )
-        return RetargetPhaseAStartOutcome(run_dir=run_dir, run=target, baseline=baseline)
-    if run_dir.exists():
-        target = _validate_existing_retarget_run(
-            root,
-            run_dir,
-            baseline=baseline,
-            replacement_run_id=replacement_run_id,
-            checkpoint_commit=resolved_checkpoint,
-            replacement_targets=normalized_targets,
-            operation_id=operation_id,
-            baseline_state=baseline_state,
-            ignore_re=ignore_re,
-            requested_re_sources=requested_re_sources,
-        )
-        intent = load_spec_switch_intent(root)
-        if (
-            intent is None
-            or intent.operation_id != operation_id
-            or intent.source_run != baseline.run_dir_name
-            or intent.target_run != target.run_dir_name
-        ):
-            raise PhaseAStartError("existing replacement run has no matching switch intent")
-        if intent.stage == "prepared":
-            observed = _require_retarget_git_position(
-                root,
-                expected_branch=baseline.feature_branch,
-                expected_commit=resolved_checkpoint,
-            )
-            mark_spec_switch_checked_out(root, operation_id, observed_branch=observed)
-        observed = _require_retarget_git_position(
-            root,
-            expected_branch=baseline.feature_branch,
-            expected_commit=resolved_checkpoint,
-        )
-        selected = commit_spec_switch_pointer(
-            root,
-            operation_id,
-            observed_branch=observed,
-        )
-        return RetargetPhaseAStartOutcome(
-            run_dir=run_dir,
-            run=selected,
-            baseline=baseline,
-        )
-    try:
         product_inputs = clone_product_input_contract(
             root,
             baseline_state,
-            run_dir,
+            staging_dir,
             baseline_run_dir=baseline.run_dir,
+            contract_run_dir=run_dir,
         )
         _write_retarget_prepared_state(
             root,
-            run_dir,
+            staging_dir,
             baseline=baseline,
             baseline_state=baseline_state,
             replacement_run_id=replacement_run_id,
@@ -440,36 +517,109 @@ def start_retarget_phase_a_spec(
             product_inputs=product_inputs,
             ignore_re=ignore_re,
             requested_re_sources=requested_re_sources,
+            installed_run_dir=run_dir,
         )
-        target = resolve_spec_run(root, replacement_run_id)
-        observed = _require_retarget_git_position(
-            root,
-            expected_branch=baseline.feature_branch,
-            expected_commit=resolved_checkpoint,
+        _install_prepared_retarget_run(
+            run_dir,
+            staging_dir,
+            staging_identity,
         )
-        begin_spec_switch(
-            root,
-            baseline,
-            target,
-            observed_branch=observed,
+
+    _discard_installed_retarget_marker(run_dir, staging_identity)
+    target = _validate_existing_retarget_run(
+        root,
+        run_dir,
+        baseline=baseline,
+        replacement_run_id=replacement_run_id,
+        checkpoint_commit=resolved_checkpoint,
+        replacement_targets=normalized_targets,
+        operation_id=operation_id,
+        baseline_state=baseline_state,
+        ignore_re=ignore_re,
+        requested_re_sources=requested_re_sources,
+    )
+    try:
+        intent = load_spec_switch_intent(root)
+    except SpecLifecycleError as exc:
+        raise PhaseAStartError(str(exc)) from exc
+
+    if active.run_dir == run_dir.resolve():
+        if intent is None:
+            return RetargetPhaseAStartOutcome(
+                run_dir=run_dir,
+                run=target,
+                baseline=baseline,
+            )
+        _require_matching_retarget_intent(
+            intent,
+            baseline=baseline,
+            target=target,
             operation_id=operation_id,
+            allowed_stages=frozenset({"checked_out"}),
         )
         observed = _require_retarget_git_position(
             root,
             expected_branch=baseline.feature_branch,
             expected_commit=resolved_checkpoint,
         )
-        mark_spec_switch_checked_out(root, operation_id, observed_branch=observed)
+        try:
+            selected = commit_spec_switch_pointer(
+                root,
+                operation_id,
+                observed_branch=observed,
+            )
+        except SpecLifecycleError as exc:
+            raise PhaseAStartError(str(exc)) from exc
+        return RetargetPhaseAStartOutcome(
+            run_dir=run_dir,
+            run=selected,
+            baseline=baseline,
+        )
+
+    if intent is None:
         observed = _require_retarget_git_position(
             root,
             expected_branch=baseline.feature_branch,
             expected_commit=resolved_checkpoint,
         )
+        try:
+            intent = begin_spec_switch(
+                root,
+                baseline,
+                target,
+                observed_branch=observed,
+                operation_id=operation_id,
+            )
+        except SpecLifecycleError as exc:
+            raise PhaseAStartError(str(exc)) from exc
+    else:
+        _require_matching_retarget_intent(
+            intent,
+            baseline=baseline,
+            target=target,
+            operation_id=operation_id,
+            allowed_stages=frozenset({"prepared", "checked_out"}),
+        )
+
+    if intent.stage == "prepared":
+        observed = _require_retarget_git_position(
+            root,
+            expected_branch=baseline.feature_branch,
+            expected_commit=resolved_checkpoint,
+        )
+        try:
+            mark_spec_switch_checked_out(root, operation_id, observed_branch=observed)
+        except SpecLifecycleError as exc:
+            raise PhaseAStartError(str(exc)) from exc
+    observed = _require_retarget_git_position(
+        root,
+        expected_branch=baseline.feature_branch,
+        expected_commit=resolved_checkpoint,
+    )
+    try:
         selected = commit_spec_switch_pointer(root, operation_id, observed_branch=observed)
-    except Exception:
-        if load_spec_switch_intent(root) is None:
-            shutil.rmtree(run_dir, ignore_errors=True)
-        raise
+    except SpecLifecycleError as exc:
+        raise PhaseAStartError(str(exc)) from exc
     return RetargetPhaseAStartOutcome(run_dir=run_dir, run=selected, baseline=baseline)
 
 

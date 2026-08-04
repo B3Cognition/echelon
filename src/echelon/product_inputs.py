@@ -46,6 +46,7 @@ _PRODUCT_INPUT_POINTER_RELATIVE_PATHS = {
     "traceability": Path("traceability.json"),
     "traceability_markdown": Path("traceability.md"),
 }
+_TREE_HASH_KEY = "tree_hash"
 
 
 class ProductInputError(ValueError):
@@ -225,6 +226,110 @@ def _assert_regular_package_tree(inputs_dir: Path) -> None:
                 raise ProductInputError(f"product input package entry is not a regular file: {path}")
 
 
+def immutable_product_input_tree_digest(inputs_dir: Path) -> str:
+    """Hash every package path, type, mode, and byte through no-follow fds."""
+
+    root = Path(inputs_dir)
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        root_fd = os.open(root, flags)
+    except OSError as exc:
+        raise ProductInputError(f"cannot open immutable product input package: {root}") from exc
+    digest = hashlib.sha256()
+
+    def frame(kind: bytes, relative: str, mode: int) -> None:
+        encoded = relative.encode("utf-8")
+        digest.update(kind)
+        digest.update(len(encoded).to_bytes(8, "big"))
+        digest.update(encoded)
+        digest.update(stat.S_IMODE(mode).to_bytes(4, "big"))
+
+    def walk(directory_fd: int, relative: Path) -> None:
+        directory_before = os.fstat(directory_fd)
+        try:
+            names = sorted(os.listdir(directory_fd))
+        except OSError as exc:
+            raise ProductInputError("cannot enumerate immutable product input package") from exc
+        for name in names:
+            child_relative = relative / name
+            child_text = child_relative.as_posix()
+            try:
+                before = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            except OSError as exc:
+                raise ProductInputError(f"product input path changed during verification: {child_text}") from exc
+            if stat.S_ISLNK(before.st_mode):
+                raise ProductInputError(f"product input package contains a symlink: {child_text}")
+            if stat.S_ISDIR(before.st_mode):
+                try:
+                    child_fd = os.open(name, flags, dir_fd=directory_fd)
+                except OSError as exc:
+                    raise ProductInputError(f"product input directory changed during verification: {child_text}") from exc
+                try:
+                    opened = os.fstat(child_fd)
+                    if (opened.st_dev, opened.st_ino, opened.st_mode) != (
+                        before.st_dev,
+                        before.st_ino,
+                        before.st_mode,
+                    ):
+                        raise ProductInputError(f"product input directory swapped during verification: {child_text}")
+                    frame(b"D", child_text, opened.st_mode)
+                    walk(child_fd, child_relative)
+                finally:
+                    os.close(child_fd)
+                continue
+            if not stat.S_ISREG(before.st_mode):
+                raise ProductInputError(f"product input package entry is not a regular file: {child_text}")
+            if before.st_nlink != 1:
+                raise ProductInputError(f"product input package contains a hardlink: {child_text}")
+            file_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+            try:
+                file_fd = os.open(name, file_flags, dir_fd=directory_fd)
+            except OSError as exc:
+                raise ProductInputError(f"product input file changed during verification: {child_text}") from exc
+            try:
+                opened = os.fstat(file_fd)
+                if (
+                    (opened.st_dev, opened.st_ino, opened.st_mode) !=
+                    (before.st_dev, before.st_ino, before.st_mode)
+                    or opened.st_nlink != 1
+                ):
+                    raise ProductInputError(f"product input file swapped during verification: {child_text}")
+                frame(b"F", child_text, opened.st_mode)
+                while chunk := os.read(file_fd, 1024 * 1024):
+                    digest.update(len(chunk).to_bytes(8, "big"))
+                    digest.update(chunk)
+                digest.update((0).to_bytes(8, "big"))
+                after = os.fstat(file_fd)
+                if (
+                    after.st_size != opened.st_size
+                    or after.st_mtime_ns != opened.st_mtime_ns
+                    or after.st_ctime_ns != opened.st_ctime_ns
+                ):
+                    raise ProductInputError(f"product input source mutated during verification: {child_text}")
+            finally:
+                os.close(file_fd)
+        directory_after = os.fstat(directory_fd)
+        if (
+            directory_after.st_dev != directory_before.st_dev
+            or directory_after.st_ino != directory_before.st_ino
+            or directory_after.st_mode != directory_before.st_mode
+            or directory_after.st_mtime_ns != directory_before.st_mtime_ns
+            or directory_after.st_ctime_ns != directory_before.st_ctime_ns
+        ):
+            label = relative.as_posix() or "."
+            raise ProductInputError(
+                f"product input directory mutated during verification: {label}"
+            )
+
+    try:
+        root_stat = os.fstat(root_fd)
+        frame(b"D", ".", root_stat.st_mode)
+        walk(root_fd, Path())
+    finally:
+        os.close(root_fd)
+    return f"sha256:{digest.hexdigest()}"
+
+
 def _validated_package_file(inputs_dir: Path, value: object, *, label: str) -> Path:
     if not isinstance(value, str) or not value:
         raise ProductInputError(f"product input {label} is missing")
@@ -279,6 +384,14 @@ def validate_immutable_product_input_package(
 
     package = Path(inputs_dir).resolve()
     _assert_regular_package_tree(package)
+    expected_tree_hash = product_inputs.get(_TREE_HASH_KEY)
+    if expected_tree_hash is not None:
+        if (
+            not isinstance(expected_tree_hash, str)
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", expected_tree_hash) is None
+            or immutable_product_input_tree_digest(package) != expected_tree_hash
+        ):
+            raise ProductInputError("product input tree hash drift")
     manifest = _read_json_object(package / "manifest.json", "product input manifest")
     catalog = _read_json_object(package / "catalog.json", "product input catalog")
     expected_manifest_hash = product_inputs.get("manifest_hash")
@@ -335,12 +448,15 @@ def clone_product_input_contract(
     replacement_run_dir: Path,
     *,
     baseline_run_dir: Path | None = None,
+    contract_run_dir: Path | None = None,
 ) -> dict[str, object]:
     """Clone one baseline run's aggregate immutable evidence without re-resolving inputs."""
 
     raw = source_state.get("product_inputs")
-    if not isinstance(raw, Mapping) or not raw:
+    if raw is None or raw == {}:
         return {}
+    if not isinstance(raw, Mapping):
+        raise ProductInputError("baseline product input contract is malformed")
     root = Path(project_root).resolve()
     source = _resolve_project_path(root, str(raw.get("inputs_dir") or ""))
     spec_ref = source_state.get("spec_dir")
@@ -364,6 +480,7 @@ def clone_product_input_contract(
     source_root = source.resolve()
     validate_product_input_contract_pointers(root, raw, source_root)
     validate_immutable_product_input_package(source, raw)
+    source_tree_hash = immutable_product_input_tree_digest(source)
     replacement_candidate = Path(replacement_run_dir)
     if not replacement_candidate.is_absolute():
         replacement_candidate = root / replacement_candidate
@@ -372,6 +489,15 @@ def clone_product_input_contract(
     replacement = replacement_candidate.resolve()
     if not replacement.is_relative_to(root):
         raise ProductInputError("replacement run directory must be inside the project root")
+    if contract_run_dir is not None:
+        contract_root = Path(contract_run_dir).resolve()
+        if not contract_root.is_relative_to(root):
+            raise ProductInputError(
+                "product input contract run must be inside the project root"
+            )
+        contract_destination = contract_root / "inputs"
+    else:
+        contract_destination = replacement / "inputs"
     destination = replacement / "inputs"
     replacement.mkdir(parents=True, exist_ok=True)
     if destination.exists() or destination.is_symlink():
@@ -386,6 +512,10 @@ def clone_product_input_contract(
             copy_function=shutil.copy2,
             symlinks=True,
         )
+        if immutable_product_input_tree_digest(source) != source_tree_hash:
+            raise ProductInputError("product input source mutated during clone")
+        if immutable_product_input_tree_digest(temporary) != source_tree_hash:
+            raise ProductInputError("product input clone bytes differ from baseline")
         validate_immutable_product_input_package(temporary, raw)
         os.replace(temporary, destination)
         directory_fd = os.open(replacement, os.O_RDONLY)
@@ -400,12 +530,52 @@ def clone_product_input_contract(
     cloned = dict(raw)
     for key in _PRODUCT_INPUT_POINTERS:
         cloned[key] = _portable(
-            destination / _PRODUCT_INPUT_POINTER_RELATIVE_PATHS[key],
+            contract_destination / _PRODUCT_INPUT_POINTER_RELATIVE_PATHS[key],
             root,
         )
-    validate_product_input_contract_pointers(root, cloned, destination)
-    validate_immutable_product_input_package(destination, cloned)
+    cloned[_TREE_HASH_KEY] = source_tree_hash
+    validation_contract = dict(cloned)
+    for key in _PRODUCT_INPUT_POINTERS:
+        validation_contract[key] = _portable(
+            destination / _PRODUCT_INPUT_POINTER_RELATIVE_PATHS[key], root
+        )
+    validate_product_input_contract_pointers(root, validation_contract, destination)
+    validate_immutable_product_input_package(destination, validation_contract)
     return cloned
+
+
+def project_cloned_product_input_contract(
+    project_root: Path,
+    source_state: Mapping[str, object],
+    replacement_run_dir: Path,
+    *,
+    baseline_run_dir: Path,
+) -> dict[str, object]:
+    """Authenticate baseline bytes and derive the exact replacement metadata."""
+
+    raw = source_state.get("product_inputs")
+    if raw is None or raw == {}:
+        return {}
+    if not isinstance(raw, Mapping):
+        raise ProductInputError("baseline product input contract is malformed")
+    root = Path(project_root).resolve()
+    source = _resolve_project_path(root, str(raw.get("inputs_dir") or ""))
+    verified = _resolve_project_path(root, str(baseline_run_dir))
+    if source != verified / "inputs":
+        raise ProductInputError("product input package is outside the verified baseline run")
+    validate_product_input_contract_pointers(root, raw, source)
+    validate_immutable_product_input_package(source, raw)
+    projected = dict(raw)
+    replacement = Path(replacement_run_dir).resolve()
+    if not replacement.is_relative_to(root):
+        raise ProductInputError("replacement run directory must be inside the project root")
+    destination = replacement / "inputs"
+    for key in _PRODUCT_INPUT_POINTERS:
+        projected[key] = _portable(
+            destination / _PRODUCT_INPUT_POINTER_RELATIVE_PATHS[key], root
+        )
+    projected[_TREE_HASH_KEY] = immutable_product_input_tree_digest(source)
+    return projected
 
 
 def attach_product_input_revision(

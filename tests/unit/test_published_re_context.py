@@ -484,6 +484,21 @@ def test_retarget_reuses_explicit_sources_and_recomputes_automatic_sources(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    "prior",
+    [
+        {"status": "absent", "selected_sources": [], "selection_reason": {}},
+        {"status": "attached", "selected_sources": ["api"], "selection_reason": {}},
+        {"status": "attached", "selected_sources": ["api", "api"], "selection_reason": {"api": "explicit --re-source"}},
+        {"status": "attached", "selected_sources": ["api"], "selection_reason": {"api": "unknown"}},
+    ],
+)
+def test_explicit_re_sources_rejects_incomplete_legacy_context(prior: dict[str, object]) -> None:
+    with pytest.raises(ValueError, match="published RE context"):
+        explicit_re_sources(prior)
+
+
+@pytest.mark.unit
 def test_workspace_brief_preserves_strategy_and_all_decisions_before_domain_bulk(
     tmp_path: Path,
 ) -> None:

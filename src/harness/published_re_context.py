@@ -65,10 +65,23 @@ _OMIT = object()
 def explicit_re_sources(context: Mapping[str, object]) -> tuple[str, ...]:
     """Recover only source selections explicitly requested by the operator."""
 
+    if context.get("status") != "attached":
+        raise ValueError("published RE context is not a complete attached selection")
     selected = context.get("selected_sources")
     reasons = context.get("selection_reason")
-    if not isinstance(selected, list) or not isinstance(reasons, Mapping):
-        return ()
+    if (
+        not isinstance(selected, list)
+        or not isinstance(reasons, Mapping)
+        or any(not isinstance(source, str) or not source for source in selected)
+        or len(set(selected)) != len(selected)
+        or set(reasons) != set(selected)
+        or any(
+            reasons.get(source)
+            not in {"explicit --re-source", "target matched published source path"}
+            for source in selected
+        )
+    ):
+        raise ValueError("published RE context selection is malformed or incomplete")
     return tuple(
         source
         for source in selected

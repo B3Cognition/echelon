@@ -498,6 +498,95 @@ def test_clone_product_input_contract_rejects_symlinked_replacement_run(
     assert not (actual_run / "inputs").exists()
 
 
+def test_cloned_product_input_contract_authenticates_every_package_byte(
+    tmp_path: Path,
+) -> None:
+    from echelon.product_inputs import (
+        ProductInputError,
+        clone_product_input_contract,
+        validate_immutable_product_input_package,
+    )
+
+    project, baseline_run, state = _clone_product_input_fixture(tmp_path)
+    (baseline_run / "inputs" / "unindexed.bin").write_bytes(b"unindexed baseline bytes")
+    attachment = baseline_run / "inputs/attachments/001/manifest.json"
+    attachment.parent.mkdir(parents=True)
+    attachment.write_text('{"attachment": true}\n', encoding="utf-8")
+    replacement_run = project / "runs/squad-retarget-tree"
+    cloned = clone_product_input_contract(project, state, replacement_run)
+    assert cloned["tree_hash"].startswith("sha256:")
+
+    for relative in (
+        "catalog.json",
+        "traceability.json",
+        "unindexed.bin",
+        "attachments/001/manifest.json",
+    ):
+        path = replacement_run / "inputs" / relative
+        original = path.read_bytes()
+        path.write_bytes(original + b"tamper")
+        with pytest.raises(ProductInputError, match="tree hash drift"):
+            validate_immutable_product_input_package(replacement_run / "inputs", cloned)
+        path.write_bytes(original)
+
+    manifest = replacement_run / "inputs/manifest.json"
+    original_mode = manifest.stat().st_mode
+    manifest.chmod(original_mode ^ 0o100)
+    with pytest.raises(ProductInputError, match="tree hash drift"):
+        validate_immutable_product_input_package(replacement_run / "inputs", cloned)
+
+
+def test_clone_product_input_contract_rejects_hardlinked_file(tmp_path: Path) -> None:
+    from echelon.product_inputs import ProductInputError, clone_product_input_contract
+
+    project, baseline_run, state = _clone_product_input_fixture(tmp_path)
+    source = baseline_run / "inputs/manifest.json"
+    os.link(source, baseline_run / "inputs/hardlink.json")
+    with pytest.raises(ProductInputError, match="hardlink"):
+        clone_product_input_contract(project, state, project / "runs/squad-retarget-hardlink")
+
+
+@pytest.mark.parametrize("mutation", ["bytes", "path_swap"])
+def test_clone_product_input_contract_rejects_source_mutation_during_copy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    import echelon.product_inputs as product_inputs
+
+    project, baseline_run, state = _clone_product_input_fixture(tmp_path)
+    victim = baseline_run / "inputs/unindexed.bin"
+    victim.write_bytes(b"baseline")
+    outside = project / "outside.bin"
+    outside.write_bytes(b"outside")
+    original_copy = shutil.copy2
+    mutated = False
+
+    def mutate_after_copy(
+        source: object,
+        destination: object,
+        *args: object,
+        **kwargs: object,
+    ):
+        nonlocal mutated
+        result = original_copy(source, destination, *args, **kwargs)
+        if not mutated:
+            mutated = True
+            if mutation == "bytes":
+                victim.write_bytes(b"changed during copy")
+            else:
+                victim.unlink()
+                victim.symlink_to(outside)
+        return result
+
+    monkeypatch.setattr(product_inputs.shutil, "copy2", mutate_after_copy)
+    replacement = project / f"runs/squad-retarget-mutation-{mutation}"
+    with pytest.raises(product_inputs.ProductInputError, match="mutated|symlink"):
+        product_inputs.clone_product_input_contract(project, state, replacement)
+
+    assert not (replacement / "inputs").exists()
+
+
 def test_product_input_revision_refuses_to_replace_existing_evidence(tmp_path: Path) -> None:
     from echelon.product_inputs import (
         ProductInputError,

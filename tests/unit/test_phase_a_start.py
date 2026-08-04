@@ -617,6 +617,103 @@ def test_retarget_bootstrap_rejects_malformed_original_re_policy(
         )
 
 
+@pytest.mark.parametrize(
+    "published_context",
+    [
+        {"status": "absent", "selected_sources": [], "selection_reason": {}},
+        {"status": "attached", "selected_sources": ["api"], "selection_reason": {}},
+    ],
+)
+def test_retarget_bootstrap_rejects_incomplete_legacy_re_context(
+    tmp_path: Path,
+    published_context: dict[str, object],
+) -> None:
+    repo = _repo(tmp_path)
+    _checkpoint_active_run(repo)
+    baseline = resolve_active_spec_run(repo)
+    state_path = baseline.run_dir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "user_message": "Original",
+            "autonomy_mode": "semi",
+            "ignore_re": False,
+            "published_re_context": published_context,
+        }
+    )
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    with pytest.raises(PhaseAStartError, match="published RE context"):
+        start_retarget_phase_a_spec(
+            repo,
+            replacement_run_id="squad-retarget-incomplete-re",
+            baseline=baseline,
+            checkpoint_commit=_git(repo, "rev-parse", "HEAD^{commit}"),
+            replacement_targets=("apps/web",),
+            retarget_state={"operation_id": "rt-incomplete-re"},
+        )
+
+
+def test_retarget_bootstrap_preserves_ignore_and_deduplicates_requested_sources(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path)
+    _checkpoint_active_run(repo)
+    baseline = resolve_active_spec_run(repo)
+    state_path = baseline.run_dir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "user_message": "Original",
+            "autonomy_mode": "semi",
+            "ignore_re": False,
+            "requested_re_sources": ["web", "api", "web"],
+        }
+    )
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    outcome = start_retarget_phase_a_spec(
+        repo,
+        replacement_run_id="squad-retarget-re-order",
+        baseline=baseline,
+        checkpoint_commit=_git(repo, "rev-parse", "HEAD^{commit}"),
+        replacement_targets=("apps/web",),
+        retarget_state={"operation_id": "rt-re-order"},
+    )
+
+    replacement = json.loads((outcome.run_dir / "state.json").read_text(encoding="utf-8"))
+    assert replacement["requested_re_sources"] == ["web", "api"]
+
+    ignored_root = tmp_path / "ignored"
+    ignored_root.mkdir()
+    ignored_repo = _repo(ignored_root)
+    _checkpoint_active_run(ignored_repo)
+    ignored_baseline = resolve_active_spec_run(ignored_repo)
+    ignored_state_path = ignored_baseline.run_dir / "state.json"
+    ignored_state = json.loads(ignored_state_path.read_text(encoding="utf-8"))
+    ignored_state.update(
+        {
+            "user_message": "Original",
+            "autonomy_mode": "semi",
+            "ignore_re": True,
+            "published_re_context": {"status": "absent"},
+        }
+    )
+    ignored_state_path.write_text(json.dumps(ignored_state), encoding="utf-8")
+    ignored_outcome = start_retarget_phase_a_spec(
+        ignored_repo,
+        replacement_run_id="squad-retarget-re-ignored",
+        baseline=ignored_baseline,
+        checkpoint_commit=_git(ignored_repo, "rev-parse", "HEAD^{commit}"),
+        replacement_targets=("apps/web",),
+        retarget_state={"operation_id": "rt-re-ignored"},
+    )
+    ignored_replacement = json.loads(
+        (ignored_outcome.run_dir / "state.json").read_text(encoding="utf-8")
+    )
+    assert ignored_replacement["ignore_re"] is True
+    assert ignored_replacement["requested_re_sources"] == []
+
+
 @pytest.mark.parametrize("drift_kind", ["branch", "head"])
 def test_retarget_bootstrap_fails_closed_when_git_drifts_before_pointer_commit(
     tmp_path: Path,
@@ -664,3 +761,218 @@ def test_retarget_bootstrap_fails_closed_when_git_drifts_before_pointer_commit(
         )
 
     assert (repo / "runs" / ".current").read_text(encoding="utf-8").strip() == "run-a"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("operation_id", "wrong-operation"),
+        ("source_run", "wrong-source"),
+        ("target_run", "run-a"),
+        ("source_branch", "wrong-branch"),
+        ("target_branch", "wrong-branch"),
+    ],
+)
+def test_retarget_retry_rejects_stale_intent_identity(
+    tmp_path: Path,
+    field: str,
+    value: str,
+) -> None:
+    repo = _repo(tmp_path)
+    _checkpoint_active_run(repo)
+    baseline = resolve_active_spec_run(repo)
+    state_path = baseline.run_dir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update({"user_message": "Original", "autonomy_mode": "semi", "ignore_re": False, "requested_re_sources": []})
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    arguments = {
+        "replacement_run_id": "squad-retarget-stale-intent",
+        "baseline": baseline,
+        "checkpoint_commit": _git(repo, "rev-parse", "HEAD^{commit}"),
+        "replacement_targets": ("apps/web",),
+        "retarget_state": {"operation_id": "rt-stale-intent"},
+    }
+    start_retarget_phase_a_spec(repo, **arguments)
+    intent = {
+        "operation_id": "rt-stale-intent",
+        "source_run": "run-a",
+        "target_run": "squad-retarget-stale-intent",
+        "source_branch": baseline.feature_branch,
+        "target_branch": baseline.feature_branch,
+        "stage": "checked_out",
+        "created_at": "2026-08-04T12:00:00+00:00",
+    }
+    intent[field] = value
+    intent_path = repo / ".echelon/runtime/spec-switch-intent.json"
+    intent_path.parent.mkdir(parents=True, exist_ok=True)
+    intent_path.write_text(json.dumps(intent), encoding="utf-8")
+
+    with pytest.raises(PhaseAStartError, match="intent identity"):
+        start_retarget_phase_a_spec(repo, **arguments)
+
+    assert json.loads(intent_path.read_text(encoding="utf-8"))[field] == value
+    assert (repo / "runs/.current").read_text().strip() == "squad-retarget-stale-intent"
+
+
+@pytest.mark.parametrize("stage", ["prepared", "completed"])
+def test_retarget_retry_rejects_wrong_intent_stage(
+    tmp_path: Path,
+    stage: str,
+) -> None:
+    repo = _repo(tmp_path)
+    _checkpoint_active_run(repo)
+    baseline = resolve_active_spec_run(repo)
+    state_path = baseline.run_dir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "user_message": "Original",
+            "autonomy_mode": "semi",
+            "ignore_re": False,
+            "requested_re_sources": [],
+        }
+    )
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    arguments = {
+        "replacement_run_id": "squad-retarget-stale-stage",
+        "baseline": baseline,
+        "checkpoint_commit": _git(repo, "rev-parse", "HEAD^{commit}"),
+        "replacement_targets": ("apps/web",),
+        "retarget_state": {"operation_id": "rt-stale-stage"},
+    }
+    start_retarget_phase_a_spec(repo, **arguments)
+    intent_path = repo / ".echelon/runtime/spec-switch-intent.json"
+    intent_path.parent.mkdir(parents=True, exist_ok=True)
+    intent_path.write_text(
+        json.dumps(
+            {
+                "operation_id": "rt-stale-stage",
+                "source_run": "run-a",
+                "target_run": "squad-retarget-stale-stage",
+                "source_branch": baseline.feature_branch,
+                "target_branch": baseline.feature_branch,
+                "stage": stage,
+                "created_at": "2026-08-04T12:00:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PhaseAStartError, match="intent stage"):
+        start_retarget_phase_a_spec(repo, **arguments)
+
+    assert (repo / "runs/.current").read_text().strip() == "squad-retarget-stale-stage"
+    assert intent_path.exists()
+
+
+@pytest.mark.parametrize(
+    "crash_point",
+    ["before_install", "after_install", "after_begin", "checked_out"],
+)
+def test_retarget_bootstrap_baseexception_crash_retries_complete_install(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    crash_point: str,
+) -> None:
+    import echelon.phase_a_start as phase_a_start
+
+    class InjectedCrash(BaseException):
+        pass
+
+    repo = _repo(tmp_path)
+    _checkpoint_active_run(repo)
+    baseline = resolve_active_spec_run(repo)
+    state_path = baseline.run_dir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update({"user_message": "Original", "autonomy_mode": "semi", "ignore_re": False, "requested_re_sources": []})
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    arguments = {
+        "replacement_run_id": f"squad-retarget-crash-{crash_point}",
+        "baseline": baseline,
+        "checkpoint_commit": _git(repo, "rev-parse", "HEAD^{commit}"),
+        "replacement_targets": ("apps/web",),
+        "retarget_state": {"operation_id": f"rt-crash-{crash_point}"},
+    }
+    if crash_point == "before_install":
+        original = phase_a_start._write_retarget_prepared_state
+        patched_name = "_write_retarget_prepared_state"
+
+        def crash(*args: object, **kwargs: object) -> None:
+            raise InjectedCrash()
+
+    elif crash_point == "after_install":
+        original = phase_a_start.begin_spec_switch
+        patched_name = "begin_spec_switch"
+
+        def crash(*args: object, **kwargs: object) -> None:
+            raise InjectedCrash()
+
+    elif crash_point == "after_begin":
+        original = phase_a_start.mark_spec_switch_checked_out
+        patched_name = "mark_spec_switch_checked_out"
+
+        def crash(*args: object, **kwargs: object) -> None:
+            raise InjectedCrash()
+
+    else:
+        original = phase_a_start.commit_spec_switch_pointer
+        patched_name = "commit_spec_switch_pointer"
+
+        def crash(*args: object, **kwargs: object) -> None:
+            raise InjectedCrash()
+
+    monkeypatch.setattr(phase_a_start, patched_name, crash)
+    with pytest.raises(InjectedCrash):
+        start_retarget_phase_a_spec(repo, **arguments)
+    unrelated = repo / "runs/.retarget-bootstrap-unrelated"
+    unrelated.mkdir()
+    (unrelated / "keep.txt").write_text("unrelated", encoding="utf-8")
+    monkeypatch.setattr(phase_a_start, patched_name, original)
+
+    outcome = start_retarget_phase_a_spec(repo, **arguments)
+    assert outcome.run.run_dir_name == arguments["replacement_run_id"]
+    assert (repo / "runs/.current").read_text().strip() == arguments["replacement_run_id"]
+    assert (unrelated / "keep.txt").read_text(encoding="utf-8") == "unrelated"
+    assert not list((repo / "runs").glob(f".retarget-bootstrap-*{arguments['replacement_run_id']}"))
+
+
+def test_retarget_retry_rejects_empty_product_input_substitution(tmp_path: Path) -> None:
+    from echelon.product_inputs import parse_input_declaration, resolve_product_inputs
+
+    repo = _repo(tmp_path)
+    _checkpoint_active_run(repo)
+    baseline = resolve_active_spec_run(repo)
+    source = repo / "requirements.md"
+    source.write_text("Original immutable request\n", encoding="utf-8")
+    resolution = resolve_product_inputs(
+        repo,
+        baseline.run_dir,
+        [parse_input_declaration("requirement:requirements.md")],
+    )
+    state_path = baseline.run_dir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "user_message": "Original",
+            "autonomy_mode": "semi",
+            "ignore_re": False,
+            "requested_re_sources": [],
+            "product_inputs": resolution.state_payload(repo),
+        }
+    )
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    arguments = {
+        "replacement_run_id": "squad-retarget-empty-inputs",
+        "baseline": baseline,
+        "checkpoint_commit": _git(repo, "rev-parse", "HEAD^{commit}"),
+        "replacement_targets": ("apps/web",),
+        "retarget_state": {"operation_id": "rt-empty-inputs"},
+    }
+    outcome = start_retarget_phase_a_spec(repo, **arguments)
+    replacement_state_path = outcome.run_dir / "state.json"
+    replacement_state = json.loads(replacement_state_path.read_text(encoding="utf-8"))
+    replacement_state["product_inputs"] = {}
+    replacement_state_path.write_text(json.dumps(replacement_state), encoding="utf-8")
+
+    with pytest.raises(PhaseAStartError, match="mismatched product inputs"):
+        start_retarget_phase_a_spec(repo, **arguments)
