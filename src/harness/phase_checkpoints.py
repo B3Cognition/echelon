@@ -1628,11 +1628,68 @@ def _current_git_head(project_root: Path) -> str:
     return head
 
 
+def _require_files_ref_storage(project_root: Path) -> None:
+    """Fail closed unless Git authoritatively identifies the files backend."""
+
+    try:
+        format_probe = run_git(
+            project_root,
+            "rev-parse",
+            "--show-ref-format",
+            check=False,
+        )
+        config_probe = run_git(
+            project_root,
+            "config",
+            "--local",
+            "--get-all",
+            "extensions.refStorage",
+            check=False,
+        )
+    except GitHelperError as exc:
+        raise PhaseCheckpointError(
+            "could not determine Git ref storage backend"
+        ) from exc
+
+    reported = format_probe.stdout.strip()
+    if format_probe.returncode != 0 or reported not in {"files", "reftable"}:
+        reported = ""
+
+    if config_probe.returncode == 1 and not config_probe.stdout:
+        configured = "files"
+    elif config_probe.returncode == 0:
+        configured_values = config_probe.stdout.splitlines()
+        if (
+            len(configured_values) != 1
+            or configured_values[0] not in {"files", "reftable"}
+        ):
+            raise PhaseCheckpointError(
+                "could not determine Git ref storage backend"
+            )
+        configured = configured_values[0]
+    else:
+        raise PhaseCheckpointError(
+            "could not determine Git ref storage backend"
+        )
+
+    if reported and reported != configured:
+        raise PhaseCheckpointError(
+            "ambiguous Git ref storage backend: "
+            f"rev-parse={reported}, config={configured}"
+        )
+    backend = reported or configured
+    if backend != "files":
+        raise PhaseCheckpointError(
+            f"unsupported Git ref storage backend: {backend}"
+        )
+
+
 def _current_git_head_state(project_root: Path) -> tuple[str, str | None]:
     try:
         symbolic = run_git(
             project_root,
             "symbolic-ref",
+            "--no-recurse",
             "-q",
             "HEAD",
             check=False,
@@ -1651,6 +1708,27 @@ def _current_git_head_state(project_root: Path) -> tuple[str, str | None]:
         )
         if not symbolic_ref.startswith("refs/") or valid_ref.returncode != 0:
             raise PhaseCheckpointError("invalid symbolic Git HEAD")
+        if not symbolic_ref.startswith("refs/heads/"):
+            raise PhaseCheckpointError("unsupported symbolic Git HEAD topology")
+        try:
+            intermediate = run_git(
+                project_root,
+                "symbolic-ref",
+                "--no-recurse",
+                "-q",
+                symbolic_ref,
+                check=False,
+            )
+        except GitHelperError as exc:
+            raise PhaseCheckpointError(
+                "could not inspect symbolic Git HEAD topology"
+            ) from exc
+        if intermediate.returncode == 0:
+            raise PhaseCheckpointError("unsupported symbolic Git HEAD topology")
+        if intermediate.returncode != 1 or intermediate.stdout:
+            raise PhaseCheckpointError(
+                "could not inspect symbolic Git HEAD topology"
+            )
     return _current_git_head(project_root), symbolic_ref
 
 
@@ -1671,6 +1749,7 @@ def _git_lock_path(project_root: Path, ref: str) -> Path:
 def _git_head_lease(project_root: Path, expected_head: str) -> Iterator[None]:
     """Hold Git-compatible ref locks while validating and recording a HEAD."""
 
+    _require_files_ref_storage(project_root)
     head, symbolic_ref = _current_git_head_state(project_root)
     if head != expected_head:
         raise PhaseCheckpointError(
@@ -1827,6 +1906,8 @@ def commit_retarget_checkpoint(
     root = Path(project_root).resolve()
     resolved_spec = Path(spec_dir).resolve()
     spec_id = _spec_id_from_dir(resolved_spec)
+    _require_files_ref_storage(root)
+    _current_git_head_state(root)
     with _checkpoint_ledger_lock(resolved_spec):
         checkpoint_ledger = _load_retarget_checkpoint_ledger_strict(resolved_spec)
         history = load_retarget_history(resolved_spec)

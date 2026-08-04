@@ -271,6 +271,37 @@ def _retarget_checkpoint_repo(tmp_path: Path) -> tuple[Path, Path]:
     return repo, spec_dir
 
 
+def _retarget_checkpoint_reftable_repo(tmp_path: Path) -> tuple[Path, Path]:
+    repo = tmp_path / "retarget-reftable-repo"
+    repo.mkdir()
+    initialized = subprocess.run(
+        ["git", "init", "--ref-format=reftable", "-b", "main"],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if initialized.returncode != 0:
+        diagnostic = (initialized.stdout + initialized.stderr).lower()
+        unsupported = (
+            ("unknown option" in diagnostic and "ref-format" in diagnostic)
+            or "unknown ref storage format" in diagnostic
+            or "unsupported ref storage format" in diagnostic
+        )
+        if unsupported:
+            pytest.skip("installed Git does not support reftable repositories")
+        initialized.check_returncode()
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test User")
+    spec_dir = repo / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Baseline\n", encoding="utf-8")
+    (repo / "README.md").write_text("# Repository\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "base")
+    return repo, spec_dir
+
+
 def _prepared_retarget_revision(spec_dir: Path):
     return append_prepared_revision(
         spec_dir,
@@ -708,6 +739,229 @@ def test_retarget_checkpoint_ref_lease_supports_linked_worktree(
 
     assert checkpoint.commit == _git(linked, "rev-parse", "HEAD^{commit}")
     assert load_checkpoint_ledger(spec_dir).checkpoints == [checkpoint]
+
+
+def test_retarget_checkpoint_rejects_reported_reftable_before_initial_seal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, spec_dir = _retarget_checkpoint_repo(tmp_path)
+    revision = _prepared_retarget_revision(spec_dir)
+    history_path = spec_dir / "retarget-history.json"
+    history_before = history_path.read_bytes()
+    real_run_git = checkpoint_module.run_git
+
+    def report_reftable(project_root, *args, **kwargs):
+        if args == ("rev-parse", "--show-ref-format"):
+            return subprocess.CompletedProcess(
+                ["git", *args],
+                0,
+                stdout="reftable\n",
+                stderr="",
+            )
+        return real_run_git(project_root, *args, **kwargs)
+
+    monkeypatch.setattr(checkpoint_module, "run_git", report_reftable)
+
+    with pytest.raises(PhaseCheckpointError, match="ref storage.*reftable"):
+        commit_retarget_checkpoint(
+            project_root=repo,
+            spec_dir=spec_dir,
+            run_id="squad-base",
+            revision_id=revision.revision_id,
+        )
+
+    assert history_path.read_bytes() == history_before
+    assert not checkpoint_module.checkpoint_ledger_path(spec_dir).exists()
+
+
+@pytest.mark.parametrize(
+    ("config_result", "message"),
+    [
+        ((0, "reftable\n"), "ref storage.*reftable"),
+        ((2, ""), "determine Git ref storage"),
+    ],
+)
+def test_retarget_checkpoint_rejects_legacy_probe_unsupported_or_ambiguous_backend(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    config_result: tuple[int, str],
+    message: str,
+) -> None:
+    repo, spec_dir = _retarget_checkpoint_repo(tmp_path)
+    revision = _prepared_retarget_revision(spec_dir)
+    history_path = spec_dir / "retarget-history.json"
+    history_before = history_path.read_bytes()
+    real_run_git = checkpoint_module.run_git
+
+    def report_backend(project_root, *args, **kwargs):
+        if args == ("rev-parse", "--show-ref-format"):
+            return subprocess.CompletedProcess(
+                ["git", *args],
+                0,
+                stdout="--show-ref-format\n",
+                stderr="",
+            )
+        if args == (
+            "config",
+            "--local",
+            "--get-all",
+            "extensions.refStorage",
+        ):
+            return subprocess.CompletedProcess(
+                ["git", *args],
+                config_result[0],
+                stdout=config_result[1],
+                stderr="",
+            )
+        return real_run_git(project_root, *args, **kwargs)
+
+    monkeypatch.setattr(checkpoint_module, "run_git", report_backend)
+
+    with pytest.raises(PhaseCheckpointError, match=message):
+        commit_retarget_checkpoint(
+            project_root=repo,
+            spec_dir=spec_dir,
+            run_id="squad-base",
+            revision_id=revision.revision_id,
+        )
+
+    assert history_path.read_bytes() == history_before
+    assert not checkpoint_module.checkpoint_ledger_path(spec_dir).exists()
+
+
+def test_retarget_checkpoint_accepts_legacy_probe_default_files_backend(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, spec_dir = _retarget_checkpoint_repo(tmp_path)
+    revision = _prepared_retarget_revision(spec_dir)
+    real_run_git = checkpoint_module.run_git
+
+    def report_legacy_default(project_root, *args, **kwargs):
+        if args == ("rev-parse", "--show-ref-format"):
+            return subprocess.CompletedProcess(
+                ["git", *args],
+                0,
+                stdout="--show-ref-format\n",
+                stderr="",
+            )
+        if args == (
+            "config",
+            "--local",
+            "--get-all",
+            "extensions.refStorage",
+        ):
+            return subprocess.CompletedProcess(
+                ["git", *args],
+                1,
+                stdout="",
+                stderr="",
+            )
+        return real_run_git(project_root, *args, **kwargs)
+
+    monkeypatch.setattr(checkpoint_module, "run_git", report_legacy_default)
+
+    checkpoint = commit_retarget_checkpoint(
+        project_root=repo,
+        spec_dir=spec_dir,
+        run_id="squad-base",
+        revision_id=revision.revision_id,
+    )
+
+    assert checkpoint.commit == _git(repo, "rev-parse", "HEAD^{commit}")
+    assert load_checkpoint_ledger(spec_dir).checkpoints == [checkpoint]
+
+
+def test_retarget_checkpoint_rejects_actual_reftable_before_initial_seal(
+    tmp_path: Path,
+) -> None:
+    repo, spec_dir = _retarget_checkpoint_reftable_repo(tmp_path)
+    revision = _prepared_retarget_revision(spec_dir)
+    history_path = spec_dir / "retarget-history.json"
+    history_before = history_path.read_bytes()
+    head_before = _git(repo, "rev-parse", "HEAD^{commit}")
+
+    with pytest.raises(PhaseCheckpointError, match="ref storage.*reftable"):
+        commit_retarget_checkpoint(
+            project_root=repo,
+            spec_dir=spec_dir,
+            run_id="squad-base",
+            revision_id=revision.revision_id,
+        )
+
+    assert history_path.read_bytes() == history_before
+    assert not checkpoint_module.checkpoint_ledger_path(spec_dir).exists()
+    assert _git(repo, "rev-parse", "HEAD^{commit}") == head_before
+
+
+def test_retarget_checkpoint_rejects_reftable_recorded_replay_without_mutation(
+    tmp_path: Path,
+) -> None:
+    repo, spec_dir = _retarget_checkpoint_reftable_repo(tmp_path)
+    parent = _git(repo, "rev-parse", "HEAD^{commit}")
+    revision = _prepared_retarget_revision(spec_dir)
+    revision = seal_retarget_checkpoint_parent(
+        spec_dir,
+        revision.revision_id,
+        checkpoint_parent=parent,
+    )
+    checkpoint_id, message = _retarget_commit_message(revision)
+    _git(repo, "add", "-f", "specs/001-demo/retarget-history.json")
+    _git(repo, "commit", "-m", message)
+    commit = _git(repo, "rev-parse", "HEAD^{commit}")
+    checkpoint = PhaseCheckpoint(
+        id=checkpoint_id,
+        spec_id="001-demo",
+        phase="retarget",
+        next_phase="phase0-constitution",
+        commit=commit,
+        metadata_commit="",
+        source="retarget-preflight",
+        run_id="squad-base",
+        created_at=_git(repo, "show", "-s", "--format=%cI", commit),
+    )
+    checkpoint_module._write_checkpoint_ledger_unlocked(
+        spec_dir,
+        CheckpointLedger(spec_id="001-demo", checkpoints=[checkpoint]),
+    )
+    history_path = spec_dir / "retarget-history.json"
+    ledger_path = checkpoint_module.checkpoint_ledger_path(spec_dir)
+    history_before = history_path.read_bytes()
+    ledger_before = ledger_path.read_bytes()
+
+    with pytest.raises(PhaseCheckpointError, match="ref storage.*reftable"):
+        commit_retarget_checkpoint(
+            project_root=repo,
+            spec_dir=spec_dir,
+            run_id="squad-base",
+            revision_id=revision.revision_id,
+        )
+
+    assert history_path.read_bytes() == history_before
+    assert ledger_path.read_bytes() == ledger_before
+
+
+def test_retarget_checkpoint_rejects_intermediate_head_symref_before_mutation(
+    tmp_path: Path,
+) -> None:
+    repo, spec_dir = _retarget_checkpoint_repo(tmp_path)
+    revision = _prepared_retarget_revision(spec_dir)
+    history_path = spec_dir / "retarget-history.json"
+    history_before = history_path.read_bytes()
+    _git(repo, "symbolic-ref", "refs/heads/checkpoint-alias", "refs/heads/main")
+    _git(repo, "symbolic-ref", "HEAD", "refs/heads/checkpoint-alias")
+
+    with pytest.raises(PhaseCheckpointError, match="symbolic Git HEAD topology"):
+        commit_retarget_checkpoint(
+            project_root=repo,
+            spec_dir=spec_dir,
+            run_id="squad-base",
+            revision_id=revision.revision_id,
+        )
+
+    assert history_path.read_bytes() == history_before
+    assert not checkpoint_module.checkpoint_ledger_path(spec_dir).exists()
 
 
 def test_recorded_retarget_checkpoint_rejects_off_line_head(
