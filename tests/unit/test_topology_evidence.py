@@ -106,6 +106,28 @@ def _write_json(path: Path, value: object) -> None:
     path.write_bytes(json.dumps(value, sort_keys=True).encode("utf-8") + b"\n")
 
 
+def _summary(provider: str, analysis: dict[str, object]) -> dict[str, object]:
+    diagnostics: object
+    if provider == "codegraph":
+        diagnostics = analysis["diagnostics"]
+    else:
+        diagnostics = {
+            "unresolved_relationships": analysis["unresolved_relationships"],
+            "parse_failures": analysis["parse_failures"],
+            "parse_diagnostics": analysis["parse_diagnostics"],
+            "unsupported_patterns": analysis["unsupported_patterns"],
+        }
+    return {
+        "schema_version": 2,
+        "tool": provider,
+        "tool_version": analysis["tool_version"],
+        "provider_status": analysis["provider_status"],
+        "complete": analysis["complete"],
+        "counts": analysis["counts"],
+        "diagnostics": diagnostics,
+    }
+
+
 @pytest.mark.unit
 def test_build_candidate_validates_explicit_paths_and_preserves_provider_bytes(
     tmp_path: Path,
@@ -118,8 +140,9 @@ def test_build_candidate_validates_explicit_paths_and_preserves_provider_bytes(
     source_output = tmp_path / "runs/re-1/re/sources/api"
     analysis = source_output / "codegraph-analysis.json"
     summary = source_output / "codegraph-summary.json"
-    _write_json(analysis, _codegraph())
-    _write_json(summary, {"provider": "codegraph", "status": "complete"})
+    codegraph = _codegraph()
+    _write_json(analysis, codegraph)
+    _write_json(summary, _summary("codegraph", codegraph))
 
     evidence = build_topology_snapshot_candidate(
         "api",
@@ -153,8 +176,9 @@ def test_build_candidate_keeps_unsupported_provider_and_records_missing_provider
     )
 
     source_output = tmp_path / "runs/re-1/re/sources/api"
-    _write_json(source_output / "perlgraph-analysis.json", _perl_unsupported())
-    _write_json(source_output / "perlgraph-summary.json", {"provider": "perlgraph"})
+    perlgraph = _perl_unsupported()
+    _write_json(source_output / "perlgraph-analysis.json", perlgraph)
+    _write_json(source_output / "perlgraph-summary.json", _summary("perlgraph", perlgraph))
     evidence = build_topology_snapshot_candidate(
         "api",
         "sources/api",
@@ -189,8 +213,9 @@ def test_build_candidate_preserves_explicit_provider_error_as_unavailable(
     )
 
     source_output = tmp_path / "runs/re-1/re/sources/api"
-    _write_json(source_output / "perlgraph-analysis.json", _perl_unsupported())
-    _write_json(source_output / "perlgraph-summary.json", {"provider": "perlgraph"})
+    perlgraph = _perl_unsupported()
+    _write_json(source_output / "perlgraph-analysis.json", perlgraph)
+    _write_json(source_output / "perlgraph-summary.json", _summary("perlgraph", perlgraph))
     _write_json(
         source_output / "codegraph-error.json",
         {"kind": "runtime-error", "message": "CodeGraph exited 2", "exit_code": 2},
@@ -280,6 +305,52 @@ def test_build_candidate_rejects_malformed_and_escaping_provider_input(tmp_path:
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("summary", ({}, {"schema_version": 2, "tool": "codegraph", "tool_version": "1.4.1", "provider_status": "complete", "complete": True, "counts": {"discovered_symbols": 9}, "diagnostics": {"unresolved_relationships": []}}))
+def test_build_candidate_rejects_malformed_or_mismatched_provider_summary(
+    tmp_path: Path, summary: dict[str, object]
+) -> None:
+    from harness.topology_evidence import (
+        ProviderArtifactPaths,
+        TopologyEvidenceError,
+        build_topology_snapshot_candidate,
+    )
+
+    source_output = tmp_path / "runs/re-1/re/sources/api"
+    analysis = _codegraph()
+    _write_json(source_output / "codegraph-analysis.json", analysis)
+    _write_json(source_output / "codegraph-summary.json", summary)
+
+    with pytest.raises(TopologyEvidenceError, match="summary"):
+        build_topology_snapshot_candidate(
+            "api",
+            "sources/api",
+            _fingerprint(),
+            {"codegraph": ProviderArtifactPaths(source_output, source_output / "codegraph-analysis.json", source_output / "codegraph-summary.json")},
+            {"kind": "re", "run_id": "re-1"},
+        )
+
+
+@pytest.mark.unit
+def test_build_candidate_accepts_compact_schema_two_summary(tmp_path: Path) -> None:
+    from harness.topology_evidence import ProviderArtifactPaths, build_topology_snapshot_candidate
+
+    source_output = tmp_path / "runs/re-1/re/sources/api"
+    analysis = _codegraph()
+    _write_json(source_output / "codegraph-analysis.json", analysis)
+    _write_json(source_output / "codegraph-summary.json", _summary("codegraph", analysis))
+
+    evidence = build_topology_snapshot_candidate(
+        "api",
+        "sources/api",
+        _fingerprint(),
+        {"codegraph": ProviderArtifactPaths(source_output, source_output / "codegraph-analysis.json", source_output / "codegraph-summary.json")},
+        {"kind": "re", "run_id": "re-1"},
+    )
+
+    assert evidence.candidate.providers[0].summary
+
+
+@pytest.mark.unit
 def test_schema_one_codegraph_upgrades_only_when_display_endpoints_are_unique(
     tmp_path: Path,
 ) -> None:
@@ -351,6 +422,30 @@ def test_schema_one_codegraph_upgrades_only_when_display_endpoints_are_unique(
 
 
 @pytest.mark.unit
+def test_historical_codegraph_v1_signature_requires_exact_pre_schema_shape(tmp_path: Path) -> None:
+    from harness.topology_evidence import ProviderArtifactPaths, is_historical_codegraph_v1_artifact
+
+    source_output = tmp_path / "runs/re-1/re/sources/api"
+    analysis = source_output / "codegraph-analysis.json"
+    summary = source_output / "codegraph-summary.json"
+    historical = {
+        "version": "1.0.0",
+        "repo_path": "/provider/native/path",
+        "supported": True,
+        "symbols": [],
+        "relationships": [],
+    }
+    _write_json(analysis, historical)
+    _write_json(summary, {"legacy": True})
+    paths = ProviderArtifactPaths(source_output, analysis, summary)
+
+    assert is_historical_codegraph_v1_artifact(paths)
+    historical["schema_version"] = 1
+    _write_json(analysis, historical)
+    assert not is_historical_codegraph_v1_artifact(paths)
+
+
+@pytest.mark.unit
 def test_schema_one_codegraph_upgrade_preserves_all_exact_projection_keys(
     tmp_path: Path,
 ) -> None:
@@ -386,6 +481,8 @@ def test_schema_one_codegraph_upgrade_preserves_all_exact_projection_keys(
         analysis,
         {
             "version": "1.0.0",
+            "repo_path": "/provider/native/path",
+            "supported": True,
             "symbols": symbols,
             "relationships": [{"kind": "calls", "source": "api.caller", "target": "api.target"}],
             "call_graph": [{"caller": "api.caller", "callee": "api.target", "weight": 3}],

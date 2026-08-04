@@ -170,6 +170,12 @@ export interface PerlGraphSummary {
   complete: boolean;
   counts: ProviderCounts;
   capabilities: ProviderCapabilities;
+  diagnostics: {
+    unresolved_relationships: UnresolvedRelationship[];
+    parse_failures: ParseFailure[];
+    parse_diagnostics: ParseDiagnostic[];
+    unsupported_patterns: UnsupportedPattern[];
+  };
   symbol_kinds: Array<{ kind: SymbolKind; count: number }>;
   relationship_kinds: Array<{ kind: RelationshipKind; count: number }>;
   top_callers: Array<{ symbol: string; outgoing_calls: number }>;

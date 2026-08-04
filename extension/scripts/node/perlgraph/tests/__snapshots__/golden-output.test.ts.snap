@@ -387,6 +387,41 @@ exports[`golden CodeGraph compatibility output > emits stable analysis and summa
     "parse_failures": 0,
     "unresolved_relationships": 2,
   },
+  "diagnostics": {
+    "parse_diagnostics": [],
+    "parse_failures": [],
+    "unresolved_relationships": [
+      {
+        "confidence": "low",
+        "file_path": "lib/My/App.pm",
+        "kind": "imports",
+        "line_start": 2,
+        "notes": "Module Moo did not resolve to a repository file",
+        "provenance": [
+          "tree-sitter",
+          "module-resolution",
+        ],
+        "source": "My::App",
+        "source_key": "sha256:6cf2c2386456474b335ee05f411823a02c44d66fb3fa50c209740f5551f78aa3",
+        "target": "Moo",
+      },
+      {
+        "confidence": "low",
+        "file_path": "lib/My/Role.pm",
+        "kind": "imports",
+        "line_start": 2,
+        "notes": "Module Moo::Role did not resolve to a repository file",
+        "provenance": [
+          "tree-sitter",
+          "module-resolution",
+        ],
+        "source": "My::Role",
+        "source_key": "sha256:e13386d8d0c82c9aa3f8ac1b054ee062c2d3f249d90ee3e1a8d4b42341f6ae60",
+        "target": "Moo::Role",
+      },
+    ],
+    "unsupported_patterns": [],
+  },
   "dynamic_risk": {
     "count": 0,
     "examples": [],

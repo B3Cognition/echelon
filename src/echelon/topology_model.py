@@ -330,7 +330,7 @@ class TopologyReceipt:
         object.__setattr__(self, "source_fingerprints", MappingProxyType(dict(sorted(fingerprints.items()))))
         hashes = {_validate_receipt_provider_key(key): _validate_sha256(value) for key, value in self.provider_receipt_hashes.items()}
         statuses = {_validate_receipt_provider_key(key): value for key, value in self.provider_statuses.items()}
-        if any(value not in {"ready", "degraded", "empty", "unsupported"} for value in statuses.values()):
+        if any(value not in {"ready", "degraded", "empty", "unsupported", "unavailable"} for value in statuses.values()):
             raise TopologyValidationError("unknown normalized provider status")
         object.__setattr__(self, "provider_receipt_hashes", MappingProxyType(dict(sorted(hashes.items()))))
         object.__setattr__(self, "provider_statuses", MappingProxyType(dict(sorted(statuses.items()))))

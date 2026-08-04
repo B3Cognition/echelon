@@ -54,6 +54,12 @@ export function renderSummary(analysis: PerlGraphAnalysis): PerlGraphSummary {
     complete: analysis.complete,
     counts: analysis.counts,
     capabilities: analysis.capabilities,
+    diagnostics: {
+      unresolved_relationships: analysis.unresolved_relationships,
+      parse_failures: analysis.parse_failures,
+      parse_diagnostics: analysis.parse_diagnostics,
+      unsupported_patterns: analysis.unsupported_patterns
+    },
     symbol_kinds: symbolKinds.map(({ key, count }) => ({ kind: key as SymbolKind, count })),
     relationship_kinds: relationshipKinds.map(({ key, count }) => ({ kind: key as RelationshipKind, count })),
     top_callers: callers.slice(0, 25).map(({ display, count }) => ({ symbol: display, outgoing_calls: count })),

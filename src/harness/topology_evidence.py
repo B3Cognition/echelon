@@ -111,8 +111,13 @@ def build_topology_snapshot_candidate(
             analysis = analysis_path.read_bytes()
             summary = summary_path.read_bytes()
             summary_document = json.loads(summary)
-            if not isinstance(summary_document, dict):
-                raise TopologyEvidenceError("provider summary must be a JSON object")
+            _validate_provider_summary(
+                provider,
+                source_id,
+                document=json.loads(analysis),
+                loaded=loaded,
+                summary=summary_document,
+            )
         except TopologyProviderError as exc:
             raise TopologyEvidenceError(
                 f"invalid provider analysis for {source_id}/{provider}: {exc}"
@@ -182,7 +187,19 @@ def build_empty_topology_snapshot_candidate(
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8") + b"\n"
-    summary = b'{"provider":"codegraph","provider_status":"empty"}\n'
+    summary = json.dumps(
+        {
+            "schema_version": 2,
+            "tool": "codegraph",
+            "tool_version": "1.4.1",
+            "provider_status": "complete",
+            "complete": True,
+            "counts": json.loads(analysis)["counts"],
+            "diagnostics": {"unresolved_relationships": []},
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8") + b"\n"
     return TopologyEvidence(
         candidate=TopologySnapshotCandidate(
             source_id=source_id,
@@ -225,7 +242,7 @@ def upgrade_legacy_codegraph_candidate(
             return None
     except (OSError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
         return None
-    if not isinstance(legacy, dict) or legacy.get("schema_version") == 2:
+    if not _is_historical_codegraph_v1_document(legacy):
         return None
     symbols_raw = legacy.get("symbols")
     relationships_raw = legacy.get("relationships", [])
@@ -373,6 +390,28 @@ def upgrade_legacy_codegraph_candidate(
     )
 
 
+def is_historical_codegraph_v1_artifact(paths: ProviderArtifactPaths) -> bool:
+    """Recognize only the known pre-schema CodeGraph artifact shape."""
+    try:
+        analysis_path = _contained_provider_file(paths.owner_dir, paths.analysis)
+        document = json.loads(analysis_path.read_bytes())
+    except (OSError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    return _is_historical_codegraph_v1_document(document)
+
+
+def _is_historical_codegraph_v1_document(document: object) -> bool:
+    return (
+        isinstance(document, dict)
+        and "schema_version" not in document
+        and document.get("version") == "1.0.0"
+        and isinstance(document.get("repo_path"), str)
+        and isinstance(document.get("supported"), bool)
+        and isinstance(document.get("symbols"), list)
+        and isinstance(document.get("relationships", []), list)
+    )
+
+
 def _provider_error_reason(path: Path) -> dict[str, object]:
     """Read an explicit provider failure without promoting any provider bytes."""
     document = json.loads(path.read_bytes())
@@ -383,6 +422,61 @@ def _provider_error_reason(path: Path) -> dict[str, object]:
     if not isinstance(kind, str) or not kind or not isinstance(message, str) or not message:
         raise ValueError("provider error requires kind and message")
     return dict(document)
+
+
+def _validate_provider_summary(
+    provider: str,
+    source_id: str,
+    *,
+    document: object,
+    loaded: object,
+    summary: object,
+) -> None:
+    """Require a provider-owned schema-2 receipt that agrees with analysis."""
+    if not isinstance(document, dict) or not isinstance(summary, dict):
+        raise TopologyEvidenceError("provider summary must be a JSON object")
+    required = {
+        "schema_version",
+        "tool",
+        "tool_version",
+        "provider_status",
+        "complete",
+        "counts",
+        "diagnostics",
+    }
+    if not required <= set(summary):
+        raise TopologyEvidenceError(f"provider summary is missing required schema-2 fields for {source_id}/{provider}")
+    if provider == "codegraph" and set(summary) != required:
+        raise TopologyEvidenceError("CodeGraph summary has unexpected fields")
+    for field in ("schema_version", "tool", "tool_version", "provider_status", "complete", "counts"):
+        if summary.get(field) != document.get(field):
+            raise TopologyEvidenceError(
+                f"provider summary {field} disagrees with analysis for {source_id}/{provider}"
+            )
+    expected_diagnostics = _summary_diagnostics(provider, document)
+    if summary.get("diagnostics") != expected_diagnostics:
+        raise TopologyEvidenceError(
+            f"provider summary diagnostics disagree with analysis for {source_id}/{provider}"
+        )
+    if provider == "perlgraph":
+        for field in ("repo_path", "capabilities"):
+            if field in summary and summary[field] != document.get(field):
+                raise TopologyEvidenceError(
+                    f"provider summary {field} disagrees with analysis for {source_id}/{provider}"
+                )
+    if getattr(loaded, "provider", None) != provider or getattr(loaded, "source_id", None) != source_id:
+        raise TopologyEvidenceError("provider summary does not match the declared source/provider")
+
+
+def _summary_diagnostics(provider: str, document: Mapping[str, object]) -> object:
+    if provider == "codegraph":
+        return document.get("diagnostics")
+    return {
+        "unresolved_relationships": document.get("unresolved_relationships"),
+        "parse_failures": document.get("parse_failures"),
+        "parse_diagnostics": document.get("parse_diagnostics"),
+        "unsupported_patterns": document.get("unsupported_patterns"),
+    }
 
 
 def _upgrade_legacy_projection(

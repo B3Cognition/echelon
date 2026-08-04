@@ -627,6 +627,29 @@ def test_from_loaded_providers_rejects_duplicate_provider_rows_and_incomplete_ex
 
 
 @pytest.mark.unit
+def test_public_receipts_preserve_unavailable_provider_without_traversal_paths() -> None:
+    from echelon.topology_provider import PublishedTopology, load_provider_document
+
+    loaded = load_provider_document(_codegraph(), provider="codegraph", source_id="api")
+    topology = PublishedTopology.from_loaded_providers(
+        [loaded],
+        generation=1,
+        source_fingerprints={"api": "f" * 64},
+        provider_receipt_hashes={"api": {"codegraph": "sha256:" + "a" * 64}},
+        provider_artifact_paths={"api": {"codegraph": "re/topology/sources/api/codegraph-analysis.json"}},
+        provider_statuses={"api": {"codegraph": "ready", "perlgraph": "unavailable"}},
+    )
+
+    receipt = topology.receipt("api")
+    search = topology.search("api", "api.run", frozenset(), 10)
+
+    assert receipt.provider_statuses == {"codegraph": "ready", "perlgraph": "unavailable"}
+    assert receipt.provider_artifact_paths == ("re/topology/sources/api/codegraph-analysis.json",)
+    assert search.receipt.provider_statuses == receipt.provider_statuses
+    assert all(node.provider == "codegraph" for node in search.nodes if hasattr(node, "provider"))
+
+
+@pytest.mark.unit
 def test_cross_source_search_receipt_covers_all_queried_sources_and_fingerprints() -> None:
     from echelon.topology_provider import PublishedTopology, load_provider_document
 

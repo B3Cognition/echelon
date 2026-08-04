@@ -287,8 +287,16 @@ def rollback_publication_transaction(
     transaction: PublicationTransaction,
     *,
     fault_hook: Callable[[str], None] | None = None,
+    _active_validation_owned_finals: frozenset[PurePosixPath] = frozenset(),
 ) -> None:
-    """Idempotently restore only paths recorded as replaced by this transaction."""
+    """Idempotently restore only paths recorded as replaced by this transaction.
+
+    ``_active_validation_owned_finals`` is deliberately private: the publisher
+    may use it only immediately after its own successful install, while it still
+    holds the fixed publication claim, to undo a topology artifact that failed
+    its post-install validation. All ordinary rollback and recovery paths remain
+    fail-closed when installed bytes no longer match the staged digest.
+    """
     if any(state.get("raw_legacy") for state in transaction._states):
         _normalize_raw_legacy_states(transaction)
         write_publication_journal(transaction, "rolling_back")
@@ -318,7 +326,8 @@ def rollback_publication_transaction(
             else:
                 expected = state.get("staged_digest")
             if not isinstance(expected, str) or _path_digest(final) != expected:
-                raise PublicationTransactionError("rollback refuses to delete a final path not installed by this transaction")
+                if operation.final not in _active_validation_owned_finals:
+                    raise PublicationTransactionError("rollback refuses to delete a final path not installed by this transaction")
             state["phase"] = "rollback_remove_intent"
             write_publication_journal(transaction, "rolling_back")
             _remove_path(final)

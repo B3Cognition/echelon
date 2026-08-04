@@ -112,6 +112,18 @@ def _topology_codegraph(source_id: str) -> dict[str, object]:
     }
 
 
+def _topology_summary(analysis: dict[str, object]) -> dict[str, object]:
+    return {
+        "schema_version": 2,
+        "tool": "codegraph",
+        "tool_version": analysis["tool_version"],
+        "provider_status": analysis["provider_status"],
+        "complete": analysis["complete"],
+        "counts": analysis["counts"],
+        "diagnostics": analysis["diagnostics"],
+    }
+
+
 def _deep_spec(source_id: str, version: str) -> str:
     evidence = "\n".join(
         f"- `src/file-{number}.ts:1`" for number in range(1, 6)
@@ -520,7 +532,7 @@ def test_publication_stages_semantic_and_topology_authorities_together(tmp_path:
     for source_id in ("api", "web"):
         source = run_dir / "re" / "sources" / source_id
         _write_json(source / "codegraph-analysis.json", _topology_codegraph(source_id))
-        _write_json(source / "codegraph-summary.json", {"provider": "codegraph"})
+        _write_json(source / "codegraph-summary.json", _topology_summary(_topology_codegraph(source_id)))
 
     result = publish_re_run(tmp_path, run_dir)
 
@@ -574,14 +586,14 @@ def test_topology_staging_corruption_rolls_back_both_authorities(
     )
     run_1 = write_valid_re_run(tmp_path, ("api",), run_id="run-1")
     _write_json(run_1 / "re/sources/api/codegraph-analysis.json", _topology_codegraph("api"))
-    _write_json(run_1 / "re/sources/api/codegraph-summary.json", {"provider": "codegraph"})
+    _write_json(run_1 / "re/sources/api/codegraph-summary.json", _topology_summary(_topology_codegraph("api")))
     publish_re_run(tmp_path, run_1)
     _finish_run(run_1)
     before = _durable_snapshot(tmp_path)
 
     run_2 = write_valid_re_run(tmp_path, ("api",), run_id="run-2", versions={"api": "v2"})
     _write_json(run_2 / "re/sources/api/codegraph-analysis.json", _topology_codegraph("api"))
-    _write_json(run_2 / "re/sources/api/codegraph-summary.json", {"provider": "codegraph"})
+    _write_json(run_2 / "re/sources/api/codegraph-summary.json", _topology_summary(_topology_codegraph("api")))
 
     def corrupt_topology_index(step: str) -> None:
         if step == f"after_backup:{topology_target}":
@@ -594,6 +606,47 @@ def test_topology_staging_corruption_rolls_back_both_authorities(
         publish_re_run(tmp_path, run_2, expected_generation=1, fault_hook=corrupt_topology_index)
 
     assert _durable_snapshot(tmp_path) == before
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("topology_target", ("topology/index.json", "topology/sources/api"))
+def test_post_install_topology_validation_restores_both_authorities(
+    tmp_path: Path, topology_target: str
+) -> None:
+    from echelon.topology_registry import load_published_topology, load_topology_index
+
+    config = tmp_path / ".echelon/config.yml"
+    config.parent.mkdir()
+    config.write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n",
+        encoding="utf-8",
+    )
+    run_1 = write_valid_re_run(tmp_path, ("api",), run_id="run-1")
+    _write_json(run_1 / "re/sources/api/codegraph-analysis.json", _topology_codegraph("api"))
+    _write_json(run_1 / "re/sources/api/codegraph-summary.json", _topology_summary(_topology_codegraph("api")))
+    publish_re_run(tmp_path, run_1)
+    _finish_run(run_1)
+    before = _durable_snapshot(tmp_path)
+
+    run_2 = write_valid_re_run(tmp_path, ("api",), run_id="run-2", versions={"api": "v2"})
+    _write_json(run_2 / "re/sources/api/codegraph-analysis.json", _topology_codegraph("api"))
+    _write_json(run_2 / "re/sources/api/codegraph-summary.json", _topology_summary(_topology_codegraph("api")))
+
+    def corrupt_installed_topology(step: str) -> None:
+        if step == f"after_replace:{topology_target}":
+            path = tmp_path / "re" / topology_target
+            if path.is_dir():
+                path = path / "receipt.json"
+            path.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(Exception, match="topology|schema_version|hash"):
+        publish_re_run(tmp_path, run_2, expected_generation=1, fault_hook=corrupt_installed_topology)
+
+    assert _durable_snapshot(tmp_path) == before
+    assert _read_json(tmp_path / "re/index.json")["generation"] == 1
+    assert load_topology_index(tmp_path).generation == 1  # type: ignore[union-attr]
+    assert load_published_topology(tmp_path).generation == 1
+    assert _read_json(tmp_path / "re/.staging/run-2/rollback-journal.json")["status"] == "rolled_back"
 
 
 @pytest.mark.unit
@@ -612,7 +665,7 @@ def test_removing_a_configured_source_removes_its_topology_in_the_same_publicati
     for source_id in ("api", "web"):
         source = run_1 / "re" / "sources" / source_id
         _write_json(source / "codegraph-analysis.json", _topology_codegraph(source_id))
-        _write_json(source / "codegraph-summary.json", {"provider": "codegraph"})
+        _write_json(source / "codegraph-summary.json", _topology_summary(_topology_codegraph(source_id)))
     publish_re_run(tmp_path, run_1)
     _finish_run(run_1)
 
@@ -654,7 +707,7 @@ def test_reuse_migrates_valid_schema_two_provider_artifacts_from_legacy_semantic
     )
     legacy = tmp_path / "re/sources/api"
     _write_json(legacy / "codegraph-analysis.json", _topology_codegraph("api"))
-    _write_json(legacy / "codegraph-summary.json", {"provider": "codegraph"})
+    _write_json(legacy / "codegraph-summary.json", _topology_summary(_topology_codegraph("api")))
 
     run_2 = write_valid_re_run(
         tmp_path,
@@ -669,6 +722,49 @@ def test_reuse_migrates_valid_schema_two_provider_artifacts_from_legacy_semantic
     assert topology is not None and set(topology.sources) == {"api"}
     assert not (legacy / "codegraph-analysis.json").exists()
     assert (tmp_path / "re/topology/sources/api/codegraph-analysis.json").is_file()
+
+
+@pytest.mark.unit
+def test_reuse_upgrades_actual_codegraph_v1_without_discarding_valid_perlgraph(
+    tmp_path: Path,
+) -> None:
+    from echelon.topology_registry import load_topology_index
+    from tests.unit.test_topology_evidence import _perl_unsupported, _summary
+
+    run_1 = write_valid_re_run(tmp_path, ("api",), run_id="run-1")
+    publish_re_run(tmp_path, run_1)
+    _finish_run(run_1)
+    config = tmp_path / ".echelon/config.yml"
+    config.parent.mkdir()
+    config.write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n",
+        encoding="utf-8",
+    )
+    legacy = tmp_path / "re/sources/api"
+    _write_json(
+        legacy / "codegraph-analysis.json",
+        {
+            "version": "1.0.0",
+            "repo_path": "/provider/native/path",
+            "supported": True,
+            "symbols": [
+                {"file_path": "src/api.py", "qualified_name": "api.run", "kind": "function", "signature": "()", "line_start": 1, "line_end": 1}
+            ],
+            "relationships": [],
+        },
+    )
+    _write_json(legacy / "codegraph-summary.json", {"legacy": True})
+    perlgraph = _perl_unsupported()
+    _write_json(legacy / "perlgraph-analysis.json", perlgraph)
+    _write_json(legacy / "perlgraph-summary.json", _summary("perlgraph", perlgraph))
+
+    run_2 = write_valid_re_run(tmp_path, ("api",), run_id="run-2", actions={"api": "reuse"})
+    result = publish_re_run(tmp_path, run_2, expected_generation=1)
+
+    topology = load_topology_index(tmp_path)
+    assert result.topology_generation == 1
+    assert topology is not None
+    assert set(topology.sources["api"].providers) == {"codegraph", "perlgraph"}
 
 
 @pytest.mark.unit
@@ -696,7 +792,7 @@ def test_untrusted_legacy_topology_bytes_do_not_block_semantic_republish(
     )
     legacy = tmp_path / "re/sources/api"
     _write_json(legacy / "codegraph-analysis.json", _topology_codegraph("api"))
-    _write_json(legacy / "codegraph-summary.json", {"provider": "codegraph"})
+    _write_json(legacy / "codegraph-summary.json", _topology_summary(_topology_codegraph("api")))
     manifest = _read_json(legacy / "manifest.json")
     manifest[field] = value
     _write_json(legacy / "manifest.json", manifest)
@@ -751,7 +847,7 @@ def test_optional_reused_legacy_failures_skip_first_topology_but_publish_semanti
         actions={"api": "refresh", "web": "reuse"},
     )
     _write_json(run_2 / "re/sources/api/codegraph-analysis.json", _topology_codegraph("api"))
-    _write_json(run_2 / "re/sources/api/codegraph-summary.json", {"provider": "codegraph"})
+    _write_json(run_2 / "re/sources/api/codegraph-summary.json", _topology_summary(_topology_codegraph("api")))
 
     result = publish_re_run(tmp_path, run_2, expected_generation=1)
 

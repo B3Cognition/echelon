@@ -63,6 +63,7 @@ from harness.topology_evidence import (
     TopologyEvidenceError,
     build_empty_topology_snapshot_candidate,
     build_topology_snapshot_candidate,
+    is_historical_codegraph_v1_artifact,
     upgrade_legacy_codegraph_candidate,
 )
 from harness.topology_publication import (
@@ -764,6 +765,10 @@ def _apply_transaction(
 
     try:
         apply_publication_transaction(transaction, fault_hook=hook)
+    except Exception:
+        # The transaction applies its normal digest-protected rollback here.
+        raise
+    try:
         published = PublishedReIndex.from_path(registry.index)
         if (
             transaction.expected_generation is not None
@@ -783,7 +788,18 @@ def _apply_transaction(
 
             load_published_topology(registry.root.parent)
     except Exception:
-        rollback_publication_transaction(transaction)
+        # This is the narrow post-install validation window. The same fixed
+        # claim is still held, every operation is journaled as installed, and
+        # only current topology finals may be force-restored from their backups.
+        # Ordinary rollback/recovery retains Task 5's strict digest ownership.
+        rollback_publication_transaction(
+            transaction,
+            _active_validation_owned_finals=frozenset(
+                operation.final
+                for operation in transaction.operations
+                if operation.final.parts and operation.final.parts[0] == "topology"
+            ),
+        )
         raise
     shutil.rmtree(transaction.staging_root)
 
@@ -1094,8 +1110,7 @@ def _topology_candidates(
                 for path in (artifact.analysis, artifact.summary)
             ):
                 continue
-            codegraph_schema = _provider_schema_version(paths["codegraph"])
-            if codegraph_schema == 1:
+            if is_historical_codegraph_v1_artifact(paths["codegraph"]):
                 upgraded = upgrade_legacy_codegraph_candidate(
                     source.id,
                     source.path,
@@ -1104,7 +1119,29 @@ def _topology_candidates(
                     provenance,
                 )
                 if upgraded is not None:
-                    snapshots.append(upgraded.candidate)
+                    providers = list(upgraded.candidate.providers)
+                    if _provider_schema_version(paths["perlgraph"]) == 2:
+                        try:
+                            perl_evidence = build_topology_snapshot_candidate(
+                                source.id,
+                                source.path,
+                                source.fingerprint,
+                                {"perlgraph": paths["perlgraph"]},
+                                provenance,
+                            )
+                        except TopologyEvidenceError:
+                            continue
+                        providers.extend(perl_evidence.candidate.providers)
+                    snapshots.append(
+                        TopologySnapshotCandidate(
+                            source_id=upgraded.candidate.source_id,
+                            source_path=upgraded.candidate.source_path,
+                            source_fingerprint=upgraded.candidate.source_fingerprint,
+                            analyzed_commit=upgraded.candidate.analyzed_commit,
+                            provenance=upgraded.candidate.provenance,
+                            providers=tuple(sorted(providers, key=lambda item: item.provider)),
+                        )
+                    )
                 continue
             if not _all_present_schema_two(paths):
                 continue
