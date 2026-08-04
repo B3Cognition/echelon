@@ -1111,6 +1111,7 @@ class SquadController:
                 drawers=self._retrieve_mempalace_context_drawers(
                     user_request,
                     str(state.get("run_id") or ""),
+                    state,
                 ),
             )
         except Exception as exc:
@@ -1129,6 +1130,7 @@ class SquadController:
         self,
         user_request: str,
         run_id: str,
+        state: Mapping[str, object],
     ) -> list[object]:
         query = user_request.strip()
         if not query:
@@ -1144,7 +1146,6 @@ class SquadController:
             drawers = list(reader.search_requirements(query, n_results=10))
         except (Exception, SystemExit):
             return []
-        state = self._state_store.load()
         retarget = state.get("retarget")
         if (
             isinstance(retarget, Mapping)
@@ -1156,7 +1157,7 @@ class SquadController:
 
             return exclude_retarget_spec_drawers(
                 drawers,
-                str(state.get("spec_id") or ""),
+                state.get("spec_id"),
             )
         return drawers
 
@@ -1552,6 +1553,7 @@ class SquadController:
                         or ""
                     ),
                     str(state.get("run_id") or ""),
+                    state,
                 ),
             )
             install_or_verify_completion_context(

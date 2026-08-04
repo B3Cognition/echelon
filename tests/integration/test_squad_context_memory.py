@@ -438,6 +438,7 @@ def test_retarget_replacement_context_excludes_only_selected_spec_drawers(
     state["spec_id"] = "001-demo"
     state["retarget"] = {"memory_excluded": True}
     store.save(state)
+    retrieval_state = store.load()
     source_drawers = _context_drawers()
     original = list(source_drawers)
 
@@ -448,7 +449,11 @@ def test_retarget_replacement_context_excludes_only_selected_spec_drawers(
         "codegen.memory.mempalace_reader.MemPalaceReader.search_requirements",
         return_value=source_drawers,
     ):
-        result = ctrl._retrieve_mempalace_context_drawers("query", "run-test")
+        result = ctrl._retrieve_mempalace_context_drawers(
+            "query",
+            "run-test",
+            retrieval_state,
+        )
 
     assert [drawer.drawer_id for drawer in result] == [
         "workspace-re",
@@ -465,6 +470,10 @@ def test_normal_context_preserves_selected_spec_drawers(tmp_path: Path) -> None:
     state["spec_id"] = "001-demo"
     state["retarget"] = {"memory_excluded": False}
     store.save(state)
+    retrieval_state = store.load()
+    changed_state = store.load()
+    changed_state["retarget"] = {"memory_excluded": True}
+    store.save(changed_state)
     source_drawers = _context_drawers()
 
     with patch(
@@ -474,7 +483,11 @@ def test_normal_context_preserves_selected_spec_drawers(tmp_path: Path) -> None:
         "codegen.memory.mempalace_reader.MemPalaceReader.search_requirements",
         return_value=source_drawers,
     ):
-        result = ctrl._retrieve_mempalace_context_drawers("query", "run-test")
+        result = ctrl._retrieve_mempalace_context_drawers(
+            "query",
+            "run-test",
+            retrieval_state,
+        )
 
     assert [drawer.drawer_id for drawer in result] == [
         "selected",
@@ -493,6 +506,7 @@ def test_retarget_replacement_context_rejects_contradictory_metadata(
     state["spec_id"] = "001-demo"
     state["retarget"] = {"memory_excluded": True}
     store.save(state)
+    retrieval_state = store.load()
     contradictory = _context_drawers()[:1]
     contradictory[0].metadata["spec_id"] = "002-other"
 
@@ -504,4 +518,8 @@ def test_retarget_replacement_context_rejects_contradictory_metadata(
         return_value=contradictory,
     ):
         with pytest.raises(RuntimeError, match="ownership metadata"):
-            ctrl._retrieve_mempalace_context_drawers("query", "run-test")
+            ctrl._retrieve_mempalace_context_drawers(
+                "query",
+                "run-test",
+                retrieval_state,
+            )

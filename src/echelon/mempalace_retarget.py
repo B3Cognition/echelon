@@ -8,8 +8,11 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import shutil
+import tempfile
 from typing import Iterable, Mapping
 
+from echelon.atomic_install import atomic_rename_no_replace
 from echelon.mempalace_audit import (
     MAX_AUDIT_SCAN_ROWS,
     SpecMemoryAuditReport,
@@ -17,14 +20,15 @@ from echelon.mempalace_audit import (
     _write_text_durable_atomic,
     audit_spec_memory,
     cleanup_stale_spec_memory,
+    render_audit_markdown,
     scan_wing_rows_complete,
-    write_audit_reports,
 )
 from echelon.mempalace_requirements import (
     SpecMemoryMineReport,
     create_requirement_memory_adapter,
     mine_spec_requirements,
 )
+from echelon.strict_json import loads_strict_json
 
 
 _CANONICAL_SPEC_ID = re.compile(
@@ -34,6 +38,14 @@ _SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 _MAX_PATH_LENGTH = 4_096
 _MAX_DRAWER_ID_LENGTH = 1_024
 _DELETE_BATCH_SIZE = 128
+_REPORT_NAMES = (
+    "mempalace-audit.json",
+    "mempalace-audit.md",
+    "mempalace-mine.json",
+)
+_REPORT_MANIFEST_NAME = "mempalace-refresh-manifest.json"
+_REPORT_TRANSACTION_NAME = ".mempalace-refresh-transaction"
+_MAX_REPORT_BYTES = 8 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -52,6 +64,9 @@ class RetargetMemoryReceipt:
     delete_acknowledged_count: int | None = None
     remaining_owned_ids: tuple[str, ...] = ()
     unrelated_missing_ids: tuple[str, ...] = ()
+    unrelated_changed_ids: tuple[str, ...] = ()
+    unexpected_added_ids: tuple[str, ...] = ()
+    report_set_digest: str | None = None
     failure_code: str | None = None
 
     def __post_init__(self) -> None:
@@ -66,6 +81,14 @@ class RetargetMemoryReceipt:
         _require_receipt_ids(
             self.unrelated_missing_ids,
             field="unrelated_missing_ids",
+        )
+        _require_receipt_ids(
+            self.unrelated_changed_ids,
+            field="unrelated_changed_ids",
+        )
+        _require_receipt_ids(
+            self.unexpected_added_ids,
+            field="unexpected_added_ids",
         )
         if type(self.deleted_count) is not int or self.deleted_count != len(
             self.deleted_ids
@@ -85,6 +108,11 @@ class RetargetMemoryReceipt:
             raise ValueError("invalid retarget memory delete acknowledgement")
         if _SHA256.fullmatch(self.drawer_set_digest) is None:
             raise ValueError("invalid retarget memory drawer digest")
+        if (
+            self.report_set_digest is not None
+            and _SHA256.fullmatch(self.report_set_digest) is None
+        ):
+            raise ValueError("invalid retarget memory report set digest")
         for value, field in (
             (self.mine_status, "mine_status"),
             (self.audit_status, "audit_status"),
@@ -93,10 +121,8 @@ class RetargetMemoryReceipt:
             (self.palace_path, "palace_path"),
             (self.failure_code, "failure_code"),
         ):
-            if value is not None and (
-                type(value) is not str or not value or len(value) > _MAX_PATH_LENGTH
-            ):
-                raise ValueError(f"invalid retarget memory {field}")
+            if value is not None:
+                _require_receipt_text(value, field=field)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -114,6 +140,9 @@ class RetargetMemoryReceipt:
             "delete_acknowledged_count": self.delete_acknowledged_count,
             "remaining_owned_ids": list(self.remaining_owned_ids),
             "unrelated_missing_ids": list(self.unrelated_missing_ids),
+            "unrelated_changed_ids": list(self.unrelated_changed_ids),
+            "unexpected_added_ids": list(self.unexpected_added_ids),
+            "report_set_digest": self.report_set_digest,
             "failure_code": self.failure_code,
         }
 
@@ -133,6 +162,18 @@ def _require_spec_id(spec_id: object) -> str:
     if type(spec_id) is not str or _CANONICAL_SPEC_ID.fullmatch(spec_id) is None:
         raise ValueError("invalid canonical spec ID")
     return spec_id
+
+
+def _require_receipt_text(value: object, *, field: str) -> str:
+    if (
+        type(value) is not str
+        or not value
+        or len(value) > _MAX_PATH_LENGTH
+        or value != value.strip()
+        or any(ord(character) < 32 for character in value)
+    ):
+        raise ValueError(f"invalid retarget memory {field}")
+    return value
 
 
 def _require_receipt_ids(values: object, *, field: str) -> tuple[str, ...]:
@@ -195,7 +236,14 @@ def _configured_mempalace_wing(project_root: Path) -> str | None:
     wing = mempalace.get("wing")
     if type(wing) is not str or not wing.strip():
         raise RetargetMemoryError("configured MemPalace storage is incomplete")
-    return wing.strip()
+    checked_wing = wing.strip()
+    try:
+        _require_receipt_text(checked_wing, field="wing")
+    except ValueError as exc:
+        raise RetargetMemoryError(
+            "configured MemPalace storage identity is invalid"
+        ) from exc
+    return checked_wing
 
 
 def _normalized_ownership_path(value: object) -> tuple[str, str | None]:
@@ -206,6 +254,7 @@ def _normalized_ownership_path(value: object) -> tuple[str, str | None]:
         or "\\" in value
         or value.startswith("/")
         or ":" in value
+        or "%" in value
         or any(ord(character) < 32 for character in value)
     ):
         raise RetargetMemoryError("invalid MemPalace ownership metadata")
@@ -243,7 +292,56 @@ def _owned_by_spec(metadata: Mapping[str, object], spec_id: str) -> bool:
         raise RetargetMemoryError("ambiguous MemPalace ownership metadata")
     if declared is not None and path_spec is not None and declared != path_spec:
         raise RetargetMemoryError("ambiguous MemPalace ownership metadata")
-    return declared == spec_id or path_spec == spec_id
+
+    canonical = metadata.get("canonical") if "canonical" in metadata else None
+    scope = metadata.get("scope") if "scope" in metadata else None
+    artifact_kind = (
+        metadata.get("artifact_kind")
+        if "artifact_kind" in metadata
+        else None
+    )
+    if "canonical" in metadata and type(canonical) is not bool:
+        raise RetargetMemoryError("invalid MemPalace ownership metadata")
+    if "scope" in metadata and (type(scope) is not str or not scope):
+        raise RetargetMemoryError("invalid MemPalace ownership metadata")
+    if "artifact_kind" in metadata and (
+        type(artifact_kind) is not str or not artifact_kind
+    ):
+        raise RetargetMemoryError("invalid MemPalace ownership metadata")
+
+    exact_evidence = (
+        declared is not None
+        and canonical is True
+        and scope == "spec-evidence"
+        and artifact_kind == "spec-evidence"
+    )
+    if path_spec is not None:
+        if canonical is False:
+            raise RetargetMemoryError("ambiguous MemPalace ownership metadata")
+        if scope is None and artifact_kind is not None:
+            raise RetargetMemoryError("ambiguous MemPalace ownership metadata")
+        if scope == "canonical" and artifact_kind is not None:
+            raise RetargetMemoryError("ambiguous MemPalace ownership metadata")
+        if scope == "canonical-support" and artifact_kind != "supporting-context":
+            raise RetargetMemoryError("ambiguous MemPalace ownership metadata")
+        if artifact_kind == "supporting-context" and scope != "canonical-support":
+            raise RetargetMemoryError("ambiguous MemPalace ownership metadata")
+        if scope == "spec-evidence" or artifact_kind == "spec-evidence":
+            if not exact_evidence:
+                raise RetargetMemoryError("ambiguous MemPalace ownership metadata")
+        elif scope not in {None, "canonical", "canonical-support"}:
+            raise RetargetMemoryError("ambiguous MemPalace ownership metadata")
+        return path_spec == spec_id
+
+    if declared is not None:
+        if not exact_evidence:
+            raise RetargetMemoryError("ambiguous MemPalace ownership metadata")
+        return declared == spec_id
+    if scope in {"canonical", "canonical-support", "spec-evidence"} or (
+        artifact_kind in {"supporting-context", "spec-evidence"}
+    ):
+        raise RetargetMemoryError("ambiguous MemPalace ownership metadata")
+    return False
 
 
 def _adapter_identity(
@@ -257,14 +355,21 @@ def _adapter_identity(
         raise RetargetMemoryError(
             "configured MemPalace adapter wing identity is inconsistent"
         )
-    if not isinstance(palace_path, (str, Path)) or not str(palace_path):
+    if not isinstance(palace_path, (str, Path)):
         raise RetargetMemoryError(
             "configured MemPalace adapter storage identity is incomplete"
         )
     adapter_name = f"{type(adapter).__module__}.{type(adapter).__qualname__}"
-    if len(adapter_name) > _MAX_PATH_LENGTH:
-        raise RetargetMemoryError("configured MemPalace adapter identity is invalid")
-    return adapter_name, wing, str(palace_path)
+    palace_identity = str(palace_path)
+    try:
+        _require_receipt_text(adapter_name, field="adapter")
+        _require_receipt_text(wing, field="wing")
+        _require_receipt_text(palace_identity, field="palace_path")
+    except ValueError as exc:
+        raise RetargetMemoryError(
+            "configured MemPalace adapter identity is invalid"
+        ) from exc
+    return adapter_name, wing, palace_identity
 
 
 def _collection_from_requirement_adapter(adapter: object) -> object:
@@ -283,7 +388,9 @@ def _delete_acknowledgement(result: object) -> int | None:
     if result is None:
         return None
     value: object
-    if isinstance(result, Mapping):
+    if type(result) is int:
+        value = result
+    elif isinstance(result, Mapping):
         if "deleted" not in result:
             return None
         value = result["deleted"]
@@ -294,6 +401,33 @@ def _delete_acknowledgement(result: object) -> int | None:
     if type(value) is not int or value < 0:
         raise RetargetMemoryError("MemPalace delete acknowledgement is invalid")
     return value
+
+
+def _type_exact_equal(left: object, right: object) -> bool:
+    if type(left) is not type(right):
+        return False
+    if type(left) is dict:
+        left_dict = left
+        right_dict = right
+        if len(left_dict) != len(right_dict):
+            return False
+        unmatched = list(right_dict.items())
+        for left_key, left_value in left_dict.items():
+            for index, (right_key, right_value) in enumerate(unmatched):
+                if _type_exact_equal(left_key, right_key):
+                    if not _type_exact_equal(left_value, right_value):
+                        return False
+                    unmatched.pop(index)
+                    break
+            else:
+                return False
+        return not unmatched
+    if type(left) in {list, tuple}:
+        return len(left) == len(right) and all(
+            _type_exact_equal(left_value, right_value)
+            for left_value, right_value in zip(left, right)
+        )
+    return bool(left == right)
 
 
 def _classify_owned_rows(
@@ -347,6 +481,9 @@ def _receipt(
     acknowledged: int | None = None,
     remaining: tuple[str, ...] = (),
     unrelated_missing: tuple[str, ...] = (),
+    unrelated_changed: tuple[str, ...] = (),
+    unexpected_added: tuple[str, ...] = (),
+    report_set_digest: str | None = None,
     failure_code: str | None = None,
     mine_status: str | None = None,
     audit_status: str | None = None,
@@ -366,6 +503,9 @@ def _receipt(
         delete_acknowledged_count=acknowledged,
         remaining_owned_ids=remaining,
         unrelated_missing_ids=unrelated_missing,
+        unrelated_changed_ids=unrelated_changed,
+        unexpected_added_ids=unexpected_added,
+        report_set_digest=report_set_digest,
         failure_code=failure_code,
     )
 
@@ -418,20 +558,24 @@ def purge_retarget_spec_memory(
         )
 
     acknowledgement_total = 0
-    acknowledgement_available = False
+    all_batches_acknowledged = True
+    completed_batches = 0
+    total_batches = (len(owned) + _DELETE_BATCH_SIZE - 1) // _DELETE_BATCH_SIZE
     delete_failure: Exception | SystemExit | None = None
     for start in range(0, len(owned), _DELETE_BATCH_SIZE):
         batch = owned[start : start + _DELETE_BATCH_SIZE]
         try:
             raw_acknowledgement = collection.delete(ids=list(batch))  # type: ignore[attr-defined]
             acknowledgement = _delete_acknowledgement(raw_acknowledgement)
-            if acknowledgement is not None:
-                acknowledgement_available = True
+            if acknowledgement is None:
+                all_batches_acknowledged = False
+            else:
                 acknowledgement_total += acknowledgement
                 if acknowledgement != len(batch):
                     raise RetargetMemoryError(
                         "MemPalace reported partial deletion"
                     )
+            completed_batches += 1
         except (Exception, SystemExit) as exc:
             delete_failure = exc
             break
@@ -453,7 +597,11 @@ def purge_retarget_spec_memory(
             palace_path=palace_path,
             scanned_count=len(rows),
             acknowledged=(
-                acknowledgement_total if acknowledgement_available else None
+                acknowledgement_total
+                if all_batches_acknowledged
+                and completed_batches == total_batches
+                and delete_failure is None
+                else None
             ),
             failure_code="retarget_memory_rescan_failed",
         )
@@ -464,14 +612,33 @@ def purge_retarget_spec_memory(
 
     remaining_ids = set(remaining_rows)
     actual_deleted = tuple(sorted(set(owned).difference(remaining_ids)))
-    unrelated_before = set(rows).difference(owned)
-    unrelated_missing = tuple(sorted(unrelated_before.difference(remaining_ids)))
+    unrelated_before = {
+        drawer_id: row
+        for drawer_id, row in rows.items()
+        if drawer_id not in set(owned)
+    }
+    unrelated_missing = tuple(
+        sorted(set(unrelated_before).difference(remaining_ids))
+    )
+    unrelated_changed = tuple(
+        sorted(
+            drawer_id
+            for drawer_id, before_row in unrelated_before.items()
+            if drawer_id in remaining_rows
+            and not _type_exact_equal(before_row, remaining_rows[drawer_id])
+        )
+    )
+    unexpected_added = tuple(
+        sorted(remaining_ids.difference(set(rows)))
+    )
     receipt = _receipt(
         status=(
             "fail"
             if delete_failure is not None
             or remaining_owned
             or unrelated_missing
+            or unrelated_changed
+            or unexpected_added
             else "pass"
         ),
         spec_id=checked_spec_id,
@@ -482,17 +649,31 @@ def purge_retarget_spec_memory(
         palace_path=palace_path,
         scanned_count=len(rows),
         acknowledged=(
-            acknowledgement_total if acknowledgement_available else None
+            acknowledgement_total
+            if all_batches_acknowledged
+            and completed_batches == total_batches
+            and delete_failure is None
+            else None
         ),
         remaining=remaining_owned,
         unrelated_missing=unrelated_missing,
+        unrelated_changed=unrelated_changed,
+        unexpected_added=unexpected_added,
         failure_code=(
             "retarget_memory_delete_partial"
             if delete_failure is not None or remaining_owned
             else (
                 "retarget_memory_unrelated_missing"
                 if unrelated_missing
-                else None
+                else (
+                    "retarget_memory_unrelated_changed"
+                    if unrelated_changed
+                    else (
+                        "retarget_memory_unexpected_added"
+                        if unexpected_added
+                        else None
+                    )
+                )
             )
         ),
     )
@@ -504,6 +685,11 @@ def purge_retarget_spec_memory(
     if unrelated_missing:
         raise RetargetMemoryError(
             "MemPalace deletion affected unrelated drawer IDs",
+            receipt=receipt,
+        )
+    if unrelated_changed or unexpected_added:
+        raise RetargetMemoryError(
+            "MemPalace unrelated postimage changed during deletion",
             receipt=receipt,
         )
     return receipt
@@ -541,6 +727,570 @@ def _strict_report_ids(value: object, *, label: str) -> tuple[str, ...]:
         raise RetargetMemoryError(
             f"replacement memory {label} receipt is inconsistent"
         ) from exc
+
+
+def _strict_report_strings(value: object, *, label: str) -> tuple[str, ...]:
+    if (
+        type(value) is not list
+        or len(value) > MAX_AUDIT_SCAN_ROWS
+        or any(
+            type(item) is not str
+            or not item
+            or len(item) > _MAX_PATH_LENGTH
+            or any(ord(character) < 32 for character in item)
+            for item in value
+        )
+        or value != sorted(set(value))
+    ):
+        raise RetargetMemoryError(
+            f"replacement memory {label} receipt is inconsistent"
+        )
+    return tuple(value)
+
+
+def _validate_refresh_audit(
+    audit: object,
+    *,
+    expected_count: int,
+) -> str:
+    if (
+        type(audit) is not SpecMemoryAuditReport
+        or type(getattr(audit, "schema_version", None)) is not int
+        or getattr(audit, "schema_version", None) != 1
+    ):
+        raise RetargetMemoryError(
+            "replacement memory audit receipt is inconsistent"
+        )
+    status = getattr(audit, "status", None)
+    if type(status) is not str or status not in {"pass", "warn"}:
+        raise RetargetMemoryError(
+            "replacement memory audit receipt is inconsistent"
+        )
+    observed_expected = getattr(audit, "expected_count", None)
+    observed_present = getattr(audit, "present_current_count", None)
+    if (
+        type(observed_expected) is not int
+        or type(observed_present) is not int
+        or observed_expected != expected_count
+        or observed_present != expected_count
+    ):
+        raise RetargetMemoryError(
+            "replacement memory audit receipt is inconsistent"
+        )
+    anomaly_fields = (
+        "missing",
+        "stale",
+        "wrong_wing",
+        "wrong_room",
+        "duplicate",
+        "non_canonical",
+        "lifecycle_excluded",
+    )
+    if any(
+        _strict_report_ids(getattr(audit, field, None), label="audit")
+        for field in anomaly_fields
+    ):
+        raise RetargetMemoryError(
+            "replacement memory audit receipt is inconsistent"
+        )
+    if _strict_report_strings(
+        getattr(audit, "recommendations", None),
+        label="audit recommendations",
+    ) or _strict_report_strings(
+        getattr(audit, "errors", None),
+        label="audit errors",
+    ):
+        raise RetargetMemoryError(
+            "replacement memory audit receipt is inconsistent"
+        )
+    probe = getattr(audit, "retrieval_probe", None)
+    if type(probe) is not dict or set(probe) != {"status", "checked"}:
+        raise RetargetMemoryError(
+            "replacement memory audit receipt is inconsistent"
+        )
+    probe_status = probe["status"]
+    checked = probe["checked"]
+    if (
+        type(probe_status) is not str
+        or probe_status not in {"pass", "warn"}
+        or type(checked) is not int
+        or not (0 <= checked <= MAX_AUDIT_SCAN_ROWS)
+        or (probe_status == "warn" and checked != 0)
+        or (probe_status == "pass" and checked != expected_count)
+        or status != ("warn" if probe_status == "warn" else "pass")
+    ):
+        raise RetargetMemoryError(
+            "replacement memory audit receipt is inconsistent"
+        )
+    return status
+
+
+def _sha256_text(content: str) -> str:
+    return f"sha256:{hashlib.sha256(content.encode('utf-8')).hexdigest()}"
+
+
+def _fsync_directory(path: Path) -> None:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(
+        os,
+        "O_NOFOLLOW",
+        0,
+    )
+    descriptor = os.open(path, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _read_optional_report_text(path: Path) -> str | None:
+    if not os.path.lexists(path):
+        return None
+    if path.is_symlink() or not path.is_file():
+        raise RetargetMemoryError(
+            "replacement memory report target is not a regular file"
+        )
+    size = path.stat().st_size
+    if size > _MAX_REPORT_BYTES:
+        raise RetargetMemoryError("replacement memory report target is oversized")
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise RetargetMemoryError(
+            "replacement memory report target is unreadable"
+        ) from exc
+
+
+def _report_manifest(
+    *,
+    spec_id: str,
+    contents: Mapping[str, str],
+) -> tuple[str, str]:
+    if type(contents) is not dict or tuple(sorted(contents)) != _REPORT_NAMES:
+        raise RetargetMemoryError("replacement memory report set is inconsistent")
+    files = [
+        {
+            "path": name,
+            "sha256": _sha256_text(contents[name]),
+            "size": len(contents[name].encode("utf-8")),
+        }
+        for name in _REPORT_NAMES
+    ]
+    digest_payload = json.dumps(
+        files,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    report_set_digest = f"sha256:{hashlib.sha256(digest_payload).hexdigest()}"
+    manifest = {
+        "schema_version": 1,
+        "spec_id": spec_id,
+        "files": files,
+        "report_set_digest": report_set_digest,
+    }
+    return (
+        json.dumps(
+            manifest,
+            indent=2,
+            sort_keys=True,
+            allow_nan=False,
+        )
+        + "\n",
+        report_set_digest,
+    )
+
+
+def _preflight_report_set(spec_dir: Path) -> None:
+    if spec_dir.is_symlink() or not spec_dir.is_dir():
+        raise RetargetMemoryError(
+            "replacement memory report parent is not a real directory"
+        )
+    for name in (*_REPORT_NAMES, _REPORT_MANIFEST_NAME):
+        _read_optional_report_text(spec_dir / name)
+    transaction = spec_dir / _REPORT_TRANSACTION_NAME
+    if os.path.lexists(transaction) and (
+        transaction.is_symlink() or not transaction.is_dir()
+    ):
+        raise RetargetMemoryError(
+            "replacement memory report transaction is invalid"
+        )
+
+
+def _write_transaction_text(path: Path, content: str) -> None:
+    if len(content.encode("utf-8")) > _MAX_REPORT_BYTES:
+        raise RetargetMemoryError("replacement memory report is oversized")
+    _write_text_durable_atomic(path, content)
+
+
+def _stage_report_transaction(
+    spec_dir: Path,
+    *,
+    spec_id: str,
+    contents: dict[str, str],
+    manifest_content: str,
+) -> Path:
+    old_contents = {
+        name: _read_optional_report_text(spec_dir / name)
+        for name in _REPORT_NAMES
+    }
+    old_manifest = _read_optional_report_text(
+        spec_dir / _REPORT_MANIFEST_NAME
+    )
+    staging = Path(
+        tempfile.mkdtemp(
+            prefix=".mempalace-refresh-staging-",
+            dir=spec_dir,
+        )
+    )
+    transaction = spec_dir / _REPORT_TRANSACTION_NAME
+    try:
+        new_dir = staging / "new"
+        old_dir = staging / "old"
+        new_dir.mkdir(mode=0o700)
+        old_dir.mkdir(mode=0o700)
+        for name in _REPORT_NAMES:
+            _write_transaction_text(new_dir / name, contents[name])
+            old_content = old_contents[name]
+            if old_content is not None:
+                _write_transaction_text(old_dir / name, old_content)
+        _write_transaction_text(
+            new_dir / _REPORT_MANIFEST_NAME,
+            manifest_content,
+        )
+        if old_manifest is not None:
+            _write_transaction_text(
+                old_dir / _REPORT_MANIFEST_NAME,
+                old_manifest,
+            )
+        records = [
+            {
+                "path": name,
+                "old_present": old_contents[name] is not None,
+                "old_sha256": (
+                    _sha256_text(old_contents[name])
+                    if old_contents[name] is not None
+                    else None
+                ),
+                "new_sha256": _sha256_text(contents[name]),
+            }
+            for name in _REPORT_NAMES
+        ]
+        descriptor = {
+            "schema_version": 1,
+            "spec_id": spec_id,
+            "files": records,
+            "old_manifest_present": old_manifest is not None,
+            "old_manifest_sha256": (
+                _sha256_text(old_manifest)
+                if old_manifest is not None
+                else None
+            ),
+            "new_manifest_sha256": _sha256_text(manifest_content),
+        }
+        _write_transaction_text(
+            staging / "transaction.json",
+            json.dumps(
+                descriptor,
+                indent=2,
+                sort_keys=True,
+                allow_nan=False,
+            )
+            + "\n",
+        )
+        _fsync_directory(new_dir)
+        _fsync_directory(old_dir)
+        _fsync_directory(staging)
+        atomic_rename_no_replace(staging, transaction)
+        return transaction
+    finally:
+        if os.path.lexists(staging):
+            shutil.rmtree(staging)
+
+
+def _require_transaction_file(path: Path) -> str:
+    if path.is_symlink() or not path.is_file():
+        raise RetargetMemoryError(
+            "replacement memory report transaction is invalid"
+        )
+    return _read_optional_report_text(path) or ""
+
+
+def _load_report_transaction(
+    spec_dir: Path,
+) -> tuple[dict[str, str | None], dict[str, str], str | None, str]:
+    transaction = spec_dir / _REPORT_TRANSACTION_NAME
+    if transaction.is_symlink() or not transaction.is_dir():
+        raise RetargetMemoryError(
+            "replacement memory report transaction is invalid"
+        )
+    if {entry.name for entry in transaction.iterdir()} != {
+        "new",
+        "old",
+        "transaction.json",
+    }:
+        raise RetargetMemoryError(
+            "replacement memory report transaction is invalid"
+        )
+    new_dir = transaction / "new"
+    old_dir = transaction / "old"
+    if (
+        new_dir.is_symlink()
+        or not new_dir.is_dir()
+        or old_dir.is_symlink()
+        or not old_dir.is_dir()
+    ):
+        raise RetargetMemoryError(
+            "replacement memory report transaction is invalid"
+        )
+    try:
+        descriptor = loads_strict_json(
+            _require_transaction_file(transaction / "transaction.json")
+        )
+    except (ValueError, TypeError, json.JSONDecodeError) as exc:
+        raise RetargetMemoryError(
+            "replacement memory report transaction is invalid"
+        ) from exc
+    expected_keys = {
+        "schema_version",
+        "spec_id",
+        "files",
+        "old_manifest_present",
+        "old_manifest_sha256",
+        "new_manifest_sha256",
+    }
+    if (
+        type(descriptor) is not dict
+        or set(descriptor) != expected_keys
+        or type(descriptor["schema_version"]) is not int
+        or descriptor["schema_version"] != 1
+        or descriptor["spec_id"] != spec_dir.name
+        or type(descriptor["spec_id"]) is not str
+        or type(descriptor["files"]) is not list
+        or len(descriptor["files"]) != len(_REPORT_NAMES)
+        or type(descriptor["old_manifest_present"]) is not bool
+        or type(descriptor["new_manifest_sha256"]) is not str
+        or _SHA256.fullmatch(descriptor["new_manifest_sha256"]) is None
+    ):
+        raise RetargetMemoryError(
+            "replacement memory report transaction is invalid"
+        )
+    records: dict[str, dict[str, object]] = {}
+    for raw_record in descriptor["files"]:
+        if (
+            type(raw_record) is not dict
+            or set(raw_record)
+            != {"path", "old_present", "old_sha256", "new_sha256"}
+            or type(raw_record["path"]) is not str
+            or raw_record["path"] not in _REPORT_NAMES
+            or raw_record["path"] in records
+            or type(raw_record["old_present"]) is not bool
+            or type(raw_record["new_sha256"]) is not str
+            or _SHA256.fullmatch(raw_record["new_sha256"]) is None
+            or (
+                raw_record["old_present"]
+                and (
+                    type(raw_record["old_sha256"]) is not str
+                    or _SHA256.fullmatch(raw_record["old_sha256"]) is None
+                )
+            )
+            or (
+                not raw_record["old_present"]
+                and raw_record["old_sha256"] is not None
+            )
+        ):
+            raise RetargetMemoryError(
+                "replacement memory report transaction is invalid"
+            )
+        records[raw_record["path"]] = raw_record
+    if tuple(sorted(records)) != _REPORT_NAMES:
+        raise RetargetMemoryError(
+            "replacement memory report transaction is invalid"
+        )
+    new_contents: dict[str, str] = {}
+    old_contents: dict[str, str | None] = {}
+    expected_new_entries = set(_REPORT_NAMES) | {_REPORT_MANIFEST_NAME}
+    expected_old_entries = {
+        name
+        for name, record in records.items()
+        if record["old_present"]
+    }
+    if descriptor["old_manifest_present"]:
+        expected_old_entries.add(_REPORT_MANIFEST_NAME)
+    if {entry.name for entry in new_dir.iterdir()} != expected_new_entries or {
+        entry.name for entry in old_dir.iterdir()
+    } != expected_old_entries:
+        raise RetargetMemoryError(
+            "replacement memory report transaction is invalid"
+        )
+    for name, record in records.items():
+        new_content = _require_transaction_file(new_dir / name)
+        if _sha256_text(new_content) != record["new_sha256"]:
+            raise RetargetMemoryError(
+                "replacement memory report transaction is invalid"
+            )
+        new_contents[name] = new_content
+        if record["old_present"]:
+            old_content = _require_transaction_file(old_dir / name)
+            if _sha256_text(old_content) != record["old_sha256"]:
+                raise RetargetMemoryError(
+                    "replacement memory report transaction is invalid"
+                )
+            old_contents[name] = old_content
+        else:
+            old_contents[name] = None
+    new_manifest = _require_transaction_file(
+        new_dir / _REPORT_MANIFEST_NAME
+    )
+    if _sha256_text(new_manifest) != descriptor["new_manifest_sha256"]:
+        raise RetargetMemoryError(
+            "replacement memory report transaction is invalid"
+        )
+    expected_manifest, _digest = _report_manifest(
+        spec_id=spec_dir.name,
+        contents=new_contents,
+    )
+    if new_manifest != expected_manifest:
+        raise RetargetMemoryError(
+            "replacement memory report transaction is invalid"
+        )
+    old_manifest: str | None = None
+    if descriptor["old_manifest_present"]:
+        if (
+            type(descriptor["old_manifest_sha256"]) is not str
+            or _SHA256.fullmatch(descriptor["old_manifest_sha256"]) is None
+        ):
+            raise RetargetMemoryError(
+                "replacement memory report transaction is invalid"
+            )
+        old_manifest = _require_transaction_file(
+            old_dir / _REPORT_MANIFEST_NAME
+        )
+        if _sha256_text(old_manifest) != descriptor["old_manifest_sha256"]:
+            raise RetargetMemoryError(
+                "replacement memory report transaction is invalid"
+            )
+    elif descriptor["old_manifest_sha256"] is not None:
+        raise RetargetMemoryError(
+            "replacement memory report transaction is invalid"
+        )
+    return old_contents, new_contents, old_manifest, new_manifest
+
+
+def _unlink_report_file(path: Path) -> None:
+    if os.path.lexists(path):
+        if path.is_symlink() or not path.is_file():
+            raise RetargetMemoryError(
+                "replacement memory report target is not a regular file"
+            )
+        os.unlink(path)
+        _fsync_directory(path.parent)
+
+
+def _remove_report_transaction(spec_dir: Path) -> None:
+    transaction = spec_dir / _REPORT_TRANSACTION_NAME
+    if transaction.is_symlink() or not transaction.is_dir():
+        raise RetargetMemoryError(
+            "replacement memory report transaction is invalid"
+        )
+    shutil.rmtree(transaction)
+    _fsync_directory(spec_dir)
+
+
+def _recover_report_transaction(spec_dir: Path) -> None:
+    transaction = spec_dir / _REPORT_TRANSACTION_NAME
+    if not os.path.lexists(transaction):
+        return
+    old_contents, new_contents, old_manifest, new_manifest = (
+        _load_report_transaction(spec_dir)
+    )
+    live_manifest = _read_optional_report_text(
+        spec_dir / _REPORT_MANIFEST_NAME
+    )
+    if live_manifest == new_manifest:
+        if all(
+            _read_optional_report_text(spec_dir / name) == content
+            for name, content in new_contents.items()
+        ):
+            _remove_report_transaction(spec_dir)
+            return
+        raise RetargetMemoryError(
+            "committed replacement memory report set is inconsistent"
+        )
+    if live_manifest not in {None, old_manifest}:
+        raise RetargetMemoryError(
+            "replacement memory report transaction postimage is inconsistent"
+        )
+    for name in _REPORT_NAMES:
+        live = _read_optional_report_text(spec_dir / name)
+        if live not in {old_contents[name], new_contents[name]}:
+            raise RetargetMemoryError(
+                "replacement memory report transaction postimage is inconsistent"
+            )
+    _unlink_report_file(spec_dir / _REPORT_MANIFEST_NAME)
+    for name in _REPORT_NAMES:
+        target = spec_dir / name
+        old_content = old_contents[name]
+        if old_content is None:
+            _unlink_report_file(target)
+        else:
+            _write_text_durable_atomic(target, old_content)
+    if old_manifest is not None:
+        _write_text_durable_atomic(
+            spec_dir / _REPORT_MANIFEST_NAME,
+            old_manifest,
+        )
+    _remove_report_transaction(spec_dir)
+
+
+def _publish_report_set(
+    spec_dir: Path,
+    *,
+    spec_id: str,
+    contents: dict[str, str],
+) -> str:
+    _recover_report_transaction(spec_dir)
+    _preflight_report_set(spec_dir)
+    manifest_content, report_set_digest = _report_manifest(
+        spec_id=spec_id,
+        contents=contents,
+    )
+    if (
+        _read_optional_report_text(spec_dir / _REPORT_MANIFEST_NAME)
+        == manifest_content
+        and all(
+            _read_optional_report_text(spec_dir / name) == content
+            for name, content in contents.items()
+        )
+    ):
+        return report_set_digest
+    _stage_report_transaction(
+        spec_dir,
+        spec_id=spec_id,
+        contents=contents,
+        manifest_content=manifest_content,
+    )
+    try:
+        _unlink_report_file(spec_dir / _REPORT_MANIFEST_NAME)
+        for name in _REPORT_NAMES:
+            _write_text_durable_atomic(spec_dir / name, contents[name])
+        _write_text_durable_atomic(
+            spec_dir / _REPORT_MANIFEST_NAME,
+            manifest_content,
+        )
+        if any(
+            _read_optional_report_text(spec_dir / name) != contents[name]
+            for name in _REPORT_NAMES
+        ) or _read_optional_report_text(
+            spec_dir / _REPORT_MANIFEST_NAME
+        ) != manifest_content:
+            raise RetargetMemoryError(
+                "replacement memory report set postimage is inconsistent"
+            )
+    except (Exception, SystemExit):
+        _recover_report_transaction(spec_dir)
+        raise
+    _remove_report_transaction(spec_dir)
+    return report_set_digest
 
 
 def refresh_retarget_spec_memory(
@@ -751,22 +1501,10 @@ def refresh_retarget_spec_memory(
         wing=wing,
         palace_path=palace_path,
     )
-    audit_expected_count = getattr(audit, "expected_count", None)
-    audit_present_count = getattr(audit, "present_current_count", None)
-    if (
-        type(audit) is not SpecMemoryAuditReport
-        or getattr(audit, "schema_version", None) != 1
-        or type(getattr(audit, "schema_version", None)) is not int
-        or type(getattr(audit, "errors", None)) is not list
-        or getattr(audit, "errors") != []
-        or type(audit_expected_count) is not int
-        or type(audit_present_count) is not int
-        or audit_expected_count != len(expected_ids)
-        or audit_present_count != len(expected_ids)
-    ):
-        raise RetargetMemoryError(
-            "replacement memory audit receipt is inconsistent"
-        )
+    audit_status = _validate_refresh_audit(
+        audit,
+        expected_count=len(expected_ids),
+    )
 
     mine_serializer = getattr(mine, "to_dict", None)
     if not callable(mine_serializer):
@@ -779,17 +1517,27 @@ def refresh_retarget_spec_memory(
             "replacement memory mine receipt is inconsistent"
         )
     try:
-        _write_text_durable_atomic(
-            resolved_spec_dir / "mempalace-mine.json",
-            json.dumps(
+        report_set_digest = _publish_report_set(
+            resolved_spec_dir,
+            spec_id=spec_id,
+            contents={
+                "mempalace-mine.json": json.dumps(
                 mine_payload,
                 indent=2,
                 sort_keys=True,
                 allow_nan=False,
             )
-            + "\n",
+                + "\n",
+                "mempalace-audit.json": json.dumps(
+                    audit.to_dict(),
+                    indent=2,
+                    sort_keys=True,
+                    allow_nan=False,
+                )
+                + "\n",
+                "mempalace-audit.md": render_audit_markdown(audit),
+            },
         )
-        write_audit_reports(audit, resolved_spec_dir)
     except (Exception, SystemExit) as exc:
         raise RetargetMemoryError(
             "replacement memory report write failed",
@@ -816,4 +1564,5 @@ def refresh_retarget_spec_memory(
         palace_path=palace_path,
         mine_status="complete",
         audit_status=audit_status,
+        report_set_digest=report_set_digest,
     )

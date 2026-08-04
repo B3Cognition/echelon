@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -22,6 +23,9 @@ class FakeCollection:
         self.force_truncated = False
         self.delete_limit: int | None = None
         self.ignore_delete = False
+        self.get_calls = 0
+        self.post_delete_hook = None
+        self.delete_results: list[object] | None = None
 
     def get(
         self,
@@ -31,6 +35,11 @@ class FakeCollection:
         limit: int,
         offset: int,
     ) -> dict[str, object]:
+        self.get_calls += 1
+        if self.deleted_batches and self.post_delete_hook is not None:
+            hook = self.post_delete_hook
+            self.post_delete_hook = None
+            hook(self.rows)
         if self.force_truncated:
             raise TypeError("offset pagination is unsupported")
         wing = where["wing"]
@@ -45,7 +54,7 @@ class FakeCollection:
             "metadatas": [row[1] for _drawer_id, row in rows],
         }
 
-    def delete(self, *, ids: list[str]) -> dict[str, int]:
+    def delete(self, *, ids: list[str]) -> object:
         self.deleted_batches.append(tuple(ids))
         deleted = 0
         if not self.ignore_delete:
@@ -53,6 +62,8 @@ class FakeCollection:
             for drawer_id in selected:
                 if self.rows.pop(drawer_id, None) is not None:
                     deleted += 1
+        if self.delete_results is not None:
+            return self.delete_results.pop(0)
         return {"deleted": deleted}
 
 
@@ -201,8 +212,53 @@ def test_retarget_purge_rejects_contradictory_ownership_before_delete(
         {"wing": "demo", "artifact_path": "/specs/001-demo/spec.md"},
         {"wing": "demo", "artifact_path": "C:/specs/001-demo/spec.md"},
         {"wing": "demo", "artifact_path": "specs/001-demo/../002-other/spec.md"},
+        {"wing": "demo", "artifact_path": "specs/001-demo/%2e%2e/002-other/spec.md"},
+        {"wing": "demo", "artifact_path": "specs%2f001-demo/spec.md"},
+        {"wing": "demo", "artifact_path": "specs%5c001-demo/spec.md"},
+        {"wing": "demo", "artifact_path": "specs%252f001-demo/spec.md"},
         {"wing": "demo", "artifact_path": ["specs/001-demo/spec.md"]},
         {"wing": "demo", "spec_id": 1},
+        {"wing": "demo", "spec_id": "001-demo"},
+        {
+            "wing": "demo",
+            "artifact_path": "specs/001-demo/spec.md",
+            "canonical": False,
+        },
+        {
+            "wing": "demo",
+            "artifact_path": "specs/001-demo/spec.md",
+            "scope": "external-input",
+        },
+        {
+            "wing": "demo",
+            "artifact_path": "specs/001-demo/spec.md",
+            "artifact_kind": "external-input",
+        },
+        {
+            "wing": "demo",
+            "spec_id": "001-demo",
+            "canonical": True,
+            "scope": "external-input",
+            "artifact_kind": "external-input",
+        },
+        {
+            "wing": "demo",
+            "canonical": True,
+            "scope": "canonical",
+        },
+        {
+            "wing": "demo",
+            "artifact_path": "re/hidden.md",
+            "canonical": True,
+            "scope": "canonical",
+        },
+        {
+            "wing": "demo",
+            "artifact_path": "inputs/external.md",
+            "canonical": True,
+            "scope": "canonical-support",
+            "artifact_kind": "supporting-context",
+        },
         {
             "wing": "demo",
             "artifact_path": "specs/001-demo/spec.md",
@@ -236,6 +292,29 @@ def test_retarget_purge_accepts_exact_source_file_ownership(
     receipt = purge_retarget_spec_memory(memory_workspace.root, "001-demo")
 
     assert receipt.deleted_ids == ("owned",)
+    assert memory_workspace.collection.rows == {}
+
+
+@pytest.mark.unit
+def test_retarget_purge_accepts_exact_spec_evidence_metadata(
+    memory_workspace: MemoryWorkspace,
+) -> None:
+    memory_workspace.collection.rows = {
+        "evidence": (
+            "old evidence",
+            {
+                "wing": "demo",
+                "spec_id": "001-demo",
+                "canonical": True,
+                "scope": "spec-evidence",
+                "artifact_kind": "spec-evidence",
+            },
+        )
+    }
+
+    receipt = purge_retarget_spec_memory(memory_workspace.root, "001-demo")
+
+    assert receipt.deleted_ids == ("evidence",)
     assert memory_workspace.collection.rows == {}
 
 
@@ -311,6 +390,123 @@ def test_retarget_purge_rejects_missing_delete_effect_even_with_acknowledgement(
 
 
 @pytest.mark.unit
+def test_retarget_purge_rejects_unrelated_document_mutation(
+    memory_workspace: MemoryWorkspace,
+) -> None:
+    memory_workspace.collection.rows = {
+        "owned": ("old", {"wing": "demo", "artifact_path": "specs/001-demo/spec.md"}),
+        "workspace-re": ("before", {"wing": "demo", "artifact_path": "re/workspace.md"}),
+    }
+    memory_workspace.collection.post_delete_hook = lambda rows: rows.__setitem__(
+        "workspace-re",
+        ("after", rows["workspace-re"][1]),
+    )
+
+    with pytest.raises(RetargetMemoryError, match="unrelated") as caught:
+        purge_retarget_spec_memory(memory_workspace.root, "001-demo")
+
+    assert caught.value.receipt is not None
+    assert caught.value.receipt.failure_code == "retarget_memory_unrelated_changed"
+
+
+@pytest.mark.unit
+def test_retarget_purge_rejects_type_confused_unrelated_metadata_mutation(
+    memory_workspace: MemoryWorkspace,
+) -> None:
+    memory_workspace.collection.rows = {
+        "owned": ("old", {"wing": "demo", "artifact_path": "specs/001-demo/spec.md"}),
+        "workspace-re": (
+            "same",
+            {"wing": "demo", "artifact_path": "re/workspace.md", "rank": 1},
+        ),
+    }
+    memory_workspace.collection.post_delete_hook = lambda rows: rows.__setitem__(
+        "workspace-re",
+        ("same", {**rows["workspace-re"][1], "rank": True}),
+    )
+
+    with pytest.raises(RetargetMemoryError, match="unrelated") as caught:
+        purge_retarget_spec_memory(memory_workspace.root, "001-demo")
+
+    assert caught.value.receipt is not None
+    assert caught.value.receipt.failure_code == "retarget_memory_unrelated_changed"
+
+
+@pytest.mark.unit
+def test_retarget_purge_rejects_new_row_after_delete(
+    memory_workspace: MemoryWorkspace,
+) -> None:
+    memory_workspace.collection.rows = {
+        "owned": ("old", {"wing": "demo", "artifact_path": "specs/001-demo/spec.md"}),
+    }
+    memory_workspace.collection.post_delete_hook = lambda rows: rows.__setitem__(
+        "concurrent",
+        ("new", {"wing": "demo", "artifact_path": "re/concurrent.md"}),
+    )
+
+    with pytest.raises(RetargetMemoryError, match="unrelated") as caught:
+        purge_retarget_spec_memory(memory_workspace.root, "001-demo")
+
+    assert caught.value.receipt is not None
+    assert caught.value.receipt.failure_code == "retarget_memory_unexpected_added"
+
+
+@pytest.mark.unit
+def test_retarget_purge_accepts_raw_integer_delete_acknowledgement(
+    memory_workspace: MemoryWorkspace,
+) -> None:
+    memory_workspace.collection.rows = {
+        "owned": ("old", {"wing": "demo", "artifact_path": "specs/001-demo/spec.md"}),
+    }
+    memory_workspace.collection.delete_results = [1]
+
+    receipt = purge_retarget_spec_memory(memory_workspace.root, "001-demo")
+
+    assert receipt.delete_acknowledged_count == 1
+
+
+@pytest.mark.unit
+def test_retarget_purge_does_not_report_partial_mixed_acknowledgements(
+    memory_workspace: MemoryWorkspace,
+) -> None:
+    memory_workspace.collection.rows = {
+        f"owned-{index:03d}": (
+            "old",
+            {"wing": "demo", "artifact_path": f"specs/001-demo/{index}.md"},
+        )
+        for index in range(129)
+    }
+    memory_workspace.collection.delete_results = [128, None]
+
+    receipt = purge_retarget_spec_memory(memory_workspace.root, "001-demo")
+
+    assert receipt.deleted_count == 129
+    assert receipt.delete_acknowledged_count is None
+
+
+@pytest.mark.unit
+def test_retarget_purge_validates_receipt_identity_before_scan(
+    memory_workspace: MemoryWorkspace,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = SimpleNamespace(
+        wing="demo",
+        palace_path="p" * 5_000,
+        open_collection_read_only=lambda: memory_workspace.collection,
+    )
+    monkeypatch.setattr(
+        "echelon.mempalace_retarget.create_requirement_memory_adapter",
+        lambda *_args, **_kwargs: adapter,
+    )
+
+    with pytest.raises(RetargetMemoryError, match="identity"):
+        purge_retarget_spec_memory(memory_workspace.root, "001-demo")
+
+    assert memory_workspace.collection.get_calls == 0
+    assert memory_workspace.collection.deleted_batches == []
+
+
+@pytest.mark.unit
 def test_retarget_purge_receipt_is_stable_and_contains_no_document_text(
     memory_workspace: MemoryWorkspace,
 ) -> None:
@@ -318,11 +514,23 @@ def test_retarget_purge_receipt_is_stable_and_contains_no_document_text(
     memory_workspace.collection.rows = {
         "owned-b": (
             secret_document,
-            {"wing": "demo", "spec_id": "001-demo"},
+            {
+                "wing": "demo",
+                "spec_id": "001-demo",
+                "canonical": True,
+                "scope": "spec-evidence",
+                "artifact_kind": "spec-evidence",
+            },
         ),
         "owned-a": (
             secret_document,
-            {"wing": "demo", "spec_id": "001-demo"},
+            {
+                "wing": "demo",
+                "spec_id": "001-demo",
+                "canonical": True,
+                "scope": "spec-evidence",
+                "artifact_kind": "spec-evidence",
+            },
         ),
     }
 
@@ -374,7 +582,7 @@ def _cleanup(workspace: MemoryWorkspace):
     )
 
 
-def _audit(workspace: MemoryWorkspace, *, status: str = "pass"):
+def _audit(workspace: MemoryWorkspace, *, status: str = "warn"):
     from echelon.mempalace_audit import SpecMemoryAuditReport
 
     return SpecMemoryAuditReport(
@@ -386,6 +594,7 @@ def _audit(workspace: MemoryWorkspace, *, status: str = "pass"):
         status=status,
         expected_count=1,
         present_current_count=1,
+        retrieval_probe={"status": "warn", "checked": 0},
     )
 
 
@@ -422,6 +631,180 @@ def test_retarget_refresh_requires_acceptable_mine_and_audit(
     assert receipt.audit_status in {"pass", "warn"}
     assert (memory_workspace.spec_dir / "mempalace-mine.json").is_file()
     assert (memory_workspace.spec_dir / "mempalace-audit.json").is_file()
+    manifest_path = memory_workspace.spec_dir / "mempalace-refresh-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert receipt.report_set_digest == manifest["report_set_digest"]
+    assert [entry["path"] for entry in manifest["files"]] == [
+        "mempalace-audit.json",
+        "mempalace-audit.md",
+        "mempalace-mine.json",
+    ]
+    for entry in manifest["files"]:
+        content = (memory_workspace.spec_dir / entry["path"]).read_bytes()
+        assert entry["sha256"] == f"sha256:{hashlib.sha256(content).hexdigest()}"
+
+
+def _stub_refresh_reports(
+    workspace: MemoryWorkspace,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "echelon.mempalace_retarget.mine_spec_requirements",
+        lambda *_args, **_kwargs: _complete_mine(workspace),
+    )
+    monkeypatch.setattr(
+        "echelon.mempalace_retarget.cleanup_stale_spec_memory",
+        lambda *_args, **_kwargs: _cleanup(workspace),
+    )
+    monkeypatch.setattr(
+        "echelon.mempalace_retarget.audit_spec_memory",
+        lambda *_args, **_kwargs: _audit(workspace),
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "failing_name",
+    [
+        "mempalace-mine.json",
+        "mempalace-audit.json",
+        "mempalace-audit.md",
+        "mempalace-refresh-manifest.json",
+    ],
+)
+def test_retarget_refresh_rolls_back_the_whole_report_set_on_publish_failure(
+    memory_workspace: MemoryWorkspace,
+    monkeypatch: pytest.MonkeyPatch,
+    failing_name: str,
+) -> None:
+    _stub_refresh_reports(memory_workspace, monkeypatch)
+    old = {
+        "mempalace-mine.json": "old mine\n",
+        "mempalace-audit.json": "old audit\n",
+        "mempalace-audit.md": "old markdown\n",
+        "mempalace-refresh-manifest.json": "old manifest\n",
+    }
+    for name, content in old.items():
+        memory_workspace.spec_dir.joinpath(name).write_text(content, encoding="utf-8")
+    from echelon import mempalace_retarget
+
+    real_write = mempalace_retarget._write_text_durable_atomic
+    failed = False
+    manifest_absent_during_publish = False
+
+    def fail_once(path: Path, content: str) -> None:
+        nonlocal failed, manifest_absent_during_publish
+        if path.parent == memory_workspace.spec_dir and path.name != "mempalace-refresh-manifest.json":
+            manifest_absent_during_publish = not memory_workspace.spec_dir.joinpath(
+                "mempalace-refresh-manifest.json"
+            ).exists()
+        if path.parent == memory_workspace.spec_dir and path.name == failing_name and not failed:
+            failed = True
+            raise OSError("injected report publication failure")
+        real_write(path, content)
+
+    monkeypatch.setattr(
+        "echelon.mempalace_retarget._write_text_durable_atomic",
+        fail_once,
+    )
+
+    with pytest.raises(RetargetMemoryError, match="report write"):
+        refresh_retarget_spec_memory(
+            memory_workspace.root,
+            memory_workspace.spec_dir,
+        )
+
+    assert failed is True
+    assert manifest_absent_during_publish is True or failing_name == "mempalace-mine.json"
+    assert {
+        name: memory_workspace.spec_dir.joinpath(name).read_text(encoding="utf-8")
+        for name in old
+    } == old
+    assert not (memory_workspace.spec_dir / ".mempalace-refresh-transaction").exists()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "target_name",
+    [
+        "mempalace-mine.json",
+        "mempalace-audit.json",
+        "mempalace-audit.md",
+        "mempalace-refresh-manifest.json",
+    ],
+)
+def test_retarget_refresh_rejects_symlinked_report_set_member(
+    memory_workspace: MemoryWorkspace,
+    monkeypatch: pytest.MonkeyPatch,
+    target_name: str,
+) -> None:
+    _stub_refresh_reports(memory_workspace, monkeypatch)
+    unrelated = memory_workspace.root / "unrelated.txt"
+    unrelated.write_text("preserve me\n", encoding="utf-8")
+    memory_workspace.spec_dir.joinpath(target_name).symlink_to(unrelated)
+
+    with pytest.raises(RetargetMemoryError, match="report write"):
+        refresh_retarget_spec_memory(
+            memory_workspace.root,
+            memory_workspace.spec_dir,
+        )
+
+    assert unrelated.read_text(encoding="utf-8") == "preserve me\n"
+    assert memory_workspace.spec_dir.joinpath(target_name).is_symlink()
+
+
+@pytest.mark.unit
+def test_retarget_refresh_recovers_interrupted_report_publication_on_retry(
+    memory_workspace: MemoryWorkspace,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_refresh_reports(memory_workspace, monkeypatch)
+    from echelon import mempalace_retarget
+
+    real_write = mempalace_retarget._write_text_durable_atomic
+    interrupted = False
+
+    def interrupt_once(path: Path, content: str) -> None:
+        nonlocal interrupted
+        if (
+            path.parent == memory_workspace.spec_dir
+            and path.name == "mempalace-audit.json"
+            and not interrupted
+        ):
+            interrupted = True
+            raise KeyboardInterrupt("simulated crash")
+        real_write(path, content)
+
+    monkeypatch.setattr(
+        "echelon.mempalace_retarget._write_text_durable_atomic",
+        interrupt_once,
+    )
+
+    with pytest.raises(KeyboardInterrupt, match="simulated crash"):
+        refresh_retarget_spec_memory(
+            memory_workspace.root,
+            memory_workspace.spec_dir,
+        )
+
+    assert not (
+        memory_workspace.spec_dir / "mempalace-refresh-manifest.json"
+    ).exists()
+    assert (
+        memory_workspace.spec_dir / ".mempalace-refresh-transaction"
+    ).is_dir()
+
+    receipt = refresh_retarget_spec_memory(
+        memory_workspace.root,
+        memory_workspace.spec_dir,
+    )
+
+    assert receipt.status == "pass"
+    assert (
+        memory_workspace.spec_dir / "mempalace-refresh-manifest.json"
+    ).is_file()
+    assert not (
+        memory_workspace.spec_dir / ".mempalace-refresh-transaction"
+    ).exists()
 
 
 @pytest.mark.unit
@@ -636,6 +1019,59 @@ def test_retarget_refresh_rejects_audit_errors_despite_warn_status(
         _audit(memory_workspace, status="warn"),
         errors=["malformed_scan_response"],
     )
+    monkeypatch.setattr(
+        "echelon.mempalace_retarget.mine_spec_requirements",
+        lambda *_args, **_kwargs: _complete_mine(memory_workspace),
+    )
+    monkeypatch.setattr(
+        "echelon.mempalace_retarget.cleanup_stale_spec_memory",
+        lambda *_args, **_kwargs: _cleanup(memory_workspace),
+    )
+    monkeypatch.setattr(
+        "echelon.mempalace_retarget.audit_spec_memory",
+        lambda *_args, **_kwargs: audit,
+    )
+
+    with pytest.raises(RetargetMemoryError, match="audit receipt"):
+        refresh_retarget_spec_memory(
+            memory_workspace.root,
+            memory_workspace.spec_dir,
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"missing": ["hidden"]},
+        {"stale": ["hidden"]},
+        {"wrong_wing": ["hidden"]},
+        {"wrong_room": ["hidden"]},
+        {"duplicate": ["hidden"]},
+        {"non_canonical": ["hidden"]},
+        {"lifecycle_excluded": ["hidden"]},
+        {"recommendations": ["bounded_extra_scan_unsupported"]},
+        {"missing": ("hidden",)},
+        {"retrieval_probe": {"status": "fail", "checked": 0}},
+        {"retrieval_probe": {"status": "warn", "checked": True}},
+        {"retrieval_probe": {"status": "warn", "checked": 0, "error": "hidden"}},
+        {"status": "pass"},
+        {
+            "status": "pass",
+            "retrieval_probe": {"status": "pass", "checked": 0},
+        },
+        {
+            "status": "warn",
+            "retrieval_probe": {"status": "pass", "checked": 1},
+        },
+    ],
+)
+def test_retarget_refresh_rejects_inconsistent_audit_fields(
+    memory_workspace: MemoryWorkspace,
+    monkeypatch: pytest.MonkeyPatch,
+    changes: dict[str, object],
+) -> None:
+    audit = replace(_audit(memory_workspace), **changes)
     monkeypatch.setattr(
         "echelon.mempalace_retarget.mine_spec_requirements",
         lambda *_args, **_kwargs: _complete_mine(memory_workspace),
