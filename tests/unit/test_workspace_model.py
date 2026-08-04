@@ -147,6 +147,8 @@ def test_declaration_loader_reports_canonical_config_without_reading_sources(
     assert declarations is not None
     assert declarations.provenance == "canonical"
     assert declarations.config_relative_path == ".echelon/config.yml"
+    assert declarations.config_sha256.startswith("sha256:")
+    assert len(declarations.config_sha256) == 71
     assert declarations.mode == "explicit"
     assert [(source.id, source.path) for source in declarations.sources] == [
         ("api", "sources/api")

@@ -340,14 +340,14 @@ def publish_re_run(
                 f"expected generation {expected_generation}, found {current_generation}"
             )
         generation = current_generation + 1
-        transaction, topology_generation, topology_configured_sources = _prepare_transaction(
+        transaction, topology_generation, declaration_snapshot = _prepare_transaction(
             root, paths, candidate, current, generation
         )
         _apply_transaction(
             transaction,
             paths,
             topology_generation=topology_generation,
-            topology_configured_sources=topology_configured_sources,
+            declaration_snapshot=declaration_snapshot,
             fault_hook=fault_hook,
         )
         published = PublishedReIndex.from_path(paths.index)
@@ -420,7 +420,11 @@ def _prepare_transaction(
     candidate: RePublicationCandidate,
     current: PublishedReIndex | None,
     generation: int,
-) -> tuple[PublicationTransaction, int | None, dict[str, str] | None]:
+) -> tuple[
+    PublicationTransaction,
+    int | None,
+    WorkspaceSourceDeclarations | None,
+]:
     stage_root = paths.staging / candidate.run_id
     journal = stage_root / "rollback-journal.json"
     if journal.is_file():
@@ -771,7 +775,7 @@ def _prepare_transaction(
     return (
         transaction,
         topology.generation if topology is not None else None,
-        configured_sources if preserve_reused_sources else None,
+        declarations if preserve_reused_sources else None,
     )
 
 
@@ -780,7 +784,7 @@ def _apply_transaction(
     registry: ReRegistryPaths,
     *,
     topology_generation: int | None,
-    topology_configured_sources: dict[str, str] | None,
+    declaration_snapshot: WorkspaceSourceDeclarations | None,
     fault_hook: Callable[[str], None] | None,
 ) -> None:
     def hook(point: str) -> None:
@@ -795,12 +799,20 @@ def _apply_transaction(
             # transaction's topology operation points to fault-injection tests.
             fault_hook(point)
 
+    if declaration_snapshot is not None:
+        try:
+            _validate_declaration_snapshot(registry.root.parent, declaration_snapshot)
+        except Exception:
+            shutil.rmtree(transaction.staging_root)
+            raise
     try:
         apply_publication_transaction(transaction, fault_hook=hook)
     except Exception:
         # The transaction applies its normal digest-protected rollback here.
         raise
     try:
+        if declaration_snapshot is not None:
+            _validate_declaration_snapshot(registry.root.parent, declaration_snapshot)
         published = PublishedReIndex.from_path(registry.index)
         if (
             transaction.expected_generation is not None
@@ -813,9 +825,9 @@ def _apply_transaction(
             topology = (
                 _load_topology_index_for_configured_sources(
                     registry.root.parent,
-                    topology_configured_sources,
+                    declaration_snapshot.source_paths,
                 )
-                if topology_configured_sources is not None
+                if declaration_snapshot is not None
                 else load_topology_index(registry.root.parent)
             )
             if topology is None or topology.generation != topology_generation:
@@ -839,6 +851,22 @@ def _apply_transaction(
         )
         raise
     shutil.rmtree(transaction.staging_root)
+
+
+def _validate_declaration_snapshot(
+    workspace_root: Path,
+    expected: WorkspaceSourceDeclarations,
+) -> None:
+    try:
+        observed = load_workspace_source_declarations(workspace_root)
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        raise RePublicationValidationError(
+            "workspace source declarations changed during publication"
+        ) from exc
+    if observed != expected:
+        raise RePublicationValidationError(
+            "workspace source declarations changed during publication"
+        )
 
 
 def _operation(stage_root: Path, final: str, *, staged: str | None) -> PublicationOperation:

@@ -864,6 +864,94 @@ def test_targeted_topology_bootstrap_failure_rolls_back_semantic_and_topology(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("provenance", ("canonical", "legacy"))
+@pytest.mark.parametrize("mutation", ("change", "remove", "replace"))
+def test_targeted_publication_rolls_back_when_declarations_change_during_apply(
+    tmp_path: Path,
+    provenance: str,
+    mutation: str,
+) -> None:
+    from echelon.topology_registry import load_published_topology, load_topology_index
+
+    config = (
+        tmp_path / ".echelon/config.yml"
+        if provenance == "canonical"
+        else tmp_path / ".specify/extensions/echelon/echelon-config.yml"
+    )
+    config.parent.mkdir(parents=True)
+    original_config = (
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n"
+        "    - id: web\n      path: sources/web\n"
+    )
+    config.write_text(original_config, encoding="utf-8")
+    run_1 = write_valid_re_run(tmp_path, ("api", "web"), run_id="run-1")
+    for source_id in ("api", "web"):
+        analysis = _topology_codegraph(source_id)
+        _write_json(
+            run_1 / f"re/sources/{source_id}/codegraph-analysis.json",
+            analysis,
+        )
+        _write_json(
+            run_1 / f"re/sources/{source_id}/codegraph-summary.json",
+            _topology_summary(analysis),
+        )
+    publish_re_run(tmp_path, run_1)
+    _finish_run(run_1)
+    before = _durable_snapshot(tmp_path)
+
+    run_2 = write_valid_re_run(
+        tmp_path,
+        ("api", "web"),
+        run_id="run-2",
+        versions={"api": "v2", "web": "v1"},
+        actions={"api": "refresh", "web": "reuse"},
+    )
+    _mark_target_only(run_2, tmp_path, "api")
+    analysis = _topology_codegraph("api")
+    _write_json(run_2 / "re/sources/api/codegraph-analysis.json", analysis)
+    _write_json(
+        run_2 / "re/sources/api/codegraph-summary.json",
+        _topology_summary(analysis),
+    )
+
+    def mutate_config_after_install(step: str) -> None:
+        if step != "after_replace:topology/index.json":
+            return
+        if mutation == "change":
+            config.write_text(original_config + "# changed during apply\n", encoding="utf-8")
+        elif mutation == "remove":
+            config.unlink()
+        else:
+            replacement = config.with_name(config.name + ".replacement")
+            replacement.write_text(
+                "workspace:\n  sources:\n    - id: api\n      path: sources/api-v2\n"
+                "    - id: web\n      path: sources/web\n",
+                encoding="utf-8",
+            )
+            replacement.replace(config)
+
+    with pytest.raises(
+        RePublicationValidationError,
+        match="workspace source declarations changed during publication",
+    ):
+        publish_re_run(
+            tmp_path,
+            run_2,
+            expected_generation=1,
+            fault_hook=mutate_config_after_install,
+        )
+
+    assert _durable_snapshot(tmp_path) == before
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(original_config, encoding="utf-8")
+    published = load_published_index(tmp_path)
+    topology = load_topology_index(tmp_path)
+    assert published is not None and published.generation == 1
+    assert topology is not None and topology.generation == 1
+    assert load_published_topology(tmp_path).generation == 1
+
+
+@pytest.mark.unit
 def test_targeted_topology_bootstrap_rejects_unusable_sibling_baseline_atomically(
     tmp_path: Path,
 ) -> None:
