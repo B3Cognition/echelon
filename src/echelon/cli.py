@@ -1884,16 +1884,7 @@ def _validate_locked_target_child_contract(
         raise SystemExit(1)
 
     implementation_target = os.environ.get("ECHELON_IMPLEMENTATION_TARGET", "")
-    declared_targets = [
-        value
-        for value in os.environ.get("ECHELON_DECLARED_TARGETS", "").split(",")
-        if value
-    ]
-    canonical_paths = [str(entry.get("path") or "") for entry in canonical_targets]
-    if (
-        implementation_target != str(expected_target.get("path") or "")
-        or declared_targets != canonical_paths
-    ):
+    if implementation_target != str(expected_target.get("path") or ""):
         print(
             "✗ Target-child delivery metadata no longer matches the canonical target set.",
             file=sys.stderr,

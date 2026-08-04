@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -16,6 +17,42 @@ from kernel.task_contract import parse_task_rows
 
 
 _ECHELON_YML_REL = ".echelon/config.yml"
+
+
+def _serialize_target_contract(value: object, *, location: str) -> str:
+    """Return deterministic JSON after rejecting values JSON cannot preserve."""
+
+    def _validate(item: object, item_location: str) -> None:
+        if item is None or isinstance(item, (str, bool, int)):
+            return
+        if isinstance(item, float):
+            if math.isfinite(item):
+                return
+            raise ValueError(f"{item_location} contains a non-finite number")
+        if isinstance(item, list):
+            for index, child in enumerate(item):
+                _validate(child, f"{item_location}[{index}]")
+            return
+        if isinstance(item, dict):
+            for key, child in item.items():
+                if not isinstance(key, str):
+                    raise TypeError(
+                        f"{item_location} contains a non-string key "
+                        f"of type {type(key).__name__}"
+                    )
+                _validate(child, f"{item_location}.{key}")
+            return
+        raise TypeError(
+            f"{item_location} contains unsupported {type(item).__name__} value"
+        )
+
+    _validate(value, location)
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
 
 
 def validate_targets(
@@ -125,6 +162,25 @@ def run_multi_target(
         for entry in target_contracts
         if str(entry.get("path") or "")
     }
+    try:
+        target_contracts_json = _serialize_target_contract(
+            target_contracts,
+            location="canonical targets",
+        )
+        contract_json_by_path = {
+            path: _serialize_target_contract(
+                entry,
+                location=f"canonical target {path!r}",
+            )
+            for path, entry in contract_by_path.items()
+        }
+    except (TypeError, ValueError) as exc:
+        print(
+            "✗ Cannot dispatch delivery: canonical target contract is not "
+            f"JSON-safe.\n  Error: {exc}",
+            file=sys.stderr,
+        )
+        return 1
 
     results: dict[str, int] = {}
     lock = threading.Lock()
@@ -137,58 +193,66 @@ def run_multi_target(
 
     def _run_one(target: Path) -> None:
         name = target.name
-        target_resolved = target.resolve()
-        target_key = str(target_resolved)
-        target_workspace_root = resolved_workspace_root or target_resolved.parent
-        source_id = source_ids.get(target_key, name)
-        target_workspace_git_role = (
-            workspace_git_role
-            or ("source" if target_workspace_root == target_resolved and source_id == "." else "orchestration")
-        )
-        source_git_role = source_git_roles.get(target_key, "source")
-        cmd = [echelon_bin, "harness", command, spec_id] + extra_args
-        env = os.environ.copy()
-        env["ECHELON_POLYREPO_ROOT"] = str(target_workspace_root)
-        env["ECHELON_TARGET_REPO_PATH"] = str(target_resolved)
-        env["ECHELON_TARGET_REPO_NAME"] = name
-        env["ECHELON_WORKSPACE_ROOT"] = str(target_workspace_root)
-        env["ECHELON_WORKSPACE_GIT_ROLE"] = target_workspace_git_role
-        env["ECHELON_SOURCE_ROOT"] = str(target_resolved)
-        env["ECHELON_SOURCE_ID"] = source_id
-        env["ECHELON_SOURCE_GIT_ROLE"] = source_git_role
-        env["ECHELON_IMPLEMENTATION_TARGET"] = _implementation_target(target)
-        env["ECHELON_DECLARED_TARGETS"] = ",".join(declared_targets)
-        expected_contract = contract_by_path.get(env["ECHELON_IMPLEMENTATION_TARGET"])
-        if expected_contract is not None:
-            env["ECHELON_TARGET_CONTRACT_JSON"] = json.dumps(
-                expected_contract,
-                sort_keys=True,
-                separators=(",", ":"),
+        try:
+            target_resolved = target.resolve()
+            target_key = str(target_resolved)
+            target_workspace_root = resolved_workspace_root or target_resolved.parent
+            source_id = source_ids.get(target_key, name)
+            target_workspace_git_role = (
+                workspace_git_role
+                or (
+                    "source"
+                    if target_workspace_root == target_resolved and source_id == "."
+                    else "orchestration"
+                )
             )
-            env["ECHELON_TARGETS_CONTRACT_JSON"] = json.dumps(
-                target_contracts,
-                sort_keys=True,
-                separators=(",", ":"),
+            source_git_role = source_git_roles.get(target_key, "source")
+            cmd = [echelon_bin, "harness", command, spec_id] + extra_args
+            env = os.environ.copy()
+            env["ECHELON_POLYREPO_ROOT"] = str(target_workspace_root)
+            env["ECHELON_TARGET_REPO_PATH"] = str(target_resolved)
+            env["ECHELON_TARGET_REPO_NAME"] = name
+            env["ECHELON_WORKSPACE_ROOT"] = str(target_workspace_root)
+            env["ECHELON_WORKSPACE_GIT_ROLE"] = target_workspace_git_role
+            env["ECHELON_SOURCE_ROOT"] = str(target_resolved)
+            env["ECHELON_SOURCE_ID"] = source_id
+            env["ECHELON_SOURCE_GIT_ROLE"] = source_git_role
+            env["ECHELON_IMPLEMENTATION_TARGET"] = _implementation_target(target)
+            env["ECHELON_DECLARED_TARGETS"] = ",".join(declared_targets)
+            expected_contract_json = contract_json_by_path.get(
+                env["ECHELON_IMPLEMENTATION_TARGET"]
             )
-        target_task_ids = task_ids_by_target.get(target_key)
-        if target_task_ids:
-            env["ECHELON_TARGET_TASK_IDS"] = ",".join(target_task_ids)
-        proc = subprocess.Popen(
-            cmd,
-            cwd=str(target),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            env=env,
-        )
-        assert proc.stdout is not None
-        for line in proc.stdout:
+            if expected_contract_json is not None:
+                env["ECHELON_TARGET_CONTRACT_JSON"] = expected_contract_json
+                env["ECHELON_TARGETS_CONTRACT_JSON"] = target_contracts_json
+            target_task_ids = task_ids_by_target.get(target_key)
+            if target_task_ids:
+                env["ECHELON_TARGET_TASK_IDS"] = ",".join(target_task_ids)
+            proc = subprocess.Popen(
+                cmd,
+                cwd=str(target),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                env=env,
+            )
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                with lock:
+                    sys.stdout.write(f"[{name}] {line}")
+                    sys.stdout.flush()
+            proc.wait()
+            returncode = proc.returncode
+        except Exception as exc:
             with lock:
-                sys.stdout.write(f"[{name}] {line}")
-                sys.stdout.flush()
-        proc.wait()
+                print(
+                    f"✗ [{name}]: delivery worker failed: {exc}",
+                    file=sys.stderr,
+                )
+                results[name] = 1
+            return
         with lock:
-            results[name] = proc.returncode
+            results[name] = returncode
 
     if task_ids_by_target and len(ordered_targets) > 1:
         # Target builds share the canonical tasks.md progress ledger. Execute in
@@ -206,8 +270,8 @@ def run_multi_target(
 
     print()
     all_ok = True
-    for name in sorted(results):
-        rc = results[name]
+    for name in sorted(target.name for target in ordered_targets):
+        rc = results.get(name, 1)
         status = "✓" if rc == 0 else "✗"
         print(f"{status} [{name}]: exit {rc}")
         if rc != 0:

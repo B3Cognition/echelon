@@ -109,6 +109,54 @@ class TestRunMultiTarget:
             rc = run_multi_target("024", targets, [], echelon_bin="echelon")
         assert rc == 1
 
+    def test_non_json_safe_canonical_contract_fails_before_launch(
+        self,
+        tmp_path: Path,
+        capsys,
+    ) -> None:
+        target = tmp_path / "r"
+        target.mkdir()
+        spec_dir = tmp_path / "specs" / "024"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "targets.yml").write_text(
+            "schema_version: 1\ntargets:\n"
+            "  - id: r\n"
+            "    path: r\n"
+            "    role: primary\n"
+            "    branch: '024'\n"
+            "    release_on: 2026-08-04\n",
+            encoding="utf-8",
+        )
+
+        with patch("subprocess.Popen") as popen:
+            rc = run_multi_target(
+                "024",
+                [target],
+                [],
+                echelon_bin="echelon",
+                workspace_root=tmp_path,
+            )
+
+        assert rc == 1
+        popen.assert_not_called()
+        assert "canonical target contract" in capsys.readouterr().err
+
+    def test_launch_exception_is_recorded_as_failure(
+        self,
+        tmp_path: Path,
+        capsys,
+    ) -> None:
+        target = tmp_path / "r"
+        target.mkdir()
+
+        with patch("subprocess.Popen", side_effect=OSError("launch failed")):
+            rc = run_multi_target("024", [target], [], echelon_bin="echelon")
+
+        assert rc == 1
+        captured = capsys.readouterr()
+        assert "launch failed" in captured.err
+        assert "✗ [r]: exit 1" in captured.out
+
     def test_output_prefixed_with_target_name(self, tmp_path: Path, capsys) -> None:
         target = tmp_path / "myrepo"
         target.mkdir()

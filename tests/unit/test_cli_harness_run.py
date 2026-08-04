@@ -687,6 +687,52 @@ class TestHarnessRunTaskFormatErrors:
 
 @pytest.mark.unit
 class TestHarnessTargetPreflight:
+    def test_target_child_uses_json_contract_for_path_containing_comma(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        root = tmp_path
+        target = root / "sources" / "api,legacy"
+        target.mkdir(parents=True)
+        spec_dir = root / "specs" / "001-feature"
+        spec_dir.mkdir(parents=True)
+        contract = (
+            "schema_version: 1\ntargets:\n"
+            "  - id: api-legacy\n"
+            "    path: sources/api,legacy\n"
+            "    role: primary\n"
+            "    branch: 001-feature\n"
+        )
+        (spec_dir / "targets.yml").write_text(contract, encoding="utf-8")
+
+        from echelon.cli import _validate_locked_target_child_contract
+        from harness.spec_frontmatter import read_canonical_target_entries
+
+        inherited_entries = read_canonical_target_entries(spec_dir)
+        monkeypatch.setenv("ECHELON_TARGET_REPO_PATH", str(target))
+        monkeypatch.setenv("ECHELON_SOURCE_ROOT", str(target))
+        monkeypatch.setenv("ECHELON_IMPLEMENTATION_TARGET", "sources/api,legacy")
+        monkeypatch.setenv("ECHELON_DECLARED_TARGETS", "sources/api,legacy")
+        monkeypatch.setenv(
+            "ECHELON_TARGET_CONTRACT_JSON",
+            json.dumps(inherited_entries[0], sort_keys=True),
+        )
+        monkeypatch.setenv(
+            "ECHELON_TARGETS_CONTRACT_JSON",
+            json.dumps(inherited_entries, sort_keys=True),
+        )
+
+        _validate_locked_target_child_contract(project_root=root, spec_dir=spec_dir)
+
+        (spec_dir / "targets.yml").write_text(
+            contract.replace("branch: 001-feature", "branch: replacement-branch"),
+            encoding="utf-8",
+        )
+        with pytest.raises(SystemExit) as exc:
+            _validate_locked_target_child_contract(project_root=root, spec_dir=spec_dir)
+        assert exc.value.code == 1
+
     def test_resolver_uses_single_source_root(self, tmp_path: Path) -> None:
         source = tmp_path / "og-platform"
         (source / ".git").mkdir(parents=True)
