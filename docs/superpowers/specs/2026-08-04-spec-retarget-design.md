@@ -62,6 +62,15 @@ command uses the same source-ID/path resolution rules as `echelon spec run`.
 Duplicate resolved targets collapse in declaration order. An empty replacement
 set and a replacement set equal to the current set are rejected.
 
+The selected spec must already be the active Phase A spec. `runs/.current`, the
+active run's spec identity, the current Git branch, and `specs/<id>/` must all
+agree. Retarget never switches from another spec implicitly. If they do not
+agree, the command exits without mutation and instructs the operator to run:
+
+```bash
+echelon spec switch <spec-id>
+```
+
 The preview performs every read-only preflight and prints:
 
 - the selected spec and original Phase A run;
@@ -85,20 +94,27 @@ in `state.json`.
 
 A spec is eligible only when all of the following hold:
 
-1. One canonical `specs/<id>/` directory resolves.
-2. One latest Phase A run for that exact spec resolves and contains its original
+1. One canonical `specs/<id>/` directory resolves, and its authoritative
+   `targets.yml` is valid.
+2. The selected spec is active: `runs/.current`, the active run state, current
+   feature branch, and canonical spec directory resolve to the same identity.
+3. One latest Phase A run for that exact spec resolves and contains its original
    `user_message`, autonomy mode, implementation targets, and spec identity.
-3. The run is not actively executing and all Phase A lifecycle locks can be
+4. The state target set exactly matches authoritative `targets.yml`; a mismatch
+   is treated as corrupt lifecycle evidence and is not reconciled.
+5. The run is not actively executing and all Phase A lifecycle locks can be
    acquired.
-4. No Phase B entry exists in `run-history.json` or
+6. No Phase B entry exists in `run-history.json` or
    `harness-run-history.json`.
-5. No delivery/build state matching the spec exists under `runs/build-*` or
+7. No delivery/build state matching the spec exists under `runs/build-*` or
    another canonical harness-state location.
-6. The canonical lifecycle is not `in-progress`, `implemented`,
+8. No task is completed and no build, verification, ready-to-land, or landed
+   artifact proves post-Phase-A work.
+9. The canonical lifecycle is not `in-progress`, `implemented`,
    `ready_to_land`, or `landed`.
-7. The selected spec-owned paths are clean. Unrelated dirty paths do not block
+10. The selected spec-owned paths are clean. Unrelated dirty paths do not block
    the operation and are never staged.
-8. The original product-input contract and any selected published RE context
+11. The original product-input contract and any selected published RE context
    can be reconstructed without consulting dirty target worktrees.
 
 Any positive evidence that Phase B started rejects retargeting, even if delivery
@@ -106,13 +122,17 @@ failed before completing a task. Ambiguous or corrupt lifecycle evidence also
 rejects the command. Rejection instructs the operator to start a new spec run
 with the correct targets.
 
+Eligibility is owned by a dedicated deterministic retarget classifier. It does
+not use `artifact_index.infer_lifecycle_stage()`, because Phase A itself writes
+`run-history.json` and that generic artifact heuristic treats the file as a
+build marker.
+
 ## Lifecycle and State Machine
 
 Retargeting has a deterministic controller-owned state machine:
 
 ```text
-previewed
-  -> checkpointed
+checkpointed
   -> invalidating
   -> rebuilding
   -> finalizing
@@ -123,17 +143,23 @@ checkpointed | invalidating | rebuilding | finalizing
   -> recovered (only through checkpoint rewind)
 ```
 
-The active Phase A state gains a bounded `retarget` object containing the
+Preview has no durable state. Confirmation creates a new replacement run on the
+existing feature branch and atomically changes `runs/.current` through the
+existing switch-intent/pointer transaction. The frozen baseline run is never
+rewritten. The replacement run owns a bounded `retarget` object containing the
 revision, operation ID, baseline run ID, replacement run ID, old/new targets,
 checkpoint ID and commit, current stage, and last failure code. While this
-object is active and not `complete` or `recovered`, readiness and delivery
-preflight must reject the spec.
+object is active and not `complete` or `recovered`, the shared Phase A readiness
+validator and every delivery entry point reject the spec.
 
 A separate runtime transaction record lives outside the resettable canonical
-spec tree. It contains the minimum recovery projection of the baseline
-`state.json`, operation receipts, and the canonical ledger path. This record
-lets checkpoint rewind restore the prior controller state after Git moves the
-branch back. It contains no prompt body or copied product evidence.
+spec tree. It caches the operation receipts and canonical ledger path. The
+committed prepared retarget revision, rather than this runtime cache, contains
+the bounded authoritative recovery projection: baseline run ID, status, phase,
+`spec_status`, completed phases, original targets, checkpoint identity, and
+whether the baseline was ready to build. The projection contains no prompt body
+or copied product evidence. Runtime loss therefore cannot make the Git-backed
+checkpoint undiscoverable or prevent baseline readiness reconstruction.
 
 ## Original Intent and Replacement Run
 
@@ -148,7 +174,7 @@ The replacement run preserves:
 - exact original `user_message`;
 - autonomy mode;
 - immutable product-input declarations and snapshots;
-- explicitly selected published RE context and ignore-RE policy;
+- the ignore-RE policy and explicit RE source selections;
 - project constitution and workspace configuration.
 
 It replaces only `implementation_targets` and receives a new run ID. The
@@ -157,20 +183,45 @@ controller enters the normal Phase A graph at its entry phase, not at
 architecture, specialist, test, planning, consensus, and documentation work is
 re-evaluated.
 
+The replacement run is created by a dedicated same-identity bootstrap. It does
+not call the normal fresh-spec bootstrap, allocate another spec number, or
+create another feature branch. It creates a new `runs/<run-id>/` prepared state
+bound to the existing spec ID/branch, copies immutable product-input snapshots
+through controller-owned filesystem operations, and journals the same-branch
+active-pointer transition.
+
+Retarget does not rerun reverse engineering. When RE is not ignored, it attaches
+the same published RE generation but recomputes automatic source selection from
+the replacement targets. Selections whose recorded reason was explicit
+`--re-source` remain explicit. This separates current target-aware context
+selection from workspace-scoped RE extraction.
+
 ## Pre-retarget Checkpoint and Destructive Boundary
 
-Confirmation acquires the Phase A, spec-run, checkpoint, and retarget operation
-locks in their established order. It then creates a mandatory checkpoint before
-any canonical artifact or external memory mutation.
+Confirmation first acquires a common per-spec mutation lock shared by amendment,
+retarget, rewind, drop-target, and delivery preparation. It then acquires the
+existing controller locks in their established order:
+
+```text
+spec mutation lock
+  -> PhaseAExecutionLock
+  -> SpecRunExecutionLock
+  -> publication/completion/checkpoint locks
+```
+
+The spec mutation lock is outside the controller rank hierarchy; the remaining
+locks retain their existing ranks. Confirmation creates the mandatory
+checkpoint before any canonical artifact or external memory mutation.
 
 The checkpoint:
 
 - has source `retarget-preflight` and a unique checkpoint ID;
-- records the current spec branch commit;
+- records the current spec branch commit with normal Echelon checkpoint
+  identity trailers so metadata can be rediscovered;
 - includes a `retarget-history.json` entry in `prepared` state;
 - binds the original and replacement target sets and original run ID;
 - captures hashes of the current target contract and generated artifacts;
-- stores the recovery projection in the runtime transaction record.
+- stores the bounded recovery projection in the committed prepared revision.
 
 Immediately after checkpoint creation, the CLI prints the exact recovery
 command:
@@ -203,21 +254,29 @@ rebuild or recover:
 Generated requirements, requirements overviews, architecture, research, data
 models, contracts, specialist outputs, test strategy, coverage, plans, task
 files, prioritization, risk/dependency files, completion reports, memory audit
-reports, and persisted graph artifacts are invalidated. The exact inventory is
-owned by a deterministic artifact-policy function and is included in preview
-output and tests; it is not maintained as a second ad-hoc CLI list.
+reports, and persisted graph artifacts are invalidated. A public Phase A
+artifact-disposition policy extends the existing artifact registry with exact
+`preserve`, `invalidate`, and `not-applicable` ownership. It explicitly covers
+directories and currently unclassified Phase A outputs; neither the CLI nor
+the retarget controller maintains a second deletion list. The workspace
+constitution under `.specify/memory/` is never invalidated.
 
-The replacement run receives checkpoint copies of the old generated artifacts
-under its run-local context directory. Prompts label that directory
-`NON-AUTHORITATIVE RETARGET COVERAGE CONTEXT`. Agents may use it to remember
-covered product concerns, but must derive every new canonical decision from the
-original request, immutable inputs, current workspace evidence, and replacement
-targets. The old files are never copied back into `specs/<id>/`.
+The replacement run reads the bounded prior-context set from the checkpoint Git
+object, never from the mutable working tree. The first version includes old
+`spec.md`, `plan.md`, `tasks.md`, and `targets.yml`, plus a path/hash manifest,
+under its run-local context directory. Context assembly applies existing byte
+caps and labels the material `NON-AUTHORITATIVE RETARGET COVERAGE CONTEXT`.
+Agents may use it to remember covered product concerns, but must derive every
+new canonical decision from the original request, immutable inputs, current
+workspace evidence, and replacement targets. The old files are never copied
+back into `specs/<id>/`.
 
 ## Retarget History and Change Control
 
-`specs/<id>/retarget-history.json` is a controller-owned append-only ledger.
-Each revision records:
+`specs/<id>/retarget-history.json` is a controller-owned atomically rewritten
+revision ledger, matching the existing `run-history.json` persistence pattern.
+Revision identity is append-only, while the controller may advance the latest
+revision through its validated status transitions. Each revision records:
 
 - revision and operation ID;
 - status and timestamps;
@@ -234,6 +293,15 @@ Each revision records:
 `run-history.json` retains both Phase A completions. The replacement entry adds
 `retarget_revision`, `supersedes_run_id`, and `baseline_checkpoint` fields. The
 normal history schema is extended for these optional Phase A fields.
+
+Retarget defines three exact Git boundaries:
+
+1. the checkpoint commit contains the prepared revision and baseline artifacts;
+2. the replacement completion commit contains replacement artifacts, final
+   memory/graph receipts, and `status: complete`;
+3. a recovery commit contains restored artifacts and `status: recovered`.
+
+The second boundary is the `<replacement-commit>` used by comparison output.
 
 On successful completion, the CLI prints:
 
@@ -258,10 +326,13 @@ ownership by the selected spec:
 
 It never deletes workspace-scoped RE drawers, immutable input source material,
 another spec's drawers, or rows with ambiguous ownership. The purge uses a
-complete bounded scan with truncation detection. Ambiguous ownership,
+complete bounded scan with pagination/truncation detection. Ambiguous ownership,
 unsupported complete scanning, or a configured but unavailable MemPalace blocks
 retargeting before canonical artifact invalidation. A workspace with no
-configured MemPalace records `not_applicable` and proceeds.
+configured MemPalace records `not_applicable` and proceeds. This hard failure is
+an intentional retarget-specific safety rule: ordinary memory commands may
+degrade gracefully, but a destructive retarget must not dispatch replacement
+agents while stale owned drawers might remain retrievable.
 
 The cleanup receipt records counts and drawer IDs/digests, never deleted
 documents. The active replacement state also carries a memory-exclusion marker
@@ -283,39 +354,53 @@ restoring the baseline readiness state.
 ## Spec and Workspace Graph Handling
 
 At invalidation, Echelon removes `spec-artifact-graph.json` and its audit report
-for the selected spec. It then rebuilds the persisted workspace graph from the
-remaining current member graphs, so consumers cannot traverse stale
-requirements, tasks, targets, or memory receipts for the retargeting spec.
+for the selected spec. Because canonical workspace graph discovery requires
+`spec.md`, the invalidated spec is absent from composition. If other canonical
+specs remain, Echelon composes and writes the workspace graph from their exact
+persisted member bytes. If none remain, it removes the persisted workspace
+graph and audit and records `not_applicable_empty_workspace`. Consumers can
+therefore never traverse stale requirements, tasks, targets, or memory receipts
+for the retargeting spec.
 
 After replacement memory is current, finalization:
 
 1. builds and writes the replacement spec graph from canonical artifacts;
 2. audits its source-set and memory receipts;
-3. refreshes the workspace graph using the exact persisted member graph bytes;
+3. composes the workspace graph using exact persisted member graph bytes,
+   without invoking the broad refresh operation or mutating unrelated specs;
 4. audits and writes workspace graph receipts;
 5. records all graph hashes and statuses in retarget history.
 
-Graph or workspace-graph finalization failure blocks readiness. Checkpoint
-recovery performs the same memory-first ordering for the restored artifacts,
-then rebuilds the restored spec and workspace graphs before marking recovery
-complete.
+Graph or workspace-graph finalization failure attributable to the selected spec
+blocks readiness. Unrelated pre-existing member findings remain visible but do
+not block retarget completion. The selected spec must be an included, current
+workspace member and the retarget operation must not introduce new workspace
+errors. Checkpoint recovery performs the same memory-first ordering for the
+restored artifacts, then rebuilds the restored spec and workspace graphs before
+marking recovery complete.
 
 ## Completion Gate
 
 Normal Phase A artifact readiness is necessary but insufficient for an active
-retarget revision. The spec becomes ready to build only when:
+retarget revision. Retarget finalization is a controller-owned, durable,
+replayable completion intent inserted after staged Phase A publication and
+before terminal completion becomes visible. The spec becomes ready to build
+only when:
 
 - all normal Phase A readiness checks pass;
 - `targets.yml` equals the replacement target set;
 - every canonical task declares exactly one replacement target;
 - replacement memory is `pass` or `warn`, or explicitly `not_applicable`;
 - spec graph audit is `pass` or `warn`;
-- workspace graph audit is `pass` or `warn`;
+- the selected spec is a current included workspace member and no new
+  retarget-attributable workspace graph error exists;
 - retarget history contains matching finalization receipts; and
 - `retarget.status` is `complete`.
 
-The completion transition is idempotent. A crash between individual external
-refresh operations can resume finalization without creating a second revision
+The completion transition is idempotent. Its state marker is durably persisted
+before external effects, and every memory/graph effect produces an exact
+receipt before the marker advances. A crash between individual effects resumes
+finalization without creating a second revision, exposing terminal readiness,
 or losing the baseline checkpoint.
 
 ## Checkpoint Recovery
@@ -329,10 +414,11 @@ The retarget recovery extension then:
 2. purges replacement spec-owned memory;
 3. mines and audits memory from the restored checkpoint artifacts;
 4. rebuilds and audits the restored spec graph;
-5. refreshes and audits the workspace graph;
+5. composes and audits the workspace graph from persisted member graphs;
 6. marks the canonical retarget revision `recovered`;
-7. clears the active retarget block; and
-8. restores the baseline Phase A status, including `ready_to_build` when that
+7. creates the recovery commit;
+8. clears the active retarget block; and
+9. restores the baseline Phase A status, including `ready_to_build` when that
    was the checkpoint state.
 
 If recovery finalization fails, the spec remains blocked rather than claiming
@@ -359,8 +445,8 @@ silently restores old artifacts.
 
 ## Concurrency and Filesystem Safety
 
-- A per-spec retarget lock prevents concurrent retarget, amendment, rewind, or
-  delivery preparation for the same spec.
+- A common per-spec mutation lock prevents concurrent retarget, amendment,
+  rewind, drop-target, or delivery preparation for the same spec.
 - Existing Phase A execution, spec-run execution, and checkpoint locks remain
   authoritative and follow the controller lock order.
 - All state and ledger writes use atomic replacement and durable fsync patterns
@@ -394,7 +480,12 @@ Integration tests exercise:
 6. replacement memory and graphs becoming current before readiness;
 7. any Phase B evidence rejecting retarget;
 8. idempotent continuation after a finalization crash; and
-9. preservation of unrelated dirty workspace files.
+9. preservation of unrelated dirty workspace files;
+10. active-spec/branch mismatch rejection and same-branch replacement bootstrap;
+11. single-spec workspace graph invalidation without a stale graph;
+12. unrelated pre-existing workspace graph findings not blocking completion;
+13. recovery after loss of the runtime transaction cache; and
+14. coexistence with the optimized unused-target `drop-target` workflow.
 
 Contract tests update CLI help, state/history schemas, lifecycle documentation,
 and installed command surfaces. Focused tests run before the wider unit,
@@ -411,3 +502,8 @@ The README and workspace model document:
 - MemPalace and graph consequences;
 - the old-to-new Git diff command; and
 - the requirement to create a new spec after delivery starts.
+
+`echelon spec drop-target` remains the optimized non-destructive path for
+removing one declared target that owns no tasks. `echelon spec retarget` is used
+when targets are added, replaced, or otherwise require target-sensitive Phase A
+re-authoring.
