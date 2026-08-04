@@ -679,6 +679,7 @@ def test_targeted_publication_is_atomic_when_selected_source_disappears(
 @pytest.mark.unit
 def test_targeted_publication_does_not_migrate_legacy_reused_sibling(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from echelon.topology_audit import audit_topology
     from echelon.topology_registry import load_published_topology, load_topology_index
@@ -732,6 +733,14 @@ def test_targeted_publication_does_not_migrate_legacy_reused_sibling(
     _write_json(
         run_2 / "re/sources/api/codegraph-summary.json",
         _topology_summary(target_analysis),
+    )
+    monkeypatch.setattr(
+        "harness.re_publication.discover_workspace",
+        lambda root: pytest.fail("targeted bootstrap read live sibling roots"),
+    )
+    monkeypatch.setattr(
+        "harness.topology_publication.discover_workspace",
+        lambda root: pytest.fail("topology staging read live sibling roots"),
     )
 
     result = publish_re_run(tmp_path, run_2, expected_generation=1)

@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Literal
 
+import yaml
+
 from echelon.topology_registry import (
     TopologyRegistryError,
     load_topology_index,
@@ -692,9 +694,17 @@ def _prepare_transaction(
     write_json_atomic(staged_index, index_payload)
     operations.append(_operation(stage_root, "index.json", staged="new/re/index.json"))
     try:
-        configured_ids = {
-            source.id for source in discover_workspace(workspace_root).sources
-        }
+        configured_sources = (
+            _declared_source_paths(workspace_root)
+            if preserve_reused_sources
+            else None
+        )
+        if configured_sources is None:
+            configured_sources = {
+                source.id: source.path
+                for source in discover_workspace(workspace_root).sources
+            }
+        configured_ids = set(configured_sources)
         topology_current = load_topology_index(
             workspace_root,
             allow_removed_source_ids=candidate.removed_sources,
@@ -731,6 +741,7 @@ def _prepare_transaction(
             removed_source_ids=candidate.removed_sources,
             required_source_ids=required_topology_sources,
             allow_unavailable_bootstrap=unavailable_bootstrap,
+            configured_sources=configured_sources,
         )
     except (
         TopologyEvidenceError,
@@ -1049,31 +1060,83 @@ def _validate_target_source_available(
 ) -> None:
     if plan.policy != "target-only" or not plan.target_source:
         return
-    try:
-        matches = [
-            source
-            for source in discover_workspace(workspace_root).sources
-            if source.id == plan.target_source
-        ]
-    except (OSError, ValueError) as exc:
-        raise RePublicationValidationError(
-            f"cannot resolve selected source {plan.target_source}: {exc}"
-        ) from exc
     planned = next(
         (source for source in plan.sources if source.id == plan.target_source),
         None,
     )
-    if len(matches) != 1 or planned is None or matches[0].path != planned.path:
+    try:
+        declared = _declared_source_paths(workspace_root)
+        if declared is None:
+            matches = [
+                source
+                for source in discover_workspace(workspace_root).sources
+                if source.id == plan.target_source
+            ]
+            declared_path = matches[0].path if len(matches) == 1 else None
+        else:
+            declared_path = declared.get(plan.target_source)
+    except (OSError, ValueError) as exc:
+        raise RePublicationValidationError(
+            f"cannot resolve selected source {plan.target_source}: {exc}"
+        ) from exc
+    if planned is None or declared_path != planned.path:
         raise RePublicationValidationError(
             f"selected source {plan.target_source} is no longer declared"
         )
-    source_path = Path(matches[0].path)
+    source_path = Path(declared_path)
     if not source_path.is_absolute():
         source_path = workspace_root / source_path
     if not source_path.exists():
         raise RePublicationValidationError(
             f"selected source {plan.target_source} is unavailable: {source_path}"
         )
+
+
+def _declared_source_paths(workspace_root: Path) -> dict[str, str] | None:
+    """Load configured source declarations without touching source roots."""
+    config = workspace_root / ".echelon/config.yml"
+    if not config.is_file():
+        legacy = workspace_root / ".specify/extensions/echelon/echelon-config.yml"
+        if not legacy.is_file():
+            return None
+        config = legacy
+    try:
+        raw = yaml.safe_load(config.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+        raise RePublicationValidationError(
+            f"workspace source configuration is invalid: {exc}"
+        ) from exc
+    if not isinstance(raw, dict):
+        raise RePublicationValidationError("workspace source configuration must be an object")
+    workspace = raw.get("workspace", {})
+    if not isinstance(workspace, dict):
+        raise RePublicationValidationError("workspace configuration must be an object")
+    raw_sources = raw.get("sources", workspace.get("sources"))
+    if raw_sources is None:
+        return None
+    if not isinstance(raw_sources, list):
+        raise RePublicationValidationError("workspace sources must be a list")
+    declared: dict[str, str] = {}
+    for item in raw_sources:
+        if isinstance(item, str):
+            source_id = source_path = item.strip()
+        elif isinstance(item, dict):
+            path_value = item.get("path", item.get("repo"))
+            id_value = item.get("id", path_value)
+            if not isinstance(path_value, str) or not isinstance(id_value, str):
+                raise RePublicationValidationError(
+                    "workspace source declaration requires string id and path"
+                )
+            source_id = id_value.strip()
+            source_path = path_value.strip()
+        else:
+            raise RePublicationValidationError("workspace source declaration is invalid")
+        if not source_id or not source_path or source_id in declared:
+            raise RePublicationValidationError(
+                "workspace source declaration has blank or duplicate identity"
+            )
+        declared[source_id] = source_path
+    return declared
 
 
 def _bootstrap_targeted_topology_candidates(

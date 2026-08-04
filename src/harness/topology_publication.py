@@ -126,6 +126,7 @@ def stage_topology_snapshots(
     removed_source_ids: tuple[str, ...] = (),
     required_source_ids: tuple[str, ...] = (),
     allow_unavailable_bootstrap: bool = False,
+    configured_sources: Mapping[str, str] | None = None,
 ) -> TopologyStagingResult | None:
     """Stage canonical topology without taking a lock or writing a journal.
 
@@ -141,11 +142,16 @@ def stage_topology_snapshots(
             candidates,
             None,
             allow_all_unavailable=allow_unavailable_bootstrap,
+            configured_sources=configured_sources,
         )
         if candidates
         else ()
     )
-    configured = _configured_sources(root)
+    configured = (
+        dict(configured_sources)
+        if configured_sources is not None
+        else _configured_sources(root)
+    )
     removed = set(removed_source_ids)
     try:
         current = load_topology_index(root, allow_removed_source_ids=removed)
@@ -354,8 +360,13 @@ def _validate_candidates(
     owner_root: Path | None,
     *,
     allow_all_unavailable: bool = False,
+    configured_sources: Mapping[str, str] | None = None,
 ) -> tuple[_PreparedCandidate, ...]:
-    configured = _configured_sources(root)
+    configured = (
+        dict(configured_sources)
+        if configured_sources is not None
+        else _configured_sources(root)
+    )
     if not candidates:
         raise TopologyPublicationValidationError("topology publication requires at least one source candidate")
     prepared: list[_PreparedCandidate] = []
