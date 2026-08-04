@@ -25,6 +25,7 @@ from echelon.topology_model import (
     TopologyTraversalStep,
     TopologyValidationError,
     normalize_source_path,
+    validate_generation,
     validate_provider,
     validate_source_id,
     validate_symbol_key,
@@ -36,6 +37,23 @@ MAX_LIMIT = 500
 DEFAULT_IMPACT_DEPTH = 3
 MAX_IMPACT_DEPTH = 10
 NORMALIZED_STATUSES = frozenset({"ready", "degraded", "empty", "unsupported"})
+IMPACT_DIRECTIONS: Mapping[str, str] = MappingProxyType(
+    {
+        "CONTAINS": "out",
+        "DECLARES": "out",
+        "IMPORTS": "in",
+        "REQUIRES": "in",
+        "CALLS": "in",
+        "EXTENDS": "in",
+        "IMPLEMENTS": "in",
+        "USES_ROLE": "in",
+        "TESTS": "in",
+        "REFERENCES": "in",
+        "INSTANTIATES": "in",
+        "DECORATES": "in",
+        "OTHER": "both",
+    }
+)
 
 _CODEGRAPH_NATIVE_STATUSES = frozenset({"complete", "partial"})
 _PERLGRAPH_NATIVE_STATUSES = frozenset({"ready", "degraded", "empty", "unsupported"})
@@ -247,25 +265,54 @@ class PublishedTopology:
         files: Iterable[TopologyFile],
         symbols: Iterable[TopologySymbol],
         relationships: Iterable[TopologyRelationship],
-        generation: int | str,
+        generation: int,
         source_fingerprints: Mapping[str, str] | None = None,
         provider_receipt_hashes: Mapping[str, Mapping[str, str]] | None = None,
         provider_artifact_paths: Mapping[str, Mapping[str, str]] | None = None,
         provider_statuses: Mapping[str, Mapping[str, str]] | None = None,
         loaded_providers: Iterable[LoadedTopologyProvider] = (),
     ) -> None:
-        self.generation = generation
+        self.generation = validate_generation(generation)
         self._loaded_providers = tuple(
             sorted(loaded_providers, key=lambda item: (item.source_id, item.provider))
         )
+        _reject_duplicate_loaded_providers(self._loaded_providers)
         self._source_fingerprints = _immutable_nested_scalar_map(source_fingerprints or {})
+        explicit_provenance = any(
+            value is not None
+            for value in (
+                provider_receipt_hashes,
+                provider_artifact_paths,
+                provider_statuses,
+            )
+        )
+        if explicit_provenance and any(
+            value is None
+            for value in (
+                provider_receipt_hashes,
+                provider_artifact_paths,
+                provider_statuses,
+            )
+        ):
+            raise TopologyProviderError(
+                "explicit provider provenance requires hashes, paths, and statuses"
+            )
         default_hashes = _receipt_hashes_for_loaded(self._loaded_providers)
         self._provider_receipt_hashes = _immutable_nested_hashes(
-            provider_receipt_hashes if provider_receipt_hashes is not None else default_hashes
+            provider_receipt_hashes if explicit_provenance else default_hashes
         )
-        self._provider_artifact_paths = _immutable_nested_paths(provider_artifact_paths or {})
-        statuses = provider_statuses if provider_statuses is not None else _statuses_for_loaded(self._loaded_providers)
+        self._provider_artifact_paths = _immutable_nested_paths(
+            provider_artifact_paths if explicit_provenance else {}
+        )
+        statuses = provider_statuses if explicit_provenance else _statuses_for_loaded(self._loaded_providers)
         self._provider_statuses = _immutable_nested_statuses(statuses)
+        if explicit_provenance:
+            _validate_explicit_provider_provenance(
+                self._loaded_providers,
+                self._provider_receipt_hashes,
+                self._provider_artifact_paths,
+                self._provider_statuses,
+            )
         nodes = [*sources, *files, *symbols]
         self.nodes_by_id = _node_index(nodes)
         self._validate_source_nodes()
@@ -280,10 +327,11 @@ class PublishedTopology:
         cls,
         providers: Iterable[LoadedTopologyProvider],
         *,
-        generation: int | str,
+        generation: int,
         source_fingerprints: Mapping[str, str] | None = None,
         provider_receipt_hashes: Mapping[str, Mapping[str, str]] | None = None,
         provider_artifact_paths: Mapping[str, Mapping[str, str]] | None = None,
+        provider_statuses: Mapping[str, Mapping[str, str]] | None = None,
         sources: Iterable[TopologySource] = (),
     ) -> "PublishedTopology":
         """Compose selected provider outputs; publication provenance is injected here."""
@@ -324,6 +372,7 @@ class PublishedTopology:
             source_fingerprints=source_fingerprints,
             provider_receipt_hashes=provider_receipt_hashes,
             provider_artifact_paths=provider_artifact_paths,
+            provider_statuses=provider_statuses,
             loaded_providers=loaded,
         )
 
@@ -356,9 +405,8 @@ class PublishedTopology:
         ]
         candidates.sort(key=lambda node: (node.type, node.id))
         returned = tuple(candidates[:limit])
-        result_sources = {_node_source_id(node) for node in returned} or source_ids
         return TopologySearchResult(
-            receipt=self._receipt_for_sources(result_sources),
+            receipt=self._receipt_for_sources(source_ids),
             nodes=returned,
             truncated=len(candidates) > limit,
         )
@@ -424,9 +472,9 @@ class PublishedTopology:
         visited = {selected_id}
         steps: list[TopologyTraversalStep] = []
         truncated = False
-        while queue and len(steps) < DEFAULT_LIMIT:
+        while queue:
             current, depth = queue.popleft()
-            adjacent = self._adjacent(current, "out", relation_filter)
+            adjacent = self._impact_adjacent(current, relation_filter)
             if depth >= max_depth:
                 if any(step.node_id not in visited for step in adjacent):
                     truncated = True
@@ -434,6 +482,9 @@ class PublishedTopology:
             for step in adjacent:
                 if step.node_id in visited:
                     continue
+                if len(steps) >= DEFAULT_LIMIT:
+                    truncated = True
+                    break
                 visited.add(step.node_id)
                 observed = TopologyTraversalStep(
                     relationship=step.relationship,
@@ -443,11 +494,8 @@ class PublishedTopology:
                 )
                 steps.append(observed)
                 queue.append((step.node_id, depth + 1))
-                if len(steps) >= DEFAULT_LIMIT:
-                    truncated = True
-                    break
-        if queue:
-            truncated = True
+            if truncated:
+                break
         involved_sources = {_node_source_id(self.nodes_by_id[node_id]) for node_id in visited}
         return TopologyTraversalResult(
             receipt=self._receipt_for_sources(involved_sources),
@@ -502,17 +550,52 @@ class PublishedTopology:
             pairs.extend(("out", relation) for relation in self.outgoing[node_id])
         if direction in {"in", "both"}:
             pairs.extend(("in", relation) for relation in self.incoming[node_id])
-        steps = [
-            TopologyTraversalStep(
+        return self._steps_from_pairs(pairs, relations)
+
+    def _impact_adjacent(
+        self, node_id: str, relations: frozenset[str]
+    ) -> tuple[TopologyTraversalStep, ...]:
+        """Walk outward for containment and inward for affected dependents."""
+        pairs: list[tuple[str, TopologyRelationship]] = []
+        for relation in self.outgoing[node_id]:
+            if IMPACT_DIRECTIONS.get(relation.type) in {"out", "both"}:
+                pairs.append(("out", relation))
+        for relation in self.incoming[node_id]:
+            if IMPACT_DIRECTIONS.get(relation.type) in {"in", "both"}:
+                pairs.append(("in", relation))
+        return self._steps_from_pairs(pairs, relations)
+
+    @staticmethod
+    def _steps_from_pairs(
+        pairs: Iterable[tuple[str, TopologyRelationship]], relations: frozenset[str]
+    ) -> tuple[TopologyTraversalStep, ...]:
+        """Normalize deterministic adjacent observations without self-loop doubles."""
+        steps_by_identity: dict[
+            tuple[str, str, str, str, str, str, int | None], TopologyTraversalStep
+        ] = {}
+        for step_direction, relation in pairs:
+            if relations and relation.type not in relations:
+                continue
+            step = TopologyTraversalStep(
                 relationship=relation,
                 direction=step_direction,
                 node_id=relation.target_id if step_direction == "out" else relation.source_id,
                 depth=1,
             )
-            for step_direction, relation in pairs
-            if not relations or relation.type in relations
-        ]
-        return tuple(sorted(steps, key=lambda step: (step.direction, _relationship_sort_key(step.relationship), step.node_id)))
+            identity = _relationship_identity(relation)
+            existing = steps_by_identity.get(identity)
+            if existing is None or step.direction < existing.direction:
+                steps_by_identity[identity] = step
+        return tuple(
+            sorted(
+                steps_by_identity.values(),
+                key=lambda step: (
+                    step.direction,
+                    _relationship_sort_key(step.relationship),
+                    step.node_id,
+                ),
+            )
+        )
 
     def _receipt_for_sources(self, source_ids: set[str]) -> TopologyReceipt:
         ordered_sources = sorted(source_ids)
@@ -522,6 +605,11 @@ class PublishedTopology:
                 generation=self.generation,
                 source_id=source_id,
                 source_fingerprint=self._source_fingerprints.get(source_id),
+                source_fingerprints={
+                    source_id: self._source_fingerprints[source_id]
+                }
+                if source_id in self._source_fingerprints
+                else {},
                 provider_receipt_hashes=self._provider_receipt_hashes.get(source_id, {}),
                 provider_artifact_paths=tuple(self._provider_artifact_paths.get(source_id, {}).values()),
                 provider_statuses=self._provider_statuses.get(source_id, {}),
@@ -529,6 +617,11 @@ class PublishedTopology:
         hashes: dict[str, str] = {}
         statuses: dict[str, str] = {}
         paths: list[str] = []
+        fingerprints = {
+            source_id: self._source_fingerprints[source_id]
+            for source_id in ordered_sources
+            if source_id in self._source_fingerprints
+        }
         for source_id in ordered_sources:
             hashes.update({f"{source_id}:{provider}": value for provider, value in self._provider_receipt_hashes.get(source_id, {}).items()})
             statuses.update({f"{source_id}:{provider}": value for provider, value in self._provider_statuses.get(source_id, {}).items()})
@@ -536,6 +629,7 @@ class PublishedTopology:
         return TopologyReceipt(
             generation=self.generation,
             source_id=None,
+            source_fingerprints=fingerprints,
             provider_receipt_hashes=hashes,
             provider_artifact_paths=tuple(paths),
             provider_statuses=statuses,
@@ -627,15 +721,33 @@ def _validate_counts(
         raise TopologyProviderError("PerlGraph unresolved count does not match diagnostics")
     if values["discovered_relationships"] != values["emitted_relationships"] + values["unresolved_relationships"]:
         raise TopologyProviderError("PerlGraph relationship counts do not reconcile")
-    if values["emitted_files"] > values["discovered_files"]:
+    parse_failures = _require_list(document, "parse_failures")
+    parse_diagnostics = _require_list(document, "parse_diagnostics")
+    unsupported_patterns = _require_list(document, "unsupported_patterns")
+    if values["discovered_files"] != values["emitted_files"] + values["parse_failures"]:
         raise TopologyProviderError("PerlGraph file counts do not reconcile")
+    if values["discovered_symbols"] != values["emitted_symbols"]:
+        raise TopologyProviderError("PerlGraph symbol counts do not reconcile")
+    if len(parse_failures) != values["parse_failures"]:
+        raise TopologyProviderError("PerlGraph parse failure count does not match collection")
+    if len(unsupported_patterns) != values["dynamic_patterns"]:
+        raise TopologyProviderError("PerlGraph dynamic pattern count does not match collection")
+    if len(parse_diagnostics) > values["parse_diagnostics"]:
+        raise TopologyProviderError("PerlGraph parse diagnostic count does not match collection")
     supported = _require_bool(document, "supported")
-    if native_status == "unsupported" and supported:
-        raise TopologyProviderError("unsupported PerlGraph status requires supported=false")
-    if native_status in {"ready", "degraded", "empty"} and not supported:
-        raise TopologyProviderError(f"{native_status} PerlGraph status requires supported=true")
-    if native_status in {"empty", "unsupported"} and (symbols or relationships or unresolved):
-        raise TopologyProviderError(f"{native_status} PerlGraph artifact must not emit graph data")
+    expected_status = _expected_perlgraph_status(
+        values,
+        symbols=symbols,
+        parse_failures=parse_failures,
+        parse_diagnostics=parse_diagnostics,
+        unsupported_patterns=unsupported_patterns,
+    )
+    if native_status != expected_status:
+        raise TopologyProviderError(
+            f"PerlGraph provider_status {native_status!r} contradicts producer rules; expected {expected_status!r}"
+        )
+    if supported is not (values["discovered_files"] > 0):
+        raise TopologyProviderError("PerlGraph supported claim contradicts discovered files")
     return len(unresolved)
 
 
@@ -653,6 +765,9 @@ def _load_symbols(
         signature = symbol.get("signature") or ""
         if not isinstance(signature, str):
             raise TopologyProviderError("provider symbol signature must be a string or null")
+        name = symbol.get("name", "")
+        if not isinstance(name, str):
+            raise TopologyProviderError("provider symbol name must be a string")
         key = validate_symbol_key(_require_string(symbol, "symbol_key"))
         normalized_path = normalize_source_path(path)
         locator = (normalized_path, qualified_name, kind, signature)
@@ -671,7 +786,7 @@ def _load_symbols(
                 qualified_name=qualified_name,
                 kind=kind,
                 signature=signature,
-                name=symbol.get("name") if isinstance(symbol.get("name"), str) else "",
+                name=name,
                 line_start=_optional_positive_int(symbol, "line_start"),
                 line_end=_optional_positive_int(symbol, "line_end"),
             )
@@ -686,7 +801,7 @@ def _load_relationships(
     symbols_by_key: Mapping[str, TopologySymbol],
 ) -> tuple[TopologyRelationship, ...]:
     relationships: list[TopologyRelationship] = []
-    identities: set[tuple[str, str, str, str]] = set()
+    identities: set[tuple[str, str, str, str, str, str, int | None]] = set()
     for raw_relationship in raw_relationships:
         relation = _require_object_value(raw_relationship, "provider relationship")
         source_key = validate_symbol_key(_require_string(relation, "source_key"))
@@ -695,24 +810,23 @@ def _load_relationships(
             raise TopologyProviderError("provider relationship has missing emitted endpoint")
         provider_kind = _require_string(relation, "kind")
         normalized_type = _RELATIONSHIP_MAP[provider].get(provider_kind, "OTHER")
-        identity = (source_key, target_key, normalized_type, provider)
-        if identity in identities:
-            raise TopologyProviderError("duplicate traversable provider relationship")
-        identities.add(identity)
         path = relation.get("file_path")
         if path is not None and not isinstance(path, str):
             raise TopologyProviderError("provider relationship file_path must be a string")
-        relationships.append(
-            TopologyRelationship(
-                source_id=symbols_by_key[source_key].id,
-                target_id=symbols_by_key[target_key].id,
-                type=normalized_type,
-                provider=provider,
-                provider_kind=provider_kind,
-                path=normalize_source_path(path) if path is not None else None,
-                line_start=_optional_positive_int(relation, "line_start"),
-            )
+        normalized = TopologyRelationship(
+            source_id=symbols_by_key[source_key].id,
+            target_id=symbols_by_key[target_key].id,
+            type=normalized_type,
+            provider=provider,
+            provider_kind=provider_kind,
+            path=normalize_source_path(path) if path is not None else None,
+            line_start=_optional_positive_int(relation, "line_start"),
         )
+        identity = _relationship_identity(normalized)
+        if identity in identities:
+            raise TopologyProviderError("duplicate traversable provider relationship")
+        identities.add(identity)
+        relationships.append(normalized)
     return tuple(sorted(relationships, key=_relationship_sort_key))
 
 
@@ -751,6 +865,9 @@ def _load_diagnostics(
                 target_name=_diagnostic_name(diagnostic, "target"),
                 path=normalize_source_path(path) if path is not None else None,
                 line_start=_optional_positive_int(diagnostic, "line_start"),
+                confidence=_optional_confidence(diagnostic),
+                provenance=_optional_provenance(diagnostic),
+                notes=_optional_notes(diagnostic),
             )
         )
     return tuple(
@@ -762,6 +879,9 @@ def _load_diagnostics(
                 item.target_key or "",
                 item.path or "",
                 item.line_start or 0,
+                item.confidence or "",
+                item.provenance,
+                item.notes or "",
             ),
         )
     )
@@ -775,6 +895,35 @@ def _diagnostic_name(diagnostic: Mapping[str, object], stem: str) -> str:
         return ""
     if not isinstance(value, str):
         raise TopologyProviderError(f"diagnostic {stem} name must be a string")
+    return value
+
+
+def _optional_confidence(diagnostic: Mapping[str, object]) -> str | None:
+    value = diagnostic.get("confidence")
+    if value is None:
+        return None
+    if value not in {"high", "medium", "low", "dynamic"}:
+        raise TopologyProviderError("diagnostic confidence is unsupported")
+    return value
+
+
+def _optional_provenance(diagnostic: Mapping[str, object]) -> tuple[str, ...]:
+    value = diagnostic.get("provenance")
+    if value is None:
+        return ()
+    if not isinstance(value, list) or any(
+        not isinstance(item, str) or not item for item in value
+    ):
+        raise TopologyProviderError("diagnostic provenance must be a list of non-empty strings")
+    return tuple(value)
+
+
+def _optional_notes(diagnostic: Mapping[str, object]) -> str | None:
+    value = diagnostic.get("notes")
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise TopologyProviderError("diagnostic notes must be a string")
     return value
 
 
@@ -849,7 +998,7 @@ def _normalize_status(
     relationship_count: int,
 ) -> str:
     if provider == "perlgraph":
-        return "degraded" if not complete and native_status == "ready" else native_status
+        return native_status
     if native_status == "partial":
         return "degraded"
     supported = document.get("supported")
@@ -862,6 +1011,24 @@ def _normalize_status(
     if supported is False:
         raise TopologyProviderError("unsupported CodeGraph artifact must not emit graph data")
     return "ready" if complete else "degraded"
+
+
+def _expected_perlgraph_status(
+    counts: Mapping[str, int],
+    *,
+    symbols: list[object],
+    parse_failures: list[object],
+    parse_diagnostics: list[object],
+    unsupported_patterns: list[object],
+) -> str:
+    """Mirror Task 2's capability-aware PerlGraph producer status rules."""
+    if counts["discovered_files"] == 0:
+        return "unsupported"
+    if parse_failures or parse_diagnostics or unsupported_patterns:
+        return "degraded"
+    if not symbols:
+        return "empty"
+    return "ready"
 
 
 def _node_index(
@@ -879,18 +1046,13 @@ def _relationship_tuple(
     relationships: Iterable[TopologyRelationship],
     nodes: Mapping[str, object],
 ) -> tuple[TopologyRelationship, ...]:
-    indexed: dict[tuple[str, str, str, str], TopologyRelationship] = {}
+    indexed: dict[tuple[str, str, str, str, str, str, int | None], TopologyRelationship] = {}
     for relationship in relationships:
         if relationship.source_id not in nodes or relationship.target_id not in nodes:
             raise TopologyProviderError(
                 f"topology relationship has missing endpoint: {relationship.source_id} {relationship.type} {relationship.target_id}"
             )
-        identity = (
-            relationship.source_id,
-            relationship.type,
-            relationship.target_id,
-            relationship.provider,
-        )
+        identity = _relationship_identity(relationship)
         if identity in indexed:
             raise TopologyProviderError("duplicate topology relationship")
         indexed[identity] = relationship
@@ -1000,6 +1162,38 @@ def _statuses_for_loaded(
     return rows
 
 
+def _reject_duplicate_loaded_providers(
+    providers: Iterable[LoadedTopologyProvider],
+) -> None:
+    seen: set[tuple[str, str]] = set()
+    for provider in providers:
+        identity = (provider.source_id, provider.provider)
+        if identity in seen:
+            raise TopologyProviderError(
+                f"duplicate loaded topology provider: {provider.source_id}/{provider.provider}"
+            )
+        seen.add(identity)
+
+
+def _validate_explicit_provider_provenance(
+    providers: Iterable[LoadedTopologyProvider],
+    hashes: Mapping[str, Mapping[str, str]],
+    paths: Mapping[str, Mapping[str, str]],
+    statuses: Mapping[str, Mapping[str, str]],
+) -> None:
+    expected = {(provider.source_id, provider.provider) for provider in providers}
+    for label, entries in (("hashes", hashes), ("paths", paths), ("statuses", statuses)):
+        actual = {
+            (source_id, provider)
+            for source_id, provider_entries in entries.items()
+            for provider in provider_entries
+        }
+        if actual != expected:
+            raise TopologyProviderError(
+                f"provider provenance {label} must exactly match loaded providers"
+            )
+
+
 def _validate_artifact_hash(value: str) -> str:
     try:
         return validate_symbol_key(value)
@@ -1030,13 +1224,31 @@ def _search_text(node: TopologySource | TopologyFile | TopologySymbol) -> str:
     return " ".join((node.id, node.source_id))
 
 
-def _relationship_sort_key(relationship: TopologyRelationship) -> tuple[str, str, str, str, str]:
+def _relationship_identity(
+    relationship: TopologyRelationship,
+) -> tuple[str, str, str, str, str, str, int | None]:
+    return (
+        relationship.source_id,
+        relationship.target_id,
+        relationship.type,
+        relationship.provider_kind,
+        relationship.provider,
+        relationship.path or "",
+        relationship.line_start,
+    )
+
+
+def _relationship_sort_key(
+    relationship: TopologyRelationship,
+) -> tuple[str, str, str, str, str, str, int]:
     return (
         relationship.type,
         relationship.source_id,
         relationship.target_id,
         relationship.provider,
         relationship.provider_kind,
+        relationship.path or "",
+        relationship.line_start or 0,
     )
 
 

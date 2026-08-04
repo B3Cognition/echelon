@@ -79,6 +79,13 @@ def validate_symbol_key(symbol_key: str) -> str:
     return symbol_key
 
 
+def validate_generation(generation: int) -> int:
+    """Return one canonical positive topology publication generation."""
+    if not isinstance(generation, int) or isinstance(generation, bool) or generation < 1:
+        raise TopologyValidationError("topology generation must be an integer at least 1")
+    return generation
+
+
 def canonical_symbol_key(
     path: str, qualified_name: str, kind: str, signature: str | None = None
 ) -> str:
@@ -181,6 +188,7 @@ class TopologySymbol:
             raise TopologyValidationError("symbol kind must be a non-empty string")
         if not isinstance(self.signature, str):
             raise TopologyValidationError("symbol signature must be a string")
+        _reject_absolute_host_path(self.name, "symbol name")
         expected = canonical_symbol_key(
             self.path, self.qualified_name, self.kind, self.signature
         )
@@ -250,6 +258,9 @@ class TopologyDiagnostic:
     target_name: str = ""
     path: str | None = None
     line_start: int | None = None
+    confidence: str | None = None
+    provenance: tuple[str, ...] = ()
+    notes: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "provider", validate_provider(self.provider))
@@ -267,26 +278,56 @@ class TopologyDiagnostic:
             not isinstance(self.line_start, int) or self.line_start <= 0
         ):
             raise TopologyValidationError("diagnostic line_start must be a positive integer")
+        if self.confidence is not None and self.confidence not in {
+            "high",
+            "medium",
+            "low",
+            "dynamic",
+        }:
+            raise TopologyValidationError("diagnostic confidence is unsupported")
+        if not isinstance(self.provenance, tuple) or any(
+            not isinstance(value, str) or not value for value in self.provenance
+        ):
+            raise TopologyValidationError("diagnostic provenance must be a tuple of non-empty strings")
+        if self.notes is not None:
+            if not isinstance(self.notes, str):
+                raise TopologyValidationError("diagnostic notes must be a string or null")
+            _reject_absolute_host_path(self.notes, "diagnostic notes")
 
 
 @dataclass(frozen=True, slots=True)
 class TopologyReceipt:
     """Bounded provenance returned with every topology read result."""
 
-    generation: int | str
+    generation: int
     source_id: str | None
     source_fingerprint: str | None = None
+    source_fingerprints: Mapping[str, str] = field(default_factory=dict)
     provider_receipt_hashes: Mapping[str, str] = field(default_factory=dict)
     provider_artifact_paths: tuple[str, ...] = ()
     provider_statuses: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "generation", validate_generation(self.generation))
         if self.source_id is not None:
             object.__setattr__(self, "source_id", validate_source_id(self.source_id))
         if self.source_fingerprint is not None:
             if not isinstance(self.source_fingerprint, str) or not self.source_fingerprint:
                 raise TopologyValidationError("source fingerprint must be a non-empty string")
             _reject_absolute_host_path(self.source_fingerprint, "source fingerprint")
+        fingerprints = {
+            validate_source_id(source_id): _validate_source_fingerprint(value)
+            for source_id, value in self.source_fingerprints.items()
+        }
+        if self.source_id is not None:
+            existing = fingerprints.get(self.source_id)
+            if existing is not None and self.source_fingerprint is not None and existing != self.source_fingerprint:
+                raise TopologyValidationError("single-source fingerprint does not match source_fingerprints")
+            if self.source_fingerprint is None and existing is not None:
+                object.__setattr__(self, "source_fingerprint", existing)
+            elif self.source_fingerprint is not None:
+                fingerprints[self.source_id] = self.source_fingerprint
+        object.__setattr__(self, "source_fingerprints", MappingProxyType(dict(sorted(fingerprints.items()))))
         hashes = {_validate_receipt_provider_key(key): _validate_sha256(value) for key, value in self.provider_receipt_hashes.items()}
         statuses = {_validate_receipt_provider_key(key): value for key, value in self.provider_statuses.items()}
         if any(value not in {"ready", "degraded", "empty", "unsupported"} for value in statuses.values()):
@@ -367,6 +408,13 @@ def _validate_receipt_provider_key(value: str) -> str:
     source_id, provider = value.split(":", 1)
     validate_source_id(source_id)
     validate_provider(provider)
+    return value
+
+
+def _validate_source_fingerprint(value: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise TopologyValidationError("source fingerprint must be a non-empty string")
+    _reject_absolute_host_path(value, "source fingerprint")
     return value
 
 
