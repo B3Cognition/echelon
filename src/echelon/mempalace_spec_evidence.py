@@ -17,6 +17,10 @@ from echelon.mempalace_requirements import (
 )
 from echelon.mempalace_memory_audit import audit_artifact_memory
 from harness.spec_frontmatter import read_frontmatter
+from harness.verify_evidence_discovery import (
+    discover_verify_evidence_runs,
+    verify_evidence_run_sort_key,
+)
 from kernel.spec_identity import spec_identity_aliases
 
 
@@ -400,75 +404,35 @@ def _resolve_verify_evidence_run_dir(
     run_id: str | None,
 ) -> Path:
     aliases = spec_identity_aliases(spec_id)
+    complete = sorted(
+        {
+            candidate
+            for name in PUBLISHED_VERIFY_EVIDENCE_ARTIFACTS
+            for candidate in discover_verify_evidence_runs(
+                project_root,
+                spec_id,
+                required_files=(name,),
+            )
+        },
+        key=verify_evidence_run_sort_key,
+    )
     if run_id:
-        direct = project_root / "runs" / run_id
-        nested_candidates = [
-            direct / "verify-spec" / alias
-            for alias in aliases
+        direct = (project_root / "runs" / run_id).resolve()
+        nested = [
+            candidate
+            for candidate in complete
+            if candidate.parent.name == "verify-spec"
+            and candidate.parent.parent.resolve() == direct
         ]
-        complete_nested = _complete_verify_evidence_candidates(nested_candidates)
-        if complete_nested:
-            return _latest_verify_evidence_candidate(complete_nested)
-        candidates = [direct] if _standalone_run_matches_spec(direct, aliases) else []
-    else:
-        runs = project_root / "runs"
-        candidates = []
-        if runs.is_dir():
-            for alias in aliases:
-                candidates.extend(runs.glob(f"verify-spec-{alias}-*"))
-                candidates.extend(runs.glob(f"*/verify-spec/{alias}"))
-    candidates = list(dict.fromkeys(candidates))
-    complete = _complete_verify_evidence_candidates(candidates)
+        if nested:
+            return nested[-1]
+        complete = [candidate for candidate in complete if candidate.resolve() == direct]
     if not complete:
         raise SpecMemoryError(
             "published verify evidence source not found for spec aliases: "
             + ", ".join(aliases)
         )
-    return _latest_verify_evidence_candidate(complete)
-
-
-def _complete_verify_evidence_candidates(candidates: list[Path]) -> list[Path]:
-    return [
-        path
-        for path in candidates
-        if path.is_dir()
-        and (path / "state.json").is_file()
-        and any(
-            (path / name).is_file()
-            for name in PUBLISHED_VERIFY_EVIDENCE_ARTIFACTS
-        )
-    ]
-
-
-def _latest_verify_evidence_candidate(complete: list[Path]) -> Path:
-    return sorted(
-        complete,
-        key=lambda path: max(
-            (path / name).stat().st_mtime
-            for name in PUBLISHED_VERIFY_EVIDENCE_ARTIFACTS
-            if (path / name).is_file()
-        ),
-    )[-1]
-
-
-def _standalone_run_matches_spec(
-    run_dir: Path,
-    aliases: tuple[str, ...],
-) -> bool:
-    state_path = run_dir / "state.json"
-    try:
-        state = json.loads(state_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return False
-    state_spec_id = str(state.get("spec_id") or "").strip()
-    if state_spec_id:
-        return bool(
-            set(spec_identity_aliases(state_spec_id)) & set(aliases)
-        )
-    return any(
-        run_dir.name == alias or run_dir.name.startswith(f"verify-spec-{alias}-")
-        for alias in aliases
-    )
+    return complete[-1]
 
 
 def _file_sha256(path: Path) -> str:

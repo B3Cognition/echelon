@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping
 
@@ -14,6 +16,9 @@ from echelon.topology_provider import (
 )
 from echelon.topology_model import canonical_symbol_key
 from harness.re_fingerprint import SourceFingerprint
+from harness.re_fingerprint import fingerprint_source, resolve_re_fingerprint_profile
+from echelon.workspace_model import discover_workspace
+from kernel.spec_identity import spec_identity_aliases
 from harness.topology_publication import (
     TopologyProviderCandidate,
     TopologyPublicationValidationError,
@@ -45,6 +50,235 @@ class TopologyEvidence:
 
     candidate: TopologySnapshotCandidate
     unavailable_providers: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class TopologyEvidenceReceiptResult:
+    receipt_path: Path
+    status: str
+    source_id: str
+
+
+def write_topology_evidence_receipt(
+    project_root: Path,
+    verify_run_dir: Path,
+    spec_dir: Path,
+    *,
+    workspace_root: Path,
+    source_id: str,
+    source_root: Path,
+    provenance: Mapping[str, object] | None = None,
+) -> TopologyEvidenceReceiptResult:
+    """Finalize deterministic delivery topology metadata after both providers."""
+    workspace = Path(workspace_root).resolve(strict=True)
+    project = Path(project_root).resolve(strict=True)
+    source = Path(source_root).resolve(strict=True)
+    run_dir = Path(verify_run_dir).resolve(strict=True)
+    spec = Path(spec_dir).resolve(strict=True)
+    if project != source:
+        raise TopologyEvidenceError("delivery project root does not match ECHELON_SOURCE_ROOT")
+    try:
+        run_dir.relative_to((workspace / "runs").resolve(strict=True))
+        spec.relative_to(workspace)
+    except (OSError, ValueError) as exc:
+        raise TopologyEvidenceError("delivery topology receipt paths escape the workspace") from exc
+    manifest_matches = [
+        item
+        for item in discover_workspace(workspace).sources
+        if item.id == source_id
+        and (workspace if item.path == "." else workspace / item.path).resolve() == source
+    ]
+    if len(manifest_matches) != 1:
+        raise TopologyEvidenceError(
+            f"delivery source does not map exactly to workspace source {source_id!r}"
+        )
+    source_path = manifest_matches[0].path
+    state_path = run_dir / "state.json"
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise TopologyEvidenceError("verify-spec state is unavailable or malformed") from exc
+    if not isinstance(state, dict):
+        raise TopologyEvidenceError("verify-spec state must be a JSON object")
+    state_spec_id = state.get("spec_id")
+    if not isinstance(state_spec_id, str) or not (
+        set(spec_identity_aliases(state_spec_id)) & set(spec_identity_aliases(spec.name))
+    ):
+        raise TopologyEvidenceError("verify-spec state/spec identity mismatch")
+    verify_scope = state.get("verify_scope")
+    if verify_scope not in {"full", "scoped"}:
+        raise TopologyEvidenceError("verify-spec state has no valid verify scope")
+
+    fingerprint = fingerprint_source(
+        source,
+        resolve_re_fingerprint_profile(workspace),
+    )
+    providers = {
+        provider: _delivery_provider_receipt(run_dir, provider, source_id)
+        for provider in sorted(_KNOWN_PROVIDERS)
+    }
+    usable = [row for row in providers.values() if row["status"] != "unavailable"]
+    if not usable:
+        status = "unavailable"
+    elif len(usable) != len(providers) or any(
+        row["status"] == "degraded" or row["complete"] is not True
+        for row in usable
+    ):
+        status = "degraded"
+    else:
+        status = "ready"
+    receipt_provenance = dict(provenance) if provenance is not None else {
+        "kind": "delivery",
+        "run_dir": run_dir.relative_to(workspace).as_posix(),
+    }
+    receipt = {
+        "schema_version": 1,
+        "source_id": source_id,
+        "source_path": source_path,
+        "source_fingerprint": fingerprint.to_json_dict(),
+        "analyzed_commit": fingerprint.git_head,
+        "spec_id": spec.name,
+        "verify_scope": verify_scope,
+        "provenance": receipt_provenance,
+        "providers": providers,
+    }
+    receipt_path = run_dir / "topology-receipt.json"
+    _write_json_atomic(receipt_path, receipt)
+    completed_at = state.get("completed_at")
+    if not isinstance(completed_at, str) or not completed_at:
+        completed_at = datetime.now(timezone.utc).isoformat()
+    state.update(
+        {
+            "completed_at": completed_at,
+            "topology_evidence": status,
+            "topology_receipt_path": str(receipt_path),
+        }
+    )
+    _write_json_atomic(state_path, state)
+    return TopologyEvidenceReceiptResult(receipt_path, status, source_id)
+
+
+def _delivery_provider_receipt(
+    run_dir: Path,
+    provider: str,
+    source_id: str,
+) -> dict[str, object]:
+    analysis_path = run_dir / f"{provider}-analysis.json"
+    summary_path = run_dir / f"{provider}-summary.json"
+    error_path = run_dir / f"{provider}-error.txt"
+    if error_path.exists() or error_path.is_symlink():
+        try:
+            contained_error = _contained_provider_file(run_dir, error_path)
+        except (OSError, ValueError):
+            return _unavailable_delivery_provider(
+                "invalid",
+                "provider error artifact is not owned by the verify run",
+            )
+        return _unavailable_delivery_provider(
+            "provider-error",
+            _bounded_error_message(contained_error),
+        )
+    try:
+        analysis_path = _contained_provider_file(run_dir, analysis_path)
+        summary_path = _contained_provider_file(run_dir, summary_path)
+    except FileNotFoundError:
+        return _unavailable_delivery_provider(
+            "missing",
+            "provider analysis or summary is missing",
+        )
+    except (OSError, ValueError):
+        return _unavailable_delivery_provider(
+            "invalid",
+            "provider artifacts are not owned by the verify run",
+        )
+    try:
+        analysis = analysis_path.read_bytes()
+        summary = summary_path.read_bytes()
+        document = json.loads(analysis)
+        summary_document = json.loads(summary)
+        if not isinstance(document, dict):
+            raise TopologyEvidenceError("provider analysis must be a JSON object")
+        loaded = load_provider_document(document, provider=provider, source_id=source_id)
+        validate_provider_summary(
+            provider,
+            source_id,
+            document=document,
+            loaded=loaded,
+            summary=summary_document,
+        )
+        status = document.get("provider_status")
+        complete = document.get("complete")
+        tool_version = document.get("tool_version")
+        counts = document.get("counts")
+        if not isinstance(status, str) or not isinstance(complete, bool):
+            raise TopologyEvidenceError("provider status/completeness is malformed")
+        if not isinstance(tool_version, str) or not isinstance(counts, dict):
+            raise TopologyEvidenceError("provider version/counts are malformed")
+    except (
+        OSError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        TopologyProviderError,
+        TopologyPublicationValidationError,
+        TopologyEvidenceError,
+    ) as exc:
+        return _unavailable_delivery_provider("invalid", str(exc))
+    diagnostics = (
+        document.get("diagnostics")
+        if provider == "codegraph"
+        else {
+            "unresolved_relationships": document.get("unresolved_relationships"),
+            "parse_failures": document.get("parse_failures"),
+            "parse_diagnostics": document.get("parse_diagnostics"),
+            "unsupported_patterns": document.get("unsupported_patterns"),
+        }
+    )
+    return {
+        "status": status,
+        "complete": complete,
+        "artifact_schema_version": document.get("schema_version"),
+        "tool_version": tool_version,
+        "capabilities": list(_capabilities(analysis, provider)),
+        "counts": counts,
+        "diagnostics": diagnostics,
+        "artifacts": {
+            "analysis": _run_artifact_receipt(analysis_path, analysis),
+            "summary": _run_artifact_receipt(summary_path, summary),
+        },
+    }
+
+
+def _unavailable_delivery_provider(kind: str, message: str) -> dict[str, object]:
+    return {
+        "status": "unavailable",
+        "complete": False,
+        "diagnostics": [{"kind": kind, "message": message[:1000]}],
+        "artifacts": {},
+    }
+
+
+def _bounded_error_message(path: Path) -> str:
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return "provider failed"
+    return next((line.strip() for line in text.splitlines() if line.strip()), "provider failed")
+
+
+def _run_artifact_receipt(path: Path, content: bytes) -> dict[str, str]:
+    return {
+        "path": path.name,
+        "sha256": "sha256:" + hashlib.sha256(content).hexdigest(),
+    }
+
+
+def _write_json_atomic(path: Path, value: object) -> None:
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text(
+        json.dumps(value, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(path)
 
 
 def build_topology_snapshot_candidate(

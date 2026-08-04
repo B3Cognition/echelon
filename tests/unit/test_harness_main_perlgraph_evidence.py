@@ -1,6 +1,7 @@
 """CLI tests for deterministic verify-spec PerlGraph evidence."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -56,11 +57,15 @@ def _write_fake_perlgraph_cli_at_runtime(
         f"""
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 
 const args = process.argv.slice(2);
 const repoPath = args[args.indexOf("--repo-path") + 1];
 const outputPath = args[args.indexOf("--output-path") + 1];
 const summaryPath = args[args.indexOf("--summary-path") + 1];
+const symbolKey = `sha256:${{crypto.createHash("sha256")
+  .update(JSON.stringify(["lib/App.pm", "App::run", "sub", ""]), "utf8")
+  .digest("hex")}}`;
 const analysis = {{
   schema_version: 2,
   tool: "perlgraph",
@@ -70,13 +75,13 @@ const analysis = {{
   supported: true,
   provider_status: "ready",
   complete: true,
-  counts: {{discovered_files: 1, emitted_files: 1, discovered_symbols: 1, emitted_symbols: 1, discovered_relationships: 1, emitted_relationships: 1, unresolved_relationships: 0, parse_failures: 0, parse_diagnostics: 0, dynamic_patterns: 0}},
+  counts: {{discovered_files: 1, emitted_files: 1, discovered_symbols: 1, emitted_symbols: 1, discovered_relationships: 0, emitted_relationships: 0, unresolved_relationships: 0, parse_failures: 0, parse_diagnostics: 0, dynamic_patterns: 0}},
   capabilities: {{language: "perl", supported_extensions: [".pm"], exact_symbol_keys: true, exact_relationship_endpoints: true, unresolved_relationship_diagnostics: true}},
   language_coverage: {{".pm": "supported"}},
-  symbols: [{{kind: "sub", file_path: "lib/App.pm", qualified_name: "App::run"}}],
+  symbols: [{{symbol_key: symbolKey, kind: "sub", file_path: "lib/App.pm", qualified_name: "App::run", name: "run", signature: "", line_start: 1, line_end: 1}}],
   relationships: [],
   unresolved_relationships: [],
-  call_graph: [{{source: "App::run", target: "App::helper", confidence: "high", provenance: ["fixture"]}}],
+  call_graph: [],
   module_graph: [],
   unsupported_patterns: [],
   parse_failures: [],
@@ -131,6 +136,153 @@ def test_write_perlgraph_evidence_cli_writes_analysis_and_summary(tmp_path: Path
     state = json.loads((verify_run_dir / "state.json").read_text())
     assert state["perlgraph_evidence"] == "ready"
     assert state["perlgraph_summary_path"] == str(verify_run_dir / "perlgraph-summary.json")
+
+
+def test_delivery_commands_finalize_exact_run_local_topology_receipt(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from tests.unit.test_harness_main_codegraph_evidence import _write_fake_bridge
+
+    workspace = tmp_path / "workspace"
+    source = workspace / "sources/api"
+    source.mkdir(parents=True)
+    (workspace / ".echelon").mkdir()
+    (workspace / ".echelon/config.yml").write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "init", "-b", "main"], cwd=source, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=source, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=source, check=True)
+    (source / "src").mkdir()
+    (source / "src/app.py").write_text("def run():\n    return 1\n", encoding="utf-8")
+    subprocess.run(["git", "add", "src/app.py"], cwd=source, check=True)
+    subprocess.run(["git", "commit", "-m", "feature"], cwd=source, check=True, capture_output=True)
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=source,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    _write_fake_bridge(source)
+    _write_fake_perlgraph_cli(source)
+    spec_dir = workspace / "specs/909-delivery-topology"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("---\nstatus: ready_to_land\n---\n", encoding="utf-8")
+    verify_run = workspace / "runs/verify-spec-909-20260804-120000"
+    verify_run.mkdir(parents=True)
+    (verify_run / "state.json").write_text(
+        json.dumps(
+            {
+                "spec_id": "909-delivery-topology",
+                "verify_scope": "full",
+                "status": "in_progress",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ECHELON_WORKSPACE_ROOT", str(workspace))
+    monkeypatch.setenv("ECHELON_SOURCE_ID", "api")
+    monkeypatch.setenv("ECHELON_SOURCE_ROOT", str(source))
+
+    codegraph = _run(
+        ["write-codegraph-evidence", str(source), str(verify_run), str(spec_dir)]
+    )
+    perlgraph = _run(
+        ["write-perlgraph-evidence", str(source), str(verify_run), str(spec_dir)]
+    )
+    finalized = _run(
+        [
+            "write-topology-evidence-receipt",
+            str(source),
+            str(verify_run),
+            str(spec_dir),
+        ]
+    )
+
+    assert codegraph.returncode == 0, codegraph.stderr
+    assert perlgraph.returncode == 0, perlgraph.stderr
+    assert finalized.returncode == 0, finalized.stderr
+    receipt = json.loads((verify_run / "topology-receipt.json").read_text())
+    assert receipt["schema_version"] == 1
+    assert receipt["source_id"] == "api"
+    assert receipt["source_path"] == "sources/api"
+    assert receipt["spec_id"] == "909-delivery-topology"
+    assert receipt["verify_scope"] == "full"
+    assert receipt["analyzed_commit"] == head
+    assert receipt["source_fingerprint"]["git_head"] == head
+    assert receipt["source_fingerprint"]["dirty"] is False
+    assert receipt["provenance"] == {
+        "kind": "delivery",
+        "run_dir": "runs/verify-spec-909-20260804-120000",
+    }
+    assert list(receipt["providers"]) == ["codegraph", "perlgraph"]
+    assert receipt["providers"]["codegraph"]["tool_version"] == "1.4.1"
+    assert receipt["providers"]["codegraph"]["status"] == "complete"
+    assert receipt["providers"]["codegraph"]["complete"] is True
+    assert receipt["providers"]["perlgraph"]["tool_version"] == "0.1.0"
+    assert receipt["providers"]["perlgraph"]["status"] == "ready"
+    for provider in ("codegraph", "perlgraph"):
+        for artifact in ("analysis", "summary"):
+            path = verify_run / f"{provider}-{artifact}.json"
+            assert receipt["providers"][provider]["artifacts"][artifact] == {
+                "path": path.name,
+                "sha256": "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest(),
+            }
+    state = json.loads((verify_run / "state.json").read_text())
+    assert state["topology_evidence"] == "ready"
+    assert state["completed_at"]
+
+
+def test_topology_receipt_is_written_when_both_providers_are_unavailable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    source = workspace / "sources/api"
+    source.mkdir(parents=True)
+    (workspace / ".echelon").mkdir()
+    (workspace / ".echelon/config.yml").write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n",
+        encoding="utf-8",
+    )
+    spec_dir = workspace / "specs/909-delivery-topology"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+    verify_run = workspace / "runs/verify-spec-909-unavailable"
+    verify_run.mkdir(parents=True)
+    (verify_run / "state.json").write_text(
+        json.dumps(
+            {
+                "spec_id": "909-delivery-topology",
+                "verify_scope": "full",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ECHELON_WORKSPACE_ROOT", str(workspace))
+    monkeypatch.setenv("ECHELON_SOURCE_ID", "api")
+    monkeypatch.setenv("ECHELON_SOURCE_ROOT", str(source))
+
+    finalized = _run(
+        [
+            "write-topology-evidence-receipt",
+            str(source),
+            str(verify_run),
+            str(spec_dir),
+        ]
+    )
+
+    assert finalized.returncode == 0, finalized.stderr
+    receipt = json.loads((verify_run / "topology-receipt.json").read_text())
+    assert {
+        provider: row["status"] for provider, row in receipt["providers"].items()
+    } == {"codegraph": "unavailable", "perlgraph": "unavailable"}
+    state = json.loads((verify_run / "state.json").read_text())
+    assert state["topology_evidence"] == "unavailable"
 
 
 def test_write_perlgraph_evidence_uses_shared_runtime(

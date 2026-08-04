@@ -518,6 +518,12 @@ def _finish_branchless_landing(
     verified_commit = metadata.get("verified_commit")
 
     if status == "landed" and not verified_commit:
+        gitops.ensure_on_default_branch(str(project_dir))
+        _post_land_topology_reconciliation(
+            spec_id,
+            wrapper_project_dir,
+            project_dir,
+        )
         logger.info("land: %s is already landed (legacy status evidence)", spec_id)
         return True
 
@@ -603,6 +609,12 @@ def _finish_branchless_landing(
                 wrapper_project_dir,
                 spec_id,
                 "",
+            )
+            gitops.ensure_on_default_branch(str(project_dir))
+            _post_land_topology_reconciliation(
+                spec_id,
+                wrapper_project_dir,
+                project_dir,
             )
             logger.info(
                 "land: %s has no feature branch, but verified commit %s is on %s",
@@ -1555,9 +1567,74 @@ def _finish_landing(
     if spec_dir:
         write_status(spec_dir, "landed")
     _clear_landed_active_authoring_pointer(spec_project_dir, spec_id, feature_branch)
+    _post_land_topology_reconciliation(
+        spec_id,
+        spec_project_dir,
+        project_dir,
+    )
 
     logger.info("land: %s — landed successfully", spec_id)
     return True
+
+
+def _post_land_topology_reconciliation(
+    spec_id: str,
+    workspace_root: Path,
+    target_root: Path,
+) -> None:
+    """Report topology reconciliation without changing a successful land result."""
+    source_id = _configured_source_id_for_target(workspace_root, target_root)
+    default_head = _current_git_commit(target_root)
+    if default_head is None:
+        logger.warning("topology: unavailable (could not resolve landed default HEAD)")
+        if source_id is not None:
+            logger.warning("next: echelon re refresh --source %s", source_id)
+        return
+    try:
+        from harness.topology_promotion import reconcile_landed_topology
+
+        result = reconcile_landed_topology(
+            workspace_root,
+            spec_id,
+            target_root,
+            default_head,
+        )
+    except Exception as exc:  # noqa: BLE001 - landing must remain successful.
+        logger.warning("topology: unavailable (%s)", exc)
+        if source_id is not None:
+            logger.warning("next: echelon re refresh --source %s", source_id)
+        return
+    source_id = result.source_id or source_id
+    if result.status == "current":
+        logger.info("topology: current")
+        return
+    logger.warning("topology: %s (%s)", result.status, result.message)
+    if source_id is not None:
+        logger.warning("next: echelon re refresh --source %s", source_id)
+
+
+def _configured_source_id_for_target(
+    workspace_root: Path,
+    target_root: Path,
+) -> str | None:
+    try:
+        from echelon.workspace_model import discover_workspace
+
+        workspace = Path(workspace_root).resolve()
+        target = Path(target_root).resolve()
+        matches = [
+            source.id
+            for source in discover_workspace(workspace).sources
+            if (
+                workspace
+                if source.path == "."
+                else workspace / source.path
+            ).resolve()
+            == target
+        ]
+    except (OSError, ValueError):
+        return None
+    return matches[0] if len(matches) == 1 else None
 
 
 def _clear_landed_active_authoring_pointer(

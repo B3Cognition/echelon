@@ -374,6 +374,52 @@ def test_build_candidate_accepts_compact_schema_two_summary(tmp_path: Path) -> N
 
 
 @pytest.mark.unit
+def test_delivery_receipt_never_attests_symlinked_provider_bytes(tmp_path: Path) -> None:
+    from harness.topology_evidence import write_topology_evidence_receipt
+
+    workspace = tmp_path / "workspace"
+    source = workspace / "sources/api"
+    source.mkdir(parents=True)
+    (workspace / ".echelon").mkdir()
+    (workspace / ".echelon/config.yml").write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n",
+        encoding="utf-8",
+    )
+    spec = workspace / "specs/909-demo"
+    spec.mkdir(parents=True)
+    (spec / "spec.md").write_text("# Spec\n", encoding="utf-8")
+    run = workspace / "runs/verify-spec-909-linked"
+    run.mkdir(parents=True)
+    (run / "state.json").write_text(
+        json.dumps(
+            {"spec_id": "909-demo", "verify_scope": "full"},
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    analysis = _codegraph()
+    outside = tmp_path / "outside-analysis.json"
+    _write_json(outside, analysis)
+    (run / "codegraph-analysis.json").symlink_to(outside)
+    _write_json(run / "codegraph-summary.json", _summary("codegraph", analysis))
+
+    result = write_topology_evidence_receipt(
+        source,
+        run,
+        spec,
+        workspace_root=workspace,
+        source_id="api",
+        source_root=source,
+    )
+
+    receipt = json.loads(result.receipt_path.read_text())
+    assert result.status == "unavailable"
+    assert receipt["providers"]["codegraph"]["status"] == "unavailable"
+    assert receipt["providers"]["codegraph"]["artifacts"] == {}
+
+
+@pytest.mark.unit
 def test_schema_one_codegraph_upgrades_only_when_display_endpoints_are_unique(
     tmp_path: Path,
 ) -> None:

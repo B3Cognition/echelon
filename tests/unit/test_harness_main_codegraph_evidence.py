@@ -298,10 +298,17 @@ def test_write_codegraph_evidence_cli_writes_analysis_and_summary(
     assert result.returncode == 0, result.stderr
     assert (verify_run_dir / "codegraph-analysis.json").exists()
     summary = json.loads((verify_run_dir / "codegraph-summary.json").read_text())
-    assert summary["index_state"] == "ready"
-    assert summary["symbol_kinds"][0] == {"kind": "function", "count": 2}
-    assert summary["top_callers"][0] == {"symbol": "A", "outgoing_calls": 2}
-    assert summary["top_callees"][0] == {"symbol": "B", "incoming_calls": 2}
+    assert set(summary) == {
+        "schema_version",
+        "tool",
+        "tool_version",
+        "provider_status",
+        "complete",
+        "counts",
+        "diagnostics",
+    }
+    assert summary["tool"] == "codegraph"
+    assert summary["counts"]["emitted_symbols"] == 4
     state = json.loads((verify_run_dir / "state.json").read_text())
     assert state["structural_evidence"] == "ready"
     assert not (project_root / ".codegraph").exists()
@@ -335,7 +342,7 @@ def test_write_codegraph_evidence_uses_installed_bridge_when_global_cli_exists(
     analysis = json.loads((verify_run_dir / "codegraph-analysis.json").read_text())
     summary = json.loads((verify_run_dir / "codegraph-summary.json").read_text())
     assert "provider" not in analysis
-    assert summary["top_callers"][0] == {"symbol": "A", "outgoing_calls": 2}
+    assert summary["counts"]["emitted_relationships"] == 3
     assert not error_path.exists()
 
 
@@ -363,7 +370,7 @@ def test_write_codegraph_evidence_uses_shared_runtime(
 
     assert result.returncode == 0, result.stderr
     summary = json.loads((verify_run_dir / "codegraph-summary.json").read_text())
-    assert summary["index_state"] == "ready"
+    assert summary["provider_status"] == "complete"
 
 
 def test_write_codegraph_evidence_rejects_stale_cli_repo_path_and_regenerates(
@@ -394,7 +401,7 @@ def test_write_codegraph_evidence_rejects_stale_cli_repo_path_and_regenerates(
     analysis = json.loads((verify_run_dir / "codegraph-analysis.json").read_text())
     summary = json.loads((verify_run_dir / "codegraph-summary.json").read_text())
     assert analysis.get("provider") != "stale-codegraph-cli"
-    assert Path(summary["repo_path"]) == project_root
+    assert summary["tool"] == "codegraph"
 
 
 def test_write_codegraph_evidence_falls_back_to_bridge_when_cli_fails(
@@ -423,7 +430,7 @@ def test_write_codegraph_evidence_falls_back_to_bridge_when_cli_fails(
     analysis = json.loads((verify_run_dir / "codegraph-analysis.json").read_text())
     summary = json.loads((verify_run_dir / "codegraph-summary.json").read_text())
     assert "provider" not in analysis
-    assert summary["top_callers"][0] == {"symbol": "A", "outgoing_calls": 2}
+    assert summary["counts"]["emitted_relationships"] == 3
     state = json.loads((verify_run_dir / "state.json").read_text())
     assert state["structural_evidence"] == "ready"
     assert not (verify_run_dir / "codegraph-error.txt").exists()

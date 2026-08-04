@@ -1,7 +1,6 @@
 """Deterministic CodeGraph evidence writer for verify-spec."""
 from __future__ import annotations
 
-from collections import Counter
 from dataclasses import dataclass
 import hashlib
 import json
@@ -330,58 +329,17 @@ def _remove_if_exists(path: Path) -> None:
 
 def _write_summary(analysis_path: Path, summary_path: Path) -> None:
     data = json.loads(analysis_path.read_text(encoding="utf-8"))
-    symbols = data.get("symbols")
-    if not isinstance(symbols, list):
-        symbols = []
-    calls = data.get("call_graph")
-    if not isinstance(calls, list):
-        calls = []
-
-    symbol_kinds = Counter(
-        str(symbol.get("kind") or "unknown")
-        for symbol in symbols
-        if isinstance(symbol, dict)
-    )
-    names_by_key = {
-        str(symbol.get("symbol_key")): str(
-            symbol.get("qualified_name") or symbol.get("name") or "unknown"
-        )
-        for symbol in symbols
-        if isinstance(symbol, dict) and isinstance(symbol.get("symbol_key"), str)
-    }
-    callers = Counter(
-        str(edge.get("caller_name") or names_by_key.get(str(edge.get("caller_key"))) or "unknown")
-        for edge in calls
-        if isinstance(edge, dict)
-    )
-    callees = Counter(
-        str(edge.get("callee_name") or names_by_key.get(str(edge.get("callee_key"))) or "unknown")
-        for edge in calls
-        if isinstance(edge, dict)
-    )
-    index_stats = data.get("index_stats") if isinstance(data.get("index_stats"), dict) else {}
-
     summary = {
-        "version": data.get("version"),
-        "generated_at": data.get("generated_at"),
-        "repo_path": data.get("repo_path"),
-        "supported": data.get("supported"),
-        "index_state": index_stats.get("index_state", "unknown"),
-        "index_stats": data.get("index_stats"),
-        "language_coverage": data.get("language_coverage"),
-        "coverage": data.get("coverage"),
-        "symbol_kinds": [
-            {"kind": kind, "count": count}
-            for kind, count in symbol_kinds.most_common()
-        ],
-        "top_callers": [
-            {"symbol": symbol, "outgoing_calls": count}
-            for symbol, count in callers.most_common(25)
-        ],
-        "top_callees": [
-            {"symbol": symbol, "incoming_calls": count}
-            for symbol, count in callees.most_common(25)
-        ],
+        field: data.get(field)
+        for field in (
+            "schema_version",
+            "tool",
+            "tool_version",
+            "provider_status",
+            "complete",
+            "counts",
+            "diagnostics",
+        )
     }
 
     summary_path.write_text(
