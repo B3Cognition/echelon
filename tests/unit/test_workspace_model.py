@@ -265,6 +265,20 @@ def test_declaration_loader_rejects_unsafe_or_duplicate_sources(
         load_workspace_source_declarations(tmp_path)
 
 
+def test_ordinary_discovery_preserves_topology_incompatible_declarations(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".echelon").mkdir()
+    (tmp_path / ".echelon/config.yml").write_text(
+        "workspace:\n  sources:\n    - id: -api\n      path: .\n",
+        encoding="utf-8",
+    )
+
+    manifest = discover_workspace(tmp_path)
+
+    assert [(source.id, source.path) for source in manifest.sources] == [("-api", ".")]
+
+
 def test_configured_empty_sources_without_sources_directory_means_planning_only(
     tmp_path: Path,
 ) -> None:

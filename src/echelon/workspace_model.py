@@ -9,10 +9,15 @@ import re
 import stat
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Iterable, Literal
 
 import yaml
 
+from echelon.topology_model import (
+    TopologyValidationError,
+    normalize_source_path,
+    validate_source_id,
+)
 from harness.config import CANONICAL_CONFIG_PATH, LEGACY_CONFIG_PATH
 
 GitRole = Literal["orchestration", "source"]
@@ -451,6 +456,20 @@ def _validate_declared_source_path(source_path: str, entry: str) -> None:
         or posixpath.normpath(source_path) != source_path
     ):
         raise ValueError(f"{entry} has unsafe source path: {source_path!r}")
+
+
+def validate_topology_source_declarations(sources: Iterable[object]) -> None:
+    """Validate declarations for opt-in canonical topology publication."""
+    for source in sources:
+        source_id = getattr(source, "id", None)
+        source_path = getattr(source, "path", None)
+        try:
+            validate_source_id(source_id)
+            normalize_source_path(source_path)
+        except (TopologyValidationError, TypeError) as exc:
+            raise ValueError(
+                f"workspace source {source_id!r} is not publishable as topology: {exc}"
+            ) from exc
 
 
 def _configured_workspace(root: Path) -> WorkspaceManifest | None:

@@ -11,7 +11,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Literal
 
-from echelon.workspace_model import WorkspaceManifest, discover_workspace
+from echelon.workspace_model import (
+    WorkspaceManifest,
+    discover_workspace,
+    validate_topology_source_declarations,
+)
 from harness.blocked_decision import (
     ensure_blocked_decision,
     mark_blocked_decision_resolved,
@@ -111,6 +115,10 @@ class ReLifecycleController:
             resolved_target = target.id
             if force_selected_refresh:
                 self._validate_target_root_isolation(manifest, resolved_target)
+                try:
+                    validate_topology_source_declarations(manifest.sources)
+                except ValueError as exc:
+                    raise ReLifecycleError(str(exc)) from exc
             target_path = Path(target.path)
             if not target_path.is_absolute():
                 target_path = self._project_root / target_path
@@ -335,6 +343,10 @@ class ReLifecycleController:
         if target is None:  # pragma: no cover - source_id is non-empty above.
             self._raise_incompatible_active_refresh(run_dir, source_id)
         self._validate_target_root_isolation(manifest, source_id)
+        try:
+            validate_topology_source_declarations(manifest.sources)
+        except ValueError as exc:
+            raise ReLifecycleError(str(exc)) from exc
         if not self._source_root(target.path).exists():
             raise ReLifecycleError(f"selected source {source_id} is unavailable")
         self._validate_active_target(

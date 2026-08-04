@@ -372,6 +372,94 @@ def test_targeted_run_rejects_symlinked_config_before_dispatch_or_mutation(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    ("source_id", "source_path"),
+    (("-api", "sources/api"), ("api", ".")),
+)
+def test_targeted_run_rejects_topology_incompatible_declarations_before_dispatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    source_id: str,
+    source_path: str,
+) -> None:
+    source = tmp_path if source_path == "." else tmp_path / source_path
+    source.mkdir(parents=True, exist_ok=True)
+    (source / "app.py").write_text("pass\n", encoding="utf-8")
+    config = tmp_path / ".echelon/config.yml"
+    config.parent.mkdir()
+    config.write_text(
+        f"workspace:\n  sources:\n    - id: {source_id}\n      path: {source_path}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "harness.re_lifecycle.build_re_execution_plan",
+        lambda **kwargs: pytest.fail(
+            "unpublishable topology declarations must be rejected before planning"
+        ),
+    )
+    provider_calls: list[bool] = []
+
+    with pytest.raises(ReLifecycleError, match="not publishable as topology"):
+        ReLifecycleController(
+            project_root=tmp_path,
+            extension_root=tmp_path / "extension",
+            provider_factory=lambda: provider_calls.append(True),
+        ).run(
+            policy="target-only",
+            target_source=source_id,
+            force_selected_refresh=True,
+        )
+
+    assert provider_calls == []
+    assert not (tmp_path / "runs").exists()
+
+
+@pytest.mark.unit
+def test_targeted_run_accepts_topology_compatible_declarations(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "sources/api_v2"
+    source.mkdir(parents=True)
+    (source / "app.py").write_text("pass\n", encoding="utf-8")
+    config = tmp_path / ".echelon/config.yml"
+    config.parent.mkdir()
+    config.write_text(
+        "workspace:\n  sources:\n    - id: api.v2-1\n      path: sources/api_v2\n",
+        encoding="utf-8",
+    )
+    profile = ReFingerprintProfile()
+    monkeypatch.setattr(
+        "harness.re_lifecycle.resolve_re_fingerprint_profile", lambda root: profile
+    )
+    monkeypatch.setattr("harness.re_lifecycle.load_published_index", lambda root: None)
+    monkeypatch.setattr(
+        "harness.re_lifecycle.build_re_execution_plan",
+        lambda **kwargs: ReExecutionPlan(
+            policy="target-only",
+            requested_policy="target-only",
+            target_source="api.v2-1",
+            sources=(),
+            forbidden_source_roots=[],
+            profile=profile,
+        ),
+    )
+
+    result = ReLifecycleController(
+        project_root=tmp_path,
+        extension_root=tmp_path / "extension",
+        provider_factory=lambda: pytest.fail("no-work plan must not construct provider"),
+    ).run(
+        policy="target-only",
+        target_source="api.v2-1",
+        force_selected_refresh=True,
+    )
+
+    assert result.status == "done"
+    assert result.no_work is True
+
+
+@pytest.mark.unit
 def test_targeted_run_rejects_overlapping_target_and_sibling_before_planning(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

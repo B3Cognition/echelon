@@ -221,6 +221,51 @@ def test_re_refresh_runs_target_only_and_publishes_completed_run(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    ("source_id", "source_path"),
+    (("-api", "sources/api"), ("api", ".")),
+)
+def test_re_refresh_cli_rejects_topology_incompatible_source_declarations(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    source_id: str,
+    source_path: str,
+) -> None:
+    from echelon.cli import _cmd_re_refresh
+    from harness.re_lifecycle import ReLifecycleController
+
+    source = tmp_path if source_path == "." else tmp_path / source_path
+    source.mkdir(parents=True, exist_ok=True)
+    (source / "app.py").write_text("pass\n", encoding="utf-8")
+    config = tmp_path / ".echelon/config.yml"
+    config.parent.mkdir()
+    config.write_text(
+        f"workspace:\n  sources:\n    - id: {source_id}\n      path: {source_path}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "echelon.cli._re_lifecycle_controller",
+        lambda root: ReLifecycleController(
+            project_root=root,
+            extension_root=tmp_path / "extension",
+            provider_factory=lambda: pytest.fail(
+                "unpublishable declaration must not construct provider"
+            ),
+        ),
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        _cmd_re_refresh(["--source", source_id])
+
+    assert exc.value.code == 2
+    assert "not publishable as topology" in capsys.readouterr().err
+    assert not (tmp_path / "runs").exists()
+    assert not (tmp_path / "re").exists()
+
+
+@pytest.mark.unit
 def test_re_run_routes_profile_and_hard_limit_overrides(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

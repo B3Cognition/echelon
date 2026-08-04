@@ -21,6 +21,7 @@ from echelon.workspace_model import (
     WorkspaceSourceDeclarations,
     discover_workspace,
     load_workspace_source_declarations,
+    validate_topology_source_declarations,
 )
 
 from harness.re_artifacts import (
@@ -706,6 +707,7 @@ def _prepare_transaction(
         declarations = load_workspace_source_declarations(workspace_root)
         if preserve_reused_sources:
             declarations = _require_explicit_source_declarations(declarations)
+            _validate_targeted_topology_declarations(declarations)
             configured_sources = declarations.source_paths
         else:
             configured_sources = {
@@ -1110,6 +1112,7 @@ def _validate_target_source_available(
         declarations = _require_explicit_source_declarations(
             load_workspace_source_declarations(workspace_root)
         )
+        _validate_targeted_topology_declarations(declarations)
         declared_path = declarations.source_paths.get(plan.target_source)
     except (OSError, ValueError) as exc:
         raise RePublicationValidationError(
@@ -1137,6 +1140,15 @@ def _require_explicit_source_declarations(
             "declare every source in the canonical or legacy workspace config"
         )
     return declarations
+
+
+def _validate_targeted_topology_declarations(
+    declarations: WorkspaceSourceDeclarations,
+) -> None:
+    try:
+        validate_topology_source_declarations(declarations.sources)
+    except ValueError as exc:
+        raise RePublicationValidationError(str(exc)) from exc
 
 
 def _bootstrap_targeted_topology_candidates(

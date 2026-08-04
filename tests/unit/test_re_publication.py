@@ -1099,6 +1099,35 @@ def test_targeted_publication_rejects_implicit_or_empty_source_declarations(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    ("source_id", "source_path"),
+    (("-api", "sources/-api"), ("api", ".")),
+)
+def test_targeted_publication_rejects_topology_incompatible_declarations_atomically(
+    tmp_path: Path,
+    source_id: str,
+    source_path: str,
+) -> None:
+    config = tmp_path / ".echelon/config.yml"
+    config.parent.mkdir()
+    config.write_text(
+        f"workspace:\n  sources:\n    - id: {source_id}\n      path: {source_path}\n",
+        encoding="utf-8",
+    )
+    run_dir = write_valid_re_run(tmp_path, (source_id,), run_id="run-1")
+    _mark_target_only(run_dir, tmp_path, source_id)
+    before = _durable_snapshot(tmp_path)
+
+    with pytest.raises(
+        RePublicationValidationError,
+        match="not publishable as topology",
+    ):
+        publish_re_run(tmp_path, run_dir)
+
+    assert _durable_snapshot(tmp_path) == before
+
+
+@pytest.mark.unit
 def test_configured_refresh_without_provider_evidence_is_atomic_failure(tmp_path: Path) -> None:
     run_dir = write_valid_re_run(tmp_path, ("api",))
     (tmp_path / ".echelon").mkdir()
