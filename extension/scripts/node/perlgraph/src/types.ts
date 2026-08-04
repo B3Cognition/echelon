@@ -20,6 +20,7 @@ export type RelationshipKind =
   | 'references';
 
 export type IndexState = 'ready' | 'degraded' | 'empty' | 'failed';
+export type ProviderStatus = 'ready' | 'degraded' | 'empty' | 'unsupported';
 
 export interface SourceRange {
   file_path: string;
@@ -28,6 +29,7 @@ export interface SourceRange {
 }
 
 export interface PerlSymbol extends SourceRange {
+  symbol_key: string;
   qualified_name: string;
   name: string;
   kind: SymbolKind;
@@ -37,6 +39,8 @@ export interface PerlSymbol extends SourceRange {
 }
 
 export interface PerlRelationship {
+  source_key: string;
+  target_key: string;
   source: string;
   target: string;
   kind: RelationshipKind;
@@ -45,6 +49,18 @@ export interface PerlRelationship {
   confidence: Confidence;
   provenance: string[];
   notes?: string;
+}
+
+export interface UnresolvedRelationship {
+  source_key?: string;
+  source: string;
+  target: string;
+  kind: RelationshipKind;
+  file_path: string;
+  line_start: number;
+  confidence: Confidence;
+  provenance: string[];
+  notes: string;
 }
 
 export interface UnsupportedPattern {
@@ -89,6 +105,27 @@ export interface IndexStats {
   index_state: IndexState;
 }
 
+export interface ProviderCounts {
+  discovered_files: number;
+  emitted_files: number;
+  discovered_symbols: number;
+  emitted_symbols: number;
+  discovered_relationships: number;
+  emitted_relationships: number;
+  unresolved_relationships: number;
+  parse_failures: number;
+  parse_diagnostics: number;
+  dynamic_patterns: number;
+}
+
+export interface ProviderCapabilities {
+  language: 'perl';
+  supported_extensions: string[];
+  exact_symbol_keys: true;
+  exact_relationship_endpoints: true;
+  unresolved_relationship_diagnostics: true;
+}
+
 export interface ModuleGraphEntry {
   source_module: string;
   target_module: string;
@@ -99,15 +136,21 @@ export interface ModuleGraphEntry {
 }
 
 export interface PerlGraphAnalysis {
-  schema_version: 1;
+  schema_version: 2;
   tool: 'perlgraph';
+  tool_version: string;
   generated_at: string;
   repo_path: string;
   supported: boolean;
+  provider_status: ProviderStatus;
+  complete: boolean;
+  counts: ProviderCounts;
+  capabilities: ProviderCapabilities;
   language_coverage: Record<string, 'supported'>;
   symbols: PerlSymbol[];
   relationships: PerlRelationship[];
-  call_graph: Array<Pick<PerlRelationship, 'source' | 'target' | 'confidence' | 'provenance'>>;
+  unresolved_relationships: UnresolvedRelationship[];
+  call_graph: Array<Pick<PerlRelationship, 'source_key' | 'target_key' | 'source' | 'target' | 'confidence' | 'provenance'>>;
   module_graph: ModuleGraphEntry[];
   unsupported_patterns: UnsupportedPattern[];
   parse_failures: ParseFailure[];
@@ -116,12 +159,17 @@ export interface PerlGraphAnalysis {
 }
 
 export interface PerlGraphSummary {
-  schema_version: 1;
+  schema_version: 2;
   tool: 'perlgraph';
+  tool_version: string;
   generated_at: string;
   repo_path: string;
   index_state: IndexState;
   index_stats: IndexStats;
+  provider_status: ProviderStatus;
+  complete: boolean;
+  counts: ProviderCounts;
+  capabilities: ProviderCapabilities;
   symbol_kinds: Array<{ kind: SymbolKind; count: number }>;
   relationship_kinds: Array<{ kind: RelationshipKind; count: number }>;
   top_callers: Array<{ symbol: string; outgoing_calls: number }>;

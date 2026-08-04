@@ -22,19 +22,27 @@ function countBy<T extends string>(values: T[]): Array<{ key: T; count: number }
 export function renderSummary(analysis: PerlGraphAnalysis): PerlGraphSummary {
   const symbolKinds = countBy(analysis.symbols.map((symbol) => symbol.kind));
   const relationshipKinds = countBy(analysis.relationships.map((relationship) => relationship.kind));
-  const confidenceCounts = countBy(analysis.relationships.map((relationship) => relationship.confidence));
+  const confidenceCounts = countBy([
+    ...analysis.relationships.map((relationship) => relationship.confidence),
+    ...analysis.unresolved_relationships.map((relationship) => relationship.confidence)
+  ]);
   const callers = countBy(analysis.call_graph.map((edge) => edge.source));
   const callees = countBy(analysis.call_graph.map((edge) => edge.target));
   const modules = countBy(analysis.module_graph.map((edge) => edge.source_module));
   const dynamicPatterns = countBy(analysis.unsupported_patterns.map((pattern) => pattern.kind));
 
   return {
-    schema_version: 1,
+    schema_version: 2,
     tool: 'perlgraph',
+    tool_version: analysis.tool_version,
     generated_at: analysis.generated_at,
     repo_path: analysis.repo_path,
     index_state: analysis.index_stats.index_state,
     index_stats: analysis.index_stats,
+    provider_status: analysis.provider_status,
+    complete: analysis.complete,
+    counts: analysis.counts,
+    capabilities: analysis.capabilities,
     symbol_kinds: symbolKinds.map(({ key, count }) => ({ kind: key as SymbolKind, count })),
     relationship_kinds: relationshipKinds.map(({ key, count }) => ({ kind: key as RelationshipKind, count })),
     top_callers: callers.slice(0, 25).map(({ key, count }) => ({ symbol: key, outgoing_calls: count })),
@@ -42,7 +50,7 @@ export function renderSummary(analysis: PerlGraphAnalysis): PerlGraphSummary {
     top_modules: modules.slice(0, 25).map(({ key, count }) => ({ module: key, outgoing_dependencies: count })),
     confidence_audit: {
       relationships: confidenceCounts.map(({ key, count }) => ({ confidence: key as Confidence, count })),
-      examples: analysis.relationships
+      examples: [...analysis.relationships, ...analysis.unresolved_relationships]
         .filter((relationship) => relationship.confidence === 'medium' || relationship.confidence === 'low')
         .slice(0, 10)
         .map((relationship) => ({

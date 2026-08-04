@@ -33,7 +33,7 @@ export interface ExtractedExport {
 }
 
 export interface ExtractedPerlFile {
-  symbols: PerlSymbol[];
+  symbols: Array<Omit<PerlSymbol, 'symbol_key'>>;
   dependencies: ExtractedDependency[];
   role_applications: ExtractedRoleApplication[];
   exports: ExtractedExport[];
@@ -398,7 +398,7 @@ export function extractPerlFile(filePath: string, content: string): ExtractedPer
   const rawLines = content.split(/\r?\n/);
   const lineEntries = logicalLines(content);
   const lines = lineEntries.map((entry) => entry.text);
-  const symbols: PerlSymbol[] = [{
+  const symbols: Array<Omit<PerlSymbol, 'symbol_key'>> = [{
     qualified_name: filePath,
     name: filePath,
     kind: 'file',
