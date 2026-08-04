@@ -367,11 +367,11 @@ def recover_interrupted_publication(
     except PublicationTransactionError as exc:
         raise RePublishRecoveryRequired(str(exc)) from exc
     rollback_publication_transaction(transaction)
-    shutil.rmtree(stage_root)
     if claim is not None:
         claim.release()
     elif not recover_stale_publish_lock(root, stale_after_seconds=stale_after_seconds):
         raise RePublishRecoveryRequired("stale publication lock could not be released")
+    shutil.rmtree(stage_root)
     return True
 
 

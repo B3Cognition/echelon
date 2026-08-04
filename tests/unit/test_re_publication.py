@@ -11,6 +11,7 @@ from typing import Callable
 
 import pytest
 
+import harness.re_lock as re_lock
 import harness.re_publication as re_publication
 from harness.re_artifacts import ReArtifactDescriptor
 from harness.re_architecture import build_re_architecture_map, write_re_architecture_catalog
@@ -27,6 +28,7 @@ from harness.re_publication import (
     publish_re_run,
     recover_interrupted_publication,
 )
+from harness.re_lock import RePublishLock
 from harness.re_registry import ensure_re_layout
 from harness.re_registry import ReRegistryError
 
@@ -1040,6 +1042,111 @@ def test_orphan_pending_journal_recovers_and_unblocks_publication(tmp_path: Path
     assert recover_interrupted_publication(tmp_path, stale_after_seconds=0)
     assert (paths.root / "orphan").read_text(encoding="utf-8") == "old\n"
     assert not stage.exists()
+
+
+@pytest.mark.unit
+def test_recovery_clean_workspace_does_not_leave_a_publish_lock(tmp_path: Path) -> None:
+    assert recover_interrupted_publication(tmp_path, stale_after_seconds=0) is False
+    assert not (tmp_path / "re/.locks/publish.lock").exists()
+
+
+@pytest.mark.unit
+def test_orphan_claim_metadata_interruption_does_not_permanently_block_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = ensure_re_layout(tmp_path)
+    (paths.root / "orphan").write_text("new\n", encoding="utf-8")
+    stage = paths.staging / "orphan"
+    backup = stage / "rollback/orphan"
+    backup.parent.mkdir(parents=True)
+    backup.write_text("old\n", encoding="utf-8")
+    _write_json(
+        stage / "rollback-journal.json",
+        {
+            "schema_version": 1,
+            "status": "replacing",
+            "operations": [
+                {
+                    "final": "orphan",
+                    "staged": "new/orphan",
+                    "backup": "rollback/orphan",
+                    "backed_up": True,
+                    "installed": True,
+                }
+            ],
+        },
+    )
+    original = re_lock._write_json_atomic
+
+    def interrupt(*_args: object, **_kwargs: object) -> None:
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(re_lock, "_write_json_atomic", interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        recover_interrupted_publication(tmp_path, stale_after_seconds=0)
+    assert not (paths.locks / "publish.lock").exists()
+
+    monkeypatch.setattr(re_lock, "_write_json_atomic", original)
+    assert recover_interrupted_publication(tmp_path, stale_after_seconds=0)
+    assert (paths.root / "orphan").read_text(encoding="utf-8") == "old\n"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("with_stale_lock", (False, True))
+def test_recovery_releases_lock_before_harmless_rolled_back_stage_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    with_stale_lock: bool,
+) -> None:
+    paths = ensure_re_layout(tmp_path)
+    (paths.root / "orphan").write_text("new\n", encoding="utf-8")
+    stage = paths.staging / "orphan"
+    backup = stage / "rollback/orphan"
+    backup.parent.mkdir(parents=True)
+    backup.write_text("old\n", encoding="utf-8")
+    _write_json(
+        stage / "rollback-journal.json",
+        {
+            "schema_version": 1,
+            "status": "replacing",
+            "operations": [
+                {
+                    "final": "orphan",
+                    "staged": "new/orphan",
+                    "backup": "rollback/orphan",
+                    "backed_up": True,
+                    "installed": True,
+                }
+            ],
+        },
+    )
+    if with_stale_lock:
+        lock = paths.locks / "publish.lock"
+        lock.mkdir()
+        _write_json(
+            lock / "owner.json",
+            {
+                "run_id": "orphan",
+                "run_dir": None,
+                "pid": 999_999_999,
+                "hostname": socket.gethostname(),
+                "acquired_at": (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat(),
+            },
+        )
+    original_rmtree = re_publication.shutil.rmtree
+
+    def fail_stage_cleanup(path: Path, *args: object, **kwargs: object) -> None:
+        if Path(path) == stage:
+            raise OSError("cleanup interrupted")
+        original_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(re_publication.shutil, "rmtree", fail_stage_cleanup)
+    with pytest.raises(OSError, match="cleanup interrupted"):
+        recover_interrupted_publication(tmp_path, stale_after_seconds=0)
+    assert not (paths.locks / "publish.lock").exists()
+    assert _read_json(stage / "rollback-journal.json")["status"] == "rolled_back"
+    with RePublishLock.acquire(tmp_path, "next", None):
+        pass
 
 
 @pytest.mark.unit

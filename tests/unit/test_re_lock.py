@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+import harness.re_lock as re_lock
 from harness.re_lock import (
     ReExtractLocked,
     ReExtractionLock,
@@ -15,6 +16,7 @@ from harness.re_lock import (
     RePublishLock,
     RePublishLocked,
     RePublishRecoveryRequired,
+    claim_orphan_publish_recovery,
     find_other_active_runs,
     recover_stale_publish_lock,
 )
@@ -204,6 +206,37 @@ def test_orphan_pending_journal_blocks_new_publication(tmp_path: Path) -> None:
     )
     with pytest.raises(RePublishRecoveryRequired, match="rollback journal"):
         RePublishLock.acquire(tmp_path, "run-next", None)
+
+
+@pytest.mark.unit
+def test_orphan_claim_error_does_not_leave_a_publish_lock(tmp_path: Path) -> None:
+    _write_json(
+        tmp_path / "re/.staging/first/rollback-journal.json",
+        {"schema_version": 1, "status": "replacing", "operations": []},
+    )
+    _write_json(
+        tmp_path / "re/.staging/second/rollback-journal.json",
+        {"schema_version": 1, "status": "rolling_back", "operations": []},
+    )
+
+    with pytest.raises(RePublishRecoveryRequired, match="multiple orphan"):
+        claim_orphan_publish_recovery(tmp_path)
+    assert not (tmp_path / "re/.locks/publish.lock").exists()
+
+
+@pytest.mark.unit
+def test_orphan_claim_recheck_no_work_cleans_its_temporary_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    journal = tmp_path / "re/.staging/orphan/rollback-journal.json"
+    observations = [(journal,), ()]
+
+    def observed_pending(_staging: Path) -> tuple[Path, ...]:
+        return observations.pop(0)
+
+    monkeypatch.setattr(re_lock, "_pending_publication_journals", observed_pending)
+    assert claim_orphan_publish_recovery(tmp_path) is None
+    assert not (tmp_path / "re/.locks/publish.lock").exists()
 
 
 @pytest.mark.unit

@@ -8,6 +8,7 @@ import re
 import shutil
 import socket
 import tempfile
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -271,9 +272,12 @@ def claim_orphan_publish_recovery(workspace_root: Path) -> RePublishLock | None:
     """Atomically claim exactly one safe orphan journal for recovery."""
     root = workspace_root.resolve()
     paths = ensure_re_layout(root)
+    if not _pending_publication_journals(paths.staging):
+        return None
     lock_path = paths.locks / "publish.lock"
+    claim_path = paths.locks / f".publish-recovery-claim-{uuid.uuid4().hex}"
     try:
-        lock_path.mkdir()
+        claim_path.mkdir()
     except FileExistsError:
         return None
     try:
@@ -281,16 +285,34 @@ def claim_orphan_publish_recovery(workspace_root: Path) -> RePublishLock | None:
         if len(pending) != 1:
             if pending:
                 raise RePublishRecoveryRequired("multiple orphan rollback journals require manual recovery")
+            shutil.rmtree(claim_path)
             return None
         journal = pending[0]
         stage = journal.parent
         if stage.is_symlink() or not _SAFE_RUN_ID.fullmatch(stage.name):
             raise RePublishRecoveryRequired("orphan rollback journal path is unsafe")
+        # Write and sync ownership before exposing the lock. A crash can leave
+        # only an unclaimed temporary directory, never an ownerless lock.
+        _write_json_atomic(
+            claim_path / "owner.json",
+            {
+                "run_id": stage.name,
+                "run_dir": None,
+                "pid": os.getpid(),
+                "hostname": socket.gethostname(),
+                "acquired_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+        try:
+            os.replace(claim_path, lock_path)
+        except FileExistsError:
+            shutil.rmtree(claim_path, ignore_errors=True)
+            return None
+        _fsync_directory(paths.locks)
         owner = RePublishLock(path=lock_path, owner_run_id=stage.name, workspace_root=root)
-        _write_json_atomic(lock_path / "owner.json", {"run_id": stage.name, "run_dir": None, "pid": os.getpid(), "hostname": socket.gethostname(), "acquired_at": datetime.now(timezone.utc).isoformat()})
         return owner
-    except Exception:
-        shutil.rmtree(lock_path, ignore_errors=True)
+    except BaseException:
+        shutil.rmtree(claim_path, ignore_errors=True)
         raise
 
 
@@ -403,9 +425,18 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         Path(temporary).replace(path)
+        _fsync_directory(path.parent)
     except Exception:
         try:
             os.unlink(temporary)
         except OSError:
             pass
         raise
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)

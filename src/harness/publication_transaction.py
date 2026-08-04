@@ -276,7 +276,18 @@ def rollback_publication_transaction(transaction: PublicationTransaction) -> Non
         phase = state["phase"]
         final_exists = final.exists() or final.is_symlink()
         backup_exists = backup.exists() or backup.is_symlink()
+        if state.get("legacy") and phase == "installed" and state.get("had_final") and final_exists and not backup_exists:
+            # A legacy rollback may have restored the original just before its
+            # boolean journal update; it is already safe and must be retained.
+            state["phase"] = "pending"
+            state["had_final"] = False
+            write_publication_journal(transaction, "rolling_back")
+            continue
         if state.get("legacy") and backup_exists and not final_exists:
+            if staged is not None and not (staged.exists() or staged.is_symlink()):
+                raise PublicationTransactionError(
+                    "legacy rollback journal has an incoherent backup-rename state"
+                )
             state["phase"] = "backed_up"
             state["had_final"] = True
             phase = "backed_up"
@@ -292,6 +303,10 @@ def rollback_publication_transaction(transaction: PublicationTransaction) -> Non
         if phase == "pending":
             continue
         installed = phase in {"install_intent", "installed", "rollback_remove_intent"}
+        if state.get("had_final") and installed and final_exists and not backup_exists:
+            raise PublicationTransactionError("rollback required backup is missing before final removal")
+        if not state.get("had_final") and backup_exists and not (state.get("legacy") and not final_exists):
+            raise PublicationTransactionError("rollback found a stray backup for a no-original operation")
         if final_exists and installed:
             expected = state.get("staged_digest")
             if not state.get("legacy") and (

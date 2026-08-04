@@ -198,6 +198,8 @@ def test_legacy_journal_restores_backup_after_rename_before_boolean_persistence(
     backup = stage / "rollback/first"
     backup.parent.mkdir(parents=True)
     backup.write_text("old-first\n", encoding="utf-8")
+    (stage / "new").mkdir()
+    (stage / "new/first").write_text("new-first\n", encoding="utf-8")
     journal = stage / "rollback-journal.json"
     journal.write_text('{"schema_version":1,"status":"replacing","operations":[{"final":"first","staged":"new/first","backup":"rollback/first","backed_up":false,"installed":false}]}', encoding="utf-8")
     transaction = PublicationTransaction.from_journal(workspace_root=root, staging_root=stage, journal=journal)
@@ -247,3 +249,33 @@ def test_directory_digest_distinguishes_tree_shape_before_install(tmp_path: Path
     staged = transaction.staging_root / "new/first"; staged.unlink(); staged.mkdir(); (staged / "ab").write_text("c", encoding="utf-8")
     with pytest.raises(PublicationTransactionError, match="changed"):
         apply_publication_transaction(transaction)
+
+
+@pytest.mark.unit
+def test_legacy_restored_original_and_missing_or_stray_backups_do_not_mutate(tmp_path: Path) -> None:
+    from harness.publication_transaction import PublicationOperation, PublicationTransaction, PublicationTransactionError, rollback_publication_transaction
+    root = tmp_path / "re"; root.mkdir(); stage = root / ".staging/legacy"; stage.mkdir(parents=True)
+    (root / "first").write_text("old\n", encoding="utf-8")
+    journal = stage / "rollback-journal.json"
+    journal.write_text(json.dumps({"schema_version": 1, "status": "replacing", "operations": [{"final": "first", "staged": "new/first", "backup": "rollback/first", "backed_up": True, "installed": True}]}), encoding="utf-8")
+    transaction = PublicationTransaction.from_journal(workspace_root=root, staging_root=stage, journal=journal)
+    rollback_publication_transaction(transaction)
+    assert (root / "first").read_text(encoding="utf-8") == "old\n"
+    # A new-journal replacement missing its backup must fail before deleting final bytes.
+    stage2 = root / ".staging/new"; stage2.mkdir(parents=True); (stage2 / "new/first").parent.mkdir(exist_ok=True); (stage2 / "new/first").write_text("new\n")
+    transaction2 = PublicationTransaction(root, stage2, stage2 / "rollback-journal.json", (PublicationOperation(PurePosixPath("first"), PurePosixPath("new/first")),))
+    transaction2._states[0].update({"phase": "installed", "had_final": True})
+    with pytest.raises(PublicationTransactionError, match="backup"):
+        rollback_publication_transaction(transaction2)
+    assert (root / "first").read_text(encoding="utf-8") == "old\n"
+    # A no-original operation must not consume a backup that it never owned.
+    stage3 = root / ".staging/stray"; stage3.mkdir(parents=True)
+    (stage3 / "new/first").parent.mkdir(exist_ok=True)
+    (stage3 / "new/first").write_text("new\n", encoding="utf-8")
+    backup = stage3 / "rollback/first"; backup.parent.mkdir(); backup.write_text("stray\n", encoding="utf-8")
+    transaction3 = PublicationTransaction(root, stage3, stage3 / "rollback-journal.json", (PublicationOperation(PurePosixPath("first"), PurePosixPath("new/first")),))
+    transaction3._states[0].update({"phase": "installed", "had_final": False})
+    with pytest.raises(PublicationTransactionError, match="stray"):
+        rollback_publication_transaction(transaction3)
+    assert (root / "first").read_text(encoding="utf-8") == "old\n"
+    assert backup.read_text(encoding="utf-8") == "stray\n"
