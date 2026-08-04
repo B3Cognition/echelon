@@ -8042,10 +8042,72 @@ def _cmd_repair_traceability(args: list[str], project_root: Path) -> None:
         print("✗ No active squad run found.", file=sys.stderr)
         raise SystemExit(1)
 
+    if confirm:
+        from threading import get_ident
+        from uuid import uuid4
+
+        from echelon.spec_lifecycle import (
+            PhaseAExecutionLock,
+            SpecLifecycleLocked,
+            SpecRunExecutionLock,
+        )
+
+        operation_id = f"repair-traceability-{os.getpid()}-{get_ident()}-{uuid4().hex}"
+        try:
+            with PhaseAExecutionLock.acquire(project_root, operation_id):
+                with SpecRunExecutionLock.acquire(squad_dir, operation_id):
+                    _cmd_repair_traceability_locked(project_root, squad_dir, confirm=True)
+                    return
+        except SpecLifecycleLocked as exc:
+            print(
+                "✗ Cannot repair traceability while execution is active.\n"
+                f"  Lease owner: {exc.operation_id}",
+                file=sys.stderr,
+            )
+            raise SystemExit(1) from exc
+    _cmd_repair_traceability_locked(project_root, squad_dir, confirm=False)
+
+
+def _cmd_repair_traceability_locked(
+    project_root: Path,
+    squad_dir: Path,
+    *,
+    confirm: bool,
+) -> None:
+    """Preview or transactionally commit an authenticated package repair."""
+    from uuid import uuid4
+
+    from echelon.product_input_transaction import (
+        ProductInputMutationError,
+        add_complete_product_input_publication,
+        authenticate_pending_product_input_mutation,
+        authenticate_product_input_contract,
+        build_product_input_mutation,
+        product_input_tree_identity,
+        require_product_input_mutation_postimage,
+    )
+    from echelon.product_inputs import (
+        immutable_product_input_tree_digest,
+        repair_product_input_traceability,
+    )
+    from echelon.spec_add_input import SpecAddInputError, _recover_pending_mutation
+    from harness.squad_publication import SquadPublicationTransaction
     from harness.squad_state import SquadStateStore
-    from echelon.product_inputs import repair_product_input_traceability
 
     store = SquadStateStore(squad_dir)
+    if confirm:
+        try:
+            recovered = _recover_pending_mutation(project_root, store)
+        except SpecAddInputError as exc:
+            print(f"✗ Traceability repair recovery failed: {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
+        if recovered is not None and recovered.get("kind") == "traceability_repair":
+            _banner(
+                "TRACEABILITY REPAIRED",
+                [("next", "echelon spec continue")],
+                subtitle="Recovered the authenticated repair publication.",
+            )
+            return
     state = store.load()
     if str(state.get("blocked_reason") or "") != "phase_a_readiness_failed":
         print("✗ Traceability repair is available only for a Phase A readiness block.", file=sys.stderr)
@@ -8053,16 +8115,110 @@ def _cmd_repair_traceability(args: list[str], project_root: Path) -> None:
     spec_dir, spec_dir_ref = _normalize_rewind_spec_dir(project_root, state)
     inputs = state.get("product_inputs")
     traceability_ref = str(inputs.get("traceability") or "").strip() if isinstance(inputs, dict) else ""
-    if spec_dir is None or spec_dir_ref is None or not traceability_ref:
+    inputs_ref = str(inputs.get("inputs_dir") or "").strip() if isinstance(inputs, dict) else ""
+    if spec_dir is None or spec_dir_ref is None or not traceability_ref or not inputs_ref:
         print("✗ Active run lacks the spec or product-input evidence needed for repair.", file=sys.stderr)
+        raise SystemExit(1)
+    inputs_dir = Path(inputs_ref)
+    if not inputs_dir.is_absolute():
+        inputs_dir = project_root / inputs_dir
+    inputs_dir = inputs_dir.resolve()
+    if inputs_dir != (squad_dir / "inputs").resolve():
+        print("✗ Active run Product Input Contract is not run-local.", file=sys.stderr)
         raise SystemExit(1)
     traceability_path = Path(traceability_ref)
     if not traceability_path.is_absolute():
         traceability_path = project_root / traceability_path
+    if traceability_path.resolve() != inputs_dir / "traceability.json":
+        print("✗ Product-input traceability pointer is not canonical.", file=sys.stderr)
+        raise SystemExit(1)
     targets = [str(value).strip() for value in state.get("implementation_targets", []) if str(value).strip()]
-    repair = repair_product_input_traceability(
-        traceability_path, spec_dir / "tasks.md", targets, apply=confirm
-    )
+    try:
+        old_tree_hash = authenticate_product_input_contract(
+            project_root,
+            inputs,
+            inputs_dir,
+        )
+    except ProductInputMutationError as exc:
+        print(f"✗ Product-input package authentication failed: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+    if not confirm:
+        repair = repair_product_input_traceability(
+            traceability_path,
+            spec_dir / "tasks.md",
+            targets,
+            apply=False,
+        )
+    else:
+        snapshot = store.capture_routing_snapshot(
+            expected_phase=str(state.get("phase") or "")
+        )
+        transaction = SquadPublicationTransaction.begin(
+            project_root,
+            squad_dir,
+            uuid4().hex,
+        )
+        staged_inputs = transaction.build_path("work/product-inputs")
+        prepared = None
+        try:
+            source_identity = product_input_tree_identity(inputs_dir)
+            shutil.copytree(
+                inputs_dir,
+                staged_inputs,
+                symlinks=True,
+                copy_function=shutil.copy2,
+            )
+            if (
+                authenticate_product_input_contract(
+                    project_root,
+                    inputs,
+                    inputs_dir,
+                )
+                != old_tree_hash
+                or product_input_tree_identity(inputs_dir) != source_identity
+                or immutable_product_input_tree_digest(staged_inputs)
+                != old_tree_hash
+            ):
+                raise ProductInputMutationError(
+                    "product input package changed during repair staging"
+                )
+            repair = repair_product_input_traceability(
+                staged_inputs / "traceability.json",
+                spec_dir / "tasks.md",
+                targets,
+                apply=True,
+            )
+            if repair.blockers or not repair.removed:
+                transaction.seal().discard()
+                prepared = False
+            else:
+                owned_paths = add_complete_product_input_publication(
+                    transaction,
+                    project_root,
+                    inputs_dir,
+                    staged_inputs,
+                )
+                new_tree_hash = immutable_product_input_tree_digest(staged_inputs)
+                prepared = transaction.seal()
+                marker = prepared.marker.to_dict()
+                mutation = build_product_input_mutation(
+                    kind="traceability_repair",
+                    marker=marker,
+                    inputs_dir=inputs_ref,
+                    old_tree_hash=old_tree_hash,
+                    new_tree_hash=new_tree_hash,
+                    owned_paths=owned_paths,
+                )
+        except Exception as exc:
+            if prepared is None:
+                try:
+                    transaction.seal().discard()
+                except Exception:
+                    pass
+            print(f"✗ Cannot stage traceability repair: {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
+
     if repair.blockers:
         print("✗ Traceability cannot be repaired safely:", file=sys.stderr)
         for blocker in repair.blockers:
@@ -8080,7 +8236,50 @@ def _cmd_repair_traceability(args: list[str], project_root: Path) -> None:
         return
 
     repaired = _reset_rewind_state(state, "phase4-document", spec_dir_ref)
-    store.save(repaired)
+    repaired_inputs = dict(inputs)
+    repaired_inputs["tree_hash"] = new_tree_hash
+    repaired["product_inputs"] = repaired_inputs
+    try:
+        store.begin_traceability_repair_publication(
+            marker,
+            mutation,
+            snapshot=snapshot,
+            desired_state=repaired,
+        )
+    except Exception as exc:
+        try:
+            prepared.discard()
+        except Exception:
+            pass
+        print(f"✗ Cannot persist traceability repair intent: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+    try:
+        durable = store.confirm_durable_state(store.load())
+        authenticate_pending_product_input_mutation(
+            project_root,
+            durable,
+            marker,
+            prepared._manifest["operations"],
+            staged_inputs=staged_inputs,
+        )
+        prepared.publish()
+        verified_hash = require_product_input_mutation_postimage(
+            project_root,
+            store.load(),
+            marker,
+        )
+        store.complete_external_publication(
+            marker,
+            verified_product_input_tree_hash=verified_hash,
+        )
+        store.confirm_durable_state(store.load())
+        prepared.discard()
+    except Exception as exc:
+        print(
+            f"✗ Traceability repair remains pending with evidence retained: {exc}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from exc
     rows.append(("next", "echelon spec continue"))
     _banner("TRACEABILITY REPAIRED", rows, subtitle="Direct mappings preserved; finalization can resume.")
 

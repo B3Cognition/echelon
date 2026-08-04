@@ -150,6 +150,7 @@ def test_seal_writes_a_canonical_sorted_exact_image_manifest(
             "postimage": {
                 "kind": "file",
                 "sha256": hashlib.sha256(b"new a").hexdigest(),
+                "mode": stat.S_IMODE(staged_a.stat().st_mode),
             },
             "preimage": {"kind": "missing"},
             "staged": "build/a.txt",
@@ -161,6 +162,7 @@ def test_seal_writes_a_canonical_sorted_exact_image_manifest(
             "preimage": {
                 "kind": "file",
                 "sha256": hashlib.sha256(b"remove me").hexdigest(),
+                "mode": stat.S_IMODE((project_root / "middle.txt").stat().st_mode),
             },
             "target": "middle.txt",
         },
@@ -169,10 +171,12 @@ def test_seal_writes_a_canonical_sorted_exact_image_manifest(
             "postimage": {
                 "kind": "file",
                 "sha256": hashlib.sha256(b"new z").hexdigest(),
+                "mode": stat.S_IMODE(staged_z.stat().st_mode),
             },
             "preimage": {
                 "kind": "file",
                 "sha256": hashlib.sha256(b"old z").hexdigest(),
+                "mode": stat.S_IMODE((project_root / "z.txt").stat().st_mode),
             },
             "staged": "build/z.txt",
             "target": "z.txt",
@@ -1244,6 +1248,7 @@ def test_stage_copy_metadata_io_error_is_bounded(
         pinned,
         parent_fd: int,
         expected_digest: str,
+        expected_mode: int,
     ) -> str:
         def failing_fstat(fd: int) -> os.stat_result:
             if fd == pinned.fd:
@@ -1252,7 +1257,7 @@ def test_stage_copy_metadata_io_error_is_bounded(
 
         publication_module.os.fstat = failing_fstat
         try:
-            return copy_stage(pinned, parent_fd, expected_digest)
+            return copy_stage(pinned, parent_fd, expected_digest, expected_mode)
         finally:
             publication_module.os.fstat = real_fstat
 

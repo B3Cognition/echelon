@@ -103,6 +103,12 @@ def _add_input_locked(
         request_sha256=request_sha256,
     )
     if completed is not None:
+        _authenticate_completed_add_input(
+            project_root,
+            run_dir,
+            state,
+            request_sha256=request_sha256,
+        )
         return completed
     _ensure_eligible_state(state)
     product_inputs = state.get("product_inputs")
@@ -235,8 +241,9 @@ def _add_input_locked(
     )
     updated_product_inputs["tree_hash"] = post_tree_hash
     recovery = {
-        "schema_version": 2,
+        "schema_version": 3,
         "request_sha256": request_sha256,
+        "product_input_tree_hash": post_tree_hash,
         "command": command,
         "attachment_ids": [attachment.attachment_id],
         "attachment_id": attachment.attachment_id,
@@ -289,6 +296,7 @@ def _add_input_locked(
             persisted,
             marker,
             prepared._manifest.get("operations"),
+            staged_inputs=prepared._transaction_root / "work/product-inputs",
         )
         prepared.publish()
         persisted = store.load()
@@ -347,6 +355,7 @@ def _recover_pending_mutation(
             durable,
             marker,
             prepared._manifest.get("operations"),
+            staged_inputs=prepared._transaction_root / "work/product-inputs",
         )
         prepared.publish()
         persisted = store.load()
@@ -377,7 +386,23 @@ def _completed_add_input_result(
     recovery = state.get("add_input_recovery")
     if (
         type(recovery) is not dict
-        or recovery.get("schema_version") != 2
+        or frozenset(recovery) != frozenset(
+            {
+                "schema_version",
+                "request_sha256",
+                "product_input_tree_hash",
+                "command",
+                "attachment_ids",
+                "attachment_id",
+                "added_count",
+                "duplicate_count",
+                "original_declarations",
+                "attached_declarations",
+                "previous_blocked_reason",
+                "previous_phase1_investigate_dispatch_count",
+            }
+        )
+        or recovery.get("schema_version") != 3
         or recovery.get("request_sha256") != request_sha256
     ):
         return None
@@ -407,6 +432,9 @@ def _completed_add_input_result(
         type(attachment_id) is not str
         or type(added_count) is not int
         or type(duplicate_count) is not int
+        or recovery.get("attachment_ids") != [attachment_id]
+        or type(recovery.get("command")) is not str
+        or type(recovery.get("product_input_tree_hash")) is not str
     ):
         raise SpecAddInputError("completed add-input result receipt is invalid")
     return SpecAddInputResult(
@@ -417,6 +445,36 @@ def _completed_add_input_result(
         original_declarations=declarations_tuple(original),
         attached_declarations=declarations_tuple(attached),
     )
+
+
+def _authenticate_completed_add_input(
+    project_root: Path,
+    run_dir: Path,
+    state: dict,
+    *,
+    request_sha256: str,
+) -> None:
+    recovery = state.get("add_input_recovery")
+    product_inputs = state.get("product_inputs")
+    if type(recovery) is not dict or type(product_inputs) is not dict:
+        raise SpecAddInputError("completed add-input contract is invalid")
+    expected_hash = recovery.get("product_input_tree_hash")
+    if (
+        recovery.get("request_sha256") != request_sha256
+        or product_inputs.get("tree_hash") != expected_hash
+    ):
+        raise SpecAddInputError("completed add-input request identity changed")
+    inputs_dir = (run_dir / "inputs").resolve()
+    try:
+        observed = authenticate_product_input_contract(
+            project_root,
+            product_inputs,
+            inputs_dir,
+        )
+    except ProductInputMutationError as exc:
+        raise SpecAddInputError(str(exc)) from exc
+    if observed != expected_hash:
+        raise SpecAddInputError("completed add-input postimage changed")
 
 
 def _ensure_eligible_state(state: dict) -> None:

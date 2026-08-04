@@ -280,13 +280,101 @@ def test_spec_add_input_completed_retry_is_operation_idempotent(
     _write_current_run(project, _base_state(resolution.inputs_dir))
 
     first = add_input_to_active_run(project, ["reference:sources/added.md"])
+    first_package = {
+        path.relative_to(resolution.inputs_dir): path.read_bytes()
+        for path in resolution.inputs_dir.rglob("*")
+        if path.is_file()
+    }
     second = add_input_to_active_run(project, ["reference:sources/added.md"])
 
     assert second == first
+    assert {
+        path.relative_to(resolution.inputs_dir): path.read_bytes()
+        for path in resolution.inputs_dir.rglob("*")
+        if path.is_file()
+    } == first_package
     ledger = json.loads(
         (resolution.inputs_dir / "attachment-ledger.json").read_text(encoding="utf-8")
     )
     assert [item["id"] for item in ledger["attachments"]] == ["001"]
+
+
+def test_spec_add_input_completed_retry_authenticates_live_postimage(
+    tmp_path: Path,
+) -> None:
+    from echelon.product_inputs import parse_input_declaration, resolve_product_inputs
+    from echelon.spec_add_input import SpecAddInputError, add_input_to_active_run
+
+    project = tmp_path / "workspace"
+    source_root = project / "sources"
+    source_root.mkdir(parents=True)
+    (source_root / "base.md").write_text("base\n", encoding="utf-8")
+    (source_root / "added.md").write_text("added\n", encoding="utf-8")
+    resolution = resolve_product_inputs(
+        project,
+        project / "runs/run-1",
+        [parse_input_declaration("reference:sources/base.md")],
+    )
+    _write_current_run(project, _base_state(resolution.inputs_dir))
+    add_input_to_active_run(project, ["reference:sources/added.md"])
+    (resolution.inputs_dir / "tamper.bin").write_bytes(b"after completion")
+
+    with pytest.raises(SpecAddInputError, match="tree hash drift"):
+        add_input_to_active_run(project, ["reference:sources/added.md"])
+
+
+def test_spec_add_input_persists_only_logical_live_package_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.product_inputs import parse_input_declaration, resolve_product_inputs
+    from echelon.spec_add_input import add_input_to_active_run
+    from harness.squad_state import SquadStateStore
+
+    project = tmp_path / "workspace"
+    source_root = project / "sources"
+    source_root.mkdir(parents=True)
+    (source_root / "base.md").write_text("base\n", encoding="utf-8")
+    (source_root / "added.md").write_text("added\n", encoding="utf-8")
+    resolution = resolve_product_inputs(
+        project,
+        project / "runs/run-1",
+        [parse_input_declaration("reference:sources/base.md")],
+    )
+    _write_current_run(project, _base_state(resolution.inputs_dir))
+    staged_bytes: list[bytes] = []
+    original_begin = SquadStateStore.begin_product_input_publication
+
+    def inspect_stage(self, *args, **kwargs):
+        stage = next(
+            (project / "runs/run-1/.publication-outbox").glob(
+                "*/work/product-inputs"
+            )
+        )
+        staged_bytes.extend(
+            path.read_bytes()
+            for path in sorted(stage.rglob("*"))
+            if path.is_file()
+        )
+        return original_begin(self, *args, **kwargs)
+
+    monkeypatch.setattr(
+        SquadStateStore,
+        "begin_product_input_publication",
+        inspect_stage,
+    )
+
+    add_input_to_active_run(project, ["reference:sources/added.md"])
+
+    transient = b".publication-outbox"
+    package_bytes = b"\n".join(
+        path.read_bytes()
+        for path in sorted(resolution.inputs_dir.rglob("*"))
+        if path.is_file()
+    )
+    assert transient not in package_bytes
+    assert transient not in b"\n".join(staged_bytes)
+    assert str(resolution.inputs_dir).encode() in package_bytes
 
 
 def test_cmd_spec_add_input_parses_repeatable_inputs(monkeypatch, capsys) -> None:

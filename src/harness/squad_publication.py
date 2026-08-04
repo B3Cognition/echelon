@@ -572,7 +572,7 @@ def _target_image(
     relative: Path,
     *,
     invalid_code: str,
-) -> dict[str, str]:
+) -> dict[str, object]:
     _validate_existing_ancestors(
         project_root,
         relative,
@@ -594,10 +594,11 @@ def _target_image(
             missing_code=invalid_code,
             invalid_code=invalid_code,
         ),
+        "mode": stat.S_IMODE(metadata.st_mode),
     }
 
 
-def _target_image_at(parent_fd: int, name: str) -> dict[str, str]:
+def _target_image_at(parent_fd: int, name: str) -> dict[str, object]:
     try:
         metadata = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
     except FileNotFoundError:
@@ -622,7 +623,11 @@ def _target_image_at(parent_fd: int, name: str) -> dict[str, str]:
             if not chunk:
                 break
             digest.update(chunk)
-        return {"kind": "file", "sha256": digest.hexdigest()}
+        return {
+            "kind": "file",
+            "sha256": digest.hexdigest(),
+            "mode": stat.S_IMODE(opened.st_mode),
+        }
     except OSError:
         _raise("target_drift")
     finally:
@@ -739,6 +744,7 @@ def _copy_pinned_stage_to_temporary(
     pinned: _PinnedRegular,
     parent_fd: int,
     expected_digest: str,
+    expected_mode: int,
 ) -> str:
     try:
         before = os.fstat(pinned.fd)
@@ -757,6 +763,7 @@ def _copy_pinned_stage_to_temporary(
     except OSError:
         _raise("publish_io")
     try:
+        os.fchmod(temporary_fd, expected_mode)
         os.lseek(pinned.fd, 0, os.SEEK_SET)
         digest = hashlib.sha256()
         while True:
@@ -833,7 +840,7 @@ def _validate_target_namespace(
             _raise("manifest_invalid")
 
 
-def _validate_image(value: object) -> dict[str, str]:
+def _validate_image(value: object) -> dict[str, object]:
     if type(value) is not dict:
         _raise("manifest_invalid")
     keys = frozenset(dict.keys(value))
@@ -845,11 +852,15 @@ def _validate_image(value: object) -> dict[str, str]:
             _raise("manifest_invalid")
         return {"kind": "missing"}
     if kind == "file":
-        if keys != frozenset({"kind", "sha256"}):
+        if keys != frozenset({"kind", "sha256", "mode"}):
+            _raise("manifest_invalid")
+        mode = dict.get(value, "mode")
+        if type(mode) is not int or not 0 <= mode <= 0o7777:
             _raise("manifest_invalid")
         return {
             "kind": "file",
             "sha256": _validate_sha256(dict.get(value, "sha256")),
+            "mode": mode,
         }
     _raise("manifest_invalid")
 
@@ -1499,13 +1510,17 @@ class PreparedSquadPublication:
         expected_preimage = dict(operation["preimage"])
         expected_postimage = dict(operation["postimage"])
         expected_digest = str(expected_postimage["sha256"])
+        expected_mode = int(expected_postimage["mode"])
         _verify_pinned_regular(
             transaction_fd,
             pinned,
             missing_code="stage_missing",
             invalid_code="stage_corrupt",
         )
-        if pinned.sha256 != expected_digest:
+        if (
+            pinned.sha256 != expected_digest
+            or stat.S_IMODE(pinned.identity[2]) != expected_mode
+        ):
             _raise("stage_corrupt")
         parent_fd = _open_parent_directory(
             self._project_root,
@@ -1518,6 +1533,7 @@ class PreparedSquadPublication:
                 pinned,
                 parent_fd,
                 expected_digest,
+                expected_mode,
             )
             if (
                 _target_image_at(parent_fd, relative.name)
@@ -2044,6 +2060,7 @@ class SquadPublicationTransaction:
                 "postimage": {
                     "kind": "file",
                     "sha256": post_digest,
+                    "mode": stat.S_IMODE(pinned.identity[2]),
                 },
                 "staged": staged_relative.as_posix(),
             }

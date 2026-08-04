@@ -218,6 +218,7 @@ TRUSTED_ROUTING_REMOVAL_KEYS = (
         PENDING_EXTERNAL_PUBLICATION_KEY,
         PENDING_CONTROLLER_COMPLETION_KEY,
         PRODUCT_INPUT_MUTATION_KEY,
+        "product_inputs",
     }
 )
 
@@ -287,7 +288,11 @@ def validate_product_input_mutation(value: object) -> dict[str, object]:
     if type(mutation["schema_version"]) is not int or mutation["schema_version"] != 1:
         raise ValueError("product input mutation schema version is invalid")
     kind = mutation["kind"]
-    if type(kind) is not str or kind not in {"controller_update", "add_input"}:
+    if type(kind) is not str or kind not in {
+        "controller_update",
+        "add_input",
+        "traceability_repair",
+    }:
         raise ValueError("product input mutation kind is invalid")
     operation_id = mutation["operation_id"]
     if (
@@ -330,7 +335,7 @@ def validate_product_input_mutation(value: object) -> dict[str, object]:
         raise ValueError("product input mutation result counts are invalid")
     request_sha256 = mutation["request_sha256"]
     attachment_id = mutation["attachment_id"]
-    if kind == "controller_update":
+    if kind in {"controller_update", "traceability_repair"}:
         if (
             request_sha256 is not None
             or attachment_id is not None

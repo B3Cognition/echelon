@@ -208,6 +208,8 @@ def resolve_product_input_revision(
     project_root: Path,
     inputs_dir: Path,
     declarations: Sequence[ProductInputDeclaration],
+    *,
+    pointer_inputs_dir: Path | None = None,
 ) -> ProductInputResolution:
     """Write one amendment input revision without replacing prior evidence."""
     return _resolve_product_inputs_to(
@@ -215,6 +217,7 @@ def resolve_product_input_revision(
         Path(inputs_dir),
         declarations,
         replace_existing=False,
+        pointer_inputs_dir=pointer_inputs_dir,
     )
 
 
@@ -700,6 +703,7 @@ def attach_product_input_revision(
         project_root,
         revision_dir,
         new_declarations,
+        pointer_inputs_dir=pointer_inputs / "attachments" / attachment_id,
     )
     revision_manifest = _read_json_object(revision.manifest_path, "attachment manifest")
     revision_catalog = _read_json_object(revision.catalog_path, "attachment catalog")
@@ -786,6 +790,7 @@ def attach_product_input_revision(
         revision_catalog,
         duplicate_hashes=duplicate_hashes,
         attachment_id=attachment_id,
+        pointer_inputs_dir=pointer_inputs,
     )
     _write_json(ledger_path, ledger)
     _durably_finalize_product_input_tree(inputs_dir)
@@ -806,9 +811,15 @@ def _resolve_product_inputs_to(
     declarations: Sequence[ProductInputDeclaration],
     *,
     replace_existing: bool,
+    pointer_inputs_dir: Path | None = None,
 ) -> ProductInputResolution:
     """Resolve input declarations to one explicitly selected evidence directory."""
     project_root = project_root.resolve()
+    rendered_inputs_dir = (
+        Path(pointer_inputs_dir)
+        if pointer_inputs_dir is not None
+        else inputs_dir
+    )
     if inputs_dir.exists():
         if not replace_existing:
             raise ProductInputError(f"product input evidence directory already exists: {inputs_dir}")
@@ -924,10 +935,10 @@ def _resolve_product_inputs_to(
     input_context = inputs_dir / "input-context.md"
     input_context.write_text(
         "# Product Input Context\n\n"
-        f"- Manifest: `{manifest_path}`\n"
-        f"- Catalog: `{catalog_path}`\n"
-        f"- Requirement units: `{requirement_context}`\n"
-        f"- Reference units: `{reference_context}`\n",
+        f"- Manifest: `{rendered_inputs_dir / 'manifest.json'}`\n"
+        f"- Catalog: `{rendered_inputs_dir / 'catalog.json'}`\n"
+        f"- Requirement units: `{rendered_inputs_dir / 'requirement-context.md'}`\n"
+        f"- Reference units: `{rendered_inputs_dir / 'reference-context.md'}`\n",
         encoding="utf-8",
     )
     traceability_path = inputs_dir / "traceability.json"
@@ -1483,7 +1494,13 @@ def _write_aggregate_product_inputs(
     *,
     duplicate_hashes: set[str],
     attachment_id: str,
+    pointer_inputs_dir: Path | None = None,
 ) -> None:
+    rendered_inputs_dir = (
+        Path(pointer_inputs_dir)
+        if pointer_inputs_dir is not None
+        else inputs_dir
+    )
     aggregate_manifest = json.loads(json.dumps(base_manifest))
     aggregate_catalog = json.loads(json.dumps(base_catalog))
     aggregate_traceability = json.loads(json.dumps(base_traceability))
@@ -1586,10 +1603,10 @@ def _write_aggregate_product_inputs(
     input_context = inputs_dir / "input-context.md"
     input_context.write_text(
         "# Product Input Context\n\n"
-        f"- Manifest: `{inputs_dir / 'manifest.json'}`\n"
-        f"- Catalog: `{inputs_dir / 'catalog.json'}`\n"
-        f"- Requirement units: `{inputs_dir / 'requirement-context.md'}`\n"
-        f"- Reference units: `{inputs_dir / 'reference-context.md'}`\n",
+        f"- Manifest: `{rendered_inputs_dir / 'manifest.json'}`\n"
+        f"- Catalog: `{rendered_inputs_dir / 'catalog.json'}`\n"
+        f"- Requirement units: `{rendered_inputs_dir / 'requirement-context.md'}`\n"
+        f"- Reference units: `{rendered_inputs_dir / 'reference-context.md'}`\n",
         encoding="utf-8",
     )
     _write_json(inputs_dir / "traceability.json", aggregate_traceability)

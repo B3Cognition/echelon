@@ -66,6 +66,21 @@ VALID_COMPLETION_MARKER = {
     "origin": "routed",
     "step": "journal",
 }
+VALID_PRODUCT_INPUT_MUTATION = {
+    "schema_version": 1,
+    "kind": "controller_update",
+    "operation_id": VALID_MARKER["transaction_id"],
+    "manifest_sha256": VALID_MARKER["manifest_sha256"],
+    "inputs_dir": "runs/r/inputs",
+    "old_tree_hash": "sha256:" + "a" * 64,
+    "new_tree_hash": "sha256:" + "b" * 64,
+    "owned_paths_sha256": "c" * 64,
+    "owned_path_count": 1,
+    "request_sha256": None,
+    "attachment_id": None,
+    "added_count": 0,
+    "duplicate_count": 0,
+}
 
 
 def _store(tmp_path: Path) -> SquadStateStore:
@@ -582,6 +597,107 @@ class TestSquadStateStore:
             f"{PENDING_EXTERNAL_PUBLICATION_KEY}"
         )
         assert store.load() == before
+
+    def test_product_inputs_contract_cannot_be_removed_by_advance(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize(
+            "r",
+            "greenfield",
+            "msg",
+            0,
+            "init",
+            product_inputs={"tree_hash": "sha256:" + "a" * 64},
+        )
+        before = store.load()
+
+        with pytest.raises(ControllerStateContractViolation) as raised:
+            _advance(
+                store,
+                "init",
+                "phase1-discover",
+                _result("DONE"),
+                transaction_state_removals={"product_inputs"},
+            )
+
+        assert raised.value.validator == "ownership"
+        assert raised.value.json_path == "$.transaction_state_removals.product_inputs"
+        assert store.load() == before
+
+    @pytest.mark.parametrize("receipt", [None, {**VALID_PRODUCT_INPUT_MUTATION, "owned_path_count": 0}])
+    def test_product_inputs_update_requires_exact_mutation_receipt_without_write(
+        self,
+        tmp_path,
+        receipt,
+    ):
+        store = _store(tmp_path)
+        store.initialize(
+            "r",
+            "greenfield",
+            "msg",
+            0,
+            "init",
+            product_inputs={
+                "inputs_dir": "runs/r/inputs",
+                "tree_hash": "sha256:" + "a" * 64,
+            },
+        )
+        before = store.load()
+        updates = {
+            PENDING_EXTERNAL_PUBLICATION_KEY: VALID_MARKER,
+            "product_inputs": {
+                "inputs_dir": "runs/r/inputs",
+                "tree_hash": "sha256:" + "b" * 64,
+            },
+        }
+        if receipt is not None:
+            updates["product_input_mutation"] = receipt
+
+        with pytest.raises((ControllerStateContractViolation, StateAdvanceError)):
+            _advance(
+                store,
+                "init",
+                "phase1-discover",
+                _result("DONE"),
+                transaction_state_updates=updates,
+            )
+
+        assert store.load() == before
+
+    def test_product_inputs_update_accepts_exact_mutation_receipt(self, tmp_path):
+        store = _store(tmp_path)
+        store.initialize(
+            "r",
+            "greenfield",
+            "msg",
+            0,
+            "init",
+            product_inputs={
+                "inputs_dir": "runs/r/inputs",
+                "tree_hash": "sha256:" + "a" * 64,
+            },
+        )
+
+        _advance(
+            store,
+            "init",
+            "phase1-discover",
+            _result("DONE"),
+            transaction_state_updates={
+                PENDING_EXTERNAL_PUBLICATION_KEY: VALID_MARKER,
+                "product_inputs": {
+                    "inputs_dir": "runs/r/inputs",
+                    "tree_hash": "sha256:" + "b" * 64,
+                },
+                "product_input_mutation": VALID_PRODUCT_INPUT_MUTATION,
+            },
+        )
+
+        state = store.load()
+        assert state["product_inputs"]["tree_hash"] == "sha256:" + "b" * 64
+        assert state["product_input_mutation"] == VALID_PRODUCT_INPUT_MUTATION
 
     def test_record_external_publication_failure_blocks_and_preserves_marker(
         self,

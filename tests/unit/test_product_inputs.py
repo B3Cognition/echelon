@@ -2144,6 +2144,50 @@ def test_controller_product_effect_rejects_persisted_tree_tamper_before_staging(
     assert {path: path.read_bytes() for path in visible} == before
 
 
+@pytest.mark.parametrize("mutation", ["source_swap", "staged_tamper"])
+def test_controller_product_effect_rejects_copy_window_tree_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    from harness.squad import _ProductInputCommitError
+
+    controller, store, result, visible = _product_effect_staging_fixture(tmp_path)
+    source_inputs = visible[0].parent
+    original_copy = controller._copy_controller_tree
+
+    def mutating_copy(source, destination, *, exclude_echelon):
+        original_copy(source, destination, exclude_echelon=exclude_echelon)
+        if mutation == "source_swap":
+            target = source_inputs / "manifest.json"
+            displaced = tmp_path / "displaced-manifest.json"
+            target.rename(displaced)
+            target.write_bytes(displaced.read_bytes())
+            target.chmod(displaced.stat().st_mode & 0o777)
+        else:
+            (destination / "copy-window-drift.bin").write_bytes(b"mixed copy")
+
+    monkeypatch.setattr(controller, "_copy_controller_tree", mutating_copy)
+
+    with pytest.raises(_ProductInputCommitError) as caught:
+        controller._prepare_external_phase_effects(
+            result,
+            "phase3-plan",
+            store.load(),
+            manual_phase_run=False,
+        )
+
+    assert "changed during staging" in caught.value.reason
+    assert not list((controller._squad_dir / ".publication-outbox").glob("*/manifest.json"))
+    assert len(
+        list(
+            (controller._squad_dir / ".publication-outbox").glob(
+                "*/work/product-inputs"
+            )
+        )
+    ) == 1
+
+
 def test_controller_product_effect_prepares_exact_tree_hash_state_receipt(
     tmp_path: Path,
 ) -> None:
@@ -2342,3 +2386,137 @@ def test_controller_product_effect_recovery_rejects_unrelated_package_drift(
     assert PENDING_EXTERNAL_PUBLICATION_KEY in retained
     assert PRODUCT_INPUT_MUTATION_KEY in retained
     assert retained["external_publication_failure"]["code"] == "target_drift"
+
+
+def _install_publication_operation(project_root: Path, prepared, operation: dict) -> None:
+    target = project_root / operation["target"]
+    postimage = operation["postimage"]
+    if postimage["kind"] == "missing":
+        target.unlink(missing_ok=True)
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(prepared._transaction_root / operation["staged"], target)
+    target.chmod(int(postimage.get("mode", 0o600)))
+
+
+def test_controller_product_effect_recovery_rejects_nonprefix_postimage_without_writes(
+    tmp_path: Path,
+) -> None:
+    from harness.state_transaction_namespace import (
+        PENDING_EXTERNAL_PUBLICATION_KEY,
+        PRODUCT_INPUT_MUTATION_KEY,
+    )
+
+    controller, store, result, visible = _product_effect_staging_fixture(tmp_path)
+    prepared = controller._prepare_external_phase_effects(
+        result,
+        "phase3-plan",
+        store.load(),
+        manual_phase_run=False,
+    )
+    assert prepared is not None
+    _authorize_controller_product_publication(controller, store, prepared)
+    operations = list(prepared._manifest["operations"])
+    changed = [
+        (index, operation)
+        for index, operation in enumerate(operations)
+        if operation["preimage"] != operation["postimage"]
+    ]
+    assert len(changed) >= 2
+    _, later = changed[-1]
+    _install_publication_operation(controller._project_root, prepared, later)
+    before_attempt = {
+        path: (path.read_bytes(), path.stat().st_mode & 0o777)
+        for path in visible[0].parent.rglob("*")
+        if path.is_file()
+    }
+
+    assert not controller._recover_pending_external_publication()
+
+    assert {
+        path: (path.read_bytes(), path.stat().st_mode & 0o777)
+        for path in visible[0].parent.rglob("*")
+        if path.is_file()
+    } == before_attempt
+    retained = store.load()
+    assert PENDING_EXTERNAL_PUBLICATION_KEY in retained
+    assert PRODUCT_INPUT_MUTATION_KEY in retained
+
+
+def test_controller_product_effect_recovers_every_exact_manifest_prefix(
+    tmp_path: Path,
+) -> None:
+    from echelon.product_inputs import immutable_product_input_tree_digest
+
+    probe, probe_store, result, _ = _product_effect_staging_fixture(tmp_path / "probe")
+    probe_prepared = probe._prepare_external_phase_effects(
+        result,
+        "phase3-plan",
+        probe_store.load(),
+        manual_phase_run=False,
+    )
+    assert probe_prepared is not None
+    operation_count = len(probe_prepared._manifest["operations"])
+    probe_prepared.discard()
+
+    for boundary in range(operation_count + 1):
+        controller, store, result, visible = _product_effect_staging_fixture(
+            tmp_path / f"boundary-{boundary}"
+        )
+        prepared = controller._prepare_external_phase_effects(
+            result,
+            "phase3-plan",
+            store.load(),
+            manual_phase_run=False,
+        )
+        assert prepared is not None
+        _authorize_controller_product_publication(controller, store, prepared)
+        for operation in prepared._manifest["operations"][:boundary]:
+            _install_publication_operation(
+                controller._project_root,
+                prepared,
+                operation,
+            )
+
+        assert controller._recover_pending_external_publication()
+        assert store.load()["product_inputs"]["tree_hash"] == (
+            immutable_product_input_tree_digest(visible[0].parent)
+        )
+
+
+def test_controller_product_effect_recovery_rejects_file_mode_drift_without_writes(
+    tmp_path: Path,
+) -> None:
+    from harness.state_transaction_namespace import (
+        PENDING_EXTERNAL_PUBLICATION_KEY,
+        PRODUCT_INPUT_MUTATION_KEY,
+    )
+
+    controller, store, result, visible = _product_effect_staging_fixture(tmp_path)
+    prepared = controller._prepare_external_phase_effects(
+        result,
+        "phase3-plan",
+        store.load(),
+        manual_phase_run=False,
+    )
+    assert prepared is not None
+    _authorize_controller_product_publication(controller, store, prepared)
+    package = visible[0].parent
+    drifted = package / "manifest.json"
+    drifted.chmod(0o640)
+    before_attempt = {
+        path: (path.read_bytes(), path.stat().st_mode & 0o777)
+        for path in package.rglob("*")
+        if path.is_file()
+    }
+
+    assert not controller._recover_pending_external_publication()
+
+    assert {
+        path: (path.read_bytes(), path.stat().st_mode & 0o777)
+        for path in package.rglob("*")
+        if path.is_file()
+    } == before_attempt
+    retained = store.load()
+    assert PENDING_EXTERNAL_PUBLICATION_KEY in retained
+    assert PRODUCT_INPUT_MUTATION_KEY in retained

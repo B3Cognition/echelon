@@ -132,3 +132,28 @@ def test_durable_tree_rejects_child_rename_and_replacement_after_recursion(
 
     with pytest.raises(durable_tree.DurableTreeError, match="directory was swapped"):
         durable_tree.durably_sync_owned_tree(root)
+
+
+def test_durable_tree_rejects_regular_file_rename_and_replacement_after_sync(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import echelon.durable_tree as durable_tree
+
+    root = tmp_path / "owned"
+    root.mkdir()
+    payload = root / "payload.txt"
+    payload.write_text("original", encoding="utf-8")
+    displaced = root / "displaced.txt"
+    original_sync = durable_tree._sync_descriptor
+
+    def replace_after_sync(descriptor: int, path: Path) -> None:
+        original_sync(descriptor, path)
+        if path == payload:
+            payload.rename(displaced)
+            payload.write_text("replacement", encoding="utf-8")
+
+    monkeypatch.setattr(durable_tree, "_sync_descriptor", replace_after_sync)
+
+    with pytest.raises(durable_tree.DurableTreeError, match="file was swapped"):
+        durable_tree.durably_sync_owned_tree(root)

@@ -69,6 +69,7 @@ def durably_sync_owned_tree(
                 f"owned tree directory has noncanonical mode: {path}"
             )
         names = sorted(os.listdir(descriptor))
+        entry_identities: dict[str, tuple[int, int, int, int]] = {}
         for name in names:
             entries_seen += 1
             if entries_seen > max_entries:
@@ -78,6 +79,7 @@ def durably_sync_owned_tree(
                 observed = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
             except OSError as exc:
                 raise DurableTreeError(f"owned tree entry changed: {child_path}") from exc
+            entry_identities[name] = _entry_identity(observed)
             if stat.S_ISLNK(observed.st_mode):
                 raise DurableTreeError(f"owned tree contains a symlink: {child_path}")
             if stat.S_ISDIR(observed.st_mode):
@@ -117,6 +119,7 @@ def durably_sync_owned_tree(
                         raise DurableTreeError(
                             f"owned tree directory was swapped: {child_path}"
                         )
+                    entry_identities[name] = _entry_identity(rebound)
                 finally:
                     os.close(child_descriptor)
                 continue
@@ -140,6 +143,25 @@ def durably_sync_owned_tree(
                     raise DurableTreeError(f"owned tree file was swapped: {child_path}")
                 _sync_descriptor(file_descriptor, child_path)
                 after = os.fstat(file_descriptor)
+                try:
+                    rebound = os.stat(
+                        name,
+                        dir_fd=descriptor,
+                        follow_symlinks=False,
+                    )
+                except OSError as exc:
+                    raise DurableTreeError(
+                        f"owned tree file was swapped: {child_path}"
+                    ) from exc
+                if (
+                    not stat.S_ISREG(rebound.st_mode)
+                    or rebound.st_nlink != 1
+                    or _entry_identity(rebound) != _entry_identity(after)
+                ):
+                    raise DurableTreeError(
+                        f"owned tree file was swapped: {child_path}"
+                    )
+                entry_identities[name] = _entry_identity(rebound)
                 if (
                     after.st_size != opened.st_size
                     or after.st_mtime_ns != opened.st_mtime_ns
@@ -150,9 +172,19 @@ def durably_sync_owned_tree(
             finally:
                 os.close(file_descriptor)
         after_names = sorted(os.listdir(descriptor))
+        try:
+            after_entry_identities = {
+                name: _entry_identity(
+                    os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+                )
+                for name in after_names
+            }
+        except OSError as exc:
+            raise DurableTreeError(f"owned tree directory mutated: {path}") from exc
         after = os.fstat(descriptor)
         if (
             after_names != names
+            or after_entry_identities != entry_identities
             or (after.st_dev, after.st_ino, after.st_mode)
             != (before.st_dev, before.st_ino, before.st_mode)
         ):

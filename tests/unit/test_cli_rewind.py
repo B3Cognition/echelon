@@ -89,6 +89,85 @@ def _record_checkpoints(
         )
 
 
+def _traceability_repair_run(project_root: Path) -> tuple[Path, Path]:
+    from echelon.product_inputs import (
+        immutable_product_input_tree_digest,
+        parse_input_declaration,
+        resolve_product_inputs,
+    )
+
+    run_dir = project_root / "runs" / "spec-20260618-073106-635192"
+    source = project_root / "requirements.md"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("A requirement.\n", encoding="utf-8")
+    resolution = resolve_product_inputs(
+        project_root,
+        run_dir,
+        [parse_input_declaration("requirement:requirements.md")],
+    )
+    spec_dir = run_dir / "specs" / "006-element-creator"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=foundation req=FR-1 depends=none target=sources/web\n"
+        "- [ ] T-S01 complexity=standard phase=foundation req=INFRA depends=none target=sources/web\n",
+        encoding="utf-8",
+    )
+    resolution.traceability_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "requirements": [
+                    {
+                        "input_unit_id": "IN-REQ-1",
+                        "disposition": "included",
+                        "rationale": "Mapped.",
+                        "spec_ids": ["FR-1"],
+                        "task_ids": ["T-001", "T-S01"],
+                        "targets": ["sources/web"],
+                    }
+                ],
+                "references": [],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    resolution.traceability_markdown_path.write_text(
+        "# Product Input Traceability\n\nlegacy\n",
+        encoding="utf-8",
+    )
+    product_inputs = resolution.state_payload(project_root)
+    product_inputs["tree_hash"] = immutable_product_input_tree_digest(
+        resolution.inputs_dir
+    )
+    state = {
+        "run_id": run_dir.name,
+        "state_revision": 0,
+        "status": "blocked",
+        "phase": "terminal-blocked",
+        "blocked_reason": "phase_a_readiness_failed",
+        "phase_a_readiness_blockers": [
+            "IN-REQ-1: task T-S01 does not reference the mapped specification IDs"
+        ],
+        "spec_dir": spec_dir.relative_to(project_root).as_posix(),
+        "product_inputs": product_inputs,
+        "implementation_targets": ["sources/web"],
+        "completed_phases": [
+            "phase3-plan",
+            "phase3-consensus",
+            "checkpoint-plan",
+        ],
+    }
+    (project_root / "runs" / ".current").write_text(
+        run_dir.name,
+        encoding="utf-8",
+    )
+    (run_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    return run_dir, resolution.traceability_path
+
+
 def test_rewind_phase3_sentinel_resets_state_and_cleans_downstream_artifacts(
     tmp_path: Path,
     monkeypatch,
@@ -783,32 +862,9 @@ def test_traceability_repair_resumes_finalization_without_replanning(
     tmp_path: Path,
     capsys,
 ) -> None:
-    run_dir = _write_run_state(
-        tmp_path,
-        {
-            "status": "blocked",
-            "phase": "terminal-blocked",
-            "blocked_reason": "phase_a_readiness_failed",
-            "phase_a_readiness_blockers": ["IN-REQ-1: task T-S01 does not reference the mapped specification IDs"],
-            "spec_dir": "runs/spec-20260618-073106-635192/specs/006-element-creator",
-            "product_inputs": {"traceability": "runs/spec-20260618-073106-635192/inputs/traceability.json"},
-            "implementation_targets": ["sources/web"],
-            "completed_phases": ["phase3-plan", "phase3-consensus", "checkpoint-plan"],
-        },
-    )
-    spec_dir = run_dir / "specs" / "006-element-creator"
-    spec_dir.mkdir(parents=True)
-    (spec_dir / "tasks.md").write_text(
-        "- [ ] T-001 complexity=standard phase=foundation req=FR-1 depends=none target=sources/web\n"
-        "- [ ] T-S01 complexity=standard phase=foundation req=INFRA depends=none target=sources/web\n",
-        encoding="utf-8",
-    )
-    traceability = run_dir / "inputs" / "traceability.json"
-    traceability.parent.mkdir(parents=True)
-    traceability.write_text(
-        json.dumps({"requirements": [{"input_unit_id": "IN-REQ-1", "disposition": "included", "spec_ids": ["FR-1"], "task_ids": ["T-001", "T-S01"], "targets": ["sources/web"]}]}),
-        encoding="utf-8",
-    )
+    from echelon.product_inputs import immutable_product_input_tree_digest
+
+    run_dir, traceability = _traceability_repair_run(tmp_path)
 
     _cmd_repair_traceability(["--confirm"], project_root=tmp_path)
 
@@ -818,4 +874,136 @@ def test_traceability_repair_resumes_finalization_without_replanning(
     assert state["status"] == "running"
     assert state["phase"] == "phase4-document"
     assert state["blocked_reason"] is None
+    assert state["product_inputs"]["tree_hash"] == (
+        immutable_product_input_tree_digest(run_dir / "inputs")
+    )
+    assert "pending_external_publication" not in state
+    assert "product_input_mutation" not in state
     assert "TRACEABILITY REPAIRED" in capsys.readouterr().out
+
+
+def test_traceability_repair_rejects_tampered_live_preimage_without_writes(
+    tmp_path: Path,
+) -> None:
+    run_dir, traceability = _traceability_repair_run(tmp_path)
+    (run_dir / "inputs/tamper.bin").write_bytes(b"unindexed")
+    before_state = (run_dir / "state.json").read_bytes()
+    before_traceability = traceability.read_bytes()
+
+    with pytest.raises(SystemExit):
+        _cmd_repair_traceability(["--confirm"], project_root=tmp_path)
+
+    assert (run_dir / "state.json").read_bytes() == before_state
+    assert traceability.read_bytes() == before_traceability
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    ["before_intent", "partial_publication", "before_finalize"],
+)
+def test_traceability_repair_recovers_transaction_crash_prefixes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    boundary: str,
+) -> None:
+    from echelon.product_inputs import immutable_product_input_tree_digest
+    from harness.squad_publication import PreparedSquadPublication
+    from harness.squad_state import SquadStateStore
+
+    run_dir, traceability = _traceability_repair_run(tmp_path)
+    if boundary == "before_intent":
+        original = SquadStateStore.begin_traceability_repair_publication
+        calls = 0
+
+        def fail_first(self, *args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise OSError("injected intent crash")
+            return original(self, *args, **kwargs)
+
+        monkeypatch.setattr(
+            SquadStateStore,
+            "begin_traceability_repair_publication",
+            fail_first,
+        )
+    elif boundary == "partial_publication":
+        original = PreparedSquadPublication.publish
+        calls = 0
+
+        def fail_first(self, fault_hook=None):
+            nonlocal calls
+            calls += 1
+            if calls != 1:
+                return original(self, fault_hook=fault_hook)
+
+            def fault(position: int) -> None:
+                if position == 1:
+                    raise OSError("injected publication crash")
+
+            return original(self, fault_hook=fault)
+
+        monkeypatch.setattr(PreparedSquadPublication, "publish", fail_first)
+    else:
+        original = SquadStateStore.complete_external_publication
+        calls = 0
+
+        def fail_first(self, *args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise OSError("injected finalization crash")
+            return original(self, *args, **kwargs)
+
+        monkeypatch.setattr(
+            SquadStateStore,
+            "complete_external_publication",
+            fail_first,
+        )
+
+    with pytest.raises(SystemExit):
+        _cmd_repair_traceability(["--confirm"], project_root=tmp_path)
+
+    _cmd_repair_traceability(["--confirm"], project_root=tmp_path)
+
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert json.loads(traceability.read_text(encoding="utf-8"))["requirements"][0][
+        "task_ids"
+    ] == ["T-001"]
+    assert state["product_inputs"]["tree_hash"] == (
+        immutable_product_input_tree_digest(run_dir / "inputs")
+    )
+    assert "pending_external_publication" not in state
+    assert "product_input_mutation" not in state
+
+
+def test_traceability_repair_authenticates_staged_package_before_copy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from harness.squad_state import SquadStateStore
+
+    run_dir, traceability = _traceability_repair_run(tmp_path)
+    before = traceability.read_bytes()
+    original = SquadStateStore.begin_traceability_repair_publication
+
+    def tamper_after_intent(self, *args, **kwargs):
+        original(self, *args, **kwargs)
+        stage = next(
+            (run_dir / ".publication-outbox").glob("*/work/product-inputs")
+        )
+        (stage / "traceability.json").write_bytes(b"{}\n")
+
+    monkeypatch.setattr(
+        SquadStateStore,
+        "begin_traceability_repair_publication",
+        tamper_after_intent,
+    )
+
+    with pytest.raises(SystemExit):
+        _cmd_repair_traceability(["--confirm"], project_root=tmp_path)
+
+    assert traceability.read_bytes() == before
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert "pending_external_publication" in state
+    assert "product_input_mutation" in state

@@ -157,6 +157,7 @@ from echelon.product_input_transaction import (
     authenticate_pending_product_input_mutation,
     authenticate_product_input_contract,
     build_product_input_mutation,
+    product_input_tree_identity,
     require_product_input_mutation_postimage,
 )
 from echelon.product_inputs import (
@@ -761,9 +762,10 @@ class _TransitionJudgmentRequired(RuntimeError):
 class _ProductInputCommitError(RuntimeError):
     """Product-input publication failed inside the state CAS window."""
 
-    def __init__(self, reason: str) -> None:
+    def __init__(self, reason: str, *, retain_stage: bool = False) -> None:
         super().__init__("product input commit failed")
         self.reason = reason
+        self.retain_stage = retain_stage
 
 
 class _PhaseAReadinessCommitError(RuntimeError):
@@ -1784,6 +1786,10 @@ class SquadController:
                             state,
                             expected_publication,
                             staged_publication._manifest["operations"],
+                            staged_inputs=(
+                                staged_publication._transaction_root
+                                / "work/product-inputs"
+                            ),
                         )
                         staged_publication.publish()
                         verified_product_input_tree_hash = (
@@ -2068,6 +2074,9 @@ class SquadController:
                 state,
                 expected_marker,
                 prepared._manifest["operations"],
+                staged_inputs=(
+                    prepared._transaction_root / "work/product-inputs"
+                ),
             )
             prepared.publish()
             verified_product_input_tree_hash = (
@@ -5664,6 +5673,7 @@ class SquadController:
                 metadata,
                 source_inputs,
             )
+            source_identity = product_input_tree_identity(source_inputs)
         except ProductInputMutationError as exc:
             raise _ProductInputCommitError(
                 f"invalid product input updates: {exc}"
@@ -5676,6 +5686,26 @@ class SquadController:
             virtual_inputs,
             exclude_echelon=False,
         )
+        try:
+            if (
+                authenticate_product_input_contract(
+                    self._project_root,
+                    metadata,
+                    source_inputs,
+                )
+                != old_tree_hash
+                or product_input_tree_identity(source_inputs) != source_identity
+                or immutable_product_input_tree_digest(virtual_inputs)
+                != old_tree_hash
+            ):
+                raise ProductInputMutationError(
+                    "product input package changed during staging"
+                )
+        except (ProductInputError, ProductInputMutationError) as exc:
+            raise _ProductInputCommitError(
+                f"invalid product input updates: product input package changed during staging: {exc}",
+                retain_stage=True,
+            ) from exc
 
         staged_metadata = dict(metadata)
         original_paths: dict[str, Path] = {}
@@ -6033,7 +6063,11 @@ class SquadController:
                     PRODUCT_INPUT_MUTATION_KEY: mutation,
                 }
             return prepared
-        except (_ProductInputCommitError, _PhaseAReadinessCommitError):
+        except _ProductInputCommitError as exc:
+            if not exc.retain_stage:
+                self._discard_uncommitted_publication(transaction)
+            raise
+        except _PhaseAReadinessCommitError:
             self._discard_uncommitted_publication(transaction)
             raise
         except (Exception, SystemExit) as exc:

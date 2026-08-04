@@ -2959,6 +2959,8 @@ class SquadStateStore:
             or type(recovery) is not dict
             or recovery.get("request_sha256")
             != expected_mutation["request_sha256"]
+            or recovery.get("product_input_tree_hash")
+            != expected_mutation["new_tree_hash"]
             or recovery.get("attachment_id")
             != expected_mutation["attachment_id"]
             or recovery.get("added_count")
@@ -3001,6 +3003,116 @@ class SquadStateStore:
                 desired,
                 json_path=f"$.{PRODUCT_INPUT_MUTATION_KEY}",
                 error_message="atomic product input publication state save failed",
+            )
+
+    def begin_traceability_repair_publication(
+        self,
+        marker: object,
+        mutation: object,
+        *,
+        snapshot: RoutingStateSnapshot,
+        desired_state: dict[str, object],
+    ) -> None:
+        """Persist the exact repair post-state before any package write."""
+        try:
+            expected_marker = validate_pending_external_publication(marker)
+            expected_mutation = require_product_input_mutation_publication_binding(
+                mutation,
+                expected_marker,
+            )
+        except ValueError as exc:
+            raise StateAdvanceError(
+                "traceability repair publication receipt is invalid",
+                json_path=f"$.{PRODUCT_INPUT_MUTATION_KEY}",
+                validator="type",
+            ) from exc
+        if expected_mutation["kind"] != "traceability_repair":
+            raise StateAdvanceError(
+                "traceability repair publication kind is invalid",
+                json_path=f"$.{PRODUCT_INPUT_MUTATION_KEY}.kind",
+                validator="enum",
+            )
+        if not isinstance(snapshot, RoutingStateSnapshot) or type(desired_state) is not dict:
+            raise StateAdvanceError(
+                "traceability repair state is invalid",
+                json_path="$.state_updates",
+                validator="type",
+            )
+        desired_input = deepcopy(desired_state)
+        allowed_updates = frozenset(
+            {
+                "phase",
+                "status",
+                "iteration",
+                "spec_dir",
+                "blocked_reason",
+                "escalation_question",
+                "escalation_resolved",
+                "escalation_resolver",
+                "product_inputs",
+            }
+        )
+        with self._lock(exclusive=True):
+            state = self._load_unlocked()
+            revision = state.get("state_revision", 0)
+            changed = {
+                key
+                for key in set(state) | set(desired_input)
+                if key in desired_input and state.get(key) != desired_input.get(key)
+            }
+            removed = set(state) - set(desired_input)
+            current_product_inputs = state.get("product_inputs")
+            repaired_product_inputs = desired_input.get("product_inputs")
+            current_without_hash = (
+                {key: value for key, value in current_product_inputs.items() if key != "tree_hash"}
+                if type(current_product_inputs) is dict
+                else None
+            )
+            repaired_without_hash = (
+                {key: value for key, value in repaired_product_inputs.items() if key != "tree_hash"}
+                if type(repaired_product_inputs) is dict
+                else None
+            )
+            if (
+                state.get("phase") != snapshot.phase
+                or type(revision) is not int
+                or revision != snapshot.state_revision
+                or _last_dispatch_sha256(state) != snapshot.previous_dispatch_sha256
+                or PENDING_EXTERNAL_PUBLICATION_KEY in state
+                or PRODUCT_INPUT_MUTATION_KEY in state
+                or changed - allowed_updates
+                or removed - {"phase_a_readiness_blockers"}
+                or desired_input.get("phase") != "phase4-document"
+                or desired_input.get("status") != "running"
+                or desired_input.get("iteration") != 0
+                or desired_input.get("spec_dir") != state.get("spec_dir")
+                or desired_input.get("blocked_reason") is not None
+                or desired_input.get("escalation_question") is not None
+                or desired_input.get("escalation_resolved") is not False
+                or desired_input.get("escalation_resolver") is not None
+                or current_without_hash != repaired_without_hash
+                or type(current_product_inputs) is not dict
+                or current_product_inputs.get("tree_hash")
+                != expected_mutation["old_tree_hash"]
+                or type(repaired_product_inputs) is not dict
+                or repaired_product_inputs.get("tree_hash")
+                != expected_mutation["new_tree_hash"]
+                or repaired_product_inputs.get("inputs_dir")
+                != expected_mutation["inputs_dir"]
+            ):
+                raise StateAdvanceError(
+                    "traceability repair post-state is not exact",
+                    json_path="$.state_updates",
+                    validator="transaction_binding",
+                )
+            desired = deepcopy(desired_input)
+            desired[PENDING_EXTERNAL_PUBLICATION_KEY] = expected_marker
+            desired[PRODUCT_INPUT_MUTATION_KEY] = expected_mutation
+            self._save_exact_state_unlocked(
+                state,
+                desired,
+                json_path=f"$.{PRODUCT_INPUT_MUTATION_KEY}",
+                error_message="atomic traceability repair state save failed",
             )
 
     def begin_terminal_controller_completion(

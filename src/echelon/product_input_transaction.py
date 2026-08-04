@@ -33,6 +33,97 @@ _TREE_HASH = re.compile(r"\Asha256:[0-9a-f]{64}\Z")
 _MAX_OWNED_PATHS = 100_000
 
 
+def product_input_tree_identity(inputs_dir: Path) -> tuple[tuple[object, ...], ...]:
+    """Pin every package pathname to one no-follow inode identity snapshot."""
+    root = Path(inputs_dir)
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    file_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        root_before = os.stat(root, follow_symlinks=False)
+        root_fd = os.open(root, directory_flags)
+    except OSError as exc:
+        raise ProductInputMutationError("product input package identity is unavailable") from exc
+    records: list[tuple[object, ...]] = []
+
+    def identity(relative: str, metadata: os.stat_result) -> tuple[object, ...]:
+        return (
+            relative,
+            metadata.st_dev,
+            metadata.st_ino,
+            stat.S_IFMT(metadata.st_mode),
+            stat.S_IMODE(metadata.st_mode),
+            metadata.st_nlink,
+            metadata.st_size,
+            metadata.st_mtime_ns,
+            metadata.st_ctime_ns,
+        )
+
+    def walk(directory_fd: int, relative: Path) -> None:
+        before = os.fstat(directory_fd)
+        if not stat.S_ISDIR(before.st_mode):
+            raise ProductInputMutationError("product input package directory changed")
+        names = sorted(os.listdir(directory_fd))
+        records.append(identity(relative.as_posix() or ".", before))
+        for name in names:
+            child_relative = relative / name
+            label = child_relative.as_posix()
+            try:
+                observed = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            except OSError as exc:
+                raise ProductInputMutationError("product input package entry changed") from exc
+            if stat.S_ISLNK(observed.st_mode):
+                raise ProductInputMutationError("product input package contains a symlink")
+            if stat.S_ISDIR(observed.st_mode):
+                try:
+                    child_fd = os.open(name, directory_flags, dir_fd=directory_fd)
+                except OSError as exc:
+                    raise ProductInputMutationError("product input package directory changed") from exc
+                try:
+                    opened = os.fstat(child_fd)
+                    if identity(label, opened)[1:5] != identity(label, observed)[1:5]:
+                        raise ProductInputMutationError("product input package directory was swapped")
+                    walk(child_fd, child_relative)
+                    rebound = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+                    if identity(label, rebound) != identity(label, os.fstat(child_fd)):
+                        raise ProductInputMutationError("product input package directory was swapped")
+                finally:
+                    os.close(child_fd)
+                continue
+            if not stat.S_ISREG(observed.st_mode) or observed.st_nlink != 1:
+                raise ProductInputMutationError("product input package contains an unsafe file")
+            try:
+                child_fd = os.open(name, file_flags, dir_fd=directory_fd)
+            except OSError as exc:
+                raise ProductInputMutationError("product input package file changed") from exc
+            try:
+                opened = os.fstat(child_fd)
+                if identity(label, opened) != identity(label, observed):
+                    raise ProductInputMutationError("product input package file was swapped")
+                rebound = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+                if identity(label, rebound) != identity(label, os.fstat(child_fd)):
+                    raise ProductInputMutationError("product input package file was swapped")
+                records.append(identity(label, rebound))
+            finally:
+                os.close(child_fd)
+        after = os.fstat(directory_fd)
+        if sorted(os.listdir(directory_fd)) != names or identity("", after)[1:] != identity("", before)[1:]:
+            raise ProductInputMutationError("product input package directory changed")
+
+    try:
+        opened_root = os.fstat(root_fd)
+        if identity(".", root_before)[1:5] != identity(".", opened_root)[1:5]:
+            raise ProductInputMutationError("product input package root was swapped")
+        walk(root_fd, Path())
+        rebound_root = os.stat(root, follow_symlinks=False)
+        if identity(".", rebound_root) != identity(".", os.fstat(root_fd)):
+            raise ProductInputMutationError("product input package root was swapped")
+    except (OSError, TypeError) as exc:
+        raise ProductInputMutationError("product input package identity changed") from exc
+    finally:
+        os.close(root_fd)
+    return tuple(records)
+
+
 def product_input_request_sha256(
     command: str,
     declarations: Sequence[object],
@@ -159,16 +250,6 @@ def add_complete_product_input_publication(
     owned = {Path(target) for target in targets}
     for relative, target in zip(relative_files, targets, strict=True):
         if relative in staged_files:
-            current_path = current_files.get(relative)
-            if (
-                current_path is None
-                or hashlib.sha256(current_path.read_bytes()).digest()
-                != hashlib.sha256(staged_files[relative].read_bytes()).digest()
-            ):
-                # The publication primitive installs writes through a private
-                # mode-0600 temporary file. Reflect that exact durable
-                # postimage in the package hash before sealing the receipt.
-                staged_files[relative].chmod(0o600)
             transaction.add_write(
                 Path(target),
                 staged_files[relative],
@@ -233,7 +314,11 @@ def _operation_targets(
         by_relative[relative] = operation
     if len(by_relative) != len(targets):
         raise ProductInputMutationError("product input publication paths are duplicate")
-    return sorted(targets), by_relative
+    if targets != sorted(targets):
+        raise ProductInputMutationError(
+            "product input publication paths are not canonical"
+        )
+    return targets, by_relative
 
 
 def _current_file_image(path: Path) -> dict[str, object]:
@@ -246,6 +331,7 @@ def _current_file_image(path: Path) -> dict[str, object]:
     return {
         "kind": "file",
         "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "mode": stat.S_IMODE(metadata.st_mode),
     }
 
 
@@ -254,8 +340,10 @@ def authenticate_pending_product_input_mutation(
     state: Mapping[str, object],
     publication_marker: Mapping[str, object],
     operations: object,
+    *,
+    staged_inputs: Path,
 ) -> dict[str, object] | None:
-    """Accept only exact old/post file images for one pending receipt."""
+    """Accept only one exact manifest-order crash prefix and sealed stage."""
     raw = state.get(PRODUCT_INPUT_MUTATION_KEY)
     if raw is None:
         return None
@@ -273,6 +361,12 @@ def authenticate_pending_product_input_mutation(
         or product_inputs.get("inputs_dir") != mutation["inputs_dir"]
     ):
         raise ProductInputMutationError("product input mutation state postimage changed")
+    try:
+        if immutable_product_input_tree_digest(staged_inputs) != mutation["new_tree_hash"]:
+            raise ProductInputMutationError("staged product input postimage changed")
+        validate_immutable_product_input_package(staged_inputs, product_inputs)
+    except ProductInputError as exc:
+        raise ProductInputMutationError(str(exc)) from exc
     root = Path(project_root).resolve()
     inputs = Path(str(mutation["inputs_dir"]))
     if not inputs.is_absolute():
@@ -304,27 +398,48 @@ def authenticate_pending_product_input_mutation(
     current_files = _package_files(inputs)
     if set(path.as_posix() for path in current_files) - set(by_relative):
         raise ProductInputMutationError("product input package has unowned drift")
-    allowed_directories = {
+    expected_directories = {
         parent.as_posix()
-        for relative in by_relative
+        for relative, operation in by_relative.items()
+        if _current_file_image(inputs / relative)["kind"] == "file"
         for parent in Path(relative).parents
         if parent != Path(".")
     }
+    actual_directories: set[str] = set()
+    try:
+        root_metadata = inputs.lstat()
+    except OSError as exc:
+        raise ProductInputMutationError("product input package root changed") from exc
+    if (
+        not stat.S_ISDIR(root_metadata.st_mode)
+        or stat.S_ISLNK(root_metadata.st_mode)
+        or stat.S_IMODE(root_metadata.st_mode) != 0o755
+    ):
+        raise ProductInputMutationError("product input package directory mode drift")
     for path in sorted(inputs.rglob("*")):
         metadata = path.lstat()
         relative = path.relative_to(inputs).as_posix()
         if stat.S_ISDIR(metadata.st_mode):
-            if relative not in allowed_directories:
-                raise ProductInputMutationError("product input package has unowned directory drift")
+            actual_directories.add(relative)
             if stat.S_IMODE(metadata.st_mode) != 0o755:
                 raise ProductInputMutationError("product input package directory mode drift")
+    if actual_directories != expected_directories:
+        raise ProductInputMutationError("product input package has directory topology drift")
+    reached_preimage = False
     for relative, operation in by_relative.items():
         current = _current_file_image(inputs / relative)
-        if (
-            current != dict(operation["preimage"])
-            and current != dict(operation["postimage"])
-        ):
+        preimage = dict(operation["preimage"])
+        postimage = dict(operation["postimage"])
+        if current == preimage == postimage:
+            continue
+        if current == preimage:
+            reached_preimage = True
+            continue
+        if current == postimage and not reached_preimage:
+            continue
+        if current != preimage and current != postimage:
             raise ProductInputMutationError("product input package has partial target drift")
+        raise ProductInputMutationError("product input package is not an exact publication prefix")
     return mutation
 
 
