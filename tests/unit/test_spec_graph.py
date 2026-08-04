@@ -16,6 +16,7 @@ from echelon.spec_graph import (
     build_spec_graph,
     render_spec_graph,
 )
+from harness.re_registry import ReRegistryError
 
 
 def _graph(
@@ -289,6 +290,76 @@ def _canonical_spec(tmp_path: Path) -> Path:
         },
     )
     return spec_dir
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "context_case",
+    ["absent", "ignored", "empty", "hash-rejected"],
+)
+def test_build_spec_graph_skips_malformed_re_index_without_admitted_artifacts(
+    tmp_path: Path,
+    context_case: str,
+) -> None:
+    spec_dir = _canonical_spec(tmp_path)
+    index = tmp_path / "re" / "index.json"
+    index.parent.mkdir(parents=True)
+    index.write_text("{malformed\n", encoding="utf-8")
+
+    if context_case == "ignored":
+        _write_json(
+            spec_dir / "re-context.json",
+            {"schema_version": 1, "status": "ignored", "artifacts": []},
+        )
+    elif context_case == "empty":
+        _write_json(
+            spec_dir / "re-context.json",
+            {"schema_version": 1, "status": "attached", "artifacts": []},
+        )
+    elif context_case == "hash-rejected":
+        artifact = tmp_path / "re" / "workspace" / "overview.md"
+        artifact.parent.mkdir(parents=True)
+        artifact.write_text("# Current bytes\n", encoding="utf-8")
+        _write_json(
+            spec_dir / "re-context.json",
+            {
+                "schema_version": 1,
+                "status": "attached",
+                "artifacts": [
+                    {
+                        "path": "re/workspace/overview.md",
+                        "hash": "sha256:" + "0" * 64,
+                    }
+                ],
+            },
+        )
+
+    graph = build_spec_graph(tmp_path, spec_dir)
+
+    assert all(
+        node.type not in {"ReverseEngineeringSource", "Decision"}
+        for node in graph.nodes
+    )
+
+
+@pytest.mark.unit
+def test_build_spec_graph_validates_re_index_for_admitted_artifact(
+    tmp_path: Path,
+) -> None:
+    spec_dir = _canonical_spec(tmp_path)
+    artifact = tmp_path / "re" / "workspace" / "overview.md"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("# Attached bytes\n", encoding="utf-8")
+    _attach_re_context(
+        spec_dir,
+        tmp_path,
+        ["re/workspace/overview.md"],
+    )
+    index = tmp_path / "re" / "index.json"
+    index.write_text("{malformed\n", encoding="utf-8")
+
+    with pytest.raises(ReRegistryError, match="cannot read RE index"):
+        build_spec_graph(tmp_path, spec_dir)
 
 
 @pytest.mark.unit

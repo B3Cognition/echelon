@@ -340,10 +340,17 @@ def _add_re_topology(
     nodes: dict[str, GraphNode],
     edges: list[GraphEdge],
 ) -> None:
+    context_path = spec_dir / "re-context.json"
+    linked_artifacts = sorted(
+        path
+        for path in _linked_re_artifacts(root, spec_dir)
+        if path != context_path
+    )
+    if not linked_artifacts:
+        return
     stored_artifacts = {
         edge.source for edge in edges if edge.type == "STORED_AS"
     }
-    linked_artifacts = sorted(_linked_re_artifacts(root, spec_dir))
     descriptor_lookup = _re_artifact_descriptor_lookup(root)
     descriptors: list[tuple[Path, ReArtifactDescriptor]] = []
     for path in linked_artifacts:
