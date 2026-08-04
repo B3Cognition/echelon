@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import subprocess
 from types import SimpleNamespace
@@ -24,7 +25,16 @@ def retarget_cli_workspace(tmp_path: Path) -> Path:
     _git(tmp_path, "init", "-b", "001-demo")
     _git(tmp_path, "config", "user.email", "test@example.invalid")
     _git(tmp_path, "config", "user.name", "Test")
+    (tmp_path / "README.md").write_text("base\n", encoding="utf-8")
+    _git(tmp_path, "add", "README.md")
+    _git(tmp_path, "commit", "-m", "base")
+    base_commit = _git(tmp_path, "rev-parse", "HEAD").strip()
     (tmp_path / "apps/web").mkdir(parents=True)
+    (tmp_path / ".echelon").mkdir()
+    (tmp_path / ".echelon/config.yml").write_text(
+        "sources: []\n",
+        encoding="utf-8",
+    )
     spec_dir = tmp_path / "specs/001-demo"
     spec_dir.mkdir(parents=True)
     (spec_dir / "spec.md").write_text(
@@ -39,13 +49,21 @@ def retarget_cli_workspace(tmp_path: Path) -> Path:
     )
     run_dir = tmp_path / "runs/squad-base"
     run_dir.mkdir(parents=True)
+    shadow_dir = run_dir / "specs/001-demo"
+    shadow_dir.mkdir(parents=True)
+    for name in ("spec.md", "plan.md", "tasks.md", "targets.yml"):
+        (shadow_dir / name).write_bytes((spec_dir / name).read_bytes())
     (run_dir / "state.json").write_text(
         json.dumps(
             {
                 "run_id": "squad-base",
                 "spec_id": "001-demo",
                 "feature_branch": "001-demo",
-                "spec_dir": "specs/001-demo",
+                "spec_dir": "runs/squad-base/specs/001-demo",
+                "published_spec_dir": "specs/001-demo",
+                "spec_number": "001",
+                "phase_a_default_branch": "001-demo",
+                "phase_a_base_commit": base_commit,
                 "implementation_targets": ["services/api"],
                 "user_message": "Build account search",
                 "autonomy_mode": "semi",
@@ -53,6 +71,8 @@ def retarget_cli_workspace(tmp_path: Path) -> Path:
                 "phase": "phase3-plan",
                 "completed_phases": ["phase1-what", "phase2-how", "phase3-plan"],
                 "published_re_context": {"status": "absent"},
+                "ignore_re": False,
+                "requested_re_sources": [],
             },
             indent=2,
         )
@@ -105,6 +125,25 @@ def test_retarget_preview_is_byte_and_git_object_read_only(
         "echelon spec rewind checkpoint:retarget-preflight-"
     )
     assert _workspace_snapshot(retarget_cli_workspace) == before
+
+
+@pytest.mark.unit
+def test_preview_owns_published_canonical_spec_not_frozen_run_shadow(
+    retarget_cli_workspace: Path,
+) -> None:
+    from echelon.spec_retarget import _build_retarget_preview
+
+    preview = _build_retarget_preview(
+        retarget_cli_workspace,
+        "001-demo",
+        ("apps/web",),
+    )
+
+    assert preview.spec_dir == retarget_cli_workspace / "specs/001-demo"
+    assert preview.baseline.spec_dir == (
+        retarget_cli_workspace / "runs/squad-base/specs/001-demo"
+    )
+    assert preview.baseline.published_spec_dir == preview.spec_dir
 
 
 @pytest.mark.unit
@@ -498,6 +537,32 @@ def test_checkpoint_context_rejects_git_symlink_before_writing(
 
 
 @pytest.mark.unit
+def test_checkpoint_artifact_extraction_failure_is_not_missing(
+    retarget_cli_workspace: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import echelon.spec_retarget as subject
+
+    commit = _git(retarget_cli_workspace, "rev-parse", "HEAD").strip()
+    real_run = subject.subprocess.run
+
+    def fail_extraction(args: list[str], **kwargs: object):
+        if args[:2] == ["git", "show"] or args[:2] == ["git", "cat-file"]:
+            return subprocess.CompletedProcess(args, 1, stdout=b"", stderr=b"boom")
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(subject.subprocess, "run", fail_extraction)
+
+    with pytest.raises(subject.RetargetError, match="read checkpoint context"):
+        subject.checkpoint_artifact_bytes(
+            retarget_cli_workspace,
+            commit,
+            "001-demo",
+            "spec.md",
+        )
+
+
+@pytest.mark.unit
 def test_bounded_failure_code_is_stable() -> None:
     from echelon.mempalace_retarget import RetargetMemoryError
     from echelon.spec_retarget import (
@@ -595,6 +660,7 @@ def _activate_retarget_retry(
         advance_retarget_revision,
         append_prepared_revision,
     )
+    from harness.phase_checkpoints import PhaseCheckpoint, record_checkpoint_metadata
 
     baseline = json.loads(
         (project_root / "runs/squad-base/state.json").read_text(encoding="utf-8")
@@ -620,7 +686,7 @@ def _activate_retarget_retry(
     )
     checkpoint_id = f"retarget-preflight-{revision.revision_id}"
     checkpoint_commit = _git(project_root, "rev-parse", "HEAD").strip()
-    if status == "rebuilding":
+    if status in {"invalidating", "rebuilding"}:
         advance_retarget_revision(
             project_root / "specs/001-demo",
             revision.revision_id,
@@ -631,14 +697,15 @@ def _activate_retarget_retry(
                 "checkpoint_commit": checkpoint_commit,
             },
         )
-        advance_retarget_revision(
-            project_root / "specs/001-demo",
-            revision.revision_id,
-            expected_status="invalidating",
-            status="rebuilding",
-            updates={},
-        )
-    else:
+        if status == "rebuilding":
+            advance_retarget_revision(
+                project_root / "specs/001-demo",
+                revision.revision_id,
+                expected_status="invalidating",
+                status="rebuilding",
+                updates={},
+            )
+    elif status == "failed":
         advance_retarget_revision(
             project_root / "specs/001-demo",
             revision.revision_id,
@@ -650,12 +717,26 @@ def _activate_retarget_retry(
                 "failure_code": "retarget_memory_purge_failed",
             },
         )
+    record_checkpoint_metadata(
+        project_root / "specs/001-demo",
+        PhaseCheckpoint(
+            id=checkpoint_id,
+            spec_id="001-demo",
+            phase="retarget",
+            next_phase="phase0-constitution",
+            commit=checkpoint_commit,
+            metadata_commit=checkpoint_commit,
+            source="retarget-preflight",
+            run_id="squad-base",
+            created_at="2026-08-05T00:00:00+00:00",
+        ),
+    )
     replacement = dict(baseline)
     replacement.update(
         {
             "run_id": replacement_id,
             "implementation_targets": ["apps/web"],
-            "spec_dir": "specs/001-demo",
+            "spec_dir": f"runs/{replacement_id}/specs/001-demo",
             "published_spec_dir": "specs/001-demo",
             "retarget": {
                 "operation_id": "retarget-existing",
@@ -675,6 +756,12 @@ def _activate_retarget_retry(
     )
     replacement_dir = project_root / "runs" / replacement_id
     replacement_dir.mkdir()
+    replacement_shadow = replacement_dir / "specs/001-demo"
+    replacement_shadow.mkdir(parents=True)
+    for name in ("spec.md", "plan.md", "tasks.md", "targets.yml"):
+        (replacement_shadow / name).write_bytes(
+            (project_root / "specs/001-demo" / name).read_bytes()
+        )
     (replacement_dir / "state.json").write_text(
         json.dumps(replacement, indent=2) + "\n",
         encoding="utf-8",
@@ -713,6 +800,130 @@ def test_matching_nonterminal_retry_reuses_recorded_run_and_checkpoint(
     assert len(
         load_retarget_history(retarget_cli_workspace / "specs/001-demo").revisions
     ) == 1
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("status", ("checkpointed", "invalidating"))
+def test_retry_finishes_remaining_destructive_effects_before_dispatch(
+    retarget_cli_workspace: Path,
+    status: str,
+) -> None:
+    from echelon.spec_retarget import prepare_spec_retarget
+    from echelon.spec_retarget_history import load_retarget_history
+
+    replacement_id, checkpoint_id = _activate_retarget_retry(
+        retarget_cli_workspace,
+        status=status,
+    )
+    callbacks: list[str] = []
+
+    result = prepare_spec_retarget(
+        retarget_cli_workspace,
+        "001-demo",
+        ("apps/web",),
+        confirm=True,
+        checkpoint_created=lambda checkpoint: callbacks.append(checkpoint.id),
+    )
+
+    canonical = retarget_cli_workspace / "specs/001-demo"
+    shadow = retarget_cli_workspace / f"runs/{replacement_id}/specs/001-demo"
+    state = json.loads(
+        (retarget_cli_workspace / f"runs/{replacement_id}/state.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    history = load_retarget_history(canonical)
+    assert result.applied is True and result.resume_existing is True
+    assert result.replacement_run_id == replacement_id
+    assert result.checkpoint_id == checkpoint_id
+    assert callbacks == [checkpoint_id]
+    assert len(history.revisions) == 1
+    assert history.revisions[-1].status == "rebuilding"
+    assert state["retarget"]["status"] == "rebuilding"
+    assert state["retarget"]["memory_excluded"] is True
+    assert not (canonical / "spec.md").exists()
+    assert not (shadow / "spec.md").exists()
+    assert (canonical / "targets.yml").read_text(encoding="utf-8") == (
+        "targets:\n- apps/web\n"
+    )
+    assert (shadow / "targets.yml").read_bytes() == (
+        canonical / "targets.yml"
+    ).read_bytes()
+
+
+@pytest.mark.unit
+def test_retry_adopts_prepared_checkpoint_before_replacement_installation(
+    retarget_cli_workspace: Path,
+) -> None:
+    import hashlib
+
+    from echelon.spec_retarget import (
+        _build_retarget_preview,
+        _replacement_run_id,
+        prepare_spec_retarget,
+    )
+    from echelon.spec_retarget_history import (
+        RetargetRecoveryProjection,
+        append_prepared_revision,
+        load_retarget_history,
+    )
+    from harness.phase_checkpoints import commit_retarget_checkpoint
+
+    preview = _build_retarget_preview(
+        retarget_cli_workspace,
+        "001-demo",
+        ("apps/web",),
+    )
+    canonical = retarget_cli_workspace / "specs/001-demo"
+    revision = append_prepared_revision(
+        canonical,
+        operation_id=preview.operation_id,
+        baseline_run_id=preview.baseline.run_id,
+        replacement_run_id=_replacement_run_id(preview),
+        old_targets=preview.old_targets,
+        replacement_targets=preview.replacement_targets,
+        original_prompt_digest=(
+            "sha256:"
+            + hashlib.sha256(preview.original_user_message.encode("utf-8")).hexdigest()
+        ),
+        recovery=RetargetRecoveryProjection(
+            run_id=preview.baseline.run_id,
+            status="done",
+            phase="phase3-plan",
+            spec_status="planned",
+            completed_phases=("phase1-what", "phase2-how", "phase3-plan"),
+            implementation_targets=preview.old_targets,
+            ready_to_build=True,
+        ),
+    )
+    checkpoint = commit_retarget_checkpoint(
+        project_root=retarget_cli_workspace,
+        spec_dir=canonical,
+        run_id=preview.baseline.run_id,
+        revision_id=revision.revision_id,
+    )
+    callbacks: list[str] = []
+
+    result = prepare_spec_retarget(
+        retarget_cli_workspace,
+        "001-demo",
+        ("apps/web",),
+        confirm=True,
+        checkpoint_created=lambda created: callbacks.append(created.id),
+    )
+
+    history = load_retarget_history(canonical)
+    assert result.resume_existing is True and result.applied is True
+    assert result.replacement_run_id == revision.replacement_run_id
+    assert result.checkpoint_id == checkpoint.id
+    assert callbacks == [checkpoint.id]
+    assert len(history.revisions) == 1
+    assert history.revisions[-1].revision_id == revision.revision_id
+    assert history.revisions[-1].status == "rebuilding"
+    assert (retarget_cli_workspace / "runs/.current").read_text().strip() == (
+        revision.replacement_run_id
+    )
+    assert not (canonical / "spec.md").exists()
 
 
 @pytest.mark.unit
@@ -1041,6 +1252,61 @@ def test_artifact_invalidation_rejects_symlink_before_removing_anything(
 
     assert (spec_dir / "spec.md").read_text(encoding="utf-8") == "old\n"
     assert outside.read_text(encoding="utf-8") == "keep\n"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("race_owner", ("canonical", "shadow"))
+def test_artifact_invalidation_swap_race_cannot_delete_outside_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    race_owner: str,
+) -> None:
+    from echelon.artifact_index import plan_retarget_artifacts
+    import echelon.spec_retarget as subject
+
+    spec_dir = tmp_path / "specs/001-demo"
+    shadow = tmp_path / "runs/squad-replacement/specs/001-demo"
+    for root in (spec_dir, shadow):
+        (root / "contracts").mkdir(parents=True)
+        (root / "contracts/owned.txt").write_text("owned\n", encoding="utf-8")
+        (root / "targets.yml").write_text(
+            "targets:\n- services/api\n",
+            encoding="utf-8",
+        )
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    outside_victim = outside / "must-survive.txt"
+    outside_victim.write_text("keep\n", encoding="utf-8")
+    race_root = spec_dir if race_owner == "canonical" else shadow
+    real_rename = os.rename
+    swapped = False
+
+    def racing_rename(src: object, dst: object, *args: object, **kwargs: object):
+        nonlocal swapped
+        source_fd = kwargs.get("src_dir_fd")
+        if (
+            not swapped
+            and src == "contracts"
+            and isinstance(source_fd, int)
+            and os.fstat(source_fd).st_ino == race_root.stat().st_ino
+        ):
+            swapped = True
+            real_rename(race_root / "contracts", race_root / "contracts-original")
+            (race_root / "contracts").symlink_to(outside, target_is_directory=True)
+        return real_rename(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(subject.os, "rename", racing_rename)
+
+    with pytest.raises(subject.RetargetArtifactError, match="changed during invalidation"):
+        subject.invalidate_retarget_artifacts(
+            spec_dir,
+            shadow,
+            plan_retarget_artifacts(spec_dir),
+            ("apps/web",),
+        )
+
+    assert swapped is True
+    assert outside_victim.read_text(encoding="utf-8") == "keep\n"
 
 
 @pytest.mark.unit

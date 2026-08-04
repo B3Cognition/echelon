@@ -169,6 +169,15 @@ def _git(project_root: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=project_root, check=True, capture_output=True)
 
 
+def _create_run_shadow(run_dir: Path, spec_dir: Path) -> Path:
+    shadow = run_dir / "specs" / spec_dir.name
+    shadow.mkdir(parents=True)
+    for source in spec_dir.iterdir():
+        if source.is_file():
+            (shadow / source.name).write_bytes(source.read_bytes())
+    return shadow
+
+
 @pytest.mark.unit
 def test_collect_evidence_reads_exact_spec_delivery_markers_without_writing(
     tmp_path: Path,
@@ -193,13 +202,15 @@ def test_collect_evidence_reads_exact_spec_delivery_markers_without_writing(
     )
     run_dir = tmp_path / "runs/squad-base"
     run_dir.mkdir(parents=True)
+    _create_run_shadow(run_dir, spec_dir)
     (run_dir / "state.json").write_text(
         json.dumps(
             {
                 "run_id": "squad-base",
                 "spec_id": "001-demo",
                 "feature_branch": "001-demo",
-                "spec_dir": "specs/001-demo",
+                "spec_dir": "runs/squad-base/specs/001-demo",
+                "published_spec_dir": "specs/001-demo",
                 "targets": ["services/api"],
                 "original_user_message": "Build account search",
                 "autonomy_mode": "semi",
@@ -248,13 +259,15 @@ def test_collect_evidence_never_falls_back_from_invalid_targets_contract(
     (spec_dir / "targets.yml").write_text(targets_yml, encoding="utf-8")
     run_dir = tmp_path / "runs/squad-base"
     run_dir.mkdir(parents=True)
+    _create_run_shadow(run_dir, spec_dir)
     (run_dir / "state.json").write_text(
         json.dumps(
             {
                 "run_id": "squad-base",
                 "spec_id": "001-demo",
                 "feature_branch": "001-demo",
-                "spec_dir": "specs/001-demo",
+                "spec_dir": "runs/squad-base/specs/001-demo",
+                "published_spec_dir": "specs/001-demo",
                 "implementation_targets": ["legacy/api"],
                 "user_message": "Build account search",
                 "published_re_context": {"status": "absent"},
@@ -294,13 +307,15 @@ def test_collect_evidence_rejects_invalid_targets_contract_when_state_is_empty(
         (spec_dir / "targets.yml").write_text(targets_yml, encoding="utf-8")
     run_dir = tmp_path / "runs/squad-base"
     run_dir.mkdir(parents=True)
+    _create_run_shadow(run_dir, spec_dir)
     (run_dir / "state.json").write_text(
         json.dumps(
             {
                 "run_id": "squad-base",
                 "spec_id": "001-demo",
                 "feature_branch": "001-demo",
-                "spec_dir": "specs/001-demo",
+                "spec_dir": "runs/squad-base/specs/001-demo",
+                "published_spec_dir": "specs/001-demo",
                 "implementation_targets": [],
                 "user_message": "Build account search",
                 "published_re_context": {"status": "absent"},

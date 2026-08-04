@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
 import shlex
 import stat
 import subprocess
@@ -22,7 +23,11 @@ from echelon.artifact_index import (
     plan_retarget_artifacts,
 )
 from echelon.git_helpers import GitHelperError, current_branch, worktree_dirty_paths
-from echelon.mempalace_retarget import RetargetMemoryError, purge_retarget_spec_memory
+from echelon.mempalace_retarget import (
+    RetargetMemoryError,
+    RetargetMemoryReceipt,
+    purge_retarget_spec_memory,
+)
 from echelon.phase_a_start import (
     PhaseAStartError,
     RetargetPhaseAStartOutcome,
@@ -53,6 +58,8 @@ from harness.phase_checkpoints import (
     PhaseCheckpoint,
     PhaseCheckpointError,
     commit_retarget_checkpoint,
+    load_checkpoint_ledger,
+    resolve_checkpoint,
 )
 from harness.spec_frontmatter import read_frontmatter
 
@@ -238,6 +245,29 @@ def _original_re_policy(run_dir: Path) -> tuple[bool, tuple[str, ...]]:
     return ignore_re, sources
 
 
+def _require_canonical_published_spec(project_root: Path, run: SpecRun) -> Path:
+    root = Path(project_root).resolve()
+    expected = root / "specs" / run.spec_id
+    expected_shadow = run.run_dir / "specs" / run.spec_id
+    for path, label in (
+        (expected, "canonical published spec directory"),
+        (expected_shadow, "baseline run shadow directory"),
+    ):
+        try:
+            metadata = path.lstat()
+        except OSError as exc:
+            raise RetargetEligibilityError(f"{label} is unavailable") from exc
+        if not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
+            raise RetargetEligibilityError(f"{label} must be a real directory")
+    if run.published_spec_dir != expected.resolve():
+        raise RetargetEligibilityError(
+            "baseline published spec directory is not canonical"
+        )
+    if run.spec_dir != expected_shadow.resolve():
+        raise RetargetEligibilityError("baseline run shadow binding is not canonical")
+    return expected.resolve()
+
+
 def _build_retarget_preview(
     project_root: Path,
     spec_id: str,
@@ -254,6 +284,9 @@ def _build_retarget_preview(
             f"{reasons}\n  Next: {eligibility.next_command}"
         )
     baseline = resolve_spec_run(root, spec_id)
+    canonical_spec_dir = _require_canonical_published_spec(root, baseline)
+    if evidence.spec_dir != canonical_spec_dir:
+        raise RetargetEligibilityError("retarget canonical spec evidence changed")
     ignore_re, explicit_re_sources = _original_re_policy(baseline.run_dir)
     identity = json.dumps(
         {
@@ -274,10 +307,10 @@ def _build_retarget_preview(
         project_root=root,
         spec_id=evidence.spec_id,
         baseline=baseline,
-        spec_dir=evidence.spec_dir,
+        spec_dir=canonical_spec_dir,
         old_targets=evidence.canonical_targets,
         replacement_targets=targets,
-        artifact_plan=plan_retarget_artifacts(evidence.spec_dir),
+        artifact_plan=plan_retarget_artifacts(canonical_spec_dir),
         operation_id=operation_id,
         original_user_message=evidence.original_user_message,
         autonomy_mode=evidence.autonomy_mode,
@@ -356,36 +389,181 @@ def _validate_relative_artifact_path(value: str) -> str:
     return value
 
 
-def _validate_tree_for_removal(
-    path: Path,
+def _open_directory_at(parent_fd: int, name: str) -> int:
+    flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    return os.open(name, flags, dir_fd=parent_fd)
+
+
+def _same_inode(left: os.stat_result, right: os.stat_result) -> bool:
+    return (
+        left.st_dev,
+        left.st_ino,
+        stat.S_IFMT(left.st_mode),
+    ) == (
+        right.st_dev,
+        right.st_ino,
+        stat.S_IFMT(right.st_mode),
+    )
+
+
+def _validate_entry_at(
+    parent_fd: int,
+    name: str,
     *,
-    budget: list[int] | None = None,
+    budget: list[int],
     depth: int = 0,
-) -> None:
-    if budget is None:
-        budget = [0]
+) -> os.stat_result:
     budget[0] += 1
     if budget[0] > _RETARGET_ARTIFACT_ENTRY_CAP or depth > _RETARGET_ARTIFACT_DEPTH_CAP:
         raise RetargetArtifactError("retarget artifact traversal exceeds safety cap")
-    metadata = path.lstat()
+    metadata = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
     if stat.S_ISLNK(metadata.st_mode):
-        raise RetargetArtifactError(f"retarget artifact must not be a symlink: {path}")
+        raise RetargetArtifactError(f"retarget artifact must not be a symlink: {name}")
     if stat.S_ISREG(metadata.st_mode):
+        return metadata
+    if not stat.S_ISDIR(metadata.st_mode):
+        raise RetargetArtifactError(f"retarget artifact has unsupported type: {name}")
+    try:
+        child_fd = _open_directory_at(parent_fd, name)
+    except OSError as exc:
+        raise RetargetArtifactError(f"retarget artifact changed during validation: {name}") from exc
+    try:
+        if not _same_inode(metadata, os.fstat(child_fd)):
+            raise RetargetArtifactError(
+                f"retarget artifact changed during validation: {name}"
+            )
+        child_names = sorted(entry.name for entry in os.scandir(child_fd))
+        for child_name in child_names:
+            _validate_entry_at(
+                child_fd,
+                child_name,
+                budget=budget,
+                depth=depth + 1,
+            )
+    finally:
+        os.close(child_fd)
+    return metadata
+
+
+def _delete_entry_at(
+    parent_fd: int,
+    name: str,
+    *,
+    budget: list[int],
+    depth: int = 0,
+) -> None:
+    metadata = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    budget[0] += 1
+    if budget[0] > _RETARGET_ARTIFACT_ENTRY_CAP or depth > _RETARGET_ARTIFACT_DEPTH_CAP:
+        raise RetargetArtifactError("retarget artifact deletion exceeds safety cap")
+    if stat.S_ISLNK(metadata.st_mode) or stat.S_ISREG(metadata.st_mode):
+        os.unlink(name, dir_fd=parent_fd)
         return
     if not stat.S_ISDIR(metadata.st_mode):
-        raise RetargetArtifactError(f"retarget artifact has unsupported type: {path}")
-    for child in sorted(path.iterdir(), key=lambda item: item.name):
-        _validate_tree_for_removal(child, budget=budget, depth=depth + 1)
+        raise RetargetArtifactError(f"retarget quarantine has unsupported type: {name}")
+    try:
+        child_fd = _open_directory_at(parent_fd, name)
+    except OSError as exc:
+        raise RetargetArtifactError(
+            f"retarget artifact changed during invalidation: {name}"
+        ) from exc
+    try:
+        if not _same_inode(metadata, os.fstat(child_fd)):
+            raise RetargetArtifactError(
+                f"retarget artifact changed during invalidation: {name}"
+            )
+        child_names = sorted(entry.name for entry in os.scandir(child_fd))
+        for child_name in child_names:
+            _delete_entry_at(
+                child_fd,
+                child_name,
+                budget=budget,
+                depth=depth + 1,
+            )
+    finally:
+        os.close(child_fd)
+    current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    if not _same_inode(metadata, current):
+        raise RetargetArtifactError(
+            f"retarget artifact changed during invalidation: {name}"
+        )
+    os.rmdir(name, dir_fd=parent_fd)
 
 
-def _remove_validated_tree(path: Path) -> None:
-    metadata = path.lstat()
-    if stat.S_ISDIR(metadata.st_mode):
-        for child in sorted(path.iterdir(), key=lambda item: item.name):
-            _remove_validated_tree(child)
-        path.rmdir()
-    else:
-        path.unlink()
+def _quarantine_invalidations(
+    root: Path,
+    identities: Mapping[str, os.stat_result],
+) -> None:
+    if not identities:
+        return
+    root_flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        root_flags |= os.O_DIRECTORY
+    if hasattr(os, "O_NOFOLLOW"):
+        root_flags |= os.O_NOFOLLOW
+    root_fd = os.open(root, root_flags)
+    quarantine_name = f".retarget-quarantine-{secrets.token_hex(16)}"
+    quarantine_fd = -1
+    try:
+        os.mkdir(quarantine_name, 0o700, dir_fd=root_fd)
+        quarantine_fd = _open_directory_at(root_fd, quarantine_name)
+        for relative, expected in identities.items():
+            try:
+                observed = os.stat(
+                    relative,
+                    dir_fd=root_fd,
+                    follow_symlinks=False,
+                )
+            except OSError as exc:
+                raise RetargetArtifactError(
+                    f"retarget artifact changed during invalidation: {relative}"
+                ) from exc
+            if not _same_inode(expected, observed):
+                raise RetargetArtifactError(
+                    f"retarget artifact changed during invalidation: {relative}"
+                )
+            os.rename(
+                relative,
+                relative,
+                src_dir_fd=root_fd,
+                dst_dir_fd=quarantine_fd,
+            )
+            quarantined = os.stat(
+                relative,
+                dir_fd=quarantine_fd,
+                follow_symlinks=False,
+            )
+            if not _same_inode(expected, quarantined):
+                if stat.S_ISLNK(quarantined.st_mode) or stat.S_ISREG(
+                    quarantined.st_mode
+                ):
+                    os.unlink(relative, dir_fd=quarantine_fd)
+                raise RetargetArtifactError(
+                    f"retarget artifact changed during invalidation: {relative}"
+                )
+        deletion_budget = [0]
+        for relative in identities:
+            _delete_entry_at(
+                quarantine_fd,
+                relative,
+                budget=deletion_budget,
+            )
+        os.close(quarantine_fd)
+        quarantine_fd = -1
+        os.rmdir(quarantine_name, dir_fd=root_fd)
+        _sync_directory(root)
+    finally:
+        if quarantine_fd >= 0:
+            os.close(quarantine_fd)
+        try:
+            os.rmdir(quarantine_name, dir_fd=root_fd)
+        except OSError:
+            pass
+        os.close(root_fd)
 
 
 def _require_real_directory(path: Path, *, label: str) -> Path:
@@ -419,31 +597,31 @@ def invalidate_retarget_artifacts(
             _validate_relative_artifact_path(item)
         if len(flattened) != len(set(flattened)):
             raise RetargetArtifactError("retarget artifact plan overlaps")
+    invalidated = tuple(
+        sorted((set(artifact_plan.invalidate) | set(shadow_plan.invalidate)) - {"targets.yml"})
+    )
+    root_identities: list[tuple[Path, dict[str, os.stat_result]]] = []
     traversal_budget = [0]
     for root, plan in ((canonical, artifact_plan), (shadow, shadow_plan)):
-        for relative in (*plan.preserve, *plan.invalidate):
-            path = root / relative
-            if path.exists() or path.is_symlink():
-                _validate_tree_for_removal(path, budget=traversal_budget)
-    invalidated = tuple(
-        sorted(set(artifact_plan.invalidate) | set(shadow_plan.invalidate) - {"targets.yml"})
-    )
-    invalidated = tuple(path for path in invalidated if path != "targets.yml")
-    removal_targets: list[Path] = []
-    for root in (canonical, shadow):
-        for relative in invalidated:
-            path = root / relative
-            try:
-                path.relative_to(root)
-            except ValueError as exc:
-                raise RetargetArtifactError("retarget artifact escapes selected spec") from exc
-            if path.exists() or path.is_symlink():
-                removal_targets.append(path)
-        targets_path = root / "targets.yml"
-        if targets_path.exists() or targets_path.is_symlink():
-            _validate_tree_for_removal(targets_path, budget=traversal_budget)
-    for path in removal_targets:
-        _remove_validated_tree(path)
+        root_fd = os.open(root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        identities: dict[str, os.stat_result] = {}
+        try:
+            for relative in (*plan.preserve, *plan.invalidate):
+                try:
+                    metadata = _validate_entry_at(
+                        root_fd,
+                        relative,
+                        budget=traversal_budget,
+                    )
+                except FileNotFoundError:
+                    continue
+                if relative in invalidated:
+                    identities[relative] = metadata
+        finally:
+            os.close(root_fd)
+        root_identities.append((root, identities))
+    for root, identities in root_identities:
+        _quarantine_invalidations(root, identities)
     content = ("targets:\n" + "".join(f"- {target}\n" for target in targets)).encode(
         "utf-8"
     )
@@ -499,14 +677,15 @@ def checkpoint_artifact_bytes(
         or raw_path != git_path.encode("utf-8")
     ):
         raise RetargetError(f"checkpoint context must be a regular Git blob: {name}")
+    blob_oid = fields[2].decode("ascii")
     result = subprocess.run(
-        ["git", "show", f"{commit}:{git_path}"],
+        ["git", "cat-file", "blob", blob_oid],
         cwd=root,
         check=False,
         capture_output=True,
     )
     if result.returncode != 0:
-        return b""
+        raise RetargetError(f"cannot read checkpoint context Git blob: {name}")
     data = bytes(result.stdout)
     if len(data) > _RETARGET_CONTEXT_FILE_CAP:
         raise RetargetError(f"checkpoint context file exceeds cap: {name}")
@@ -797,13 +976,15 @@ def _applied_result(
     replacement: object,
     checkpoint: PhaseCheckpoint,
     invalidated: tuple[str, ...],
+    *,
+    resume_existing: bool = False,
 ) -> RetargetCommandResult:
     replacement_run = getattr(replacement, "run", None)
     replacement_id = getattr(replacement_run, "run_id", None) or revision.replacement_run_id
     recovery = getattr(revision, "recovery", None)
     return RetargetCommandResult(
         applied=True,
-        resume_existing=False,
+        resume_existing=resume_existing,
         spec_id=preview.spec_id,
         baseline_run_id=preview.baseline.run_id,
         replacement_run_id=replacement_id,
@@ -819,6 +1000,140 @@ def _applied_result(
         old_targets=preview.old_targets,
         baseline_ready_to_build=getattr(recovery, "ready_to_build", False) is True,
     )
+
+
+def _recorded_checkpoint(
+    spec_dir: Path,
+    revision: RetargetRevision,
+    checkpoint_id: str,
+    checkpoint_commit: str,
+) -> PhaseCheckpoint:
+    try:
+        checkpoint = resolve_checkpoint(
+            load_checkpoint_ledger(spec_dir),
+            f"checkpoint:{checkpoint_id}",
+        )
+    except (KeyError, OSError, ValueError, PhaseCheckpointError) as exc:
+        raise RetargetEligibilityError(
+            f"recorded retarget checkpoint is unavailable\n"
+            f"  Recovery: {preview_recovery_command(checkpoint_id)}"
+        ) from exc
+    if (
+        checkpoint.id != checkpoint_id
+        or checkpoint.commit != checkpoint_commit
+        or checkpoint.spec_id != spec_dir.name
+        or checkpoint.run_id != revision.baseline_run_id
+        or checkpoint.phase != "retarget"
+        or checkpoint.next_phase != "phase0-constitution"
+        or checkpoint.source != "retarget-preflight"
+    ):
+        raise RetargetEligibilityError(
+            f"recorded retarget checkpoint identity drifted\n"
+            f"  Recovery: {preview_recovery_command(checkpoint_id)}"
+        )
+    return checkpoint
+
+
+_MEMORY_RECEIPT_LIST_FIELDS = frozenset(
+    {
+        "deleted_ids",
+        "remaining_owned_ids",
+        "unrelated_missing_ids",
+        "unrelated_changed_ids",
+        "unexpected_added_ids",
+    }
+)
+
+
+def _persisted_memory_receipt(run_dir: Path) -> RetargetMemoryReceipt | None:
+    state = _read_json_object(Path(run_dir) / "state.json")
+    retarget = state.get("retarget")
+    if type(retarget) is not dict or retarget.get("memory_excluded") is not True:
+        return None
+    raw = retarget.get("memory_purge")
+    expected = frozenset(RetargetMemoryReceipt.__dataclass_fields__)
+    if type(raw) is not dict or frozenset(raw) != expected:
+        raise RetargetMemoryError("persisted retarget memory receipt is invalid")
+    values = dict(raw)
+    for field in _MEMORY_RECEIPT_LIST_FIELDS:
+        value = values[field]
+        if type(value) is not list:
+            raise RetargetMemoryError("persisted retarget memory receipt is invalid")
+        values[field] = tuple(value)
+    try:
+        return RetargetMemoryReceipt(**values)
+    except (TypeError, ValueError) as exc:
+        raise RetargetMemoryError(
+            "persisted retarget memory receipt is invalid"
+        ) from exc
+
+
+def _finish_retarget_invalidation(
+    preview: RetargetPreview,
+    revision: RetargetRevision,
+    checkpoint: PhaseCheckpoint,
+    replacement: RetargetPhaseAStartOutcome,
+    *,
+    starting_status: str,
+    reuse_persisted_memory: bool = False,
+) -> tuple[str, ...]:
+    run_dir = replacement.run.run_dir
+    try:
+        if starting_status == "checkpointed":
+            advance_retarget_revision(
+                preview.spec_dir,
+                revision.revision_id,
+                expected_status="prepared",
+                status="invalidating",
+                updates={
+                    "checkpoint_id": checkpoint.id,
+                    "checkpoint_commit": checkpoint.commit,
+                },
+            )
+            _update_run_retarget(run_dir, status="invalidating")
+        elif starting_status != "invalidating":
+            raise RetargetRebuildError(
+                f"retarget destructive stage cannot resume from {starting_status!r}"
+            )
+
+        memory = _persisted_memory_receipt(run_dir) if reuse_persisted_memory else None
+        if memory is None:
+            memory = purge_retarget_spec_memory(
+                preview.project_root,
+                preview.spec_id,
+            )
+            persist_retarget_memory_exclusion(run_dir, memory)
+        shadow_dir = run_dir / "specs" / preview.spec_id
+        invalidated = invalidate_retarget_artifacts(
+            preview.spec_dir,
+            shadow_dir,
+            preview.artifact_plan,
+            preview.replacement_targets,
+        )
+        graph = invalidate_retarget_graphs(
+            preview.project_root,
+            preview.spec_dir,
+        )
+        write_checkpoint_coverage_context(
+            preview.project_root,
+            checkpoint.commit,
+            preview.spec_id,
+            run_dir,
+        )
+        mark_retarget_rebuilding(
+            run_dir,
+            preview.spec_dir,
+            memory,
+            graph,
+        )
+        return invalidated
+    except Exception as exc:
+        code = bounded_failure_code(exc)
+        try:
+            mark_retarget_failed(run_dir, preview.spec_dir, code)
+        except Exception as state_exc:
+            raise RetargetDestructiveError(checkpoint, state_exc) from exc
+        raise RetargetDestructiveError(checkpoint, exc) from exc
 
 
 def _apply_retarget(
@@ -861,57 +1176,13 @@ def _apply_retarget(
                     except Exception as state_exc:
                         raise RetargetDestructiveError(checkpoint, state_exc) from exc
                     raise RetargetDestructiveError(checkpoint, exc) from exc
-                run_dir = replacement.run.run_dir
-                try:
-                    advance_retarget_revision(
-                        preview.spec_dir,
-                        revision.revision_id,
-                        expected_status="prepared",
-                        status="invalidating",
-                        updates={
-                            "checkpoint_id": checkpoint.id,
-                            "checkpoint_commit": checkpoint.commit,
-                        },
-                    )
-                    _update_run_retarget(
-                        run_dir,
-                        status="invalidating",
-                    )
-                    memory = purge_retarget_spec_memory(
-                        preview.project_root,
-                        preview.spec_id,
-                    )
-                    persist_retarget_memory_exclusion(run_dir, memory)
-                    shadow_dir = run_dir / "specs" / preview.spec_id
-                    invalidated = invalidate_retarget_artifacts(
-                        preview.spec_dir,
-                        shadow_dir,
-                        preview.artifact_plan,
-                        preview.replacement_targets,
-                    )
-                    graph = invalidate_retarget_graphs(
-                        preview.project_root,
-                        preview.spec_dir,
-                    )
-                    write_checkpoint_coverage_context(
-                        preview.project_root,
-                        checkpoint.commit,
-                        preview.spec_id,
-                        run_dir,
-                    )
-                    mark_retarget_rebuilding(
-                        run_dir,
-                        preview.spec_dir,
-                        memory,
-                        graph,
-                    )
-                except Exception as exc:
-                    code = bounded_failure_code(exc)
-                    try:
-                        mark_retarget_failed(run_dir, preview.spec_dir, code)
-                    except Exception as state_exc:
-                        raise RetargetDestructiveError(checkpoint, state_exc) from exc
-                    raise RetargetDestructiveError(checkpoint, exc) from exc
+                invalidated = _finish_retarget_invalidation(
+                    rechecked,
+                    revision,
+                    checkpoint,
+                    replacement,
+                    starting_status="checkpointed",
+                )
     return _applied_result(preview, revision, replacement, checkpoint, invalidated)
 
 
@@ -1050,6 +1321,274 @@ def _detect_existing_retarget(
     )
 
 
+def _active_retry_preview(
+    project_root: Path,
+    active: SpecRun,
+    baseline: SpecRun,
+    revision: RetargetRevision,
+    result: RetargetCommandResult,
+) -> RetargetPreview:
+    root = Path(project_root).resolve()
+    canonical = _require_canonical_published_spec(root, baseline)
+    if _require_canonical_published_spec(root, active) != canonical:
+        raise RetargetEligibilityError("replacement published spec binding drifted")
+    return RetargetPreview(
+        project_root=root,
+        spec_id=result.spec_id,
+        baseline=baseline,
+        spec_dir=canonical,
+        old_targets=revision.old_targets,
+        replacement_targets=result.replacement_targets,
+        artifact_plan=plan_retarget_artifacts(canonical),
+        operation_id=revision.operation_id,
+        original_user_message=result.original_user_message,
+        autonomy_mode=result.autonomy_mode,
+        ignore_re=result.ignore_re,
+        explicit_re_sources=result.explicit_re_sources,
+    )
+
+
+def _resume_existing_retarget(
+    project_root: Path,
+    result: RetargetCommandResult,
+    *,
+    checkpoint_created: Callable[[PhaseCheckpoint], None] | None,
+) -> RetargetCommandResult:
+    root = Path(project_root).resolve()
+    baseline = resolve_spec_run(root, result.baseline_run_id)
+    history = load_retarget_history(root / "specs" / result.spec_id)
+    if not history.revisions:
+        raise RetargetEligibilityError("active retarget history is missing")
+    operation_id = history.revisions[-1].operation_id
+    with SpecMutationLock.acquire(root, result.spec_id, operation_id):
+        with PhaseAExecutionLock.acquire(root, operation_id):
+            with SpecRunExecutionLock.acquire(baseline.run_dir, operation_id):
+                observed = _detect_existing_retarget(
+                    root,
+                    result.spec_id,
+                    result.replacement_targets,
+                    confirm=True,
+                )
+                if observed != result:
+                    raise RetargetEligibilityError(
+                        "active retarget evidence changed while locking"
+                    )
+                active = resolve_active_spec_run(root)
+                state = _read_json_object(active.run_dir / "state.json")
+                retarget = state.get("retarget")
+                if type(retarget) is not dict:
+                    raise RetargetEligibilityError("active retarget state is corrupt")
+                status = retarget.get("status")
+                if status in {"rebuilding", "finalizing"}:
+                    return result
+                if status not in {"checkpointed", "invalidating"}:
+                    raise RetargetEligibilityError(
+                        f"active retarget status is not resumable: {status!r}"
+                    )
+                history = load_retarget_history(root / "specs" / result.spec_id)
+                revision = history.revisions[-1]
+                assert result.checkpoint_id is not None
+                assert result.checkpoint_commit is not None
+                checkpoint = _recorded_checkpoint(
+                    root / "specs" / result.spec_id,
+                    revision,
+                    result.checkpoint_id,
+                    result.checkpoint_commit,
+                )
+                preview = _active_retry_preview(
+                    root,
+                    active,
+                    baseline,
+                    revision,
+                    result,
+                )
+                if checkpoint_created is not None:
+                    checkpoint_created(checkpoint)
+                replacement = RetargetPhaseAStartOutcome(
+                    run_dir=active.run_dir,
+                    run=active,
+                    baseline=baseline,
+                )
+                invalidated = _finish_retarget_invalidation(
+                    preview,
+                    revision,
+                    checkpoint,
+                    replacement,
+                    starting_status=status,
+                    reuse_persisted_memory=True,
+                )
+    return _applied_result(
+        preview,
+        revision,
+        replacement,
+        checkpoint,
+        invalidated,
+        resume_existing=True,
+    )
+
+
+def _detect_prepared_retarget(
+    project_root: Path,
+    spec_id: str,
+    replacement_targets: tuple[str, ...],
+) -> tuple[RetargetPreview, RetargetRevision, PhaseCheckpoint] | None:
+    root = Path(project_root).resolve()
+    canonical = root / "specs" / spec_id
+    try:
+        history = load_retarget_history(canonical)
+    except ValueError as exc:
+        raise RetargetEligibilityError("prepared retarget history is corrupt") from exc
+    if not history.revisions or history.revisions[-1].status != "prepared":
+        return None
+    revision = history.revisions[-1]
+    checkpoint_id = f"retarget-preflight-{revision.revision_id}"
+    recovery = preview_recovery_command(checkpoint_id)
+    if revision.replacement_targets != replacement_targets:
+        raise RetargetEligibilityError(
+            f"retarget retry does not match the recorded operation\n  Recovery: {recovery}"
+        )
+    try:
+        ledger_checkpoint = resolve_checkpoint(
+            load_checkpoint_ledger(canonical),
+            f"checkpoint:{checkpoint_id}",
+        )
+    except (KeyError, OSError, ValueError, PhaseCheckpointError) as exc:
+        raise RetargetEligibilityError(
+            f"prepared retarget checkpoint is unavailable\n  Recovery: {recovery}"
+        ) from exc
+    checkpoint = _recorded_checkpoint(
+        canonical,
+        revision,
+        checkpoint_id,
+        ledger_checkpoint.commit,
+    )
+    try:
+        baseline = resolve_spec_run(root, revision.baseline_run_id)
+        active = resolve_active_spec_run(root)
+    except SpecLifecycleError as exc:
+        raise RetargetEligibilityError(
+            f"prepared retarget baseline is unavailable\n  Recovery: {recovery}"
+        ) from exc
+    if active != baseline:
+        raise RetargetEligibilityError(
+            f"prepared retarget baseline is no longer active\n  Recovery: {recovery}"
+        )
+    published = _require_canonical_published_spec(root, baseline)
+    baseline_state = _read_json_object(baseline.run_dir / "state.json")
+    if (
+        _canonical_targets(published) != revision.old_targets
+        or _state_targets(baseline_state) != revision.old_targets
+    ):
+        raise RetargetEligibilityError(
+            f"prepared retarget baseline target evidence drifted\n  Recovery: {recovery}"
+        )
+    user_message = _first_text(
+        baseline_state,
+        "original_user_message",
+        "user_message",
+    )
+    autonomy_mode = _first_text(baseline_state, "autonomy_mode", "mode")
+    digest = "sha256:" + hashlib.sha256(user_message.encode("utf-8")).hexdigest()
+    if not user_message or not autonomy_mode or digest != revision.original_prompt_digest:
+        raise RetargetEligibilityError(
+            f"prepared retarget original intent drifted\n  Recovery: {recovery}"
+        )
+    ignore_re, explicit_re_sources = _original_re_policy(baseline.run_dir)
+    preview = RetargetPreview(
+        project_root=root,
+        spec_id=spec_id,
+        baseline=baseline,
+        spec_dir=published,
+        old_targets=revision.old_targets,
+        replacement_targets=revision.replacement_targets,
+        artifact_plan=plan_retarget_artifacts(published),
+        operation_id=revision.operation_id,
+        original_user_message=user_message,
+        autonomy_mode=autonomy_mode,
+        ignore_re=ignore_re,
+        explicit_re_sources=explicit_re_sources,
+    )
+    if _replacement_run_id(preview) != revision.replacement_run_id:
+        raise RetargetEligibilityError(
+            f"prepared retarget replacement identity drifted\n  Recovery: {recovery}"
+        )
+    return preview, revision, checkpoint
+
+
+def _prepared_retry_result(
+    preview: RetargetPreview,
+    revision: RetargetRevision,
+    checkpoint: PhaseCheckpoint,
+    *,
+    applied: bool,
+) -> RetargetCommandResult:
+    result = _applied_result(
+        preview,
+        revision,
+        None,
+        checkpoint,
+        (),
+        resume_existing=True,
+    )
+    return replace(result, applied=applied)
+
+
+def _adopt_prepared_retarget(
+    prepared: tuple[RetargetPreview, RetargetRevision, PhaseCheckpoint],
+    *,
+    checkpoint_created: Callable[[PhaseCheckpoint], None] | None,
+) -> RetargetCommandResult:
+    preview, revision, checkpoint = prepared
+    operation_id = revision.operation_id
+    with SpecMutationLock.acquire(preview.project_root, preview.spec_id, operation_id):
+        with PhaseAExecutionLock.acquire(preview.project_root, operation_id):
+            with SpecRunExecutionLock.acquire(preview.baseline.run_dir, operation_id):
+                observed = _detect_prepared_retarget(
+                    preview.project_root,
+                    preview.spec_id,
+                    preview.replacement_targets,
+                )
+                if observed != prepared:
+                    raise RetargetEligibilityError(
+                        "prepared retarget evidence changed while locking"
+                    )
+                if checkpoint_created is not None:
+                    checkpoint_created(checkpoint)
+                try:
+                    replacement = start_retarget_phase_a_spec_from_preview(
+                        preview,
+                        revision,
+                        checkpoint,
+                    )
+                except Exception as exc:
+                    code = bounded_failure_code(exc)
+                    try:
+                        mark_retarget_failed_before_bootstrap(
+                            preview,
+                            revision,
+                            checkpoint,
+                            code,
+                        )
+                    except Exception as state_exc:
+                        raise RetargetDestructiveError(checkpoint, state_exc) from exc
+                    raise RetargetDestructiveError(checkpoint, exc) from exc
+                invalidated = _finish_retarget_invalidation(
+                    preview,
+                    revision,
+                    checkpoint,
+                    replacement,
+                    starting_status="checkpointed",
+                )
+    return _applied_result(
+        preview,
+        revision,
+        replacement,
+        checkpoint,
+        invalidated,
+        resume_existing=True,
+    )
+
+
 def prepare_spec_retarget(
     project_root: Path,
     spec_id: str,
@@ -1068,7 +1607,21 @@ def prepare_spec_retarget(
         confirm=confirm,
     )
     if retry is not None:
+        if confirm:
+            return _resume_existing_retarget(
+                project_root,
+                retry,
+                checkpoint_created=checkpoint_created,
+            )
         return retry
+    prepared = _detect_prepared_retarget(project_root, spec_id, targets)
+    if prepared is not None:
+        if not confirm:
+            return _prepared_retry_result(*prepared, applied=False)
+        return _adopt_prepared_retarget(
+            prepared,
+            checkpoint_created=checkpoint_created,
+        )
     preview = _build_retarget_preview(project_root, spec_id, targets)
     if not confirm:
         return _preview_result(preview)
@@ -1161,7 +1714,7 @@ def collect_retarget_evidence(project_root: Path, spec_id: str) -> RetargetEvide
             f"selected spec identity does not agree with requested spec: {selected_id!r}"
         )
     state = _read_json_object(run.run_dir / "state.json")
-    spec_dir = run.spec_dir
+    spec_dir = _require_canonical_published_spec(root, run)
     canonical_targets = _canonical_targets(spec_dir)
     state_targets = _state_targets(state)
     lifecycle_status = str(read_frontmatter(spec_dir).get("status") or "").strip().lower()
