@@ -1366,6 +1366,77 @@ def test_artifact_invalidation_root_swap_before_target_publication_fails_closed(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("race_owner", ("canonical", "shadow"))
+def test_target_publication_replace_interval_root_swap_rolls_back_both_contracts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    race_owner: str,
+) -> None:
+    """A post-replace root swap must roll back every owned target contract."""
+    from echelon.artifact_index import plan_retarget_artifacts
+    import echelon.spec_retarget as subject
+
+    spec_dir = tmp_path / "specs/001-demo"
+    shadow = tmp_path / "runs/squad-replacement/specs/001-demo"
+    old_content = b"targets:\n- services/api\n"
+    old_modes = {spec_dir: 0o640, shadow: 0o600}
+    for root, mode in old_modes.items():
+        (root / "contracts").mkdir(parents=True)
+        (root / "contracts/owned.txt").write_text("owned\n", encoding="utf-8")
+        target = root / "targets.yml"
+        target.write_bytes(old_content)
+        target.chmod(mode)
+    race_root = spec_dir if race_owner == "canonical" else shadow
+    other_root = shadow if race_root == spec_dir else spec_dir
+    displaced = race_root.with_name(f"{race_root.name}-displaced")
+    external = tmp_path / f"external-replace-{race_owner}"
+    external.mkdir()
+    external_target = external / "targets.yml"
+    external_target.write_bytes(b"external\n")
+    external_target.chmod(0o604)
+    external_preimage = (
+        external_target.read_bytes(),
+        stat.S_IMODE(external_target.stat().st_mode),
+    )
+    real_replace = subject.os.replace
+    swapped = False
+
+    def swap_inside_replace(src: object, dst: object, *args: object, **kwargs: object):
+        nonlocal swapped
+        result = real_replace(src, dst, *args, **kwargs)
+        destination_fd = kwargs.get("dst_dir_fd")
+        if (
+            not swapped
+            and dst == "targets.yml"
+            and isinstance(destination_fd, int)
+            and os.fstat(destination_fd).st_ino == race_root.stat().st_ino
+        ):
+            swapped = True
+            os.rename(race_root, displaced)
+            os.rename(external, race_root)
+        return result
+
+    monkeypatch.setattr(subject.os, "replace", swap_inside_replace)
+
+    with pytest.raises(subject.RetargetArtifactError, match="target publication"):
+        subject.invalidate_retarget_artifacts(
+            spec_dir,
+            shadow,
+            plan_retarget_artifacts(spec_dir),
+            ("apps/web",),
+        )
+
+    assert swapped is True
+    assert (race_root / "targets.yml").read_bytes() == external_preimage[0]
+    assert stat.S_IMODE((race_root / "targets.yml").stat().st_mode) == external_preimage[1]
+    assert (displaced / "targets.yml").read_bytes() == old_content
+    assert stat.S_IMODE((displaced / "targets.yml").stat().st_mode) == old_modes[race_root]
+    assert (other_root / "targets.yml").read_bytes() == old_content
+    assert stat.S_IMODE((other_root / "targets.yml").stat().st_mode) == old_modes[other_root]
+    assert not list(tmp_path.rglob(".targets.yml.*.tmp"))
+
+
+@pytest.mark.unit
 def test_memory_exclusion_persists_the_squad_reader_gate(tmp_path: Path) -> None:
     from echelon.spec_retarget import persist_retarget_memory_exclusion
 

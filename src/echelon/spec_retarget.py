@@ -172,6 +172,7 @@ _RETARGET_CONTEXT_FILE_CAP = 256 * 1024
 _RETARGET_CONTEXT_TOTAL_CAP = 768 * 1024
 _RETARGET_ARTIFACT_ENTRY_CAP = 16_384
 _RETARGET_ARTIFACT_DEPTH_CAP = 64
+_RETARGET_TARGET_PREIMAGE_CAP = 256 * 1024
 _CANONICAL_SPEC_ID = re.compile(r"\A[0-9]{3,}-[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 
 _RETARGET_FAILURE_CODES = {
@@ -407,6 +408,14 @@ class _PinnedRetargetRoot:
     identity: os.stat_result
 
 
+@dataclass(frozen=True)
+class _TargetContractPreimage:
+    present: bool
+    identity: os.stat_result | None
+    content: bytes
+    mode: int | None
+
+
 def _same_inode(left: os.stat_result, right: os.stat_result) -> bool:
     return (
         left.st_dev,
@@ -487,33 +496,98 @@ def _authenticate_pinned_retarget_root(
         )
 
 
-def _write_target_contract_at(
+def _same_file_snapshot(left: os.stat_result, right: os.stat_result) -> bool:
+    return (
+        _same_inode(left, right)
+        and left.st_size == right.st_size
+        and stat.S_IMODE(left.st_mode) == stat.S_IMODE(right.st_mode)
+        and left.st_mtime_ns == right.st_mtime_ns
+        and left.st_ctime_ns == right.st_ctime_ns
+    )
+
+
+def _capture_target_contract_preimage(
     root: _PinnedRetargetRoot,
-    content: bytes,
-) -> None:
-    """Publish targets.yml only through a still-authenticated pinned root FD."""
+    *,
+    authenticate_name: bool,
+) -> _TargetContractPreimage:
+    """Read one exact bounded regular-file preimage through a pinned root FD."""
 
     name = "targets.yml"
-    temporary_name = f".{name}.{secrets.token_hex(16)}.tmp"
     descriptor = -1
     try:
-        _authenticate_pinned_retarget_root(root, stage="target publication")
+        if authenticate_name:
+            _authenticate_pinned_retarget_root(root, stage="target publication")
         try:
-            existing = os.stat(name, dir_fd=root.root_fd, follow_symlinks=False)
+            before = os.stat(name, dir_fd=root.root_fd, follow_symlinks=False)
         except FileNotFoundError:
-            existing = None
-        if existing is not None and not stat.S_ISREG(existing.st_mode):
-            raise RetargetArtifactError("retarget output must be a regular file: targets.yml")
+            return _TargetContractPreimage(False, None, b"", None)
+        if not stat.S_ISREG(before.st_mode):
+            raise RetargetArtifactError(
+                "retarget target preimage must be a regular file: targets.yml"
+            )
+        if before.st_size > _RETARGET_TARGET_PREIMAGE_CAP:
+            raise RetargetArtifactError("retarget target preimage exceeds safety cap")
+        flags = os.O_RDONLY
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        descriptor = os.open(name, flags, dir_fd=root.root_fd)
+        opened = os.fstat(descriptor)
+        if not _same_file_snapshot(before, opened):
+            raise RetargetArtifactError(
+                "retarget target preimage changed while reading: targets.yml"
+            )
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(descriptor, min(64 * 1024, _RETARGET_TARGET_PREIMAGE_CAP + 1 - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > _RETARGET_TARGET_PREIMAGE_CAP:
+                raise RetargetArtifactError("retarget target preimage exceeds safety cap")
+        after = os.fstat(descriptor)
+        if not _same_file_snapshot(before, after) or total != after.st_size:
+            raise RetargetArtifactError(
+                "retarget target preimage changed while reading: targets.yml"
+            )
+        return _TargetContractPreimage(
+            True,
+            before,
+            b"".join(chunks),
+            stat.S_IMODE(before.st_mode),
+        )
+    except OSError as exc:
+        raise RetargetArtifactError(
+            f"cannot capture retarget target preimage: {root.path}"
+        ) from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def _atomic_target_contract_replace(
+    root: _PinnedRetargetRoot,
+    content: bytes,
+    *,
+    mode: int,
+    label: str,
+) -> None:
+    name = "targets.yml"
+    temporary_name = f".{name}.{label}.{secrets.token_hex(16)}.tmp"
+    descriptor = -1
+    try:
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
         if hasattr(os, "O_NOFOLLOW"):
             flags |= os.O_NOFOLLOW
-        descriptor = os.open(temporary_name, flags, 0o600, dir_fd=root.root_fd)
+        descriptor = os.open(temporary_name, flags, mode, dir_fd=root.root_fd)
+        os.fchmod(descriptor, mode)
         with os.fdopen(descriptor, "wb") as handle:
             descriptor = -1
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
-        _authenticate_pinned_retarget_root(root, stage="target publication")
         os.replace(
             temporary_name,
             name,
@@ -521,11 +595,6 @@ def _write_target_contract_at(
             dst_dir_fd=root.root_fd,
         )
         _sync_directory_fd(root.root_fd)
-        _authenticate_pinned_retarget_root(root, stage="target publication")
-    except OSError as exc:
-        raise RetargetArtifactError(
-            f"retarget artifact changed during target publication: {root.path}"
-        ) from exc
     finally:
         if descriptor >= 0:
             os.close(descriptor)
@@ -533,10 +602,121 @@ def _write_target_contract_at(
             os.unlink(temporary_name, dir_fd=root.root_fd)
         except FileNotFoundError:
             pass
-        except OSError as exc:
+
+
+def _preimage_matches(
+    observed: _TargetContractPreimage,
+    expected: _TargetContractPreimage,
+    *,
+    require_identity: bool,
+) -> bool:
+    if (
+        observed.present != expected.present
+        or observed.content != expected.content
+        or observed.mode != expected.mode
+    ):
+        return False
+    if not expected.present or not require_identity:
+        return True
+    assert observed.identity is not None and expected.identity is not None
+    return _same_file_snapshot(observed.identity, expected.identity)
+
+
+def _write_target_contract_at(
+    root: _PinnedRetargetRoot,
+    content: bytes,
+    preimage: _TargetContractPreimage,
+) -> None:
+    """Publish targets.yml only through a still-authenticated pinned root FD."""
+
+    try:
+        current = _capture_target_contract_preimage(root, authenticate_name=True)
+        if not _preimage_matches(current, preimage, require_identity=True):
             raise RetargetArtifactError(
-                f"retarget artifact changed during target publication: {root.path}"
-            ) from exc
+                f"retarget target preimage changed before publication: {root.path}"
+            )
+        _authenticate_pinned_retarget_root(root, stage="target publication")
+        _atomic_target_contract_replace(
+            root,
+            content,
+            mode=0o600,
+            label="publish",
+        )
+        _authenticate_pinned_retarget_root(root, stage="target publication")
+    except OSError as exc:
+        raise RetargetArtifactError(
+            f"retarget artifact changed during target publication: {root.path}"
+        ) from exc
+
+
+def _restore_target_contract_preimage(
+    root: _PinnedRetargetRoot,
+    preimage: _TargetContractPreimage,
+) -> None:
+    """Durably restore and verify the exact bytes/mode through the pinned root."""
+
+    try:
+        if preimage.present:
+            assert preimage.mode is not None
+            _atomic_target_contract_replace(
+                root,
+                preimage.content,
+                mode=preimage.mode,
+                label="rollback",
+            )
+        else:
+            try:
+                observed = os.stat(
+                    "targets.yml",
+                    dir_fd=root.root_fd,
+                    follow_symlinks=False,
+                )
+            except FileNotFoundError:
+                observed = None
+            if observed is not None:
+                if stat.S_ISDIR(observed.st_mode):
+                    raise RetargetArtifactError(
+                        "retarget target rollback encountered a directory"
+                    )
+                os.unlink("targets.yml", dir_fd=root.root_fd)
+                _sync_directory_fd(root.root_fd)
+        restored = _capture_target_contract_preimage(root, authenticate_name=False)
+        if not _preimage_matches(restored, preimage, require_identity=False):
+            raise RetargetArtifactError(
+                f"retarget target rollback could not be proven: {root.path}"
+            )
+    except OSError as exc:
+        raise RetargetArtifactError(
+            f"retarget target rollback could not be proven: {root.path}"
+        ) from exc
+
+
+def _publish_target_contract_transaction(
+    roots: tuple[_PinnedRetargetRoot, ...],
+    content: bytes,
+) -> None:
+    """Publish both target contracts or restore every exact preimage."""
+
+    preimages = tuple(
+        (root, _capture_target_contract_preimage(root, authenticate_name=True))
+        for root in roots
+    )
+    try:
+        for root, preimage in preimages:
+            _write_target_contract_at(root, content, preimage)
+    except BaseException as publication_error:
+        rollback_errors: list[str] = []
+        for root, preimage in reversed(preimages):
+            try:
+                _restore_target_contract_preimage(root, preimage)
+            except BaseException as rollback_error:
+                rollback_errors.append(f"{root.path}: {rollback_error}")
+        if rollback_errors:
+            raise RetargetArtifactError(
+                "retarget target rollback could not be proven; recovery required: "
+                + "; ".join(rollback_errors)
+            ) from publication_error
+        raise
 
 
 def _validate_entry_at(
@@ -754,8 +934,10 @@ def invalidate_retarget_artifacts(
         content = ("targets:\n" + "".join(f"- {target}\n" for target in targets)).encode(
             "utf-8"
         )
-        for root, _identities in pinned_roots:
-            _write_target_contract_at(root, content)
+        _publish_target_contract_transaction(
+            tuple(root for root, _identities in pinned_roots),
+            content,
+        )
     finally:
         for root, _identities in pinned_roots:
             _close_pinned_retarget_root(root)
