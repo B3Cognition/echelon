@@ -274,3 +274,189 @@ def test_registry_rejects_hash_drift_and_symlink_escape(tmp_path: Path) -> None:
     analysis.symlink_to(outside)
     with pytest.raises(TopologyRegistryError, match="escape"):
         load_published_topology(tmp_path)
+
+
+@pytest.mark.unit
+def test_registry_rejects_source_directory_and_nested_symlink_escapes(tmp_path: Path) -> None:
+    build_topology(tmp_path)
+    from echelon.topology_registry import TopologyRegistryError, load_topology_index
+
+    source_dir = tmp_path / "re/topology/sources/api"
+    outside_dir = tmp_path / "outside-source"
+    source_dir.rename(outside_dir)
+    source_dir.symlink_to(outside_dir, target_is_directory=True)
+    with pytest.raises(TopologyRegistryError, match="escape"):
+        load_topology_index(tmp_path)
+
+    source_dir.unlink()
+    outside_dir.rename(source_dir)
+    nested = source_dir / "codegraph-summary.json"
+    outside = tmp_path / "outside-summary.json"
+    outside.write_text("{}", encoding="utf-8")
+    nested.unlink()
+    nested.symlink_to(outside)
+    with pytest.raises(TopologyRegistryError, match="escape"):
+        load_topology_index(tmp_path)
+
+
+@pytest.mark.unit
+def test_registry_rejects_empty_provider_catalog_and_nonstandard_json_constants(tmp_path: Path) -> None:
+    index = build_topology(tmp_path)
+    index["sources"]["api"]["providers"] = {}  # type: ignore[index]
+    _write_json(tmp_path / "re/topology/index.json", index)
+    from echelon.topology_registry import TopologyRegistryError, load_topology_index
+
+    with pytest.raises(TopologyRegistryError, match="provider"):
+        load_topology_index(tmp_path)
+
+    build_topology(tmp_path)
+    (tmp_path / "re/topology/index.json").write_text(
+        '{"schema_version":NaN}', encoding="utf-8"
+    )
+    with pytest.raises(TopologyRegistryError, match="constant"):
+        load_topology_index(tmp_path)
+
+
+@pytest.mark.unit
+def test_published_loader_uses_the_hash_verified_bytes_without_a_second_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    build_topology(tmp_path)
+    from echelon import topology_registry
+
+    analysis = tmp_path / "re/topology/sources/api/codegraph-analysis.json"
+    original_read = Path.read_bytes
+    calls = {"analysis": 0}
+
+    def changed_after_hash(self: Path) -> bytes:
+        raw = original_read(self)
+        if self == analysis:
+            calls["analysis"] += 1
+            # Index validation is the first read; mutate only after the
+            # published loader obtains its authoritative second read.
+            if calls["analysis"] == 2:
+                analysis.write_text('{"schema_version":2,"schema_version":2}', encoding="utf-8")
+        return raw
+
+    monkeypatch.setattr(Path, "read_bytes", changed_after_hash)
+    topology = topology_registry.load_published_topology(tmp_path)
+
+    assert calls["analysis"] == 2
+    assert topology.receipt("api").provider_statuses["codegraph"] == "ready"
+
+
+@pytest.mark.unit
+def test_provider_analysis_rejects_duplicate_json_keys_before_native_validation(tmp_path: Path) -> None:
+    index = build_topology(tmp_path)
+    analysis = tmp_path / "re/topology/sources/api/codegraph-analysis.json"
+    raw = b'{"schema_version":2,"schema_version":2}'
+    analysis.write_bytes(raw)
+    digest = _sha(raw)
+    index["sources"]["api"]["providers"]["codegraph"]["artifacts"]["analysis"]["sha256"] = digest  # type: ignore[index]
+    receipt_path = tmp_path / index["sources"]["api"]["receipt"]["path"]  # type: ignore[index]
+    receipt = json.loads(receipt_path.read_text())
+    receipt["providers"]["codegraph"]["artifacts"]["analysis"]["sha256"] = digest
+    receipt_sha = _write_json(receipt_path, receipt)
+    index["sources"]["api"]["receipt"]["sha256"] = receipt_sha  # type: ignore[index]
+    _write_json(tmp_path / "re/topology/index.json", index)
+    from echelon.topology_registry import TopologyRegistryError, load_published_topology
+
+    with pytest.raises(TopologyRegistryError, match="duplicate JSON"):
+        load_published_topology(tmp_path)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("value", (True, "1"))
+def test_registry_rejects_non_integer_schema_and_invalid_published_timestamp(
+    tmp_path: Path, value: object
+) -> None:
+    index = build_topology(tmp_path)
+    index["schema_version"] = value
+    _write_json(tmp_path / "re/topology/index.json", index)
+    from echelon.topology_registry import TopologyRegistryError, load_topology_index
+
+    with pytest.raises(TopologyRegistryError, match="schema"):
+        load_topology_index(tmp_path)
+
+    index = build_topology(tmp_path)
+    index["published_at"] = "2026-08-04T12:00:00"
+    _write_json(tmp_path / "re/topology/index.json", index)
+    with pytest.raises(TopologyRegistryError, match="published_at"):
+        load_topology_index(tmp_path)
+
+
+@pytest.mark.unit
+def test_registry_rejects_source_path_symlink_escaping_workspace(tmp_path: Path) -> None:
+    index = build_topology(tmp_path)
+    source = tmp_path / "sources/api"
+    outside = tmp_path.parent / f"{tmp_path.name}-outside-source"
+    source.rename(outside)
+    source.symlink_to(outside, target_is_directory=True)
+    from echelon.topology_registry import TopologyRegistryError, load_topology_index
+
+    with pytest.raises(TopologyRegistryError, match="escapes"):
+        load_topology_index(tmp_path)
+    source.unlink()
+    outside.rename(source)
+
+
+@pytest.mark.unit
+def test_registry_accepts_all_unsupported_completed_provider_evidence(tmp_path: Path) -> None:
+    index = build_topology(tmp_path)
+    index["sources"]["api"]["providers"].pop("codegraph")  # type: ignore[index]
+    receipt_path = tmp_path / index["sources"]["api"]["receipt"]["path"]  # type: ignore[index]
+    receipt = json.loads(receipt_path.read_text())
+    receipt["providers"].pop("codegraph")
+    receipt_sha = _write_json(receipt_path, receipt)
+    index["sources"]["api"]["receipt"]["sha256"] = receipt_sha  # type: ignore[index]
+    _write_json(tmp_path / "re/topology/index.json", index)
+    from echelon.topology_registry import load_published_topology
+
+    topology = load_published_topology(tmp_path)
+    assert topology.receipt("api").provider_statuses == {"perlgraph": "unsupported"}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "mutate",
+    (
+        lambda receipt: receipt["providers"]["codegraph"].update({"tool_version": "/private/tool"}),
+        lambda receipt: receipt["providers"]["codegraph"].update({"capabilities": ["/private/capability"]}),
+        lambda receipt: receipt["providers"]["codegraph"].update({"counts": {"/private/count": 1}}),
+        lambda receipt: receipt["providers"]["codegraph"].update({"diagnostics": [{"/private/key": "value"}]}),
+        lambda receipt: receipt.update({"provenance": {"kind": "re", "run_id": "/private/run"}}),
+    ),
+)
+def test_registry_rejects_host_path_shaped_public_receipt_metadata(
+    tmp_path: Path, mutate: object
+) -> None:
+    index = build_topology(tmp_path)
+    receipt_path = tmp_path / index["sources"]["api"]["receipt"]["path"]  # type: ignore[index]
+    receipt = json.loads(receipt_path.read_text())
+    assert callable(mutate)
+    mutate(receipt)
+    receipt_sha = _write_json(receipt_path, receipt)
+    index["sources"]["api"]["receipt"]["sha256"] = receipt_sha  # type: ignore[index]
+    _write_json(tmp_path / "re/topology/index.json", index)
+    from echelon.topology_registry import TopologyRegistryError, load_topology_index
+
+    with pytest.raises(TopologyRegistryError):
+        load_topology_index(tmp_path)
+
+
+@pytest.mark.unit
+def test_registry_rejects_dirty_file_tree_fingerprint(tmp_path: Path) -> None:
+    index = build_topology(tmp_path)
+    fingerprint = index["sources"]["api"]["source_fingerprint"]  # type: ignore[index]
+    fingerprint.update({"kind": "file-tree", "dirty": True, "git_head": None})
+    receipt_path = tmp_path / index["sources"]["api"]["receipt"]["path"]  # type: ignore[index]
+    receipt = json.loads(receipt_path.read_text())
+    receipt["source_fingerprint"] = fingerprint
+    receipt["analyzed_commit"] = None
+    receipt_sha = _write_json(receipt_path, receipt)
+    index["sources"]["api"]["receipt"]["sha256"] = receipt_sha  # type: ignore[index]
+    _write_json(tmp_path / "re/topology/index.json", index)
+    from echelon.topology_registry import TopologyRegistryError, load_topology_index
+
+    with pytest.raises(TopologyRegistryError, match="file-tree"):
+        load_topology_index(tmp_path)

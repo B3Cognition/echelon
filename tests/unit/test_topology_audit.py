@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -125,3 +126,48 @@ def test_audit_reports_structural_contract_failures_as_invalid(
     report = audit_topology(tmp_path)
     assert report.status == "invalid"
     assert report.exit_code == 2
+
+
+@pytest.mark.unit
+def test_audit_fingerprint_execution_failure_is_invalid_with_exit_two(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    build_topology(tmp_path)
+    from echelon.topology_audit import audit_topology
+
+    monkeypatch.setattr("echelon.topology_audit.resolve_re_fingerprint_profile", lambda root: object())
+    monkeypatch.setattr(
+        "echelon.topology_audit.fingerprint_source",
+        lambda path, profile: (_ for _ in ()).throw(
+            subprocess.CalledProcessError(1, ["git", "rev-parse"])
+        ),
+    )
+    report = audit_topology(tmp_path, source_id="api")
+
+    assert report.status == "invalid"
+    assert report.exit_code == 2
+    assert report.findings[0].source_id == "api"
+
+
+@pytest.mark.unit
+def test_audit_all_unsupported_completed_provider_is_current(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    index = build_topology(tmp_path)
+    index["sources"]["api"]["providers"].pop("codegraph")  # type: ignore[index]
+    receipt_path = tmp_path / index["sources"]["api"]["receipt"]["path"]  # type: ignore[index]
+    receipt = json.loads(receipt_path.read_text())
+    receipt["providers"].pop("codegraph")
+    receipt_sha = _write_json(receipt_path, receipt)
+    index["sources"]["api"]["receipt"]["sha256"] = receipt_sha  # type: ignore[index]
+    _write_json(tmp_path / "re/topology/index.json", index)
+    from harness.re_fingerprint import SourceFingerprint
+    from echelon.topology_audit import audit_topology
+
+    fingerprint = SourceFingerprint("0" * 64, "git", False, "1" * 64, "0123456789abcdef0123456789abcdef01234567")
+    monkeypatch.setattr("echelon.topology_audit.resolve_re_fingerprint_profile", lambda root: object())
+    monkeypatch.setattr("echelon.topology_audit.fingerprint_source", lambda path, profile: fingerprint)
+    report = audit_topology(tmp_path)
+
+    assert report.status == "current"
+    assert report.exit_code == 0

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import datetime
 import hashlib
 import json
 from pathlib import Path
@@ -22,7 +23,7 @@ from echelon.topology_provider import (
     NORMALIZED_STATUSES,
     PublishedTopology,
     TopologyProviderError,
-    load_provider_artifact,
+    load_provider_document,
 )
 from echelon.workspace_model import discover_workspace
 from harness.re_fingerprint import SourceFingerprint
@@ -32,6 +33,9 @@ _SHA256 = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 _GIT_HEAD = re.compile(r"[0-9a-f]{40}\Z")
 _RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+_RFC3339 = re.compile(
+    r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})\Z"
+)
 _INDEX_PATH = "re/topology/index.json"
 
 
@@ -100,14 +104,19 @@ class TopologyProviderReceipt:
             not isinstance(self.tool_version, str) or not self.tool_version
         ):
             raise TopologyRegistryError("provider tool_version must be a non-empty string")
+        if self.tool_version is not None:
+            _reject_host_path(self.tool_version)
         if any(not isinstance(value, str) or not value for value in self.capabilities):
             raise TopologyRegistryError("provider capabilities must contain non-empty strings")
         if len(set(self.capabilities)) != len(self.capabilities):
             raise TopologyRegistryError("provider capabilities must not contain duplicates")
+        for capability in self.capabilities:
+            _reject_host_path(capability)
         counts: dict[str, int] = {}
         for name, value in self.counts.items():
             if not isinstance(name, str) or not name or isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise TopologyRegistryError("provider counts must map names to non-negative integers")
+            _reject_host_path(name)
             counts[name] = value
         object.__setattr__(self, "provider", provider)
         object.__setattr__(self, "artifacts", MappingProxyType(dict(sorted(artifacts.items()))))
@@ -222,19 +231,21 @@ def load_published_topology(
                 if artifact.name != "analysis":
                     continue
                 try:
-                    loaded = load_provider_artifact(
-                        _artifact_path(root, source.source_id, artifact),
-                        provider=provider_name,
-                        source_id=source.source_id,
+                    document = _read_json_bytes(
+                        raw, f"{provider_name} analysis for {source.source_id}"
+                    )
+                    loaded = replace(
+                        load_provider_document(
+                            document,
+                            provider=provider_name,
+                            source_id=source.source_id,
+                        ),
+                        artifact_hash=artifact.sha256,
                     )
                 except (TopologyProviderError, TopologyValidationError) as exc:
                     raise TopologyRegistryError(
                         f"invalid {provider_name} analysis for {source.source_id}: {exc}"
                     ) from exc
-                if loaded.artifact_hash != artifact.sha256:
-                    raise TopologyRegistryError(
-                        f"analysis hash drift for {source.source_id}/{provider_name}"
-                    )
                 if loaded.status != provider_receipt.status or loaded.complete != provider_receipt.complete:
                     raise TopologyRegistryError(
                         f"provider receipt disagrees with analysis for {source.source_id}/{provider_name}"
@@ -244,12 +255,15 @@ def load_published_topology(
                         f"provider receipt tool version disagrees with analysis for {source.source_id}/{provider_name}"
                     )
                 _validate_receipt_counts(provider_receipt, loaded.symbols, loaded.relationships)
-                # ``raw`` intentionally verifies before native JSON parsing.
-                del raw
                 providers.append(loaded)
                 receipt_hashes[source.source_id][provider_name] = source.receipt.sha256
                 artifact_paths[source.source_id][provider_name] = artifact.path
                 statuses[source.source_id][provider_name] = loaded.status
+        loaded_names = set(receipt_hashes[source.source_id])
+        if loaded_names != set(source.providers):
+            raise TopologyRegistryError(
+                f"selected source did not load every authoritative provider: {source.source_id}"
+            )
     return PublishedTopology.from_loaded_providers(
         providers,
         generation=index.generation,
@@ -264,13 +278,12 @@ def load_published_topology(
 def _parse_index(root: Path, document: object) -> TopologyIndex:
     data = _object(document, "topology index")
     _exact_keys(data, {"schema_version", "generation", "published_at", "sources"}, "topology index")
-    if data["schema_version"] != 1:
-        raise TopologyRegistryError("unsupported topology index schema version")
+    _schema_version(data, "topology index")
     generation = _positive_int(data, "generation")
-    published_at = _string(data, "published_at")
+    published_at = _published_at(data.get("published_at"))
     sources_data = _object(data.get("sources"), "topology index sources")
     manifest = discover_workspace(root)
-    configured = _configured_sources(manifest.sources)
+    configured = _configured_sources(root, manifest.sources)
     if set(sources_data) != set(configured):
         missing = sorted(set(configured) - set(sources_data))
         unknown = sorted(set(sources_data) - set(configured))
@@ -305,6 +318,9 @@ def _parse_source(
     index_providers = _parse_providers(
         _object(data.get("providers"), f"index providers {source_id}"), source_id, detailed=False
     )
+    for provider_receipt in index_providers.values():
+        for artifact in provider_receipt.artifacts.values():
+            _read_hashed_artifact(root, source_id, artifact)
     receipt_document = _read_json_bytes(_read_hashed_artifact(root, source_id, receipt), f"receipt {source_id}")
     receipt_source, receipt_fingerprint, receipt_providers, analyzed_commit, provenance = _parse_source_receipt(
         receipt_document, source_id, source_path, generation
@@ -333,7 +349,7 @@ def _parse_source_receipt(
         {"schema_version", "generation", "source_id", "source_path", "source_fingerprint", "analyzed_commit", "provenance", "providers"},
         f"source receipt {source_id}",
     )
-    if data["schema_version"] != 1 or _positive_int(data, "generation") != generation:
+    if _schema_version(data, f"source receipt {source_id}") != 1 or _positive_int(data, "generation") != generation:
         raise TopologyRegistryError(f"source receipt generation disagrees with index for {source_id}")
     receipt_source = _source_id(data.get("source_id"))
     if receipt_source != source_id or _source_path(data.get("source_path"), "receipt source_path") != source_path:
@@ -391,6 +407,8 @@ def _parse_providers(
                 artifacts=artifacts,
             )
         providers[provider] = receipt
+    if not providers:
+        raise TopologyRegistryError(f"source {source_id} must contain at least one provider row")
     return MappingProxyType(dict(sorted(providers.items())))
 
 
@@ -427,8 +445,13 @@ def _artifact_path(root: Path, source_id: str, artifact: TopologyArtifactReceipt
         )
     candidate = root / artifact.path
     try:
+        canonical_sources = (root / "re/topology/sources").resolve(strict=True)
+        canonical_sources.relative_to(root)
+        source_base = root / f"re/topology/sources/{source_id}"
+        resolved_source_base = source_base.resolve(strict=True)
+        resolved_source_base.relative_to(canonical_sources)
         resolved = candidate.resolve(strict=True)
-        resolved.relative_to((root / prefix).resolve(strict=True))
+        resolved.relative_to(resolved_source_base)
     except (OSError, ValueError) as exc:
         raise TopologyRegistryError(f"topology artifact symlink escape or missing path: {artifact.path}") from exc
     return resolved
@@ -443,11 +466,17 @@ def _parse_artifact(value: object, name: str, source_id: str) -> TopologyArtifac
     return artifact
 
 
-def _configured_sources(sources: Iterable[object]) -> dict[str, str]:
+def _configured_sources(root: Path, sources: Iterable[object]) -> dict[str, str]:
     configured: dict[str, str] = {}
     for source in sources:
         source_id = _source_id(getattr(source, "id", None))
         source_path = _source_path(getattr(source, "path", None), f"workspace source {source_id}")
+        try:
+            (root / source_path).resolve().relative_to(root)
+        except ValueError as exc:
+            raise TopologyRegistryError(
+                f"configured source path escapes workspace: {source_id} -> {source_path}"
+            ) from exc
         if source_id in configured:
             raise TopologyRegistryError(f"workspace has duplicate source ID: {source_id}")
         configured[source_id] = source_path
@@ -488,8 +517,8 @@ def _validate_fingerprint(fingerprint: SourceFingerprint) -> None:
     if fingerprint.kind == "git":
         if fingerprint.git_head is None or not _GIT_HEAD.fullmatch(fingerprint.git_head):
             raise TopologyRegistryError("git source fingerprint requires a lowercase 40-hex git_head")
-    elif fingerprint.git_head is not None:
-        raise TopologyRegistryError("file-tree source fingerprint must not have git_head")
+    elif fingerprint.git_head is not None or fingerprint.dirty:
+        raise TopologyRegistryError("file-tree source fingerprint must have git_head=null and dirty=false")
 
 
 def _validate_commit(commit: str | None, fingerprint: SourceFingerprint) -> None:
@@ -505,9 +534,17 @@ def _validate_commit(commit: str | None, fingerprint: SourceFingerprint) -> None
 def _parse_provenance(value: object) -> Mapping[str, object]:
     data = _object(value, "source receipt provenance")
     kind = data.get("kind")
-    run_id = data.get("run_id")
-    if kind not in {"re", "delivery"} or not isinstance(run_id, str) or not _RUN_ID.fullmatch(run_id):
-        raise TopologyRegistryError("source receipt provenance requires kind re|delivery and safe run_id")
+    expected = {
+        "re": {"kind", "run_id"},
+        "delivery": {"kind", "run_id"},
+        "land-reconciliation": {"kind", "evidence_run"},
+    }
+    if kind not in expected or set(data) != expected[kind]:
+        raise TopologyRegistryError("source receipt provenance has an invalid kind-specific schema")
+    id_key = "evidence_run" if kind == "land-reconciliation" else "run_id"
+    identifier = data.get(id_key)
+    if not isinstance(identifier, str) or not _RUN_ID.fullmatch(identifier):
+        raise TopologyRegistryError("source receipt provenance requires a safe run identifier")
     return _freeze_mapping(data)
 
 
@@ -554,6 +591,7 @@ def _freeze_mapping(value: Mapping[str, object]) -> Mapping[str, object]:
     for key, item in value.items():
         if not isinstance(key, str):
             raise TopologyRegistryError("receipt object keys must be strings")
+        _reject_host_path(key)
         frozen[key] = _freeze_json(item)
     return MappingProxyType(dict(sorted(frozen.items())))
 
@@ -572,7 +610,11 @@ def _read_json(path: Path, label: str) -> object:
 
 def _read_json_bytes(raw: bytes, label: str) -> object:
     try:
-        return json.loads(raw, object_pairs_hook=_no_duplicate_object)
+        return json.loads(
+            raw,
+            object_pairs_hook=_no_duplicate_object,
+            parse_constant=_reject_json_constant,
+        )
     except (UnicodeDecodeError, json.JSONDecodeError, TopologyRegistryError) as exc:
         raise TopologyRegistryError(f"malformed {label}: {exc}") from exc
 
@@ -584,6 +626,10 @@ def _no_duplicate_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
             raise TopologyRegistryError(f"duplicate JSON object key: {key}")
         result[key] = value
     return result
+
+
+def _reject_json_constant(value: str) -> object:
+    raise TopologyRegistryError(f"non-standard JSON constant is not allowed: {value}")
 
 
 def _object(value: object, label: str) -> Mapping[str, object]:
@@ -608,6 +654,26 @@ def _positive_int(data: Mapping[str, object], key: str) -> int:
     value = data.get(key)
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise TopologyRegistryError(f"{key} must be a positive integer")
+    return value
+
+
+def _schema_version(data: Mapping[str, object], label: str) -> int:
+    value = data.get("schema_version")
+    if type(value) is not int or value != 1:
+        raise TopologyRegistryError(f"unsupported {label} schema_version")
+    return value
+
+
+def _published_at(value: object) -> str:
+    if not isinstance(value, str) or not _RFC3339.fullmatch(value):
+        raise TopologyRegistryError("published_at must be a timezone-aware RFC 3339 timestamp")
+    candidate = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        parsed = datetime.fromisoformat(candidate)
+    except ValueError as exc:
+        raise TopologyRegistryError("published_at must be a timezone-aware RFC 3339 timestamp") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise TopologyRegistryError("published_at must be a timezone-aware RFC 3339 timestamp")
     return value
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import subprocess
 from typing import Literal
 
 from echelon.topology_registry import (
@@ -80,7 +81,7 @@ def audit_topology(project_root: Path, source_id: str | None = None) -> Topology
     overall = _overall_status(result.status for result in results)
     return TopologyAuditReport(
         status=overall,
-        exit_code=0 if overall == "current" else 1,
+        exit_code=0 if overall == "current" else 2 if overall == "invalid" else 1,
         sources=tuple(sorted(results, key=lambda result: result.source_id)),
         findings=tuple(sorted(findings, key=_finding_key)),
     )
@@ -96,7 +97,7 @@ def _audit_source(root: Path, source: TopologySourceRecord, profile: object) -> 
         ]
     try:
         live = fingerprint_source(source_path, profile)  # type: ignore[arg-type]
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
         return "invalid", [TopologyAuditFinding("invalid", f"cannot fingerprint source: {exc}", source.source_id, path=source.source_path)]
     findings: list[TopologyAuditFinding] = []
     stale = False
