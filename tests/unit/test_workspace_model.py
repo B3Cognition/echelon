@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from echelon.workspace_model import (
     count_source_files,
     discover_workspace,
@@ -170,6 +172,54 @@ def test_configured_empty_sources_discovers_sources_directory_children(
     assert manifest.workspace.git_role == "orchestration"
     assert [source.id for source in manifest.sources] == ["optasearch-pro"]
     assert [source.path for source in manifest.sources] == ["sources/optasearch-pro"]
+
+
+@pytest.mark.parametrize(
+    ("document", "message"),
+    (
+        ("workspace: null\nsources: []\n", "workspace must be a mapping"),
+        ("workspace: []\nsources: []\n", "workspace must be a mapping"),
+        ("workspace: source\nsources: []\n", "workspace must be a mapping"),
+        ("sources: null\n", "sources must be a list"),
+        ("sources:\n  api: sources/api\n", "sources must be a list"),
+        ("sources: api\n", "sources must be a list"),
+        ("sources:\n  - 42\n", "sources entry 1 must be"),
+        ("sources:\n  - ''\n", "sources entry 1 must not be blank"),
+        ("sources:\n  - id: api\n", "sources entry 1 requires a path"),
+        ("sources:\n  - path: 42\n", "sources entry 1 path must be a string"),
+        ("sources:\n  - id: 42\n    path: sources/api\n", "sources entry 1 id must be a string"),
+    ),
+)
+def test_explicit_malformed_workspace_shapes_never_fall_back_to_discovery(
+    tmp_path: Path,
+    document: str,
+    message: str,
+) -> None:
+    (tmp_path / ".echelon").mkdir()
+    (tmp_path / ".echelon/config.yml").write_text(document, encoding="utf-8")
+    auto = tmp_path / "auto-discovered"
+    auto.mkdir()
+    (auto / "package.json").write_text("{}\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match=message):
+        discover_workspace(tmp_path)
+
+
+def test_config_without_workspace_or_sources_intentionally_uses_discovery(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".echelon").mkdir()
+    (tmp_path / ".echelon/config.yml").write_text(
+        "telemetry:\n  enabled: true\n",
+        encoding="utf-8",
+    )
+    source = tmp_path / "auto-discovered"
+    source.mkdir()
+    (source / "package.json").write_text("{}\n", encoding="utf-8")
+
+    manifest = discover_workspace(tmp_path)
+
+    assert [row.path for row in manifest.sources] == ["auto-discovered"]
 
 
 def test_planning_only_workspace_has_no_sources(tmp_path: Path) -> None:

@@ -15,6 +15,7 @@ def _audit_report(
     *,
     source_ids: tuple[str, ...] = ("api", "web"),
     findings: tuple[object, ...] = (),
+    snapshot: object | None = None,
 ):
     from echelon.topology_audit import TopologyAuditReport, TopologyAuditSource
 
@@ -27,6 +28,34 @@ def _audit_report(
             for source_id in source_ids
         ),
         findings=findings,  # type: ignore[arg-type]
+        snapshot=snapshot,  # type: ignore[arg-type]
+    )
+
+
+def _audit_snapshot(topology: object, source_ids: tuple[str, ...]):
+    from echelon.topology_audit import (
+        TopologyAuditSnapshot,
+        TopologyAuditSnapshotSource,
+    )
+
+    paths = {"api": "services/api", "web": "apps/web"}
+    rows = []
+    for source_id in source_ids:
+        receipt = topology.receipt(source_id)
+        receipt_hashes = set(receipt.provider_receipt_hashes.values())
+        rows.append(
+            TopologyAuditSnapshotSource(
+                source_id=source_id,
+                source_path=paths[source_id],
+                source_fingerprint=receipt.source_fingerprint,
+                receipt_sha256=next(
+                    iter(receipt_hashes), "sha256:" + "e" * 64
+                ),
+            )
+        )
+    return TopologyAuditSnapshot(
+        generation=topology.generation,
+        sources=tuple(rows),
     )
 
 
@@ -102,7 +131,11 @@ def _patch_reads(
 
     def audit(_root: Path, source_id: str | None = None):
         source_ids = (source_id,) if source_id else ("api", "web")
-        return _audit_report(status, source_ids=source_ids)
+        return _audit_report(
+            status,
+            source_ids=source_ids,
+            snapshot=_audit_snapshot(published, source_ids),
+        )
 
     def load(_root: Path, source_ids: tuple[str, ...] = ()):
         loaded.append(tuple(source_ids))
@@ -367,6 +400,76 @@ def test_search_source_scope_and_repeated_json_are_exactly_deterministic(
 
 
 @pytest.mark.unit
+def test_source_node_search_uses_final_audited_source_path_in_json_and_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import echelon.topology_cli as topology_cli
+
+    _patch_reads(monkeypatch)
+
+    json_result = topology_cli.search_command(
+        Path("/workspace"),
+        "api",
+        source="api",
+        node_types=("source",),
+        as_json=True,
+    )
+    text_result = topology_cli.search_command(
+        Path("/workspace"),
+        "api",
+        source="api",
+        node_types=("source",),
+    )
+    row = json.loads(json_result.stdout)["results"][0]
+
+    assert row["node_id"] == "source:api"
+    assert row["path"] == "services/api"
+    assert row["source_relative_path"] == "services/api"
+    source_line = next(
+        line for line in text_result.stdout.splitlines() if "[SOURCE]" in line
+    )
+    assert "source:api" in source_line
+    assert "path=services/api" in source_line
+
+
+@pytest.mark.unit
+def test_source_root_impact_uses_final_audited_source_path_in_json_and_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import echelon.topology_cli as topology_cli
+
+    _patch_reads(monkeypatch)
+
+    json_result = topology_cli.impact_command(
+        Path("/workspace"),
+        "source:api",
+        source="api",
+        max_depth=1,
+        relations=("contains",),
+        as_json=True,
+    )
+    text_result = topology_cli.impact_command(
+        Path("/workspace"),
+        "source:api",
+        source="api",
+        max_depth=1,
+        relations=("contains",),
+    )
+    source_row = next(
+        row for row in json.loads(json_result.stdout)["nodes"]
+        if row["node_id"] == "source:api"
+    )
+
+    assert source_row["path"] == "services/api"
+    assert source_row["source_relative_path"] == "services/api"
+    source_line = next(
+        line for line in text_result.stdout.splitlines() if "[SOURCE]" in line
+    )
+    assert "source:api" in source_line
+    assert "path=services/api" in source_line
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize("command", ("audit", "list", "search"))
 def test_topology_commands_revalidate_live_freshness_before_rendering(
     tmp_path: Path,
@@ -392,6 +495,68 @@ def test_topology_commands_revalidate_live_freshness_before_rendering(
     assert result.exit_code in {1, 2}
     rendered = result.stdout or result.stderr
     assert json.loads(rendered)["audit"]["status"] in {"stale", "invalid"}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("command", ("audit", "list", "search"))
+def test_final_canonical_load_precedes_live_audit_and_exposes_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+) -> None:
+    from echelon.topology_registry import load_topology_index
+    from tests.unit.test_topology_registry import build_topology
+    import echelon.topology_cli as topology_cli
+
+    build_topology(tmp_path)
+    index = load_topology_index(tmp_path)
+    assert index is not None
+    topology = _published_topology()
+    events: list[str] = []
+    mutated = False
+    load_count = 0
+
+    def audit(root: Path, source_id: str | None = None):
+        events.append("audit-stale" if mutated else "audit-current")
+        return _audit_report(
+            "stale" if mutated else "current",
+            source_ids=(source_id,) if source_id else ("api",),
+        )
+
+    def load_index(root: Path):
+        nonlocal load_count, mutated
+        load_count += 1
+        if load_count == 2:
+            mutated = True
+        events.append(f"load-{load_count}")
+        return index
+
+    def load_published(root: Path, source_ids: tuple[str, ...] = ()):
+        nonlocal load_count, mutated
+        load_count += 1
+        if load_count == 2:
+            mutated = True
+        events.append(f"load-{load_count}")
+        return topology
+
+    monkeypatch.setattr(topology_cli, "audit_topology", audit)
+    if command in {"audit", "list"}:
+        monkeypatch.setattr(topology_cli, "load_topology_index", load_index)
+    else:
+        monkeypatch.setattr(topology_cli, "load_published_topology", load_published)
+
+    if command == "audit":
+        result = topology_cli.audit_command(tmp_path, source="api", as_json=True)
+    elif command == "list":
+        result = topology_cli.list_sources_command(tmp_path, as_json=True)
+    else:
+        result = topology_cli.search_command(
+            tmp_path, "shared", source="api", as_json=True
+        )
+
+    assert events == ["audit-current", "load-1", "load-2", "audit-stale"]
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["audit"]["status"] == "stale"
 
 
 @pytest.mark.unit
@@ -491,6 +656,45 @@ def test_malformed_workspace_config_is_a_bounded_fatal_result(
     assert payload["audit"]["status"] == "invalid"
     assert payload["error"]["kind"] == "invalid"
     assert "workspace config" in payload["error"]["message"]
+    assert len(result.stderr.encode("utf-8")) < 10_000
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("document", "message"),
+    (
+        ("workspace: null\nsources: []\n", "workspace must be a mapping"),
+        ("workspace: []\nsources: []\n", "workspace must be a mapping"),
+        ("sources:\n  - 42\n", "sources entry 1 must be"),
+        ("sources:\n  - id: api\n", "sources entry 1 requires a path"),
+        ("sources:\n  api: sources/api\n", "sources must be a list"),
+        ("sources: api\n", "sources must be a list"),
+    ),
+)
+@pytest.mark.parametrize(
+    "command", ("audit", "list-sources", "search", "explain", "neighbors", "impact")
+)
+def test_every_topology_service_rejects_semantically_malformed_workspace_config(
+    tmp_path: Path,
+    command: str,
+    document: str,
+    message: str,
+) -> None:
+    from tests.unit.test_topology_registry import build_topology
+    import echelon.topology_cli as topology_cli
+
+    build_topology(tmp_path)
+    (tmp_path / ".echelon/config.yml").write_text(document, encoding="utf-8")
+
+    result = _invoke_topology_service(
+        topology_cli, command, tmp_path, as_json=True
+    )
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    payload = json.loads(result.stderr)
+    assert payload["error"]["kind"] == "invalid"
+    assert message in payload["error"]["message"]
     assert len(result.stderr.encode("utf-8")) < 10_000
 
 

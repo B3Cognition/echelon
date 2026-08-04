@@ -205,18 +205,21 @@ def _configured_workspace(root: Path) -> WorkspaceManifest | None:
     if not isinstance(raw, dict):
         raise ValueError("workspace config must be a mapping")
 
-    workspace_raw = raw.get("workspace") or {}
-    if not isinstance(workspace_raw, dict):
+    if "workspace" in raw:
+        workspace_raw = raw["workspace"]
+        if not isinstance(workspace_raw, dict):
+            raise ValueError("workspace config workspace must be a mapping")
+    else:
         workspace_raw = {}
 
     if "sources" in raw:
-        sources_raw = raw.get("sources") or []
+        sources_raw = raw["sources"]
+    elif "sources" in workspace_raw:
+        sources_raw = workspace_raw["sources"]
     else:
-        sources_raw = workspace_raw.get("sources")
-    if sources_raw is None:
         return None
     if not isinstance(sources_raw, list):
-        return None
+        raise ValueError("workspace config sources must be a list")
 
     git_role = str(workspace_raw.get("git_role") or "orchestration")
     if git_role not in ("orchestration", "source"):
@@ -237,19 +240,33 @@ def _configured_workspace(root: Path) -> WorkspaceManifest | None:
 
     sources: list[SourceRoot] = []
     for index, item in enumerate(sources_raw):
+        entry = f"workspace config sources entry {index + 1}"
         if isinstance(item, str):
-            source_id = item
-            source_path = item
+            source_path = item.strip()
+            if not source_path:
+                raise ValueError(f"{entry} must not be blank")
+            source_id = source_path
             source_git_role: GitRole = "source"
         elif isinstance(item, dict):
-            source_path = str(item.get("path") or item.get("repo") or "").strip()
-            source_id = str(item.get("id") or source_path or f"source-{index + 1}").strip()
+            path_value = item.get("path")
+            if path_value is None:
+                path_value = item.get("repo")
+            if path_value is None:
+                raise ValueError(f"{entry} requires a path")
+            if not isinstance(path_value, str):
+                raise ValueError(f"{entry} path must be a string")
+            source_path = path_value.strip()
+            if not source_path:
+                raise ValueError(f"{entry} requires a path")
+            id_value = item.get("id")
+            if id_value is not None and not isinstance(id_value, str):
+                raise ValueError(f"{entry} id must be a string")
+            source_id = id_value.strip() if isinstance(id_value, str) else source_path
+            if not source_id:
+                raise ValueError(f"{entry} id must not be blank")
             source_git_role = "source" if item.get("git_role") != "orchestration" else "orchestration"
         else:
-            continue
-
-        if not source_path:
-            continue
+            raise ValueError(f"{entry} must be a string or mapping")
         resolved_source = root if source_path == "." else (root / source_path)
         sources.append(
             SourceRoot(

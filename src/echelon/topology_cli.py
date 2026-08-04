@@ -1,9 +1,10 @@
 """Audit-aware services and deterministic renderers for topology CLI reads.
 
 Reads use a bounded double-collect guarantee: an initial live audit is bound to
-the loaded publication, then a final live audit and independent publication load
-must agree before rendering. This detects mutation within the command's read
-window without claiming a permanent filesystem lock after final validation.
+the loaded publication, then an independent final publication capture is bound
+to the last live audit before rendering. No filesystem read follows that audit.
+This detects mutation within the command's read window without claiming a
+permanent filesystem lock after final validation.
 """
 
 from __future__ import annotations
@@ -105,6 +106,12 @@ def audit_command(
                     as_json=as_json,
                     kind="unavailable",
                 )
+            final_index = load_topology_index(root)
+            if final_index is None:
+                raise TopologyRegistryError("topology index is missing")
+            final_snapshot = snapshot_topology_index(final_index, source)
+            if final_snapshot != snapshot:
+                raise TopologyRegistryError("topology publication changed during read")
             final_report, audit_error = _audit_at_boundary(root, source)
             if audit_error is not None:
                 return _fatal(
@@ -122,12 +129,7 @@ def audit_command(
                     request={"source": source},
                     as_json=as_json,
                 )
-            _assert_audit_matches_snapshot(final_report, snapshot)
-            final_index = load_topology_index(root)
-            if final_index is None:
-                raise TopologyRegistryError("topology index is missing")
-            if snapshot_topology_index(final_index, source) != snapshot:
-                raise TopologyRegistryError("topology publication changed during read")
+            _assert_audit_matches_snapshot(final_report, final_snapshot)
             report = _merge_audit_reports(initial_report, final_report)
         except (OSError, TopologyRegistryError, TopologyValidationError, ValueError) as exc:
             return _fatal(
@@ -182,6 +184,12 @@ def list_sources_command(
                 as_json=as_json,
                 kind="unavailable",
             )
+        final_index = load_topology_index(root)
+        if final_index is None:
+            raise TopologyRegistryError("topology index is missing")
+        final_snapshot = snapshot_topology_index(final_index)
+        if final_snapshot != snapshot:
+            raise TopologyRegistryError("topology publication changed during read")
         final_report, audit_error = _audit_at_boundary(root)
         if audit_error is not None:
             return _fatal(
@@ -193,21 +201,16 @@ def list_sources_command(
             )
         if final_report.exit_code == 2:
             return _fatal_audit("list-sources", final_report, as_json=as_json)
-        _assert_audit_matches_snapshot(final_report, snapshot)
-        final_index = load_topology_index(root)
-        if final_index is None:
-            raise TopologyRegistryError("topology index is missing")
-        if snapshot_topology_index(final_index) != snapshot:
-            raise TopologyRegistryError("topology publication changed during read")
+        _assert_audit_matches_snapshot(final_report, final_snapshot)
         report = _merge_audit_reports(initial_report, final_report)
         statuses = _source_statuses(report)
         rows = [
             _source_row(
                 source,
                 statuses.get(source.source_id, report.status),
-                index.generation,
+                final_index.generation,
             )
-            for source in index.sources.values()
+            for source in final_index.sources.values()
         ]
     except (OSError, TopologyRegistryError, TopologyValidationError, ValueError) as exc:
         return _fatal(
@@ -415,6 +418,9 @@ def _run_read(
                 kind="unavailable",
             )
         result = operation(topology)
+        final_topology = load_published_topology(root, selected)
+        if _topology_binding(final_topology, source_ids) != binding:
+            raise TopologyRegistryError("topology publication changed during read")
         final_report, audit_error = _audit_at_boundary(root, source)
         if audit_error is not None:
             return _fatal(
@@ -429,10 +435,6 @@ def _run_read(
             return _fatal_audit(
                 command, final_report, request=request, as_json=as_json
             )
-        _assert_topology_matches_audit(topology, final_report, source_ids)
-        final_topology = load_published_topology(root, selected)
-        if _topology_binding(final_topology, source_ids) != binding:
-            raise TopologyRegistryError("topology publication changed during read")
         _assert_topology_matches_audit(final_topology, final_report, source_ids)
         report = _merge_audit_reports(initial_report, final_report)
     except (
@@ -475,6 +477,7 @@ def _search_payload(
 ) -> dict[str, object]:
     result = _expect(value, TopologySearchResult)
     statuses = _source_statuses(report)
+    source_paths = _source_paths(report)
     return {
         "provenance": _receipt_payload(result.receipt),
         "results": [
@@ -483,6 +486,7 @@ def _search_payload(
                 result.receipt,
                 statuses.get(node.source_id, report.status),
                 result.truncated,
+                source_paths,
             )
             for node in result.nodes
         ],
@@ -497,10 +501,17 @@ def _explain_payload(
 ) -> dict[str, object]:
     result = _expect(value, TopologyExplainResult)
     statuses = _source_statuses(report)
+    source_paths = _source_paths(report)
     status = statuses.get(result.node.source_id, report.status)
     return {
         "provenance": _receipt_payload(result.receipt),
-        "node": _node_payload(result.node, result.receipt, status, result.truncated),
+        "node": _node_payload(
+            result.node,
+            result.receipt,
+            status,
+            result.truncated,
+            source_paths,
+        ),
         "relationships": [
             _relationship_payload(
                 topology, relationship, result.receipt, statuses, result.truncated
@@ -519,6 +530,7 @@ def _traversal_payload(
     root_id: str,
 ) -> dict[str, object]:
     statuses = _source_statuses(report)
+    source_paths = _source_paths(report)
     paths = _traversal_paths(root_id, result.steps)
     return {
         "provenance": _receipt_payload(result.receipt),
@@ -528,6 +540,7 @@ def _traversal_payload(
                 result.receipt,
                 statuses.get(node.source_id, report.status),
                 result.truncated,
+                source_paths,
             )
             for node in result.nodes
         ],
@@ -545,6 +558,7 @@ def _traversal_payload(
                 statuses,
                 result.truncated,
                 paths[index],
+                source_paths,
             )
             for index, step in enumerate(result.steps)
         ],
@@ -557,17 +571,23 @@ def _node_payload(
     receipt: TopologyReceipt,
     topology_status: str,
     truncated: bool,
+    source_paths: Mapping[str, str],
 ) -> dict[str, object]:
     provider = node.provider if isinstance(node, TopologySymbol) else "topology"
     provider_key = _provider_key(receipt, node.source_id, provider)
     artifact_path = _provider_artifact_path(receipt, provider, node.source_id)
+    source_relative_path = (
+        source_paths.get(node.source_id)
+        if isinstance(node, TopologySource)
+        else getattr(node, "path", None)
+    )
     return {
         "source_id": node.source_id,
         "provider": provider,
         "node_id": node.id,
         "node_type": node.type,
-        "path": getattr(node, "path", None),
-        "source_relative_path": getattr(node, "path", None),
+        "path": source_relative_path,
+        "source_relative_path": source_relative_path,
         "name": getattr(node, "name", ""),
         "qualified_name": getattr(node, "qualified_name", ""),
         "kind": getattr(node, "kind", ""),
@@ -625,6 +645,7 @@ def _step_payload(
     statuses: Mapping[str, str],
     truncated: bool,
     traversal_path: tuple[str, ...],
+    source_paths: Mapping[str, str],
 ) -> dict[str, object]:
     node = topology.nodes_by_id[step.node_id]
     row = _node_payload(
@@ -632,6 +653,7 @@ def _step_payload(
         receipt,
         statuses.get(node.source_id, "current"),
         truncated,
+        source_paths,
     )
     relationship = step.relationship
     row.update(
@@ -797,12 +819,14 @@ def _render_search(
     else:
         lines.append("Results:")
         statuses = _source_statuses(report)
+        source_paths = _source_paths(report)
         for node in result.nodes:
             row = _node_payload(
                 node,
                 result.receipt,
                 statuses.get(node.source_id, report.status),
                 result.truncated,
+                source_paths,
             )
             lines.append(_render_node_row(row))
     return "\n".join(lines) + "\n"
@@ -815,6 +839,7 @@ def _render_explain(
 ) -> str:
     result = _expect(value, TopologyExplainResult)
     statuses = _source_statuses(report)
+    source_paths = _source_paths(report)
     lines = [_read_header("explain", report, result.receipt, result.truncated)]
     _append_findings(lines, report)
     lines.append(
@@ -824,6 +849,7 @@ def _render_explain(
                 result.receipt,
                 statuses.get(result.node.source_id, report.status),
                 result.truncated,
+                source_paths,
             )
         )
     )
@@ -852,6 +878,20 @@ def _render_traversal(
 ) -> str:
     lines = [_read_header(command, report, result.receipt, result.truncated)]
     _append_findings(lines, report)
+    source_paths = _source_paths(report)
+    root = topology.nodes_by_id[root_id]
+    lines.append("Root:")
+    lines.append(
+        _render_node_row(
+            _node_payload(
+                root,
+                result.receipt,
+                _source_statuses(report).get(root.source_id, report.status),
+                result.truncated,
+                source_paths,
+            )
+        )
+    )
     lines.append("Steps:" if result.steps else "Steps: (none)")
     paths = _traversal_paths(root_id, result.steps)
     for index, step in enumerate(result.steps):
@@ -862,6 +902,7 @@ def _render_traversal(
             _source_statuses(report),
             result.truncated,
             paths[index],
+            source_paths,
         )
         lines.append(
             f"- depth={row['depth']} direction={row['direction']} "
@@ -1191,6 +1232,15 @@ def _audit_at_boundary(
 
 def _source_statuses(report: TopologyAuditReport) -> dict[str, str]:
     return {source.source_id: source.status for source in report.sources}
+
+
+def _source_paths(report: TopologyAuditReport) -> dict[str, str]:
+    if report.snapshot is None:
+        return {}
+    return {
+        source.source_id: source.source_path
+        for source in report.snapshot.sources
+    }
 
 
 def _topology_has_usable_provider(
