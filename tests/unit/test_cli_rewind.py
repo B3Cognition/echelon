@@ -454,6 +454,38 @@ def test_rewind_refuses_a_run_that_is_still_running(tmp_path: Path, capsys) -> N
     assert (run_dir / "state.json").exists()
 
 
+def test_rewind_mutation_refuses_shared_spec_mutation_owner(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    from echelon.spec_lifecycle import SpecMutationLock
+
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "phase2-decide",
+            "spec_dir": "specs/004-transform-selector",
+        },
+    )
+    spec_dir = tmp_path / "specs" / "004-transform-selector"
+    spec_dir.mkdir(parents=True)
+    _record_checkpoints(spec_dir, "phase1-what")
+    state_before = (run_dir / "state.json").read_bytes()
+
+    with SpecMutationLock.acquire(
+        tmp_path,
+        "004-transform-selector",
+        "retarget-held",
+    ):
+        with pytest.raises(SystemExit) as exc:
+            _cmd_rewind(["phase1-what", "--confirm"], project_root=tmp_path)
+
+    assert exc.value.code == 1
+    assert "retarget-held" in capsys.readouterr().err
+    assert (run_dir / "state.json").read_bytes() == state_before
+
+
 def test_rewind_reconstructs_primary_predecessors_for_the_roadmap() -> None:
     """A checkpoint ledger is sparse; the roadmap still needs its prior phases."""
     rewound = _reset_rewind_state(

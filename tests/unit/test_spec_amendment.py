@@ -103,6 +103,18 @@ def test_amendment_lock_is_scoped_to_the_spec_being_amended(tmp_path: Path) -> N
             pass
 
 
+def test_amendment_uses_the_shared_spec_mutation_lock(tmp_path: Path) -> None:
+    from echelon.spec_amendment import SpecAmendmentLocked, prepare_amendment
+    from echelon.spec_lifecycle import SpecMutationLock
+
+    repo = _repo(tmp_path)
+    _write_spec(repo, "004-demo")
+
+    with SpecMutationLock.acquire(repo, "004-demo", "retarget-held"):
+        with pytest.raises(SpecAmendmentLocked, match="retarget-held"):
+            prepare_amendment(repo, ["004-demo", "Concurrent change"])
+
+
 def test_amendment_worktree_leaves_caller_branch_unchanged(tmp_path: Path) -> None:
     from echelon.spec_amendment import create_amendment_worktree, resolve_control_baseline
 

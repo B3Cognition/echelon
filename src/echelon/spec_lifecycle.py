@@ -82,6 +82,7 @@ class SpecSwitchRecovery:
 
 
 _SAFE_OPERATION_ID = re.compile(r"^[A-Za-z0-9._-]+$")
+_SAFE_SPEC_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 def _runtime_dir(project_root: Path) -> Path:
@@ -275,6 +276,25 @@ class SpecLifecycleLock:
 
     def __exit__(self, *_exc: object) -> None:
         self.release()
+
+
+class SpecMutationLock(SpecLifecycleLock):
+    """Outer serialization lease for one spec's lifecycle mutations."""
+
+    @classmethod
+    def acquire(
+        cls,
+        project_root: Path,
+        spec_id: str,
+        operation_id: str,
+    ) -> "SpecMutationLock":
+        if not _SAFE_SPEC_ID.fullmatch(spec_id):
+            raise ValueError(f"unsafe spec identity: {spec_id!r}")
+        return cls._acquire_path(
+            _runtime_dir(project_root) / "spec-mutations" / f"{spec_id}.lock",
+            operation_id,
+            owner_label=f"spec mutation lock owner for {spec_id}",
+        )
 
 
 class SpecRunExecutionLock(SpecLifecycleLock):

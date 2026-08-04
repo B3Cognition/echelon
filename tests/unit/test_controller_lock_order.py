@@ -146,6 +146,20 @@ def test_execution_lock_owners_reject_acquisition_under_state(
             acquired.release()
 
 
+def test_spec_mutation_lock_is_not_assigned_a_controller_rank(tmp_path) -> None:
+    acquired = None
+    try:
+        with controller_lock_order("state", "state-a"):
+            acquired = spec_lifecycle_module.SpecMutationLock.acquire(
+                tmp_path,
+                "001-demo",
+                "retarget-test",
+            )
+    finally:
+        if acquired is not None:
+            acquired.release()
+
+
 def test_all_controller_lock_owners_are_bound_to_the_global_guard() -> None:
     owners = {
         squad_module: ("completion", "telemetry"),

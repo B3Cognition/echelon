@@ -83,7 +83,7 @@ class AmendmentPreparation:
 
 @dataclass
 class AmendmentLock:
-    """Per-spec lease stored in Git's shared directory across worktrees."""
+    """Compatibility wrapper around the shared per-spec mutation lease."""
 
     _lease: object
 
@@ -96,18 +96,13 @@ class AmendmentLock:
     ) -> "AmendmentLock":
         """Acquire a lock that permits amendments of other specs concurrently."""
 
-        from echelon.spec_lifecycle import SpecLifecycleLock, SpecLifecycleLocked
+        from echelon.spec_lifecycle import SpecLifecycleLocked, SpecMutationLock
 
         _validate_spec_id(spec_id)
         root = Path(project_root).resolve()
-        common = _git_common_dir(root)
         owner = operation_id or f"amend-{spec_id}-{os.getpid()}"
         try:
-            lease = SpecLifecycleLock._acquire_path(
-                common / "echelon" / "locks" / f"amend-{spec_id}.lock",
-                owner,
-                owner_label="amendment lock owner",
-            )
+            lease = SpecMutationLock.acquire(root, spec_id, owner)
         except SpecLifecycleLocked as exc:
             raise SpecAmendmentLocked(exc.operation_id) from exc
         return cls(_lease=lease)
@@ -258,8 +253,22 @@ def prepare_amendment(project_root: Path, args: Sequence[str]) -> AmendmentPrepa
             state_path=None,
         )
 
-    with AmendmentLock.acquire(root, spec_id):
-        return _prepare_amendment_locked(root, spec_id, description, input_values)
+    operation_id = f"amend-{spec_id}-{os.getpid()}"
+    from echelon.spec_lifecycle import PhaseAExecutionLock, SpecLifecycleLocked
+
+    try:
+        with AmendmentLock.acquire(root, spec_id, operation_id):
+            with PhaseAExecutionLock.acquire(root, operation_id):
+                return _prepare_amendment_locked(
+                    root,
+                    spec_id,
+                    description,
+                    input_values,
+                )
+    except SpecAmendmentLocked:
+        raise
+    except SpecLifecycleLocked as exc:
+        raise SpecAmendmentLocked(exc.operation_id) from exc
 
 
 def _prepare_amendment_locked(

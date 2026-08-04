@@ -17,6 +17,7 @@ Auto-detected from ECHELON_LLM (default: claude).
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -1821,6 +1822,47 @@ def _workspace_target_dispatch_metadata(target: HarnessWorkspaceTarget) -> dict[
     }
 
 
+def _prepare_delivery_build_state(
+    *,
+    project_root: Path,
+    spec_id: str,
+    spec_dir: Path,
+) -> str:
+    """Create durable Phase B evidence under the per-spec mutation lease."""
+    from harness.lexicon_gate_io import write_json_atomic
+    from harness.paths import build_dir, make_build_id
+    from echelon.spec_lifecycle import (
+        PhaseAExecutionLock,
+        SpecLifecycleLocked,
+        SpecMutationLock,
+    )
+
+    operation_id = f"delivery-{os.getpid()}"
+    try:
+        with SpecMutationLock.acquire(project_root, spec_id, operation_id):
+            with PhaseAExecutionLock.acquire(project_root, operation_id):
+                _block_if_harness_phase_a_not_ready(spec_dir, spec_id)
+                build_id = make_build_id()
+                write_json_atomic(
+                    build_dir(project_root, build_id) / "state.json",
+                    {
+                        "schema_version": 1,
+                        "spec_id": spec_id,
+                        "build_id": build_id,
+                        "status": "preparing",
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                    },
+                )
+                return build_id
+    except SpecLifecycleLocked as exc:
+        print(
+            "✗ Cannot prepare delivery while the spec mutation lease is owned by "
+            f"{exc.operation_id}.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from exc
+
+
 def _cmd_harness_run(
     args: list[str],
     *,
@@ -1964,6 +2006,11 @@ def _cmd_harness_run(
                     direct_target_path = workspace_target.source_root
                 else:
                     target = validate_single_target([target_rel], polyrepo_root)
+                    _prepare_delivery_build_state(
+                        project_root=polyrepo_root,
+                        spec_id=resolved_spec_id,
+                        spec_dir=spec_dir,
+                    )
                     sys.exit(run_multi_target(
                         spec_id,
                         [target],
@@ -1993,6 +2040,11 @@ def _cmd_harness_run(
                     "source_ids": source_ids,
                     "source_git_roles": source_git_roles,
                 }
+                _prepare_delivery_build_state(
+                    project_root=polyrepo_root,
+                    spec_id=resolved_spec_id,
+                    spec_dir=spec_dir,
+                )
                 sys.exit(run_multi_target(spec_id, targets, args[1:], **dispatch_metadata))
 
         if not target_env and direct_target_path is None:
@@ -2104,6 +2156,13 @@ def _cmd_harness_run(
     if spec_dir is not None:
         _block_if_harness_phase_a_not_ready(spec_dir, spec_dir.name)
 
+    assert spec_dir is not None
+    delivery_build_id = _prepare_delivery_build_state(
+        project_root=spec_dir.parent.parent,
+        spec_id=spec_dir.name,
+        spec_dir=spec_dir,
+    )
+
     target_display = str(getattr(config, "target_repo", None) or "local")
     _banner("HARNESS RUN", [
         ("Spec", f"{spec_id}" + (f"  ({task_count} tasks)" if task_count else "")),
@@ -2116,7 +2175,14 @@ def _cmd_harness_run(
         _write_spec_status(spec_dir, "In Progress")
 
     try:
-        run(user_message, provider, gitops, base_dir=str(harness_base_dir), config=config)
+        run(
+            user_message,
+            provider,
+            gitops,
+            base_dir=str(harness_base_dir),
+            config=config,
+            resume_build_id=delivery_build_id,
+        )
     except Exception as exc:
         if _is_docker_unavailable_error(exc):
             _mark_current_harness_state_blocked(
@@ -7763,44 +7829,52 @@ def _cmd_rewind(
     from echelon.spec_lifecycle import (
         PhaseAExecutionLock,
         SpecLifecycleLocked,
+        SpecMutationLock,
         SpecRunExecutionLock,
     )
 
+    operation_id = f"rewind-{os.getpid()}"
     try:
-        with PhaseAExecutionLock.acquire(project_root, f"rewind-{os.getpid()}"):
-            with SpecRunExecutionLock.acquire(squad_dir, f"rewind-{os.getpid()}"):
-                result = prepare_rewind(
-                    project_root=project_root,
-                    spec=spec_dir.name,
-                    spec_dir=spec_dir,
-                    target=target,
-                    confirm=confirm,
-                    checkpoint_commit=checkpoint_commit,
-                )
-                if not result.applied:
-                    print(result.message)
-                    return
+        with (
+            SpecMutationLock.acquire(project_root, spec_dir.name, operation_id)
+            if confirm
+            else nullcontext()
+        ):
+            with PhaseAExecutionLock.acquire(project_root, operation_id):
+                with SpecRunExecutionLock.acquire(squad_dir, operation_id):
+                    result = prepare_rewind(
+                        project_root=project_root,
+                        spec=spec_dir.name,
+                        spec_dir=spec_dir,
+                        target=target,
+                        confirm=confirm,
+                        checkpoint_commit=checkpoint_commit,
+                    )
+                    if not result.applied:
+                        print(result.message)
+                        return
 
-                target_index = ledger.checkpoints.index(checkpoint)
-                retained_ledger = type(ledger)(
-                    spec_id=ledger.spec_id,
-                    checkpoints=ledger.checkpoints[: target_index + 1],
-                )
-                write_checkpoint_ledger(spec_dir, retained_ledger)
-                checkpoint_phases_before_target = {
-                    item.phase for item in ledger.checkpoints[:target_index]
-                }
-                removed = _cleanup_rewind_outputs(spec_dir, checkpoint.phase, squad_dir)
-                rewound = _reset_rewind_state(
-                    state,
-                    checkpoint.phase,
-                    spec_dir_ref,
-                    checkpoint_phases_before_target=checkpoint_phases_before_target,
-                )
-                store.save(rewound)
-    except SpecLifecycleLocked:
+                    target_index = ledger.checkpoints.index(checkpoint)
+                    retained_ledger = type(ledger)(
+                        spec_id=ledger.spec_id,
+                        checkpoints=ledger.checkpoints[: target_index + 1],
+                    )
+                    write_checkpoint_ledger(spec_dir, retained_ledger)
+                    checkpoint_phases_before_target = {
+                        item.phase for item in ledger.checkpoints[:target_index]
+                    }
+                    removed = _cleanup_rewind_outputs(spec_dir, checkpoint.phase, squad_dir)
+                    rewound = _reset_rewind_state(
+                        state,
+                        checkpoint.phase,
+                        spec_dir_ref,
+                        checkpoint_phases_before_target=checkpoint_phases_before_target,
+                    )
+                    store.save(rewound)
+    except SpecLifecycleLocked as exc:
         print(
             "✗ Cannot rewind while the active spec run is still running.\n"
+            f"  Execution or spec mutation lease owner: {exc.operation_id}.\n"
             "  Interrupt it and wait for `echelon spec status` to show INTERRUPTED, then retry.",
             file=sys.stderr,
         )
@@ -7878,7 +7952,12 @@ def _cmd_repair_traceability(args: list[str], project_root: Path) -> None:
     _banner("TRACEABILITY REPAIRED", rows, subtitle="Direct mappings preserved; finalization can resume.")
 
 
-def _cmd_drop_target(args: list[str], project_root: Path) -> None:
+def _cmd_drop_target(
+    args: list[str],
+    project_root: Path,
+    *,
+    _mutation_locked: bool = False,
+) -> None:
     """Remove one unreferenced delivery target from the active unfinished run.
 
     This deliberately supports only a declared target with no task ownership.
@@ -7898,6 +7977,30 @@ def _cmd_drop_target(args: list[str], project_root: Path) -> None:
     if not spec_id or not target:
         print("✗ spec id and target must not be empty", file=sys.stderr)
         sys.exit(1)
+
+    if confirm and not _mutation_locked:
+        from echelon.spec_lifecycle import (
+            PhaseAExecutionLock,
+            SpecLifecycleLocked,
+            SpecMutationLock,
+        )
+
+        operation_id = f"drop-target-{os.getpid()}"
+        try:
+            with SpecMutationLock.acquire(project_root, spec_id, operation_id):
+                with PhaseAExecutionLock.acquire(project_root, operation_id):
+                    return _cmd_drop_target(
+                        args,
+                        project_root,
+                        _mutation_locked=True,
+                    )
+        except SpecLifecycleLocked as exc:
+            print(
+                "✗ Cannot drop a target while the spec mutation lease is owned by "
+                f"{exc.operation_id}.",
+                file=sys.stderr,
+            )
+            raise SystemExit(1) from exc
 
     squad_dir = _find_current_run_dir(project_root)
     if squad_dir is None or not (squad_dir / "state.json").is_file():

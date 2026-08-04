@@ -6,6 +6,7 @@ where 'echelon delivery run 013 strategy=codegen "do X"' silently dropped "do X"
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -423,6 +424,89 @@ class TestHarnessRunTaskFormatErrors:
             _cmd_harness_run(["003"])
 
         mock_run.assert_called_once()
+
+    def test_delivery_preparation_refuses_active_spec_mutation_lock(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+        capsys,
+    ) -> None:
+        config_file = tmp_path / ".echelon" / "config.yml"
+        config_file.parent.mkdir(parents=True)
+        config_file.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
+        (tmp_path / "package.json").write_text("{}\n", encoding="utf-8")
+        mirror = tmp_path / "runs" / "mirror.git"
+        mirror.mkdir(parents=True)
+        spec_dir = tmp_path / "specs" / "003-test"
+        _write_phase_a_build_inputs(spec_dir)
+        monkeypatch.chdir(tmp_path)
+
+        from echelon.cli import _cmd_harness_run
+        from echelon.spec_lifecycle import SpecMutationLock
+
+        with patch("harness.config.load_config") as mock_cfg, \
+             patch("harness.paths.mirror_path", return_value=mirror), \
+             patch("harness.gitops.GitOpsManager"), \
+             patch("harness.docker_provider.DockerWorktreeProvider"), \
+             patch("harness.skills.run_skill.run") as mock_run:
+            mock_cfg.return_value = MagicMock(
+                buffer_limit_bytes=1024 * 1024,
+                target_repo=".",
+            )
+            with SpecMutationLock.acquire(tmp_path, "003-test", "retarget-held"):
+                with pytest.raises(SystemExit) as exc:
+                    _cmd_harness_run(["003"])
+
+        assert exc.value.code == 1
+        mock_run.assert_not_called()
+        assert "spec mutation" in capsys.readouterr().err.lower()
+        assert not list((tmp_path / "runs").glob("build-*"))
+
+    def test_delivery_releases_mutation_lock_after_durable_phase_b_evidence(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        config_file = tmp_path / ".echelon" / "config.yml"
+        config_file.parent.mkdir(parents=True)
+        config_file.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
+        (tmp_path / "package.json").write_text("{}\n", encoding="utf-8")
+        mirror = tmp_path / "runs" / "mirror.git"
+        mirror.mkdir(parents=True)
+        spec_dir = tmp_path / "specs" / "003-test"
+        _write_phase_a_build_inputs(spec_dir)
+        monkeypatch.chdir(tmp_path)
+
+        from echelon.cli import _cmd_harness_run
+        from echelon.spec_lifecycle import SpecMutationLock
+
+        observed_build_ids: list[str] = []
+
+        def observe_delivery(*_args, **kwargs) -> None:
+            build_id = kwargs["resume_build_id"]
+            observed_build_ids.append(build_id)
+            evidence = json.loads(
+                (tmp_path / "runs" / build_id / "state.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            assert evidence["spec_id"] == "003-test"
+            assert evidence["status"] == "preparing"
+            with SpecMutationLock.acquire(tmp_path, "003-test", "retarget-after"):
+                pass
+
+        with patch("harness.config.load_config") as mock_cfg, \
+             patch("harness.paths.mirror_path", return_value=mirror), \
+             patch("harness.gitops.GitOpsManager"), \
+             patch("harness.docker_provider.DockerWorktreeProvider"), \
+             patch("harness.skills.run_skill.run", side_effect=observe_delivery):
+            mock_cfg.return_value = MagicMock(
+                buffer_limit_bytes=1024 * 1024,
+                target_repo=".",
+            )
+            _cmd_harness_run(["003"])
+
+        assert len(observed_build_ids) == 1
 
     def test_harness_run_forwards_loop_options_to_run_intent(
         self,

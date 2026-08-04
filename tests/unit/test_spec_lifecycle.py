@@ -13,6 +13,7 @@ from echelon.spec_lifecycle import (
     SpecLifecycleLock,
     SpecLifecycleLocked,
     SpecLifecycleRecoveryRequired,
+    SpecMutationLock,
     SpecRunExecutionLock,
     SpecRunAmbiguous,
     SpecRunNotFound,
@@ -221,6 +222,24 @@ def test_lifecycle_lock_rejects_second_live_owner(tmp_path: Path) -> None:
     with SpecLifecycleLock.acquire(tmp_path, "switch-001"):
         with pytest.raises(SpecLifecycleLocked, match="switch-001"):
             SpecLifecycleLock.acquire(tmp_path, "switch-002")
+
+
+def test_spec_mutation_lock_serializes_one_spec_but_not_siblings(
+    tmp_path: Path,
+) -> None:
+    first = SpecMutationLock.acquire(tmp_path, "001-demo", "retarget-a")
+    try:
+        with pytest.raises(SpecLifecycleLocked, match="retarget-a"):
+            SpecMutationLock.acquire(tmp_path, "001-demo", "delivery-b")
+        sibling = SpecMutationLock.acquire(tmp_path, "002-other", "amend-c")
+        sibling.release()
+    finally:
+        first.release()
+
+
+def test_spec_mutation_lock_rejects_unsafe_spec_identity(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="unsafe spec identity"):
+        SpecMutationLock.acquire(tmp_path, "../outside", "retarget-a")
 
 
 def test_run_execution_lock_refuses_a_second_owner_without_blocking_sibling_run(
