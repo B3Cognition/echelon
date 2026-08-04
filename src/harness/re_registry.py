@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from dataclasses import dataclass
@@ -11,6 +12,7 @@ from typing import Any
 from harness.re_artifacts import (
     ReArtifactCatalogError,
     ReArtifactDescriptor,
+    classify_re_artifact,
     validate_re_artifact_descriptor,
 )
 
@@ -125,10 +127,33 @@ def canonical_re_artifacts(
     workspace_root: Path,
     index: PublishedReIndex,
 ) -> dict[str, object]:
-    """Return the durable published context expected by squad consumers."""
+    """Project normalized descriptors into the legacy squad context shape."""
     root = workspace_root.resolve()
     paths = ReRegistryPaths.for_workspace(root)
-    source_dirs: list[str] = []
+    descriptors = canonical_re_artifact_descriptors(root, index)
+    by_path = {descriptor.path: descriptor for descriptor in descriptors}
+
+    def absolute(descriptor: ReArtifactDescriptor) -> str:
+        return str(root / descriptor.path)
+
+    def exact(relative_path: str, field: str) -> str:
+        descriptor = by_path.get(relative_path)
+        if descriptor is None:
+            raise ReRegistryError(
+                f"registered artifact is missing for {field}: {relative_path}"
+            )
+        return absolute(descriptor)
+
+    source_dirs = [
+        str(
+            _existing_registry_path(
+                root,
+                index.sources[source_id].published_path,
+                "published_path",
+            )
+        )
+        for source_id in sorted(index.sources)
+    ]
     source_manifests: dict[str, str] = {}
     source_overviews: list[str] = []
     specs: list[str] = []
@@ -144,114 +169,105 @@ def canonical_re_artifacts(
 
     for source_id in sorted(index.sources):
         source = index.sources[source_id]
-        source_dir = _existing_registry_path(root, source.published_path, "published_path")
-        manifest_path = _existing_registry_path(root, source.manifest, "manifest")
-        manifest = _read_object(manifest_path, "source manifest")
-        if manifest.get("schema_version") != RE_REGISTRY_SCHEMA_VERSION:
-            raise ReRegistryError(f"unsupported source manifest schema: {manifest_path}")
-        if manifest.get("source_id") != source_id:
-            raise ReRegistryError(f"source manifest ID mismatch: {manifest_path}")
-
-        overview_value = _required_string(manifest, "overview", str(manifest_path))
-        overview_path = _existing_registry_path(root, overview_value, "overview")
-        expected_prefix = PurePosixPath(f"re/sources/{source_id}")
-        _require_prefix(overview_value, expected_prefix, "overview")
-
-        raw_specs = manifest.get("specs")
-        if not isinstance(raw_specs, list) or any(not isinstance(item, str) for item in raw_specs):
-            raise ReRegistryError(f"source manifest specs must be a list of paths: {manifest_path}")
-        for spec_value in raw_specs:
-            _require_prefix(spec_value, expected_prefix / "specs", "spec")
-            specs.append(str(_existing_registry_path(root, spec_value, "spec")))
-
-        summary_value = manifest.get("codegraph_summary")
-        if isinstance(summary_value, str) and summary_value.strip():
-            summary_value = summary_value.strip()
-            _require_prefix(summary_value, expected_prefix, "codegraph_summary")
-            codegraph_summaries.append(
-                str(_existing_registry_path(root, summary_value, "codegraph_summary"))
-            )
-        analysis_value = manifest.get("codegraph_analysis")
-        if isinstance(analysis_value, str) and analysis_value.strip():
-            analysis_value = analysis_value.strip()
-            _require_prefix(analysis_value, expected_prefix, "codegraph_analysis")
-            codegraph_analyses.append(
-                str(_existing_registry_path(root, analysis_value, "codegraph_analysis"))
-            )
-        domain_manifest_value = manifest.get("domain_manifest")
-        if isinstance(domain_manifest_value, str) and domain_manifest_value.strip():
-            domain_manifest_value = domain_manifest_value.strip()
-            _require_prefix(domain_manifest_value, expected_prefix, "domain_manifest")
-            source_domain_manifests[source_id] = str(
-                _existing_registry_path(root, domain_manifest_value, "domain_manifest")
-            )
-        for manifest_key, destination in (
-            ("architecture", source_architecture),
-            ("contracts", source_contracts),
-            ("components", source_components),
-        ):
-            raw_value = manifest.get(manifest_key)
-            if isinstance(raw_value, str) and raw_value.strip():
-                raw_value = raw_value.strip()
-                _require_prefix(raw_value, expected_prefix, manifest_key)
-                destination[source_id] = str(
-                    _existing_registry_path(root, raw_value, manifest_key)
-                )
-        supporting_value = manifest.get("supporting_artifacts")
-        if isinstance(supporting_value, str) and supporting_value.strip():
-            supporting_value = supporting_value.strip()
-            _require_prefix(supporting_value, expected_prefix, "supporting_artifacts")
-            source_supporting_artifacts[source_id] = str(
-                _existing_registry_path(root, supporting_value, "supporting_artifacts")
-            )
-        extraction_value = manifest.get("extraction_artifacts")
-        if isinstance(extraction_value, dict):
-            source_extraction_artifacts[source_id] = _source_extraction_artifacts(
-                root,
-                source_id,
-                extraction_value,
-            )
-        adrs_dir = paths.sources / source_id / "adrs"
-        if adrs_dir.is_dir():
-            source_adrs[source_id] = [
-                str(path)
-                for path in sorted(adrs_dir.rglob("*.md"))
-                if path.is_file()
-            ]
-
-        source_dirs.append(str(source_dir))
-        source_manifests[source_id] = str(manifest_path)
-        source_overviews.append(str(overview_path))
-
-    workspace_paths = {
-        field: _existing_registry_path(root, getattr(index.workspace, field), f"workspace.{field}")
-        for field in _WORKSPACE_FIELDS
-    }
-    workspace_domains = paths.workspace / "domains"
-    architecture_map = paths.workspace / "architecture-map.json"
-    domain_catalog = paths.workspace / "domain-catalog.md"
-    workspace_checklist = paths.workspace / "checklist.md"
-    workspace_strategy = [
-        str(path)
-        for path in sorted((paths.workspace / "strategy").rglob("*.md"))
-        if path.is_file()
-    ]
-    if workspace_domains.is_dir():
-        specs.extend(
-            str(path)
-            for path in sorted(workspace_domains.glob("*.md"))
-            if path.is_file()
+        source_manifests[source_id] = exact(
+            source.manifest, f"source manifest {source_id}"
+        )
+        source_overviews.append(
+            exact(f"re/sources/{source_id}/overview.md", f"source overview {source_id}")
         )
 
-    re_contexts = source_overviews + specs + [
-        str(workspace_paths["overview"]),
-        str(workspace_paths["relationships"]),
-        str(workspace_paths["contracts"]),
+    source_rows = [
+        descriptor for descriptor in descriptors if descriptor.scope == "source"
     ]
-    if architecture_map.is_file():
-        re_contexts.append(str(architecture_map))
-    if workspace_checklist.is_file():
-        re_contexts.append(str(workspace_checklist))
+    workspace_rows = [
+        descriptor for descriptor in descriptors if descriptor.scope == "workspace"
+    ]
+    specs.extend(
+        absolute(row) for row in source_rows if row.kind == "re-generated-spec"
+    )
+    specs.extend(
+        absolute(row)
+        for row in workspace_rows
+        if row.kind == "re-domain" and row.path.startswith("re/workspace/domains/")
+    )
+    codegraph_summaries.extend(
+        absolute(row) for row in source_rows if row.kind == "re-codegraph-summary"
+    )
+    codegraph_analyses.extend(
+        absolute(row) for row in source_rows if row.kind == "re-codegraph-analysis"
+    )
+
+    extraction_kinds = {
+        "re-analysis": "analysis",
+        "re-configs": "configs",
+        "re-dependencies": "dependencies",
+        "re-structure": "structure",
+    }
+    source_destinations = {
+        "re-architecture": source_architecture,
+        "re-components": source_components,
+        "re-contracts": source_contracts,
+        "re-domain-manifest": source_domain_manifests,
+        "re-supporting-artifacts": source_supporting_artifacts,
+    }
+    for source_id in sorted(index.sources):
+        owned = [row for row in source_rows if row.source_id == source_id]
+        for kind, destination in source_destinations.items():
+            matches = [row for row in owned if row.kind == kind]
+            if matches:
+                destination[source_id] = absolute(matches[0])
+        adrs = [absolute(row) for row in owned if row.kind == "re-decision"]
+        if adrs:
+            source_adrs[source_id] = adrs
+        extraction = {
+            extraction_kinds[row.kind]: absolute(row)
+            for row in owned
+            if row.kind in extraction_kinds
+        }
+        if extraction:
+            source_extraction_artifacts[source_id] = dict(sorted(extraction.items()))
+
+    workspace_manifest = exact(index.workspace.manifest, "workspace.manifest")
+    workspace_overview = exact(index.workspace.overview, "workspace.overview")
+    workspace_relationships = exact(
+        index.workspace.relationships, "workspace.relationships"
+    )
+    workspace_contracts = exact(index.workspace.contracts, "workspace.contracts")
+    architecture_map = next(
+        (absolute(row) for row in workspace_rows if row.kind == "re-architecture-map"),
+        None,
+    )
+    domain_catalog = next(
+        (
+            absolute(row)
+            for row in workspace_rows
+            if row.path == "re/workspace/domain-catalog.md"
+        ),
+        None,
+    )
+    workspace_checklist = next(
+        (
+            absolute(row)
+            for row in workspace_rows
+            if row.kind == "re-workspace-checklist"
+        ),
+        None,
+    )
+    workspace_strategy = [
+        absolute(row)
+        for row in workspace_rows
+        if row.path.startswith("re/workspace/strategy/") and row.path.endswith(".md")
+    ]
+
+    re_contexts = source_overviews + specs + [
+        workspace_overview,
+        workspace_relationships,
+        workspace_contracts,
+    ]
+    if architecture_map:
+        re_contexts.append(architecture_map)
+    if workspace_checklist:
+        re_contexts.append(workspace_checklist)
     re_contexts.extend(workspace_strategy)
     re_contexts.extend(codegraph_summaries)
     re_contexts.extend(source_architecture.values())
@@ -261,29 +277,26 @@ def canonical_re_artifacts(
         re_contexts.extend(paths_for_source)
     re_contexts.extend(source_domain_manifests.values())
     re_contexts.extend(source_supporting_artifacts.values())
-    if domain_catalog.is_file():
-        re_contexts.append(str(domain_catalog))
+    if domain_catalog:
+        re_contexts.append(domain_catalog)
     workspace_codegraph_summary = None
     if index.workspace.codegraph_summary:
-        workspace_codegraph_summary = str(
-            _existing_registry_path(
-                root,
-                index.workspace.codegraph_summary,
-                "workspace.codegraph_summary",
-            )
+        workspace_codegraph_summary = exact(
+            index.workspace.codegraph_summary,
+            "workspace.codegraph_summary",
         )
         re_contexts.append(workspace_codegraph_summary)
     return {
         "manifest": str(paths.index),
         "source_index": str(paths.index),
-        "workspace_manifest": str(workspace_paths["manifest"]),
-        "architecture_map": str(architecture_map) if architecture_map.is_file() else None,
-        "domain_catalog": str(domain_catalog) if domain_catalog.is_file() else None,
-        "workspace_checklist": str(workspace_checklist) if workspace_checklist.is_file() else None,
+        "workspace_manifest": workspace_manifest,
+        "architecture_map": architecture_map,
+        "domain_catalog": domain_catalog,
+        "workspace_checklist": workspace_checklist,
         "workspace_strategy": workspace_strategy,
-        "re_overview": str(workspace_paths["overview"]),
-        "cross_repo": str(workspace_paths["relationships"]),
-        "contracts": str(workspace_paths["contracts"]),
+        "re_overview": workspace_overview,
+        "cross_repo": workspace_relationships,
+        "contracts": workspace_contracts,
         "workspace_codegraph_summary": workspace_codegraph_summary,
         "source_manifests": source_manifests,
         "per_repo": source_dirs,
@@ -298,27 +311,280 @@ def canonical_re_artifacts(
         "source_supporting_artifacts": source_supporting_artifacts,
         "source_extraction_artifacts": source_extraction_artifacts,
         "re_contexts": re_contexts,
+        "artifact_descriptors": [
+            descriptor.to_json_dict() for descriptor in descriptors
+        ],
     }
 
 
-def _source_extraction_artifacts(
+def canonical_re_artifact_descriptors(
     workspace_root: Path,
-    source_id: str,
-    value: dict[Any, Any],
-) -> dict[str, str]:
-    expected_prefix = PurePosixPath(f"re/sources/{source_id}")
-    artifacts: dict[str, str] = {}
-    for key, raw_path in sorted(value.items()):
-        if not isinstance(key, str) or not isinstance(raw_path, str) or not raw_path.strip():
-            raise ReRegistryError(
-                f"source extraction artifacts must map names to paths: {source_id}"
-            )
-        raw_path = raw_path.strip()
-        _require_prefix(raw_path, expected_prefix, f"extraction_artifacts.{key}")
-        artifacts[key] = str(
-            _existing_registry_path(workspace_root, raw_path, f"extraction_artifacts.{key}")
+    index: PublishedReIndex,
+) -> tuple[ReArtifactDescriptor, ...]:
+    """Return one validated, path-sorted descriptor for each registered artifact."""
+    owner_descriptors = [index.workspace.manifest_artifact] + [
+        index.sources[source_id].manifest_artifact for source_id in sorted(index.sources)
+    ]
+    typed_owners = sum(descriptor is not None for descriptor in owner_descriptors)
+    if typed_owners == 0:
+        return _legacy_re_artifact_descriptors(workspace_root.resolve(), index)
+    if typed_owners != len(owner_descriptors):
+        raise ReRegistryError(
+            "typed RE publication requires manifest_artifact for every owner"
         )
-    return artifacts
+    return _typed_re_artifact_descriptors(workspace_root.resolve(), index)
+
+
+def _typed_re_artifact_descriptors(
+    workspace_root: Path,
+    index: PublishedReIndex,
+) -> tuple[ReArtifactDescriptor, ...]:
+    descriptors: list[ReArtifactDescriptor] = []
+    seen_paths: set[str] = set()
+
+    for source_id in sorted(index.sources):
+        source = index.sources[source_id]
+        assert source.manifest_artifact is not None
+        descriptor = _validate_registry_descriptor(
+            source.manifest_artifact.to_json_dict(),
+            workspace_root=workspace_root,
+            owner_scope="source",
+            owner_source_id=source_id,
+        )
+        _append_unique_descriptor(descriptors, seen_paths, descriptor)
+    assert index.workspace.manifest_artifact is not None
+    workspace_manifest = _validate_registry_descriptor(
+        index.workspace.manifest_artifact.to_json_dict(),
+        workspace_root=workspace_root,
+        owner_scope="workspace",
+        owner_source_id=None,
+    )
+    _append_unique_descriptor(descriptors, seen_paths, workspace_manifest)
+
+    for source_id in sorted(index.sources):
+        source = index.sources[source_id]
+        manifest_path = _existing_registry_path(
+            workspace_root, source.manifest, "manifest"
+        )
+        manifest = _read_object(manifest_path, "source manifest")
+        if manifest.get("schema_version") != RE_REGISTRY_SCHEMA_VERSION:
+            raise ReRegistryError(f"unsupported source manifest schema: {manifest_path}")
+        if manifest.get("source_id") != source_id:
+            raise ReRegistryError(f"source manifest ID mismatch: {manifest_path}")
+        _append_typed_catalog(
+            manifest,
+            workspace_root=workspace_root,
+            owner_scope="source",
+            owner_source_id=source_id,
+            descriptors=descriptors,
+            seen_paths=seen_paths,
+        )
+
+    workspace_manifest_path = _existing_registry_path(
+        workspace_root, index.workspace.manifest, "workspace.manifest"
+    )
+    workspace_manifest_payload = _read_object(
+        workspace_manifest_path, "workspace manifest"
+    )
+    if workspace_manifest_payload.get("schema_version") != RE_REGISTRY_SCHEMA_VERSION:
+        raise ReRegistryError(
+            f"unsupported workspace manifest schema: {workspace_manifest_path}"
+        )
+    _append_typed_catalog(
+        workspace_manifest_payload,
+        workspace_root=workspace_root,
+        owner_scope="workspace",
+        owner_source_id=None,
+        descriptors=descriptors,
+        seen_paths=seen_paths,
+    )
+    return tuple(sorted(descriptors, key=lambda descriptor: descriptor.path))
+
+
+def _append_typed_catalog(
+    manifest: dict[str, Any],
+    *,
+    workspace_root: Path,
+    owner_scope: str,
+    owner_source_id: str | None,
+    descriptors: list[ReArtifactDescriptor],
+    seen_paths: set[str],
+) -> None:
+    raw_artifacts = manifest.get("artifacts")
+    if not isinstance(raw_artifacts, list):
+        raise ReRegistryError("typed owner artifact catalog must be a list")
+
+    catalog_paths: list[str] = []
+    for raw in raw_artifacts:
+        descriptor = _validate_registry_descriptor(
+            raw,
+            workspace_root=workspace_root,
+            owner_scope=owner_scope,
+            owner_source_id=owner_source_id,
+        )
+        _append_unique_descriptor(descriptors, seen_paths, descriptor)
+        catalog_paths.append(descriptor.path)
+    if catalog_paths != sorted(catalog_paths):
+        raise ReRegistryError("artifact catalog paths are not sorted")
+
+
+def _validate_registry_descriptor(
+    raw: object,
+    *,
+    workspace_root: Path,
+    owner_scope: str,
+    owner_source_id: str | None,
+) -> ReArtifactDescriptor:
+    try:
+        descriptor = validate_re_artifact_descriptor(
+            raw,
+            workspace_root=workspace_root,
+            owner_scope=owner_scope,
+            owner_source_id=owner_source_id,
+        )
+        expected_kind = classify_re_artifact(
+            PurePosixPath(descriptor.path), scope=owner_scope
+        )
+    except ReArtifactCatalogError as exc:
+        raise ReRegistryError(f"invalid artifact descriptor: {exc}") from exc
+    if descriptor.kind != expected_kind:
+        raise ReRegistryError(
+            f"artifact kind does not match path: {descriptor.path}"
+        )
+    return descriptor
+
+
+def _append_unique_descriptor(
+    descriptors: list[ReArtifactDescriptor],
+    seen_paths: set[str],
+    descriptor: ReArtifactDescriptor,
+) -> None:
+    if descriptor.path in seen_paths:
+        raise ReRegistryError(f"duplicate artifact path: {descriptor.path}")
+    seen_paths.add(descriptor.path)
+    descriptors.append(descriptor)
+
+
+def _legacy_re_artifact_descriptors(
+    workspace_root: Path,
+    index: PublishedReIndex,
+) -> tuple[ReArtifactDescriptor, ...]:
+    paths = ReRegistryPaths.for_workspace(workspace_root)
+    descriptors: dict[str, ReArtifactDescriptor] = {}
+
+    def add(relative_path: str, *, scope: str, source_id: str | None = None) -> None:
+        normalized = _safe_relative_path(relative_path, "artifact")
+        artifact_path = _existing_registry_path(
+            workspace_root, normalized, "artifact"
+        )
+        try:
+            kind = classify_re_artifact(PurePosixPath(normalized), scope=scope)
+        except ReArtifactCatalogError as exc:
+            raise ReRegistryError(
+                f"cannot classify legacy artifact {normalized}: {exc}"
+            ) from exc
+        descriptors.setdefault(
+            normalized,
+            ReArtifactDescriptor(
+                kind=kind,
+                path=normalized,
+                sha256="sha256:"
+                + hashlib.sha256(artifact_path.read_bytes()).hexdigest(),
+                scope=scope,
+                source_id=source_id,
+            ),
+        )
+
+    for source_id in sorted(index.sources):
+        source = index.sources[source_id]
+        _existing_registry_path(
+            workspace_root, source.published_path, "published_path"
+        )
+        manifest_path = _existing_registry_path(
+            workspace_root, source.manifest, "manifest"
+        )
+        manifest = _read_object(manifest_path, "source manifest")
+        if manifest.get("schema_version") != RE_REGISTRY_SCHEMA_VERSION:
+            raise ReRegistryError(f"unsupported source manifest schema: {manifest_path}")
+        if manifest.get("source_id") != source_id:
+            raise ReRegistryError(f"source manifest ID mismatch: {manifest_path}")
+        expected_prefix = PurePosixPath(f"re/sources/{source_id}")
+        add(source.manifest, scope="source", source_id=source_id)
+
+        overview = _required_string(manifest, "overview", str(manifest_path))
+        _require_prefix(overview, expected_prefix, "overview")
+        add(overview, scope="source", source_id=source_id)
+        raw_specs = manifest.get("specs")
+        if not isinstance(raw_specs, list) or any(
+            not isinstance(item, str) for item in raw_specs
+        ):
+            raise ReRegistryError(
+                f"source manifest specs must be a list of paths: {manifest_path}"
+            )
+        for spec in raw_specs:
+            _require_prefix(spec, expected_prefix / "specs", "spec")
+            add(spec, scope="source", source_id=source_id)
+
+        for key in (
+            "codegraph_summary",
+            "codegraph_analysis",
+            "domain_manifest",
+            "architecture",
+            "contracts",
+            "components",
+            "supporting_artifacts",
+        ):
+            value = manifest.get(key)
+            if isinstance(value, str) and value.strip():
+                value = value.strip()
+                _require_prefix(value, expected_prefix, key)
+                add(value, scope="source", source_id=source_id)
+        extraction = manifest.get("extraction_artifacts")
+        if isinstance(extraction, dict):
+            for key, value in sorted(extraction.items()):
+                if (
+                    not isinstance(key, str)
+                    or not isinstance(value, str)
+                    or not value.strip()
+                ):
+                    raise ReRegistryError(
+                        f"source extraction artifacts must map names to paths: {source_id}"
+                    )
+                value = value.strip()
+                _require_prefix(value, expected_prefix, f"extraction_artifacts.{key}")
+                add(value, scope="source", source_id=source_id)
+        adrs_dir = paths.sources / source_id / "adrs"
+        if adrs_dir.is_dir():
+            for adr in sorted(adrs_dir.rglob("*.md")):
+                if adr.is_file():
+                    add(
+                        adr.relative_to(workspace_root).as_posix(),
+                        scope="source",
+                        source_id=source_id,
+                    )
+
+    for field in _WORKSPACE_FIELDS:
+        add(getattr(index.workspace, field), scope="workspace")
+    for optional in (
+        paths.workspace / "architecture-map.json",
+        paths.workspace / "domain-catalog.md",
+        paths.workspace / "checklist.md",
+    ):
+        if optional.is_file():
+            add(optional.relative_to(workspace_root).as_posix(), scope="workspace")
+    domains = paths.workspace / "domains"
+    if domains.is_dir():
+        for domain in sorted(domains.glob("*.md")):
+            if domain.is_file():
+                add(domain.relative_to(workspace_root).as_posix(), scope="workspace")
+    strategy = paths.workspace / "strategy"
+    if strategy.is_dir():
+        for document in sorted(strategy.rglob("*.md")):
+            if document.is_file():
+                add(document.relative_to(workspace_root).as_posix(), scope="workspace")
+    if index.workspace.codegraph_summary:
+        add(index.workspace.codegraph_summary, scope="workspace")
+    return tuple(descriptors[path] for path in sorted(descriptors))
 
 
 def published_source_is_usable(

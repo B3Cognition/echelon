@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -14,6 +15,26 @@ from harness.published_re_context import (
 def _write_json(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def _descriptor(
+    root: Path,
+    relative_path: str,
+    *,
+    kind: str,
+    scope: str,
+    source_id: str | None = None,
+) -> dict[str, str]:
+    payload = {
+        "kind": kind,
+        "path": relative_path,
+        "sha256": "sha256:"
+        + hashlib.sha256((root / relative_path).read_bytes()).hexdigest(),
+        "scope": scope,
+    }
+    if source_id is not None:
+        payload["source_id"] = source_id
+    return payload
 
 
 def _publish_fixture(root: Path) -> Path:
@@ -34,6 +55,30 @@ def _publish_fixture(root: Path) -> Path:
     _write_json(source_root / "codegraph-analysis.json", {"source_id": "api", "deep": True})
     _write_json(source_root / "analysis.json", {"source_id": "api", "analysis": True})
     (source_root / "unregistered.txt").write_text("secret\n", encoding="utf-8")
+    source_artifacts = [
+        _descriptor(
+            root,
+            path,
+            kind=kind,
+            scope="source",
+            source_id="api",
+        )
+        for path, kind in sorted(
+            {
+                "re/sources/api/adrs/ADR-001-api.md": "re-decision",
+                "re/sources/api/analysis.json": "re-analysis",
+                "re/sources/api/architecture.md": "re-architecture",
+                "re/sources/api/codegraph-analysis.json": "re-codegraph-analysis",
+                "re/sources/api/codegraph-summary.json": "re-codegraph-summary",
+                "re/sources/api/components.md": "re-components",
+                "re/sources/api/contracts.md": "re-contracts",
+                "re/sources/api/domain-manifest.json": "re-domain-manifest",
+                "re/sources/api/overview.md": "re-overview",
+                "re/sources/api/specs/search/spec.md": "re-generated-spec",
+                "re/sources/api/supporting-artifacts.md": "re-supporting-artifacts",
+            }.items()
+        )
+    ]
     _write_json(
         source_root / "manifest.json",
         {
@@ -52,6 +97,7 @@ def _publish_fixture(root: Path) -> Path:
             "extraction_artifacts": {
                 "analysis": "re/sources/api/analysis.json",
             },
+            "artifacts": source_artifacts,
         },
     )
     workspace = root / "re" / "workspace"
@@ -61,6 +107,36 @@ def _publish_fixture(root: Path) -> Path:
     (workspace / "checklist.md").write_text("# Checklist\n", encoding="utf-8")
     _write_json(workspace / "architecture-map.json", {"schema_version": 1, "domains": []})
     _write_json(workspace / "codegraph-summary.json", {"workspace": True})
+    workspace_artifacts = [
+        _descriptor(root, path, kind=kind, scope="workspace")
+        for path, kind in sorted(
+            {
+                "re/workspace/architecture-map.json": "re-architecture-map",
+                "re/workspace/checklist.md": "re-workspace-checklist",
+                "re/workspace/codegraph-summary.json": "re-codegraph-summary",
+                "re/workspace/contracts.md": "re-contracts",
+                "re/workspace/overview.md": "re-overview",
+                "re/workspace/relationships.md": "re-relationships",
+            }.items()
+        )
+    ]
+    _write_json(
+        workspace / "manifest.json",
+        {"schema_version": 1, "artifacts": workspace_artifacts},
+    )
+    source_manifest_artifact = _descriptor(
+        root,
+        "re/sources/api/manifest.json",
+        kind="re-source-manifest",
+        scope="source",
+        source_id="api",
+    )
+    workspace_manifest_artifact = _descriptor(
+        root,
+        "re/workspace/manifest.json",
+        kind="re-workspace-manifest",
+        scope="workspace",
+    )
     _write_json(
         root / "re" / "index.json",
         {
@@ -77,10 +153,12 @@ def _publish_fixture(root: Path) -> Path:
                     "profile_hash": "profile",
                     "status": "complete",
                     "manifest": "re/sources/api/manifest.json",
+                    "manifest_artifact": source_manifest_artifact,
                 }
             },
             "workspace": {
                 "manifest": "re/workspace/manifest.json",
+                "manifest_artifact": workspace_manifest_artifact,
                 "overview": "re/workspace/overview.md",
                 "relationships": "re/workspace/relationships.md",
                 "contracts": "re/workspace/contracts.md",
@@ -133,6 +211,12 @@ def test_attach_published_re_context_snapshots_only_registered_artifacts(
     assert snapshot_root == run_dir / "context" / "published-re"
     artifacts = context["artifacts"]
     assert isinstance(artifacts, dict)
+    descriptors = artifacts["artifact_descriptors"]
+    assert isinstance(descriptors, list)
+    assert [row["path"] for row in descriptors] == sorted(
+        row["path"] for row in descriptors
+    )
+    assert not any(row["path"].endswith("unregistered.txt") for row in descriptors)
     snapshot_specs = artifacts["re_specs"]
     assert isinstance(snapshot_specs, list)
     snapshot_spec = Path(snapshot_specs[0])
