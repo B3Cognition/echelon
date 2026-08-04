@@ -238,6 +238,67 @@ def test_collect_evidence_never_falls_back_from_invalid_targets_contract(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    "targets_yml",
+    (None, "targets: [\n", "targets: services/api\n", "targets: []\n"),
+    ids=("missing", "malformed", "structurally-invalid", "empty"),
+)
+def test_collect_evidence_rejects_invalid_targets_contract_when_state_is_empty(
+    tmp_path: Path,
+    targets_yml: str | None,
+) -> None:
+    _git(tmp_path, "init", "-b", "001-demo")
+    spec_dir = tmp_path / "specs/001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text(
+        "---\nstatus: planned\ntargets:\n  - legacy/api\n---\n# Demo\n",
+        encoding="utf-8",
+    )
+    if targets_yml is not None:
+        (spec_dir / "targets.yml").write_text(targets_yml, encoding="utf-8")
+    run_dir = tmp_path / "runs/squad-base"
+    run_dir.mkdir(parents=True)
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "run_id": "squad-base",
+                "spec_id": "001-demo",
+                "feature_branch": "001-demo",
+                "spec_dir": "specs/001-demo",
+                "implementation_targets": [],
+                "user_message": "Build account search",
+                "published_re_context": {"status": "absent"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "runs/.current").write_text("squad-base\n", encoding="utf-8")
+
+    evidence = collect_retarget_evidence(tmp_path, "001-demo")
+    result = classify_retarget(replace(evidence, replacement_targets=("apps/web",)))
+
+    assert evidence.canonical_targets == ()
+    assert evidence.state_targets == ()
+    assert result.eligible is False
+    assert "retarget_target_contract_invalid" in result.reason_codes
+
+
+@pytest.mark.unit
+def test_classifier_accepts_non_empty_normalized_canonical_contract(tmp_path: Path) -> None:
+    result = classify_retarget(
+        replace(
+            eligible_evidence(tmp_path),
+            canonical_targets=("services/api/",),
+            state_targets=("services/api",),
+            replacement_targets=("apps/web",),
+        )
+    )
+
+    assert result.eligible is True
+    assert result.reason_codes == ()
+
+
+@pytest.mark.unit
 def test_collect_evidence_rejects_feature_branch_only_identity_match(tmp_path: Path) -> None:
     _git(tmp_path, "init", "-b", "001-demo")
     spec_dir = tmp_path / "specs/002-other"

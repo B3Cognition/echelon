@@ -97,6 +97,8 @@ def classify_retarget(evidence: RetargetEvidence) -> RetargetEligibility:
     )
     if not active_matches:
         reasons.append("retarget_active_spec_mismatch")
+    if not canonical_targets:
+        reasons.append("retarget_target_contract_invalid")
     if state_targets != canonical_targets:
         reasons.append("retarget_target_contract_mismatch")
     if not replacement_targets:
