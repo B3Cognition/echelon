@@ -33,6 +33,9 @@ _COMPLETION_TRAILER_KEYS = (
     "Echelon-Next-Phase",
     "Echelon-Checkpoint",
     "Echelon-Completion",
+    "Echelon-Retarget-Revision",
+    "Echelon-Baseline-Run",
+    "Echelon-Replacement-Run",
 )
 _CHECKPOINT_GIT_EXCLUDES = (
     "**/.echelon/checkpoints.lock",
@@ -255,33 +258,47 @@ def record_phase_checkpoint(
             f"checkpoint spec_id {checkpoint.spec_id!r} does not match spec directory {spec_id!r}"
         )
     with _checkpoint_ledger_lock(spec_dir):
-        ledger = load_checkpoint_ledger(spec_dir)
-        if checkpoint.completion_id:
-            matches = [
-                item
-                for item in ledger.checkpoints
-                if item.completion_id == checkpoint.completion_id
-            ]
-            if len(matches) > 1:
-                raise ValueError("duplicate checkpoint completion identity")
-            if matches:
-                if matches[0] != checkpoint:
-                    raise ValueError("checkpoint completion identity drift")
-                return ledger
-            checkpoints = [*ledger.checkpoints, checkpoint]
-        else:
-            checkpoints = [
-                item
-                for item in ledger.checkpoints
-                if item.id != checkpoint.id
-            ]
-            checkpoints.append(checkpoint)
-        updated = CheckpointLedger(
-            spec_id=checkpoint.spec_id,
-            checkpoints=checkpoints,
-        )
-        _write_checkpoint_ledger_unlocked(spec_dir, updated)
-        return updated
+        return _record_phase_checkpoint_unlocked(spec_dir, checkpoint)
+
+
+def _record_phase_checkpoint_unlocked(
+    spec_dir: Path,
+    checkpoint: PhaseCheckpoint,
+) -> CheckpointLedger:
+    """Record one validated checkpoint while the caller holds the ledger lock."""
+
+    ledger = load_checkpoint_ledger(spec_dir)
+    if checkpoint.completion_id:
+        matches = [
+            item
+            for item in ledger.checkpoints
+            if item.completion_id == checkpoint.completion_id
+        ]
+        if len(matches) > 1:
+            raise ValueError("duplicate checkpoint completion identity")
+        if matches:
+            if matches[0] != checkpoint:
+                raise ValueError("checkpoint completion identity drift")
+            return ledger
+        checkpoints = [*ledger.checkpoints, checkpoint]
+    else:
+        matches = [item for item in ledger.checkpoints if item.id == checkpoint.id]
+        if len(matches) > 1:
+            raise ValueError("duplicate checkpoint identity")
+        if matches and matches[0] == checkpoint:
+            return ledger
+        checkpoints = [
+            item
+            for item in ledger.checkpoints
+            if item.id != checkpoint.id
+        ]
+        checkpoints.append(checkpoint)
+    updated = CheckpointLedger(
+        spec_id=checkpoint.spec_id,
+        checkpoints=checkpoints,
+    )
+    _write_checkpoint_ledger_unlocked(spec_dir, updated)
+    return updated
 
 
 def record_checkpoint_metadata(
@@ -783,6 +800,56 @@ def _record_has_exact_identity(
     )
 
 
+def _record_has_exact_retarget_identity(
+    record: Mapping[str, str],
+    identity: Mapping[str, str],
+) -> bool:
+    trailers = _parse_commit_trailers(record["message"])
+    parents = record.get("parents", "").split()
+    return (
+        len(parents) == 1
+        and _GIT_OBJECT_ID_PATTERN.fullmatch(parents[0]) is not None
+        and frozenset(trailers) == frozenset(identity)
+        and all(trailers.get(key) == [value] for key, value in identity.items())
+    )
+
+
+def _bounded_retarget_commit(
+    project_root: Path,
+    *,
+    identity: Mapping[str, str],
+) -> dict[str, str] | None:
+    try:
+        output = run_git(
+            project_root,
+            "log",
+            "--all",
+            "--max-count=256",
+            "-z",
+            "--format=%H%x00%P%x00%cI%x00%B",
+        ).stdout
+    except GitHelperError as exc:
+        raise PhaseCheckpointError(str(exc)) from exc
+    revision_id = identity["Echelon-Retarget-Revision"]
+    candidates = [
+        record
+        for record in _parse_log_records(output)
+        if revision_id
+        in _parse_commit_trailers(record["message"]).get(
+            "Echelon-Retarget-Revision",
+            (),
+        )
+    ]
+    if any(
+        not _record_has_exact_retarget_identity(record, identity)
+        for record in candidates
+    ):
+        raise PhaseCheckpointError("retarget checkpoint identity drift")
+    if len(candidates) > 1:
+        raise PhaseCheckpointError("duplicate retarget checkpoint identity")
+    return candidates[0] if candidates else None
+
+
 def _bounded_completion_commit(
     project_root: Path,
     *,
@@ -1244,6 +1311,148 @@ def create_or_recover_completion_checkpoint(
         if fault_hook is not None:
             fault_hook("after_ledger")
         return _committed_checkpoint_receipt(common, commit)
+
+
+def _verify_retarget_commit_tree(
+    project_root: Path,
+    spec_dir: Path,
+    commit: str,
+    expected_history: object,
+) -> None:
+    from echelon.spec_retarget_history import (
+        RETARGET_HISTORY_FILENAME,
+        _history_from_raw,
+    )
+
+    root = Path(project_root).resolve()
+    resolved_spec = Path(spec_dir).resolve()
+    try:
+        relative = resolved_spec.relative_to(root)
+    except ValueError as exc:
+        raise PhaseCheckpointError(
+            "owned spec directory must be inside the project root"
+        ) from exc
+    try:
+        content = run_git(
+            root,
+            "show",
+            f"{commit}:{(relative / RETARGET_HISTORY_FILENAME).as_posix()}",
+        ).stdout
+        raw = json.loads(content)
+        committed_history = _history_from_raw(
+            raw,
+            spec_id=_spec_id_from_dir(resolved_spec),
+        )
+    except (GitHelperError, json.JSONDecodeError, UnicodeError, ValueError) as exc:
+        raise PhaseCheckpointError(
+            "retarget checkpoint does not contain the prepared revision ledger"
+        ) from exc
+    if committed_history != expected_history:
+        raise PhaseCheckpointError(
+            "retarget checkpoint prepared revision ledger drift"
+        )
+
+
+def commit_retarget_checkpoint(
+    *,
+    project_root: Path,
+    spec_dir: Path,
+    run_id: str,
+    revision_id: str,
+) -> PhaseCheckpoint:
+    """Commit and record the immutable preflight boundary for one retarget."""
+
+    from echelon.spec_retarget_history import load_retarget_history
+
+    root = Path(project_root).resolve()
+    resolved_spec = Path(spec_dir).resolve()
+    spec_id = _spec_id_from_dir(resolved_spec)
+    with _checkpoint_ledger_lock(resolved_spec):
+        history = load_retarget_history(resolved_spec)
+        if not history.revisions:
+            raise PhaseCheckpointError("retarget revision is missing")
+        revision = history.revisions[-1]
+        if revision.revision_id != revision_id or revision.status != "prepared":
+            raise PhaseCheckpointError(
+                "retarget checkpoint requires the latest prepared revision"
+            )
+        if revision.baseline_run_id != run_id:
+            raise PhaseCheckpointError(
+                "retarget checkpoint baseline run does not match"
+            )
+
+        checkpoint_id = f"retarget-preflight-{revision.revision_id}"
+        identity = {
+            "Echelon-Origin": "phase-a",
+            "Echelon-Action": "retarget-preflight",
+            "Echelon-Spec": spec_id,
+            "Echelon-Run": run_id,
+            "Echelon-Phase": "retarget",
+            "Echelon-Next-Phase": "phase0-constitution",
+            "Echelon-Checkpoint": checkpoint_id,
+            "Echelon-Retarget-Revision": revision.revision_id,
+            "Echelon-Baseline-Run": revision.baseline_run_id,
+            "Echelon-Replacement-Run": revision.replacement_run_id,
+        }
+        message = build_echelon_commit_message(
+            f"checkpoint: prepare retarget {revision.revision_id}",
+            EchelonCommitMetadata(
+                origin="phase-a",
+                action="retarget-preflight",
+                spec_id=spec_id,
+                run_id=run_id,
+                phase="retarget",
+                next_phase="phase0-constitution",
+                checkpoint_id=checkpoint_id,
+                retarget_revision=revision.revision_id,
+                baseline_run_id=revision.baseline_run_id,
+                replacement_run_id=revision.replacement_run_id,
+            ),
+        )
+
+        record = _bounded_retarget_commit(root, identity=identity)
+        if record is None:
+            try:
+                checkpoint_head = run_git(
+                    root,
+                    "rev-parse",
+                    "HEAD^{commit}",
+                ).stdout.strip()
+            except GitHelperError as exc:
+                raise PhaseCheckpointError(str(exc)) from exc
+            commit = _commit_spec_changes(root, (resolved_spec,), message)
+            if commit is None:
+                raise PhaseCheckpointError(
+                    "retarget checkpoint produced no selected-spec change"
+                )
+            record = _show_completion_commit(root, commit)
+            if (
+                record.get("parents") != checkpoint_head
+                or not _record_has_exact_retarget_identity(record, identity)
+            ):
+                raise PhaseCheckpointError(
+                    "created retarget checkpoint commit identity mismatch"
+                )
+
+        _verify_retarget_commit_tree(
+            root,
+            resolved_spec,
+            record["commit"],
+            history,
+        )
+        checkpoint = PhaseCheckpoint(
+            id=checkpoint_id,
+            spec_id=spec_id,
+            phase="retarget",
+            next_phase="phase0-constitution",
+            commit=record["commit"],
+            metadata_commit="",
+            source="retarget-preflight",
+            run_id=run_id,
+            created_at=record["created_at"],
+        )
+        _record_phase_checkpoint_unlocked(resolved_spec, checkpoint)
+        return checkpoint
 
 
 def create_phase_checkpoint(

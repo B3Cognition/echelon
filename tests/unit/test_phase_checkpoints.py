@@ -12,10 +12,15 @@ from harness.phase_checkpoints import (
     PhaseCheckpointError,
     PhaseCheckpoint,
     commit_manual_checkpoint,
+    commit_retarget_checkpoint,
     create_phase_checkpoint,
     load_checkpoint_ledger,
     record_phase_checkpoint,
     resolve_checkpoint,
+)
+from echelon.spec_retarget_history import (
+    RetargetRecoveryProjection,
+    append_prepared_revision,
 )
 
 
@@ -247,6 +252,166 @@ def _checkpoint_repo(tmp_path: Path) -> tuple[Path, Path]:
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "base")
     return repo, spec_dir
+
+
+def _retarget_checkpoint_repo(tmp_path: Path) -> tuple[Path, Path]:
+    repo = tmp_path / "retarget-repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test User")
+    spec_dir = repo / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Baseline\n", encoding="utf-8")
+    (repo / "README.md").write_text("# Repository\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "base")
+    return repo, spec_dir
+
+
+def test_retarget_checkpoint_commits_prepared_ledger_and_exact_trailers(
+    tmp_path: Path,
+) -> None:
+    repo, spec_dir = _retarget_checkpoint_repo(tmp_path)
+    revision = append_prepared_revision(
+        spec_dir,
+        operation_id="rt-abc",
+        baseline_run_id="squad-base",
+        replacement_run_id="squad-retarget",
+        old_targets=("services/api",),
+        replacement_targets=("apps/web",),
+        original_prompt_digest="sha256:" + "a" * 64,
+        recovery=RetargetRecoveryProjection(
+            run_id="squad-base",
+            status="done",
+            phase="done",
+            spec_status="planned",
+            completed_phases=("phase4-document",),
+            implementation_targets=("services/api",),
+            ready_to_build=True,
+        ),
+    )
+    (repo / "unrelated-staged.txt").write_text("staged\n", encoding="utf-8")
+    _git(repo, "add", "unrelated-staged.txt")
+    (repo / "README.md").write_text("dirty\n", encoding="utf-8")
+    count_before = int(_git(repo, "rev-list", "--count", "HEAD"))
+
+    checkpoint = commit_retarget_checkpoint(
+        project_root=repo,
+        spec_dir=spec_dir,
+        run_id="squad-base",
+        revision_id=revision.revision_id,
+    )
+
+    assert int(_git(repo, "rev-list", "--count", "HEAD")) == count_before + 1
+    assert checkpoint.source == "retarget-preflight"
+    assert checkpoint.commit == _git(repo, "rev-parse", "HEAD^{commit}")
+    message = _git(repo, "show", "-s", "--format=%B", checkpoint.commit)
+    expected_trailers = (
+        "Echelon-Action: retarget-preflight",
+        f"Echelon-Checkpoint: {checkpoint.id}",
+        f"Echelon-Retarget-Revision: {revision.revision_id}",
+        "Echelon-Baseline-Run: squad-base",
+        "Echelon-Replacement-Run: squad-retarget",
+    )
+    for trailer in expected_trailers:
+        assert message.count(trailer) == 1
+    ledger = _git(
+        repo,
+        "show",
+        f"{checkpoint.commit}:specs/001-demo/retarget-history.json",
+    )
+    assert '"status": "prepared"' in ledger
+    assert revision.revision_id in ledger
+    assert _git(
+        repo,
+        "show",
+        "--format=",
+        "--name-only",
+        checkpoint.commit,
+    ).splitlines() == ["specs/001-demo/retarget-history.json"]
+    assert _git(repo, "diff", "--cached", "--name-only") == "unrelated-staged.txt"
+    assert "README.md" in _git(repo, "status", "--short")
+    recorded = load_checkpoint_ledger(spec_dir).checkpoints[-1]
+    assert recorded == checkpoint
+
+
+def test_retarget_checkpoint_requires_latest_prepared_revision(
+    tmp_path: Path,
+) -> None:
+    repo, spec_dir = _retarget_checkpoint_repo(tmp_path)
+    revision = append_prepared_revision(
+        spec_dir,
+        operation_id="rt-abc",
+        baseline_run_id="squad-base",
+        replacement_run_id="squad-retarget",
+        old_targets=("services/api",),
+        replacement_targets=("apps/web",),
+        original_prompt_digest="sha256:" + "a" * 64,
+        recovery=RetargetRecoveryProjection(
+            run_id="squad-base",
+            status="done",
+            phase="done",
+            spec_status="planned",
+            completed_phases=(),
+            implementation_targets=("services/api",),
+            ready_to_build=False,
+        ),
+    )
+
+    with pytest.raises(PhaseCheckpointError, match="baseline run"):
+        commit_retarget_checkpoint(
+            project_root=repo,
+            spec_dir=spec_dir,
+            run_id="wrong-run",
+            revision_id=revision.revision_id,
+        )
+
+    assert _git(repo, "rev-list", "--count", "HEAD") == "1"
+    assert not checkpoint_module.checkpoint_ledger_path(spec_dir).exists()
+
+
+def test_retarget_checkpoint_recovers_commit_created_before_checkpoint_ledger(
+    tmp_path: Path,
+) -> None:
+    repo, spec_dir = _retarget_checkpoint_repo(tmp_path)
+    revision = append_prepared_revision(
+        spec_dir,
+        operation_id="rt-abc",
+        baseline_run_id="squad-base",
+        replacement_run_id="squad-retarget",
+        old_targets=("services/api",),
+        replacement_targets=("apps/web",),
+        original_prompt_digest="sha256:" + "a" * 64,
+        recovery=RetargetRecoveryProjection(
+            run_id="squad-base",
+            status="done",
+            phase="done",
+            spec_status="planned",
+            completed_phases=(),
+            implementation_targets=("services/api",),
+            ready_to_build=False,
+        ),
+    )
+    created = commit_retarget_checkpoint(
+        project_root=repo,
+        spec_dir=spec_dir,
+        run_id="squad-base",
+        revision_id=revision.revision_id,
+    )
+    count_after_commit = _git(repo, "rev-list", "--count", "--all")
+    checkpoint_module.checkpoint_ledger_path(spec_dir).unlink()
+
+    recovered = commit_retarget_checkpoint(
+        project_root=repo,
+        spec_dir=spec_dir,
+        run_id="squad-base",
+        revision_id=revision.revision_id,
+    )
+
+    assert recovered == created
+    assert _git(repo, "rev-list", "--count", "--all") == count_after_commit
+    assert load_checkpoint_ledger(spec_dir).checkpoints == [created]
 
 
 def _completion_checkpoint(

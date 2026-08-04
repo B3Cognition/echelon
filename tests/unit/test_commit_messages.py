@@ -80,3 +80,31 @@ def test_legacy_commit_message_omits_completion_checkpoint_trailers() -> None:
 
     assert "Echelon-Next-Phase:" not in message
     assert "Echelon-Completion:" not in message
+
+
+def test_retarget_commit_trailers_are_optional_and_render_exactly_once() -> None:
+    absent = build_echelon_commit_message(
+        "checkpoint: ordinary",
+        EchelonCommitMetadata(origin="phase-a", action="checkpoint"),
+    )
+    populated = build_echelon_commit_message(
+        "checkpoint: prepare retarget",
+        EchelonCommitMetadata(
+            origin="phase-a",
+            action="retarget-preflight",
+            retarget_revision="retarget-abc",
+            baseline_run_id="squad-base",
+            replacement_run_id="squad-retarget",
+        ),
+    )
+
+    for trailer in (
+        "Echelon-Retarget-Revision:",
+        "Echelon-Baseline-Run:",
+        "Echelon-Replacement-Run:",
+    ):
+        assert trailer not in absent
+        assert populated.count(trailer) == 1
+    assert "Echelon-Retarget-Revision: retarget-abc" in populated
+    assert "Echelon-Baseline-Run: squad-base" in populated
+    assert "Echelon-Replacement-Run: squad-retarget" in populated
