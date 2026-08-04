@@ -7,12 +7,15 @@ import os
 import re
 import shutil
 import socket
+import stat
 import tempfile
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
+
+import fcntl
 
 from harness.re_registry import ReRegistryPaths, ensure_re_layout
 
@@ -66,6 +69,7 @@ class RePublishLock:
     owner_run_id: str
     workspace_root: Path
     claim: _PublicationClaim | None = None
+    allow_ownerless_release: bool = False
 
     @classmethod
     def acquire(
@@ -123,9 +127,17 @@ class RePublishLock:
     def release(self) -> None:
         if not self.path.exists():
             return
-        owner = _read_owner(self.path)
-        if owner.get("run_id") != self.owner_run_id:
-            raise RePublishLocked(str(owner.get("run_id") or "unknown"))
+        owner_path = self.path / "owner.json"
+        if owner_path.exists():
+            owner = _read_owner(self.path)
+            if owner.get("run_id") != self.owner_run_id:
+                raise RePublishLocked(str(owner.get("run_id") or "unknown"))
+        elif not (
+            self.allow_ownerless_release
+            and self.claim is not None
+            and self.claim.metadata.get("run_id") == self.owner_run_id
+        ):
+            raise RePublishRecoveryRequired("ownerless publication lock has no matching claim")
         if _owner_has_pending_journal(self.workspace_root, self.owner_run_id):
             raise RePublishRecoveryRequired(
                 "rollback journal must be recovered before removing publication lock"
@@ -255,26 +267,21 @@ def recover_stale_publish_lock(
     """Remove a provably stale lock when no replacement rollback is pending."""
     root = workspace_root.resolve()
     paths = ensure_re_layout(root)
-    lock_path = paths.locks / "publish.lock"
-    owner = recoverable_publish_lock_owner(
+    recovery_lock = claim_stale_publish_recovery(
         root,
         stale_after_seconds=stale_after_seconds,
     )
-    if owner is None:
+    if recovery_lock is None:
         return False
-    run_id = str(owner.get("run_id") or "")
-    journal = ensure_re_layout(root).staging / run_id / "rollback-journal.json"
+    journal = paths.staging / recovery_lock.owner_run_id / "rollback-journal.json"
     if journal.is_file():
         journal_data = _read_json(journal)
         if journal_data.get("status") in {"replacing", "rolling_back"}:
+            _release_publication_claim(paths, recovery_lock.claim)
             raise RePublishRecoveryRequired(
                 f"rollback journal must be recovered before removing lock: {journal}"
             )
-
-    shutil.rmtree(lock_path)
-    claim = _read_publication_claim(paths)
-    if claim is not None and claim.metadata.get("run_id") == run_id:
-        _release_publication_claim(paths, claim)
+    recovery_lock.release()
     return True
 
 
@@ -322,19 +329,45 @@ def _owner_record(metadata: dict[str, Any]) -> dict[str, Any]:
 @contextmanager
 def _publication_claim_guard(locks_root: Path) -> Iterator[None]:
     guard = locks_root / _PUBLISH_CLAIM_GUARD
-    descriptor = os.open(guard, os.O_CREAT | os.O_RDWR, 0o600)
+    _validate_guard_path(guard, required=False)
+    flags = os.O_CREAT | os.O_RDWR
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
     try:
-        import fcntl
-
+        descriptor = os.open(guard, flags, 0o600)
+    except OSError as exc:
+        raise RePublishRecoveryRequired("publication claim guard cannot be opened safely") from exc
+    try:
+        _validate_guard_descriptor(guard, descriptor)
         fcntl.flock(descriptor, fcntl.LOCK_EX)
+        _validate_guard_descriptor(guard, descriptor)
         yield
     finally:
         try:
-            import fcntl
-
             fcntl.flock(descriptor, fcntl.LOCK_UN)
         finally:
             os.close(descriptor)
+
+
+def _validate_guard_path(path: Path, *, required: bool) -> None:
+    try:
+        details = os.lstat(path)
+    except FileNotFoundError:
+        if required:
+            raise RePublishRecoveryRequired("publication claim guard disappeared")
+        return
+    if not stat.S_ISREG(details.st_mode):
+        raise RePublishRecoveryRequired("publication claim guard path is unsafe")
+
+
+def _validate_guard_descriptor(path: Path, descriptor: int) -> None:
+    details = os.fstat(descriptor)
+    if not stat.S_ISREG(details.st_mode):
+        raise RePublishRecoveryRequired("publication claim guard is not a regular file")
+    _validate_guard_path(path, required=True)
+    path_details = os.lstat(path)
+    if (details.st_dev, details.st_ino) != (path_details.st_dev, path_details.st_ino):
+        raise RePublishRecoveryRequired("publication claim guard was replaced during acquisition")
 
 
 def _read_publication_claim(paths: ReRegistryPaths) -> _PublicationClaim | None:
@@ -375,6 +408,8 @@ def _acquire_publication_claim(
     paths: ReRegistryPaths,
     workspace_root: Path,
     metadata: dict[str, Any],
+    *,
+    allow_locked_takeover: bool = False,
 ) -> _PublicationClaim | None:
     temporary = _write_claim_temp(paths.locks, metadata)
     claim_path = paths.locks / _PUBLISH_CLAIM
@@ -384,13 +419,15 @@ def _acquire_publication_claim(
         with _publication_claim_guard(paths.locks):
             existing = _read_publication_claim(paths)
             if existing is not None:
-                if (paths.locks / "publish.lock").exists():
-                    return None
                 stale = _recoverable_owner(
                     workspace_root,
                     existing.metadata,
                     stale_after_seconds=3600,
                 )
+                if (paths.locks / "publish.lock").exists() and not (
+                    allow_locked_takeover and stale is not None
+                ):
+                    return None
                 if stale is None:
                     return None
                 os.unlink(existing.path)
@@ -497,6 +534,55 @@ def claim_orphan_publish_recovery(workspace_root: Path) -> RePublishLock | None:
             if lock_acquired:
                 shutil.rmtree(lock_path, ignore_errors=True)
             _release_publication_claim(paths, claim)
+        raise
+
+
+def claim_stale_publish_recovery(
+    workspace_root: Path,
+    *,
+    stale_after_seconds: int = 3600,
+) -> RePublishLock | None:
+    """Claim a stale owner lock before inspecting or recovering its journal."""
+    root = workspace_root.resolve()
+    paths = ensure_re_layout(root)
+    owner = recoverable_publish_lock_owner(
+        root,
+        stale_after_seconds=stale_after_seconds,
+    )
+    if owner is None:
+        return None
+    run_id = str(owner["run_id"])
+    ownerless = not (paths.locks / "publish.lock" / "owner.json").exists()
+    claim = _acquire_publication_claim(
+        paths,
+        root,
+        _owner_metadata(run_id, None, claim_kind="recovery"),
+        allow_locked_takeover=True,
+    )
+    if claim is None:
+        return None
+    try:
+        if ownerless:
+            if (paths.locks / "publish.lock" / "owner.json").exists():
+                _release_publication_claim(paths, claim)
+                return None
+        else:
+            current = recoverable_publish_lock_owner(
+                root,
+                stale_after_seconds=stale_after_seconds,
+            )
+            if current is None or current.get("run_id") != run_id:
+                _release_publication_claim(paths, claim)
+                return None
+        return RePublishLock(
+            path=paths.locks / "publish.lock",
+            owner_run_id=run_id,
+            workspace_root=root,
+            claim=claim,
+            allow_ownerless_release=ownerless,
+        )
+    except BaseException:
+        _release_publication_claim(paths, claim)
         raise
 
 

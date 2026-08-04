@@ -30,9 +30,9 @@ from harness.publication_transaction import (
 )
 from harness.re_lock import (
     claim_orphan_publish_recovery,
+    claim_stale_publish_recovery,
     RePublishLock,
     RePublishRecoveryRequired,
-    recover_stale_publish_lock,
     recoverable_publish_lock_owner,
 )
 from harness.re_planner import ReExecutionPlan, RePlanSource
@@ -339,32 +339,30 @@ def recover_interrupted_publication(
         root,
         stale_after_seconds=stale_after_seconds,
     )
-    claim = None
+    recovery_lock = None
     if owner is None:
-        claim = claim_orphan_publish_recovery(root)
-        if claim is None:
+        recovery_lock = claim_orphan_publish_recovery(root)
+        if recovery_lock is None:
             return False
-        run_id = claim.owner_run_id
+        run_id = recovery_lock.owner_run_id
     else:
-        run_id = str(owner["run_id"])
+        recovery_lock = claim_stale_publish_recovery(
+            root,
+            stale_after_seconds=stale_after_seconds,
+        )
+        if recovery_lock is None:
+            return False
+        run_id = recovery_lock.owner_run_id
     paths = ensure_re_layout(root)
     stage_root = paths.staging / run_id
     journal = stage_root / "rollback-journal.json"
     if not journal.is_file():
-        if claim is not None:
-            claim.release()
-            return False
-        if recover_stale_publish_lock(root, stale_after_seconds=stale_after_seconds):
-            return False
-        raise RePublishRecoveryRequired("ownerless publication lock has no recovery journal")
+        recovery_lock.release()
+        return False
     data = _read_json(journal)
     if data.get("status") not in {"replacing", "rolling_back"}:
-        if claim is not None:
-            claim.release()
-        return recover_stale_publish_lock(
-            root,
-            stale_after_seconds=stale_after_seconds,
-        )
+        recovery_lock.release()
+        return True
     try:
         transaction = PublicationTransaction.from_journal(
             workspace_root=paths.root,
@@ -374,10 +372,7 @@ def recover_interrupted_publication(
     except PublicationTransactionError as exc:
         raise RePublishRecoveryRequired(str(exc)) from exc
     rollback_publication_transaction(transaction)
-    if claim is not None:
-        claim.release()
-    elif not recover_stale_publish_lock(root, stale_after_seconds=stale_after_seconds):
-        raise RePublishRecoveryRequired("stale publication lock could not be released")
+    recovery_lock.release()
     shutil.rmtree(stage_root)
     return True
 

@@ -386,3 +386,70 @@ def test_legacy_rollback_remains_reloadable_after_restore_intent_interruption(
 
     assert (root / "first").read_text(encoding="utf-8") == "old\n"
     assert json.loads(journal.read_text(encoding="utf-8"))["status"] == "rolled_back"
+
+
+@pytest.mark.unit
+def test_rewritten_legacy_journal_rejects_forged_deletion_states(tmp_path: Path) -> None:
+    from harness.publication_transaction import (
+        PublicationTransaction,
+        PublicationTransactionError,
+        rollback_publication_transaction,
+    )
+
+    root = tmp_path / "re"
+    root.mkdir()
+    (root / "first").write_text("unrelated\n", encoding="utf-8")
+    stage = root / ".staging/legacy"
+    stage.mkdir(parents=True)
+    backup = stage / "rollback/first"
+    backup.parent.mkdir()
+    backup.write_text("old\n", encoding="utf-8")
+    journal = stage / "rollback-journal.json"
+    base = {
+        "final": "first",
+        "staged": "new/first",
+        "backup": "rollback/first",
+        "backed_up": True,
+        "installed": True,
+        "phase": "installed",
+        "had_final": True,
+        "staged_digest": None,
+        "legacy": True,
+    }
+
+    journal.write_text(
+        json.dumps({"schema_version": 1, "status": "rolling_back", "operations": [base]}),
+        encoding="utf-8",
+    )
+    with pytest.raises(PublicationTransactionError, match="ownership digest"):
+        PublicationTransaction.from_journal(
+            workspace_root=root,
+            staging_root=stage,
+            journal=journal,
+        )
+
+    contradictory = {**base, "backed_up": False, "rollback_digest": "sha256:" + "0" * 64}
+    journal.write_text(
+        json.dumps({"schema_version": 1, "status": "rolling_back", "operations": [contradictory]}),
+        encoding="utf-8",
+    )
+    with pytest.raises(PublicationTransactionError, match="contradict"):
+        PublicationTransaction.from_journal(
+            workspace_root=root,
+            staging_root=stage,
+            journal=journal,
+        )
+
+    forged = {**base, "rollback_digest": "sha256:" + "0" * 64}
+    journal.write_text(
+        json.dumps({"schema_version": 1, "status": "rolling_back", "operations": [forged]}),
+        encoding="utf-8",
+    )
+    transaction = PublicationTransaction.from_journal(
+        workspace_root=root,
+        staging_root=stage,
+        journal=journal,
+    )
+    with pytest.raises(PublicationTransactionError, match="refuses"):
+        rollback_publication_transaction(transaction)
+    assert (root / "first").read_text(encoding="utf-8") == "unrelated\n"

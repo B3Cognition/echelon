@@ -401,6 +401,40 @@ def test_normal_and_recovery_share_one_fixed_claim(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_publication_claim_guard_rejects_symlink_to_external_file(tmp_path: Path) -> None:
+    paths = ensure_re_layout(tmp_path)
+    external = tmp_path / "external-guard"
+    external.write_text("outside\n", encoding="utf-8")
+    guard = paths.locks / ".publish-claim.guard"
+    guard.symlink_to(external)
+
+    with pytest.raises(RePublishRecoveryRequired, match="guard"):
+        RePublishLock.acquire(tmp_path, "run-a", None)
+    assert external.read_text(encoding="utf-8") == "outside\n"
+
+
+@pytest.mark.unit
+def test_publication_claim_guard_rejects_inode_replacement_after_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = ensure_re_layout(tmp_path)
+    guard = paths.locks / ".publish-claim.guard"
+    replacement = paths.locks / ".replacement-guard"
+    replacement.write_text("replacement\n", encoding="utf-8")
+    original_flock = re_lock.fcntl.flock
+
+    def replace_after_lock(descriptor: int, operation: int) -> None:
+        original_flock(descriptor, operation)
+        if operation & re_lock.fcntl.LOCK_EX and replacement.exists():
+            os.replace(replacement, guard)
+
+    monkeypatch.setattr(re_lock.fcntl, "flock", replace_after_lock)
+    with pytest.raises(RePublishRecoveryRequired, match="replaced"):
+        RePublishLock.acquire(tmp_path, "run-a", None)
+
+
+@pytest.mark.unit
 def test_different_host_lock_must_exceed_stale_threshold(tmp_path: Path) -> None:
     lock_dir = _write_lock(
         tmp_path,

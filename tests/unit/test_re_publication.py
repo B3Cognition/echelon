@@ -4,6 +4,8 @@ import hashlib
 import json
 import shutil
 import socket
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
@@ -1029,6 +1031,61 @@ def test_stale_interrupted_replacement_restores_backup(tmp_path: Path) -> None:
     assert _durable_snapshot(tmp_path) == before
     assert not lock.exists()
     assert not stage.exists()
+
+
+@pytest.mark.unit
+def test_concurrent_stale_recovery_has_one_rollback_owner(tmp_path: Path) -> None:
+    paths = ensure_re_layout(tmp_path)
+    final = paths.root / "canonical"
+    final.write_text("new\n", encoding="utf-8")
+    stage = paths.staging / "run-stale"
+    backup = stage / "rollback/canonical"
+    backup.parent.mkdir(parents=True)
+    backup.write_text("old\n", encoding="utf-8")
+    _write_json(
+        stage / "rollback-journal.json",
+        {
+            "schema_version": 1,
+            "status": "replacing",
+            "operations": [
+                {
+                    "final": "canonical",
+                    "staged": "new/canonical",
+                    "backup": "rollback/canonical",
+                    "backed_up": True,
+                    "installed": True,
+                }
+            ],
+        },
+    )
+    lock = paths.locks / "publish.lock"
+    lock.mkdir()
+    _write_json(
+        lock / "owner.json",
+        {
+            "run_id": "run-stale",
+            "run_dir": None,
+            "pid": 999_999_999,
+            "hostname": socket.gethostname(),
+            "acquired_at": (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat(),
+        },
+    )
+    barrier = threading.Barrier(3)
+
+    def recover() -> bool:
+        barrier.wait()
+        return recover_interrupted_publication(tmp_path, stale_after_seconds=0)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(recover)
+        second = executor.submit(recover)
+        barrier.wait()
+        outcomes = [first.result(), second.result()]
+
+    assert sorted(outcomes) == [False, True]
+    assert final.read_text(encoding="utf-8") == "old\n"
+    assert not backup.exists()
+    assert not lock.exists()
 
 
 @pytest.mark.unit
