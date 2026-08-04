@@ -1076,17 +1076,17 @@ def test_orphan_claim_metadata_interruption_does_not_permanently_block_recovery(
             ],
         },
     )
-    original = re_lock._write_json_atomic
+    original = re_lock._write_claim_temp
 
     def interrupt(*_args: object, **_kwargs: object) -> None:
         raise KeyboardInterrupt()
 
-    monkeypatch.setattr(re_lock, "_write_json_atomic", interrupt)
+    monkeypatch.setattr(re_lock, "_write_claim_temp", interrupt)
     with pytest.raises(KeyboardInterrupt):
         recover_interrupted_publication(tmp_path, stale_after_seconds=0)
     assert not (paths.locks / "publish.lock").exists()
 
-    monkeypatch.setattr(re_lock, "_write_json_atomic", original)
+    monkeypatch.setattr(re_lock, "_write_claim_temp", original)
     assert recover_interrupted_publication(tmp_path, stale_after_seconds=0)
     assert (paths.root / "orphan").read_text(encoding="utf-8") == "old\n"
 
@@ -1129,14 +1129,14 @@ def test_ownerless_recovery_lock_claim_blocks_publishers_and_recovers_after_deat
     with pytest.raises(KeyboardInterrupt):
         recover_interrupted_publication(tmp_path, stale_after_seconds=0)
     assert (paths.locks / "publish.lock").is_dir()
-    with pytest.raises(re_lock.RePublishRecoveryRequired, match="recovery claim"):
+    with pytest.raises(re_lock.RePublishLocked, match="orphan"):
         RePublishLock.acquire(tmp_path, "next", None)
 
     monkeypatch.setattr(re_lock, "_write_json_atomic", original)
-    claim = next(paths.locks.glob(".publish-recovery-claim-*"))
-    owner = _read_json(claim / "owner.json")
+    claim = paths.locks / ".publish-claim.json"
+    owner = _read_json(claim)
     owner["pid"] = 999_999_999
-    _write_json(claim / "owner.json", owner)
+    _write_json(claim, owner)
 
     assert recover_interrupted_publication(tmp_path, stale_after_seconds=0)
     assert (paths.root / "orphan").read_text(encoding="utf-8") == "old\n"

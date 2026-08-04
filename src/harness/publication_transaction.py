@@ -150,9 +150,12 @@ class PublicationTransaction:
                 raise PublicationTransactionError("rollback journal operation flags must be booleans")
             operations.append(operation)
             phase = entry.get("phase")
-            legacy = phase is None
+            legacy_marker = entry.get("legacy")
+            if legacy_marker is not None and not isinstance(legacy_marker, bool):
+                raise PublicationTransactionError("rollback journal legacy marker is malformed")
+            legacy = legacy_marker if legacy_marker is not None else phase is None
             if legacy:
-                phase = "installed" if installed else "backed_up" if backed_up else "pending"
+                phase = phase or ("installed" if installed else "backed_up" if backed_up else "pending")
             if not isinstance(phase, str) or phase not in _PHASES:
                 raise PublicationTransactionError("rollback journal operation phase is malformed")
             had_final = entry.get("had_final", backed_up)
@@ -200,6 +203,7 @@ def write_publication_journal(transaction: PublicationTransaction, status: str) 
                 "phase": state["phase"],
                 "had_final": state["had_final"],
                 "staged_digest": state["staged_digest"],
+                "legacy": bool(state.get("legacy")),
             }
         )
     write_json_atomic(transaction.journal, {"schema_version": 1, "status": status, "operations": operations})
@@ -264,7 +268,11 @@ def apply_publication_transaction(
         raise
 
 
-def rollback_publication_transaction(transaction: PublicationTransaction) -> None:
+def rollback_publication_transaction(
+    transaction: PublicationTransaction,
+    *,
+    fault_hook: Callable[[str], None] | None = None,
+) -> None:
     """Idempotently restore only paths recorded as replaced by this transaction."""
     write_publication_journal(transaction, "rolling_back")
     for index in range(len(transaction.operations) - 1, -1, -1):
@@ -283,7 +291,7 @@ def rollback_publication_transaction(transaction: PublicationTransaction) -> Non
             state["had_final"] = False
             write_publication_journal(transaction, "rolling_back")
             continue
-        if state.get("legacy") and phase == "installed" and state.get("had_final") and not final_exists and backup_exists:
+        if state.get("legacy") and phase in {"installed", "restore_intent"} and state.get("had_final") and not final_exists and backup_exists:
             # Old rollback removed the installed final before it persisted the
             # next boolean state. The original backup remains authoritative.
             state["phase"] = "backed_up"
@@ -328,6 +336,8 @@ def rollback_publication_transaction(transaction: PublicationTransaction) -> Non
         if backup_exists:
             state["phase"] = "restore_intent"
             write_publication_journal(transaction, "rolling_back")
+            if fault_hook:
+                fault_hook(f"before_restore:{operation.final.as_posix()}")
             final.parent.mkdir(parents=True, exist_ok=True)
             os.replace(backup, final)
             _fsync_directory(final.parent)

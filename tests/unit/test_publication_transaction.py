@@ -320,3 +320,69 @@ def test_legacy_rollback_resumes_after_removing_installed_final(tmp_path: Path) 
 
     assert (root / "first").read_text(encoding="utf-8") == "old\n"
     assert json.loads(journal.read_text(encoding="utf-8"))["status"] == "rolled_back"
+
+
+@pytest.mark.unit
+def test_legacy_rollback_remains_reloadable_after_restore_intent_interruption(
+    tmp_path: Path,
+) -> None:
+    from harness.publication_transaction import (
+        PublicationTransaction,
+        rollback_publication_transaction,
+    )
+
+    root = tmp_path / "re"
+    root.mkdir()
+    stage = root / ".staging/legacy"
+    backup = stage / "rollback/first"
+    backup.parent.mkdir(parents=True)
+    backup.write_text("old\n", encoding="utf-8")
+    journal = stage / "rollback-journal.json"
+    journal.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "status": "rolling_back",
+                "operations": [
+                    {
+                        "final": "first",
+                        "staged": "new/first",
+                        "backup": "rollback/first",
+                        "backed_up": True,
+                        "installed": True,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    transaction = PublicationTransaction.from_journal(
+        workspace_root=root,
+        staging_root=stage,
+        journal=journal,
+    )
+
+    class Interrupted(BaseException):
+        pass
+
+    def interrupt_before_restore(point: str) -> None:
+        if point == "before_restore:first":
+            raise Interrupted()
+
+    with pytest.raises(Interrupted):
+        rollback_publication_transaction(
+            transaction,
+            fault_hook=interrupt_before_restore,
+        )
+
+    rewritten = json.loads(journal.read_text(encoding="utf-8"))
+    assert rewritten["operations"][0]["legacy"] is True
+    resumed = PublicationTransaction.from_journal(
+        workspace_root=root,
+        staging_root=stage,
+        journal=journal,
+    )
+    rollback_publication_transaction(resumed)
+
+    assert (root / "first").read_text(encoding="utf-8") == "old\n"
+    assert json.loads(journal.read_text(encoding="utf-8"))["status"] == "rolled_back"

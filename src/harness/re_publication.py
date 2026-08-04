@@ -350,6 +350,13 @@ def recover_interrupted_publication(
     paths = ensure_re_layout(root)
     stage_root = paths.staging / run_id
     journal = stage_root / "rollback-journal.json"
+    if not journal.is_file():
+        if claim is not None:
+            claim.release()
+            return False
+        if recover_stale_publish_lock(root, stale_after_seconds=stale_after_seconds):
+            return False
+        raise RePublishRecoveryRequired("ownerless publication lock has no recovery journal")
     data = _read_json(journal)
     if data.get("status") not in {"replacing", "rolling_back"}:
         if claim is not None:

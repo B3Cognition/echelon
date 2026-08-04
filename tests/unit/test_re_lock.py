@@ -292,6 +292,115 @@ def test_two_orphan_recovery_claimants_have_one_exclusive_owner(tmp_path: Path) 
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("failure", ("lock_mkdir", "lock_fsync", "owner_write", "claim_remove"))
+def test_normal_claim_acquisition_errors_leave_no_permanent_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    paths = ensure_re_layout(tmp_path)
+    lock = paths.locks / "publish.lock"
+    original_mkdir = Path.mkdir
+    original_fsync = re_lock._fsync_directory
+    original_write = re_lock._write_json_atomic
+    original_release = re_lock._release_publication_claim
+    release_calls = 0
+
+    if failure == "lock_mkdir":
+        def fail_mkdir(path: Path, *args: object, **kwargs: object) -> None:
+            if path == lock:
+                raise OSError("lock mkdir failed")
+            original_mkdir(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "mkdir", fail_mkdir)
+    elif failure == "lock_fsync":
+        def fail_fsync(path: Path) -> None:
+            if path == paths.locks and lock.exists():
+                raise OSError("lock fsync failed")
+            original_fsync(path)
+
+        monkeypatch.setattr(re_lock, "_fsync_directory", fail_fsync)
+    elif failure == "owner_write":
+        def fail_owner_write(path: Path, *args: object, **kwargs: object) -> None:
+            if path == lock / "owner.json":
+                raise OSError("owner write failed")
+            original_write(path, *args, **kwargs)
+
+        monkeypatch.setattr(re_lock, "_write_json_atomic", fail_owner_write)
+    else:
+        def fail_first_claim_remove(*args: object, **kwargs: object) -> None:
+            nonlocal release_calls
+            release_calls += 1
+            if release_calls == 1:
+                raise OSError("claim remove failed")
+            original_release(*args, **kwargs)
+
+        monkeypatch.setattr(re_lock, "_release_publication_claim", fail_first_claim_remove)
+
+    with pytest.raises(OSError):
+        RePublishLock.acquire(tmp_path, "run-a", None)
+    assert not lock.exists()
+    assert not (paths.locks / ".publish-claim.json").exists()
+
+
+@pytest.mark.unit
+def test_claim_publication_error_leaves_only_an_ignored_temp(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = ensure_re_layout(tmp_path)
+
+    def fail_link(*_args: object, **_kwargs: object) -> None:
+        raise OSError("claim publication failed")
+
+    monkeypatch.setattr(re_lock.os, "link", fail_link)
+    with pytest.raises(OSError, match="claim publication failed"):
+        RePublishLock.acquire(tmp_path, "run-a", None)
+
+    assert not (paths.locks / "publish.lock").exists()
+    assert not (paths.locks / ".publish-claim.json").exists()
+
+
+@pytest.mark.unit
+def test_dead_fixed_claim_is_taken_over_without_leaving_an_orphan(tmp_path: Path) -> None:
+    paths = ensure_re_layout(tmp_path)
+    _write_json(
+        paths.locks / ".publish-claim.json",
+        {
+            "run_id": "dead",
+            "run_dir": None,
+            "pid": 999_999_999,
+            "hostname": socket.gethostname(),
+            "acquired_at": (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat(),
+            "claim_kind": "publisher",
+        },
+    )
+
+    with RePublishLock.acquire(tmp_path, "next", None):
+        assert (paths.locks / "publish.lock/owner.json").is_file()
+        assert not (paths.locks / ".publish-claim.json").exists()
+
+    assert not (paths.locks / "publish.lock").exists()
+    assert not (paths.locks / ".publish-claim.json").exists()
+
+
+@pytest.mark.unit
+def test_normal_and_recovery_share_one_fixed_claim(tmp_path: Path) -> None:
+    paths = ensure_re_layout(tmp_path)
+    _write_json(
+        paths.staging / "orphan/rollback-journal.json",
+        {"schema_version": 1, "status": "replacing", "operations": []},
+    )
+    metadata = re_lock._owner_metadata("publisher", None, claim_kind="publisher")
+    claim = re_lock._acquire_publication_claim(paths, tmp_path, metadata)
+    assert claim is not None
+
+    assert claim_orphan_publish_recovery(tmp_path) is None
+    re_lock._release_publication_claim(paths, claim)
+    assert not (paths.locks / ".publish-claim.json").exists()
+
+
+@pytest.mark.unit
 def test_different_host_lock_must_exceed_stale_threshold(tmp_path: Path) -> None:
     lock_dir = _write_lock(
         tmp_path,
