@@ -8,6 +8,7 @@ import pytest
 
 from echelon.artifact_index import (
     infer_lifecycle_stage,
+    plan_retarget_artifacts,
     render_artifact_index,
     write_artifact_index,
 )
@@ -172,3 +173,33 @@ def test_write_artifact_index_overwrites_only_artifacts_md(tmp_path: Path) -> No
     )
     assert spec_path.read_text(encoding="utf-8") == "# Spec\n"
     assert other_path.read_text(encoding="utf-8") == "leave me alone\n"
+
+
+@pytest.mark.unit
+def test_retarget_artifact_policy_preserves_inputs_and_invalidates_outputs(tmp_path: Path) -> None:
+    spec_dir = tmp_path / "specs/001-demo"
+    (spec_dir / "inputs").mkdir(parents=True)
+    (spec_dir / "inputs/manifest.json").write_text("{}\n", encoding="utf-8")
+    (spec_dir / "inputs.yml").write_text("inputs: []\n", encoding="utf-8")
+    (spec_dir / "run-history.json").write_text('{"runs": []}\n', encoding="utf-8")
+    (spec_dir / "amendments/001/inputs").mkdir(parents=True)
+    (spec_dir / "amendments/001/inputs/manifest.json").write_text("{}\n", encoding="utf-8")
+    (spec_dir / "spec.md").write_text("# Old spec\n", encoding="utf-8")
+    (spec_dir / "contracts").mkdir()
+    (spec_dir / "contracts/api.yaml").write_text("openapi: 3.1.0\n", encoding="utf-8")
+    (spec_dir / "unknown-phase-a-report.md").write_text("old\n", encoding="utf-8")
+
+    plan = plan_retarget_artifacts(spec_dir)
+
+    assert set(plan.preserve) >= {
+        "amendments",
+        "inputs",
+        "inputs.yml",
+        "run-history.json",
+    }
+    assert set(plan.invalidate) >= {
+        "spec.md",
+        "contracts",
+        "unknown-phase-a-report.md",
+    }
+    assert not set(plan.preserve) & set(plan.invalidate)

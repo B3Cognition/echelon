@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path
 
 from harness.spec_frontmatter import read_frontmatter
@@ -20,6 +21,23 @@ class ArtifactDefinition:
     required_stage: str | None = None
 
 
+class RetargetDisposition(str, Enum):
+    """Public disposition for a spec-local artifact during a retarget."""
+
+    PRESERVE = "preserve"
+    INVALIDATE = "invalidate"
+    NOT_APPLICABLE = "not_applicable"
+
+
+@dataclass(frozen=True)
+class RetargetArtifactPlan:
+    """Read-only, mutually exclusive retarget disposition for one spec root."""
+
+    preserve: tuple[str, ...]
+    invalidate: tuple[str, ...]
+    not_applicable: tuple[str, ...]
+
+
 STAGE_ORDER = {"phase_a": 1, "build": 2, "verified": 3, "landed": 4}
 
 _BUILD_MARKERS = (
@@ -32,6 +50,16 @@ _BUILD_MARKERS = (
 )
 
 _ARTIFACTS = (
+    ArtifactDefinition(
+        "targets.yml",
+        "Target contract",
+        "Canonical implementation target entries for the specification.",
+        "Phase A",
+        "Squad controller",
+        "Written when Phase A publishes the target contract.",
+        "Controllers and implementers",
+        "phase_a",
+    ),
     ArtifactDefinition(
         "00-overview.md",
         "Final overview",
@@ -120,6 +148,42 @@ _ARTIFACTS = (
         "Published from the immutable run-local input snapshot at Phase A finalization.",
         "Spec authors, implementers, and auditors",
         "phase_a",
+    ),
+    ArtifactDefinition(
+        "inputs.yml",
+        "Product input index",
+        "Canonical index for preserved product input evidence.",
+        "Phase A",
+        "Squad controller",
+        "Published with product input evidence.",
+        "Controllers and auditors",
+    ),
+    ArtifactDefinition(
+        "retarget-history.json",
+        "Retarget history",
+        "Immutable audit history of prior approved spec retargets.",
+        "Lifecycle",
+        "Retarget controller",
+        "Appended only after a retarget completes.",
+        "Auditors and controllers",
+    ),
+    ArtifactDefinition(
+        "memory-receipts.json",
+        "Memory receipts",
+        "Generated receipts connecting Phase A outputs to memory evidence.",
+        "Phase A",
+        "Memory miner",
+        "Regenerated when Phase A evidence changes.",
+        "Auditors and spec authors",
+    ),
+    ArtifactDefinition(
+        "graph-receipts.json",
+        "Graph receipts",
+        "Generated receipts connecting Phase A outputs to graph evidence.",
+        "Phase A",
+        "Graph controller",
+        "Regenerated when Phase A evidence changes.",
+        "Auditors and spec authors",
     ),
     ArtifactDefinition(
         "research.md",
@@ -419,7 +483,82 @@ _ARTIFACTS = (
         "Automation and reviewers",
         "build",
     ),
+    ArtifactDefinition(
+        "harness-run-history.json",
+        "Harness delivery history",
+        "Records Phase B delivery-run summaries.",
+        "Build",
+        "Harness",
+        "Updated after each delivery run.",
+        "Automation and reviewers",
+        "build",
+    ),
+    ArtifactDefinition(
+        "squad-report.md",
+        "Phase A squad report",
+        "Generated Phase A completion and handoff summary.",
+        "Phase A",
+        "Squad controller",
+        "Generated when Phase A finalizes.",
+        "Implementers and decision makers",
+    ),
+    ArtifactDefinition(
+        "feature-metadata.yml",
+        "Feature metadata",
+        "Generated Phase A publication metadata.",
+        "Phase A",
+        "Squad controller",
+        "Generated when Phase A finalizes.",
+        "Controllers and tooling",
+    ),
+    ArtifactDefinition(
+        "re-context.json",
+        "Published RE context",
+        "Generated canonical reference to the run-local published RE snapshot.",
+        "Phase A",
+        "Squad controller",
+        "Generated when Phase A finalizes.",
+        "Spec authors and implementers",
+    ),
+    ArtifactDefinition(
+        "ARTIFACTS.md",
+        "Artifact map",
+        "Generated inventory of the spec-local artifact registry.",
+        "Phase A",
+        "Artifact index",
+        "Regenerated when the artifact map is requested.",
+        "Spec readers and controllers",
+    ),
 )
+
+
+_RETARGET_PRESERVE_ROOTS = frozenset(
+    {
+        ".echelon",
+        "amendments",
+        "inputs",
+        "inputs.yml",
+        "retarget-history.json",
+        "run-history.json",
+    }
+)
+
+
+def artifact_definitions() -> tuple[ArtifactDefinition, ...]:
+    """Return the immutable public artifact registry without exposing its storage."""
+
+    return _ARTIFACTS
+
+
+def plan_retarget_artifacts(spec_dir: Path) -> RetargetArtifactPlan:
+    """Classify every spec-local root without reading or changing external state."""
+
+    existing = tuple(sorted(path.name for path in spec_dir.iterdir()))
+    preserve = tuple(name for name in existing if name in _RETARGET_PRESERVE_ROOTS)
+    invalidate = tuple(name for name in existing if name not in _RETARGET_PRESERVE_ROOTS)
+    declared = tuple(definition.path for definition in artifact_definitions())
+    not_applicable = tuple(name for name in declared if not (spec_dir / name).exists())
+    return RetargetArtifactPlan(preserve, invalidate, not_applicable)
 
 
 def infer_lifecycle_stage(spec_dir: Path) -> str:
