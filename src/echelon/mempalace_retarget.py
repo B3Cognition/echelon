@@ -1583,9 +1583,11 @@ def _parse_legacy_bound_report_transaction(
     spec_id: str,
     journal_fd: int,
 ) -> _BoundReportTransaction:
-    new_fd = _open_transaction_child(journal_fd, "new")
-    old_fd = _open_transaction_child(journal_fd, "old")
+    new_fd: int | None = None
+    old_fd: int | None = None
     try:
+        new_fd = _open_transaction_child(journal_fd, "new")
+        old_fd = _open_transaction_child(journal_fd, "old")
         descriptor_text, _metadata = _read_text_entry_at(
             journal_fd,
             "transaction.json",
@@ -1728,6 +1730,18 @@ def _parse_legacy_bound_report_transaction(
             raise RetargetMemoryError(
                 "replacement memory report transaction is invalid"
             )
+        _require_open_entry_binding(
+            journal_fd,
+            "new",
+            os.fstat(new_fd),
+            label="report transaction new directory",
+        )
+        _require_open_entry_binding(
+            journal_fd,
+            "old",
+            os.fstat(old_fd),
+            label="report transaction old directory",
+        )
         return _BoundReportTransaction(
             old_contents=old_contents,
             new_contents=new_contents,
@@ -1737,8 +1751,10 @@ def _parse_legacy_bound_report_transaction(
             journal_identity=_cleanup_entry_identity(os.fstat(journal_fd)),
         )
     finally:
-        os.close(old_fd)
-        os.close(new_fd)
+        if old_fd is not None:
+            os.close(old_fd)
+        if new_fd is not None:
+            os.close(new_fd)
 
 
 def _parse_bound_report_transaction(
@@ -1766,10 +1782,13 @@ def _parse_bound_report_transaction(
         raise RetargetMemoryError(
             "replacement memory report transaction is invalid"
         )
-    new_fd = _open_transaction_child(journal_fd, "new")
-    old_fd = _open_transaction_child(journal_fd, "old")
-    slots_fd = _open_transaction_child(journal_fd, "slots")
+    new_fd: int | None = None
+    old_fd: int | None = None
+    slots_fd: int | None = None
     try:
+        new_fd = _open_transaction_child(journal_fd, "new")
+        old_fd = _open_transaction_child(journal_fd, "old")
+        slots_fd = _open_transaction_child(journal_fd, "slots")
         descriptor_text, _descriptor_metadata = _read_text_entry_at(
             journal_fd,
             "transaction.json",
@@ -1959,6 +1978,17 @@ def _parse_bound_report_transaction(
             raise RetargetMemoryError(
                 "replacement memory report transaction is invalid"
             )
+        for child_name, child_fd in (
+            ("new", new_fd),
+            ("old", old_fd),
+            ("slots", slots_fd),
+        ):
+            _require_open_entry_binding(
+                journal_fd,
+                child_name,
+                os.fstat(child_fd),
+                label=f"report transaction {child_name} directory",
+            )
         return _BoundReportTransaction(
             old_contents={name: old_contents[name] for name in _REPORT_NAMES},
             new_contents={name: new_contents[name] for name in _REPORT_NAMES},
@@ -1968,9 +1998,12 @@ def _parse_bound_report_transaction(
             journal_identity=_cleanup_entry_identity(journal_metadata),
         )
     finally:
-        os.close(slots_fd)
-        os.close(old_fd)
-        os.close(new_fd)
+        if slots_fd is not None:
+            os.close(slots_fd)
+        if old_fd is not None:
+            os.close(old_fd)
+        if new_fd is not None:
+            os.close(new_fd)
 
 
 def _load_report_transaction(
@@ -1983,25 +2016,25 @@ def _load_report_transaction(
 ) -> _BoundReportTransaction:
     owns_parent = parent_fd is None
     owns_transaction = transaction_fd is None
-    if parent_fd is None:
-        parent_fd, _parent_identity = _open_report_parent(spec_dir)
-    assert parent_fd is not None
-    if source_name is None:
-        source_name = (
-            transaction_path.name
-            if transaction_path is not None
-            else _REPORT_TRANSACTION_NAME
-        )
-    if source_name in {"", ".", ".."} or "/" in source_name:
-        if owns_parent:
-            os.close(parent_fd)
-        raise RetargetMemoryError(
-            "replacement memory report transaction is invalid"
-        )
-    if transaction_fd is None:
-        transaction_fd = _open_entry_at(parent_fd, source_name, directory=True)
-    assert transaction_fd is not None
     try:
+        if parent_fd is None:
+            parent_fd, _parent_identity = _open_report_parent(spec_dir)
+        if source_name is None:
+            source_name = (
+                transaction_path.name
+                if transaction_path is not None
+                else _REPORT_TRANSACTION_NAME
+            )
+        if source_name in {"", ".", ".."} or "/" in source_name:
+            raise RetargetMemoryError(
+                "replacement memory report transaction is invalid"
+            )
+        if transaction_fd is None:
+            transaction_fd = _open_entry_at(
+                parent_fd,
+                source_name,
+                directory=True,
+            )
         metadata = os.fstat(transaction_fd)
         loaded = _parse_bound_report_transaction(
             spec_id=spec_dir.name,
@@ -2015,9 +2048,9 @@ def _load_report_transaction(
         )
         return loaded
     finally:
-        if owns_transaction:
+        if owns_transaction and transaction_fd is not None:
             os.close(transaction_fd)
-        if owns_parent:
+        if owns_parent and parent_fd is not None:
             os.close(parent_fd)
 
 
@@ -2059,10 +2092,13 @@ def _stage_report_transaction_at(
         staging_identity = _cleanup_entry_identity(os.fstat(staging_fd))
         for child in ("new", "old", "slots"):
             os.mkdir(child, mode=0o700, dir_fd=staging_fd)
-        new_fd = _open_transaction_child(staging_fd, "new")
-        old_fd = _open_transaction_child(staging_fd, "old")
-        slots_fd = _open_transaction_child(staging_fd, "slots")
+        new_fd: int | None = None
+        old_fd: int | None = None
+        slots_fd: int | None = None
         try:
+            new_fd = _open_transaction_child(staging_fd, "new")
+            old_fd = _open_transaction_child(staging_fd, "old")
+            slots_fd = _open_transaction_child(staging_fd, "slots")
             records: list[dict[str, object]] = []
             for name in _transaction_entry_names():
                 new_identity = _write_transaction_text_at(
@@ -2135,9 +2171,12 @@ def _stage_report_transaction_at(
             os.fsync(old_fd)
             os.fsync(slots_fd)
         finally:
-            os.close(slots_fd)
-            os.close(old_fd)
-            os.close(new_fd)
+            if slots_fd is not None:
+                os.close(slots_fd)
+            if old_fd is not None:
+                os.close(old_fd)
+            if new_fd is not None:
+                os.close(new_fd)
         os.fsync(staging_fd)
         _require_open_entry_binding(
             parent_fd,
@@ -2550,9 +2589,14 @@ def _archive_bound_transaction_at(
     parent_identity: tuple[int, int, int],
     *,
     transaction_fd: int,
-    transaction: _BoundReportTransaction,
     expected_live: str,
 ) -> None:
+    transaction = _load_report_transaction(
+        spec_dir,
+        parent_fd=parent_fd,
+        transaction_fd=transaction_fd,
+        source_name=_REPORT_TRANSACTION_NAME,
+    )
     if expected_live == "new":
         expected_contents: Mapping[str, str | None] = transaction.new_contents
         expected_manifest = transaction.new_manifest
@@ -2650,38 +2694,31 @@ def _remove_report_transaction(
     transaction_fd: int | None = None,
     transaction: _BoundReportTransaction | None = None,
 ) -> None:
+    del transaction
     owns_parent = parent_fd is None
     owns_transaction = transaction_fd is None
-    if parent_fd is None:
-        parent_fd, parent_identity = _open_report_parent(spec_dir)
-    assert parent_fd is not None and parent_identity is not None
-    if transaction_fd is None:
-        transaction_fd = _open_entry_at(
-            parent_fd,
-            _REPORT_TRANSACTION_NAME,
-            directory=True,
-        )
-    assert transaction_fd is not None
     try:
-        if transaction is None:
-            transaction = _load_report_transaction(
-                spec_dir,
-                parent_fd=parent_fd,
-                transaction_fd=transaction_fd,
-                source_name=_REPORT_TRANSACTION_NAME,
+        if parent_fd is None:
+            parent_fd, parent_identity = _open_report_parent(spec_dir)
+        if parent_identity is None:
+            parent_identity = _cleanup_entry_identity(os.fstat(parent_fd))
+        if transaction_fd is None:
+            transaction_fd = _open_entry_at(
+                parent_fd,
+                _REPORT_TRANSACTION_NAME,
+                directory=True,
             )
         _archive_bound_transaction_at(
             spec_dir,
             parent_fd,
             parent_identity,
             transaction_fd=transaction_fd,
-            transaction=transaction,
             expected_live=expected_live,
         )
     finally:
-        if owns_transaction:
+        if owns_transaction and transaction_fd is not None:
             os.close(transaction_fd)
-        if owns_parent:
+        if owns_parent and parent_fd is not None:
             os.close(parent_fd)
 
 

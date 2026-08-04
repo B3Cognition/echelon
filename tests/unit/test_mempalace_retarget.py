@@ -765,6 +765,270 @@ def _prepare_detached_cleanup(
     return detached, receipt
 
 
+def _legacy_transaction_copy(
+    workspace: MemoryWorkspace,
+    source: Path,
+) -> Path:
+    legacy = workspace.spec_dir / ".mempalace-refresh-legacy-test"
+    new_dir = legacy / "new"
+    old_dir = legacy / "old"
+    new_dir.mkdir(parents=True)
+    old_dir.mkdir()
+    for entry in source.joinpath("new").iterdir():
+        shutil.copy2(entry, new_dir / entry.name)
+    records = []
+    for name in (
+        "mempalace-audit.json",
+        "mempalace-audit.md",
+        "mempalace-mine.json",
+    ):
+        content = new_dir.joinpath(name).read_text(encoding="utf-8")
+        records.append(
+            {
+                "path": name,
+                "old_present": False,
+                "old_sha256": None,
+                "new_sha256": (
+                    "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
+                ),
+            }
+        )
+    manifest = new_dir.joinpath(
+        "mempalace-refresh-manifest.json"
+    ).read_text(encoding="utf-8")
+    descriptor = {
+        "schema_version": 1,
+        "spec_id": workspace.spec_dir.name,
+        "files": records,
+        "old_manifest_present": False,
+        "old_manifest_sha256": None,
+        "new_manifest_sha256": (
+            "sha256:" + hashlib.sha256(manifest.encode("utf-8")).hexdigest()
+        ),
+    }
+    legacy.joinpath("transaction.json").write_text(
+        json.dumps(descriptor, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return legacy
+
+
+def _process_fd_count() -> int:
+    fd_root = Path("/dev/fd")
+    if not fd_root.is_dir():
+        fd_root = Path("/proc/self/fd")
+    return len(list(fd_root.iterdir()))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("schema", "child_name"),
+    [
+        ("legacy", "new"),
+        ("legacy", "old"),
+        ("v2", "new"),
+        ("v2", "old"),
+        ("v2", "slots"),
+    ],
+)
+def test_retarget_transaction_reauthenticates_child_after_bound_tree_read(
+    memory_workspace: MemoryWorkspace,
+    monkeypatch: pytest.MonkeyPatch,
+    schema: str,
+    child_name: str,
+) -> None:
+    _stub_refresh_reports(memory_workspace, monkeypatch)
+    refresh_retarget_spec_memory(
+        memory_workspace.root,
+        memory_workspace.spec_dir,
+    )
+    from echelon import mempalace_retarget
+
+    completed = next(
+        memory_workspace.spec_dir.glob(".mempalace-refresh-detached-*")
+    )
+    transaction = (
+        _legacy_transaction_copy(memory_workspace, completed)
+        if schema == "legacy"
+        else completed
+    )
+    child = transaction / child_name
+    authentic = memory_workspace.root / f"authentic-{schema}-{child_name}"
+    real_manifest = mempalace_retarget._report_manifest
+    swapped = False
+
+    def swap_after_tree_read(*args, **kwargs):
+        nonlocal swapped
+        if not swapped:
+            swapped = True
+            child.rename(authentic)
+            shutil.copytree(authentic, child)
+        return real_manifest(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "echelon.mempalace_retarget._report_manifest",
+        swap_after_tree_read,
+    )
+
+    with pytest.raises(RetargetMemoryError, match="identity changed|transaction"):
+        mempalace_retarget._load_report_transaction(
+            memory_workspace.spec_dir,
+            transaction_path=transaction,
+        )
+
+    assert swapped is True
+    assert authentic.is_dir()
+    assert child.is_dir()
+    assert authentic.stat().st_ino != child.stat().st_ino
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("schema", "fail_at"),
+    [
+        ("legacy", 1),
+        ("legacy", 2),
+        ("v2", 1),
+        ("v2", 2),
+        ("v2", 3),
+    ],
+)
+def test_retarget_transaction_parser_closes_partial_child_fd_acquisitions(
+    memory_workspace: MemoryWorkspace,
+    monkeypatch: pytest.MonkeyPatch,
+    schema: str,
+    fail_at: int,
+) -> None:
+    _stub_refresh_reports(memory_workspace, monkeypatch)
+    refresh_retarget_spec_memory(
+        memory_workspace.root,
+        memory_workspace.spec_dir,
+    )
+    from echelon import mempalace_retarget
+
+    completed = next(
+        memory_workspace.spec_dir.glob(".mempalace-refresh-detached-*")
+    )
+    transaction = (
+        _legacy_transaction_copy(memory_workspace, completed)
+        if schema == "legacy"
+        else completed
+    )
+    journal_fd = os.open(
+        transaction,
+        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+    )
+    real_open_child = mempalace_retarget._open_transaction_child
+    attempt_calls = 0
+
+    def fail_selected_child(*args, **kwargs):
+        nonlocal attempt_calls
+        attempt_calls += 1
+        if attempt_calls == fail_at:
+            raise RetargetMemoryError("injected child open failure")
+        return real_open_child(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "echelon.mempalace_retarget._open_transaction_child",
+        fail_selected_child,
+    )
+    try:
+        baseline = _process_fd_count()
+        for _attempt in range(24):
+            attempt_calls = 0
+            with pytest.raises(RetargetMemoryError, match="injected"):
+                mempalace_retarget._parse_bound_report_transaction(
+                    spec_id=memory_workspace.spec_dir.name,
+                    journal_fd=journal_fd,
+                )
+        assert _process_fd_count() == baseline
+    finally:
+        os.close(journal_fd)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("fail_at", [1, 2, 3])
+def test_retarget_staging_closes_partial_child_fd_acquisitions(
+    memory_workspace: MemoryWorkspace,
+    monkeypatch: pytest.MonkeyPatch,
+    fail_at: int,
+) -> None:
+    from echelon import mempalace_retarget
+
+    parent_fd, parent_identity = mempalace_retarget._open_report_parent(
+        memory_workspace.spec_dir
+    )
+    contents = {
+        "mempalace-mine.json": "new mine\n",
+        "mempalace-audit.json": "new audit\n",
+        "mempalace-audit.md": "new markdown\n",
+    }
+    manifest, _digest = mempalace_retarget._report_manifest(
+        spec_id=memory_workspace.spec_dir.name,
+        contents=contents,
+    )
+    real_open_child = mempalace_retarget._open_transaction_child
+    attempt_calls = 0
+
+    def fail_selected_child(*args, **kwargs):
+        nonlocal attempt_calls
+        attempt_calls += 1
+        if attempt_calls == fail_at:
+            raise RetargetMemoryError("injected staging child open failure")
+        return real_open_child(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "echelon.mempalace_retarget._open_transaction_child",
+        fail_selected_child,
+    )
+    try:
+        baseline = _process_fd_count()
+        for _attempt in range(24):
+            attempt_calls = 0
+            with pytest.raises(RetargetMemoryError, match="injected"):
+                mempalace_retarget._stage_report_transaction_at(
+                    memory_workspace.spec_dir,
+                    parent_fd,
+                    parent_identity,
+                    spec_id=memory_workspace.spec_dir.name,
+                    contents=contents,
+                    manifest_content=manifest,
+                )
+        assert _process_fd_count() == baseline
+    finally:
+        os.close(parent_fd)
+
+
+@pytest.mark.unit
+def test_retarget_owned_active_loader_closes_parent_after_open_failure(
+    memory_workspace: MemoryWorkspace,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon import mempalace_retarget
+
+    memory_workspace.spec_dir.joinpath(
+        ".mempalace-refresh-transaction"
+    ).mkdir()
+    real_open_entry = mempalace_retarget._open_entry_at
+
+    def fail_active_open(parent_fd: int, name: str, *, directory: bool) -> int:
+        if name == ".mempalace-refresh-transaction":
+            raise RetargetMemoryError("injected active open failure")
+        return real_open_entry(parent_fd, name, directory=directory)
+
+    monkeypatch.setattr(
+        "echelon.mempalace_retarget._open_entry_at",
+        fail_active_open,
+    )
+    baseline = _process_fd_count()
+    for _attempt in range(24):
+        with pytest.raises(RetargetMemoryError, match="injected"):
+            mempalace_retarget._load_report_transaction(
+                memory_workspace.spec_dir,
+            )
+    assert _process_fd_count() == baseline
+
+
 @pytest.mark.unit
 def test_retarget_refresh_archives_cleanup_evidence_without_deleting_it(
     memory_workspace: MemoryWorkspace,
@@ -1349,6 +1613,146 @@ def test_retarget_refresh_parent_replacement_cannot_touch_replacement_tree(
     assert (
         saved_parent / ".mempalace-refresh-transaction"
     ).exists() or list(saved_parent.glob(".mempalace-refresh-staging-*"))
+
+
+@pytest.mark.unit
+def test_retarget_refresh_reparses_post_publication_tree_before_archive(
+    memory_workspace: MemoryWorkspace,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_refresh_reports(memory_workspace, monkeypatch)
+    from echelon import mempalace_retarget
+
+    real_load = mempalace_retarget._load_report_transaction
+    parse_count = 0
+
+    def count_parse(*args, **kwargs):
+        nonlocal parse_count
+        parse_count += 1
+        return real_load(*args, **kwargs)
+
+    real_remove = mempalace_retarget._remove_report_transaction
+    mutated = False
+
+    def mutate_before_archive(*args, **kwargs) -> None:
+        nonlocal mutated
+        transaction = (
+            memory_workspace.spec_dir / ".mempalace-refresh-transaction"
+        )
+        transaction.joinpath("slots", "unexpected-entry").write_text(
+            "preserve post-publication mutation\n",
+            encoding="utf-8",
+        )
+        mutated = True
+        real_remove(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "echelon.mempalace_retarget._load_report_transaction",
+        count_parse,
+    )
+    monkeypatch.setattr(
+        "echelon.mempalace_retarget._remove_report_transaction",
+        mutate_before_archive,
+    )
+
+    with pytest.raises(RetargetMemoryError, match="transaction|report write"):
+        refresh_retarget_spec_memory(
+            memory_workspace.root,
+            memory_workspace.spec_dir,
+        )
+
+    assert mutated is True
+    assert parse_count >= 2
+    assert (
+        memory_workspace.spec_dir / ".mempalace-refresh-transaction"
+    ).is_dir()
+    assert not list(
+        memory_workspace.spec_dir.glob(".mempalace-refresh-completed-*.json")
+    )
+
+
+@pytest.mark.unit
+def test_retarget_refresh_reparses_post_rollback_tree_before_archive(
+    memory_workspace: MemoryWorkspace,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_refresh_reports(memory_workspace, monkeypatch)
+    old = {
+        "mempalace-mine.json": "old mine\n",
+        "mempalace-audit.json": "old audit\n",
+        "mempalace-audit.md": "old markdown\n",
+        "mempalace-refresh-manifest.json": "old manifest\n",
+    }
+    for name, content in old.items():
+        memory_workspace.spec_dir.joinpath(name).write_text(content, encoding="utf-8")
+    from echelon import mempalace_retarget
+
+    real_load = mempalace_retarget._load_report_transaction
+    parse_count = 0
+
+    def count_parse(*args, **kwargs):
+        nonlocal parse_count
+        parse_count += 1
+        return real_load(*args, **kwargs)
+
+    real_exchange = mempalace_retarget._exchange_report_entry_at
+    exchanges = 0
+
+    def fail_after_first_publish(*args, **kwargs):
+        nonlocal exchanges
+        result = real_exchange(*args, **kwargs)
+        exchanges += 1
+        if exchanges == 1:
+            raise OSError("force rollback before archival reparse")
+        return result
+
+    real_remove = mempalace_retarget._remove_report_transaction
+    mutated = False
+
+    def mutate_rollback_before_archive(*args, **kwargs) -> None:
+        nonlocal mutated
+        if kwargs.get("expected_live") == "old":
+            transaction = (
+                memory_workspace.spec_dir / ".mempalace-refresh-transaction"
+            )
+            transaction.joinpath("slots", "unexpected-entry").write_text(
+                "preserve post-rollback mutation\n",
+                encoding="utf-8",
+            )
+            mutated = True
+        real_remove(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "echelon.mempalace_retarget._load_report_transaction",
+        count_parse,
+    )
+    monkeypatch.setattr(
+        "echelon.mempalace_retarget._exchange_report_entry_at",
+        fail_after_first_publish,
+    )
+    monkeypatch.setattr(
+        "echelon.mempalace_retarget._remove_report_transaction",
+        mutate_rollback_before_archive,
+    )
+
+    with pytest.raises(RetargetMemoryError, match="report write"):
+        refresh_retarget_spec_memory(
+            memory_workspace.root,
+            memory_workspace.spec_dir,
+        )
+
+    assert mutated is True
+    assert parse_count >= 3
+    assert {
+        name: memory_workspace.spec_dir.joinpath(name).read_text(encoding="utf-8")
+        for name in old
+    } == old
+    assert (
+        memory_workspace.spec_dir / ".mempalace-refresh-transaction"
+    ).is_dir()
+    assert not list(
+        memory_workspace.spec_dir.glob(".mempalace-refresh-completed-*.json")
+    )
 
 
 @pytest.mark.unit
