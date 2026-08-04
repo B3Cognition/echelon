@@ -9,6 +9,20 @@ import pytest
 from tests.unit.test_topology_registry import build_topology, _write_json
 
 
+def _advance_publication_generation(root: Path) -> None:
+    index_path = root / "re/topology/index.json"
+    index = json.loads(index_path.read_text(encoding="utf-8"))
+    generation = int(index["generation"]) + 1
+    receipt_path = root / index["sources"]["api"]["receipt"]["path"]
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["generation"] = generation
+    index["sources"]["api"]["receipt"]["sha256"] = _write_json(
+        receipt_path, receipt
+    )
+    index["generation"] = generation
+    _write_json(index_path, index)
+
+
 @pytest.mark.unit
 def test_audit_reports_invalid_when_index_is_missing(tmp_path: Path) -> None:
     from echelon.topology_audit import audit_topology
@@ -38,6 +52,48 @@ def test_audit_reports_current_for_matching_clean_snapshot(
     assert report.snapshot.sources[0].source_id == "api"
     assert report.snapshot.sources[0].source_fingerprint == "0" * 64
     assert report.snapshot.sources[0].receipt_sha256.startswith("sha256:")
+
+
+@pytest.mark.unit
+def test_audit_fails_closed_when_publication_swaps_between_index_and_provider_load(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    build_topology(tmp_path)
+    from harness.re_fingerprint import SourceFingerprint
+    import echelon.topology_audit as topology_audit
+
+    real_load_index = topology_audit.load_topology_index
+    swapped = False
+
+    def load_then_swap(root: Path):
+        nonlocal swapped
+        index = real_load_index(root)
+        if not swapped:
+            swapped = True
+            _advance_publication_generation(root)
+        return index
+
+    fingerprint = SourceFingerprint(
+        "0" * 64,
+        "git",
+        False,
+        "1" * 64,
+        "0123456789abcdef0123456789abcdef01234567",
+    )
+    monkeypatch.setattr(topology_audit, "load_topology_index", load_then_swap)
+    monkeypatch.setattr(
+        topology_audit, "resolve_re_fingerprint_profile", lambda root: object()
+    )
+    monkeypatch.setattr(
+        topology_audit, "fingerprint_source", lambda path, profile: fingerprint
+    )
+
+    report = topology_audit.audit_topology(tmp_path, source_id="api")
+
+    assert report.status == "invalid"
+    assert report.exit_code == 2
+    assert "publication changed during audit" in report.findings[0].message
 
 
 @pytest.mark.unit

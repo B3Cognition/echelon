@@ -226,6 +226,18 @@ def load_published_topology(
     index = load_topology_index(root)
     if index is None:
         raise TopologyRegistryError("topology index is missing")
+    return load_published_topology_from_index(root, index, source_ids)
+
+
+def load_published_topology_from_index(
+    project_root: Path,
+    index: TopologyIndex,
+    source_ids: Iterable[str] = (),
+) -> PublishedTopology:
+    """Load provider bytes named and hash-validated by one immutable index."""
+    root = Path(project_root).resolve()
+    if not isinstance(index, TopologyIndex):
+        raise TopologyRegistryError("published topology requires a validated index")
     selected = _select_sources(index, source_ids)
     providers = []
     source_fingerprints: dict[str, str] = {}

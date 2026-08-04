@@ -560,6 +560,73 @@ def test_final_canonical_load_precedes_live_audit_and_exposes_mutation(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("command", ("audit", "list", "search"))
+def test_cli_fails_closed_on_index_swap_inside_final_live_audit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+) -> None:
+    from harness.re_fingerprint import SourceFingerprint
+    from tests.unit.test_topology_audit import _advance_publication_generation
+    from tests.unit.test_topology_registry import build_topology
+    import echelon.topology_audit as topology_audit
+    import echelon.topology_cli as topology_cli
+
+    build_topology(tmp_path)
+    real_audit = topology_cli.audit_topology
+    real_load_index = topology_audit.load_topology_index
+    audit_count = 0
+    arm_swap = False
+    swapped = False
+
+    def audit(root: Path, source_id: str | None = None):
+        nonlocal audit_count, arm_swap
+        audit_count += 1
+        arm_swap = audit_count == 2
+        return real_audit(root, source_id=source_id)
+
+    def load_index(root: Path):
+        nonlocal swapped
+        index = real_load_index(root)
+        if arm_swap and not swapped:
+            swapped = True
+            _advance_publication_generation(root)
+        return index
+
+    fingerprint = SourceFingerprint(
+        "0" * 64,
+        "git",
+        False,
+        "1" * 64,
+        "0123456789abcdef0123456789abcdef01234567",
+    )
+    monkeypatch.setattr(topology_cli, "audit_topology", audit)
+    monkeypatch.setattr(topology_audit, "load_topology_index", load_index)
+    monkeypatch.setattr(
+        topology_audit, "resolve_re_fingerprint_profile", lambda root: object()
+    )
+    monkeypatch.setattr(
+        topology_audit, "fingerprint_source", lambda path, profile: fingerprint
+    )
+
+    if command == "audit":
+        result = topology_cli.audit_command(tmp_path, source="api", as_json=True)
+    elif command == "list":
+        result = topology_cli.list_sources_command(tmp_path, as_json=True)
+    else:
+        result = topology_cli.search_command(
+            tmp_path, "run", source="api", as_json=True
+        )
+
+    assert swapped is True
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    payload = json.loads(result.stderr)
+    assert payload["audit"]["status"] == "invalid"
+    assert "publication changed during audit" in payload["error"]["message"]
+
+
+@pytest.mark.unit
 def test_topology_read_fails_closed_when_publication_changes_during_read(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

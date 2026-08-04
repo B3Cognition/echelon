@@ -7,11 +7,13 @@ from pathlib import Path
 import subprocess
 from typing import Literal
 
+from echelon.topology_model import TopologySource
+from echelon.topology_provider import PublishedTopology, TopologyNodeResolutionError
 from echelon.topology_registry import (
     TopologyIndex,
     TopologyRegistryError,
     TopologySourceRecord,
-    load_published_topology,
+    load_published_topology_from_index,
     load_topology_index,
 )
 from harness.re_fingerprint import fingerprint_source, resolve_re_fingerprint_profile
@@ -70,15 +72,24 @@ class TopologyAuditReport:
 
 
 def audit_topology(project_root: Path, source_id: str | None = None) -> TopologyAuditReport:
-    """Audit structure first, then live source freshness without writing anything."""
+    """Audit one coherent publication capture, then live source freshness."""
     root = Path(project_root).resolve()
     try:
         index = load_topology_index(root)
         if index is None:
             return _invalid("topology index is missing")
         selected = _select(index, source_id)
-        load_published_topology(root, (source.source_id for source in selected))
         snapshot = snapshot_topology_index(index, source_id)
+        topology = load_published_topology_from_index(
+            root, index, (source.source_id for source in selected)
+        )
+        _assert_topology_matches_snapshot(topology, snapshot)
+        confirmed_index = load_topology_index(root)
+        if (
+            confirmed_index is None
+            or snapshot_topology_index(confirmed_index, source_id) != snapshot
+        ):
+            raise TopologyRegistryError("topology publication changed during audit")
     except TopologyRegistryError as exc:
         return _invalid(str(exc), source_id=source_id)
 
@@ -125,6 +136,39 @@ def snapshot_topology_index(
             for source in selected
         ),
     )
+
+
+def _assert_topology_matches_snapshot(
+    topology: PublishedTopology, snapshot: TopologyAuditSnapshot
+) -> None:
+    source_ids = tuple(
+        sorted(
+            node.source_id
+            for node in topology.nodes_by_id.values()
+            if isinstance(node, TopologySource)
+        )
+    )
+    expected_ids = tuple(source.source_id for source in snapshot.sources)
+    if topology.generation != snapshot.generation or source_ids != expected_ids:
+        raise TopologyRegistryError("topology publication changed during audit")
+    try:
+        for source in snapshot.sources:
+            receipt = topology.receipt(source.source_id)
+            if receipt.source_fingerprint != source.source_fingerprint:
+                raise TopologyRegistryError(
+                    "topology publication changed during audit"
+                )
+            if any(
+                value != source.receipt_sha256
+                for value in receipt.provider_receipt_hashes.values()
+            ):
+                raise TopologyRegistryError(
+                    "topology publication changed during audit"
+                )
+    except TopologyNodeResolutionError as exc:
+        raise TopologyRegistryError(
+            "topology publication changed during audit"
+        ) from exc
 
 
 def _audit_source(root: Path, source: TopologySourceRecord, profile: object) -> tuple[AuditStatus, list[TopologyAuditFinding]]:
