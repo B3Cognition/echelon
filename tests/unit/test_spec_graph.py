@@ -210,6 +210,48 @@ def test_write_spec_graph_audit_is_atomic_and_preserves_previous_bytes(
     assert path.read_bytes() == b"previous-audit\n"
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize("artifact_name", ["graph", "audit"])
+def test_spec_graph_writers_reject_earlier_symlinked_ancestor_before_temp_creation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    artifact_name: str,
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    outside_specs = tmp_path / "outside" / "specs"
+    outside_spec = outside_specs / "001-demo"
+    outside_spec.mkdir(parents=True)
+    root.joinpath("specs").symlink_to(outside_specs, target_is_directory=True)
+    spec_dir = root / "specs" / "001-demo"
+    filename = (
+        "spec-artifact-graph.json"
+        if artifact_name == "graph"
+        else "spec-artifact-graph-audit.json"
+    )
+    external_target = outside_spec / filename
+    external_target.write_bytes(b"external-before\n")
+    temp_calls: list[object] = []
+
+    def unexpected_temp(*args: object, **kwargs: object) -> tuple[int, str]:
+        temp_calls.append((args, kwargs))
+        raise AssertionError("temporary creation must not run")
+
+    monkeypatch.setattr("echelon.spec_graph.tempfile.mkstemp", unexpected_temp)
+
+    with pytest.raises(OSError, match="ancestor must be a real directory"):
+        if artifact_name == "graph":
+            write_spec_graph(_graph(), spec_dir)
+        else:
+            report = SimpleNamespace(
+                to_dict=lambda: {"schema_version": 1, "status": "pass"}
+            )
+            write_spec_graph_audit(report, spec_dir)
+
+    assert temp_calls == []
+    assert external_target.read_bytes() == b"external-before\n"
+
+
 def _write_json(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")

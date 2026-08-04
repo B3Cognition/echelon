@@ -720,3 +720,43 @@ def test_write_workspace_audit_rejects_symlink_target(
 
     assert path.is_symlink()
     assert referent.read_bytes() == b"outside\n"
+
+
+@pytest.mark.unit
+def test_write_workspace_audit_rejects_earlier_symlinked_ancestor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    outside_control = tmp_path / "outside-control"
+    outside_graph = outside_control / "runtime" / "graph"
+    outside_graph.mkdir(parents=True)
+    root.joinpath(".echelon").symlink_to(
+        outside_control,
+        target_is_directory=True,
+    )
+    current = _candidate()
+    monkeypatch.setattr(
+        "echelon.workspace_graph_audit.build_workspace_graph",
+        lambda project_root: current,
+    )
+    report = audit_workspace_graph(root, candidate=current)
+    external_target = outside_graph / WORKSPACE_GRAPH_AUDIT_FILENAME
+    external_target.write_bytes(b"external-before\n")
+    temp_calls: list[object] = []
+
+    def unexpected_temp(*args: object, **kwargs: object) -> object:
+        temp_calls.append((args, kwargs))
+        raise AssertionError("temporary creation must not run")
+
+    monkeypatch.setattr(
+        "echelon.workspace_graph_audit.tempfile.NamedTemporaryFile",
+        unexpected_temp,
+    )
+
+    with pytest.raises(OSError, match="ancestor must be a real directory"):
+        write_workspace_graph_audit(report, root)
+
+    assert temp_calls == []
+    assert external_target.read_bytes() == b"external-before\n"

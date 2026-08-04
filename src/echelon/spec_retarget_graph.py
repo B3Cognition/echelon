@@ -359,15 +359,29 @@ def _validate_optional_regular_target(root: Path, path: Path) -> None:
 
 
 def _unlink_outputs(paths: tuple[Path, ...]) -> None:
-    parents: set[Path] = set()
     for path in paths:
+        unlink_error: OSError | None = None
+        deleted = False
         try:
             path.unlink()
+            deleted = True
         except FileNotFoundError:
-            continue
-        parents.add(path.parent)
-    for parent in sorted(parents):
-        _fsync_directory(parent)
+            pass
+        except OSError as exc:
+            unlink_error = exc
+        if not deleted and unlink_error is None:
+            try:
+                path.parent.lstat()
+            except FileNotFoundError:
+                continue
+        try:
+            _fsync_directory(path.parent)
+        except OSError:
+            if unlink_error is not None:
+                raise unlink_error
+            raise
+        if unlink_error is not None:
+            raise unlink_error
 
 
 def _fsync_directory(path: Path) -> None:

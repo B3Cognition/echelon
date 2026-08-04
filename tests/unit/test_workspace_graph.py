@@ -928,6 +928,41 @@ def test_write_workspace_graph_bytes_rejects_nonregular_targets(
 
 
 @pytest.mark.unit
+def test_write_workspace_graph_bytes_rejects_earlier_symlinked_ancestor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    outside_control = tmp_path / "outside-control"
+    outside_graph = outside_control / "runtime" / "graph"
+    outside_graph.mkdir(parents=True)
+    root.joinpath(".echelon").symlink_to(
+        outside_control,
+        target_is_directory=True,
+    )
+    output = root / ".echelon" / "runtime" / "graph" / "workspace.json"
+    external_target = outside_graph / "workspace.json"
+    external_target.write_bytes(b"external-before\n")
+    temp_calls: list[object] = []
+
+    def unexpected_temp(*args: object, **kwargs: object) -> object:
+        temp_calls.append((args, kwargs))
+        raise AssertionError("temporary creation must not run")
+
+    monkeypatch.setattr(
+        "echelon.workspace_graph.tempfile.NamedTemporaryFile",
+        unexpected_temp,
+    )
+
+    with pytest.raises(OSError, match="ancestor must be a real directory"):
+        write_workspace_graph_bytes(output, b"replacement\n")
+
+    assert temp_calls == []
+    assert external_target.read_bytes() == b"external-before\n"
+
+
+@pytest.mark.unit
 def test_workspace_graph_path_uses_canonical_runtime_directory(tmp_path: Path) -> None:
     assert workspace_graph_path(tmp_path) == (
         tmp_path / ".echelon" / "runtime" / "graph" / "workspace-artifact-graph.json"

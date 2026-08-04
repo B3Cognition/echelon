@@ -8,7 +8,6 @@ from importlib.metadata import PackageNotFoundError, version
 import json
 import os
 from pathlib import Path
-import stat
 import tempfile
 from typing import Any, Mapping
 
@@ -21,6 +20,7 @@ from echelon.spec_graph import (
     GraphInput,
     GraphNode,
     SpecGraphError,
+    _prepare_graph_output_path,
     _validate_graph,
     build_spec_graph,
 )
@@ -319,15 +319,11 @@ def write_workspace_graph(graph: WorkspaceArtifactGraph, project_root: Path) -> 
 
 def write_workspace_graph_bytes(path: Path, data: bytes) -> Path:
     """Atomically replace one workspace-derived output with exact bytes."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.parent.is_symlink() or not path.parent.is_dir():
-        raise OSError("workspace graph parent must be a real directory")
-    try:
-        metadata = path.lstat()
-    except FileNotFoundError:
-        metadata = None
-    if metadata is not None and not stat.S_ISREG(metadata.st_mode):
-        raise OSError("workspace graph target must be a regular file")
+    _prepare_graph_output_path(
+        path,
+        label="workspace graph",
+        create_parent=True,
+    )
     temporary_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(

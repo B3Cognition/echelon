@@ -180,16 +180,52 @@ def write_spec_graph(graph: SpecArtifactGraph, spec_dir: Path) -> Path:
     return _write_spec_graph_bytes(path, render_spec_graph(graph))
 
 
-def _write_spec_graph_bytes(path: Path, data: bytes) -> Path:
-    parent = path.parent
-    if parent.is_symlink() or not parent.is_dir():
-        raise OSError("spec graph parent must be a real directory")
+def _prepare_graph_output_path(
+    path: Path,
+    *,
+    label: str,
+    create_parent: bool,
+) -> None:
+    """Reject symlink/non-directory ancestors before graph publication."""
+    absolute_parent = path.absolute().parent
+    _validate_graph_output_ancestors(absolute_parent, label)
+    if create_parent:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _validate_graph_output_ancestors(absolute_parent, label)
+    try:
+        parent_metadata = absolute_parent.lstat()
+    except FileNotFoundError as exc:
+        raise OSError(f"{label} parent must be a real directory") from exc
+    if not stat.S_ISDIR(parent_metadata.st_mode):
+        raise OSError(f"{label} parent must be a real directory")
     try:
         metadata = path.lstat()
     except FileNotFoundError:
         metadata = None
     if metadata is not None and not stat.S_ISREG(metadata.st_mode):
-        raise OSError("spec graph target must be a regular file")
+        raise OSError(f"{label} target must be a regular file")
+
+
+def _validate_graph_output_ancestors(parent: Path, label: str) -> None:
+    ancestors: list[Path] = []
+    current = parent
+    while True:
+        ancestors.append(current)
+        if current.parent == current:
+            break
+        current = current.parent
+    for ancestor in reversed(ancestors):
+        try:
+            metadata = ancestor.lstat()
+        except FileNotFoundError:
+            continue
+        if not stat.S_ISDIR(metadata.st_mode):
+            raise OSError(f"{label} ancestor must be a real directory")
+
+
+def _write_spec_graph_bytes(path: Path, data: bytes) -> Path:
+    parent = path.parent
+    _prepare_graph_output_path(path, label="spec graph", create_parent=False)
     descriptor, temporary_name = tempfile.mkstemp(
         dir=parent,
         prefix=f".{path.name}.",

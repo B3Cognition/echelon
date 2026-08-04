@@ -16,6 +16,7 @@ from echelon.spec_graph_audit import (
 from echelon.spec_retarget_graph import (
     RetargetGraphError,
     RetargetGraphReceipt,
+    _unlink_outputs,
     finalize_retarget_graphs,
     invalidate_retarget_graphs,
 )
@@ -636,3 +637,87 @@ def test_invalidation_rejects_workspace_publication_that_differs_from_audit(
         match="workspace graph publication does not match audit",
     ):
         invalidate_retarget_graphs(workspace.root, workspace.selected_spec)
+
+
+@pytest.mark.unit
+def test_unlink_outputs_fsyncs_success_before_later_unlink_failure_and_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    graph = tmp_path / "spec-artifact-graph.json"
+    audit = tmp_path / GRAPH_AUDIT_FILENAME
+    unrelated = tmp_path / "unrelated.json"
+    graph.write_bytes(b"graph\n")
+    audit.write_bytes(b"audit\n")
+    unrelated.write_bytes(b"unrelated\n")
+    real_unlink = Path.unlink
+    fsynced: list[Path] = []
+
+    def fail_second(path: Path, *args: object, **kwargs: object) -> None:
+        if path == audit:
+            raise OSError("second unlink failed")
+        real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_second)
+    monkeypatch.setattr(
+        "echelon.spec_retarget_graph._fsync_directory",
+        lambda path: fsynced.append(path),
+    )
+
+    with pytest.raises(OSError, match="second unlink failed"):
+        _unlink_outputs((graph, audit))
+
+    assert not graph.exists()
+    assert audit.read_bytes() == b"audit\n"
+    assert fsynced == [tmp_path, tmp_path]
+    assert unrelated.read_bytes() == b"unrelated\n"
+
+    fsynced.clear()
+    monkeypatch.setattr(Path, "unlink", real_unlink)
+    _unlink_outputs((graph, audit))
+
+    assert fsynced == [tmp_path, tmp_path]
+    assert not audit.exists()
+    assert unrelated.read_bytes() == b"unrelated\n"
+
+
+@pytest.mark.unit
+def test_unlink_outputs_retries_directory_fsync_when_outputs_are_already_absent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    graph = tmp_path / "workspace-artifact-graph.json"
+    audit = tmp_path / WORKSPACE_GRAPH_AUDIT_FILENAME
+    unrelated = tmp_path / "unrelated.json"
+    graph.write_bytes(b"graph\n")
+    audit.write_bytes(b"audit\n")
+    unrelated.write_bytes(b"unrelated\n")
+    attempts = 0
+
+    def fail_first_fsync(path: Path) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OSError("directory fsync failed")
+
+    monkeypatch.setattr(
+        "echelon.spec_retarget_graph._fsync_directory", fail_first_fsync
+    )
+
+    with pytest.raises(OSError, match="directory fsync failed"):
+        _unlink_outputs((graph, audit))
+
+    assert not graph.exists()
+    assert audit.read_bytes() == b"audit\n"
+    assert unrelated.read_bytes() == b"unrelated\n"
+
+    fsynced: list[Path] = []
+    monkeypatch.setattr(
+        "echelon.spec_retarget_graph._fsync_directory",
+        lambda path: fsynced.append(path),
+    )
+    _unlink_outputs((graph, audit))
+
+    assert fsynced == [tmp_path, tmp_path]
+    assert not audit.exists()
+    assert unrelated.read_bytes() == b"unrelated\n"
