@@ -12,6 +12,8 @@ import secrets
 import stat
 from typing import Mapping
 
+from echelon.strict_json import loads_strict_json
+from echelon.target_normalization import normalize_target_set
 from harness.phase_checkpoints import _checkpoint_ledger_lock
 
 
@@ -68,6 +70,7 @@ _REVISION_KEYS = frozenset(
         "replacement_targets",
         "original_prompt_digest",
         "recovery",
+        "checkpoint_parent",
         "checkpoint_id",
         "checkpoint_commit",
         "artifact_inventory",
@@ -121,6 +124,7 @@ class RetargetRevision:
     replacement_targets: tuple[str, ...]
     original_prompt_digest: str
     recovery: RetargetRecoveryProjection
+    checkpoint_parent: str | None = None
     checkpoint_id: str | None = None
     checkpoint_commit: str | None = None
     artifact_inventory: tuple[Mapping[str, object], ...] = ()
@@ -217,6 +221,18 @@ def _require_strings(
     return items
 
 
+def _require_targets(value: object, *, field: str) -> tuple[str, ...]:
+    items = _require_strings(
+        value,
+        field=field,
+        maximum_items=_MAX_TARGETS,
+        maximum_length=_MAX_TARGET_LENGTH,
+    )
+    if normalize_target_set(items) != items:
+        raise ValueError(f"invalid retarget canonical target set: {field}")
+    return items
+
+
 def _require_git_oid(value: object, *, field: str) -> str | None:
     if value is None:
         return None
@@ -308,11 +324,9 @@ def _recovery_from_raw(value: object) -> RetargetRecoveryProjection:
             maximum_length=_MAX_ID_LENGTH,
             allow_empty=True,
         ),
-        implementation_targets=_require_strings(
+        implementation_targets=_require_targets(
             raw["implementation_targets"],
             field="recovery implementation_targets",
-            maximum_items=_MAX_TARGETS,
-            maximum_length=_MAX_TARGET_LENGTH,
         ),
         ready_to_build=ready,
     )
@@ -336,17 +350,10 @@ def _revision_from_raw(value: object) -> RetargetRevision:
     )
     if replacement_run_id == baseline_run_id:
         raise ValueError("retarget replacement_run_id must differ from baseline_run_id")
-    old_targets = _require_strings(
-        raw["old_targets"],
-        field="old_targets",
-        maximum_items=_MAX_TARGETS,
-        maximum_length=_MAX_TARGET_LENGTH,
-    )
-    replacement_targets = _require_strings(
+    old_targets = _require_targets(raw["old_targets"], field="old_targets")
+    replacement_targets = _require_targets(
         raw["replacement_targets"],
         field="replacement_targets",
-        maximum_items=_MAX_TARGETS,
-        maximum_length=_MAX_TARGET_LENGTH,
     )
     if recovery.implementation_targets != old_targets:
         raise ValueError(
@@ -375,6 +382,10 @@ def _revision_from_raw(value: object) -> RetargetRevision:
         replacement_targets=replacement_targets,
         original_prompt_digest=prompt_digest,
         recovery=recovery,
+        checkpoint_parent=_require_git_oid(
+            raw["checkpoint_parent"],
+            field="checkpoint_parent",
+        ),
         checkpoint_id=_require_optional_string(
             raw["checkpoint_id"],
             field="checkpoint_id",
@@ -506,7 +517,7 @@ def load_retarget_history(spec_dir: Path) -> RetargetHistory:
             revisions=(),
         )
     try:
-        raw = json.loads(content.decode("utf-8"))
+        raw = loads_strict_json(content.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError("invalid retarget history JSON") from exc
     return _history_from_raw(raw, spec_id=spec_id)
@@ -605,6 +616,58 @@ def append_prepared_revision(
         validated = _validate_history(updated, spec_id=directory.name)
         _write_history_atomic(directory, validated)
         return validated.revisions[-1]
+
+
+def _seal_retarget_checkpoint_parent_unlocked(
+    spec_dir: Path,
+    revision_id: str,
+    *,
+    checkpoint_parent: str,
+) -> RetargetRevision:
+    directory = Path(spec_dir)
+    parent = _require_git_oid(
+        checkpoint_parent,
+        field="checkpoint_parent",
+    )
+    if parent is None:
+        raise ValueError("invalid retarget checkpoint_parent")
+    history = load_retarget_history(directory)
+    if not history.revisions:
+        raise ValueError("retarget revision precondition changed")
+    latest = history.revisions[-1]
+    if latest.revision_id != revision_id or latest.status != "prepared":
+        raise ValueError("retarget revision precondition changed")
+    if latest.checkpoint_parent is not None:
+        if latest.checkpoint_parent == parent:
+            return latest
+        raise ValueError("retarget checkpoint_parent is already sealed")
+    sealed = replace(
+        latest,
+        checkpoint_parent=parent,
+        updated_at=_now(),
+    )
+    updated = replace(
+        history,
+        revisions=(*history.revisions[:-1], sealed),
+    )
+    validated = _validate_history(updated, spec_id=directory.name)
+    _write_history_atomic(directory, validated)
+    return validated.revisions[-1]
+
+
+def seal_retarget_checkpoint_parent(
+    spec_dir: Path,
+    revision_id: str,
+    *,
+    checkpoint_parent: str,
+) -> RetargetRevision:
+    directory = Path(spec_dir)
+    with _checkpoint_ledger_lock(directory):
+        return _seal_retarget_checkpoint_parent_unlocked(
+            directory,
+            revision_id,
+            checkpoint_parent=checkpoint_parent,
+        )
 
 
 def advance_retarget_revision(

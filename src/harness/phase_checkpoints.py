@@ -16,6 +16,7 @@ from typing import Callable, Iterator, Mapping
 
 from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_message
 from echelon.git_helpers import GitHelperError, run_git
+from echelon.strict_json import loads_strict_json
 from harness.controller_lock_order import controller_lock_order
 
 
@@ -255,9 +256,11 @@ def _load_retarget_checkpoint_ledger_strict(spec_dir: Path) -> CheckpointLedger:
     except FileNotFoundError:
         return CheckpointLedger(spec_id=spec_id, checkpoints=[])
     try:
-        raw = json.loads(content.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise PhaseCheckpointError("invalid retarget checkpoint ledger JSON") from exc
+        raw = loads_strict_json(content.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        raise PhaseCheckpointError(
+            f"invalid retarget checkpoint ledger JSON: {exc}"
+        ) from exc
     if type(raw) is not dict or frozenset(raw) != _CHECKPOINT_LEDGER_KEYS:
         raise PhaseCheckpointError("invalid retarget checkpoint ledger keys")
     stored_spec_id = _strict_checkpoint_string(raw["spec_id"], field="spec_id")
@@ -1496,6 +1499,7 @@ def _verify_retarget_commit_tree(
 ) -> None:
     from echelon.spec_retarget_history import (
         RETARGET_HISTORY_FILENAME,
+        _MAX_HISTORY_BYTES,
         _history_from_raw,
     )
 
@@ -1507,13 +1511,57 @@ def _verify_retarget_commit_tree(
         raise PhaseCheckpointError(
             "owned spec directory must be inside the project root"
         ) from exc
+    ledger_path = (relative / RETARGET_HISTORY_FILENAME).as_posix()
     try:
-        content = run_git(
-            root,
-            "show",
-            f"{commit}:{(relative / RETARGET_HISTORY_FILENAME).as_posix()}",
-        ).stdout
-        raw = json.loads(content)
+        entries = tuple(
+            entry
+            for entry in run_git(
+                root,
+                "ls-tree",
+                "-z",
+                commit,
+                "--",
+                ledger_path,
+            ).stdout.split("\0")
+            if entry
+        )
+    except (GitHelperError, UnicodeError) as exc:
+        raise PhaseCheckpointError(
+            "retarget checkpoint does not contain the prepared revision ledger"
+        ) from exc
+    if len(entries) != 1 or "\t" not in entries[0]:
+        raise PhaseCheckpointError(
+            "retarget checkpoint does not contain the prepared revision ledger"
+        )
+    metadata, committed_path = entries[0].split("\t", 1)
+    fields = metadata.split()
+    if (
+        len(fields) != 3
+        or fields[0] != "100644"
+        or fields[1] != "blob"
+        or _GIT_OBJECT_ID_PATTERN.fullmatch(fields[2]) is None
+        or committed_path != ledger_path
+    ):
+        raise PhaseCheckpointError(
+            "retarget checkpoint history must use regular blob mode 100644"
+        )
+    blob = fields[2]
+    try:
+        size_text = run_git(root, "cat-file", "-s", blob).stdout.strip()
+        size = int(size_text)
+    except (GitHelperError, UnicodeError, ValueError) as exc:
+        raise PhaseCheckpointError(
+            "could not inspect retarget checkpoint history blob"
+        ) from exc
+    if size < 0 or size > _MAX_HISTORY_BYTES:
+        raise PhaseCheckpointError(
+            "retarget checkpoint history blob exceeds size limit"
+        )
+    try:
+        content = run_git(root, "cat-file", "blob", blob).stdout
+        if len(content.encode("utf-8")) != size:
+            raise ValueError("retarget checkpoint history blob size changed")
+        raw = loads_strict_json(content)
         committed_history = _history_from_raw(
             raw,
             spec_id=_spec_id_from_dir(resolved_spec),
@@ -1580,6 +1628,131 @@ def _current_git_head(project_root: Path) -> str:
     return head
 
 
+def _current_git_head_state(project_root: Path) -> tuple[str, str | None]:
+    try:
+        symbolic = run_git(
+            project_root,
+            "symbolic-ref",
+            "-q",
+            "HEAD",
+            check=False,
+        )
+    except GitHelperError as exc:
+        raise PhaseCheckpointError(str(exc)) from exc
+    if symbolic.returncode not in {0, 1}:
+        raise PhaseCheckpointError("could not inspect current Git HEAD")
+    symbolic_ref = symbolic.stdout.strip() if symbolic.returncode == 0 else None
+    if symbolic_ref is not None:
+        valid_ref = run_git(
+            project_root,
+            "check-ref-format",
+            symbolic_ref,
+            check=False,
+        )
+        if not symbolic_ref.startswith("refs/") or valid_ref.returncode != 0:
+            raise PhaseCheckpointError("invalid symbolic Git HEAD")
+    return _current_git_head(project_root), symbolic_ref
+
+
+def _git_lock_path(project_root: Path, ref: str) -> Path:
+    try:
+        value = run_git(project_root, "rev-parse", "--git-path", ref).stdout.strip()
+    except GitHelperError as exc:
+        raise PhaseCheckpointError(str(exc)) from exc
+    if not value:
+        raise PhaseCheckpointError("could not resolve Git ref lock path")
+    path = Path(value)
+    if not path.is_absolute():
+        path = project_root / path
+    return path.with_name(path.name + ".lock")
+
+
+@contextmanager
+def _git_head_lease(project_root: Path, expected_head: str) -> Iterator[None]:
+    """Hold Git-compatible ref locks while validating and recording a HEAD."""
+
+    head, symbolic_ref = _current_git_head_state(project_root)
+    if head != expected_head:
+        raise PhaseCheckpointError(
+            "Git HEAD changed before retarget checkpoint recording"
+        )
+    refs = ["HEAD"]
+    if symbolic_ref is not None:
+        refs.append(symbolic_ref)
+    owned: list[tuple[Path, int, tuple[int, int]]] = []
+    try:
+        for ref in refs:
+            path = _git_lock_path(project_root, ref)
+            try:
+                path.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+            except OSError as exc:
+                raise PhaseCheckpointError(
+                    "could not prepare Git HEAD lease"
+                ) from exc
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            try:
+                descriptor = os.open(path, flags, 0o600)
+            except OSError as exc:
+                raise PhaseCheckpointError(
+                    "could not acquire Git HEAD lease"
+                ) from exc
+            metadata = os.fstat(descriptor)
+            if not stat.S_ISREG(metadata.st_mode):
+                os.close(descriptor)
+                raise PhaseCheckpointError("Git ref lease must be a regular file")
+            owned.append(
+                (path, descriptor, (metadata.st_dev, metadata.st_ino))
+            )
+        verified_head, verified_ref = _current_git_head_state(project_root)
+        if verified_head != expected_head or verified_ref != symbolic_ref:
+            raise PhaseCheckpointError(
+                "Git HEAD changed before retarget checkpoint recording"
+            )
+        yield
+        final_head, final_ref = _current_git_head_state(project_root)
+        if final_head != expected_head or final_ref != symbolic_ref:
+            raise PhaseCheckpointError(
+                "Git HEAD changed before retarget checkpoint recording"
+            )
+    finally:
+        for path, descriptor, identity in reversed(owned):
+            try:
+                current = path.lstat()
+                if (
+                    stat.S_ISREG(current.st_mode)
+                    and (current.st_dev, current.st_ino) == identity
+                ):
+                    path.unlink()
+            except FileNotFoundError:
+                pass
+            finally:
+                os.close(descriptor)
+
+
+def _require_commit_on_current_lineage(
+    project_root: Path,
+    commit: str,
+    current_head: str,
+) -> None:
+    try:
+        result = run_git(
+            project_root,
+            "merge-base",
+            "--is-ancestor",
+            commit,
+            current_head,
+            check=False,
+        )
+    except GitHelperError as exc:
+        raise PhaseCheckpointError(str(exc)) from exc
+    if result.returncode != 0:
+        raise PhaseCheckpointError(
+            "recorded retarget checkpoint is not on the current lineage"
+        )
+
+
 def _retarget_checkpoint_from_record(
     *,
     record: Mapping[str, str],
@@ -1620,9 +1793,14 @@ def _validate_retarget_commit_record(
     record: Mapping[str, str],
     identity: Mapping[str, str],
     expected_history: object,
+    expected_parent: str,
 ) -> None:
     if not _record_has_exact_retarget_identity(record, identity):
         raise PhaseCheckpointError("retarget checkpoint identity drift")
+    if record.get("parents") != expected_parent:
+        raise PhaseCheckpointError(
+            "retarget checkpoint does not have the expected parent"
+        )
     _verify_retarget_commit_tree(
         project_root,
         spec_dir,
@@ -1641,7 +1819,10 @@ def commit_retarget_checkpoint(
 ) -> PhaseCheckpoint:
     """Commit and record the immutable preflight boundary for one retarget."""
 
-    from echelon.spec_retarget_history import load_retarget_history
+    from echelon.spec_retarget_history import (
+        _seal_retarget_checkpoint_parent_unlocked,
+        load_retarget_history,
+    )
 
     root = Path(project_root).resolve()
     resolved_spec = Path(spec_dir).resolve()
@@ -1660,6 +1841,24 @@ def commit_retarget_checkpoint(
             raise PhaseCheckpointError(
                 "retarget checkpoint baseline run does not match"
             )
+        if revision.checkpoint_parent is None:
+            observed_parent = _current_git_head(root)
+            with _git_head_lease(root, observed_parent):
+                try:
+                    revision = _seal_retarget_checkpoint_parent_unlocked(
+                        resolved_spec,
+                        revision.revision_id,
+                        checkpoint_parent=observed_parent,
+                    )
+                except ValueError as exc:
+                    raise PhaseCheckpointError(str(exc)) from exc
+            history = load_retarget_history(resolved_spec)
+        checkpoint_parent = revision.checkpoint_parent
+        if (
+            checkpoint_parent is None
+            or _GIT_OBJECT_ID_PATTERN.fullmatch(checkpoint_parent) is None
+        ):
+            raise PhaseCheckpointError("invalid retarget checkpoint parent")
 
         checkpoint_id = f"retarget-preflight-{revision.revision_id}"
         identity = {
@@ -1716,13 +1915,21 @@ def commit_retarget_checkpoint(
             )
             if recorded_checkpoint != expected_checkpoint:
                 raise PhaseCheckpointError("retarget checkpoint identity drift")
-            _validate_retarget_commit_record(
-                project_root=root,
-                spec_dir=resolved_spec,
-                record=record,
-                identity=identity,
-                expected_history=history,
-            )
+            current_head = _current_git_head(root)
+            with _git_head_lease(root, current_head):
+                _require_commit_on_current_lineage(
+                    root,
+                    recorded_checkpoint.commit,
+                    current_head,
+                )
+                _validate_retarget_commit_record(
+                    project_root=root,
+                    spec_dir=resolved_spec,
+                    record=record,
+                    identity=identity,
+                    expected_history=history,
+                    expected_parent=checkpoint_parent,
+                )
             return recorded_checkpoint
 
         checkpoint_head = _current_git_head(root)
@@ -1732,19 +1939,47 @@ def commit_retarget_checkpoint(
             checkpoint_id=checkpoint_id,
             revision_id=revision.revision_id,
         ):
+            with _git_head_lease(root, checkpoint_head):
+                _validate_retarget_commit_record(
+                    project_root=root,
+                    spec_dir=resolved_spec,
+                    record=head_record,
+                    identity=identity,
+                    expected_history=history,
+                    expected_parent=checkpoint_parent,
+                )
+                checkpoint = _retarget_checkpoint_from_record(
+                    record=head_record,
+                    checkpoint_id=checkpoint_id,
+                    spec_id=spec_id,
+                    run_id=run_id,
+                )
+                _record_retarget_checkpoint_unlocked(
+                    resolved_spec,
+                    checkpoint_ledger,
+                    checkpoint,
+                )
+            return checkpoint
+
+        if checkpoint_head != checkpoint_parent:
+            raise PhaseCheckpointError("retarget checkpoint prestate mismatch")
+        commit = _commit_spec_changes(root, (resolved_spec,), message)
+        if commit is None:
+            raise PhaseCheckpointError(
+                "retarget checkpoint produced no selected-spec change"
+            )
+        with _git_head_lease(root, commit):
+            record = _show_completion_commit(root, commit)
             _validate_retarget_commit_record(
                 project_root=root,
                 spec_dir=resolved_spec,
-                record=head_record,
+                record=record,
                 identity=identity,
                 expected_history=history,
+                expected_parent=checkpoint_parent,
             )
-            if _current_git_head(root) != head_record["commit"]:
-                raise PhaseCheckpointError(
-                    "Git HEAD changed before retarget checkpoint recording"
-                )
             checkpoint = _retarget_checkpoint_from_record(
-                record=head_record,
+                record=record,
                 checkpoint_id=checkpoint_id,
                 spec_id=spec_id,
                 run_id=run_id,
@@ -1754,40 +1989,6 @@ def commit_retarget_checkpoint(
                 checkpoint_ledger,
                 checkpoint,
             )
-            return checkpoint
-
-        commit = _commit_spec_changes(root, (resolved_spec,), message)
-        if commit is None:
-            raise PhaseCheckpointError(
-                "retarget checkpoint produced no selected-spec change"
-            )
-        record = _show_completion_commit(root, commit)
-        if record.get("parents") != checkpoint_head:
-            raise PhaseCheckpointError(
-                "created retarget checkpoint commit parent mismatch"
-            )
-        _validate_retarget_commit_record(
-            project_root=root,
-            spec_dir=resolved_spec,
-            record=record,
-            identity=identity,
-            expected_history=history,
-        )
-        if _current_git_head(root) != commit:
-            raise PhaseCheckpointError(
-                "Git HEAD changed before retarget checkpoint recording"
-            )
-        checkpoint = _retarget_checkpoint_from_record(
-            record=record,
-            checkpoint_id=checkpoint_id,
-            spec_id=spec_id,
-            run_id=run_id,
-        )
-        _record_retarget_checkpoint_unlocked(
-            resolved_spec,
-            checkpoint_ledger,
-            checkpoint,
-        )
         return checkpoint
 
 

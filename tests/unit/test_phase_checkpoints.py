@@ -21,6 +21,8 @@ from harness.phase_checkpoints import (
 from echelon.spec_retarget_history import (
     RetargetRecoveryProjection,
     append_prepared_revision,
+    load_retarget_history,
+    seal_retarget_checkpoint_parent,
 )
 
 
@@ -454,6 +456,60 @@ def test_retarget_checkpoint_recovers_commit_created_before_checkpoint_ledger(
     assert load_checkpoint_ledger(spec_dir).checkpoints == [created]
 
 
+def test_retarget_checkpoint_seals_expected_parent_before_commit(
+    tmp_path: Path,
+) -> None:
+    repo, spec_dir = _retarget_checkpoint_repo(tmp_path)
+    expected_parent = _git(repo, "rev-parse", "HEAD^{commit}")
+    revision = _prepared_retarget_revision(spec_dir)
+
+    checkpoint = commit_retarget_checkpoint(
+        project_root=repo,
+        spec_dir=spec_dir,
+        run_id="squad-base",
+        revision_id=revision.revision_id,
+    )
+
+    sealed = load_retarget_history(spec_dir).revisions[-1]
+    committed = json.loads(
+        _git(
+            repo,
+            "show",
+            f"{checkpoint.commit}:specs/001-demo/retarget-history.json",
+        )
+    )
+    assert sealed.checkpoint_parent == expected_parent
+    assert committed["revisions"][-1]["checkpoint_parent"] == expected_parent
+    assert _git(repo, "rev-parse", f"{checkpoint.commit}^") == expected_parent
+
+
+def test_retarget_checkpoint_rejects_current_candidate_with_wrong_sealed_parent(
+    tmp_path: Path,
+) -> None:
+    repo, spec_dir = _retarget_checkpoint_repo(tmp_path)
+    expected_parent = _git(repo, "rev-parse", "HEAD^{commit}")
+    revision = _prepared_retarget_revision(spec_dir)
+    revision = seal_retarget_checkpoint_parent(
+        spec_dir,
+        revision.revision_id,
+        checkpoint_parent=expected_parent,
+    )
+    _git(repo, "commit", "--allow-empty", "-m", "different parent")
+    _checkpoint_id, message = _retarget_commit_message(revision)
+    _git(repo, "add", "-f", "specs/001-demo/retarget-history.json")
+    _git(repo, "commit", "-m", message)
+
+    with pytest.raises(PhaseCheckpointError, match="expected parent"):
+        commit_retarget_checkpoint(
+            project_root=repo,
+            spec_dir=spec_dir,
+            run_id="squad-base",
+            revision_id=revision.revision_id,
+        )
+
+    assert not checkpoint_module.checkpoint_ledger_path(spec_dir).exists()
+
+
 def test_retarget_checkpoint_does_not_adopt_matching_off_branch_commit(
     tmp_path: Path,
 ) -> None:
@@ -473,16 +529,16 @@ def test_retarget_checkpoint_does_not_adopt_matching_off_branch_commit(
     _git(repo, "commit", "--allow-empty", "-m", "diverged current branch")
     (spec_dir / "retarget-history.json").write_bytes(ledger_bytes)
 
-    created = commit_retarget_checkpoint(
-        project_root=repo,
-        spec_dir=spec_dir,
-        run_id="squad-base",
-        revision_id=revision.revision_id,
-    )
+    with pytest.raises(PhaseCheckpointError, match="prestate"):
+        commit_retarget_checkpoint(
+            project_root=repo,
+            spec_dir=spec_dir,
+            run_id="squad-base",
+            revision_id=revision.revision_id,
+        )
 
-    assert created.commit != first.commit
-    assert created.commit == _git(repo, "rev-parse", "HEAD^{commit}")
-    assert load_checkpoint_ledger(spec_dir).checkpoints == [created]
+    assert _git(repo, "rev-parse", "HEAD^{commit}") != first.commit
+    assert not checkpoint_module.checkpoint_ledger_path(spec_dir).exists()
 
 
 def test_retarget_checkpoint_rejects_matching_current_head_with_unrelated_change(
@@ -490,6 +546,11 @@ def test_retarget_checkpoint_rejects_matching_current_head_with_unrelated_change
 ) -> None:
     repo, spec_dir = _retarget_checkpoint_repo(tmp_path)
     revision = _prepared_retarget_revision(spec_dir)
+    revision = seal_retarget_checkpoint_parent(
+        spec_dir,
+        revision.revision_id,
+        checkpoint_parent=_git(repo, "rev-parse", "HEAD^{commit}"),
+    )
     _checkpoint_id, message = _retarget_commit_message(revision)
     (repo / "unrelated.txt").write_text("not checkpoint-owned\n", encoding="utf-8")
     _git(repo, "add", "-f", "specs/001-demo/retarget-history.json")
@@ -509,17 +570,26 @@ def test_retarget_checkpoint_rejects_matching_current_head_with_unrelated_change
     assert not checkpoint_module.checkpoint_ledger_path(spec_dir).exists()
 
 
-def test_retarget_checkpoint_rejects_head_move_before_recording(
+def test_retarget_checkpoint_blocks_head_move_before_recording(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo, spec_dir = _retarget_checkpoint_repo(tmp_path)
     revision = _prepared_retarget_revision(spec_dir)
     real_verify = checkpoint_module._verify_retarget_commit_tree
+    attempted: list[subprocess.CompletedProcess[str]] = []
 
     def move_head_after_verification(*args, **kwargs) -> None:
         real_verify(*args, **kwargs)
-        _git(repo, "commit", "--allow-empty", "-m", "concurrent commit")
+        attempted.append(
+            subprocess.run(
+                ["git", "commit", "--allow-empty", "-m", "concurrent commit"],
+                cwd=repo,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        )
 
     monkeypatch.setattr(
         checkpoint_module,
@@ -527,7 +597,136 @@ def test_retarget_checkpoint_rejects_head_move_before_recording(
         move_head_after_verification,
     )
 
-    with pytest.raises(PhaseCheckpointError, match="HEAD changed"):
+    checkpoint = commit_retarget_checkpoint(
+        project_root=repo,
+        spec_dir=spec_dir,
+        run_id="squad-base",
+        revision_id=revision.revision_id,
+    )
+
+    assert len(attempted) == 1
+    assert attempted[0].returncode != 0
+    assert checkpoint.commit == _git(repo, "rev-parse", "HEAD^{commit}")
+    assert load_checkpoint_ledger(spec_dir).checkpoints == [checkpoint]
+
+
+@pytest.mark.parametrize("head_kind", ["branch", "detached"])
+def test_retarget_checkpoint_ref_lease_closes_verify_to_record_gap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    head_kind: str,
+) -> None:
+    repo, spec_dir = _retarget_checkpoint_repo(tmp_path)
+    parent = _git(repo, "rev-parse", "HEAD^{commit}")
+    if head_kind == "detached":
+        _git(repo, "checkout", "--detach", parent)
+    revision = _prepared_retarget_revision(spec_dir)
+    real_record = checkpoint_module._record_retarget_checkpoint_unlocked
+    attempted: list[subprocess.CompletedProcess[str]] = []
+
+    def attempt_ref_move(*args, **kwargs):
+        attempted.append(
+            subprocess.run(
+                [
+                    "git",
+                    "update-ref",
+                    "HEAD" if head_kind == "detached" else "refs/heads/main",
+                    parent,
+                ],
+                cwd=repo,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        )
+        return real_record(*args, **kwargs)
+
+    monkeypatch.setattr(
+        checkpoint_module,
+        "_record_retarget_checkpoint_unlocked",
+        attempt_ref_move,
+    )
+
+    checkpoint = commit_retarget_checkpoint(
+        project_root=repo,
+        spec_dir=spec_dir,
+        run_id="squad-base",
+        revision_id=revision.revision_id,
+    )
+
+    assert len(attempted) == 1
+    assert attempted[0].returncode != 0
+    assert checkpoint.commit == _git(repo, "rev-parse", "HEAD^{commit}")
+    assert load_checkpoint_ledger(spec_dir).checkpoints == [checkpoint]
+
+
+def test_retarget_checkpoint_ref_lease_supports_packed_nested_branch(
+    tmp_path: Path,
+) -> None:
+    repo, spec_dir = _retarget_checkpoint_repo(tmp_path)
+    _git(repo, "checkout", "-b", "nested/checkpoint")
+    _git(repo, "pack-refs", "--all", "--prune")
+    ref_directory_value = _git(
+        repo,
+        "rev-parse",
+        "--git-path",
+        "refs/heads/nested",
+    )
+    ref_directory = Path(ref_directory_value)
+    if not ref_directory.is_absolute():
+        ref_directory = repo / ref_directory
+    if ref_directory.is_dir():
+        ref_directory.rmdir()
+    revision = _prepared_retarget_revision(spec_dir)
+
+    checkpoint = commit_retarget_checkpoint(
+        project_root=repo,
+        spec_dir=spec_dir,
+        run_id="squad-base",
+        revision_id=revision.revision_id,
+    )
+
+    assert checkpoint.commit == _git(repo, "rev-parse", "HEAD^{commit}")
+    assert load_checkpoint_ledger(spec_dir).checkpoints == [checkpoint]
+
+
+def test_retarget_checkpoint_ref_lease_supports_linked_worktree(
+    tmp_path: Path,
+) -> None:
+    repo, _spec_dir = _retarget_checkpoint_repo(tmp_path)
+    linked = tmp_path / "retarget-linked"
+    _git(repo, "worktree", "add", "-b", "linked-checkpoint", str(linked))
+    spec_dir = linked / "specs" / "001-demo"
+    revision = _prepared_retarget_revision(spec_dir)
+
+    checkpoint = commit_retarget_checkpoint(
+        project_root=linked,
+        spec_dir=spec_dir,
+        run_id="squad-base",
+        revision_id=revision.revision_id,
+    )
+
+    assert checkpoint.commit == _git(linked, "rev-parse", "HEAD^{commit}")
+    assert load_checkpoint_ledger(spec_dir).checkpoints == [checkpoint]
+
+
+def test_recorded_retarget_checkpoint_rejects_off_line_head(
+    tmp_path: Path,
+) -> None:
+    repo, spec_dir = _retarget_checkpoint_repo(tmp_path)
+    revision = _prepared_retarget_revision(spec_dir)
+    created = commit_retarget_checkpoint(
+        project_root=repo,
+        spec_dir=spec_dir,
+        run_id="squad-base",
+        revision_id=revision.revision_id,
+    )
+    history_bytes = (spec_dir / "retarget-history.json").read_bytes()
+    parent = _git(repo, "rev-parse", f"{created.commit}^")
+    _git(repo, "reset", "--hard", parent)
+    (spec_dir / "retarget-history.json").write_bytes(history_bytes)
+
+    with pytest.raises(PhaseCheckpointError, match="current lineage"):
         commit_retarget_checkpoint(
             project_root=repo,
             spec_dir=spec_dir,
@@ -535,7 +734,63 @@ def test_retarget_checkpoint_rejects_head_move_before_recording(
             revision_id=revision.revision_id,
         )
 
-    assert not checkpoint_module.checkpoint_ledger_path(spec_dir).exists()
+
+def test_retarget_checkpoint_rejects_symlink_history_entry_in_commit(
+    tmp_path: Path,
+) -> None:
+    repo, spec_dir = _retarget_checkpoint_repo(tmp_path)
+    parent = _git(repo, "rev-parse", "HEAD^{commit}")
+    revision = _prepared_retarget_revision(spec_dir)
+    revision = seal_retarget_checkpoint_parent(
+        spec_dir,
+        revision.revision_id,
+        checkpoint_parent=parent,
+    )
+    history_path = spec_dir / "retarget-history.json"
+    history_bytes = history_path.read_bytes()
+    history_path.unlink()
+    history_path.symlink_to("spec.md")
+    _checkpoint_id, message = _retarget_commit_message(revision)
+    _git(repo, "add", "-f", "specs/001-demo/retarget-history.json")
+    _git(repo, "commit", "-m", message)
+    history_path.unlink()
+    history_path.write_bytes(history_bytes)
+
+    with pytest.raises(PhaseCheckpointError, match="regular blob mode"):
+        commit_retarget_checkpoint(
+            project_root=repo,
+            spec_dir=spec_dir,
+            run_id="squad-base",
+            revision_id=revision.revision_id,
+        )
+
+
+def test_retarget_checkpoint_rejects_oversized_history_blob_before_reading(
+    tmp_path: Path,
+) -> None:
+    repo, spec_dir = _retarget_checkpoint_repo(tmp_path)
+    parent = _git(repo, "rev-parse", "HEAD^{commit}")
+    revision = _prepared_retarget_revision(spec_dir)
+    revision = seal_retarget_checkpoint_parent(
+        spec_dir,
+        revision.revision_id,
+        checkpoint_parent=parent,
+    )
+    history_path = spec_dir / "retarget-history.json"
+    history_bytes = history_path.read_bytes()
+    history_path.write_bytes(b" " * (2 * 1024 * 1024 + 1))
+    _checkpoint_id, message = _retarget_commit_message(revision)
+    _git(repo, "add", "-f", "specs/001-demo/retarget-history.json")
+    _git(repo, "commit", "-m", message)
+    history_path.write_bytes(history_bytes)
+
+    with pytest.raises(PhaseCheckpointError, match="size limit"):
+        commit_retarget_checkpoint(
+            project_root=repo,
+            spec_dir=spec_dir,
+            run_id="squad-base",
+            revision_id=revision.revision_id,
+        )
 
 
 def test_retarget_checkpoint_returns_strict_recorded_row_without_history_search(
@@ -607,6 +862,42 @@ def test_retarget_checkpoint_rejects_malformed_checkpoint_ledger_before_commit(
         )
 
     assert _git(repo, "rev-parse", "HEAD^{commit}") == head_before
+
+
+@pytest.mark.parametrize("location", ["top", "row"])
+def test_retarget_checkpoint_rejects_duplicate_json_members_in_strict_ledger(
+    tmp_path: Path,
+    location: str,
+) -> None:
+    repo, spec_dir = _retarget_checkpoint_repo(tmp_path)
+    revision = _prepared_retarget_revision(spec_dir)
+    path = checkpoint_module.checkpoint_ledger_path(spec_dir)
+    if location == "top":
+        path.write_text(
+            '{"spec_id":"001-demo","spec_id":"001-demo","checkpoints":[]}',
+            encoding="utf-8",
+        )
+    else:
+        commit_retarget_checkpoint(
+            project_root=repo,
+            spec_dir=spec_dir,
+            run_id="squad-base",
+            revision_id=revision.revision_id,
+        )
+        content = path.read_text(encoding="utf-8").replace(
+            '"source": "retarget-preflight",',
+            '"source": "retarget-preflight",\n      "source": "retarget-preflight",',
+            1,
+        )
+        path.write_text(content, encoding="utf-8")
+
+    with pytest.raises(PhaseCheckpointError, match="duplicate JSON member"):
+        commit_retarget_checkpoint(
+            project_root=repo,
+            spec_dir=spec_dir,
+            run_id="squad-base",
+            revision_id=revision.revision_id,
+        )
 
 
 def test_retarget_checkpoint_rejects_oversized_checkpoint_ledger_before_commit(

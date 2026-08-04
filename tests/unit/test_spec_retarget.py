@@ -154,6 +154,17 @@ def test_classifier_rejects_equivalent_or_empty_normalized_replacement_targets(
     assert empty.reason_codes == ("retarget_target_set_empty",)
 
 
+def test_classifier_collapses_dot_segment_target_aliases(tmp_path: Path) -> None:
+    result = classify_retarget(
+        replace(
+            eligible_evidence(tmp_path),
+            replacement_targets=("services/./api/", "services/api"),
+        )
+    )
+
+    assert result.reason_codes == ("retarget_target_set_unchanged",)
+
+
 def _git(project_root: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=project_root, check=True, capture_output=True)
 

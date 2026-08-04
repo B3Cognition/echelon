@@ -12,6 +12,7 @@ import yaml
 
 from echelon.artifact_index import artifact_definitions
 from echelon.git_helpers import GitHelperError, current_branch, worktree_dirty_paths
+from echelon.target_normalization import normalize_target_set
 from echelon.spec_lifecycle import (
     SpecLifecycleError,
     resolve_active_spec_run,
@@ -248,12 +249,7 @@ def _state_targets(state: Mapping[str, object]) -> tuple[str, ...]:
 
 
 def _normalized_targets(values: Iterable[object]) -> tuple[str, ...]:
-    ordered: list[str] = []
-    for value in values:
-        target = str(value or "").strip().rstrip("/")
-        if target and target not in ordered:
-            ordered.append(target)
-    return tuple(ordered)
+    return normalize_target_set(values)
 
 
 def _phase_b_history(spec_dir: Path) -> tuple[str, ...]:

@@ -339,6 +339,107 @@ def test_retarget_append_cannot_supersede_failed_revision(tmp_path: Path) -> Non
         )
 
 
+def test_retarget_checkpoint_parent_is_sealed_once_while_prepared(
+    tmp_path: Path,
+) -> None:
+    spec_dir, revision = _prepared_revision(tmp_path)
+    parent = "1" * 40
+
+    sealed = history_module.seal_retarget_checkpoint_parent(
+        spec_dir,
+        revision.revision_id,
+        checkpoint_parent=parent,
+    )
+    replayed = history_module.seal_retarget_checkpoint_parent(
+        spec_dir,
+        revision.revision_id,
+        checkpoint_parent=parent,
+    )
+
+    assert sealed.checkpoint_parent == parent
+    assert replayed == sealed
+    with pytest.raises(ValueError, match="checkpoint_parent.*sealed"):
+        history_module.seal_retarget_checkpoint_parent(
+            spec_dir,
+            revision.revision_id,
+            checkpoint_parent="2" * 40,
+        )
+
+
+@pytest.mark.parametrize(
+    ("old_targets", "replacement_targets", "recovery_targets"),
+    [
+        (("services/api/",), ("apps/web",), ("services/api/",)),
+        (("services/./api",), ("apps/web",), ("services/./api",)),
+        (("services/api", "services/api/"), ("apps/web",), ("services/api", "services/api/")),
+        (("services/api",), ("apps/./web",), ("services/api",)),
+    ],
+)
+def test_retarget_append_rejects_noncanonical_target_aliases(
+    tmp_path: Path,
+    old_targets: tuple[str, ...],
+    replacement_targets: tuple[str, ...],
+    recovery_targets: tuple[str, ...],
+) -> None:
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+
+    with pytest.raises(ValueError, match="canonical target"):
+        append_prepared_revision(
+            spec_dir,
+            operation_id="rt-abc",
+            baseline_run_id="squad-base",
+            replacement_run_id="squad-retarget",
+            old_targets=old_targets,
+            replacement_targets=replacement_targets,
+            original_prompt_digest="sha256:" + "a" * 64,
+            recovery=replace(
+                _projection(),
+                implementation_targets=recovery_targets,
+            ),
+        )
+
+
+def test_retarget_history_load_rejects_noncanonical_target_alias(tmp_path: Path) -> None:
+    spec_dir, _revision = _prepared_revision(tmp_path)
+    path = spec_dir / "retarget-history.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["revisions"][0]["old_targets"] = ["services/./api"]
+    payload["revisions"][0]["recovery"]["implementation_targets"] = [
+        "services/./api"
+    ]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="canonical target"):
+        load_retarget_history(spec_dir)
+
+
+@pytest.mark.parametrize("location", ["top", "revision"])
+def test_retarget_history_rejects_duplicate_json_members(
+    tmp_path: Path,
+    location: str,
+) -> None:
+    spec_dir, _revision = _prepared_revision(tmp_path)
+    path = spec_dir / "retarget-history.json"
+    content = path.read_text(encoding="utf-8")
+    if location == "top":
+        content = content.replace(
+            '"spec_id": "001-demo"\n}',
+            '"spec_id": "001-demo",\n  "spec_id": "001-demo"\n}',
+            1,
+        )
+    else:
+        content = content.replace(
+            '"status": "prepared",',
+            '"status": "prepared",\n      "status": "prepared",',
+            1,
+        )
+    path.write_text(content, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="duplicate JSON member"):
+        load_retarget_history(spec_dir)
+
+
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [
