@@ -150,6 +150,104 @@ def _write_json(path: Path, payload: object) -> None:
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
+def _re_descriptor(
+    root: Path,
+    relative_path: str,
+    *,
+    kind: str,
+    scope: str,
+    source_id: str | None = None,
+) -> dict[str, object]:
+    descriptor: dict[str, object] = {
+        "kind": kind,
+        "path": relative_path,
+        "sha256": "sha256:"
+        + hashlib.sha256((root / relative_path).read_bytes()).hexdigest(),
+        "scope": scope,
+    }
+    if source_id is not None:
+        descriptor["source_id"] = source_id
+    return descriptor
+
+
+def _write_re_index(
+    root: Path,
+    *,
+    typed: bool,
+    include_source: bool = True,
+) -> None:
+    workspace_root = root / "re" / "workspace"
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    manifest_path = workspace_root / "manifest.json"
+    if not manifest_path.exists():
+        _write_json(manifest_path, {"schema_version": 1})
+    for name in ("overview.md", "relationships.md", "contracts.md"):
+        path = workspace_root / name
+        if not path.exists():
+            path.write_text(f"# {name}\n", encoding="utf-8")
+
+    source_entry: dict[str, object] = {
+        "path": ".",
+        "published_path": "re/sources/api",
+        "fingerprint": "source-fingerprint",
+        "profile_hash": "profile-hash",
+        "status": "complete",
+        "manifest": "re/sources/api/manifest.json",
+    }
+    workspace_entry: dict[str, object] = {
+        "manifest": "re/workspace/manifest.json",
+        "overview": "re/workspace/overview.md",
+        "relationships": "re/workspace/relationships.md",
+        "contracts": "re/workspace/contracts.md",
+    }
+    if typed and include_source:
+        source_entry["manifest_artifact"] = _re_descriptor(
+            root,
+            "re/sources/api/manifest.json",
+            kind="re-source-manifest",
+            scope="source",
+            source_id="api",
+        )
+        workspace_entry["manifest_artifact"] = _re_descriptor(
+            root,
+            "re/workspace/manifest.json",
+            kind="re-workspace-manifest",
+            scope="workspace",
+        )
+    _write_json(
+        root / "re" / "index.json",
+        {
+            "schema_version": 1,
+            "generation": 2,
+            "publication_status": "complete",
+            "published_at": "2026-08-04T12:00:00Z",
+            "published_from_run": "re-graph-test",
+            "sources": {"api": source_entry} if include_source else {},
+            "workspace": workspace_entry,
+            "warnings": [],
+        },
+    )
+
+
+def _attach_re_context(spec_dir: Path, root: Path, paths: list[str]) -> None:
+    _write_json(
+        spec_dir / "re-context.json",
+        {
+            "schema_version": 1,
+            "status": "attached",
+            "generation": 2,
+            "artifacts": [
+                {
+                    "path": path,
+                    "hash": "sha256:"
+                    + hashlib.sha256((root / path).read_bytes()).hexdigest(),
+                }
+                for path in paths
+            ],
+        },
+    )
+
+
 def _canonical_spec(tmp_path: Path) -> Path:
     spec_dir = tmp_path / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
@@ -697,6 +795,189 @@ def test_build_spec_graph_limits_re_memory_to_canonical_context(
 
 
 @pytest.mark.unit
+def test_build_spec_graph_uses_typed_descriptor_kinds_for_re_topology(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    spec_dir = _canonical_spec(tmp_path)
+    source_root = tmp_path / "re" / "sources" / "api"
+    workspace_root = tmp_path / "re" / "workspace"
+    source_artifacts = {
+        "notes/alpha.md": ("re-architecture", "# Typed architecture\n"),
+        "notes/bravo.md": ("re-contracts", "# Typed contracts\n"),
+        "notes/charlie.md": ("re-components", "# Typed components\n"),
+        "notes/delta.md": ("re-decision", "# Typed source decision\n"),
+        "evidence/echo.json": (
+            "re-codegraph-summary",
+            '{"summary":"source"}\n',
+        ),
+    }
+    source_descriptors = []
+    for relative_path, (kind, content) in source_artifacts.items():
+        path = source_root / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        source_descriptors.append(
+            _re_descriptor(
+                tmp_path,
+                f"re/sources/api/{relative_path}",
+                kind=kind,
+                scope="source",
+                source_id="api",
+            )
+        )
+    uncataloged = source_root / "contracts.md"
+    uncataloged.write_text("# Uncataloged filename bait\n", encoding="utf-8")
+    _write_json(
+        source_root / "manifest.json",
+        {
+            "schema_version": 1,
+            "source_id": "api",
+            "publication_status": "complete",
+            "source_fingerprint": "source-fingerprint",
+            "artifacts": sorted(
+                source_descriptors,
+                key=lambda descriptor: str(descriptor["path"]),
+            ),
+        },
+    )
+
+    workspace_decision = workspace_root / "notes" / "foxtrot.md"
+    workspace_decision.parent.mkdir(parents=True, exist_ok=True)
+    workspace_decision.write_text("# Typed workspace decision\n", encoding="utf-8")
+    _write_json(
+        workspace_root / "manifest.json",
+        {
+            "schema_version": 1,
+            "artifacts": [
+                _re_descriptor(
+                    tmp_path,
+                    "re/workspace/notes/foxtrot.md",
+                    kind="re-decision",
+                    scope="workspace",
+                )
+            ],
+        },
+    )
+    _write_re_index(tmp_path, typed=True)
+    attached_paths = [
+        "re/sources/api/manifest.json",
+        *[
+            f"re/sources/api/{relative_path}"
+            for relative_path in source_artifacts
+        ],
+        "re/sources/api/contracts.md",
+        "re/workspace/notes/foxtrot.md",
+    ]
+    _attach_re_context(spec_dir, tmp_path, attached_paths)
+
+    class FakeAdapter:
+        wing = "demo-wing"
+
+        def plan_re_artifact_rows(self, content, *, source, artifact_metadata):
+            if source != "re/sources/api/notes/alpha.md":
+                return []
+            return [
+                SimpleNamespace(
+                    drawer_id="drawer-re-architecture",
+                    requirement_id="RE-ARCH-001",
+                    room=artifact_metadata["room"],
+                    source=source,
+                    artifact_hash=artifact_metadata["artifact_hash"],
+                    canonical_spec_sha256="re-architecture-hash",
+                    requirement_content_sha256="re-architecture-content-hash",
+                )
+            ]
+
+    monkeypatch.setattr(
+        "echelon.mempalace_re.create_re_memory_adapter",
+        lambda project_root, run_id: FakeAdapter(),
+    )
+    monkeypatch.setattr(
+        "echelon.mempalace_re.audit_re_memory",
+        lambda project_root: SimpleNamespace(
+            schema_version=1,
+            wing="demo-wing",
+            status="pass",
+            artifact_count=len(attached_paths),
+            expected_count=1,
+            present_current_count=1,
+            missing=[],
+            stale=[],
+            wrong_wing=[],
+            wrong_room=[],
+            duplicate=[],
+            non_canonical=[],
+            lifecycle_excluded=[],
+            errors=[],
+        ),
+    )
+
+    payload = build_spec_graph(tmp_path, spec_dir).to_dict()
+    nodes = {item["id"]: item for item in payload["nodes"]}
+    edges = {
+        (item["source"], item["type"], item["target"])
+        for item in payload["edges"]
+    }
+
+    source_id = "re-source:api"
+    architecture_id = "artifact:001-demo:re/sources/api/notes/alpha.md"
+    contracts_id = "artifact:001-demo:re/sources/api/notes/bravo.md"
+    components_id = "artifact:001-demo:re/sources/api/notes/charlie.md"
+    source_decision_artifact_id = (
+        "artifact:001-demo:re/sources/api/notes/delta.md"
+    )
+    source_decision_id = "decision:api:notes/delta.md"
+    codegraph_id = "artifact:001-demo:re/sources/api/evidence/echo.json"
+    workspace_decision_artifact_id = (
+        "artifact:001-demo:re/workspace/notes/foxtrot.md"
+    )
+    workspace_decision_id = "decision:workspace:notes/foxtrot.md"
+    uncataloged_id = "artifact:001-demo:re/sources/api/contracts.md"
+    drawer_id = "drawer:001-demo:drawer-re-architecture"
+
+    assert nodes[source_id]["properties"]["publication_status"] == "complete"
+    assert nodes[architecture_id]["properties"]["re_artifact_kind"] == (
+        "re-architecture"
+    )
+    assert nodes[architecture_id]["properties"]["re_scope"] == "source"
+    assert nodes[architecture_id]["properties"]["re_source_id"] == "api"
+    assert nodes[workspace_decision_artifact_id]["properties"][
+        "re_artifact_kind"
+    ] == "re-decision"
+    assert nodes[workspace_decision_artifact_id]["properties"]["re_scope"] == (
+        "workspace"
+    )
+    assert (source_id, "DESCRIBED_BY", architecture_id) in edges
+    assert (source_id, "DECLARES_CONTRACTS_IN", contracts_id) in edges
+    assert (source_id, "CATALOGS_COMPONENTS_IN", components_id) in edges
+    assert (source_id, "SUMMARIZED_BY", codegraph_id) in edges
+    assert (source_id, "HAS_DECISION", source_decision_id) in edges
+    assert (
+        source_decision_id,
+        "DOCUMENTED_BY",
+        source_decision_artifact_id,
+    ) in edges
+    assert (
+        "spec:001-demo",
+        "INFORMED_BY_DECISION",
+        workspace_decision_id,
+    ) in edges
+    assert (
+        workspace_decision_id,
+        "DOCUMENTED_BY",
+        workspace_decision_artifact_id,
+    ) in edges
+    assert (architecture_id, "STORED_AS", drawer_id) in edges
+    assert "re_artifact_kind" not in nodes[uncataloged_id]["properties"]
+    assert "re_scope" not in nodes[uncataloged_id]["properties"]
+    assert not any(
+        source == source_id and target == uncataloged_id
+        for source, _, target in edges
+    )
+
+
+@pytest.mark.unit
 def test_build_spec_graph_models_linked_re_source_topology(
     tmp_path: Path,
     monkeypatch,
@@ -707,9 +988,18 @@ def test_build_spec_graph_models_linked_re_source_topology(
     artifacts = {
         "manifest.json": json.dumps(
             {
+                "schema_version": 1,
                 "source_id": "api",
                 "publication_status": "complete",
-                "fingerprint": "sha256:source",
+                "source_fingerprint": "source-fingerprint",
+                "overview": "re/sources/api/overview.md",
+                "specs": [],
+                "architecture": "re/sources/api/architecture.md",
+                "contracts": "re/sources/api/contracts.md",
+                "components": "re/sources/api/components.md",
+                "codegraph_summary": (
+                    "re/sources/api/codegraph-summary.json"
+                ),
             }
         )
         + "\n",
@@ -731,6 +1021,7 @@ def test_build_spec_graph_models_linked_re_source_topology(
                 "hash": "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest(),
             }
         )
+    _write_re_index(tmp_path, typed=False)
     _write_json(
         spec_dir / "re-context.json",
         {
@@ -802,7 +1093,10 @@ def test_build_spec_graph_models_linked_re_source_topology(
     assert nodes[source_id]["properties"]["publication_status"] == "complete"
     assert nodes[decision_id]["type"] == "Decision"
     assert nodes[decision_id]["properties"]["title"] == "ADR-001-boundary"
-    assert nodes[architecture_id]["properties"]["re_artifact_kind"] == "architecture"
+    assert nodes[architecture_id]["properties"]["re_artifact_kind"] == (
+        "re-architecture"
+    )
+    assert nodes[architecture_id]["properties"]["re_scope"] == "source"
     assert nodes[architecture_id]["properties"]["re_source_id"] == "api"
     assert nodes[architecture_id]["properties"]["mining_status"] == "mined"
     assert nodes[codegraph_id]["properties"]["mining_status"] == "eligible"
@@ -827,6 +1121,7 @@ def test_build_spec_graph_models_linked_workspace_re_decision(
     adr = tmp_path / "re" / "workspace" / "strategy" / "adrs" / "ADR-001-platform.md"
     adr.parent.mkdir(parents=True)
     adr.write_text("# Platform Boundary\n\nKeep services independent.\n", encoding="utf-8")
+    _write_re_index(tmp_path, typed=False, include_source=False)
     _write_json(
         spec_dir / "re-context.json",
         {
@@ -883,7 +1178,8 @@ def test_build_spec_graph_models_linked_workspace_re_decision(
     )
     decision_id = "decision:workspace:strategy/adrs/ADR-001-platform.md"
 
-    assert nodes[artifact_id]["properties"]["re_artifact_kind"] == "decision"
+    assert nodes[artifact_id]["properties"]["re_artifact_kind"] == "re-decision"
+    assert nodes[artifact_id]["properties"]["re_scope"] == "workspace"
     assert nodes[decision_id]["type"] == "Decision"
     assert nodes[decision_id]["properties"]["title"] == "Platform Boundary"
     assert ("spec:001-demo", "INFORMED_BY_DECISION", decision_id) in edges

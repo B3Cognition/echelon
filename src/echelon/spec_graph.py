@@ -22,6 +22,11 @@ from harness.canonical_requirements import (
     extract_canonical_requirements,
 )
 from harness.deferred_scope import read_ledger
+from harness.re_artifacts import ReArtifactDescriptor
+from harness.re_registry import (
+    canonical_re_artifact_descriptors,
+    load_published_index,
+)
 from harness.task_progress import summarize_task_progress
 from harness.verified_fulfillment_ledger import (
     UNRESOLVED_STATUSES,
@@ -106,14 +111,6 @@ class MemoryReceipt:
             "audit_hash": self.audit_hash,
             "status": self.status,
         }
-
-
-@dataclass(frozen=True)
-class _ReArtifactDescriptor:
-    source_id: str
-    source_relative_path: str
-    artifact_kind: str
-    edge_type: str
 
 
 @dataclass(frozen=True)
@@ -347,24 +344,14 @@ def _add_re_topology(
         edge.source for edge in edges if edge.type == "STORED_AS"
     }
     linked_artifacts = sorted(_linked_re_artifacts(root, spec_dir))
-    descriptors: list[tuple[Path, _ReArtifactDescriptor]] = []
+    descriptor_lookup = _re_artifact_descriptor_lookup(root)
+    descriptors: list[tuple[Path, ReArtifactDescriptor]] = []
     for path in linked_artifacts:
-        descriptor = _describe_re_artifact(root, path)
+        descriptor = descriptor_lookup.get(_workspace_path(root, path))
         if descriptor is not None:
             descriptors.append((path, descriptor))
 
-    workspace_root = (root / "re" / "workspace").resolve()
-    workspace_adrs: list[tuple[Path, str]] = []
-    for path in linked_artifacts:
-        try:
-            relative = path.resolve().relative_to(workspace_root)
-        except ValueError:
-            continue
-        relative_path = relative.as_posix()
-        if relative_path.startswith("strategy/adrs/") and path.suffix.lower() == ".md":
-            workspace_adrs.append((path, relative_path))
-
-    for path, relative_path in workspace_adrs:
+    for path, descriptor in descriptors:
         artifact_id = f"artifact:{spec_dir.name}:{_workspace_path(root, path)}"
         artifact_node = nodes.get(artifact_id)
         if artifact_node is None:
@@ -372,14 +359,21 @@ def _add_re_topology(
         properties = dict(artifact_node.properties)
         properties.update(
             {
-                "re_artifact_kind": "decision",
-                "re_scope": "workspace",
-                "mining_status": (
-                    "mined" if artifact_id in stored_artifacts else "eligible"
-                ),
+                "re_artifact_kind": descriptor.kind,
+                "re_scope": descriptor.scope,
             }
         )
+        if descriptor.source_id is not None:
+            properties["re_source_id"] = descriptor.source_id
+        if artifact_id in stored_artifacts:
+            properties["mining_status"] = "mined"
+        elif descriptor.kind in _RE_SEMANTIC_EDGE_TYPES:
+            properties["mining_status"] = "eligible"
         nodes[artifact_id] = GraphNode(artifact_id, artifact_node.type, properties)
+
+        if descriptor.scope != "workspace" or descriptor.kind != "re-decision":
+            continue
+        relative_path = descriptor.path.removeprefix("re/workspace/")
         decision_id = f"decision:workspace:{relative_path}"
         nodes[decision_id] = GraphNode(
             decision_id,
@@ -403,25 +397,11 @@ def _add_re_topology(
     if not descriptors:
         return
 
-    by_source: dict[str, list[tuple[Path, _ReArtifactDescriptor]]] = {}
+    by_source: dict[str, list[tuple[Path, ReArtifactDescriptor]]] = {}
     for path, descriptor in descriptors:
-        by_source.setdefault(descriptor.source_id, []).append((path, descriptor))
-        artifact_id = f"artifact:{spec_dir.name}:{_workspace_path(root, path)}"
-        artifact_node = nodes.get(artifact_id)
-        if artifact_node is None:
+        if descriptor.scope != "source" or descriptor.source_id is None:
             continue
-        properties = dict(artifact_node.properties)
-        properties.update(
-            {
-                "re_artifact_kind": descriptor.artifact_kind,
-                "re_source_id": descriptor.source_id,
-            }
-        )
-        if descriptor.artifact_kind != "reverse-engineering":
-            properties["mining_status"] = (
-                "mined" if artifact_id in stored_artifacts else "eligible"
-            )
-        nodes[artifact_id] = GraphNode(artifact_id, artifact_node.type, properties)
+        by_source.setdefault(descriptor.source_id, []).append((path, descriptor))
 
     for source_id, source_artifacts in sorted(by_source.items()):
         source_node_id = f"re-source:{source_id}"
@@ -430,7 +410,7 @@ def _add_re_topology(
             (
                 (path, descriptor)
                 for path, descriptor in source_artifacts
-                if descriptor.source_relative_path == "manifest.json"
+                if descriptor.kind == "re-source-manifest"
             ),
             None,
         )
@@ -458,12 +438,17 @@ def _add_re_topology(
             artifact_id = f"artifact:{spec_dir.name}:{_workspace_path(root, path)}"
             if artifact_id not in nodes:
                 continue
-            edges.append(GraphEdge(source_node_id, descriptor.edge_type, artifact_id, {}))
-            if descriptor.artifact_kind != "decision":
-                continue
-            decision_id = (
-                f"decision:{source_id}:{descriptor.source_relative_path}"
+            edge_type = _RE_SEMANTIC_EDGE_TYPES.get(
+                descriptor.kind,
+                "EVIDENCED_BY",
             )
+            edges.append(GraphEdge(source_node_id, edge_type, artifact_id, {}))
+            if descriptor.kind != "re-decision":
+                continue
+            source_relative_path = descriptor.path.removeprefix(
+                f"re/sources/{source_id}/"
+            )
+            decision_id = f"decision:{source_id}:{source_relative_path}"
             nodes[decision_id] = GraphNode(
                 decision_id,
                 "Decision",
@@ -477,37 +462,26 @@ def _add_re_topology(
             edges.append(GraphEdge(decision_id, "DOCUMENTED_BY", artifact_id, {}))
 
 
-def _describe_re_artifact(
+_RE_SEMANTIC_EDGE_TYPES = {
+    "re-overview": "DESCRIBED_BY",
+    "re-architecture": "DESCRIBED_BY",
+    "re-contracts": "DECLARES_CONTRACTS_IN",
+    "re-components": "CATALOGS_COMPONENTS_IN",
+    "re-decision": "DECIDED_BY",
+    "re-codegraph-summary": "SUMMARIZED_BY",
+}
+
+
+def _re_artifact_descriptor_lookup(
     root: Path,
-    path: Path,
-) -> _ReArtifactDescriptor | None:
-    sources_root = (root / "re" / "sources").resolve()
-    try:
-        relative = path.resolve().relative_to(sources_root)
-    except ValueError:
-        return None
-    if len(relative.parts) < 2:
-        return None
-    source_id = relative.parts[0]
-    source_relative = Path(*relative.parts[1:]).as_posix()
-    name = relative.name
-    if source_relative.startswith("adrs/") and relative.suffix.lower() == ".md":
-        return _ReArtifactDescriptor(
-            source_id, source_relative, "decision", "DECIDED_BY"
-        )
-    kinds = {
-        "overview.md": ("overview", "DESCRIBED_BY"),
-        "architecture.md": ("architecture", "DESCRIBED_BY"),
-        "contracts.md": ("contracts", "DECLARES_CONTRACTS_IN"),
-        "components.md": ("components", "CATALOGS_COMPONENTS_IN"),
-        "codegraph-summary.json": ("codegraph-summary", "SUMMARIZED_BY"),
+) -> dict[str, ReArtifactDescriptor]:
+    index = load_published_index(root)
+    if index is None:
+        return {}
+    return {
+        descriptor.path: descriptor
+        for descriptor in canonical_re_artifact_descriptors(root, index)
     }
-    artifact_kind, edge_type = kinds.get(
-        name, ("reverse-engineering", "EVIDENCED_BY")
-    )
-    return _ReArtifactDescriptor(
-        source_id, source_relative, artifact_kind, edge_type
-    )
 
 
 def _adr_title(path: Path) -> str:

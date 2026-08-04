@@ -55,6 +55,7 @@ def _member_graph(
     artifact_path: str = "re/workspace/overview.md",
     drawer_id: str = "shared-re-drawer",
     artifact_role: str = "published-re",
+    artifact_properties: dict[str, object] | None = None,
     extra_nodes: tuple[GraphNode, ...] = (),
     extra_edges: tuple[GraphEdge, ...] = (),
 ) -> SpecArtifactGraph:
@@ -73,7 +74,11 @@ def _member_graph(
             GraphNode(
                 artifact_id,
                 "Artifact",
-                {"path": artifact_path, "role": artifact_role},
+                {
+                    "path": artifact_path,
+                    "role": artifact_role,
+                    **(artifact_properties or {}),
+                },
             ),
             GraphNode(
                 drawer_node_id,
@@ -690,6 +695,11 @@ def test_workspace_graph_deduplicates_re_source_topology(
             _member_graph(
                 spec_id,
                 artifact_path=artifact_path,
+                artifact_properties={
+                    "re_artifact_kind": "re-decision",
+                    "re_scope": "source",
+                    "re_source_id": "api",
+                },
                 extra_nodes=(source_node, decision_node),
                 extra_edges=(
                     GraphEdge(f"spec:{spec_id}", "USES_RE_SOURCE", "re-source:api", {}),
@@ -707,6 +717,15 @@ def test_workspace_graph_deduplicates_re_source_topology(
     nodes = {node.id: node for node in result.graph.nodes}
     edges = {(edge.source, edge.type, edge.target): edge for edge in result.graph.edges}
 
+    normalized_artifact_id = f"artifact:{artifact_path}"
+    assert nodes[normalized_artifact_id].properties["re_artifact_kind"] == (
+        "re-decision"
+    )
+    assert nodes[normalized_artifact_id].properties["re_scope"] == "source"
+    assert nodes[normalized_artifact_id].properties["member_specs"] == [
+        "001-alpha",
+        "002-beta",
+    ]
     assert nodes["re-source:api"].properties["member_specs"] == [
         "001-alpha",
         "002-beta",
@@ -718,6 +737,12 @@ def test_workspace_graph_deduplicates_re_source_topology(
     assert edges[("re-source:api", "HAS_DECISION", decision_id)].properties[
         "member_specs"
     ] == ["001-alpha", "002-beta"]
+    assert edges[(decision_id, "DOCUMENTED_BY", normalized_artifact_id)].properties[
+        "member_specs"
+    ] == ["001-alpha", "002-beta"]
+    assert edges[
+        (normalized_artifact_id, "STORED_AS", "drawer:shared-re-drawer")
+    ].properties["member_specs"] == ["001-alpha", "002-beta"]
 
 
 @pytest.mark.unit
