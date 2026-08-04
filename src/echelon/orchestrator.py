@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import threading
+from collections import Counter
 from pathlib import Path
 from typing import List, Mapping, Optional
 
@@ -182,7 +183,7 @@ def run_multi_target(
         )
         return 1
 
-    results: dict[str, int] = {}
+    results: dict[int, int] = {}
     lock = threading.Lock()
     ordered_targets, task_ids_by_target = _target_execution_plan(
         spec_id=spec_id,
@@ -191,7 +192,35 @@ def run_multi_target(
         command=command,
     )
 
-    def _run_one(target: Path) -> None:
+    basename_counts = Counter(target.name for target in ordered_targets)
+    label_candidates: list[str] = []
+    for target in ordered_targets:
+        label = target.name
+        if basename_counts[label] > 1:
+            target_resolved = target.resolve()
+            if resolved_workspace_root is not None:
+                try:
+                    label = target_resolved.relative_to(
+                        resolved_workspace_root
+                    ).as_posix()
+                except ValueError:
+                    label = str(target_resolved)
+            else:
+                label = str(target_resolved)
+        label_candidates.append(label)
+    label_counts = Counter(label_candidates)
+    label_occurrences: Counter[str] = Counter()
+    display_labels: list[str] = []
+    for label in label_candidates:
+        label_occurrences[label] += 1
+        display_labels.append(
+            f"{label}#{label_occurrences[label]}"
+            if label_counts[label] > 1
+            else label
+        )
+    target_runs = list(enumerate(zip(ordered_targets, display_labels)))
+
+    def _run_one(result_id: int, target: Path, display_label: str) -> None:
         name = target.name
         try:
             target_resolved = target.resolve()
@@ -239,30 +268,36 @@ def run_multi_target(
             assert proc.stdout is not None
             for line in proc.stdout:
                 with lock:
-                    sys.stdout.write(f"[{name}] {line}")
+                    sys.stdout.write(f"[{display_label}] {line}")
                     sys.stdout.flush()
             proc.wait()
             returncode = proc.returncode
         except Exception as exc:
             with lock:
                 print(
-                    f"✗ [{name}]: delivery worker failed: {exc}",
+                    f"✗ [{display_label}]: delivery worker failed: {exc}",
                     file=sys.stderr,
                 )
-                results[name] = 1
+                results[result_id] = 1
             return
         with lock:
-            results[name] = returncode
+            results[result_id] = returncode
 
     if task_ids_by_target and len(ordered_targets) > 1:
         # Target builds share the canonical tasks.md progress ledger. Execute in
         # dependency order so each subprocess can update it without write races.
-        for target in ordered_targets:
-            _run_one(target)
-            if results.get(target.name, 1) != 0:
+        for result_id, (target, display_label) in target_runs:
+            _run_one(result_id, target, display_label)
+            if results.get(result_id, 1) != 0:
                 break
     else:
-        threads = [threading.Thread(target=_run_one, args=(t,)) for t in ordered_targets]
+        threads = [
+            threading.Thread(
+                target=_run_one,
+                args=(result_id, target, display_label),
+            )
+            for result_id, (target, display_label) in target_runs
+        ]
         for thread in threads:
             thread.start()
         for thread in threads:
@@ -270,10 +305,13 @@ def run_multi_target(
 
     print()
     all_ok = True
-    for name in sorted(target.name for target in ordered_targets):
-        rc = results.get(name, 1)
+    for result_id, (_target, display_label) in sorted(
+        target_runs,
+        key=lambda target_run: (target_run[1][1], target_run[0]),
+    ):
+        rc = results.get(result_id, 1)
         status = "✓" if rc == 0 else "✗"
-        print(f"{status} [{name}]: exit {rc}")
+        print(f"{status} [{display_label}]: exit {rc}")
         if rc != 0:
             all_ok = False
 

@@ -157,6 +157,42 @@ class TestRunMultiTarget:
         assert "launch failed" in captured.err
         assert "✗ [r]: exit 1" in captured.out
 
+    def test_duplicate_basenames_keep_independent_worker_results(
+        self,
+        tmp_path: Path,
+        capsys,
+    ) -> None:
+        failed_target = tmp_path / "one" / "api"
+        successful_target = tmp_path / "two" / "api"
+        failed_target.mkdir(parents=True)
+        successful_target.mkdir(parents=True)
+
+        def fake_popen(cmd, cwd, stdout, stderr, text, env=None):
+            target = Path(cwd).relative_to(tmp_path).as_posix()
+            if target == "one/api":
+                raise OSError("launch failed")
+            mock = MagicMock()
+            mock.stdout = iter([])
+            mock.returncode = 0
+            mock.wait.return_value = None
+            return mock
+
+        with patch("subprocess.Popen", side_effect=fake_popen):
+            rc = run_multi_target(
+                "024",
+                [failed_target, successful_target],
+                [],
+                echelon_bin="echelon",
+                workspace_root=tmp_path,
+            )
+
+        assert rc == 1
+        captured = capsys.readouterr()
+        assert "✗ [one/api]: delivery worker failed: launch failed" in captured.err
+        assert "✗ [one/api]: exit 1" in captured.out
+        assert "✓ [two/api]: exit 0" in captured.out
+        assert captured.out.index("[one/api]") < captured.out.index("[two/api]")
+
     def test_output_prefixed_with_target_name(self, tmp_path: Path, capsys) -> None:
         target = tmp_path / "myrepo"
         target.mkdir()
