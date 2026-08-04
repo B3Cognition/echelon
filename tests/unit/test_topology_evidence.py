@@ -1,0 +1,276 @@
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+
+import pytest
+
+from harness.re_fingerprint import SourceFingerprint
+
+
+def _key(path: str, qualified_name: str) -> str:
+    locator = json.dumps([path, qualified_name, "function", "()"], separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(locator.encode("utf-8")).hexdigest()
+
+
+def _codegraph(*, status: str = "complete") -> dict[str, object]:
+    key = _key("src/api.py", "api.run")
+    return {
+        "schema_version": 2,
+        "version": "2.0.0",
+        "tool": "codegraph",
+        "tool_version": "1.4.1",
+        "repo_path": "/provider/native/path",
+        "provider_status": status,
+        "complete": True,
+        "supported": True,
+        "counts": {
+            "discovered_symbols": 1,
+            "emitted_symbols": 1,
+            "excluded_symbols": 0,
+            "discovered_relationships": 0,
+            "emitted_relationships": 0,
+            "excluded_relationships": 0,
+        },
+        "diagnostics": {"unresolved_relationships": []},
+        "symbols": [
+            {
+                "symbol_key": key,
+                "file_path": "src/api.py",
+                "qualified_name": "api.run",
+                "name": "run",
+                "kind": "function",
+                "signature": "()",
+                "line_start": 1,
+                "line_end": 1,
+            }
+        ],
+        "relationships": [],
+        "call_graph": [],
+        "type_hierarchy": [],
+        "impact_radius": [],
+    }
+
+
+def _perl_unsupported() -> dict[str, object]:
+    return {
+        "schema_version": 2,
+        "tool": "perlgraph",
+        "tool_version": "0.1.0",
+        "repo_path": "/provider/native/path",
+        "provider_status": "unsupported",
+        "complete": True,
+        "supported": False,
+        "capabilities": {
+            "language": "perl",
+            "exact_symbol_keys": True,
+            "exact_relationship_endpoints": True,
+            "unresolved_relationship_diagnostics": True,
+        },
+        "counts": {
+            "discovered_files": 0,
+            "emitted_files": 0,
+            "discovered_symbols": 0,
+            "emitted_symbols": 0,
+            "discovered_relationships": 0,
+            "emitted_relationships": 0,
+            "unresolved_relationships": 0,
+            "parse_failures": 0,
+            "parse_diagnostics": 0,
+            "dynamic_patterns": 0,
+        },
+        "symbols": [],
+        "relationships": [],
+        "unresolved_relationships": [],
+        "call_graph": [],
+        "module_graph": [],
+        "unsupported_patterns": [],
+        "parse_failures": [],
+        "parse_diagnostics": [],
+    }
+
+
+def _fingerprint() -> SourceFingerprint:
+    return SourceFingerprint(
+        value="a" * 64,
+        kind="git",
+        dirty=False,
+        profile_hash="b" * 64,
+        git_head="0123456789abcdef0123456789abcdef01234567",
+    )
+
+
+def _write_json(path: Path, value: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(json.dumps(value, sort_keys=True).encode("utf-8") + b"\n")
+
+
+@pytest.mark.unit
+def test_build_candidate_validates_explicit_paths_and_preserves_provider_bytes(
+    tmp_path: Path,
+) -> None:
+    from harness.topology_evidence import (
+        ProviderArtifactPaths,
+        build_topology_snapshot_candidate,
+    )
+
+    source_output = tmp_path / "runs/re-1/re/sources/api"
+    analysis = source_output / "codegraph-analysis.json"
+    summary = source_output / "codegraph-summary.json"
+    _write_json(analysis, _codegraph())
+    _write_json(summary, {"provider": "codegraph", "status": "complete"})
+
+    evidence = build_topology_snapshot_candidate(
+        "api",
+        "sources/api",
+        _fingerprint(),
+        {
+            "codegraph": ProviderArtifactPaths(
+                owner_dir=source_output,
+                analysis=analysis,
+                summary=summary,
+            )
+        },
+        {"kind": "re", "run_id": "re-1"},
+    )
+
+    assert evidence.candidate.source_id == "api"
+    assert evidence.unavailable_providers == ()
+    provider = evidence.candidate.providers[0]
+    assert provider.provider == "codegraph"
+    assert provider.analysis == analysis.read_bytes()
+    assert provider.summary == summary.read_bytes()
+
+
+@pytest.mark.unit
+def test_build_candidate_keeps_unsupported_provider_and_records_missing_provider(
+    tmp_path: Path,
+) -> None:
+    from harness.topology_evidence import (
+        ProviderArtifactPaths,
+        build_topology_snapshot_candidate,
+    )
+
+    source_output = tmp_path / "runs/re-1/re/sources/api"
+    _write_json(source_output / "perlgraph-analysis.json", _perl_unsupported())
+    _write_json(source_output / "perlgraph-summary.json", {"provider": "perlgraph"})
+    evidence = build_topology_snapshot_candidate(
+        "api",
+        "sources/api",
+        _fingerprint(),
+        {
+            "codegraph": ProviderArtifactPaths(
+                owner_dir=source_output,
+                analysis=source_output / "missing-codegraph-analysis.json",
+                summary=source_output / "missing-codegraph-summary.json",
+            ),
+            "perlgraph": ProviderArtifactPaths(
+                owner_dir=source_output,
+                analysis=source_output / "perlgraph-analysis.json",
+                summary=source_output / "perlgraph-summary.json",
+            ),
+        },
+        {"kind": "re", "run_id": "re-1"},
+    )
+
+    assert [provider.provider for provider in evidence.candidate.providers] == ["perlgraph"]
+    assert evidence.unavailable_providers == ("codegraph",)
+
+
+@pytest.mark.unit
+def test_build_candidate_rejects_malformed_and_escaping_provider_input(tmp_path: Path) -> None:
+    from harness.topology_evidence import (
+        ProviderArtifactPaths,
+        TopologyEvidenceError,
+        build_topology_snapshot_candidate,
+    )
+
+    source_output = tmp_path / "runs/re-1/re/sources/api"
+    _write_json(source_output / "codegraph-analysis.json", {"schema_version": 2})
+    _write_json(source_output / "codegraph-summary.json", {"provider": "codegraph"})
+    with pytest.raises(TopologyEvidenceError, match="invalid provider analysis"):
+        build_topology_snapshot_candidate(
+            "api",
+            "sources/api",
+            _fingerprint(),
+            {
+                "codegraph": ProviderArtifactPaths(
+                    owner_dir=source_output,
+                    analysis=source_output / "codegraph-analysis.json",
+                    summary=source_output / "codegraph-summary.json",
+                )
+            },
+            {"kind": "re", "run_id": "re-1"},
+        )
+
+
+@pytest.mark.unit
+def test_schema_one_codegraph_upgrades_only_when_display_endpoints_are_unique(
+    tmp_path: Path,
+) -> None:
+    from harness.topology_evidence import (
+        ProviderArtifactPaths,
+        TopologyEvidenceError,
+        build_topology_snapshot_candidate,
+        upgrade_legacy_codegraph_candidate,
+    )
+
+    source_output = tmp_path / "runs/re-1/re/sources/api"
+    analysis = source_output / "codegraph-analysis.json"
+    summary = source_output / "codegraph-summary.json"
+    _write_json(
+        analysis,
+        {
+            "version": "1.0.0",
+            "repo_path": "/provider/native/path",
+            "supported": True,
+            "symbols": [
+                {
+                    "file_path": "src/api.py",
+                    "qualified_name": "api.run",
+                    "name": "run",
+                    "kind": "function",
+                    "signature": "()",
+                    "line_start": 1,
+                    "line_end": 1,
+                }
+            ],
+            "relationships": [
+                {"kind": "calls", "source": "api.run", "target": "api.run"}
+            ],
+        },
+    )
+    _write_json(summary, {"legacy": True})
+
+    upgraded = upgrade_legacy_codegraph_candidate(
+        "api",
+        "sources/api",
+        _fingerprint(),
+        ProviderArtifactPaths(source_output, analysis, summary),
+        {"kind": "re", "run_id": "re-1"},
+    )
+
+    assert upgraded is not None
+    analysis_document = json.loads(upgraded.candidate.providers[0].analysis)
+    assert analysis_document["schema_version"] == 2
+    assert analysis_document["relationships"][0]["source_key"] == (
+        analysis_document["relationships"][0]["target_key"]
+    )
+
+    external = tmp_path / "outside.json"
+    _write_json(external, _codegraph())
+    with pytest.raises(TopologyEvidenceError, match="escapes declared source output"):
+        build_topology_snapshot_candidate(
+            "api",
+            "sources/api",
+            _fingerprint(),
+            {
+                "codegraph": ProviderArtifactPaths(
+                    owner_dir=source_output,
+                    analysis=external,
+                    summary=external,
+                )
+            },
+            {"kind": "re", "run_id": "re-1"},
+        )

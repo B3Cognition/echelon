@@ -54,8 +54,6 @@ def test_build_source_catalog_types_every_child(tmp_path: Path) -> None:
         ("re-decision", "re/sources/api/adrs/ADR-001.md"),
         ("re-analysis", "re/sources/api/analysis.json"),
         ("re-architecture", "re/sources/api/architecture.md"),
-        ("re-codegraph-analysis", "re/sources/api/codegraph-analysis.json"),
-        ("re-codegraph-summary", "re/sources/api/codegraph-summary.json"),
         ("re-components", "re/sources/api/components.md"),
         ("re-configs", "re/sources/api/configs.json"),
         ("re-contracts", "re/sources/api/contracts.md"),

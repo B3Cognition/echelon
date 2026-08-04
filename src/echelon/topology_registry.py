@@ -187,9 +187,20 @@ class TopologyIndex:
         object.__setattr__(self, "sources", MappingProxyType(dict(sorted(sources.items()))))
 
 
-def load_topology_index(project_root: Path) -> TopologyIndex | None:
-    """Load the only canonical topology authority, or ``None`` when absent."""
+def load_topology_index(
+    project_root: Path,
+    *,
+    allow_removed_source_ids: Iterable[str] = (),
+) -> TopologyIndex | None:
+    """Load canonical topology, optionally retaining explicit rows being removed.
+
+    The optional reconciliation set is only for the writer's one transaction: it
+    lets that transaction hash-validate an old row before removing it after the
+    workspace manifest has stopped declaring the source. Normal readers retain
+    the exact-manifest contract by using the default empty set.
+    """
     root = Path(project_root).resolve()
+    allowed_removed = frozenset(validate_source_id(value) for value in allow_removed_source_ids)
     path = root / _INDEX_PATH
     if not path.exists() and not path.is_symlink():
         return None
@@ -197,7 +208,7 @@ def load_topology_index(project_root: Path) -> TopologyIndex | None:
         raise TopologyRegistryError(f"unsafe topology index: {_INDEX_PATH}")
     document = _read_json(path, "topology index")
     try:
-        return _parse_index(root, document)
+        return _parse_index(root, document, allowed_removed)
     except TopologyRegistryError:
         raise
     except (TypeError, ValueError, KeyError) as exc:
@@ -273,7 +284,11 @@ def load_published_topology(
     )
 
 
-def _parse_index(root: Path, document: object) -> TopologyIndex:
+def _parse_index(
+    root: Path,
+    document: object,
+    allowed_removed: frozenset[str] = frozenset(),
+) -> TopologyIndex:
     data = _object(document, "topology index")
     _exact_keys(data, {"schema_version", "generation", "published_at", "sources"}, "topology index")
     _schema_version(data, "topology index")
@@ -282,20 +297,32 @@ def _parse_index(root: Path, document: object) -> TopologyIndex:
     sources_data = _object(data.get("sources"), "topology index sources")
     manifest = discover_workspace(root)
     configured = _configured_sources(root, manifest.sources)
-    if set(sources_data) != set(configured):
+    if set(sources_data) != set(configured) | set(allowed_removed):
         missing = sorted(set(configured) - set(sources_data))
-        unknown = sorted(set(sources_data) - set(configured))
+        unknown = sorted(set(sources_data) - set(configured) - set(allowed_removed))
         detail = ", ".join([*(f"missing {value}" for value in missing), *(f"unknown {value}" for value in unknown)])
         raise TopologyRegistryError(f"topology index sources do not match workspace manifest: {detail}")
     sources: dict[str, TopologySourceRecord] = {}
     for source_id in sorted(sources_data):
         source_id = _source_id(source_id)
+        raw_source = _object(
+            sources_data[source_id], f"topology index source {source_id}"
+        )
+        configured_path = configured.get(source_id)
+        if configured_path is None:
+            if source_id not in allowed_removed:
+                raise TopologyRegistryError(
+                    f"topology index contains undeclared source: {source_id}"
+                )
+            configured_path = _source_path(
+                raw_source.get("source_path"), f"index source {source_id} path"
+            )
         sources[source_id] = _parse_source(
             root,
             source_id,
-            _object(sources_data[source_id], f"topology index source {source_id}"),
+            raw_source,
             generation,
-            configured[source_id],
+            configured_path,
         )
     return TopologyIndex(1, generation, published_at, sources)
 

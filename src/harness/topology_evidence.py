@@ -1,0 +1,343 @@
+"""Build explicit, validated topology publication candidates from provider output."""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Mapping
+
+from echelon.topology_provider import (
+    TopologyProviderError,
+    load_provider_artifact,
+    load_provider_document,
+)
+from echelon.topology_model import canonical_symbol_key
+from harness.re_fingerprint import SourceFingerprint
+from harness.topology_publication import (
+    TopologyProviderCandidate,
+    TopologySnapshotCandidate,
+)
+
+
+_KNOWN_PROVIDERS = frozenset({"codegraph", "perlgraph"})
+
+
+class TopologyEvidenceError(RuntimeError):
+    """Raised when explicit provider evidence cannot truthfully form a snapshot."""
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderArtifactPaths:
+    """The only provider files eligible for one source snapshot."""
+
+    owner_dir: Path
+    analysis: Path
+    summary: Path
+
+
+@dataclass(frozen=True, slots=True)
+class TopologyEvidence:
+    """A publishable snapshot plus explicitly unavailable provider observations."""
+
+    candidate: TopologySnapshotCandidate
+    unavailable_providers: tuple[str, ...]
+
+
+def build_topology_snapshot_candidate(
+    source_id: str,
+    source_path: str,
+    fingerprint: SourceFingerprint,
+    provider_artifacts: Mapping[str, ProviderArtifactPaths],
+    provenance: Mapping[str, object],
+) -> TopologyEvidence:
+    """Validate explicit schema-2 inputs and capture their exact bytes.
+
+    The caller declares every accepted path. Missing or unreadable provider files are
+    recorded as unavailable; malformed provider output remains a hard error because
+    treating it as an empty graph would be an untruthful topology claim.
+    """
+    if not isinstance(provider_artifacts, Mapping):
+        raise TopologyEvidenceError("provider artifacts must be a mapping")
+    providers: list[TopologyProviderCandidate] = []
+    unavailable: list[str] = []
+    for provider, paths in sorted(provider_artifacts.items()):
+        if provider not in _KNOWN_PROVIDERS:
+            raise TopologyEvidenceError(f"unsupported topology provider: {provider!r}")
+        if not isinstance(paths, ProviderArtifactPaths):
+            raise TopologyEvidenceError(f"provider artifacts are malformed: {provider}")
+        try:
+            analysis_path = _contained_provider_file(paths.owner_dir, paths.analysis)
+            summary_path = _contained_provider_file(paths.owner_dir, paths.summary)
+        except FileNotFoundError:
+            unavailable.append(provider)
+            continue
+        except OSError as exc:
+            raise TopologyEvidenceError(
+                f"cannot read provider evidence for {source_id}/{provider}: {exc}"
+            ) from exc
+        except ValueError as exc:
+            raise TopologyEvidenceError(
+                f"provider evidence escapes declared source output for {source_id}/{provider}"
+            ) from exc
+
+        try:
+            loaded = load_provider_artifact(
+                analysis_path, provider=provider, source_id=source_id
+            )
+            analysis = analysis_path.read_bytes()
+            summary = summary_path.read_bytes()
+            summary_document = json.loads(summary)
+            if not isinstance(summary_document, dict):
+                raise TopologyEvidenceError("provider summary must be a JSON object")
+        except TopologyProviderError as exc:
+            raise TopologyEvidenceError(
+                f"invalid provider analysis for {source_id}/{provider}: {exc}"
+            ) from exc
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise TopologyEvidenceError(
+                f"invalid provider summary for {source_id}/{provider}: {exc}"
+            ) from exc
+
+        raw_capabilities = _capabilities(analysis, provider)
+        providers.append(
+            TopologyProviderCandidate(
+                provider=provider,
+                analysis=analysis,
+                summary=summary,
+                capabilities=raw_capabilities,
+            )
+        )
+
+    if not providers:
+        raise TopologyEvidenceError(f"source has no usable provider evidence: {source_id}")
+    return TopologyEvidence(
+        candidate=TopologySnapshotCandidate(
+            source_id=source_id,
+            source_path=source_path,
+            source_fingerprint=fingerprint,
+            analyzed_commit=fingerprint.git_head,
+            provenance=dict(provenance),
+            providers=tuple(providers),
+        ),
+        unavailable_providers=tuple(unavailable),
+    )
+
+
+def build_empty_topology_snapshot_candidate(
+    source_id: str,
+    source_path: str,
+    fingerprint: SourceFingerprint,
+    provenance: Mapping[str, object],
+) -> TopologyEvidence:
+    """Represent a planner-proven empty source with explicit zero-graph evidence."""
+    analysis = json.dumps(
+        {
+            "schema_version": 2,
+            "version": "2.0.0",
+            "tool": "codegraph",
+            "tool_version": "1.4.1",
+            "repo_path": "",
+            "provider_status": "complete",
+            "complete": True,
+            "supported": True,
+            "counts": {
+                "discovered_symbols": 0,
+                "emitted_symbols": 0,
+                "excluded_symbols": 0,
+                "discovered_relationships": 0,
+                "emitted_relationships": 0,
+                "excluded_relationships": 0,
+            },
+            "diagnostics": {"unresolved_relationships": []},
+            "symbols": [],
+            "relationships": [],
+            "call_graph": [],
+            "type_hierarchy": [],
+            "impact_radius": [],
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8") + b"\n"
+    summary = b'{"provider":"codegraph","provider_status":"empty"}\n'
+    return TopologyEvidence(
+        candidate=TopologySnapshotCandidate(
+            source_id=source_id,
+            source_path=source_path,
+            source_fingerprint=fingerprint,
+            analyzed_commit=fingerprint.git_head,
+            provenance=dict(provenance),
+            providers=(
+                TopologyProviderCandidate(
+                    provider="codegraph",
+                    analysis=analysis,
+                    summary=summary,
+                    capabilities=("relationships", "symbols"),
+                ),
+            ),
+        ),
+        unavailable_providers=(),
+    )
+
+
+def upgrade_legacy_codegraph_candidate(
+    source_id: str,
+    source_path: str,
+    fingerprint: SourceFingerprint,
+    paths: ProviderArtifactPaths,
+    provenance: Mapping[str, object],
+) -> TopologyEvidence | None:
+    """Upgrade only an unambiguous schema-1 CodeGraph artifact.
+
+    ``None`` means that the historical display-name graph cannot be converted
+    safely and must be refreshed. No unresolved or ambiguous edge is promoted
+    into the schema-2 traversable relationship collection.
+    """
+    try:
+        analysis_path = _contained_provider_file(paths.owner_dir, paths.analysis)
+        summary_path = _contained_provider_file(paths.owner_dir, paths.summary)
+        legacy = json.loads(analysis_path.read_bytes())
+        summary = summary_path.read_bytes()
+        if not isinstance(json.loads(summary), dict):
+            return None
+    except (OSError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(legacy, dict) or legacy.get("schema_version") == 2:
+        return None
+    symbols_raw = legacy.get("symbols")
+    relationships_raw = legacy.get("relationships", [])
+    if not isinstance(symbols_raw, list) or not isinstance(relationships_raw, list):
+        return None
+    symbols: list[dict[str, object]] = []
+    aliases: dict[str, list[str]] = {}
+    for raw in symbols_raw:
+        if not isinstance(raw, dict):
+            return None
+        path = raw.get("file_path")
+        qualified = raw.get("qualified_name")
+        kind = raw.get("kind")
+        signature = raw.get("signature", "")
+        if not all(isinstance(value, str) and value for value in (path, qualified, kind)):
+            return None
+        if signature is not None and not isinstance(signature, str):
+            return None
+        try:
+            key = canonical_symbol_key(path, qualified, kind, signature)
+        except Exception:
+            return None
+        symbol = {
+            "symbol_key": key,
+            "file_path": path,
+            "qualified_name": qualified,
+            "name": raw.get("name") if isinstance(raw.get("name"), str) else qualified,
+            "kind": kind,
+            "signature": signature or "",
+            "line_start": raw.get("line_start", 1),
+            "line_end": raw.get("line_end", raw.get("line_start", 1)),
+        }
+        if not isinstance(symbol["line_start"], int) or not isinstance(symbol["line_end"], int):
+            return None
+        symbols.append(symbol)
+        for alias in {path, qualified, str(symbol["name"])}:
+            aliases.setdefault(alias, []).append(key)
+    if len({symbol["symbol_key"] for symbol in symbols}) != len(symbols):
+        return None
+    relationships: list[dict[str, object]] = []
+    for raw in relationships_raw:
+        if not isinstance(raw, dict):
+            return None
+        source = raw.get("source")
+        target = raw.get("target")
+        kind = raw.get("kind")
+        if not isinstance(source, str) or not isinstance(target, str) or not isinstance(kind, str):
+            return None
+        source_keys = aliases.get(source, [])
+        target_keys = aliases.get(target, [])
+        if len(source_keys) != 1 or len(target_keys) != 1:
+            return None
+        relationships.append(
+            {
+                "kind": kind,
+                "source_key": source_keys[0],
+                "target_key": target_keys[0],
+                "source_name": source,
+                "target_name": target,
+            }
+        )
+    analysis = json.dumps(
+        {
+            "schema_version": 2,
+            "version": "2.0.0",
+            "tool": "codegraph",
+            "tool_version": "1.4.1",
+            "repo_path": legacy.get("repo_path", ""),
+            "provider_status": "complete",
+            "complete": True,
+            "supported": bool(legacy.get("supported", bool(symbols))),
+            "counts": {
+                "discovered_symbols": len(symbols),
+                "emitted_symbols": len(symbols),
+                "excluded_symbols": 0,
+                "discovered_relationships": len(relationships),
+                "emitted_relationships": len(relationships),
+                "excluded_relationships": 0,
+            },
+            "diagnostics": {"unresolved_relationships": []},
+            "symbols": symbols,
+            "relationships": relationships,
+            "call_graph": [],
+            "type_hierarchy": [],
+            "impact_radius": [],
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8") + b"\n"
+    try:
+        # Validate the converted document through the same provider boundary.
+        load_provider_document(
+            json.loads(analysis), provider="codegraph", source_id=source_id
+        )
+    except (TopologyProviderError, json.JSONDecodeError):
+        return None
+    return TopologyEvidence(
+        candidate=TopologySnapshotCandidate(
+            source_id=source_id,
+            source_path=source_path,
+            source_fingerprint=fingerprint,
+            analyzed_commit=fingerprint.git_head,
+            provenance=dict(provenance),
+            providers=(TopologyProviderCandidate("codegraph", analysis, summary),),
+        ),
+        unavailable_providers=(),
+    )
+
+
+def _contained_provider_file(owner_dir: Path, path: Path) -> Path:
+    owner = Path(owner_dir)
+    if owner.is_symlink() or not owner.is_dir():
+        raise ValueError("declared source output directory is unsafe")
+    resolved_owner = owner.resolve(strict=True)
+    candidate = Path(path)
+    if candidate.is_symlink() or not candidate.is_file():
+        raise FileNotFoundError(candidate)
+    resolved = candidate.resolve(strict=True)
+    resolved.relative_to(resolved_owner)
+    current = candidate.parent
+    while current != owner:
+        if current.is_symlink():
+            raise ValueError("provider evidence has a symlinked parent")
+        current = current.parent
+    return candidate
+
+
+def _capabilities(analysis: bytes, provider: str) -> tuple[str, ...]:
+    """Project only producer-declared capabilities into the receipt candidate."""
+    document = json.loads(analysis)
+    raw = document.get("capabilities") if isinstance(document, dict) else None
+    if isinstance(raw, dict):
+        return tuple(sorted(key for key, value in raw.items() if isinstance(key, str) and value is True))
+    if isinstance(raw, list) and all(isinstance(value, str) for value in raw):
+        return tuple(sorted(set(raw)))
+    # CodeGraph schema-2 has no capabilities object; the native schema guarantees
+    # exact symbols and relationships when it validates successfully.
+    return ("relationships", "symbols") if provider == "codegraph" else ()

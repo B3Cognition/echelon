@@ -68,6 +68,48 @@ def _fingerprint(source_id: str, version: str, profile: ReFingerprintProfile) ->
     )
 
 
+def _topology_codegraph(source_id: str) -> dict[str, object]:
+    locator = ["src/api.py", f"{source_id}.run", "function", "()"]
+    key = "sha256:" + hashlib.sha256(
+        json.dumps(locator, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return {
+        "schema_version": 2,
+        "version": "2.0.0",
+        "tool": "codegraph",
+        "tool_version": "1.4.1",
+        "repo_path": "/provider/native/path",
+        "provider_status": "complete",
+        "complete": True,
+        "supported": True,
+        "counts": {
+            "discovered_symbols": 1,
+            "emitted_symbols": 1,
+            "excluded_symbols": 0,
+            "discovered_relationships": 0,
+            "emitted_relationships": 0,
+            "excluded_relationships": 0,
+        },
+        "diagnostics": {"unresolved_relationships": []},
+        "symbols": [
+            {
+                "symbol_key": key,
+                "file_path": "src/api.py",
+                "qualified_name": f"{source_id}.run",
+                "name": "run",
+                "kind": "function",
+                "signature": "()",
+                "line_start": 1,
+                "line_end": 1,
+            }
+        ],
+        "relationships": [],
+        "call_graph": [],
+        "type_hierarchy": [],
+        "impact_radius": [],
+    }
+
+
 def _deep_spec(source_id: str, version: str) -> str:
     evidence = "\n".join(
         f"- `src/file-{number}.ts:1`" for number in range(1, 6)
@@ -387,8 +429,6 @@ def test_complete_two_source_publish_creates_generation_with_typed_artifact_cata
         "# Supporting Artifacts\n",
         encoding="utf-8",
     )
-    _write_json(source_re / "codegraph-summary.json", {"source_id": "api", "summary": True})
-    _write_json(source_re / "codegraph-analysis.json", {"source_id": "api", "analysis": True})
     _write_json(
         run_dir / "re" / "codegraph-summary.json",
         {"workspace": True, "sources": ["api"]},
@@ -415,8 +455,8 @@ def test_complete_two_source_publish_creates_generation_with_typed_artifact_cata
         "dependencies": "re/sources/api/dependencies.json",
         "structure": "re/sources/api/structure.json",
     }
-    assert manifest["codegraph_summary"] == "re/sources/api/codegraph-summary.json"
-    assert manifest["codegraph_analysis"] == "re/sources/api/codegraph-analysis.json"
+    assert "codegraph_summary" not in manifest
+    assert "codegraph_analysis" not in manifest
     assert (tmp_path / "re/sources/api/domain-manifest.json").is_file()
     assert (tmp_path / "re/sources/api/architecture.md").is_file()
     assert (tmp_path / "re/sources/api/contracts.md").is_file()
@@ -427,14 +467,8 @@ def test_complete_two_source_publish_creates_generation_with_typed_artifact_cata
         "source_id": "api",
         "structure": True,
     }
-    assert json.loads((tmp_path / "re/sources/api/codegraph-summary.json").read_text()) == {
-        "source_id": "api",
-        "summary": True,
-    }
-    assert json.loads((tmp_path / "re/sources/api/codegraph-analysis.json").read_text()) == {
-        "source_id": "api",
-        "analysis": True,
-    }
+    assert not (tmp_path / "re/sources/api/codegraph-summary.json").exists()
+    assert not (tmp_path / "re/sources/api/codegraph-analysis.json").exists()
     fingerprint = index["sources"]["api"]["fingerprint"]
     assert (tmp_path / f"re/.cache/sources/api/{fingerprint}/analysis.json").is_file()
     assert (tmp_path / "re/workspace/contracts.md").is_file()
@@ -472,6 +506,118 @@ def test_complete_two_source_publish_creates_generation_with_typed_artifact_cata
     assert index["workspace"]["manifest_artifact"]["kind"] == (
         "re-workspace-manifest"
     )
+
+
+@pytest.mark.unit
+def test_publication_stages_semantic_and_topology_authorities_together(tmp_path: Path) -> None:
+    from echelon.topology_registry import load_topology_index
+
+    run_dir = write_valid_re_run(tmp_path, ("api", "web"))
+    (tmp_path / ".echelon").mkdir()
+    (tmp_path / ".echelon" / "config.yml").write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n    - id: web\n      path: sources/web\n",
+        encoding="utf-8",
+    )
+    for source_id in ("api", "web"):
+        source = run_dir / "re" / "sources" / source_id
+        _write_json(source / "codegraph-analysis.json", _topology_codegraph(source_id))
+        _write_json(source / "codegraph-summary.json", {"provider": "codegraph"})
+
+    result = publish_re_run(tmp_path, run_dir)
+
+    semantic = _read_json(tmp_path / "re" / "index.json")
+    topology = load_topology_index(tmp_path)
+    assert result.generation == semantic["generation"] == 1
+    assert result.topology_generation == 1
+    assert topology is not None and topology.generation == 1
+    assert semantic["sources"]["api"]["fingerprint"] == (
+        topology.sources["api"].source_fingerprint.value
+    )
+    assert topology.sources["api"].providers["codegraph"].counts[
+        "discovered_symbols"
+    ] == 1
+    assert not (tmp_path / "re/sources/api/codegraph-analysis.json").exists()
+    assert not (tmp_path / "re/sources/api/codegraph-summary.json").exists()
+    assert (tmp_path / "re/topology/sources/api/codegraph-analysis.json").is_file()
+    assert (tmp_path / "re/topology/sources/api/codegraph-summary.json").is_file()
+    manifest = _read_json(tmp_path / "re/sources/api/manifest.json")
+    assert "codegraph_analysis" not in manifest
+    assert "codegraph_summary" not in manifest
+
+
+@pytest.mark.unit
+def test_removing_a_configured_source_removes_its_topology_in_the_same_publication(
+    tmp_path: Path,
+) -> None:
+    from echelon.topology_registry import load_topology_index
+
+    run_1 = write_valid_re_run(tmp_path, ("api", "web"), run_id="run-1")
+    config = tmp_path / ".echelon" / "config.yml"
+    config.parent.mkdir()
+    config.write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n    - id: web\n      path: sources/web\n",
+        encoding="utf-8",
+    )
+    for source_id in ("api", "web"):
+        source = run_1 / "re" / "sources" / source_id
+        _write_json(source / "codegraph-analysis.json", _topology_codegraph(source_id))
+        _write_json(source / "codegraph-summary.json", {"provider": "codegraph"})
+    publish_re_run(tmp_path, run_1)
+    _finish_run(run_1)
+
+    config.write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n",
+        encoding="utf-8",
+    )
+    run_2 = write_valid_re_run(
+        tmp_path,
+        ("api",),
+        run_id="run-2",
+        actions={"api": "reuse"},
+        removed_sources=("web",),
+    )
+    result = publish_re_run(tmp_path, run_2, expected_generation=1)
+
+    topology = load_topology_index(tmp_path)
+    assert result.generation == 2
+    assert result.topology_generation == 2
+    assert topology is not None and set(topology.sources) == {"api"}
+    assert not (tmp_path / "re/sources/web").exists()
+    assert not (tmp_path / "re/topology/sources/web").exists()
+
+
+@pytest.mark.unit
+def test_reuse_migrates_valid_schema_two_provider_artifacts_from_legacy_semantic_source(
+    tmp_path: Path,
+) -> None:
+    from echelon.topology_registry import load_topology_index
+
+    config = tmp_path / ".echelon" / "config.yml"
+    config.parent.mkdir()
+    config.write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n",
+        encoding="utf-8",
+    )
+    run_1 = write_valid_re_run(tmp_path, ("api",), run_id="run-1")
+    publish_re_run(tmp_path, run_1)
+    _finish_run(run_1)
+    legacy = tmp_path / "re/sources/api"
+    _write_json(legacy / "codegraph-analysis.json", _topology_codegraph("api"))
+    _write_json(legacy / "codegraph-summary.json", {"provider": "codegraph"})
+
+    run_2 = write_valid_re_run(
+        tmp_path,
+        ("api",),
+        run_id="run-2",
+        actions={"api": "reuse"},
+    )
+    result = publish_re_run(tmp_path, run_2, expected_generation=1)
+
+    topology = load_topology_index(tmp_path)
+    assert result.topology_generation == 1
+    assert topology is not None and set(topology.sources) == {"api"}
+    assert not (legacy / "codegraph-analysis.json").exists()
+    assert (tmp_path / "re/topology/sources/api/codegraph-analysis.json").is_file()
 
 
 @pytest.mark.unit

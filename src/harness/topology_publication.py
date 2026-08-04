@@ -102,6 +102,73 @@ class TopologyPublicationResult:
     changed_sources: tuple[str, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class TopologyStagingResult:
+    """Topology operations staged for composition into an existing transaction."""
+
+    generation: int
+    operations: tuple[PublicationOperation, ...]
+
+
+def stage_topology_snapshots(
+    workspace_root: Path,
+    stage_root: Path,
+    candidates: tuple[TopologySnapshotCandidate, ...],
+    *,
+    removed_source_ids: tuple[str, ...] = (),
+    required_source_ids: tuple[str, ...] = (),
+) -> TopologyStagingResult | None:
+    """Stage canonical topology without taking a lock or writing a journal.
+
+    ``publish_re_run`` uses this while holding the established RE publication
+    claim. Keeping staging separate prevents a nested lock/transaction while
+    retaining the registry validation and byte-preserving merge semantics.
+    """
+    root = Path(workspace_root).resolve()
+    stage_root = Path(stage_root).resolve()
+    prepared = _validate_candidates(root, candidates, None) if candidates else ()
+    configured = _configured_sources(root)
+    removed = set(removed_source_ids)
+    try:
+        current = load_topology_index(root, allow_removed_source_ids=removed)
+    except TopologyRegistryError as exc:
+        raise TopologyPublicationValidationError(
+            f"current topology publication is structurally invalid: {exc}"
+        ) from exc
+    if current is None and not prepared:
+        return None
+    selected = {item.candidate.source_id for item in prepared}
+    required = set(required_source_ids)
+    if not required <= set(configured):
+        raise TopologyPublicationValidationError(
+            "required topology source is not configured in workspace"
+        )
+    if current is None and selected != set(configured):
+        raise TopologyPublicationValidationError(
+            "first topology publication must cover every configured workspace source"
+        )
+    if current is not None and not selected <= set(configured):
+        raise TopologyPublicationValidationError("candidate source is not configured in workspace")
+    if current is not None and not required <= selected:
+        missing = ", ".join(sorted(required - selected))
+        raise TopologyPublicationValidationError(
+            f"refreshed source has no usable topology evidence: {missing}"
+        )
+    if not prepared and not removed:
+        return None
+    generation = (current.generation if current else 0) + 1
+    operations = _stage_snapshot_tree(
+        root,
+        stage_root,
+        prepared,
+        configured,
+        current,
+        generation,
+        removed,
+    )
+    return TopologyStagingResult(generation, operations)
+
+
 def publish_topology_snapshots(
     workspace_root: Path,
     candidates: tuple[TopologySnapshotCandidate, ...],
@@ -219,6 +286,17 @@ def _validate_candidates(root: Path, candidates: tuple[TopologySnapshotCandidate
             if not capabilities:
                 capabilities = ("relationships", "symbols")
             diagnostics = _diagnostics(document, provider.provider)
+            native_counts = document.get("counts")
+            if not isinstance(native_counts, dict) or any(
+                not isinstance(name, str)
+                or isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 0
+                for name, value in native_counts.items()
+            ):
+                raise TopologyPublicationValidationError(
+                    f"provider counts are malformed for {candidate.source_id}/{provider.provider}"
+                )
             prepared_provider = _PreparedProvider(
                     provider=loaded.provider,
                     analysis=analysis,
@@ -227,7 +305,11 @@ def _validate_candidates(root: Path, candidates: tuple[TopologySnapshotCandidate
                     complete=loaded.complete,
                     tool_version=loaded.tool_version,
                     capabilities=capabilities,
-                    counts={"symbols": len(loaded.symbols), "relationships": len(loaded.relationships)},
+                    counts={
+                        **native_counts,
+                        "symbols": len(loaded.symbols),
+                        "relationships": len(loaded.relationships),
+                    },
                     diagnostics=diagnostics,
                 )
             _validate_provider_receipt_candidate(candidate.source_id, prepared_provider)
@@ -251,12 +333,40 @@ def _prepare_transaction(root: Path, stage_root: Path, candidates: tuple[_Prepar
             )
     if stage_root.exists():
         shutil.rmtree(stage_root)
-    new_root = stage_root / "new/re/topology"
     (stage_root / "rollback").mkdir(parents=True)
-    new_root.mkdir(parents=True)
+    operations = _stage_snapshot_tree(
+        root,
+        stage_root,
+        candidates,
+        configured,
+        current,
+        generation,
+        set(),
+    )
+    transaction = PublicationTransaction(
+        workspace_root=root / "re", staging_root=stage_root, journal=stage_root / "rollback-journal.json", operations=operations, expected_generation=generation
+    )
+    write_publication_journal(transaction, "prepared")
+    return transaction
+
+
+def _stage_snapshot_tree(
+    root: Path,
+    stage_root: Path,
+    candidates: tuple[_PreparedCandidate, ...],
+    configured: Mapping[str, str],
+    current: object,
+    generation: int,
+    removed_source_ids: set[str],
+) -> tuple[PublicationOperation, ...]:
+    new_root = stage_root / "new/re/topology"
+    new_root.mkdir(parents=True, exist_ok=True)
     current_rows = _current_rows(root, current)
     rows = dict(current_rows)
     operations: list[PublicationOperation] = []
+    for source_id in sorted(removed_source_ids):
+        rows.pop(source_id, None)
+        operations.append(PublicationOperation(PurePosixPath(f"topology/sources/{source_id}"), None))
     for prepared in candidates:
         source = prepared.candidate
         source_root = new_root / "sources" / source.source_id
@@ -310,11 +420,7 @@ def _prepare_transaction(root: Path, stage_root: Path, candidates: tuple[_Prepar
     (new_root / "index.json").write_bytes(index_bytes)
     operations.append(PublicationOperation(PurePosixPath("topology/index.json"), PurePosixPath("new/re/topology/index.json")))
     _validate_staged_tree(root, stage_root, configured, current, rows)
-    transaction = PublicationTransaction(
-        workspace_root=root / "re", staging_root=stage_root, journal=stage_root / "rollback-journal.json", operations=tuple(operations), expected_generation=generation
-    )
-    write_publication_journal(transaction, "prepared")
-    return transaction
+    return tuple(operations)
 
 
 def _validate_staged_tree(root: Path, stage_root: Path, configured: Mapping[str, str], current: object, rows: Mapping[str, object]) -> None:

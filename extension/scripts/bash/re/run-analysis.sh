@@ -428,33 +428,10 @@ write_codegraph_summary() {
         return 0
     fi
 
-    jq '{
-        version,
-        generated_at,
-        repo_path,
-        supported,
-        index_state: (.index_stats.index_state // "unknown"),
-        index_stats,
-        language_coverage,
-        coverage,
-        symbol_kinds: ((.symbols // [])
-            | group_by(.kind)
-            | map({kind: (.[0].kind // "unknown"), count: length})
-            | sort_by(.count)
-            | reverse),
-        top_callers: ((.call_graph // [])
-            | group_by(.caller)
-            | map({symbol: (.[0].caller // "unknown"), outgoing_calls: length})
-            | sort_by(.outgoing_calls)
-            | reverse
-            | .[:25]),
-        top_callees: ((.call_graph // [])
-            | group_by(.callee)
-            | map({symbol: (.[0].callee // "unknown"), incoming_calls: length})
-            | sort_by(.incoming_calls)
-            | reverse
-            | .[:25])
-    }' "$analysis_path" > "$summary_path" || true
+    # CodeGraph emits the schema-2 status, completeness, and counts itself.
+    # Keep an exact provider-owned companion artifact rather than reconstructing
+    # a second, shell-inferred view with potentially different semantics.
+    cp "$analysis_path" "$summary_path"
 }
 
 write_polyrepo_codegraph_summary() {
