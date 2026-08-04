@@ -16,7 +16,9 @@ from echelon.topology_model import canonical_symbol_key
 from harness.re_fingerprint import SourceFingerprint
 from harness.topology_publication import (
     TopologyProviderCandidate,
+    TopologyPublicationValidationError,
     TopologySnapshotCandidate,
+    validate_provider_summary,
 )
 
 
@@ -111,7 +113,7 @@ def build_topology_snapshot_candidate(
             analysis = analysis_path.read_bytes()
             summary = summary_path.read_bytes()
             summary_document = json.loads(summary)
-            _validate_provider_summary(
+            validate_provider_summary(
                 provider,
                 source_id,
                 document=json.loads(analysis),
@@ -123,6 +125,10 @@ def build_topology_snapshot_candidate(
                 f"invalid provider analysis for {source_id}/{provider}: {exc}"
             ) from exc
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise TopologyEvidenceError(
+                f"invalid provider summary for {source_id}/{provider}: {exc}"
+            ) from exc
+        except TopologyPublicationValidationError as exc:
             raise TopologyEvidenceError(
                 f"invalid provider summary for {source_id}/{provider}: {exc}"
             ) from exc
@@ -342,30 +348,47 @@ def upgrade_legacy_codegraph_candidate(
     impact_radius = _upgrade_legacy_impact_projection(impact_radius_raw, resolve)
     if call_graph is None or type_hierarchy is None or impact_radius is None:
         return None
+    analysis_document = {
+        "schema_version": 2,
+        "version": "2.0.0",
+        "tool": "codegraph",
+        "tool_version": "1.4.1",
+        "repo_path": legacy.get("repo_path", ""),
+        "provider_status": "complete",
+        "complete": True,
+        "supported": bool(legacy.get("supported", bool(symbols))),
+        "counts": {
+            "discovered_symbols": len(symbols),
+            "emitted_symbols": len(symbols),
+            "excluded_symbols": 0,
+            "discovered_relationships": len(relationships),
+            "emitted_relationships": len(relationships),
+            "excluded_relationships": 0,
+        },
+        "diagnostics": {"unresolved_relationships": []},
+        "symbols": symbols,
+        "relationships": relationships,
+        "call_graph": call_graph,
+        "type_hierarchy": type_hierarchy,
+        "impact_radius": impact_radius,
+    }
     analysis = json.dumps(
+        analysis_document,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8") + b"\n"
+    summary = json.dumps(
         {
-            "schema_version": 2,
-            "version": "2.0.0",
-            "tool": "codegraph",
-            "tool_version": "1.4.1",
-            "repo_path": legacy.get("repo_path", ""),
-            "provider_status": "complete",
-            "complete": True,
-            "supported": bool(legacy.get("supported", bool(symbols))),
-            "counts": {
-                "discovered_symbols": len(symbols),
-                "emitted_symbols": len(symbols),
-                "excluded_symbols": 0,
-                "discovered_relationships": len(relationships),
-                "emitted_relationships": len(relationships),
-                "excluded_relationships": 0,
-            },
-            "diagnostics": {"unresolved_relationships": []},
-            "symbols": symbols,
-            "relationships": relationships,
-            "call_graph": call_graph,
-            "type_hierarchy": type_hierarchy,
-            "impact_radius": impact_radius,
+            field: analysis_document[field]
+            for field in (
+                "schema_version",
+                "tool",
+                "tool_version",
+                "provider_status",
+                "complete",
+                "counts",
+                "diagnostics",
+            )
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -422,61 +445,6 @@ def _provider_error_reason(path: Path) -> dict[str, object]:
     if not isinstance(kind, str) or not kind or not isinstance(message, str) or not message:
         raise ValueError("provider error requires kind and message")
     return dict(document)
-
-
-def _validate_provider_summary(
-    provider: str,
-    source_id: str,
-    *,
-    document: object,
-    loaded: object,
-    summary: object,
-) -> None:
-    """Require a provider-owned schema-2 receipt that agrees with analysis."""
-    if not isinstance(document, dict) or not isinstance(summary, dict):
-        raise TopologyEvidenceError("provider summary must be a JSON object")
-    required = {
-        "schema_version",
-        "tool",
-        "tool_version",
-        "provider_status",
-        "complete",
-        "counts",
-        "diagnostics",
-    }
-    if not required <= set(summary):
-        raise TopologyEvidenceError(f"provider summary is missing required schema-2 fields for {source_id}/{provider}")
-    if provider == "codegraph" and set(summary) != required:
-        raise TopologyEvidenceError("CodeGraph summary has unexpected fields")
-    for field in ("schema_version", "tool", "tool_version", "provider_status", "complete", "counts"):
-        if summary.get(field) != document.get(field):
-            raise TopologyEvidenceError(
-                f"provider summary {field} disagrees with analysis for {source_id}/{provider}"
-            )
-    expected_diagnostics = _summary_diagnostics(provider, document)
-    if summary.get("diagnostics") != expected_diagnostics:
-        raise TopologyEvidenceError(
-            f"provider summary diagnostics disagree with analysis for {source_id}/{provider}"
-        )
-    if provider == "perlgraph":
-        for field in ("repo_path", "capabilities"):
-            if field in summary and summary[field] != document.get(field):
-                raise TopologyEvidenceError(
-                    f"provider summary {field} disagrees with analysis for {source_id}/{provider}"
-                )
-    if getattr(loaded, "provider", None) != provider or getattr(loaded, "source_id", None) != source_id:
-        raise TopologyEvidenceError("provider summary does not match the declared source/provider")
-
-
-def _summary_diagnostics(provider: str, document: Mapping[str, object]) -> object:
-    if provider == "codegraph":
-        return document.get("diagnostics")
-    return {
-        "unresolved_relationships": document.get("unresolved_relationships"),
-        "parse_failures": document.get("parse_failures"),
-        "parse_diagnostics": document.get("parse_diagnostics"),
-        "unsupported_patterns": document.get("unsupported_patterns"),
-    }
 
 
 def _upgrade_legacy_projection(

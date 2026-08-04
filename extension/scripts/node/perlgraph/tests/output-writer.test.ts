@@ -28,28 +28,36 @@ function analysis(): PerlGraphAnalysis {
 }
 
 describe('output writer', () => {
-  it('uses exact call keys for display summaries and includes unresolved confidence diagnostics', () => {
-    const summary = renderSummary(analysis());
-    expect(summary.schema_version).toBe(2);
-    expect(summary.top_callers).toEqual([{ symbol: 'My::App::run', outgoing_calls: 1 }]);
-    expect(summary.top_callees).toEqual([{ symbol: 'My::Service::execute', incoming_calls: 1 }]);
-    expect(summary.confidence_audit.relationships).toEqual([{ confidence: 'high', count: 1 }, { confidence: 'low', count: 1 }]);
-    expect(summary.confidence_audit.examples).toMatchObject([{ target: 'maybe', notes: expect.stringMatching(/did not resolve/) }]);
-  });
-
-  it('does not merge duplicate display names with different exact keys', () => {
+  it('emits only the compact provider-owned schema-2 summary', () => {
     const payload = analysis();
-    const duplicate = symbol({ qualified_name: 'My::App::run', name: 'run', kind: 'sub', language: 'perl', file_path: 'lib/My/Other.pm', line_start: 3, line_end: 8, provenance: ['tree-sitter'] });
-    payload.call_graph = [
-      ...payload.call_graph,
-      { source_key: duplicate.symbol_key, target_key: payload.symbols[1]!.symbol_key, source: duplicate.qualified_name, target: payload.symbols[1]!.qualified_name, confidence: 'high', provenance: ['tree-sitter'] }
-    ];
-
     const summary = renderSummary(payload);
-    expect(summary.top_callers.filter((entry) => entry.symbol === 'My::App::run')).toEqual([
-      { symbol: 'My::App::run', outgoing_calls: 1 },
-      { symbol: 'My::App::run', outgoing_calls: 1 }
+    expect(Object.keys(summary).sort()).toEqual([
+      'capabilities',
+      'complete',
+      'counts',
+      'diagnostics',
+      'provider_status',
+      'repo_path',
+      'schema_version',
+      'tool',
+      'tool_version'
     ]);
+    expect(summary).toMatchObject({
+      schema_version: 2,
+      tool: 'perlgraph',
+      tool_version: payload.tool_version,
+      repo_path: payload.repo_path,
+      provider_status: payload.provider_status,
+      complete: payload.complete,
+      counts: payload.counts,
+      capabilities: payload.capabilities,
+      diagnostics: {
+        unresolved_relationships: payload.unresolved_relationships,
+        parse_failures: payload.parse_failures,
+        parse_diagnostics: payload.parse_diagnostics,
+        unsupported_patterns: payload.unsupported_patterns
+      }
+    });
   });
 
   it('writes stable pretty JSON', async () => {

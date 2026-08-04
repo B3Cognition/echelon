@@ -325,56 +325,6 @@ exports[`golden CodeGraph compatibility output > emits stable analysis and summa
     "unresolved_relationship_diagnostics": true,
   },
   "complete": true,
-  "confidence_audit": {
-    "examples": [
-      {
-        "confidence": "medium",
-        "kind": "calls",
-        "provenance": [
-          "tree-sitter",
-          "self-method-resolution",
-        ],
-        "source": "My::App::run",
-        "target": "My::App::service",
-      },
-      {
-        "confidence": "low",
-        "kind": "imports",
-        "notes": "Module Moo did not resolve to a repository file",
-        "provenance": [
-          "tree-sitter",
-          "module-resolution",
-        ],
-        "source": "My::App",
-        "target": "Moo",
-      },
-      {
-        "confidence": "low",
-        "kind": "imports",
-        "notes": "Module Moo::Role did not resolve to a repository file",
-        "provenance": [
-          "tree-sitter",
-          "module-resolution",
-        ],
-        "source": "My::Role",
-        "target": "Moo::Role",
-      },
-    ],
-    "relationships": [
-      {
-        "confidence": "high",
-        "count": 2,
-      },
-      {
-        "confidence": "low",
-        "count": 2,
-      },
-      {
-        "confidence": "medium",
-        "count": 1,
-      },
-    ],
-  },
   "counts": {
     "discovered_files": 3,
     "discovered_relationships": 5,
@@ -422,84 +372,10 @@ exports[`golden CodeGraph compatibility output > emits stable analysis and summa
     ],
     "unsupported_patterns": [],
   },
-  "dynamic_risk": {
-    "count": 0,
-    "examples": [],
-    "patterns": [],
-  },
-  "framework_evidence": {
-    "modifiers": [],
-  },
-  "generated_at": "<generated_at>",
-  "index_state": "ready",
-  "index_stats": {
-    "dynamic_pattern_count": 0,
-    "failed_files": 0,
-    "index_state": "ready",
-    "parse_error_count": 0,
-    "parsed_files": 3,
-    "relationship_count": 3,
-    "symbol_count": 10,
-    "total_files": 3,
-  },
   "provider_status": "ready",
-  "relationship_kinds": [
-    {
-      "count": 1,
-      "kind": "calls",
-    },
-    {
-      "count": 1,
-      "kind": "imports",
-    },
-    {
-      "count": 1,
-      "kind": "uses_role",
-    },
-  ],
   "repo_path": "<repo_path>",
   "schema_version": 2,
-  "symbol_kinds": [
-    {
-      "count": 3,
-      "kind": "file",
-    },
-    {
-      "count": 3,
-      "kind": "package",
-    },
-    {
-      "count": 2,
-      "kind": "method",
-    },
-    {
-      "count": 2,
-      "kind": "sub",
-    },
-  ],
   "tool": "perlgraph",
   "tool_version": "0.1.0",
-  "top_callees": [
-    {
-      "incoming_calls": 1,
-      "symbol": "My::App::service",
-    },
-  ],
-  "top_callers": [
-    {
-      "outgoing_calls": 1,
-      "symbol": "My::App::run",
-    },
-  ],
-  "top_modules": [
-    {
-      "module": "My::App",
-      "outgoing_dependencies": 2,
-    },
-    {
-      "module": "My::Role",
-      "outgoing_dependencies": 1,
-    },
-  ],
 }
 `;

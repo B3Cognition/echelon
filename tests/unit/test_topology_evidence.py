@@ -117,7 +117,7 @@ def _summary(provider: str, analysis: dict[str, object]) -> dict[str, object]:
             "parse_diagnostics": analysis["parse_diagnostics"],
             "unsupported_patterns": analysis["unsupported_patterns"],
         }
-    return {
+    summary = {
         "schema_version": 2,
         "tool": provider,
         "tool_version": analysis["tool_version"],
@@ -126,6 +126,10 @@ def _summary(provider: str, analysis: dict[str, object]) -> dict[str, object]:
         "counts": analysis["counts"],
         "diagnostics": diagnostics,
     }
+    if provider == "perlgraph":
+        summary["repo_path"] = analysis["repo_path"]
+        summary["capabilities"] = analysis["capabilities"]
+    return summary
 
 
 @pytest.mark.unit

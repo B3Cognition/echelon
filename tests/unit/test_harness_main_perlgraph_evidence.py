@@ -62,33 +62,37 @@ const repoPath = args[args.indexOf("--repo-path") + 1];
 const outputPath = args[args.indexOf("--output-path") + 1];
 const summaryPath = args[args.indexOf("--summary-path") + 1];
 const analysis = {{
-  schema_version: 1,
+  schema_version: 2,
   tool: "perlgraph",
+  tool_version: "0.1.0",
   generated_at: "2026-07-14T00:00:00Z",
   repo_path: {repo_literal},
   supported: true,
+  provider_status: "ready",
+  complete: true,
+  counts: {{discovered_files: 1, emitted_files: 1, discovered_symbols: 1, emitted_symbols: 1, discovered_relationships: 1, emitted_relationships: 1, unresolved_relationships: 0, parse_failures: 0, parse_diagnostics: 0, dynamic_patterns: 0}},
+  capabilities: {{language: "perl", supported_extensions: [".pm"], exact_symbol_keys: true, exact_relationship_endpoints: true, unresolved_relationship_diagnostics: true}},
   language_coverage: {{".pm": "supported"}},
   symbols: [{{kind: "sub", file_path: "lib/App.pm", qualified_name: "App::run"}}],
   relationships: [],
+  unresolved_relationships: [],
   call_graph: [{{source: "App::run", target: "App::helper", confidence: "high", provenance: ["fixture"]}}],
   module_graph: [],
   unsupported_patterns: [],
   parse_failures: [],
+  parse_diagnostics: [],
   index_stats: {{index_state: "ready", symbol_count: 1, relationship_count: 1}}
 }};
 const summary = {{
-  schema_version: 1,
+  schema_version: 2,
   tool: "perlgraph",
-  generated_at: analysis.generated_at,
+  tool_version: analysis.tool_version,
   repo_path: analysis.repo_path,
-  index_state: "ready",
-  index_stats: analysis.index_stats,
-  symbol_kinds: [{{kind: "sub", count: 1}}],
-  relationship_kinds: [],
-  top_callers: [{{symbol: "App::run", outgoing_calls: 1}}],
-  top_callees: [{{symbol: "App::helper", incoming_calls: 1}}],
-  top_modules: [],
-  dynamic_risk: {{count: 0, patterns: []}}
+  provider_status: analysis.provider_status,
+  complete: analysis.complete,
+  counts: analysis.counts,
+  capabilities: analysis.capabilities,
+  diagnostics: {{unresolved_relationships: analysis.unresolved_relationships, parse_failures: analysis.parse_failures, parse_diagnostics: analysis.parse_diagnostics, unsupported_patterns: analysis.unsupported_patterns}}
 }};
 fs.mkdirSync(path.dirname(outputPath), {{recursive: true}});
 fs.writeFileSync(outputPath, JSON.stringify(analysis));
@@ -123,7 +127,7 @@ def test_write_perlgraph_evidence_cli_writes_analysis_and_summary(tmp_path: Path
     assert (verify_run_dir / "perlgraph-analysis.json").exists()
     summary = json.loads((verify_run_dir / "perlgraph-summary.json").read_text())
     assert summary["tool"] == "perlgraph"
-    assert summary["index_state"] == "ready"
+    assert summary["provider_status"] == "ready"
     state = json.loads((verify_run_dir / "state.json").read_text())
     assert state["perlgraph_evidence"] == "ready"
     assert state["perlgraph_summary_path"] == str(verify_run_dir / "perlgraph-summary.json")
@@ -153,7 +157,7 @@ def test_write_perlgraph_evidence_uses_shared_runtime(
 
     assert result.returncode == 0, result.stderr
     summary = json.loads((verify_run_dir / "perlgraph-summary.json").read_text())
-    assert summary["index_state"] == "ready"
+    assert summary["provider_status"] == "ready"
 
 
 def test_write_perlgraph_evidence_rejects_stale_repo_path(tmp_path: Path) -> None:

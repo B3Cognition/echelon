@@ -37,6 +37,33 @@ def _perl_unsupported() -> bytes:
     return json.dumps(value, sort_keys=True).encode()
 
 
+def _summary(provider: str, analysis: bytes) -> bytes:
+    document = json.loads(analysis)
+    diagnostics: object
+    if provider == "codegraph":
+        diagnostics = document["diagnostics"]
+    else:
+        diagnostics = {
+            "unresolved_relationships": document["unresolved_relationships"],
+            "parse_failures": document["parse_failures"],
+            "parse_diagnostics": document["parse_diagnostics"],
+            "unsupported_patterns": document["unsupported_patterns"],
+        }
+    summary = {
+        "schema_version": 2,
+        "tool": provider,
+        "tool_version": document["tool_version"],
+        "provider_status": document["provider_status"],
+        "complete": document["complete"],
+        "counts": document["counts"],
+        "diagnostics": diagnostics,
+    }
+    if provider == "perlgraph":
+        summary["repo_path"] = document["repo_path"]
+        summary["capabilities"] = document["capabilities"]
+    return json.dumps(summary, sort_keys=True).encode()
+
+
 def _candidate(source_id: str, version: str = "0"):
     from harness.re_fingerprint import SourceFingerprint
     from harness.topology_publication import TopologyProviderCandidate, TopologySnapshotCandidate
@@ -54,7 +81,7 @@ def _candidate(source_id: str, version: str = "0"):
         source_fingerprint=fingerprint,
         analyzed_commit=fingerprint.git_head,
         provenance={"kind": "re", "run_id": "re-20260804-120000"},
-        providers=(TopologyProviderCandidate("codegraph", _analysis(), b'{"summary":"ok"}\n'),),
+        providers=(TopologyProviderCandidate("codegraph", _analysis(), _summary("codegraph", _analysis())),),
     )
 
 
@@ -128,7 +155,7 @@ def test_topology_generation_conflict_and_fault_rollback_do_not_mutate(tmp_path:
 
 
 @pytest.mark.unit
-def test_topology_rejects_malformed_summary_duplicate_locator_and_unowned_path_input(tmp_path: Path) -> None:
+def test_topology_direct_publication_rejects_malformed_summary_duplicate_locator_and_unowned_path_input(tmp_path: Path) -> None:
     from dataclasses import replace
     from harness.topology_publication import TopologyProviderCandidate, TopologyPublicationValidationError, publish_topology_snapshots
 
@@ -136,11 +163,15 @@ def test_topology_rejects_malformed_summary_duplicate_locator_and_unowned_path_i
     malformed = replace(_candidate("api"), providers=(TopologyProviderCandidate("codegraph", _analysis(), b"not json"),))
     with pytest.raises(TopologyPublicationValidationError, match="summary"):
         publish_topology_snapshots(tmp_path, (malformed,), owner_id="run-1", owner_run_dir=None)
+    empty_summary = replace(_candidate("api"), providers=(TopologyProviderCandidate("codegraph", _analysis(), b"{}"),))
+    with pytest.raises(TopologyPublicationValidationError, match="summary"):
+        publish_topology_snapshots(tmp_path, (empty_summary,), owner_id="run-1", owner_run_dir=None)
     duplicate = json.loads(_analysis())
     duplicate["symbols"].append(dict(duplicate["symbols"][0]))
     duplicate["counts"]["discovered_symbols"] = 2
     duplicate["counts"]["emitted_symbols"] = 2
-    duplicate_candidate = replace(_candidate("api"), providers=(TopologyProviderCandidate("codegraph", json.dumps(duplicate).encode(), b"{}"),))
+    duplicate_analysis = json.dumps(duplicate).encode()
+    duplicate_candidate = replace(_candidate("api"), providers=(TopologyProviderCandidate("codegraph", duplicate_analysis, _summary("codegraph", duplicate_analysis)),))
     with pytest.raises(TopologyPublicationValidationError, match="duplicate"):
         publish_topology_snapshots(tmp_path, (duplicate_candidate,), owner_id="run-1", owner_run_dir=None)
     evidence = tmp_path / "runs/run-1/evidence.json"
@@ -158,7 +189,8 @@ def test_topology_accepts_unsupported_provider_evidence_and_rejects_future_recei
     from echelon.topology_registry import TopologyRegistryError, load_topology_index
 
     _workspace(tmp_path, ("api",))
-    candidate = replace(_candidate("api"), providers=(TopologyProviderCandidate("perlgraph", _perl_unsupported(), b"{}"),))
+    perlgraph = _perl_unsupported()
+    candidate = replace(_candidate("api"), providers=(TopologyProviderCandidate("perlgraph", perlgraph, _summary("perlgraph", perlgraph)),))
     publish_topology_snapshots(tmp_path, (candidate,), owner_id="run-1", owner_run_dir=None)
     receipt_path = tmp_path / "re/topology/sources/api/receipt.json"
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
@@ -185,11 +217,42 @@ def test_topology_accepts_explicit_empty_provider_evidence(tmp_path: Path) -> No
     empty["supported"] = True
     empty["counts"]["discovered_files"] = 1
     empty["counts"]["emitted_files"] = 1
-    candidate = replace(_candidate("api"), providers=(TopologyProviderCandidate("perlgraph", json.dumps(empty).encode(), b"{}"),))
+    empty_analysis = json.dumps(empty).encode()
+    candidate = replace(_candidate("api"), providers=(TopologyProviderCandidate("perlgraph", empty_analysis, _summary("perlgraph", empty_analysis)),))
     publish_topology_snapshots(tmp_path, (candidate,), owner_id="run-1", owner_run_dir=None)
     index = load_topology_index(tmp_path)
     assert index is not None
     assert index.sources["api"].providers["perlgraph"].status == "empty"
+
+
+@pytest.mark.unit
+def test_topology_direct_publication_requires_exact_perlgraph_summary(tmp_path: Path) -> None:
+    from dataclasses import replace
+    from harness.topology_publication import (
+        TopologyProviderCandidate,
+        TopologyPublicationValidationError,
+        publish_topology_snapshots,
+    )
+
+    _workspace(tmp_path, ("api",))
+    analysis = _perl_unsupported()
+    extra = json.loads(_summary("perlgraph", analysis))
+    extra["top_callers"] = []
+    extra_candidate = replace(
+        _candidate("api"),
+        providers=(TopologyProviderCandidate("perlgraph", analysis, json.dumps(extra).encode()),),
+    )
+    with pytest.raises(TopologyPublicationValidationError, match="summary fields"):
+        publish_topology_snapshots(tmp_path, (extra_candidate,), owner_id="run-1", owner_run_dir=None)
+
+    mismatched = json.loads(_summary("perlgraph", analysis))
+    mismatched["capabilities"] = {**mismatched["capabilities"], "exact_symbol_keys": False}
+    mismatched_candidate = replace(
+        _candidate("api"),
+        providers=(TopologyProviderCandidate("perlgraph", analysis, json.dumps(mismatched).encode()),),
+    )
+    with pytest.raises(TopologyPublicationValidationError, match="capabilities disagrees"):
+        publish_topology_snapshots(tmp_path, (mismatched_candidate,), owner_id="run-1", owner_run_dir=None)
 
 
 @pytest.mark.unit
@@ -203,7 +266,7 @@ def test_topology_path_evidence_must_stay_in_its_owner_run(tmp_path: Path) -> No
     analysis = owner / "analysis.json"
     summary = owner / "summary.json"
     analysis.write_bytes(_analysis())
-    summary.write_bytes(b"{}")
+    summary.write_bytes(_summary("codegraph", _analysis()))
     candidate = replace(_candidate("api"), providers=(TopologyProviderCandidate("codegraph", analysis, summary),))
     assert publish_topology_snapshots(tmp_path, (candidate,), owner_id="run-1", owner_run_dir=owner).generation == 1
 
@@ -229,7 +292,7 @@ def test_topology_rejects_symlinked_lifecycle_root(tmp_path: Path) -> None:
     outside = tmp_path / "outside-runs/run-1"
     outside.mkdir(parents=True)
     (outside / "analysis.json").write_bytes(_analysis())
-    (outside / "summary.json").write_bytes(b"{}")
+    (outside / "summary.json").write_bytes(_summary("codegraph", _analysis()))
     (tmp_path / "runs").symlink_to(tmp_path / "outside-runs", target_is_directory=True)
     candidate = replace(_candidate("api"), providers=(TopologyProviderCandidate("codegraph", outside / "analysis.json", outside / "summary.json"),))
     with pytest.raises(TopologyPublicationValidationError, match="unsafe"):

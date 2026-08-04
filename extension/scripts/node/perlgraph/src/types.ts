@@ -162,10 +162,7 @@ export interface PerlGraphSummary {
   schema_version: 2;
   tool: 'perlgraph';
   tool_version: string;
-  generated_at: string;
   repo_path: string;
-  index_state: IndexState;
-  index_stats: IndexStats;
   provider_status: ProviderStatus;
   complete: boolean;
   counts: ProviderCounts;
@@ -175,22 +172,5 @@ export interface PerlGraphSummary {
     parse_failures: ParseFailure[];
     parse_diagnostics: ParseDiagnostic[];
     unsupported_patterns: UnsupportedPattern[];
-  };
-  symbol_kinds: Array<{ kind: SymbolKind; count: number }>;
-  relationship_kinds: Array<{ kind: RelationshipKind; count: number }>;
-  top_callers: Array<{ symbol: string; outgoing_calls: number }>;
-  top_callees: Array<{ symbol: string; incoming_calls: number }>;
-  top_modules: Array<{ module: string; outgoing_dependencies: number }>;
-  confidence_audit: {
-    relationships: Array<{ confidence: Confidence; count: number }>;
-    examples: Array<Pick<PerlRelationship, 'source' | 'target' | 'kind' | 'confidence' | 'provenance' | 'notes'>>;
-  };
-  framework_evidence: {
-    modifiers: Array<Pick<UnsupportedPattern, 'file_path' | 'line_start' | 'snippet' | 'notes'>>;
-  };
-  dynamic_risk: {
-    count: number;
-    patterns: Array<{ kind: UnsupportedPattern['kind']; count: number }>;
-    examples: Array<Pick<UnsupportedPattern, 'kind' | 'file_path' | 'line_start' | 'snippet' | 'notes'>>;
   };
 }

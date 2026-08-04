@@ -252,6 +252,75 @@ class _PreparedCandidate:
     providers: tuple[_PreparedProvider, ...]
 
 
+def validate_provider_summary(
+    provider: str,
+    source_id: str,
+    *,
+    document: Mapping[str, object],
+    loaded: object,
+    summary: Mapping[str, object],
+) -> None:
+    """Validate the exact compact provider summary at the publication boundary."""
+    base_fields = frozenset(
+        {
+            "schema_version",
+            "tool",
+            "tool_version",
+            "provider_status",
+            "complete",
+            "counts",
+            "diagnostics",
+        }
+    )
+    provider_fields = {
+        "codegraph": base_fields,
+        "perlgraph": base_fields | frozenset({"repo_path", "capabilities"}),
+    }
+    expected_fields = provider_fields.get(provider)
+    if expected_fields is None:
+        raise TopologyPublicationValidationError(f"unsupported topology provider summary: {provider}")
+    if set(summary) != expected_fields:
+        raise TopologyPublicationValidationError(
+            f"provider summary fields are invalid for {source_id}/{provider}"
+        )
+    for field in (
+        "schema_version",
+        "tool",
+        "tool_version",
+        "provider_status",
+        "complete",
+        "counts",
+    ):
+        if summary[field] != document.get(field):
+            raise TopologyPublicationValidationError(
+                f"provider summary {field} disagrees with analysis for {source_id}/{provider}"
+            )
+    if summary["diagnostics"] != _summary_diagnostics(provider, document):
+        raise TopologyPublicationValidationError(
+            f"provider summary diagnostics disagree with analysis for {source_id}/{provider}"
+        )
+    for field in ("repo_path", "capabilities"):
+        if field in expected_fields and summary[field] != document.get(field):
+            raise TopologyPublicationValidationError(
+                f"provider summary {field} disagrees with analysis for {source_id}/{provider}"
+            )
+    if getattr(loaded, "provider", None) != provider or getattr(loaded, "source_id", None) != source_id:
+        raise TopologyPublicationValidationError(
+            "provider summary does not match the declared source/provider"
+        )
+
+
+def _summary_diagnostics(provider: str, document: Mapping[str, object]) -> object:
+    if provider == "codegraph":
+        return document.get("diagnostics")
+    return {
+        "unresolved_relationships": document.get("unresolved_relationships"),
+        "parse_failures": document.get("parse_failures"),
+        "parse_diagnostics": document.get("parse_diagnostics"),
+        "unsupported_patterns": document.get("unsupported_patterns"),
+    }
+
+
 def _validate_candidates(root: Path, candidates: tuple[TopologySnapshotCandidate, ...], owner_root: Path | None) -> tuple[_PreparedCandidate, ...]:
     configured = _configured_sources(root)
     if not candidates:
@@ -308,6 +377,13 @@ def _validate_candidates(root: Path, candidates: tuple[TopologySnapshotCandidate
                     raise TopologyRegistryError("provider summary must be a JSON object")
                 document = _read_json_bytes(analysis, f"candidate {provider.provider} analysis")
                 loaded = load_provider_document(document, provider=provider.provider, source_id=candidate.source_id)
+                validate_provider_summary(
+                    provider.provider,
+                    candidate.source_id,
+                    document=document,
+                    loaded=loaded,
+                    summary=summary_document,
+                )
             except (TopologyRegistryError, TopologyProviderError) as exc:
                 raise TopologyPublicationValidationError(
                     f"invalid provider analysis for {candidate.source_id}/{provider.provider}: {exc}"
