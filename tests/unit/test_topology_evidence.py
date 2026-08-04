@@ -309,9 +309,28 @@ def test_build_candidate_rejects_malformed_and_escaping_provider_input(tmp_path:
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("summary", ({}, {"schema_version": 2, "tool": "codegraph", "tool_version": "1.4.1", "provider_status": "complete", "complete": True, "counts": {"discovered_symbols": 9}, "diagnostics": {"unresolved_relationships": []}}))
+@pytest.mark.parametrize(
+    "summary",
+    (
+        None,
+        [],
+        [{}],
+        "not-an-object",
+        7,
+        {},
+        {
+            "schema_version": 2,
+            "tool": "codegraph",
+            "tool_version": "1.4.1",
+            "provider_status": "complete",
+            "complete": True,
+            "counts": {"discovered_symbols": 9},
+            "diagnostics": {"unresolved_relationships": []},
+        },
+    ),
+)
 def test_build_candidate_rejects_malformed_or_mismatched_provider_summary(
-    tmp_path: Path, summary: dict[str, object]
+    tmp_path: Path, summary: object
 ) -> None:
     from harness.topology_evidence import (
         ProviderArtifactPaths,

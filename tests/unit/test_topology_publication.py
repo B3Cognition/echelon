@@ -183,6 +183,31 @@ def test_topology_direct_publication_rejects_malformed_summary_duplicate_locator
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("summary", (None, [], [{}], "not-an-object", 7))
+def test_topology_direct_publication_rejects_non_object_provider_summaries(
+    tmp_path: Path, summary: object
+) -> None:
+    from dataclasses import replace
+    from harness.topology_publication import (
+        TopologyProviderCandidate,
+        TopologyPublicationValidationError,
+        publish_topology_snapshots,
+    )
+
+    _workspace(tmp_path, ("api",))
+    malformed = replace(
+        _candidate("api"),
+        providers=(
+            TopologyProviderCandidate("codegraph", _analysis(), json.dumps(summary).encode()),
+        ),
+    )
+
+    with pytest.raises(TopologyPublicationValidationError, match="summary"):
+        publish_topology_snapshots(tmp_path, (malformed,), owner_id="run-1", owner_run_dir=None)
+    assert not (tmp_path / "re/topology/index.json").exists()
+
+
+@pytest.mark.unit
 def test_topology_accepts_unsupported_provider_evidence_and_rejects_future_receipt(tmp_path: Path) -> None:
     from dataclasses import replace
     from harness.topology_publication import TopologyProviderCandidate, publish_topology_snapshots

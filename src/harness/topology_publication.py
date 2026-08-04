@@ -258,9 +258,13 @@ def validate_provider_summary(
     *,
     document: Mapping[str, object],
     loaded: object,
-    summary: Mapping[str, object],
+    summary: object,
 ) -> None:
     """Validate the exact compact provider summary at the publication boundary."""
+    if not isinstance(summary, Mapping):
+        raise TopologyPublicationValidationError(
+            f"provider summary must be a JSON object for {source_id}/{provider}"
+        )
     base_fields = frozenset(
         {
             "schema_version",
