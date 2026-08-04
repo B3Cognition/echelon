@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 import hashlib
 import json
+import os
 from pathlib import Path
+import shutil
 from types import SimpleNamespace
 
 import pytest
@@ -779,14 +781,22 @@ def test_retarget_refresh_archives_cleanup_evidence_without_deleting_it(
         recursive_delete_called = True
         raise AssertionError("completed journals must remain append-only")
 
-    real_unlink_report = mempalace_retarget._unlink_report_file
+    real_unlink = os.unlink
 
-    def reject_receipt_unlink(path: Path) -> None:
+    def reject_receipt_unlink(path, *args, **kwargs) -> None:
         nonlocal receipt_unlink_called
-        if path.name == ".mempalace-refresh-cleanup.json":
+        if Path(path).name.startswith(
+            (
+                ".mempalace-refresh-cleanup",
+                ".mempalace-refresh-transaction",
+                ".mempalace-refresh-detached-",
+                ".mempalace-refresh-completed-",
+                ".mempalace-refresh-staging-",
+            )
+        ):
             receipt_unlink_called = True
             raise AssertionError("completion evidence must remain append-only")
-        real_unlink_report(path)
+        real_unlink(path, *args, **kwargs)
 
     monkeypatch.setattr(
         "echelon.mempalace_retarget._remove_bound_cleanup_contents",
@@ -794,7 +804,7 @@ def test_retarget_refresh_archives_cleanup_evidence_without_deleting_it(
         raising=False,
     )
     monkeypatch.setattr(
-        "echelon.mempalace_retarget._unlink_report_file",
+        "echelon.mempalace_retarget.os.unlink",
         reject_receipt_unlink,
     )
 
@@ -816,6 +826,7 @@ def test_retarget_refresh_archives_cleanup_evidence_without_deleting_it(
     assert {entry.name for entry in completed_journals[0].iterdir()} == {
         "new",
         "old",
+        "slots",
         "transaction.json",
     }
     assert len(completed_receipts) == 1
@@ -851,6 +862,47 @@ def test_retarget_refresh_rejects_missing_authenticated_detached_journal(
 
 
 @pytest.mark.unit
+def test_retarget_refresh_rejects_byte_identical_active_receipt_replacement(
+    memory_workspace: MemoryWorkspace,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_refresh_reports(memory_workspace, monkeypatch)
+    _detached, active_receipt = _prepare_detached_cleanup(
+        memory_workspace,
+        monkeypatch,
+    )
+    from echelon import mempalace_retarget
+
+    authentic = memory_workspace.root / "authentic-cleanup-receipt.json"
+    real_retire = mempalace_retarget._retire_report_cleanup_receipt
+    swapped = False
+
+    def swap_before_bound_archive(*args, **kwargs) -> None:
+        nonlocal swapped
+        if not swapped:
+            swapped = True
+            active_receipt.rename(authentic)
+            shutil.copy2(authentic, active_receipt)
+        real_retire(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "echelon.mempalace_retarget._retire_report_cleanup_receipt",
+        swap_before_bound_archive,
+    )
+
+    with pytest.raises(RetargetMemoryError, match="receipt identity changed"):
+        refresh_retarget_spec_memory(
+            memory_workspace.root,
+            memory_workspace.spec_dir,
+        )
+
+    assert swapped is True
+    assert authentic.is_file()
+    assert active_receipt.is_file()
+    assert authentic.stat().st_ino != active_receipt.stat().st_ino
+
+
+@pytest.mark.unit
 def test_retarget_refresh_archives_receipt_through_pinned_parent(
     memory_workspace: MemoryWorkspace,
     monkeypatch: pytest.MonkeyPatch,
@@ -881,12 +933,12 @@ def test_retarget_refresh_archives_receipt_through_pinned_parent(
         swap_parent_before_receipt_archive,
     )
 
-    receipt = refresh_retarget_spec_memory(
-        memory_workspace.root,
-        memory_workspace.spec_dir,
-    )
+    with pytest.raises(RetargetMemoryError, match="parent"):
+        refresh_retarget_spec_memory(
+            memory_workspace.root,
+            memory_workspace.spec_dir,
+        )
 
-    assert receipt.status == "pass"
     assert swapped is True
     assert replacement_receipt.read_text(encoding="utf-8") == (
         "preserve replacement parent\n"
@@ -977,6 +1029,428 @@ def test_retarget_refresh_accumulates_unique_completed_transactions(
 
 
 @pytest.mark.unit
+def test_retarget_refresh_rejects_byte_identical_completed_journal_replacement(
+    memory_workspace: MemoryWorkspace,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catch archive validation that reopens a checked pathname."""
+    _stub_refresh_reports(memory_workspace, monkeypatch)
+    refresh_retarget_spec_memory(
+        memory_workspace.root,
+        memory_workspace.spec_dir,
+    )
+    from echelon import mempalace_retarget
+
+    journal = next(
+        memory_workspace.spec_dir.glob(".mempalace-refresh-detached-*")
+    )
+    authentic = memory_workspace.root / "authentic-completed-journal"
+    real_load = mempalace_retarget._load_report_transaction
+    swapped = False
+
+    def swap_after_identity_check(*args, **kwargs):
+        nonlocal swapped
+        if not swapped:
+            swapped = True
+            journal.rename(authentic)
+            shutil.copytree(authentic, journal)
+        return real_load(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "echelon.mempalace_retarget._load_report_transaction",
+        swap_after_identity_check,
+    )
+
+    with pytest.raises(RetargetMemoryError, match="journal|identity|changed"):
+        refresh_retarget_spec_memory(
+            memory_workspace.root,
+            memory_workspace.spec_dir,
+        )
+
+    assert swapped is True
+    assert authentic.is_dir()
+    assert journal.is_dir()
+    assert authentic.stat().st_ino != journal.stat().st_ino
+
+
+@pytest.mark.unit
+def test_retarget_refresh_rejects_new_transaction_at_exact_archive_capacity(
+    memory_workspace: MemoryWorkspace,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catch admission that checks only after the bound is exceeded."""
+    _stub_refresh_reports(memory_workspace, monkeypatch)
+    monkeypatch.setattr(
+        "echelon.mempalace_retarget._MAX_COMPLETED_REPORT_TRANSACTIONS",
+        1,
+    )
+    refresh_retarget_spec_memory(
+        memory_workspace.root,
+        memory_workspace.spec_dir,
+    )
+    monkeypatch.setattr(
+        "echelon.mempalace_retarget.render_audit_markdown",
+        lambda _audit_report: "# capacity-changing report\n",
+    )
+
+    with pytest.raises(RetargetMemoryError, match="history is full"):
+        refresh_retarget_spec_memory(
+            memory_workspace.root,
+            memory_workspace.spec_dir,
+        )
+
+    assert len(list(
+        memory_workspace.spec_dir.glob(".mempalace-refresh-detached-*")
+    )) == 1
+    assert len(list(
+        memory_workspace.spec_dir.glob(".mempalace-refresh-completed-*.json")
+    )) == 1
+    assert not (
+        memory_workspace.spec_dir / ".mempalace-refresh-transaction"
+    ).exists()
+
+
+@pytest.mark.unit
+def test_retarget_refresh_exact_existing_set_is_idempotent_at_capacity(
+    memory_workspace: MemoryWorkspace,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_refresh_reports(memory_workspace, monkeypatch)
+    monkeypatch.setattr(
+        "echelon.mempalace_retarget._MAX_COMPLETED_REPORT_TRANSACTIONS",
+        1,
+    )
+    first = refresh_retarget_spec_memory(
+        memory_workspace.root,
+        memory_workspace.spec_dir,
+    )
+
+    second = refresh_retarget_spec_memory(
+        memory_workspace.root,
+        memory_workspace.spec_dir,
+    )
+
+    assert second.report_set_digest == first.report_set_digest
+    assert len(list(
+        memory_workspace.spec_dir.glob(".mempalace-refresh-completed-*.json")
+    )) == 1
+
+
+@pytest.mark.unit
+def test_retarget_refresh_recovers_admitted_transaction_to_exact_capacity(
+    memory_workspace: MemoryWorkspace,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An active journal is recovered before new-capacity admission."""
+    _stub_refresh_reports(memory_workspace, monkeypatch)
+    monkeypatch.setattr(
+        "echelon.mempalace_retarget._MAX_COMPLETED_REPORT_TRANSACTIONS",
+        1,
+    )
+    from echelon import mempalace_retarget
+
+    real_remove = mempalace_retarget._remove_report_transaction
+    interrupted = False
+
+    def interrupt_after_publication(*args, **kwargs) -> None:
+        nonlocal interrupted
+        if not interrupted:
+            interrupted = True
+            raise KeyboardInterrupt("leave admitted transaction active")
+        real_remove(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "echelon.mempalace_retarget._remove_report_transaction",
+        interrupt_after_publication,
+    )
+    with pytest.raises(KeyboardInterrupt, match="admitted"):
+        refresh_retarget_spec_memory(
+            memory_workspace.root,
+            memory_workspace.spec_dir,
+        )
+    monkeypatch.setattr(
+        "echelon.mempalace_retarget._remove_report_transaction",
+        real_remove,
+    )
+
+    receipt = refresh_retarget_spec_memory(
+        memory_workspace.root,
+        memory_workspace.spec_dir,
+    )
+
+    assert receipt.status == "pass"
+    assert len(list(
+        memory_workspace.spec_dir.glob(".mempalace-refresh-completed-*.json")
+    )) == 1
+    assert not (
+        memory_workspace.spec_dir / ".mempalace-refresh-transaction"
+    ).exists()
+
+
+@pytest.mark.unit
+def test_retarget_refresh_rejects_active_journal_replacement_before_recovery(
+    memory_workspace: MemoryWorkspace,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catch rollback that validates and later mutates through active names."""
+    _stub_refresh_reports(memory_workspace, monkeypatch)
+    from echelon import mempalace_retarget
+
+    real_exchange = getattr(
+        mempalace_retarget,
+        "_exchange_report_entry_at",
+        lambda *_args, **_kwargs: None,
+    )
+    interrupted = False
+
+    def interrupt_publish(*args, **kwargs) -> None:
+        nonlocal interrupted
+        if (
+            kwargs.get("name") == "mempalace-audit.json"
+            and not interrupted
+        ):
+            interrupted = True
+            raise KeyboardInterrupt("leave active journal")
+        real_exchange(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "echelon.mempalace_retarget._exchange_report_entry_at",
+        interrupt_publish,
+        raising=False,
+    )
+    with pytest.raises(KeyboardInterrupt, match="active journal"):
+        refresh_retarget_spec_memory(
+            memory_workspace.root,
+            memory_workspace.spec_dir,
+        )
+    monkeypatch.setattr(
+        "echelon.mempalace_retarget._exchange_report_entry_at",
+        real_exchange,
+        raising=False,
+    )
+
+    journal = memory_workspace.spec_dir / ".mempalace-refresh-transaction"
+    authentic = memory_workspace.root / "authentic-active-journal"
+    real_load = mempalace_retarget._load_report_transaction
+    swapped = False
+
+    def swap_bound_active_journal(*args, **kwargs):
+        nonlocal swapped
+        if not swapped:
+            swapped = True
+            journal.rename(authentic)
+            shutil.copytree(authentic, journal)
+        return real_load(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "echelon.mempalace_retarget._load_report_transaction",
+        swap_bound_active_journal,
+    )
+
+    with pytest.raises(RetargetMemoryError, match="journal|identity|changed"):
+        refresh_retarget_spec_memory(
+            memory_workspace.root,
+            memory_workspace.spec_dir,
+        )
+
+    assert swapped is True
+    assert authentic.is_dir()
+    assert journal.is_dir()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("boundary", ["publish", "rollback"])
+def test_retarget_refresh_parent_replacement_cannot_touch_replacement_tree(
+    memory_workspace: MemoryWorkspace,
+    monkeypatch: pytest.MonkeyPatch,
+    boundary: str,
+) -> None:
+    """The public path may move, but the authenticated parent stays authoritative."""
+    _stub_refresh_reports(memory_workspace, monkeypatch)
+    refresh_retarget_spec_memory(
+        memory_workspace.root,
+        memory_workspace.spec_dir,
+    )
+    monkeypatch.setattr(
+        "echelon.mempalace_retarget.render_audit_markdown",
+        lambda _audit_report: "# parent-bound replacement report\n",
+    )
+    from echelon import mempalace_retarget
+
+    saved_parent = memory_workspace.root / f"saved-parent-{boundary}"
+    replacement_contents = {
+        "mempalace-mine.json": "unrelated mine\n",
+        "mempalace-audit.json": "unrelated audit\n",
+        "mempalace-audit.md": "unrelated markdown\n",
+        "mempalace-refresh-manifest.json": "unrelated manifest\n",
+        "unrelated.txt": "preserve replacement tree\n",
+    }
+    swapped = False
+    real_parent_check = getattr(
+        mempalace_retarget,
+        "_require_report_parent_binding",
+        lambda *_args, **_kwargs: None,
+    )
+
+    def swap_at_boundary(*args, **kwargs):
+        nonlocal swapped
+        phase = kwargs.get("boundary")
+        if phase == boundary and not swapped:
+            swapped = True
+            memory_workspace.spec_dir.rename(saved_parent)
+            memory_workspace.spec_dir.mkdir()
+            for name, content in replacement_contents.items():
+                memory_workspace.spec_dir.joinpath(name).write_text(
+                    content,
+                    encoding="utf-8",
+                )
+        return real_parent_check(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "echelon.mempalace_retarget._require_report_parent_binding",
+        swap_at_boundary,
+        raising=False,
+    )
+
+    if boundary == "rollback":
+        real_exchange = getattr(
+            mempalace_retarget,
+            "_exchange_report_entry_at",
+            lambda *_args, **_kwargs: None,
+        )
+        exchanges = 0
+
+        def fail_after_one_exchange(*args, **kwargs):
+            nonlocal exchanges
+            result = real_exchange(*args, **kwargs)
+            exchanges += 1
+            if exchanges == 1:
+                raise OSError("force descriptor-bound rollback")
+            return result
+
+        monkeypatch.setattr(
+            "echelon.mempalace_retarget._exchange_report_entry_at",
+            fail_after_one_exchange,
+            raising=False,
+        )
+
+    with pytest.raises(RetargetMemoryError, match="report write|parent"):
+        refresh_retarget_spec_memory(
+            memory_workspace.root,
+            memory_workspace.spec_dir,
+        )
+
+    assert swapped is True
+    assert {
+        name: memory_workspace.spec_dir.joinpath(name).read_text(encoding="utf-8")
+        for name in replacement_contents
+    } == replacement_contents
+    assert saved_parent.is_dir()
+    assert (
+        saved_parent / ".mempalace-refresh-transaction"
+    ).exists() or list(saved_parent.glob(".mempalace-refresh-staging-*"))
+
+
+@pytest.mark.unit
+def test_retarget_refresh_retains_failed_staging_evidence(
+    memory_workspace: MemoryWorkspace,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catch staging rollback that recursively erases forensic evidence."""
+    _stub_refresh_reports(memory_workspace, monkeypatch)
+    from echelon import mempalace_retarget
+
+    real_write = getattr(
+        mempalace_retarget,
+        "_write_transaction_text_at",
+        lambda *_args, **_kwargs: None,
+    )
+    writes = 0
+    recursive_delete_called = False
+
+    def fail_staging_write(*args, **kwargs) -> None:
+        nonlocal writes
+        writes += 1
+        real_write(*args, **kwargs)
+        if writes == 2:
+            raise OSError("staging interrupted")
+
+    real_rmtree = shutil.rmtree
+
+    def reject_recursive_delete(path, *args, **kwargs):
+        nonlocal recursive_delete_called
+        if Path(path).name.startswith(".mempalace-refresh-staging-"):
+            recursive_delete_called = True
+            raise AssertionError("staging evidence must remain append-only")
+        return real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(
+        "echelon.mempalace_retarget._write_transaction_text_at",
+        fail_staging_write,
+        raising=False,
+    )
+    monkeypatch.setattr(shutil, "rmtree", reject_recursive_delete)
+
+    with pytest.raises(RetargetMemoryError, match="report write"):
+        refresh_retarget_spec_memory(
+            memory_workspace.root,
+            memory_workspace.spec_dir,
+        )
+
+    assert recursive_delete_called is False
+    assert list(
+        memory_workspace.spec_dir.glob(".mempalace-refresh-staging-*")
+    )
+
+
+@pytest.mark.unit
+def test_retarget_refresh_rejects_byte_identical_staging_directory_replacement(
+    memory_workspace: MemoryWorkspace,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_refresh_reports(memory_workspace, monkeypatch)
+    from echelon import mempalace_retarget
+
+    real_write = mempalace_retarget._write_transaction_text_at
+    saved = memory_workspace.root / "authentic-staging-journal"
+    replacement: Path | None = None
+    writes = 0
+
+    def swap_staging_entry(*args, **kwargs):
+        nonlocal replacement, writes
+        result = real_write(*args, **kwargs)
+        writes += 1
+        if writes == 2:
+            staging = next(
+                memory_workspace.spec_dir.glob(".mempalace-refresh-staging-*")
+            )
+            staging.rename(saved)
+            shutil.copytree(saved, staging)
+            replacement = staging
+        return result
+
+    monkeypatch.setattr(
+        "echelon.mempalace_retarget._write_transaction_text_at",
+        swap_staging_entry,
+    )
+
+    with pytest.raises(RetargetMemoryError, match="staging|identity|report write"):
+        refresh_retarget_spec_memory(
+            memory_workspace.root,
+            memory_workspace.spec_dir,
+        )
+
+    assert saved.is_dir()
+    assert replacement is not None and replacement.is_dir()
+    assert not (
+        memory_workspace.spec_dir / ".mempalace-refresh-transaction"
+    ).exists()
+    assert not (
+        memory_workspace.spec_dir / "mempalace-refresh-manifest.json"
+    ).exists()
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     "failing_name",
     [
@@ -1002,24 +1476,33 @@ def test_retarget_refresh_rolls_back_the_whole_report_set_on_publish_failure(
         memory_workspace.spec_dir.joinpath(name).write_text(content, encoding="utf-8")
     from echelon import mempalace_retarget
 
-    real_write = mempalace_retarget._write_text_durable_atomic
+    real_exchange = getattr(
+        mempalace_retarget,
+        "_exchange_report_entry_at",
+        lambda *_args, **_kwargs: None,
+    )
     failed = False
-    manifest_absent_during_publish = False
+    old_manifest_preserved_during_publish = False
 
-    def fail_once(path: Path, content: str) -> None:
-        nonlocal failed, manifest_absent_during_publish
-        if path.parent == memory_workspace.spec_dir and path.name != "mempalace-refresh-manifest.json":
-            manifest_absent_during_publish |= not memory_workspace.spec_dir.joinpath(
-                "mempalace-refresh-manifest.json"
-            ).exists()
-        if path.parent == memory_workspace.spec_dir and path.name == failing_name and not failed:
+    def fail_once(*args, **kwargs) -> None:
+        nonlocal failed, old_manifest_preserved_during_publish
+        name = kwargs.get("name")
+        if name != "mempalace-refresh-manifest.json":
+            old_manifest_preserved_during_publish |= (
+                memory_workspace.spec_dir.joinpath(
+                    "mempalace-refresh-manifest.json"
+                ).read_text(encoding="utf-8")
+                == old["mempalace-refresh-manifest.json"]
+            )
+        if name == failing_name and not failed:
             failed = True
             raise OSError("injected report publication failure")
-        real_write(path, content)
+        real_exchange(*args, **kwargs)
 
     monkeypatch.setattr(
-        "echelon.mempalace_retarget._write_text_durable_atomic",
+        "echelon.mempalace_retarget._exchange_report_entry_at",
         fail_once,
+        raising=False,
     )
 
     with pytest.raises(RetargetMemoryError, match="report write"):
@@ -1029,7 +1512,8 @@ def test_retarget_refresh_rolls_back_the_whole_report_set_on_publish_failure(
         )
 
     assert failed is True
-    assert manifest_absent_during_publish is True or failing_name == "mempalace-mine.json"
+    if failing_name != "mempalace-mine.json":
+        assert old_manifest_preserved_during_publish is True
     assert {
         name: memory_workspace.spec_dir.joinpath(name).read_text(encoding="utf-8")
         for name in old
@@ -1075,23 +1559,27 @@ def test_retarget_refresh_recovers_interrupted_report_publication_on_retry(
     _stub_refresh_reports(memory_workspace, monkeypatch)
     from echelon import mempalace_retarget
 
-    real_write = mempalace_retarget._write_text_durable_atomic
+    real_exchange = getattr(
+        mempalace_retarget,
+        "_exchange_report_entry_at",
+        lambda *_args, **_kwargs: None,
+    )
     interrupted = False
 
-    def interrupt_once(path: Path, content: str) -> None:
+    def interrupt_once(*args, **kwargs) -> None:
         nonlocal interrupted
         if (
-            path.parent == memory_workspace.spec_dir
-            and path.name == "mempalace-audit.json"
+            kwargs.get("name") == "mempalace-audit.json"
             and not interrupted
         ):
             interrupted = True
             raise KeyboardInterrupt("simulated crash")
-        real_write(path, content)
+        real_exchange(*args, **kwargs)
 
     monkeypatch.setattr(
-        "echelon.mempalace_retarget._write_text_durable_atomic",
+        "echelon.mempalace_retarget._exchange_report_entry_at",
         interrupt_once,
+        raising=False,
     )
 
     with pytest.raises(KeyboardInterrupt, match="simulated crash"):

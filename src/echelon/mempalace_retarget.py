@@ -10,18 +10,15 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
-import shutil
+import secrets
 import stat
 import sys
-import tempfile
 from typing import Iterable, Mapping
 
-from echelon.atomic_install import atomic_rename_no_replace
 from echelon.mempalace_audit import (
     MAX_AUDIT_SCAN_ROWS,
     SpecMemoryAuditReport,
     SpecMemoryCleanupReport,
-    _write_text_durable_atomic,
     audit_spec_memory,
     cleanup_stale_spec_memory,
     render_audit_markdown,
@@ -840,37 +837,6 @@ def _sha256_text(content: str) -> str:
     return f"sha256:{hashlib.sha256(content.encode('utf-8')).hexdigest()}"
 
 
-def _fsync_directory(path: Path) -> None:
-    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(
-        os,
-        "O_NOFOLLOW",
-        0,
-    )
-    descriptor = os.open(path, flags)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-
-
-def _read_optional_report_text(path: Path) -> str | None:
-    if not os.path.lexists(path):
-        return None
-    if path.is_symlink() or not path.is_file():
-        raise RetargetMemoryError(
-            "replacement memory report target is not a regular file"
-        )
-    size = path.stat().st_size
-    if size > _MAX_REPORT_BYTES:
-        raise RetargetMemoryError("replacement memory report target is oversized")
-    try:
-        return path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as exc:
-        raise RetargetMemoryError(
-            "replacement memory report target is unreadable"
-        ) from exc
-
-
 def _report_manifest(
     *,
     spec_id: str,
@@ -908,328 +874,6 @@ def _report_manifest(
         )
         + "\n",
         report_set_digest,
-    )
-
-
-def _preflight_report_set(spec_dir: Path) -> None:
-    if spec_dir.is_symlink() or not spec_dir.is_dir():
-        raise RetargetMemoryError(
-            "replacement memory report parent is not a real directory"
-        )
-    for name in (*_REPORT_NAMES, _REPORT_MANIFEST_NAME):
-        _read_optional_report_text(spec_dir / name)
-    transaction = spec_dir / _REPORT_TRANSACTION_NAME
-    if os.path.lexists(transaction) and (
-        transaction.is_symlink() or not transaction.is_dir()
-    ):
-        raise RetargetMemoryError(
-            "replacement memory report transaction is invalid"
-        )
-
-
-def _write_transaction_text(path: Path, content: str) -> None:
-    if len(content.encode("utf-8")) > _MAX_REPORT_BYTES:
-        raise RetargetMemoryError("replacement memory report is oversized")
-    _write_text_durable_atomic(path, content)
-
-
-def _stage_report_transaction(
-    spec_dir: Path,
-    *,
-    spec_id: str,
-    contents: dict[str, str],
-    manifest_content: str,
-) -> Path:
-    old_contents = {
-        name: _read_optional_report_text(spec_dir / name)
-        for name in _REPORT_NAMES
-    }
-    old_manifest = _read_optional_report_text(
-        spec_dir / _REPORT_MANIFEST_NAME
-    )
-    staging = Path(
-        tempfile.mkdtemp(
-            prefix=".mempalace-refresh-staging-",
-            dir=spec_dir,
-        )
-    )
-    transaction = spec_dir / _REPORT_TRANSACTION_NAME
-    try:
-        new_dir = staging / "new"
-        old_dir = staging / "old"
-        new_dir.mkdir(mode=0o700)
-        old_dir.mkdir(mode=0o700)
-        for name in _REPORT_NAMES:
-            _write_transaction_text(new_dir / name, contents[name])
-            old_content = old_contents[name]
-            if old_content is not None:
-                _write_transaction_text(old_dir / name, old_content)
-        _write_transaction_text(
-            new_dir / _REPORT_MANIFEST_NAME,
-            manifest_content,
-        )
-        if old_manifest is not None:
-            _write_transaction_text(
-                old_dir / _REPORT_MANIFEST_NAME,
-                old_manifest,
-            )
-        records = [
-            {
-                "path": name,
-                "old_present": old_contents[name] is not None,
-                "old_sha256": (
-                    _sha256_text(old_contents[name])
-                    if old_contents[name] is not None
-                    else None
-                ),
-                "new_sha256": _sha256_text(contents[name]),
-            }
-            for name in _REPORT_NAMES
-        ]
-        descriptor = {
-            "schema_version": 1,
-            "spec_id": spec_id,
-            "files": records,
-            "old_manifest_present": old_manifest is not None,
-            "old_manifest_sha256": (
-                _sha256_text(old_manifest)
-                if old_manifest is not None
-                else None
-            ),
-            "new_manifest_sha256": _sha256_text(manifest_content),
-        }
-        _write_transaction_text(
-            staging / "transaction.json",
-            json.dumps(
-                descriptor,
-                indent=2,
-                sort_keys=True,
-                allow_nan=False,
-            )
-            + "\n",
-        )
-        _fsync_directory(new_dir)
-        _fsync_directory(old_dir)
-        _fsync_directory(staging)
-        atomic_rename_no_replace(staging, transaction)
-        return transaction
-    finally:
-        if os.path.lexists(staging):
-            shutil.rmtree(staging)
-
-
-def _require_transaction_file(path: Path) -> str:
-    if path.is_symlink() or not path.is_file():
-        raise RetargetMemoryError(
-            "replacement memory report transaction is invalid"
-        )
-    return _read_optional_report_text(path) or ""
-
-
-def _load_report_transaction(
-    spec_dir: Path,
-    *,
-    transaction_path: Path | None = None,
-) -> tuple[dict[str, str | None], dict[str, str], str | None, str]:
-    transaction = (
-        spec_dir / _REPORT_TRANSACTION_NAME
-        if transaction_path is None
-        else transaction_path
-    )
-    if transaction.is_symlink() or not transaction.is_dir():
-        raise RetargetMemoryError(
-            "replacement memory report transaction is invalid"
-        )
-    if {entry.name for entry in transaction.iterdir()} != {
-        "new",
-        "old",
-        "transaction.json",
-    }:
-        raise RetargetMemoryError(
-            "replacement memory report transaction is invalid"
-        )
-    new_dir = transaction / "new"
-    old_dir = transaction / "old"
-    if (
-        new_dir.is_symlink()
-        or not new_dir.is_dir()
-        or old_dir.is_symlink()
-        or not old_dir.is_dir()
-    ):
-        raise RetargetMemoryError(
-            "replacement memory report transaction is invalid"
-        )
-    try:
-        descriptor = loads_strict_json(
-            _require_transaction_file(transaction / "transaction.json")
-        )
-    except (ValueError, TypeError, json.JSONDecodeError) as exc:
-        raise RetargetMemoryError(
-            "replacement memory report transaction is invalid"
-        ) from exc
-    expected_keys = {
-        "schema_version",
-        "spec_id",
-        "files",
-        "old_manifest_present",
-        "old_manifest_sha256",
-        "new_manifest_sha256",
-    }
-    if (
-        type(descriptor) is not dict
-        or set(descriptor) != expected_keys
-        or type(descriptor["schema_version"]) is not int
-        or descriptor["schema_version"] != 1
-        or descriptor["spec_id"] != spec_dir.name
-        or type(descriptor["spec_id"]) is not str
-        or type(descriptor["files"]) is not list
-        or len(descriptor["files"]) != len(_REPORT_NAMES)
-        or type(descriptor["old_manifest_present"]) is not bool
-        or type(descriptor["new_manifest_sha256"]) is not str
-        or _SHA256.fullmatch(descriptor["new_manifest_sha256"]) is None
-    ):
-        raise RetargetMemoryError(
-            "replacement memory report transaction is invalid"
-        )
-    records: dict[str, dict[str, object]] = {}
-    for raw_record in descriptor["files"]:
-        if (
-            type(raw_record) is not dict
-            or set(raw_record)
-            != {"path", "old_present", "old_sha256", "new_sha256"}
-            or type(raw_record["path"]) is not str
-            or raw_record["path"] not in _REPORT_NAMES
-            or raw_record["path"] in records
-            or type(raw_record["old_present"]) is not bool
-            or type(raw_record["new_sha256"]) is not str
-            or _SHA256.fullmatch(raw_record["new_sha256"]) is None
-            or (
-                raw_record["old_present"]
-                and (
-                    type(raw_record["old_sha256"]) is not str
-                    or _SHA256.fullmatch(raw_record["old_sha256"]) is None
-                )
-            )
-            or (
-                not raw_record["old_present"]
-                and raw_record["old_sha256"] is not None
-            )
-        ):
-            raise RetargetMemoryError(
-                "replacement memory report transaction is invalid"
-            )
-        records[raw_record["path"]] = raw_record
-    if tuple(sorted(records)) != _REPORT_NAMES:
-        raise RetargetMemoryError(
-            "replacement memory report transaction is invalid"
-        )
-    new_contents: dict[str, str] = {}
-    old_contents: dict[str, str | None] = {}
-    expected_new_entries = set(_REPORT_NAMES) | {_REPORT_MANIFEST_NAME}
-    expected_old_entries = {
-        name
-        for name, record in records.items()
-        if record["old_present"]
-    }
-    if descriptor["old_manifest_present"]:
-        expected_old_entries.add(_REPORT_MANIFEST_NAME)
-    if {entry.name for entry in new_dir.iterdir()} != expected_new_entries or {
-        entry.name for entry in old_dir.iterdir()
-    } != expected_old_entries:
-        raise RetargetMemoryError(
-            "replacement memory report transaction is invalid"
-        )
-    for name, record in records.items():
-        new_content = _require_transaction_file(new_dir / name)
-        if _sha256_text(new_content) != record["new_sha256"]:
-            raise RetargetMemoryError(
-                "replacement memory report transaction is invalid"
-            )
-        new_contents[name] = new_content
-        if record["old_present"]:
-            old_content = _require_transaction_file(old_dir / name)
-            if _sha256_text(old_content) != record["old_sha256"]:
-                raise RetargetMemoryError(
-                    "replacement memory report transaction is invalid"
-                )
-            old_contents[name] = old_content
-        else:
-            old_contents[name] = None
-    new_manifest = _require_transaction_file(
-        new_dir / _REPORT_MANIFEST_NAME
-    )
-    if _sha256_text(new_manifest) != descriptor["new_manifest_sha256"]:
-        raise RetargetMemoryError(
-            "replacement memory report transaction is invalid"
-        )
-    expected_manifest, _digest = _report_manifest(
-        spec_id=spec_dir.name,
-        contents=new_contents,
-    )
-    if new_manifest != expected_manifest:
-        raise RetargetMemoryError(
-            "replacement memory report transaction is invalid"
-        )
-    old_manifest: str | None = None
-    if descriptor["old_manifest_present"]:
-        if (
-            type(descriptor["old_manifest_sha256"]) is not str
-            or _SHA256.fullmatch(descriptor["old_manifest_sha256"]) is None
-        ):
-            raise RetargetMemoryError(
-                "replacement memory report transaction is invalid"
-            )
-        old_manifest = _require_transaction_file(
-            old_dir / _REPORT_MANIFEST_NAME
-        )
-        if _sha256_text(old_manifest) != descriptor["old_manifest_sha256"]:
-            raise RetargetMemoryError(
-                "replacement memory report transaction is invalid"
-            )
-    elif descriptor["old_manifest_sha256"] is not None:
-        raise RetargetMemoryError(
-            "replacement memory report transaction is invalid"
-        )
-    return old_contents, new_contents, old_manifest, new_manifest
-
-
-def _unlink_report_file(path: Path) -> None:
-    if os.path.lexists(path):
-        if path.is_symlink() or not path.is_file():
-            raise RetargetMemoryError(
-                "replacement memory report target is not a regular file"
-            )
-        os.unlink(path)
-        _fsync_directory(path.parent)
-
-
-def _detached_cleanup_paths(spec_dir: Path) -> list[Path]:
-    return sorted(
-        (
-            entry
-            for entry in spec_dir.iterdir()
-            if entry.name.startswith(_REPORT_DETACHED_PREFIX)
-        ),
-        key=lambda entry: entry.name,
-    )
-
-
-def _report_set_matches(
-    spec_dir: Path,
-    *,
-    contents: Mapping[str, str | None],
-    manifest: str | None,
-) -> bool:
-    return (
-        tuple(sorted(contents)) == _REPORT_NAMES
-        and all(
-            _read_optional_report_text(spec_dir / name) == content
-            for name, content in contents.items()
-        )
-        and _read_optional_report_text(
-            spec_dir / _REPORT_MANIFEST_NAME
-        )
-        == manifest
     )
 
 
@@ -1372,42 +1016,6 @@ def _parse_report_cleanup_receipt(content: str) -> dict[str, object]:
     return loaded
 
 
-def _load_report_cleanup_receipt(spec_dir: Path) -> dict[str, object] | None:
-    receipt_path = spec_dir / _REPORT_CLEANUP_RECEIPT_NAME
-    if not os.path.lexists(receipt_path):
-        return None
-    if receipt_path.is_symlink() or not receipt_path.is_file():
-        raise RetargetMemoryError(
-            "replacement memory cleanup receipt is invalid"
-        )
-    return _parse_report_cleanup_receipt(
-        _read_optional_report_text(receipt_path) or ""
-    )
-
-
-def _cleanup_receipt_live_matches(
-    spec_dir: Path,
-    receipt: Mapping[str, object],
-) -> bool:
-    for record in receipt["files"]:  # type: ignore[index]
-        name = record["path"]
-        content = _read_optional_report_text(spec_dir / name)
-        if record["present"]:
-            if content is None or _sha256_text(content) != record["sha256"]:
-                return False
-        elif content is not None:
-            return False
-    manifest = _read_optional_report_text(
-        spec_dir / _REPORT_MANIFEST_NAME
-    )
-    if receipt["manifest_present"]:
-        return (
-            manifest is not None
-            and _sha256_text(manifest) == receipt["manifest_sha256"]
-        )
-    return manifest is None
-
-
 def _cleanup_entry_identity(metadata: os.stat_result) -> tuple[int, int, int]:
     return (stat.S_IFMT(metadata.st_mode), metadata.st_dev, metadata.st_ino)
 
@@ -1421,17 +1029,6 @@ def _canonical_cleanup_receipt(receipt: Mapping[str, object]) -> str:
             allow_nan=False,
         )
         + "\n"
-    )
-
-
-def _completed_receipt_paths(spec_dir: Path) -> list[Path]:
-    return sorted(
-        (
-            entry
-            for entry in spec_dir.iterdir()
-            if entry.name.startswith(_REPORT_COMPLETED_RECEIPT_PREFIX)
-        ),
-        key=lambda entry: entry.name,
     )
 
 
@@ -1463,88 +1060,6 @@ def _cleanup_receipt_matches_transaction(
             else None
         )
     )
-
-
-def _validate_completed_report_archives(
-    spec_dir: Path,
-    *,
-    active_receipt: Mapping[str, object] | None,
-) -> None:
-    completed_paths = _completed_receipt_paths(spec_dir)
-    if len(completed_paths) > _MAX_COMPLETED_REPORT_TRANSACTIONS:
-        raise RetargetMemoryError(
-            "replacement memory completed transaction history is full"
-        )
-    completed: dict[str, dict[str, object]] = {}
-    for receipt_path in completed_paths:
-        content = _read_optional_report_text(receipt_path)
-        if (
-            content is None
-            or receipt_path.name != _report_completed_receipt_name(content)
-        ):
-            raise RetargetMemoryError(
-                "replacement memory completed cleanup receipt is invalid"
-            )
-        receipt = _parse_report_cleanup_receipt(content)
-        cleanup_name = receipt["cleanup_name"]
-        if type(cleanup_name) is not str or cleanup_name in completed:
-            raise RetargetMemoryError(
-                "replacement memory completed cleanup receipts conflict"
-            )
-        completed[cleanup_name] = receipt
-
-    detached = {path.name: path for path in _detached_cleanup_paths(spec_dir)}
-    active_name = (
-        active_receipt["cleanup_name"]
-        if active_receipt is not None
-        else None
-    )
-    if type(active_name) is str and active_name in completed:
-        raise RetargetMemoryError(
-            "replacement memory cleanup evidence is duplicated"
-        )
-    expected_detached = set(completed)
-    if type(active_name) is str and active_name in detached:
-        expected_detached.add(active_name)
-    if set(detached) != expected_detached:
-        raise RetargetMemoryError(
-            "replacement memory detached cleanup is unauthenticated"
-        )
-
-    for cleanup_name, receipt in completed.items():
-        transaction = detached[cleanup_name]
-        if transaction.is_symlink() or not transaction.is_dir():
-            raise RetargetMemoryError(
-                "replacement memory completed journal is invalid"
-            )
-        identity = transaction.stat(follow_symlinks=False)
-        if (
-            identity.st_dev != receipt["device"]
-            or identity.st_ino != receipt["inode"]
-            or _sha256_text(
-                _require_transaction_file(transaction / "transaction.json")
-            )
-            != receipt["transaction_sha256"]
-        ):
-            raise RetargetMemoryError(
-                "replacement memory completed journal identity changed"
-            )
-        old_contents, new_contents, old_manifest, new_manifest = (
-            _load_report_transaction(
-                spec_dir,
-                transaction_path=transaction,
-            )
-        )
-        if not _cleanup_receipt_matches_transaction(
-            receipt,
-            old_contents=old_contents,
-            new_contents=new_contents,
-            old_manifest=old_manifest,
-            new_manifest=new_manifest,
-        ):
-            raise RetargetMemoryError(
-                "replacement memory completed cleanup receipt is inconsistent"
-            )
 
 
 def _atomic_rename_no_replace_at(
@@ -1662,6 +1177,7 @@ def _retire_report_cleanup_receipt(
     *,
     source_name: str,
     receipt: Mapping[str, object],
+    expected_receipt_identity: tuple[int, int, int] | None = None,
 ) -> None:
     cleanup_name = receipt["cleanup_name"]
     if type(cleanup_name) is not str:
@@ -1703,6 +1219,14 @@ def _retire_report_cleanup_receipt(
                 "replacement memory cleanup receipt changed"
             )
         receipt_identity = os.fstat(receipt_fd)
+        if (
+            expected_receipt_identity is not None
+            and _cleanup_entry_identity(receipt_identity)
+            != expected_receipt_identity
+        ):
+            raise RetargetMemoryError(
+                "replacement memory cleanup receipt identity changed"
+            )
         archived_receipt_name = _report_completed_receipt_name(receipt_content)
         _atomic_rename_no_replace_at(
             parent_fd,
@@ -1726,262 +1250,1530 @@ def _retire_report_cleanup_receipt(
         os.close(journal_fd)
 
 
-def _finish_detached_report_cleanup(
-    spec_dir: Path,
-    *,
-    receipt: Mapping[str, object],
-) -> None:
-    cleanup_name = receipt["cleanup_name"]
-    directory_flag = getattr(os, "O_DIRECTORY", 0)
-    no_follow_flag = getattr(os, "O_NOFOLLOW", 0)
-    if not directory_flag or not no_follow_flag:
+@dataclass(frozen=True)
+class _BoundReportTransaction:
+    old_contents: dict[str, str | None]
+    new_contents: dict[str, str]
+    old_manifest: str | None
+    new_manifest: str
+    records: dict[str, dict[str, object]]
+    journal_identity: tuple[int, int, int]
+
+    def __iter__(self):
+        yield self.old_contents
+        yield self.new_contents
+        yield self.old_manifest
+        yield self.new_manifest
+
+
+def _identity_record(metadata: os.stat_result) -> list[int]:
+    return [stat.S_IFMT(metadata.st_mode), metadata.st_dev, metadata.st_ino]
+
+
+def _strict_identity_record(value: object) -> tuple[int, int, int]:
+    if (
+        type(value) is not list
+        or len(value) != 3
+        or any(type(part) is not int for part in value)
+        or value[0] not in {stat.S_IFREG, stat.S_IFDIR}
+        or value[1] < 0
+        or value[2] <= 0
+    ):
         raise RetargetMemoryError(
-            "replacement memory descriptor-bound cleanup is unsupported"
+            "replacement memory report transaction is invalid"
         )
-    parent_flags = (
+    return (value[0], value[1], value[2])
+
+
+def _open_report_parent(spec_dir: Path) -> tuple[int, tuple[int, int, int]]:
+    flags = (
         os.O_RDONLY
-        | directory_flag
-        | no_follow_flag
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+    )
+    if not getattr(os, "O_DIRECTORY", 0) or not getattr(os, "O_NOFOLLOW", 0):
+        raise RetargetMemoryError(
+            "replacement memory descriptor-bound publication is unsupported"
+        )
+    try:
+        descriptor = os.open(spec_dir, flags)
+    except OSError as exc:
+        raise RetargetMemoryError(
+            "replacement memory report parent is invalid"
+        ) from exc
+    metadata = os.fstat(descriptor)
+    if not stat.S_ISDIR(metadata.st_mode):
+        os.close(descriptor)
+        raise RetargetMemoryError(
+            "replacement memory report parent is invalid"
+        )
+    return descriptor, _cleanup_entry_identity(metadata)
+
+
+def _require_report_parent_binding(
+    spec_dir: Path,
+    parent_fd: int,
+    parent_identity: tuple[int, int, int],
+    *,
+    boundary: str,
+) -> None:
+    del boundary
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
         | getattr(os, "O_CLOEXEC", 0)
     )
     try:
-        parent_fd = os.open(spec_dir, parent_flags)
+        public_fd = os.open(spec_dir, flags)
     except OSError as exc:
         raise RetargetMemoryError(
-            "replacement memory cleanup parent is invalid"
+            "replacement memory report parent identity changed"
         ) from exc
     try:
-        transaction_present = True
-        cleanup_present = True
-        try:
-            os.stat(
-                _REPORT_TRANSACTION_NAME,
-                dir_fd=parent_fd,
-                follow_symlinks=False,
-            )
-        except FileNotFoundError:
-            transaction_present = False
-        try:
-            os.stat(
-                cleanup_name,  # type: ignore[arg-type]
-                dir_fd=parent_fd,
-                follow_symlinks=False,
-            )
-        except FileNotFoundError:
-            cleanup_present = False
-        if transaction_present == cleanup_present:
+        if _cleanup_entry_identity(os.fstat(public_fd)) != parent_identity:
             raise RetargetMemoryError(
-                "replacement memory cleanup journal is missing or duplicated"
+                "replacement memory report parent identity changed"
             )
-        _retire_report_cleanup_receipt(
-            parent_fd,
-            source_name=(
-                _REPORT_TRANSACTION_NAME if transaction_present else cleanup_name
-            ),  # type: ignore[arg-type]
-            receipt=receipt,
-        )
+        if _cleanup_entry_identity(os.fstat(parent_fd)) != parent_identity:
+            raise RetargetMemoryError(
+                "replacement memory report parent identity changed"
+            )
     finally:
-        os.close(parent_fd)
+        os.close(public_fd)
 
 
-def _retire_detached_report_cleanup(spec_dir: Path) -> None:
-    receipt = _load_report_cleanup_receipt(spec_dir)
-    _validate_completed_report_archives(
-        spec_dir,
-        active_receipt=receipt,
+def _entry_stat_at(parent_fd: int, name: str) -> os.stat_result | None:
+    try:
+        return os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise RetargetMemoryError(
+            "replacement memory report entry is unavailable"
+        ) from exc
+
+
+def _require_open_entry_binding(
+    parent_fd: int,
+    name: str,
+    metadata: os.stat_result,
+    *,
+    label: str,
+) -> None:
+    current = _entry_stat_at(parent_fd, name)
+    if (
+        current is None
+        or _cleanup_entry_identity(current) != _cleanup_entry_identity(metadata)
+    ):
+        raise RetargetMemoryError(f"replacement memory {label} identity changed")
+
+
+def _directory_names_at(directory_fd: int) -> set[str]:
+    try:
+        names = os.listdir(directory_fd)
+    except OSError as exc:
+        raise RetargetMemoryError(
+            "replacement memory report transaction is invalid"
+        ) from exc
+    if any(name in {"", ".", ".."} or "/" in name for name in names):
+        raise RetargetMemoryError(
+            "replacement memory report transaction is invalid"
+        )
+    return set(names)
+
+
+def _read_text_entry_at(
+    parent_fd: int,
+    name: str,
+    *,
+    label: str,
+) -> tuple[str, os.stat_result]:
+    descriptor, content = _read_regular_entry_at(parent_fd, name)
+    try:
+        metadata = os.fstat(descriptor)
+        _require_open_entry_binding(
+            parent_fd,
+            name,
+            metadata,
+            label=label,
+        )
+        return content, metadata
+    finally:
+        os.close(descriptor)
+
+
+def _read_optional_report_text_at(
+    parent_fd: int,
+    name: str,
+) -> tuple[str | None, tuple[int, int, int] | None]:
+    metadata = _entry_stat_at(parent_fd, name)
+    if metadata is None:
+        return None, None
+    if not stat.S_ISREG(metadata.st_mode):
+        raise RetargetMemoryError(
+            "replacement memory report target is not a regular file"
+        )
+    content, opened = _read_text_entry_at(parent_fd, name, label="report target")
+    return content, _cleanup_entry_identity(opened)
+
+
+def _write_transaction_text_at(
+    directory_fd: int,
+    name: str,
+    content: str,
+    *,
+    mode: int = 0o600,
+) -> tuple[int, int, int]:
+    encoded = content.encode("utf-8")
+    if len(encoded) > _MAX_REPORT_BYTES:
+        raise RetargetMemoryError("replacement memory report is oversized")
+    flags = (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_CLOEXEC", 0)
     )
-    if receipt is None:
-        return
-    if not _cleanup_receipt_live_matches(spec_dir, receipt):
+    try:
+        descriptor = os.open(name, flags, mode, dir_fd=directory_fd)
+    except OSError as exc:
         raise RetargetMemoryError(
-            "replacement memory cleanup live report set changed"
+            "replacement memory report staging entry is invalid"
+        ) from exc
+    try:
+        view = memoryview(encoded)
+        while view:
+            written = os.write(descriptor, view)
+            if written <= 0:
+                raise OSError(errno.EIO, "short report transaction write")
+            view = view[written:]
+        os.fsync(descriptor)
+        metadata = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    _require_open_entry_binding(
+        directory_fd,
+        name,
+        metadata,
+        label="report staging entry",
+    )
+    return _cleanup_entry_identity(metadata)
+
+
+def _atomic_rename_no_replace_between(
+    source_fd: int,
+    source_name: str,
+    destination_fd: int,
+    destination_name: str,
+) -> None:
+    libc = ctypes.CDLL(None, use_errno=True)
+    if sys.platform == "darwin" and hasattr(libc, "renameatx_np"):
+        function = libc.renameatx_np
+        function.argtypes = (
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
         )
-    transaction = spec_dir / _REPORT_TRANSACTION_NAME
-    cleanup_path = spec_dir / receipt["cleanup_name"]  # type: ignore[operator]
-    if os.path.lexists(transaction) and os.path.lexists(cleanup_path):
+        function.restype = ctypes.c_int
+        arguments = (
+            source_fd,
+            os.fsencode(source_name),
+            destination_fd,
+            os.fsencode(destination_name),
+            0x00000004,
+        )
+    elif sys.platform.startswith("linux") and hasattr(libc, "renameat2"):
+        function = libc.renameat2
+        function.argtypes = (
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        )
+        function.restype = ctypes.c_int
+        arguments = (
+            source_fd,
+            os.fsencode(source_name),
+            destination_fd,
+            os.fsencode(destination_name),
+            0x00000001,
+        )
+    else:
         raise RetargetMemoryError(
-            "replacement memory cleanup has multiple active artifacts"
+            "replacement memory atomic publication is unsupported"
         )
-    if os.path.lexists(transaction):
-        if transaction.is_symlink() or not transaction.is_dir():
+    ctypes.set_errno(0)
+    if function(*arguments) != 0:
+        error_number = ctypes.get_errno() or errno.EIO
+        raise OSError(error_number, os.strerror(error_number), destination_name)
+    os.fsync(source_fd)
+    if destination_fd != source_fd:
+        os.fsync(destination_fd)
+
+
+def _atomic_exchange_at(
+    left_fd: int,
+    left_name: str,
+    right_fd: int,
+    right_name: str,
+) -> None:
+    libc = ctypes.CDLL(None, use_errno=True)
+    if sys.platform == "darwin" and hasattr(libc, "renameatx_np"):
+        function = libc.renameatx_np
+        function.argtypes = (
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        )
+        function.restype = ctypes.c_int
+        arguments = (
+            left_fd,
+            os.fsencode(left_name),
+            right_fd,
+            os.fsencode(right_name),
+            0x00000002,
+        )
+    elif sys.platform.startswith("linux") and hasattr(libc, "renameat2"):
+        function = libc.renameat2
+        function.argtypes = (
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        )
+        function.restype = ctypes.c_int
+        arguments = (
+            left_fd,
+            os.fsencode(left_name),
+            right_fd,
+            os.fsencode(right_name),
+            0x00000002,
+        )
+    else:
+        raise RetargetMemoryError(
+            "replacement memory atomic exchange is unsupported"
+        )
+    ctypes.set_errno(0)
+    if function(*arguments) != 0:
+        error_number = ctypes.get_errno() or errno.EIO
+        raise OSError(error_number, os.strerror(error_number), right_name)
+    os.fsync(left_fd)
+    if right_fd != left_fd:
+        os.fsync(right_fd)
+
+
+def _open_transaction_child(journal_fd: int, name: str) -> int:
+    return _open_entry_at(journal_fd, name, directory=True)
+
+
+def _transaction_entry_names() -> tuple[str, ...]:
+    return (*_REPORT_NAMES, _REPORT_MANIFEST_NAME)
+
+
+def _parse_legacy_bound_report_transaction(
+    *,
+    spec_id: str,
+    journal_fd: int,
+) -> _BoundReportTransaction:
+    new_fd = _open_transaction_child(journal_fd, "new")
+    old_fd = _open_transaction_child(journal_fd, "old")
+    try:
+        descriptor_text, _metadata = _read_text_entry_at(
+            journal_fd,
+            "transaction.json",
+            label="report transaction descriptor",
+        )
+        try:
+            descriptor = loads_strict_json(descriptor_text)
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            raise RetargetMemoryError(
+                "replacement memory report transaction is invalid"
+            ) from exc
+        if (
+            type(descriptor) is not dict
+            or set(descriptor)
+            != {
+                "schema_version",
+                "spec_id",
+                "files",
+                "old_manifest_present",
+                "old_manifest_sha256",
+                "new_manifest_sha256",
+            }
+            or descriptor["schema_version"] != 1
+            or type(descriptor["schema_version"]) is not int
+            or descriptor["spec_id"] != spec_id
+            or type(descriptor["spec_id"]) is not str
+            or type(descriptor["files"]) is not list
+            or len(descriptor["files"]) != len(_REPORT_NAMES)
+            or type(descriptor["old_manifest_present"]) is not bool
+            or type(descriptor["new_manifest_sha256"]) is not str
+            or _SHA256.fullmatch(descriptor["new_manifest_sha256"]) is None
+        ):
             raise RetargetMemoryError(
                 "replacement memory report transaction is invalid"
             )
-        identity = transaction.stat(follow_symlinks=False)
+        records: dict[str, dict[str, object]] = {}
+        for raw in descriptor["files"]:
+            if (
+                type(raw) is not dict
+                or set(raw)
+                != {"path", "old_present", "old_sha256", "new_sha256"}
+                or type(raw["path"]) is not str
+                or raw["path"] not in _REPORT_NAMES
+                or raw["path"] in records
+                or type(raw["old_present"]) is not bool
+                or type(raw["new_sha256"]) is not str
+                or _SHA256.fullmatch(raw["new_sha256"]) is None
+                or (
+                    raw["old_present"]
+                    and (
+                        type(raw["old_sha256"]) is not str
+                        or _SHA256.fullmatch(raw["old_sha256"]) is None
+                    )
+                )
+                or (not raw["old_present"] and raw["old_sha256"] is not None)
+            ):
+                raise RetargetMemoryError(
+                    "replacement memory report transaction is invalid"
+                )
+            records[raw["path"]] = raw
+        if tuple(sorted(records)) != _REPORT_NAMES:
+            raise RetargetMemoryError(
+                "replacement memory report transaction is invalid"
+            )
+        expected_new = set(_REPORT_NAMES) | {_REPORT_MANIFEST_NAME}
+        expected_old = {
+            name for name, record in records.items() if record["old_present"]
+        }
+        if descriptor["old_manifest_present"]:
+            expected_old.add(_REPORT_MANIFEST_NAME)
         if (
-            identity.st_dev != receipt["device"]
-            or identity.st_ino != receipt["inode"]
-            or _sha256_text(
-                _require_transaction_file(transaction / "transaction.json")
-            )
-            != receipt["transaction_sha256"]
+            _directory_names_at(new_fd) != expected_new
+            or _directory_names_at(old_fd) != expected_old
         ):
             raise RetargetMemoryError(
-                "replacement memory cleanup transaction identity changed"
+                "replacement memory report transaction is invalid"
             )
-        old_contents, new_contents, old_manifest, new_manifest = (
-            _load_report_transaction(spec_dir)
+        new_contents: dict[str, str] = {}
+        old_contents: dict[str, str | None] = {}
+        for name, record in records.items():
+            new_content, _metadata = _read_text_entry_at(
+                new_fd,
+                name,
+                label="report transaction new entry",
+            )
+            if _sha256_text(new_content) != record["new_sha256"]:
+                raise RetargetMemoryError(
+                    "replacement memory report transaction is invalid"
+                )
+            new_contents[name] = new_content
+            if record["old_present"]:
+                old_content, _metadata = _read_text_entry_at(
+                    old_fd,
+                    name,
+                    label="report transaction old entry",
+                )
+                if _sha256_text(old_content) != record["old_sha256"]:
+                    raise RetargetMemoryError(
+                        "replacement memory report transaction is invalid"
+                    )
+                old_contents[name] = old_content
+            else:
+                old_contents[name] = None
+        new_manifest, _metadata = _read_text_entry_at(
+            new_fd,
+            _REPORT_MANIFEST_NAME,
+            label="report transaction new manifest",
         )
-        expected_contents = (
-            new_contents if receipt["expected_live"] == "new" else old_contents
-        )
-        expected_manifest = (
-            new_manifest if receipt["expected_live"] == "new" else old_manifest
-        )
-        if not _report_set_matches(
-            spec_dir,
-            contents=expected_contents,
-            manifest=expected_manifest,
-        ):
+        if _sha256_text(new_manifest) != descriptor["new_manifest_sha256"]:
             raise RetargetMemoryError(
-                "replacement memory cleanup transaction state is inconsistent"
+                "replacement memory report transaction is invalid"
             )
-    elif os.path.lexists(cleanup_path):
-        if cleanup_path.is_symlink() or not cleanup_path.is_dir():
-            raise RetargetMemoryError(
-                "replacement memory detached cleanup path is invalid"
-            )
-        identity = cleanup_path.stat(follow_symlinks=False)
-        if (
-            identity.st_dev != receipt["device"]
-            or identity.st_ino != receipt["inode"]
-            or _sha256_text(
-                _require_transaction_file(cleanup_path / "transaction.json")
-            )
-            != receipt["transaction_sha256"]
-        ):
-            raise RetargetMemoryError(
-                "replacement memory cleanup transaction identity changed"
-            )
-        old_contents, new_contents, old_manifest, new_manifest = (
-            _load_report_transaction(
-                spec_dir,
-                transaction_path=cleanup_path,
-            )
+        expected_manifest, _digest = _report_manifest(
+            spec_id=spec_id,
+            contents=new_contents,
         )
-        if not _cleanup_receipt_matches_transaction(
-            receipt,
+        if new_manifest != expected_manifest:
+            raise RetargetMemoryError(
+                "replacement memory report transaction is invalid"
+            )
+        old_manifest: str | None = None
+        if descriptor["old_manifest_present"]:
+            if (
+                type(descriptor["old_manifest_sha256"]) is not str
+                or _SHA256.fullmatch(descriptor["old_manifest_sha256"]) is None
+            ):
+                raise RetargetMemoryError(
+                    "replacement memory report transaction is invalid"
+                )
+            old_manifest, _metadata = _read_text_entry_at(
+                old_fd,
+                _REPORT_MANIFEST_NAME,
+                label="report transaction old manifest",
+            )
+            if _sha256_text(old_manifest) != descriptor["old_manifest_sha256"]:
+                raise RetargetMemoryError(
+                    "replacement memory report transaction is invalid"
+                )
+        elif descriptor["old_manifest_sha256"] is not None:
+            raise RetargetMemoryError(
+                "replacement memory report transaction is invalid"
+            )
+        return _BoundReportTransaction(
             old_contents=old_contents,
             new_contents=new_contents,
             old_manifest=old_manifest,
             new_manifest=new_manifest,
+            records={},
+            journal_identity=_cleanup_entry_identity(os.fstat(journal_fd)),
+        )
+    finally:
+        os.close(old_fd)
+        os.close(new_fd)
+
+
+def _parse_bound_report_transaction(
+    *,
+    spec_id: str,
+    journal_fd: int,
+) -> _BoundReportTransaction:
+    journal_metadata = os.fstat(journal_fd)
+    if not stat.S_ISDIR(journal_metadata.st_mode):
+        raise RetargetMemoryError(
+            "replacement memory report transaction is invalid"
+        )
+    journal_names = _directory_names_at(journal_fd)
+    if journal_names == {"new", "old", "transaction.json"}:
+        return _parse_legacy_bound_report_transaction(
+            spec_id=spec_id,
+            journal_fd=journal_fd,
+        )
+    if journal_names != {
+        "new",
+        "old",
+        "slots",
+        "transaction.json",
+    }:
+        raise RetargetMemoryError(
+            "replacement memory report transaction is invalid"
+        )
+    new_fd = _open_transaction_child(journal_fd, "new")
+    old_fd = _open_transaction_child(journal_fd, "old")
+    slots_fd = _open_transaction_child(journal_fd, "slots")
+    try:
+        descriptor_text, _descriptor_metadata = _read_text_entry_at(
+            journal_fd,
+            "transaction.json",
+            label="report transaction descriptor",
+        )
+        try:
+            descriptor = loads_strict_json(descriptor_text)
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            raise RetargetMemoryError(
+                "replacement memory report transaction is invalid"
+            ) from exc
+        if (
+            type(descriptor) is not dict
+            or set(descriptor)
+            != {
+                "schema_version",
+                "spec_id",
+                "journal_identity",
+                "directory_identities",
+                "entries",
+            }
+            or descriptor["schema_version"] != 2
+            or type(descriptor["schema_version"]) is not int
+            or descriptor["spec_id"] != spec_id
+            or type(descriptor["spec_id"]) is not str
+            or _strict_identity_record(descriptor["journal_identity"])
+            != _cleanup_entry_identity(journal_metadata)
+            or type(descriptor["directory_identities"]) is not dict
+            or set(descriptor["directory_identities"])
+            != {"new", "old", "slots"}
+            or _strict_identity_record(descriptor["directory_identities"]["new"])
+            != _cleanup_entry_identity(os.fstat(new_fd))
+            or _strict_identity_record(descriptor["directory_identities"]["old"])
+            != _cleanup_entry_identity(os.fstat(old_fd))
+            or _strict_identity_record(
+                descriptor["directory_identities"]["slots"]
+            )
+            != _cleanup_entry_identity(os.fstat(slots_fd))
+            or type(descriptor["entries"]) is not list
+            or len(descriptor["entries"]) != len(_transaction_entry_names())
+        ):
+            raise RetargetMemoryError(
+                "replacement memory report transaction is invalid"
+            )
+        records: dict[str, dict[str, object]] = {}
+        for raw in descriptor["entries"]:
+            if (
+                type(raw) is not dict
+                or set(raw)
+                != {
+                    "path",
+                    "old_present",
+                    "old_sha256",
+                    "old_identity",
+                    "old_snapshot_identity",
+                    "new_sha256",
+                    "new_identity",
+                    "slot_identity",
+                }
+                or type(raw["path"]) is not str
+                or raw["path"] not in _transaction_entry_names()
+                or raw["path"] in records
+                or type(raw["old_present"]) is not bool
+                or type(raw["new_sha256"]) is not str
+                or _SHA256.fullmatch(raw["new_sha256"]) is None
+            ):
+                raise RetargetMemoryError(
+                    "replacement memory report transaction is invalid"
+                )
+            if raw["old_present"]:
+                if (
+                    type(raw["old_sha256"]) is not str
+                    or _SHA256.fullmatch(raw["old_sha256"]) is None
+                    or _strict_identity_record(raw["old_identity"])[0]
+                    != stat.S_IFREG
+                    or _strict_identity_record(raw["old_snapshot_identity"])[0]
+                    != stat.S_IFREG
+                ):
+                    raise RetargetMemoryError(
+                        "replacement memory report transaction is invalid"
+                    )
+            elif (
+                raw["old_sha256"] is not None
+                or raw["old_identity"] is not None
+                or raw["old_snapshot_identity"] is not None
+            ):
+                raise RetargetMemoryError(
+                    "replacement memory report transaction is invalid"
+                )
+            if (
+                _strict_identity_record(raw["new_identity"])[0] != stat.S_IFREG
+                or _strict_identity_record(raw["slot_identity"])[0]
+                != stat.S_IFREG
+            ):
+                raise RetargetMemoryError(
+                    "replacement memory report transaction is invalid"
+                )
+            records[raw["path"]] = raw
+        if tuple(sorted(records)) != tuple(sorted(_transaction_entry_names())):
+            raise RetargetMemoryError(
+                "replacement memory report transaction is invalid"
+            )
+        expected_new = set(_transaction_entry_names())
+        expected_old = {
+            name for name, record in records.items() if record["old_present"]
+        }
+        if _directory_names_at(new_fd) != expected_new:
+            raise RetargetMemoryError(
+                "replacement memory report transaction is invalid"
+            )
+        if _directory_names_at(old_fd) != expected_old:
+            raise RetargetMemoryError(
+                "replacement memory report transaction is invalid"
+            )
+        slot_names = _directory_names_at(slots_fd)
+        if not slot_names.issubset(expected_new):
+            raise RetargetMemoryError(
+                "replacement memory report transaction is invalid"
+            )
+        new_contents: dict[str, str] = {}
+        old_contents: dict[str, str | None] = {}
+        for name, record in records.items():
+            new_content, new_metadata = _read_text_entry_at(
+                new_fd,
+                name,
+                label="report transaction new entry",
+            )
+            if (
+                _sha256_text(new_content) != record["new_sha256"]
+                or _cleanup_entry_identity(new_metadata)
+                != _strict_identity_record(record["new_identity"])
+            ):
+                raise RetargetMemoryError(
+                    "replacement memory report transaction is invalid"
+                )
+            new_contents[name] = new_content
+            if record["old_present"]:
+                old_content, old_metadata = _read_text_entry_at(
+                    old_fd,
+                    name,
+                    label="report transaction old entry",
+                )
+                if (
+                    _sha256_text(old_content) != record["old_sha256"]
+                    or _cleanup_entry_identity(old_metadata)
+                    != _strict_identity_record(record["old_snapshot_identity"])
+                ):
+                    raise RetargetMemoryError(
+                        "replacement memory report transaction is invalid"
+                    )
+                old_contents[name] = old_content
+            else:
+                old_contents[name] = None
+            if name in slot_names:
+                slot_content, slot_metadata = _read_text_entry_at(
+                    slots_fd,
+                    name,
+                    label="report transaction slot",
+                )
+                slot_identity = _cleanup_entry_identity(slot_metadata)
+                permitted = {
+                    (
+                        record["new_sha256"],
+                        _strict_identity_record(record["slot_identity"]),
+                    )
+                }
+                if record["old_present"]:
+                    permitted.add(
+                        (
+                            record["old_sha256"],
+                            _strict_identity_record(record["old_identity"]),
+                        )
+                    )
+                if (_sha256_text(slot_content), slot_identity) not in permitted:
+                    raise RetargetMemoryError(
+                        "replacement memory report transaction is invalid"
+                    )
+            elif record["old_present"]:
+                raise RetargetMemoryError(
+                    "replacement memory report transaction is invalid"
+                )
+        expected_manifest, _digest = _report_manifest(
+            spec_id=spec_id,
+            contents={name: new_contents[name] for name in _REPORT_NAMES},
+        )
+        if new_contents[_REPORT_MANIFEST_NAME] != expected_manifest:
+            raise RetargetMemoryError(
+                "replacement memory report transaction is invalid"
+            )
+        return _BoundReportTransaction(
+            old_contents={name: old_contents[name] for name in _REPORT_NAMES},
+            new_contents={name: new_contents[name] for name in _REPORT_NAMES},
+            old_manifest=old_contents[_REPORT_MANIFEST_NAME],
+            new_manifest=new_contents[_REPORT_MANIFEST_NAME],
+            records=records,
+            journal_identity=_cleanup_entry_identity(journal_metadata),
+        )
+    finally:
+        os.close(slots_fd)
+        os.close(old_fd)
+        os.close(new_fd)
+
+
+def _load_report_transaction(
+    spec_dir: Path,
+    *,
+    transaction_path: Path | None = None,
+    parent_fd: int | None = None,
+    transaction_fd: int | None = None,
+    source_name: str | None = None,
+) -> _BoundReportTransaction:
+    owns_parent = parent_fd is None
+    owns_transaction = transaction_fd is None
+    if parent_fd is None:
+        parent_fd, _parent_identity = _open_report_parent(spec_dir)
+    assert parent_fd is not None
+    if source_name is None:
+        source_name = (
+            transaction_path.name
+            if transaction_path is not None
+            else _REPORT_TRANSACTION_NAME
+        )
+    if source_name in {"", ".", ".."} or "/" in source_name:
+        if owns_parent:
+            os.close(parent_fd)
+        raise RetargetMemoryError(
+            "replacement memory report transaction is invalid"
+        )
+    if transaction_fd is None:
+        transaction_fd = _open_entry_at(parent_fd, source_name, directory=True)
+    assert transaction_fd is not None
+    try:
+        metadata = os.fstat(transaction_fd)
+        loaded = _parse_bound_report_transaction(
+            spec_id=spec_dir.name,
+            journal_fd=transaction_fd,
+        )
+        _require_open_entry_binding(
+            parent_fd,
+            source_name,
+            metadata,
+            label="report journal",
+        )
+        return loaded
+    finally:
+        if owns_transaction:
+            os.close(transaction_fd)
+        if owns_parent:
+            os.close(parent_fd)
+
+
+def _stage_report_transaction_at(
+    spec_dir: Path,
+    parent_fd: int,
+    parent_identity: tuple[int, int, int],
+    *,
+    spec_id: str,
+    contents: dict[str, str],
+    manifest_content: str,
+) -> None:
+    _require_report_parent_binding(
+        spec_dir,
+        parent_fd,
+        parent_identity,
+        boundary="stage",
+    )
+    old_values: dict[str, tuple[str | None, tuple[int, int, int] | None]] = {}
+    new_values = dict(contents)
+    new_values[_REPORT_MANIFEST_NAME] = manifest_content
+    for name in _transaction_entry_names():
+        old_values[name] = _read_optional_report_text_at(parent_fd, name)
+    staging_name = ""
+    for _attempt in range(32):
+        candidate = f".mempalace-refresh-staging-{secrets.token_hex(16)}"
+        try:
+            os.mkdir(candidate, mode=0o700, dir_fd=parent_fd)
+        except FileExistsError:
+            continue
+        staging_name = candidate
+        break
+    if not staging_name:
+        raise RetargetMemoryError(
+            "replacement memory report staging is unavailable"
+        )
+    staging_fd = _open_entry_at(parent_fd, staging_name, directory=True)
+    try:
+        staging_identity = _cleanup_entry_identity(os.fstat(staging_fd))
+        for child in ("new", "old", "slots"):
+            os.mkdir(child, mode=0o700, dir_fd=staging_fd)
+        new_fd = _open_transaction_child(staging_fd, "new")
+        old_fd = _open_transaction_child(staging_fd, "old")
+        slots_fd = _open_transaction_child(staging_fd, "slots")
+        try:
+            records: list[dict[str, object]] = []
+            for name in _transaction_entry_names():
+                new_identity = _write_transaction_text_at(
+                    new_fd,
+                    name,
+                    new_values[name],
+                )
+                slot_identity = _write_transaction_text_at(
+                    slots_fd,
+                    name,
+                    new_values[name],
+                    mode=0o644,
+                )
+                old_content, old_identity = old_values[name]
+                if old_content is not None:
+                    snapshot_identity = _write_transaction_text_at(
+                        old_fd,
+                        name,
+                        old_content,
+                    )
+                    if snapshot_identity == old_identity:
+                        raise RetargetMemoryError(
+                            "replacement memory report staging identity is invalid"
+                        )
+                records.append(
+                    {
+                        "path": name,
+                        "old_present": old_content is not None,
+                        "old_sha256": (
+                            _sha256_text(old_content)
+                            if old_content is not None
+                            else None
+                        ),
+                        "old_identity": (
+                            list(old_identity) if old_identity is not None else None
+                        ),
+                        "old_snapshot_identity": (
+                            list(snapshot_identity)
+                            if old_content is not None
+                            else None
+                        ),
+                        "new_sha256": _sha256_text(new_values[name]),
+                        "new_identity": list(new_identity),
+                        "slot_identity": list(slot_identity),
+                    }
+                )
+            descriptor = {
+                "schema_version": 2,
+                "spec_id": spec_id,
+                "journal_identity": list(staging_identity),
+                "directory_identities": {
+                    "new": list(_cleanup_entry_identity(os.fstat(new_fd))),
+                    "old": list(_cleanup_entry_identity(os.fstat(old_fd))),
+                    "slots": list(_cleanup_entry_identity(os.fstat(slots_fd))),
+                },
+                "entries": records,
+            }
+            _write_transaction_text_at(
+                staging_fd,
+                "transaction.json",
+                json.dumps(
+                    descriptor,
+                    indent=2,
+                    sort_keys=True,
+                    allow_nan=False,
+                )
+                + "\n",
+            )
+            os.fsync(new_fd)
+            os.fsync(old_fd)
+            os.fsync(slots_fd)
+        finally:
+            os.close(slots_fd)
+            os.close(old_fd)
+            os.close(new_fd)
+        os.fsync(staging_fd)
+        _require_open_entry_binding(
+            parent_fd,
+            staging_name,
+            os.fstat(staging_fd),
+            label="report staging journal",
+        )
+        _require_report_parent_binding(
+            spec_dir,
+            parent_fd,
+            parent_identity,
+            boundary="stage",
+        )
+        _atomic_rename_no_replace_at(
+            parent_fd,
+            staging_name,
+            _REPORT_TRANSACTION_NAME,
+        )
+        _require_open_entry_binding(
+            parent_fd,
+            _REPORT_TRANSACTION_NAME,
+            os.fstat(staging_fd),
+            label="report journal",
+        )
+    finally:
+        os.close(staging_fd)
+
+
+def _read_cleanup_receipt_at(
+    parent_fd: int,
+    name: str,
+) -> tuple[dict[str, object], str, os.stat_result]:
+    content, metadata = _read_text_entry_at(
+        parent_fd,
+        name,
+        label="cleanup receipt",
+    )
+    return _parse_report_cleanup_receipt(content), content, metadata
+
+
+def _live_report_set_matches_at(
+    parent_fd: int,
+    *,
+    contents: Mapping[str, str | None],
+    manifest: str | None,
+) -> bool:
+    if tuple(sorted(contents)) != _REPORT_NAMES:
+        return False
+    for name, expected in contents.items():
+        actual, _identity = _read_optional_report_text_at(parent_fd, name)
+        if actual != expected:
+            return False
+    actual_manifest, _identity = _read_optional_report_text_at(
+        parent_fd,
+        _REPORT_MANIFEST_NAME,
+    )
+    return actual_manifest == manifest
+
+
+def _receipt_matches_bound_transaction(
+    receipt: Mapping[str, object],
+    transaction: _BoundReportTransaction,
+) -> bool:
+    return _cleanup_receipt_matches_transaction(
+        receipt,
+        old_contents=transaction.old_contents,
+        new_contents=transaction.new_contents,
+        old_manifest=transaction.old_manifest,
+        new_manifest=transaction.new_manifest,
+    )
+
+
+def _validate_completed_report_archives_at(
+    spec_dir: Path,
+    parent_fd: int,
+    *,
+    active_receipt: Mapping[str, object] | None,
+) -> int:
+    names = _directory_names_at(parent_fd)
+    completed_names = sorted(
+        name
+        for name in names
+        if name.startswith(_REPORT_COMPLETED_RECEIPT_PREFIX)
+    )
+    if len(completed_names) > _MAX_COMPLETED_REPORT_TRANSACTIONS:
+        raise RetargetMemoryError(
+            "replacement memory completed transaction history is full"
+        )
+    completed: dict[str, tuple[dict[str, object], str, os.stat_result]] = {}
+    for receipt_name in completed_names:
+        receipt, content, metadata = _read_cleanup_receipt_at(
+            parent_fd,
+            receipt_name,
+        )
+        if receipt_name != _report_completed_receipt_name(content):
+            raise RetargetMemoryError(
+                "replacement memory completed cleanup receipt is invalid"
+            )
+        cleanup_name = receipt["cleanup_name"]
+        if type(cleanup_name) is not str or cleanup_name in completed:
+            raise RetargetMemoryError(
+                "replacement memory completed cleanup receipts conflict"
+            )
+        completed[cleanup_name] = (receipt, content, metadata)
+    detached_names = {
+        name for name in names if name.startswith(_REPORT_DETACHED_PREFIX)
+    }
+    active_name = (
+        active_receipt["cleanup_name"]
+        if active_receipt is not None
+        else None
+    )
+    if type(active_name) is str and active_name in completed:
+        raise RetargetMemoryError(
+            "replacement memory cleanup evidence is duplicated"
+        )
+    expected = set(completed)
+    if type(active_name) is str and active_name in detached_names:
+        expected.add(active_name)
+    if detached_names != expected:
+        raise RetargetMemoryError(
+            "replacement memory detached cleanup is unauthenticated"
+        )
+    for cleanup_name, (receipt, _content, receipt_metadata) in completed.items():
+        journal_fd = _open_entry_at(parent_fd, cleanup_name, directory=True)
+        try:
+            journal_metadata = os.fstat(journal_fd)
+            if (
+                journal_metadata.st_dev != receipt["device"]
+                or journal_metadata.st_ino != receipt["inode"]
+            ):
+                raise RetargetMemoryError(
+                    "replacement memory completed journal identity changed"
+                )
+            transaction = _load_report_transaction(
+                spec_dir,
+                parent_fd=parent_fd,
+                transaction_fd=journal_fd,
+                source_name=cleanup_name,
+            )
+            descriptor_text, _metadata = _read_text_entry_at(
+                journal_fd,
+                "transaction.json",
+                label="report transaction descriptor",
+            )
+            if _sha256_text(descriptor_text) != receipt["transaction_sha256"]:
+                raise RetargetMemoryError(
+                    "replacement memory completed journal identity changed"
+                )
+            if not _receipt_matches_bound_transaction(receipt, transaction):
+                raise RetargetMemoryError(
+                    "replacement memory completed cleanup receipt is inconsistent"
+                )
+            _require_open_entry_binding(
+                parent_fd,
+                cleanup_name,
+                journal_metadata,
+                label="completed journal",
+            )
+            _require_open_entry_binding(
+                parent_fd,
+                _report_completed_receipt_name(_content),
+                receipt_metadata,
+                label="completed cleanup receipt",
+            )
+        finally:
+            os.close(journal_fd)
+    return len(completed_names)
+
+
+def _load_active_cleanup_receipt_at(
+    parent_fd: int,
+) -> tuple[dict[str, object], str, os.stat_result] | None:
+    if _entry_stat_at(parent_fd, _REPORT_CLEANUP_RECEIPT_NAME) is None:
+        return None
+    return _read_cleanup_receipt_at(parent_fd, _REPORT_CLEANUP_RECEIPT_NAME)
+
+
+def _active_journal_source_at(
+    parent_fd: int,
+    receipt: Mapping[str, object],
+) -> str:
+    cleanup_name = receipt["cleanup_name"]
+    if type(cleanup_name) is not str:
+        raise RetargetMemoryError(
+            "replacement memory cleanup receipt is invalid"
+        )
+    active = _entry_stat_at(parent_fd, _REPORT_TRANSACTION_NAME) is not None
+    detached = _entry_stat_at(parent_fd, cleanup_name) is not None
+    if active == detached:
+        raise RetargetMemoryError(
+            "replacement memory cleanup journal is missing or duplicated"
+        )
+    return _REPORT_TRANSACTION_NAME if active else cleanup_name
+
+
+def _retire_active_cleanup_at(
+    spec_dir: Path,
+    parent_fd: int,
+    parent_identity: tuple[int, int, int],
+) -> int:
+    active_record = _load_active_cleanup_receipt_at(parent_fd)
+    active_receipt = active_record[0] if active_record is not None else None
+    completed_count = _validate_completed_report_archives_at(
+        spec_dir,
+        parent_fd,
+        active_receipt=active_receipt,
+    )
+    if active_record is None:
+        return completed_count
+    if completed_count >= _MAX_COMPLETED_REPORT_TRANSACTIONS:
+        raise RetargetMemoryError(
+            "replacement memory completed transaction history is full"
+        )
+    receipt, receipt_content, receipt_metadata = active_record
+    source_name = _active_journal_source_at(parent_fd, receipt)
+    journal_fd = _open_entry_at(parent_fd, source_name, directory=True)
+    try:
+        journal_metadata = os.fstat(journal_fd)
+        if (
+            journal_metadata.st_dev != receipt["device"]
+            or journal_metadata.st_ino != receipt["inode"]
+        ):
+            raise RetargetMemoryError(
+                "replacement memory cleanup transaction identity changed"
+            )
+        transaction = _load_report_transaction(
+            spec_dir,
+            parent_fd=parent_fd,
+            transaction_fd=journal_fd,
+            source_name=source_name,
+        )
+        descriptor_text, _metadata = _read_text_entry_at(
+            journal_fd,
+            "transaction.json",
+            label="report transaction descriptor",
+        )
+        if (
+            _sha256_text(descriptor_text) != receipt["transaction_sha256"]
+            or not _receipt_matches_bound_transaction(receipt, transaction)
         ):
             raise RetargetMemoryError(
                 "replacement memory cleanup transaction state is inconsistent"
             )
-    _finish_detached_report_cleanup(spec_dir, receipt=receipt)
+        expected_contents = (
+            transaction.new_contents
+            if receipt["expected_live"] == "new"
+            else transaction.old_contents
+        )
+        expected_manifest = (
+            transaction.new_manifest
+            if receipt["expected_live"] == "new"
+            else transaction.old_manifest
+        )
+        if not _live_report_set_matches_at(
+            parent_fd,
+            contents=expected_contents,
+            manifest=expected_manifest,
+        ):
+            raise RetargetMemoryError(
+                "replacement memory cleanup live report set changed"
+            )
+        _require_open_entry_binding(
+            parent_fd,
+            source_name,
+            journal_metadata,
+            label="cleanup journal",
+        )
+        _require_open_entry_binding(
+            parent_fd,
+            _REPORT_CLEANUP_RECEIPT_NAME,
+            receipt_metadata,
+            label="cleanup receipt",
+        )
+        if _canonical_cleanup_receipt(receipt) != receipt_content:
+            raise RetargetMemoryError(
+                "replacement memory cleanup receipt changed"
+            )
+        _require_report_parent_binding(
+            spec_dir,
+            parent_fd,
+            parent_identity,
+            boundary="archive",
+        )
+        _retire_report_cleanup_receipt(
+            parent_fd,
+            source_name=source_name,
+            receipt=receipt,
+            expected_receipt_identity=_cleanup_entry_identity(receipt_metadata),
+        )
+        _require_report_parent_binding(
+            spec_dir,
+            parent_fd,
+            parent_identity,
+            boundary="archive",
+        )
+    finally:
+        os.close(journal_fd)
+    return completed_count + 1
 
 
-def _remove_report_transaction(
-    spec_dir: Path,
+def _exchange_report_entry_at(
+    parent_fd: int,
+    slots_fd: int,
     *,
+    name: str,
+    old_present: bool,
+    old_identity: tuple[int, int, int] | None,
+    new_identity: tuple[int, int, int],
+) -> None:
+    live = _entry_stat_at(parent_fd, name)
+    slot = _entry_stat_at(slots_fd, name)
+    if slot is None or _cleanup_entry_identity(slot) != new_identity:
+        raise RetargetMemoryError(
+            "replacement memory report publication slot changed"
+        )
+    if old_present:
+        if live is None or _cleanup_entry_identity(live) != old_identity:
+            raise RetargetMemoryError(
+                "replacement memory live report changed before publication"
+            )
+        _atomic_exchange_at(parent_fd, name, slots_fd, name)
+        after_live = _entry_stat_at(parent_fd, name)
+        after_slot = _entry_stat_at(slots_fd, name)
+        if (
+            after_live is None
+            or after_slot is None
+            or _cleanup_entry_identity(after_live) != new_identity
+            or _cleanup_entry_identity(after_slot) != old_identity
+        ):
+            raise RetargetMemoryError(
+                "replacement memory report publication is uncertain"
+            )
+    else:
+        if live is not None:
+            raise RetargetMemoryError(
+                "replacement memory live report changed before publication"
+            )
+        _atomic_rename_no_replace_between(slots_fd, name, parent_fd, name)
+        after_live = _entry_stat_at(parent_fd, name)
+        if (
+            after_live is None
+            or _cleanup_entry_identity(after_live) != new_identity
+            or _entry_stat_at(slots_fd, name) is not None
+        ):
+            raise RetargetMemoryError(
+                "replacement memory report publication is uncertain"
+            )
+
+
+def _restore_old_entry_at(
+    parent_fd: int,
+    slots_fd: int,
+    *,
+    name: str,
+    record: Mapping[str, object],
+) -> None:
+    old_present = bool(record["old_present"])
+    old_identity = (
+        _strict_identity_record(record["old_identity"])
+        if old_present
+        else None
+    )
+    new_identity = _strict_identity_record(record["slot_identity"])
+    live = _entry_stat_at(parent_fd, name)
+    slot = _entry_stat_at(slots_fd, name)
+    live_identity = _cleanup_entry_identity(live) if live is not None else None
+    slot_identity = _cleanup_entry_identity(slot) if slot is not None else None
+    if old_present:
+        if live_identity == old_identity and slot_identity == new_identity:
+            return
+        if live_identity == new_identity and slot_identity == old_identity:
+            _atomic_exchange_at(parent_fd, name, slots_fd, name)
+        else:
+            raise RetargetMemoryError(
+                "replacement memory report rollback state is inconsistent"
+            )
+    else:
+        if live is None and slot_identity == new_identity:
+            return
+        if live_identity == new_identity and slot is None:
+            _atomic_rename_no_replace_between(parent_fd, name, slots_fd, name)
+        else:
+            raise RetargetMemoryError(
+                "replacement memory report rollback state is inconsistent"
+            )
+    final_live = _entry_stat_at(parent_fd, name)
+    final_slot = _entry_stat_at(slots_fd, name)
+    if old_present:
+        if (
+            final_live is None
+            or final_slot is None
+            or _cleanup_entry_identity(final_live) != old_identity
+            or _cleanup_entry_identity(final_slot) != new_identity
+        ):
+            raise RetargetMemoryError(
+                "replacement memory report rollback is uncertain"
+            )
+    elif final_live is not None or final_slot is None or (
+        _cleanup_entry_identity(final_slot) != new_identity
+    ):
+        raise RetargetMemoryError(
+            "replacement memory report rollback is uncertain"
+        )
+
+
+def _archive_bound_transaction_at(
+    spec_dir: Path,
+    parent_fd: int,
+    parent_identity: tuple[int, int, int],
+    *,
+    transaction_fd: int,
+    transaction: _BoundReportTransaction,
     expected_live: str,
 ) -> None:
-    _retire_detached_report_cleanup(spec_dir)
-    transaction = spec_dir / _REPORT_TRANSACTION_NAME
-    old_contents, new_contents, old_manifest, new_manifest = (
-        _load_report_transaction(spec_dir)
-    )
     if expected_live == "new":
-        expected_contents: Mapping[str, str | None] = new_contents
-        expected_manifest = new_manifest
+        expected_contents: Mapping[str, str | None] = transaction.new_contents
+        expected_manifest = transaction.new_manifest
     elif expected_live == "old":
-        expected_contents = old_contents
-        expected_manifest = old_manifest
+        expected_contents = transaction.old_contents
+        expected_manifest = transaction.old_manifest
     else:
-        raise RetargetMemoryError(
-            "replacement memory cleanup state is invalid"
-        )
-    if not _report_set_matches(
-        spec_dir,
+        raise RetargetMemoryError("replacement memory cleanup state is invalid")
+    if not _live_report_set_matches_at(
+        parent_fd,
         contents=expected_contents,
         manifest=expected_manifest,
     ):
         raise RetargetMemoryError(
             "replacement memory cleanup live report set is inconsistent"
         )
-    transaction_identity = transaction.stat(follow_symlinks=False)
-    transaction_digest = _sha256_text(
-        _require_transaction_file(transaction / "transaction.json")
+    journal_metadata = os.fstat(transaction_fd)
+    descriptor_text, _metadata = _read_text_entry_at(
+        transaction_fd,
+        "transaction.json",
+        label="report transaction descriptor",
     )
+    transaction_digest = _sha256_text(descriptor_text)
     cleanup_name = _report_cleanup_name(
         transaction_sha256=transaction_digest,
         expected_live=expected_live,
-        device=transaction_identity.st_dev,
-        inode=transaction_identity.st_ino,
+        device=journal_metadata.st_dev,
+        inode=journal_metadata.st_ino,
     )
-    manifest_present = expected_manifest is not None
     receipt = {
         "schema_version": 1,
         "cleanup_name": cleanup_name,
         "transaction_sha256": transaction_digest,
         "expected_live": expected_live,
-        "device": transaction_identity.st_dev,
-        "inode": transaction_identity.st_ino,
+        "device": journal_metadata.st_dev,
+        "inode": journal_metadata.st_ino,
         "files": _cleanup_live_records(expected_contents),
-        "manifest_present": manifest_present,
+        "manifest_present": expected_manifest is not None,
         "manifest_sha256": (
-            _sha256_text(expected_manifest) if expected_manifest is not None else None
+            _sha256_text(expected_manifest)
+            if expected_manifest is not None
+            else None
         ),
     }
-    _write_text_durable_atomic(
-        spec_dir / _REPORT_CLEANUP_RECEIPT_NAME,
-        json.dumps(
-            receipt,
-            indent=2,
-            sort_keys=True,
-            allow_nan=False,
+    receipt_content = _canonical_cleanup_receipt(receipt)
+    existing = _entry_stat_at(parent_fd, _REPORT_CLEANUP_RECEIPT_NAME)
+    if existing is None:
+        receipt_identity = _write_transaction_text_at(
+            parent_fd,
+            _REPORT_CLEANUP_RECEIPT_NAME,
+            receipt_content,
         )
-        + "\n",
-    )
-    _finish_detached_report_cleanup(spec_dir, receipt=receipt)
-
-
-def _recover_report_transaction(spec_dir: Path) -> None:
-    _retire_detached_report_cleanup(spec_dir)
-    transaction = spec_dir / _REPORT_TRANSACTION_NAME
-    if not os.path.lexists(transaction):
-        return
-    old_contents, new_contents, old_manifest, new_manifest = (
-        _load_report_transaction(spec_dir)
-    )
-    live_manifest = _read_optional_report_text(
-        spec_dir / _REPORT_MANIFEST_NAME
-    )
-    if live_manifest == new_manifest:
-        if all(
-            _read_optional_report_text(spec_dir / name) == content
-            for name, content in new_contents.items()
-        ):
-            _remove_report_transaction(spec_dir, expected_live="new")
-            return
-        raise RetargetMemoryError(
-            "committed replacement memory report set is inconsistent"
+    else:
+        _loaded, persisted, receipt_metadata = _read_cleanup_receipt_at(
+            parent_fd,
+            _REPORT_CLEANUP_RECEIPT_NAME,
         )
-    if live_manifest not in {None, old_manifest}:
-        raise RetargetMemoryError(
-            "replacement memory report transaction postimage is inconsistent"
-        )
-    for name in _REPORT_NAMES:
-        live = _read_optional_report_text(spec_dir / name)
-        if live not in {old_contents[name], new_contents[name]}:
+        if persisted != receipt_content:
             raise RetargetMemoryError(
-                "replacement memory report transaction postimage is inconsistent"
+                "replacement memory cleanup receipt changed"
             )
-    _unlink_report_file(spec_dir / _REPORT_MANIFEST_NAME)
-    for name in _REPORT_NAMES:
-        target = spec_dir / name
-        old_content = old_contents[name]
-        if old_content is None:
-            _unlink_report_file(target)
-        else:
-            _write_text_durable_atomic(target, old_content)
-    if old_manifest is not None:
-        _write_text_durable_atomic(
-            spec_dir / _REPORT_MANIFEST_NAME,
-            old_manifest,
+        receipt_identity = _cleanup_entry_identity(receipt_metadata)
+    _require_open_entry_binding(
+        parent_fd,
+        _REPORT_TRANSACTION_NAME,
+        journal_metadata,
+        label="report journal",
+    )
+    _require_report_parent_binding(
+        spec_dir,
+        parent_fd,
+        parent_identity,
+        boundary="archive",
+    )
+    _retire_report_cleanup_receipt(
+        parent_fd,
+        source_name=_REPORT_TRANSACTION_NAME,
+        receipt=receipt,
+        expected_receipt_identity=receipt_identity,
+    )
+    _require_report_parent_binding(
+        spec_dir,
+        parent_fd,
+        parent_identity,
+        boundary="archive",
+    )
+
+
+def _remove_report_transaction(
+    spec_dir: Path,
+    *,
+    expected_live: str,
+    parent_fd: int | None = None,
+    parent_identity: tuple[int, int, int] | None = None,
+    transaction_fd: int | None = None,
+    transaction: _BoundReportTransaction | None = None,
+) -> None:
+    owns_parent = parent_fd is None
+    owns_transaction = transaction_fd is None
+    if parent_fd is None:
+        parent_fd, parent_identity = _open_report_parent(spec_dir)
+    assert parent_fd is not None and parent_identity is not None
+    if transaction_fd is None:
+        transaction_fd = _open_entry_at(
+            parent_fd,
+            _REPORT_TRANSACTION_NAME,
+            directory=True,
         )
-    _remove_report_transaction(spec_dir, expected_live="old")
+    assert transaction_fd is not None
+    try:
+        if transaction is None:
+            transaction = _load_report_transaction(
+                spec_dir,
+                parent_fd=parent_fd,
+                transaction_fd=transaction_fd,
+                source_name=_REPORT_TRANSACTION_NAME,
+            )
+        _archive_bound_transaction_at(
+            spec_dir,
+            parent_fd,
+            parent_identity,
+            transaction_fd=transaction_fd,
+            transaction=transaction,
+            expected_live=expected_live,
+        )
+    finally:
+        if owns_transaction:
+            os.close(transaction_fd)
+        if owns_parent:
+            os.close(parent_fd)
+
+
+def _recover_report_transaction_at(
+    spec_dir: Path,
+    parent_fd: int,
+    parent_identity: tuple[int, int, int],
+) -> int:
+    completed_count = _retire_active_cleanup_at(
+        spec_dir,
+        parent_fd,
+        parent_identity,
+    )
+    if _entry_stat_at(parent_fd, _REPORT_TRANSACTION_NAME) is None:
+        return completed_count
+    if completed_count >= _MAX_COMPLETED_REPORT_TRANSACTIONS:
+        raise RetargetMemoryError(
+            "replacement memory completed transaction history is full"
+        )
+    transaction_fd = _open_entry_at(
+        parent_fd,
+        _REPORT_TRANSACTION_NAME,
+        directory=True,
+    )
+    try:
+        transaction = _load_report_transaction(
+            spec_dir,
+            parent_fd=parent_fd,
+            transaction_fd=transaction_fd,
+            source_name=_REPORT_TRANSACTION_NAME,
+        )
+        if _live_report_set_matches_at(
+            parent_fd,
+            contents=transaction.new_contents,
+            manifest=transaction.new_manifest,
+        ):
+            _remove_report_transaction(
+                spec_dir,
+                expected_live="new",
+                parent_fd=parent_fd,
+                parent_identity=parent_identity,
+                transaction_fd=transaction_fd,
+                transaction=transaction,
+            )
+            return completed_count + 1
+        if not transaction.records:
+            raise RetargetMemoryError(
+                "replacement memory legacy active journal requires manual recovery"
+            )
+        _require_report_parent_binding(
+            spec_dir,
+            parent_fd,
+            parent_identity,
+            boundary="rollback",
+        )
+        slots_fd = _open_transaction_child(transaction_fd, "slots")
+        try:
+            for name in (
+                _REPORT_MANIFEST_NAME,
+                *_REPORT_NAMES,
+            ):
+                _restore_old_entry_at(
+                    parent_fd,
+                    slots_fd,
+                    name=name,
+                    record=transaction.records[name],
+                )
+        finally:
+            os.close(slots_fd)
+        _require_open_entry_binding(
+            parent_fd,
+            _REPORT_TRANSACTION_NAME,
+            os.fstat(transaction_fd),
+            label="report journal",
+        )
+        _require_report_parent_binding(
+            spec_dir,
+            parent_fd,
+            parent_identity,
+            boundary="rollback",
+        )
+        _remove_report_transaction(
+            spec_dir,
+            expected_live="old",
+            parent_fd=parent_fd,
+            parent_identity=parent_identity,
+            transaction_fd=transaction_fd,
+            transaction=transaction,
+        )
+        return completed_count + 1
+    finally:
+        os.close(transaction_fd)
 
 
 def _publish_report_set(
@@ -1990,49 +2782,122 @@ def _publish_report_set(
     spec_id: str,
     contents: dict[str, str],
 ) -> str:
-    _recover_report_transaction(spec_dir)
-    _preflight_report_set(spec_dir)
-    manifest_content, report_set_digest = _report_manifest(
-        spec_id=spec_id,
-        contents=contents,
-    )
-    if (
-        _read_optional_report_text(spec_dir / _REPORT_MANIFEST_NAME)
-        == manifest_content
-        and all(
-            _read_optional_report_text(spec_dir / name) == content
-            for name, content in contents.items()
-        )
-    ):
-        return report_set_digest
-    _stage_report_transaction(
-        spec_dir,
-        spec_id=spec_id,
-        contents=contents,
-        manifest_content=manifest_content,
-    )
+    parent_fd, parent_identity = _open_report_parent(spec_dir)
     try:
-        _unlink_report_file(spec_dir / _REPORT_MANIFEST_NAME)
-        for name in _REPORT_NAMES:
-            _write_text_durable_atomic(spec_dir / name, contents[name])
-        _write_text_durable_atomic(
-            spec_dir / _REPORT_MANIFEST_NAME,
-            manifest_content,
+        completed_count = _recover_report_transaction_at(
+            spec_dir,
+            parent_fd,
+            parent_identity,
         )
-        if any(
-            _read_optional_report_text(spec_dir / name) != contents[name]
-            for name in _REPORT_NAMES
-        ) or _read_optional_report_text(
-            spec_dir / _REPORT_MANIFEST_NAME
-        ) != manifest_content:
+        staging_names = {
+            name
+            for name in _directory_names_at(parent_fd)
+            if name.startswith(".mempalace-refresh-staging-")
+        }
+        if staging_names:
             raise RetargetMemoryError(
-                "replacement memory report set postimage is inconsistent"
+                "replacement memory unauthenticated staging evidence is present"
             )
-    except (Exception, SystemExit):
-        _recover_report_transaction(spec_dir)
-        raise
-    _remove_report_transaction(spec_dir, expected_live="new")
-    return report_set_digest
+        manifest_content, report_set_digest = _report_manifest(
+            spec_id=spec_id,
+            contents=contents,
+        )
+        if _live_report_set_matches_at(
+            parent_fd,
+            contents=contents,
+            manifest=manifest_content,
+        ):
+            _require_report_parent_binding(
+                spec_dir,
+                parent_fd,
+                parent_identity,
+                boundary="complete",
+            )
+            return report_set_digest
+        if completed_count >= _MAX_COMPLETED_REPORT_TRANSACTIONS:
+            raise RetargetMemoryError(
+                "replacement memory completed transaction history is full"
+            )
+        _stage_report_transaction_at(
+            spec_dir,
+            parent_fd,
+            parent_identity,
+            spec_id=spec_id,
+            contents=contents,
+            manifest_content=manifest_content,
+        )
+        transaction_fd = _open_entry_at(
+            parent_fd,
+            _REPORT_TRANSACTION_NAME,
+            directory=True,
+        )
+        try:
+            transaction = _load_report_transaction(
+                spec_dir,
+                parent_fd=parent_fd,
+                transaction_fd=transaction_fd,
+                source_name=_REPORT_TRANSACTION_NAME,
+            )
+            _require_report_parent_binding(
+                spec_dir,
+                parent_fd,
+                parent_identity,
+                boundary="publish",
+            )
+            slots_fd = _open_transaction_child(transaction_fd, "slots")
+            try:
+                for name in (*_REPORT_NAMES, _REPORT_MANIFEST_NAME):
+                    record = transaction.records[name]
+                    _exchange_report_entry_at(
+                        parent_fd,
+                        slots_fd,
+                        name=name,
+                        old_present=bool(record["old_present"]),
+                        old_identity=(
+                            _strict_identity_record(record["old_identity"])
+                            if record["old_present"]
+                            else None
+                        ),
+                        new_identity=_strict_identity_record(
+                            record["slot_identity"]
+                        ),
+                    )
+            except (Exception, SystemExit):
+                _recover_report_transaction_at(
+                    spec_dir,
+                    parent_fd,
+                    parent_identity,
+                )
+                raise
+            finally:
+                os.close(slots_fd)
+            if not _live_report_set_matches_at(
+                parent_fd,
+                contents=contents,
+                manifest=manifest_content,
+            ):
+                raise RetargetMemoryError(
+                    "replacement memory report set postimage is inconsistent"
+                )
+            _remove_report_transaction(
+                spec_dir,
+                expected_live="new",
+                parent_fd=parent_fd,
+                parent_identity=parent_identity,
+                transaction_fd=transaction_fd,
+                transaction=transaction,
+            )
+        finally:
+            os.close(transaction_fd)
+        _require_report_parent_binding(
+            spec_dir,
+            parent_fd,
+            parent_identity,
+            boundary="complete",
+        )
+        return report_set_digest
+    finally:
+        os.close(parent_fd)
 
 
 def refresh_retarget_spec_memory(
