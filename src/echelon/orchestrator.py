@@ -1,6 +1,7 @@
 """Multi-target orchestrator for target-scoped workspace delivery."""
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -9,7 +10,7 @@ import threading
 from pathlib import Path
 from typing import List, Mapping, Optional
 
-from harness.spec_frontmatter import find_spec_dir
+from harness.spec_frontmatter import find_spec_dir, read_canonical_target_entries
 from harness.task_targets import analyze_task_targets
 from kernel.task_contract import parse_task_rows
 
@@ -111,6 +112,19 @@ def run_multi_target(
         return source_ids.get(str(target_resolved), target.name)
 
     declared_targets = [_implementation_target(target) for target in targets]
+    target_contracts: list[dict[str, object]] = []
+    if resolved_workspace_root is not None:
+        contract_spec_dir = find_spec_dir(spec_id, resolved_workspace_root)
+        if contract_spec_dir is not None:
+            target_contracts = [
+                dict(entry)
+                for entry in read_canonical_target_entries(contract_spec_dir)
+            ]
+    contract_by_path = {
+        str(entry.get("path") or ""): entry
+        for entry in target_contracts
+        if str(entry.get("path") or "")
+    }
 
     results: dict[str, int] = {}
     lock = threading.Lock()
@@ -144,6 +158,18 @@ def run_multi_target(
         env["ECHELON_SOURCE_GIT_ROLE"] = source_git_role
         env["ECHELON_IMPLEMENTATION_TARGET"] = _implementation_target(target)
         env["ECHELON_DECLARED_TARGETS"] = ",".join(declared_targets)
+        expected_contract = contract_by_path.get(env["ECHELON_IMPLEMENTATION_TARGET"])
+        if expected_contract is not None:
+            env["ECHELON_TARGET_CONTRACT_JSON"] = json.dumps(
+                expected_contract,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            env["ECHELON_TARGETS_CONTRACT_JSON"] = json.dumps(
+                target_contracts,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
         target_task_ids = task_ids_by_target.get(target_key)
         if target_task_ids:
             env["ECHELON_TARGET_TASK_IDS"] = ",".join(target_task_ids)

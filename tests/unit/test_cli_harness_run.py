@@ -774,6 +774,20 @@ class TestHarnessTargetPreflight:
         monkeypatch.setenv("ECHELON_POLYREPO_ROOT", str(root))
         monkeypatch.setenv("ECHELON_TARGET_REPO_PATH", str(target))
         monkeypatch.setenv("ECHELON_TARGET_REPO_NAME", "api")
+        monkeypatch.setenv("ECHELON_SOURCE_ROOT", str(target))
+        monkeypatch.setenv("ECHELON_IMPLEMENTATION_TARGET", "sources/api")
+        monkeypatch.setenv("ECHELON_DECLARED_TARGETS", "sources/api")
+        from harness.spec_frontmatter import read_target_entries
+
+        inherited_entries = read_target_entries(spec_dir)
+        monkeypatch.setenv(
+            "ECHELON_TARGET_CONTRACT_JSON",
+            json.dumps(inherited_entries[0], sort_keys=True),
+        )
+        monkeypatch.setenv(
+            "ECHELON_TARGETS_CONTRACT_JSON",
+            json.dumps(inherited_entries, sort_keys=True),
+        )
         monkeypatch.setattr("echelon.cli._sync_polyrepo_runtime_extension", lambda *_: None)
         monkeypatch.setattr(
             "echelon.cli._apply_target_verify_command_detection",
@@ -806,6 +820,114 @@ class TestHarnessTargetPreflight:
 
         assert len(observed) == 1
         assert not list((root / "runs").glob("build-*"))
+
+    @pytest.mark.parametrize(
+        "replacement_contract",
+        [
+            "schema_version: 1\ntargets: []\n",
+            (
+                "schema_version: 1\ntargets:\n"
+                "  - id: api\n"
+                "    path: sources/api\n"
+                "    role: primary\n"
+                "    branch: replacement-branch\n"
+            ),
+        ],
+        ids=("removed", "same-name-changed-branch"),
+    )
+    def test_target_child_rejects_stale_inherited_target_contract_before_preparing(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+        replacement_contract: str,
+    ) -> None:
+        root = tmp_path
+        target = root / "sources" / "api"
+        (target / ".git").mkdir(parents=True)
+        (target / "package.json").write_text("{}\n", encoding="utf-8")
+        spec_dir = root / "specs" / "001-feature"
+        _write_phase_a_build_inputs(spec_dir)
+        (spec_dir / "spec.md").write_text(
+            "---\ntargets:\n  - sources/api\n---\n# Feature\n",
+            encoding="utf-8",
+        )
+        original_contract = (
+            "schema_version: 1\ntargets:\n"
+            "  - id: api\n"
+            "    path: sources/api\n"
+            "    role: primary\n"
+            "    branch: 001-feature\n"
+        )
+        (spec_dir / "targets.yml").write_text(original_contract, encoding="utf-8")
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=foundation req=INFRA "
+            "depends=none target=sources/api\n",
+            encoding="utf-8",
+        )
+        config_file = root / ".echelon" / "config.yml"
+        config_file.parent.mkdir(parents=True)
+        config_file.write_text("harness:\n  target_repo: sources/api\n", encoding="utf-8")
+        harness_base = root / "runs" / "targets" / "api"
+        mirror = harness_base / "runs" / "mirror.git"
+        mirror.mkdir(parents=True)
+
+        from harness.spec_frontmatter import read_target_entries
+        from echelon.spec_lifecycle import SpecMutationLock
+
+        inherited_entries = read_target_entries(spec_dir)
+        monkeypatch.chdir(target)
+        monkeypatch.setenv("ECHELON_POLYREPO_ROOT", str(root))
+        monkeypatch.setenv("ECHELON_TARGET_REPO_PATH", str(target))
+        monkeypatch.setenv("ECHELON_TARGET_REPO_NAME", "api")
+        monkeypatch.setenv("ECHELON_SOURCE_ID", "api")
+        monkeypatch.setenv("ECHELON_IMPLEMENTATION_TARGET", "sources/api")
+        monkeypatch.setenv("ECHELON_DECLARED_TARGETS", "sources/api")
+        monkeypatch.setenv(
+            "ECHELON_TARGET_CONTRACT_JSON",
+            json.dumps(inherited_entries[0], sort_keys=True),
+        )
+        monkeypatch.setenv(
+            "ECHELON_TARGETS_CONTRACT_JSON",
+            json.dumps(inherited_entries, sort_keys=True),
+        )
+        monkeypatch.setattr("echelon.cli._sync_polyrepo_runtime_extension", lambda *_: None)
+        monkeypatch.setattr(
+            "echelon.cli._apply_target_verify_command_detection",
+            lambda *_args, **_kwargs: None,
+        )
+
+        original_acquire = SpecMutationLock.acquire.__func__
+
+        def replace_contract_before_acquire(cls, project_root, spec_id, operation_id):
+            (spec_dir / "targets.yml").write_text(
+                replacement_contract,
+                encoding="utf-8",
+            )
+            return original_acquire(cls, project_root, spec_id, operation_id)
+
+        monkeypatch.setattr(
+            SpecMutationLock,
+            "acquire",
+            classmethod(replace_contract_before_acquire),
+        )
+
+        with patch("harness.config.load_config") as mock_cfg, \
+             patch("harness.paths.mirror_path", return_value=mirror), \
+             patch("harness.gitops.GitOpsManager"), \
+             patch("harness.docker_provider.DockerWorktreeProvider"), \
+             patch("harness.skills.run_skill.run") as mock_run:
+            mock_cfg.return_value = MagicMock(
+                buffer_limit_bytes=1024 * 1024,
+                target_repo=str(target),
+            )
+            from echelon.cli import _cmd_harness_run
+
+            with pytest.raises(SystemExit) as exc:
+                _cmd_harness_run(["001"])
+
+        assert exc.value.code == 1
+        mock_run.assert_not_called()
+        assert not list((harness_base / "runs").glob("build-*"))
 
     def test_delivery_without_declared_target_stops_before_source_detection(
         self,

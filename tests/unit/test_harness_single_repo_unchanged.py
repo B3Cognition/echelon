@@ -5,6 +5,7 @@ Verifies that when a spec has no targets, the single-repo path is taken
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -188,6 +189,14 @@ class TestSingleRepoPathUnchanged:
         monkeypatch.setenv("ECHELON_POLYREPO_ROOT", str(polyrepo))
         monkeypatch.setenv("ECHELON_TARGET_REPO_PATH", str(target))
         monkeypatch.setenv("ECHELON_TARGET_REPO_NAME", "repo-a")
+        monkeypatch.setenv("ECHELON_SOURCE_ROOT", str(target))
+        monkeypatch.setenv("ECHELON_IMPLEMENTATION_TARGET", "repo-a")
+        monkeypatch.setenv("ECHELON_DECLARED_TARGETS", "repo-a")
+        from harness.spec_frontmatter import read_target_entries
+
+        entries = read_target_entries(spec_dir)
+        monkeypatch.setenv("ECHELON_TARGET_CONTRACT_JSON", json.dumps(entries[0]))
+        monkeypatch.setenv("ECHELON_TARGETS_CONTRACT_JSON", json.dumps(entries))
 
         import os
 
@@ -255,6 +264,14 @@ class TestSingleRepoPathUnchanged:
         monkeypatch.setenv("ECHELON_POLYREPO_ROOT", str(polyrepo))
         monkeypatch.setenv("ECHELON_TARGET_REPO_PATH", str(target))
         monkeypatch.setenv("ECHELON_TARGET_REPO_NAME", "prosaic")
+        monkeypatch.setenv("ECHELON_SOURCE_ROOT", str(target))
+        monkeypatch.setenv("ECHELON_IMPLEMENTATION_TARGET", "sources/prosaic")
+        monkeypatch.setenv("ECHELON_DECLARED_TARGETS", "sources/prosaic")
+        from harness.spec_frontmatter import read_target_entries
+
+        entries = read_target_entries(spec_dir)
+        monkeypatch.setenv("ECHELON_TARGET_CONTRACT_JSON", json.dumps(entries[0]))
+        monkeypatch.setenv("ECHELON_TARGETS_CONTRACT_JSON", json.dumps(entries))
 
         import os
 

@@ -1,6 +1,7 @@
 """Unit tests for echelon.orchestrator — validate_targets and run_multi_target."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -147,6 +148,12 @@ class TestRunMultiTarget:
             "- [ ] T-002 complexity=standard phase=verify req=FR-002 depends=T-001 target=r\n",
             encoding="utf-8",
         )
+        (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+        (spec_dir / "targets.yml").write_text(
+            "schema_version: 1\ntargets:\n"
+            "  - id: r\n    path: r\n    role: primary\n    branch: '024'\n",
+            encoding="utf-8",
+        )
         captured: dict = {}
 
         def fake_popen(cmd, cwd, stdout, stderr, text, env=None):
@@ -169,6 +176,15 @@ class TestRunMultiTarget:
         assert captured["env"]["ECHELON_SOURCE_ROOT"] == str(target.resolve())
         assert captured["env"]["ECHELON_SOURCE_ID"] == "r"
         assert captured["env"]["ECHELON_TARGET_TASK_IDS"] == "T-001,T-002"
+        assert json.loads(captured["env"]["ECHELON_TARGET_CONTRACT_JSON"]) == {
+            "branch": "024",
+            "id": "r",
+            "path": "r",
+            "role": "primary",
+        }
+        assert json.loads(captured["env"]["ECHELON_TARGETS_CONTRACT_JSON"]) == [
+            {"branch": "024", "id": "r", "path": "r", "role": "primary"}
+        ]
 
     def test_multi_target_delivery_is_dependency_ordered_and_task_scoped(
         self,

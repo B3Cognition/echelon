@@ -1844,6 +1844,77 @@ def _write_delivery_preparation_state(
     _fsync_directory(state_path.parent.parent.parent)
 
 
+def _validate_locked_target_child_contract(
+    *,
+    project_root: Path,
+    spec_dir: Path,
+) -> None:
+    """Fail closed when an orchestrated child's inherited target is stale."""
+    target_env = os.environ.get("ECHELON_TARGET_REPO_PATH")
+    if not target_env:
+        return
+
+    from harness.spec_frontmatter import read_canonical_target_entries
+
+    expected_target_text = os.environ.get("ECHELON_TARGET_CONTRACT_JSON", "")
+    expected_targets_text = os.environ.get("ECHELON_TARGETS_CONTRACT_JSON", "")
+    try:
+        expected_target = json.loads(expected_target_text)
+        expected_targets = json.loads(expected_targets_text)
+    except json.JSONDecodeError:
+        expected_target = None
+        expected_targets = None
+    if not isinstance(expected_target, dict) or not isinstance(expected_targets, list):
+        print(
+            "✗ Target-child delivery is missing its inherited canonical target contract.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+    canonical_targets = [
+        dict(entry)
+        for entry in read_canonical_target_entries(spec_dir)
+    ]
+    if canonical_targets != expected_targets or expected_target not in canonical_targets:
+        print(
+            "✗ Target-child delivery contract is stale; the canonical spec targets "
+            "changed after dispatch. Restart delivery from the workspace root.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+    implementation_target = os.environ.get("ECHELON_IMPLEMENTATION_TARGET", "")
+    declared_targets = [
+        value
+        for value in os.environ.get("ECHELON_DECLARED_TARGETS", "").split(",")
+        if value
+    ]
+    canonical_paths = [str(entry.get("path") or "") for entry in canonical_targets]
+    if (
+        implementation_target != str(expected_target.get("path") or "")
+        or declared_targets != canonical_paths
+    ):
+        print(
+            "✗ Target-child delivery metadata no longer matches the canonical target set.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+    expected_path = (
+        project_root
+        if implementation_target == "."
+        else project_root / implementation_target
+    ).resolve()
+    inherited_path = Path(target_env).resolve()
+    source_root = Path(os.environ.get("ECHELON_SOURCE_ROOT") or target_env).resolve()
+    if inherited_path != expected_path or source_root != expected_path:
+        print(
+            "✗ Target-child repository path no longer matches the canonical target contract.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+
 def _prepare_delivery_build_state(
     *,
     project_root: Path,
@@ -1863,6 +1934,10 @@ def _prepare_delivery_build_state(
     try:
         with SpecMutationLock.acquire(project_root, spec_id, operation_id):
             with PhaseAExecutionLock.acquire(project_root, operation_id):
+                _validate_locked_target_child_contract(
+                    project_root=project_root,
+                    spec_dir=spec_dir,
+                )
                 _block_if_harness_phase_a_not_ready(spec_dir, spec_id)
                 build_id = make_build_id()
                 _write_delivery_preparation_state(

@@ -103,6 +103,13 @@ def read_target_entries(spec_dir: Path) -> List[Dict[str, Any]]:
     return fallback_entries
 
 
+def read_canonical_target_entries(spec_dir: Path) -> List[Dict[str, Any]]:
+    """Read targets.yml authoritatively, using frontmatter only when it is absent."""
+    if (spec_dir / TARGETS_FILENAME).exists():
+        return _read_targets_file_entries(spec_dir)
+    return read_target_entries(spec_dir)
+
+
 def read_targets(spec_dir: Path) -> List[str]:
     """Read target paths from canonical targets.yml, falling back to spec.md frontmatter."""
     return [str(entry["path"]) for entry in read_target_entries(spec_dir)]
