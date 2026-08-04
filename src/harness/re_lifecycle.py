@@ -315,6 +315,36 @@ class ReLifecycleController:
         except (OSError, RuntimeError) as exc:
             raise ReLifecycleError(f"cannot resolve source root {path}: {exc}") from exc
 
+    def _validate_forced_target_invocation(
+        self,
+        run_dir: Path,
+        state: dict,
+    ) -> None:
+        if state.get("force_selected_refresh") is not True:
+            return
+        source_id = state.get("target_source")
+        if not isinstance(source_id, str) or not source_id:
+            self._raise_incompatible_active_refresh(run_dir, "the selected source")
+        try:
+            manifest = discover_workspace(self._project_root)
+            target = resolve_re_target_source(manifest.sources, source_id)
+        except (OSError, ValueError) as exc:
+            raise ReLifecycleError(
+                f"cannot authenticate active targeted RE run {run_dir.name}: {exc}"
+            ) from exc
+        if target is None:  # pragma: no cover - source_id is non-empty above.
+            self._raise_incompatible_active_refresh(run_dir, source_id)
+        self._validate_target_root_isolation(manifest, source_id)
+        if not self._source_root(target.path).exists():
+            raise ReLifecycleError(f"selected source {source_id} is unavailable")
+        self._validate_active_target(
+            run_dir,
+            state,
+            manifest,
+            source_id,
+            require_forced=True,
+        )
+
     def continue_run(self, re_max_inner: int | None = None) -> ReLifecycleResult:
         if re_max_inner is not None and re_max_inner < 1:
             raise ReLifecycleError("--re-max-inner requires a positive integer")
@@ -356,6 +386,7 @@ class ReLifecycleController:
         if run_dir is None:
             raise ReLifecycleError("no active RE run; start one with echelon re run")
         state = self._load_state(run_dir)
+        self._validate_forced_target_invocation(run_dir, state)
         ensure_blocked_decision(state)
         decision = state.get("blocked_decision")
         if not isinstance(decision, dict) or decision.get("status") != "pending":
@@ -414,6 +445,8 @@ class ReLifecycleController:
         *,
         re_max_inner: int | None,
     ) -> ReLifecycleResult:
+        state = self._load_state(run_dir)
+        self._validate_forced_target_invocation(run_dir, state)
         if not isinstance(state.get("re_execution_profile"), dict):
             re_state = self._load_json(run_dir / "re" / "state.json")
             execution_profile = migrate_legacy_re_profile(re_state).to_json_dict()

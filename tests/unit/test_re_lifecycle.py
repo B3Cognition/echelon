@@ -678,6 +678,156 @@ def test_continue_completed_run_does_not_publish_or_repeat_extraction(
     assert extraction_calls == [True]
 
 
+def _blocked_forced_target_run_that_becomes_overlapping(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    pending_decision: bool,
+) -> tuple[ReLifecycleController, Path, list[bool], list[bool]]:
+    for source_id in ("api", "web"):
+        source = tmp_path / f"sources/{source_id}"
+        source.mkdir(parents=True)
+        (source / "app.py").write_text("pass\n", encoding="utf-8")
+    manifest = WorkspaceManifest(
+        schema_version=1,
+        workspace=WorkspaceInfo(root=tmp_path, git_role="orchestration", git_present=False),
+        sources=tuple(
+            SourceRoot(
+                id=source_id,
+                path=f"sources/{source_id}",
+                git_present=False,
+                project_markers=(),
+                source_file_count=1,
+            )
+            for source_id in ("api", "web")
+        ),
+    )
+    profile = ReFingerprintProfile()
+    published_source = SimpleNamespace(
+        fingerprint="1" * 64,
+        profile_hash=profile.profile_hash(),
+        source_path="sources/web",
+    )
+    published = SimpleNamespace(generation=4, sources={"web": published_source})
+    monkeypatch.setattr("harness.re_lifecycle.discover_workspace", lambda root: manifest)
+    monkeypatch.setattr(
+        "harness.re_lifecycle.resolve_re_fingerprint_profile", lambda root: profile
+    )
+    monkeypatch.setattr("harness.re_lifecycle.load_published_index", lambda root: published)
+    monkeypatch.setattr(
+        "harness.re_planner.published_source_is_usable", lambda *args, **kwargs: True
+    )
+    monkeypatch.setattr(
+        "harness.re_planner.published_source_is_current", lambda *args, **kwargs: False
+    )
+    plan = build_re_execution_plan(
+        project_root=tmp_path,
+        manifest=manifest,
+        target_source="api",
+        requested_policy="target-only",
+        profile=profile,
+        published_index=published,
+        force_selected_refresh=True,
+    )
+    run_dir = tmp_path / "runs/re-blocked"
+    re_dir = run_dir / "re"
+    re_dir.mkdir(parents=True)
+    (tmp_path / "runs/.current-re").write_text("re-blocked\n", encoding="utf-8")
+    decision = {
+        "status": "pending" if pending_decision else "resolved",
+        "question": "Continue?",
+        "options": [{"id": "continue", "label": "Continue"}],
+        "blocked_phase": "re-extract-2-specify",
+    }
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "run_id": "re-blocked",
+                "run_kind": "re",
+                "status": "blocked",
+                "phase": "re-extract-2-specify",
+                "re_policy": "target-only",
+                "target_source": "api",
+                "force_selected_refresh": True,
+                "expected_generation": 4,
+                "extraction_complete": False,
+                "blocked_decision": decision,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (re_dir / "state.json").write_text(
+        json.dumps({"phase": "re-extract-2-specify"}), encoding="utf-8"
+    )
+    (re_dir / "re-execution-plan.json").write_text(
+        json.dumps(plan.to_json_dict()), encoding="utf-8"
+    )
+
+    provider_calls: list[bool] = []
+    analyzer_calls: list[bool] = []
+
+    class ForbiddenExtractionController:
+        def __init__(self, **kwargs: object) -> None:
+            analyzer_calls.append(True)
+
+        def run(self) -> object:
+            pytest.fail("overlapping targeted run reached extraction")
+
+    monkeypatch.setattr(
+        "harness.re_lifecycle.ReExtractionController", ForbiddenExtractionController
+    )
+    controller = ReLifecycleController(
+        project_root=tmp_path,
+        extension_root=tmp_path / "extension",
+        provider_factory=lambda: provider_calls.append(True),
+    )
+
+    api = tmp_path / "sources/api"
+    (api / "app.py").unlink()
+    api.rmdir()
+    api.symlink_to(tmp_path / "sources/web", target_is_directory=True)
+    return controller, run_dir, provider_calls, analyzer_calls
+
+
+@pytest.mark.unit
+def test_continue_revalidates_forced_target_root_isolation_before_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller, _run_dir, provider_calls, analyzer_calls = (
+        _blocked_forced_target_run_that_becomes_overlapping(
+            tmp_path, monkeypatch, pending_decision=False
+        )
+    )
+
+    with pytest.raises(ReLifecycleError, match="overlapping source roots.*api.*web"):
+        controller.continue_run()
+
+    assert provider_calls == []
+    assert analyzer_calls == []
+
+
+@pytest.mark.unit
+def test_resume_revalidates_forced_target_root_isolation_before_state_or_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller, run_dir, provider_calls, analyzer_calls = (
+        _blocked_forced_target_run_that_becomes_overlapping(
+            tmp_path, monkeypatch, pending_decision=True
+        )
+    )
+
+    with pytest.raises(ReLifecycleError, match="overlapping source roots.*api.*web"):
+        controller.resume("continue")
+
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["status"] == "blocked"
+    assert state["blocked_decision"]["status"] == "pending"
+    assert provider_calls == []
+    assert analyzer_calls == []
+
+
 @pytest.mark.unit
 def test_resume_rejects_run_without_typed_question(tmp_path: Path) -> None:
     run_dir = tmp_path / "runs/re-1"
