@@ -503,7 +503,10 @@ def test_impact_is_cycle_safe_and_marks_budget_truncation_only_for_omitted_edges
     root_id = next(symbol.id for symbol in loaded.symbols if symbol.qualified_name == "api.0")
     exact_budget = topology.impact(None, root_id, 10, frozenset({"CALLS"}))
 
-    assert [step.node_id for step in cycle_result.steps] == [cycle_loaded.symbols[0].id]
+    assert [step.node_id for step in cycle_result.steps] == [
+        cycle_loaded.symbols[0].id,
+        cycle_loaded.symbols[1].id,
+    ]
     assert cycle_result.truncated is False
     assert len(exact_budget.steps) == 50
     assert exact_budget.truncated is False
@@ -651,3 +654,78 @@ def test_cross_source_search_receipt_covers_all_queried_sources_and_fingerprints
     assert dict(result.receipt.source_fingerprints) == {
         "api": "fingerprint-api", "worker": "fingerprint-worker",
     }
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(("call_sites", "truncated"), ((50, False), (51, True)))
+def test_impact_accounts_for_repeated_perl_call_site_observations(
+    call_sites: int, truncated: bool
+) -> None:
+    from echelon.topology_provider import PublishedTopology, load_provider_document
+
+    caller = _symbol("lib/API.pm", "API::caller")
+    callee = _symbol("lib/API.pm", "API::callee")
+    relationships = [
+        {
+            "kind": "calls",
+            "source_key": caller["symbol_key"],
+            "target_key": callee["symbol_key"],
+            "file_path": "lib/API.pm",
+            "line_start": line,
+        }
+        for line in range(1, call_sites + 1)
+    ]
+    loaded = load_provider_document(
+        _perlgraph(status="ready", symbols=[caller, callee], relationships=relationships),
+        provider="perlgraph",
+        source_id="api",
+    )
+    topology = PublishedTopology.from_loaded_providers([loaded], generation=1)
+    callee_id = next(symbol.id for symbol in loaded.symbols if symbol.qualified_name == "API::callee")
+
+    result = topology.impact(None, callee_id, 3, frozenset({"CALLS"}))
+
+    assert len(result.steps) == min(call_sites, 50)
+    assert [step.relationship.line_start for step in result.steps] == list(
+        range(1, min(call_sites, 50) + 1)
+    )
+    assert result.truncated is truncated
+
+
+@pytest.mark.unit
+def test_impact_counts_cycle_observations_once_and_deduplicates_both_direction_other() -> None:
+    from echelon.topology_provider import PublishedTopology, load_provider_document
+
+    first = _symbol("src/first.py", "api.first")
+    second = _symbol("src/second.py", "api.second")
+    document = _codegraph(
+        symbols=[first, second],
+        relationships=[
+            {"kind": "calls", "source_key": first["symbol_key"], "target_key": second["symbol_key"], "file_path": "src/first.py", "line_start": 1},
+            {"kind": "calls", "source_key": second["symbol_key"], "target_key": first["symbol_key"], "file_path": "src/second.py", "line_start": 2},
+            {"kind": "unrecognized", "source_key": first["symbol_key"], "target_key": second["symbol_key"], "file_path": "src/first.py", "line_start": 3},
+        ],
+    )
+    loaded = load_provider_document(document, provider="codegraph", source_id="api")
+    topology = PublishedTopology.from_loaded_providers([loaded], generation=1)
+    second_id = next(symbol.id for symbol in loaded.symbols if symbol.qualified_name == "api.second")
+    first_id = next(symbol.id for symbol in loaded.symbols if symbol.qualified_name == "api.first")
+
+    cycle = topology.impact(None, second_id, 5, frozenset({"CALLS"}))
+    other = topology.impact(None, first_id, 5, frozenset({"OTHER"}))
+
+    assert [step.relationship.line_start for step in cycle.steps] == [1, 2]
+    assert len(other.steps) == 1
+    assert other.steps[0].relationship.type == "OTHER"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("unc_name", ("\\\\server\\share\\secret", "//server/share/secret"))
+def test_provider_rejects_unc_symbol_names_before_they_become_searchable(unc_name: str) -> None:
+    from echelon.topology_provider import TopologyProviderError, load_provider_document
+
+    document = _codegraph()
+    document["symbols"][0]["name"] = unc_name  # type: ignore[index]
+
+    with pytest.raises(TopologyProviderError):
+        load_provider_document(document, provider="codegraph", source_id="api")

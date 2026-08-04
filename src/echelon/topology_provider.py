@@ -470,22 +470,27 @@ class PublishedTopology:
             relation_filter = frozenset(RELATIONSHIP_TYPES - {"OTHER"})
         queue: deque[tuple[str, int]] = deque([(selected_id, 0)])
         visited = {selected_id}
+        seen_relationships: set[RelationshipIdentity] = set()
         steps: list[TopologyTraversalStep] = []
         truncated = False
         while queue:
             current, depth = queue.popleft()
             adjacent = self._impact_adjacent(current, relation_filter)
             if depth >= max_depth:
-                if any(step.node_id not in visited for step in adjacent):
+                if any(
+                    _relationship_identity(step.relationship) not in seen_relationships
+                    for step in adjacent
+                ):
                     truncated = True
                 continue
             for step in adjacent:
-                if step.node_id in visited:
+                relationship_identity = _relationship_identity(step.relationship)
+                if relationship_identity in seen_relationships:
                     continue
                 if len(steps) >= DEFAULT_LIMIT:
                     truncated = True
                     break
-                visited.add(step.node_id)
+                seen_relationships.add(relationship_identity)
                 observed = TopologyTraversalStep(
                     relationship=step.relationship,
                     direction=step.direction,
@@ -493,7 +498,9 @@ class PublishedTopology:
                     depth=depth + 1,
                 )
                 steps.append(observed)
-                queue.append((step.node_id, depth + 1))
+                if step.node_id not in visited:
+                    visited.add(step.node_id)
+                    queue.append((step.node_id, depth + 1))
             if truncated:
                 break
         involved_sources = {_node_source_id(self.nodes_by_id[node_id]) for node_id in visited}

@@ -111,3 +111,41 @@ def test_receipt_rejects_noncanonical_generation(generation: object) -> None:
 
     with pytest.raises(TopologyValidationError):
         TopologyReceipt(generation=generation, source_id="api")  # type: ignore[arg-type]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "value",
+    ("\\\\server\\share\\private", "//server/share/private"),
+)
+def test_exposed_model_text_rejects_unc_host_paths(value: str) -> None:
+    from echelon.topology_model import (
+        TopologyDiagnostic,
+        TopologySymbol,
+        TopologyValidationError,
+        canonical_symbol_key,
+    )
+
+    with pytest.raises(TopologyValidationError):
+        TopologySymbol(
+            source_id="api",
+            provider="codegraph",
+            symbol_key=canonical_symbol_key("src/api.py", "api.run", "function", ""),
+            path="src/api.py",
+            qualified_name="api.run",
+            kind="function",
+            name=value,
+        )
+    with pytest.raises(TopologyValidationError):
+        TopologyDiagnostic(provider="perlgraph", provider_kind="calls", notes=value)
+
+    accepted = TopologySymbol(
+        source_id="api",
+        provider="codegraph",
+        symbol_key=canonical_symbol_key("src/api.py", "api.run", "function", ""),
+        path="src/api.py",
+        qualified_name="api.run",
+        kind="function",
+        name="api/run",
+    )
+    assert accepted.name == "api/run"

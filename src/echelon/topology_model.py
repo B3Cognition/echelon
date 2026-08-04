@@ -421,5 +421,9 @@ def _validate_source_fingerprint(value: str) -> str:
 def _reject_absolute_host_path(value: str, label: str) -> None:
     if not isinstance(value, str):
         raise TopologyValidationError(f"{label} must be a string")
-    if value.startswith("/") or re.match(r"^[A-Za-z]:[\\/]", value):
+    if (
+        value.startswith("/")
+        or value.startswith("\\\\")
+        or re.match(r"^[A-Za-z]:[\\/]", value)
+    ):
         raise TopologyValidationError(f"{label} must not expose an absolute host path")
