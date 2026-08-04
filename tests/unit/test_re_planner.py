@@ -419,6 +419,33 @@ def test_refresh_all_still_refreshes_every_current_source(tmp_path: Path) -> Non
     assert [source.action for source in plan.sources] == ["refresh", "refresh"]
 
 
+def test_no_reuse_reconstructs_declared_sources_and_keeps_removed_source_reconciliation(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "workspace"
+    _write_source(root, "api")
+    _write_source(root, "removed")
+    profile = ReFingerprintProfile()
+    _publish_source(root, "api", profile)
+    _publish_source(root, "removed", profile)
+
+    plan = build_re_execution_plan(
+        project_root=root,
+        manifest=_manifest(root, "api"),
+        target_source="",
+        requested_policy="changed",
+        profile=profile,
+        published_index=load_published_index(root),
+        reuse_published=False,
+    )
+
+    assert plan.sources[0].action == "refresh"
+    assert plan.removed_sources == ("removed",)
+    assert plan.analysis_required is True
+    assert plan.workspace_synthesis_required is True
+    assert plan.publication_required is True
+
+
 def test_re_execution_plan_round_trips_exact_profile_and_fingerprints(tmp_path: Path) -> None:
     root = tmp_path / "workspace"
     _write_source(root, "api")

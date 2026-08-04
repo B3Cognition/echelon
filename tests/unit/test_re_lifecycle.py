@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -12,7 +14,7 @@ from harness.re_lifecycle import (
     ReLifecycleError,
     resolve_current_re_run,
 )
-from harness.re_planner import ReExecutionPlan
+from harness.re_planner import ReExecutionPlan, build_re_execution_plan
 from harness.re_publication import RePublicationError, RePublicationResult
 
 
@@ -174,6 +176,45 @@ def test_changed_current_publication_does_not_blanket_refresh_reusable_sources(
 
 
 @pytest.mark.unit
+def test_no_reuse_keeps_published_index_available_to_planner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile = ReFingerprintProfile()
+    published = SimpleNamespace(generation=7, sources={"removed": object()})
+    observed: dict[str, object] = {}
+    monkeypatch.setattr("harness.re_lifecycle.discover_workspace", _empty_manifest)
+    monkeypatch.setattr(
+        "harness.re_lifecycle.resolve_re_fingerprint_profile", lambda root: profile
+    )
+    monkeypatch.setattr(
+        "harness.re_lifecycle.load_published_index", lambda root: published
+    )
+
+    def build_plan(**kwargs: object) -> ReExecutionPlan:
+        observed.update(kwargs)
+        return ReExecutionPlan(
+            policy="changed",
+            requested_policy="changed",
+            target_source="",
+            sources=(),
+            forbidden_source_roots=[],
+            profile=profile,
+        )
+
+    monkeypatch.setattr("harness.re_lifecycle.build_re_execution_plan", build_plan)
+
+    ReLifecycleController(
+        project_root=tmp_path,
+        extension_root=tmp_path / "extension",
+        provider_factory=object,
+    ).run(policy="changed", reuse_published=False)
+
+    assert observed["published_index"] is published
+    assert observed["reuse_published"] is False
+
+
+@pytest.mark.unit
 def test_targeted_run_passes_selected_force_semantics_to_planner(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -256,6 +297,217 @@ def test_targeted_run_rejects_disappeared_declared_source_before_run_creation(
         )
 
     assert not (tmp_path / "runs").exists()
+
+
+@pytest.mark.unit
+def test_targeted_run_rejects_overlapping_target_and_sibling_before_planning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sibling = tmp_path / "sources/web"
+    sibling.mkdir(parents=True)
+    manifest = WorkspaceManifest(
+        schema_version=1,
+        workspace=WorkspaceInfo(root=tmp_path, git_role="orchestration", git_present=False),
+        sources=(
+            SourceRoot(
+                id="workspace",
+                path=".",
+                git_present=False,
+                project_markers=(),
+                source_file_count=1,
+            ),
+            SourceRoot(
+                id="web",
+                path="sources/web",
+                git_present=False,
+                project_markers=(),
+                source_file_count=1,
+            ),
+        ),
+    )
+    monkeypatch.setattr("harness.re_lifecycle.discover_workspace", lambda root: manifest)
+    monkeypatch.setattr(
+        "harness.re_lifecycle.build_re_execution_plan",
+        lambda **kwargs: pytest.fail("overlap must be rejected before planning"),
+    )
+    provider_calls: list[bool] = []
+
+    controller = ReLifecycleController(
+        project_root=tmp_path,
+        extension_root=tmp_path / "extension",
+        provider_factory=lambda: provider_calls.append(True),
+    )
+
+    with pytest.raises(ReLifecycleError, match="overlapping source roots.*workspace.*web"):
+        controller.run(
+            policy="target-only",
+            target_source="workspace",
+            force_selected_refresh=True,
+        )
+
+    assert provider_calls == []
+    assert not (tmp_path / "runs").exists()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("persisted_force", "exclude_sibling"),
+    ((False, False), (True, True)),
+)
+def test_targeted_run_rejects_active_plan_that_is_not_forced_equivalent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    persisted_force: bool,
+    exclude_sibling: bool,
+) -> None:
+    for source_id in ("api", "web"):
+        source = tmp_path / f"sources/{source_id}"
+        source.mkdir(parents=True)
+        (source / "app.py").write_text("pass\n", encoding="utf-8")
+    manifest = WorkspaceManifest(
+        schema_version=1,
+        workspace=WorkspaceInfo(root=tmp_path, git_role="orchestration", git_present=False),
+        sources=tuple(
+            SourceRoot(
+                id=source_id,
+                path=f"sources/{source_id}",
+                git_present=False,
+                project_markers=(),
+                source_file_count=1,
+            )
+            for source_id in ("api", "web")
+        ),
+    )
+    profile = ReFingerprintProfile()
+    published_source = SimpleNamespace(
+        fingerprint="1" * 64,
+        profile_hash=profile.profile_hash(),
+        source_path="sources/web",
+    )
+    published = SimpleNamespace(generation=4, sources={"web": published_source})
+    monkeypatch.setattr("harness.re_lifecycle.discover_workspace", lambda root: manifest)
+    monkeypatch.setattr(
+        "harness.re_lifecycle.resolve_re_fingerprint_profile", lambda root: profile
+    )
+    monkeypatch.setattr("harness.re_lifecycle.load_published_index", lambda root: published)
+    monkeypatch.setattr(
+        "harness.re_planner.published_source_is_current", lambda *args, **kwargs: False
+    )
+    monkeypatch.setattr(
+        "harness.re_planner.published_source_is_usable", lambda *args, **kwargs: True
+    )
+    plan = build_re_execution_plan(
+        project_root=tmp_path,
+        manifest=manifest,
+        target_source="api",
+        requested_policy="target-only",
+        profile=profile,
+        published_index=published,
+        force_selected_refresh=True,
+    )
+    if exclude_sibling:
+        plan = replace(
+            plan,
+            sources=tuple(
+                replace(source, action="exclude") if source.id == "web" else source
+                for source in plan.sources
+            ),
+        )
+    run_dir = tmp_path / "runs/re-active"
+    (run_dir / "re").mkdir(parents=True)
+    (tmp_path / "runs/.current-re").write_text("re-active\n", encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "run_id": "re-active",
+                "run_kind": "re",
+                "status": "running",
+                "re_policy": "target-only",
+                "target_source": "api",
+                "force_selected_refresh": persisted_force,
+                "expected_generation": 4,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "re/re-execution-plan.json").write_text(
+        json.dumps(plan.to_json_dict()),
+        encoding="utf-8",
+    )
+    controller = ReLifecycleController(
+        project_root=tmp_path,
+        extension_root=tmp_path / "extension",
+        provider_factory=object,
+    )
+    monkeypatch.setattr(
+        controller,
+        "_execute_run",
+        lambda *args, **kwargs: pytest.fail("unauthenticated active plan was executed"),
+    )
+
+    with pytest.raises(ReLifecycleError, match="active RE run.*forced selected refresh"):
+        controller.run(
+            policy="target-only",
+            target_source="api",
+            force_selected_refresh=True,
+        )
+
+
+@pytest.mark.unit
+def test_empty_targeted_run_never_invokes_semantic_analyzer_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from harness.re_controller import ReControllerResult, ReExtractionController
+
+    source = tmp_path / "sources/docs"
+    source.mkdir(parents=True)
+    manifest = _manifest_with_source(tmp_path, "docs", source_file_count=0)
+    profile = ReFingerprintProfile()
+    monkeypatch.setattr("harness.re_lifecycle.discover_workspace", lambda root: manifest)
+    monkeypatch.setattr(
+        "harness.re_lifecycle.resolve_re_fingerprint_profile", lambda root: profile
+    )
+    monkeypatch.setattr("harness.re_lifecycle.load_published_index", lambda root: None)
+    run_analysis = ReExtractionController._run_analysis_script
+
+    class EmptyExtractionController:
+        def __init__(self, **kwargs: object) -> None:
+            self._kwargs = kwargs
+
+        def run(self) -> ReControllerResult:
+            run_dir = self._kwargs["run_dir"]
+            assert isinstance(run_dir, Path)
+            plan = ReExecutionPlan.from_json_dict(
+                json.loads((run_dir / "re/re-execution-plan.json").read_text())
+            )
+            assert plan.analysis_required is False
+            controller = object.__new__(ReExtractionController)
+            controller._run_re_dir = run_dir / "re"
+            controller._extension_root = tmp_path / "missing-extension"
+            controller._execute_analysis_command = lambda *args, **kwargs: pytest.fail(
+                "empty selected source invoked the semantic analyzer"
+            )
+            assert run_analysis(controller, plan) is None
+            return ReControllerResult(completed=True)
+
+    monkeypatch.setattr(
+        "harness.re_lifecycle.ReExtractionController", EmptyExtractionController
+    )
+
+    result = ReLifecycleController(
+        project_root=tmp_path,
+        extension_root=tmp_path / "extension",
+        provider_factory=object,
+    ).run(
+        policy="target-only",
+        target_source="docs",
+        force_selected_refresh=True,
+    )
+
+    assert result.status == "done"
+    assert result.run_id
 
 
 @pytest.mark.unit

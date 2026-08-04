@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Literal
 
-from echelon.workspace_model import discover_workspace
+from echelon.workspace_model import WorkspaceManifest, discover_workspace
 from harness.blocked_decision import (
     ensure_blocked_decision,
     mark_blocked_decision_resolved,
@@ -109,6 +109,8 @@ class ReLifecycleController:
             if target is None:  # pragma: no cover - guarded by the non-empty selector.
                 raise ReLifecycleError("target source selector did not resolve")
             resolved_target = target.id
+            if force_selected_refresh:
+                self._validate_target_root_isolation(manifest, resolved_target)
             target_path = Path(target.path)
             if not target_path.is_absolute():
                 target_path = self._project_root / target_path
@@ -125,7 +127,13 @@ class ReLifecycleController:
                 state = self._load_state(current)
                 if state.get("status") != "done":
                     if resolved_target:
-                        self._validate_active_target(current, resolved_target)
+                        self._validate_active_target(
+                            current,
+                            state,
+                            manifest,
+                            resolved_target,
+                            require_forced=force_selected_refresh,
+                        )
                     return self._execute_run(current, state, re_max_inner=re_max_inner)
 
         manifest = manifest or discover_workspace(self._project_root)
@@ -147,8 +155,9 @@ class ReLifecycleController:
                 target_source=resolved_target,
                 requested_policy=policy,
                 profile=profile,
-                published_index=published if reuse_published else None,
+                published_index=published,
                 force_selected_refresh=force_selected_refresh,
+                reuse_published=reuse_published,
             )
         except RePlanError as exc:
             raise ReLifecycleError(str(exc)) from exc
@@ -210,7 +219,15 @@ class ReLifecycleController:
         )
         return self._execute_run(run_dir, state, re_max_inner=re_max_inner)
 
-    def _validate_active_target(self, run_dir: Path, source_id: str) -> None:
+    def _validate_active_target(
+        self,
+        run_dir: Path,
+        state: dict,
+        manifest: WorkspaceManifest,
+        source_id: str,
+        *,
+        require_forced: bool,
+    ) -> None:
         try:
             plan = ReExecutionPlan.from_json_dict(
                 self._load_json(run_dir / "re" / "re-execution-plan.json")
@@ -225,6 +242,78 @@ class ReLifecycleController:
                 f"{plan.target_source or 'the workspace'}, not {source_id}; "
                 "continue or publish it before refreshing another source"
             )
+        if not require_forced:
+            return
+        if (
+            state.get("force_selected_refresh") is not True
+            or state.get("re_policy") != "target-only"
+            or state.get("target_source") != source_id
+        ):
+            self._raise_incompatible_active_refresh(run_dir, source_id)
+        try:
+            published = load_published_index(self._project_root)
+            expected = build_re_execution_plan(
+                project_root=self._project_root,
+                manifest=manifest,
+                target_source=source_id,
+                requested_policy="target-only",
+                profile=resolve_re_fingerprint_profile(self._project_root),
+                published_index=published,
+                force_selected_refresh=True,
+                reuse_published=True,
+            )
+        except (OSError, ValueError) as exc:
+            raise ReLifecycleError(
+                f"cannot authenticate active targeted RE run {run_dir.name}: {exc}"
+            ) from exc
+        if (
+            plan != expected
+            or plan.removed_sources
+            or not plan.workspace_synthesis_required
+            or not plan.publication_required
+            or any(source.action == "missing" for source in plan.sources)
+            or state.get("expected_generation")
+            != (published.generation if published is not None else 0)
+        ):
+            self._raise_incompatible_active_refresh(run_dir, source_id)
+
+    @staticmethod
+    def _raise_incompatible_active_refresh(run_dir: Path, source_id: str) -> None:
+        raise ReLifecycleError(
+            f"active RE run {run_dir.name} is not an authenticated forced selected "
+            f"refresh for {source_id}"
+        )
+
+    def _validate_target_root_isolation(
+        self,
+        manifest: WorkspaceManifest,
+        source_id: str,
+    ) -> None:
+        sources = manifest.sources
+        target = next(source for source in sources if source.id == source_id)
+        target_path = self._source_root(target.path)
+        for sibling in sources:
+            if sibling.id == source_id:
+                continue
+            sibling_path = self._source_root(sibling.path)
+            if (
+                target_path == sibling_path
+                or target_path.is_relative_to(sibling_path)
+                or sibling_path.is_relative_to(target_path)
+            ):
+                raise ReLifecycleError(
+                    "overlapping source roots are unsafe for targeted refresh: "
+                    f"{source_id} ({target_path}) and {sibling.id} ({sibling_path})"
+                )
+
+    def _source_root(self, configured_path: str) -> Path:
+        path = Path(configured_path)
+        if not path.is_absolute():
+            path = self._project_root / path
+        try:
+            return path.resolve()
+        except (OSError, RuntimeError) as exc:
+            raise ReLifecycleError(f"cannot resolve source root {path}: {exc}") from exc
 
     def continue_run(self, re_max_inner: int | None = None) -> ReLifecycleResult:
         if re_max_inner is not None and re_max_inner < 1:

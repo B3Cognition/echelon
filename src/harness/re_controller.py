@@ -2582,6 +2582,10 @@ class ReExtractionController:
 
     def _run_analysis_script(self, plan: ReExecutionPlan) -> str | None:
         """Run extraction in the controller so one-shot agents cannot detach it."""
+        if not plan.analysis_required:
+            if not (self._run_re_dir / "analysis.json").is_file():
+                return "materialized analysis.json missing for no-analysis RE plan"
+            return None
         profile = plan.profile
         script = self._extension_root / "scripts" / "bash" / "re" / "run-analysis.sh"
         manifest = self._run_re_dir / "re-analysis-manifest.json"

@@ -13,6 +13,7 @@ from harness.re_fingerprint import ReFingerprintProfile, SourceFingerprint, fing
 from harness.re_registry import (
     PublishedReIndex,
     published_source_is_current,
+    published_source_is_usable,
 )
 from harness.re_quality_contract import QUALITY_CONTRACT_VERSION
 
@@ -253,6 +254,7 @@ def build_re_execution_plan(
     published_index: PublishedReIndex | None = None,
     cache_root: Path | None = None,
     force_selected_refresh: bool = False,
+    reuse_published: bool = True,
 ) -> ReExecutionPlan:
     """Build a per-source RE execution plan."""
     root = project_root.resolve()
@@ -274,12 +276,18 @@ def build_re_execution_plan(
         absolute_path = _source_absolute_path(root, source)
         source_exists = absolute_path.exists()
         published = published_index.sources.get(source.id) if published_index else None
-        forced_reuse = bool(
+        targeted_sibling = bool(
             force_selected_refresh
             and policy == "target-only"
             and target is not None
             and source.id != target.id
+        )
+        forced_reuse = bool(
+            targeted_sibling
+            and reuse_published
             and published is not None
+            and published_index is not None
+            and published_source_is_usable(root, published_index, source.id)
         )
         if forced_reuse or (not source_exists and published is not None):
             fingerprint = SourceFingerprint(
@@ -316,7 +324,7 @@ def build_re_execution_plan(
         if not selected:
             if forced_reuse:
                 action: RePlanAction = "reuse"
-            elif force_selected_refresh and policy == "target-only":
+            elif targeted_sibling:
                 action = "missing"
             else:
                 action = "exclude"
@@ -326,8 +334,17 @@ def build_re_execution_plan(
         elif not source_exists:
             action = "missing"
         elif source_empty:
-            action = "skip-empty" if force_selected_refresh or not current else "reuse"
+            reconstruct_empty = (
+                not reuse_published and policy not in {"none", "cached-only"}
+            )
+            action = (
+                "skip-empty"
+                if force_selected_refresh or reconstruct_empty or not current
+                else "reuse"
+            )
         elif force_selected_refresh:
+            action = "refresh"
+        elif not reuse_published and policy not in {"none", "cached-only"}:
             action = "refresh"
         elif policy == "refresh-all":
             action = "refresh"
