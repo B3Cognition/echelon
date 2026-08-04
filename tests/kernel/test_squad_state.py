@@ -83,6 +83,46 @@ VALID_PRODUCT_INPUT_MUTATION = {
 }
 
 
+@pytest.mark.parametrize(
+    ("attachment_id", "valid"),
+    [
+        ("999", True),
+        ("1000", True),
+        ("123456789012", True),
+        ("000", True),
+        ("0001", True),
+        ("99", False),
+        ("1234567890123", False),
+        ("12a", False),
+        ("+001", False),
+        (" 001", False),
+    ],
+)
+def test_product_input_attachment_id_validator_matches_state_schema(
+    attachment_id: str,
+    valid: bool,
+) -> None:
+    from harness.state_transaction_namespace import (
+        is_valid_product_input_attachment_id,
+        validate_product_input_mutation,
+    )
+
+    mutation = {
+        **VALID_PRODUCT_INPUT_MUTATION,
+        "kind": "add_input",
+        "request_sha256": "d" * 64,
+        "attachment_id": attachment_id,
+        "added_count": 1,
+    }
+
+    assert is_valid_product_input_attachment_id(attachment_id) is valid
+    if valid:
+        assert validate_product_input_mutation(mutation) == mutation
+    else:
+        with pytest.raises(ValueError, match="add-input product input mutation receipt"):
+            validate_product_input_mutation(mutation)
+
+
 def _store(tmp_path: Path) -> SquadStateStore:
     return SquadStateStore(tmp_path / "squad/run-test")
 

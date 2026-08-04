@@ -299,6 +299,46 @@ def test_spec_add_input_completed_retry_is_operation_idempotent(
     assert [item["id"] for item in ledger["attachments"]] == ["001"]
 
 
+def test_spec_add_input_completed_retry_accepts_four_digit_attachment_id(
+    tmp_path: Path,
+) -> None:
+    from echelon.product_inputs import parse_input_declaration, resolve_product_inputs
+    from echelon.spec_add_input import add_input_to_active_run
+
+    project = tmp_path / "workspace"
+    source_root = project / "sources"
+    source_root.mkdir(parents=True)
+    (source_root / "base.md").write_text("base\n", encoding="utf-8")
+    (source_root / "added.md").write_text("added\n", encoding="utf-8")
+    resolution = resolve_product_inputs(
+        project,
+        project / "runs/run-1",
+        [parse_input_declaration("reference:sources/base.md")],
+    )
+    ledger_path = resolution.inputs_dir / "attachment-ledger.json"
+    ledger_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "attachments": [{"id": "999"}],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _write_current_run(project, _base_state(resolution.inputs_dir))
+
+    first = add_input_to_active_run(project, ["reference:sources/added.md"])
+    second = add_input_to_active_run(project, ["reference:sources/added.md"])
+
+    assert first.attachment_id == "1000"
+    assert second == first
+    ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    assert [item["id"] for item in ledger["attachments"]] == ["999", "1000"]
+
+
 def test_spec_add_input_completed_retry_authenticates_live_postimage(
     tmp_path: Path,
 ) -> None:

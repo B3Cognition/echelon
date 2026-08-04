@@ -61,6 +61,15 @@ _COMPLETION_STEPS = frozenset(
     }
 )
 
+
+def is_valid_product_input_attachment_id(value: object) -> bool:
+    """Return whether a value matches the persisted attachment-ID schema."""
+    return (
+        type(value) is str
+        and _ATTACHMENT_ID_PATTERN.fullmatch(value) is not None
+    )
+
+
 CAS_AND_RUN_IDENTITY_KEYS = frozenset(
     {
         "run_id",
@@ -347,8 +356,7 @@ def validate_product_input_mutation(value: object) -> dict[str, object]:
         if (
             type(request_sha256) is not str
             or _MANIFEST_SHA256_PATTERN.fullmatch(request_sha256) is None
-            or type(attachment_id) is not str
-            or _ATTACHMENT_ID_PATTERN.fullmatch(attachment_id) is None
+            or not is_valid_product_input_attachment_id(attachment_id)
             or added_count <= 0
         ):
             raise ValueError("add-input product input mutation receipt is invalid")

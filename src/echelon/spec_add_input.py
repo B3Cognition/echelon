@@ -44,6 +44,7 @@ from harness.squad_publication import (
 )
 from harness.state_transaction_namespace import (
     PENDING_EXTERNAL_PUBLICATION_KEY,
+    is_valid_product_input_attachment_id,
 )
 
 
@@ -541,8 +542,7 @@ def _completed_add_input_result(
     normalized_original = declarations_tuple(original)
     normalized_attached = declarations_tuple(attached)
     if (
-        type(attachment_id) is not str
-        or re.fullmatch(r"[0-9]{3}", attachment_id) is None
+        not is_valid_product_input_attachment_id(attachment_id)
         or type(added_count) is not int
         or not 0 <= added_count <= 100_000
         or type(duplicate_count) is not int
