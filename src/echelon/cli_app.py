@@ -1734,6 +1734,30 @@ def spec_run(
     legacy_cli._cmd_spec_run(args)
 
 
+@spec_app.command("retarget")
+def spec_retarget(
+    spec_id: str = typer.Argument(..., help="Active unimplemented spec id."),
+    target: list[str] = typer.Option(
+        ...,
+        "--target",
+        help="Complete replacement implementation target set; repeat as needed.",
+    ),
+    confirm: int = typer.Option(
+        0,
+        "--confirm",
+        count=True,
+        help="Create the checkpoint and rebuild Phase A.",
+    ),
+) -> None:
+    """Destructively replace the active spec's complete target set."""
+    from echelon import cli as legacy_cli
+
+    args = [spec_id]
+    _extend_repeated_option(args, "--target", target)
+    args.extend("--confirm" for _ in range(confirm))
+    legacy_cli._cmd_spec_retarget(args)
+
+
 @spec_app.command("status")
 def spec_status() -> None:
     """Show current spec run state and next action."""

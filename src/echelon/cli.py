@@ -101,6 +101,8 @@ Commands:
                                             Select a checkpointed Phase A spec run.
   spec drop-target <spec_id> <target> --confirm
                                             Remove an unused target from an unfinished run.
+  spec retarget <spec_id> --target <source-id-or-path>... [--confirm]
+                                            Destructively replace all implementation targets.
   spec checkpoint list|accept|commit [--spec <id>] [--phase <phase-id>]
                                             Manage Phase A/spec checkpoints.
   spec targets <spec_id>                    Display every task grouped by delivery target.
@@ -10072,6 +10074,8 @@ def _cmd_spec(args: list[str]) -> None:
             "                    [--restore-stash] Select a checkpointed Phase A spec run\n"
             "  drop-target <spec_id> <target> --confirm\n"
             "                                      Remove an unused target and re-plan tasks\n"
+            "  retarget <spec_id> --target <source-id-or-path>... [--confirm]\n"
+            "                                      Destructively replace all implementation targets\n"
             "  checkpoint list|accept|commit [--spec <id>] [--phase <phase-id>]\n"
             "                                      Manage Phase A/spec checkpoints\n"
             "  artifacts <spec_id>                 Generate specs/<id>/ARTIFACTS.md\n"
@@ -10114,6 +10118,8 @@ def _cmd_spec(args: list[str]) -> None:
             sys.exit(exit_code)
     elif subcmd == "drop-target":
         _cmd_drop_target(args[1:], project_root=Path.cwd())
+    elif subcmd == "retarget":
+        _cmd_spec_retarget(args[1:])
     elif subcmd == "checkpoint":
         _require_phase_a_git_ownership(Path.cwd(), command_name="echelon spec checkpoint")
         from echelon.checkpoint_cli import run_checkpoint_command
@@ -10217,6 +10223,30 @@ def _cmd_spec_run(args: list[str]) -> None:
         sys.exit(1)
     _require_provider_capability("echelon spec run", ProviderCapability.ARTIFACT, project_dir=project_root)
     _cmd_run(args, project_root=project_root, ext_dir=ext_dir)
+
+
+def _cmd_spec_retarget(args: list[str]) -> None:
+    """Preview or prepare a destructive complete target-set replacement."""
+    project_root = Path.cwd()
+    try:
+        from echelon.spec_retarget import RetargetError
+        from echelon.spec_retarget_cli import run_spec_retarget_command
+
+        result = run_spec_retarget_command(args, project_root)
+    except RetargetError as exc:
+        print(f"✗ echelon spec retarget: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+    if not result.applied:
+        return
+    ext_dir = _installed_extension_or_exit(project_root)
+    run_args = [result.original_user_message, "--mode", result.autonomy_mode]
+    for target in result.replacement_targets:
+        run_args.extend(("--target", target))
+    for source in result.explicit_re_sources:
+        run_args.extend(("--re-source", source))
+    if result.ignore_re:
+        run_args.append("--ignore-re")
+    _cmd_run(run_args, project_root=project_root, ext_dir=ext_dir)
 
 
 def _cmd_spec_continue(args: list[str]) -> None:

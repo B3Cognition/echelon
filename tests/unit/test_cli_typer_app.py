@@ -127,6 +127,131 @@ def test_spec_rewind_forwards_checkpoint_commit(monkeypatch):
 
 
 @pytest.mark.unit
+def test_spec_retarget_forwards_ordered_targets_and_confirm(monkeypatch):
+    from echelon.cli_app import run
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_spec_retarget",
+        lambda args: calls.append(args),
+        raising=False,
+    )
+
+    run([
+        "spec",
+        "retarget",
+        "001-demo",
+        "--target",
+        "apps/web",
+        "--target",
+        "services/api",
+        "--confirm",
+    ])
+
+    assert calls == [[
+        "001-demo",
+        "--target",
+        "apps/web",
+        "--target",
+        "services/api",
+        "--confirm",
+    ]]
+
+    from echelon.cli import USAGE
+
+    assert "spec retarget <spec_id> --target <source-id-or-path>... [--confirm]" in USAGE
+
+
+@pytest.mark.unit
+def test_spec_retarget_dispatches_preserved_phase_a_arguments(monkeypatch, tmp_path):
+    from echelon import cli
+    from echelon.spec_retarget import RetargetCommandResult
+
+    result = RetargetCommandResult(
+        applied=True,
+        resume_existing=False,
+        spec_id="001-demo",
+        baseline_run_id="squad-base",
+        replacement_run_id="squad-replacement",
+        replacement_targets=("apps/web", "services/api"),
+        checkpoint_id="retarget-preflight-rev-1",
+        checkpoint_commit="a" * 40,
+        recovery_command="echelon spec rewind checkpoint:retarget-preflight-rev-1 --confirm",
+        invalidated_paths=("spec.md",),
+        original_user_message="Build account search exactly",
+        autonomy_mode="guided",
+        ignore_re=True,
+        explicit_re_sources=("catalog", "billing"),
+    )
+    calls: list[tuple[list[str], Path, Path]] = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "echelon.spec_retarget_cli.run_spec_retarget_command",
+        lambda *_args, **_kwargs: result,
+    )
+    monkeypatch.setattr(cli, "_installed_extension_or_exit", lambda root: root / "ext")
+    monkeypatch.setattr(
+        cli,
+        "_cmd_run",
+        lambda args, project_root, ext_dir: calls.append((args, project_root, ext_dir)),
+    )
+
+    cli._cmd_spec_retarget(
+        ["001-demo", "--target", "apps/web", "--confirm"]
+    )
+
+    assert calls == [
+        (
+            [
+                "Build account search exactly",
+                "--mode",
+                "guided",
+                "--target",
+                "apps/web",
+                "--target",
+                "services/api",
+                "--re-source",
+                "catalog",
+                "--re-source",
+                "billing",
+                "--ignore-re",
+            ],
+            tmp_path,
+            tmp_path / "ext",
+        )
+    ]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "args",
+    (
+        ("spec", "retarget"),
+        ("spec", "retarget", "001-demo"),
+        ("spec", "retarget", "001-demo", "apps/web"),
+        ("spec", "retarget", "001-demo", "--target"),
+        ("spec", "retarget", "001-demo", "--target", "apps/web", "--init"),
+        ("spec", "retarget", "001-demo", "--target", "apps/web", "--unknown"),
+        (
+            "spec",
+            "retarget",
+            "001-demo",
+            "--target",
+            "apps/web",
+            "--confirm",
+            "--confirm",
+        ),
+    ),
+)
+def test_spec_retarget_typer_invalid_shapes_exit_2(args):
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(app, list(args))
+
+    assert result.exit_code == 2
+
+
+@pytest.mark.unit
 def test_spec_amend_routes_product_inputs_and_dry_run(monkeypatch):
     from echelon.cli_app import run
 
