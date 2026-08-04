@@ -13,13 +13,21 @@ class DurableJsonError(OSError):
     """Raised when a durable JSON destination is unsafe or unavailable."""
 
 
-def write_json_atomic(path: Path, value: object) -> None:
-    """Replace JSON relative to a no-follow, securely walked parent fd."""
+def write_json_atomic(
+    path: Path,
+    value: object,
+    *,
+    trusted_root: Path | None = None,
+) -> None:
+    """Replace JSON relative to a pinned parent directory descriptor."""
     destination = Path(os.path.abspath(os.fspath(path)))
     if not destination.name:
         raise DurableJsonError("JSON destination has no filename")
     content = (json.dumps(value, indent=2, sort_keys=True) + "\n").encode("utf-8")
-    parent_fd = _open_parent_directory(destination.parent)
+    parent_fd = _open_destination_parent(
+        destination,
+        trusted_root=trusted_root,
+    )
     temporary_name: str | None = None
     temporary_fd: int | None = None
     try:
@@ -60,30 +68,79 @@ def write_json_atomic(path: Path, value: object) -> None:
         os.close(parent_fd)
 
 
-def _open_parent_directory(parent: Path) -> int:
+def _open_destination_parent(
+    destination: Path,
+    *,
+    trusted_root: Path | None,
+) -> int:
+    if trusted_root is None:
+        return _open_directory_strict(destination.parent)
+
+    lexical_root = Path(os.path.abspath(os.fspath(trusted_root)))
+    try:
+        relative_destination = destination.relative_to(lexical_root)
+    except ValueError as exc:
+        raise DurableJsonError(
+            f"JSON destination escapes trusted root: {destination}"
+        ) from exc
+    if not relative_destination.parts or relative_destination == Path("."):
+        raise DurableJsonError("JSON destination has no filename below trusted root")
+    try:
+        canonical_root = lexical_root.resolve(strict=True)
+    except OSError as exc:
+        raise DurableJsonError(f"JSON trusted root is unavailable: {lexical_root}") from exc
+
+    root_fd = _open_directory_strict(canonical_root)
+    return _walk_directory_components(
+        root_fd,
+        relative_destination.parent.parts,
+        display_path=destination.parent,
+    )
+
+
+def _open_directory_strict(directory: Path) -> int:
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
     flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
     try:
-        current_fd = os.open(parent.anchor or os.sep, flags)
+        current_fd = os.open(directory.anchor or os.sep, flags)
     except OSError as exc:
-        raise DurableJsonError(f"JSON directory is unsafe: {parent}") from exc
+        raise DurableJsonError(f"JSON directory is unsafe: {directory}") from exc
+    components = directory.parts[1:] if directory.is_absolute() else directory.parts
+    return _walk_directory_components(
+        current_fd,
+        components,
+        display_path=directory,
+    )
+
+
+def _walk_directory_components(
+    current_fd: int,
+    components: tuple[str, ...],
+    *,
+    display_path: Path,
+) -> int:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
     try:
-        components = parent.parts[1:] if parent.is_absolute() else parent.parts
         for component in components:
             try:
                 next_fd = os.open(component, flags, dir_fd=current_fd)
             except OSError as exc:
-                raise DurableJsonError(f"JSON directory is unsafe: {parent}") from exc
+                raise DurableJsonError(
+                    f"JSON directory is unsafe: {display_path}"
+                ) from exc
             try:
                 if not stat.S_ISDIR(os.fstat(next_fd).st_mode):
-                    raise DurableJsonError(f"JSON directory is unsafe: {parent}")
+                    raise DurableJsonError(
+                        f"JSON directory is unsafe: {display_path}"
+                    )
             except Exception:
                 os.close(next_fd)
                 raise
             os.close(current_fd)
             current_fd = next_fd
         if not stat.S_ISDIR(os.fstat(current_fd).st_mode):
-            raise DurableJsonError(f"JSON directory is unsafe: {parent}")
+            raise DurableJsonError(f"JSON directory is unsafe: {display_path}")
         return current_fd
     except Exception:
         os.close(current_fd)

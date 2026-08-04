@@ -154,7 +154,7 @@ def write_topology_evidence_receipt(
     }
     receipt_path = run_dir / "topology-receipt.json"
     try:
-        write_json_atomic(receipt_path, receipt)
+        write_json_atomic(receipt_path, receipt, trusted_root=run_dir)
     except DurableJsonError as exc:
         raise TopologyEvidenceError(str(exc)) from exc
     state.update(
@@ -164,7 +164,7 @@ def write_topology_evidence_receipt(
         }
     )
     try:
-        write_json_atomic(state_path, state)
+        write_json_atomic(state_path, state, trusted_root=run_dir)
     except DurableJsonError as exc:
         raise TopologyEvidenceError(str(exc)) from exc
     return TopologyEvidenceReceiptResult(receipt_path, status, source_id)

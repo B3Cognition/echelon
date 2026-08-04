@@ -88,3 +88,51 @@ def test_durable_json_replaces_normally_and_cleans_temps_idempotently(
 
     assert json.loads(destination.read_text()) == {"generation": 2}
     assert [path for path in tmp_path.iterdir() if path.name != "state.json"] == []
+
+
+@pytest.mark.unit
+def test_durable_json_allows_alias_in_declared_trusted_base(tmp_path: Path) -> None:
+    from harness.durable_json import write_json_atomic
+
+    trusted = tmp_path / "trusted-workspace"
+    destination_parent = trusted / "runs/verify-spec-001"
+    destination_parent.mkdir(parents=True)
+    trusted_alias = tmp_path / "workspace-alias"
+    trusted_alias.symlink_to(trusted, target_is_directory=True)
+
+    write_json_atomic(
+        trusted_alias / "runs/verify-spec-001/state.json",
+        {"status": "complete"},
+        trusted_root=trusted_alias,
+    )
+
+    assert json.loads((destination_parent / "state.json").read_text()) == {
+        "status": "complete"
+    }
+
+
+@pytest.mark.unit
+def test_durable_json_rejects_alias_below_trusted_base_without_external_writes(
+    tmp_path: Path,
+) -> None:
+    from harness.durable_json import DurableJsonError, write_json_atomic
+
+    trusted = tmp_path / "trusted-workspace"
+    trusted.mkdir()
+    trusted_alias = tmp_path / "workspace-alias"
+    trusted_alias.symlink_to(trusted, target_is_directory=True)
+    outside = tmp_path / "outside"
+    (outside / "verify-spec-001").mkdir(parents=True)
+    sentinel = outside / "sentinel.txt"
+    sentinel.write_text("unchanged\n", encoding="utf-8")
+    (trusted / "runs").symlink_to(outside, target_is_directory=True)
+
+    before = _tree_snapshot(outside)
+    with pytest.raises(DurableJsonError, match="unsafe|directory"):
+        write_json_atomic(
+            trusted_alias / "runs/verify-spec-001/state.json",
+            {"status": "complete"},
+            trusted_root=trusted_alias,
+        )
+
+    assert _tree_snapshot(outside) == before

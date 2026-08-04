@@ -508,6 +508,37 @@ def test_delivery_receipt_rejects_symlinked_destinations_without_external_writes
 
 
 @pytest.mark.unit
+def test_delivery_receipt_declares_verified_run_as_trusted_write_boundary(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from harness import topology_evidence
+
+    workspace, source, spec, run = _delivery_receipt_fixture(tmp_path)
+    original_write = topology_evidence.write_json_atomic
+    trusted_roots: list[Path | None] = []
+
+    def record_write(path, value, *, trusted_root=None):
+        trusted_roots.append(trusted_root)
+        if trusted_root is None:
+            return original_write(path, value)
+        return original_write(path, value, trusted_root=trusted_root)
+
+    monkeypatch.setattr(topology_evidence, "write_json_atomic", record_write)
+
+    topology_evidence.write_topology_evidence_receipt(
+        source,
+        run,
+        spec,
+        workspace_root=workspace,
+        source_id="api",
+        source_root=source,
+    )
+
+    assert trusted_roots == [run.resolve(), run.resolve()]
+
+
+@pytest.mark.unit
 def test_schema_one_codegraph_upgrades_only_when_display_endpoints_are_unique(
     tmp_path: Path,
 ) -> None:

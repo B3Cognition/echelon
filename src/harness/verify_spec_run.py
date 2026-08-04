@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 from typing import Iterable
 
@@ -39,7 +40,8 @@ def complete_verify_spec_run(
     completed_at: str | None = None,
 ) -> Path:
     """Durably mark a fully validated verify-spec lifecycle complete."""
-    run_dir = Path(verify_run_dir)
+    run_dir = Path(os.path.abspath(os.fspath(verify_run_dir)))
+    trusted_workspace = _trusted_workspace_for_verify_run(run_dir)
     if run_dir.is_symlink() or not run_dir.is_dir():
         raise VerifySpecRunInitError("verify run directory is unavailable or symlinked")
     state_path = run_dir / "state.json"
@@ -64,10 +66,21 @@ def complete_verify_spec_run(
         raise VerifySpecRunInitError("verify completion timestamp is invalid")
     state.update({"status": "complete", "completed_at": timestamp})
     try:
-        write_json_atomic(state_path, state)
+        write_json_atomic(state_path, state, trusted_root=trusted_workspace)
     except DurableJsonError as exc:
         raise VerifySpecRunInitError(str(exc)) from exc
     return state_path
+
+
+def _trusted_workspace_for_verify_run(run_dir: Path) -> Path:
+    if run_dir.parent.name == "runs":
+        return run_dir.parent.parent
+    if (
+        run_dir.parent.name == "verify-spec"
+        and run_dir.parent.parent.parent.name == "runs"
+    ):
+        return run_dir.parent.parent.parent.parent
+    raise VerifySpecRunInitError("verify run path has no valid runs ancestry")
 
 
 def _validate_completion_evidence(state: dict[str, object]) -> None:
