@@ -461,6 +461,7 @@ def _write_re_briefings(
 
 
 _WORKSPACE_BRIEFING_SECTIONS = (
+    ("re-decision", "Workspace Decision"),
     ("re-overview", "Workspace Overview"),
     ("re-relationships", "Relationships"),
     ("re-contracts", "Contracts"),
@@ -468,7 +469,6 @@ _WORKSPACE_BRIEFING_SECTIONS = (
     ("re-architecture-map", "Architecture Map"),
     ("re-codegraph-summary", "Workspace CodeGraph Summary"),
     ("re-strategy", "Workspace Strategy"),
-    ("re-decision", "Workspace Decision"),
     ("re-domain", "Domain Context"),
 )
 

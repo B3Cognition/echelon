@@ -457,6 +457,7 @@ def test_workspace_brief_preserves_strategy_and_all_decisions_before_domain_bulk
 ) -> None:
     _publish_fixture(tmp_path)
     domain_body = "domain evidence\n" * 3_000
+    strategy_body = "strategy evidence\n" * 3_000
     additions = {
         **{
             f"re/workspace/domains/domain-{index}.md": (
@@ -464,6 +465,13 @@ def test_workspace_brief_preserves_strategy_and_all_decisions_before_domain_bulk
                 f"# Oversized Domain {index}\n{domain_body}",
             )
             for index in range(5)
+        },
+        **{
+            f"re/workspace/strategy/strategy-{index}.md": (
+                "re-strategy",
+                f"# Oversized Strategy {index}\n{strategy_body}",
+            )
+            for index in range(4)
         },
         **{
             f"re/workspace/decisions/ADR-00{index}-marker.md": (
