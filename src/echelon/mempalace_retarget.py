@@ -9,6 +9,7 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import shutil
+import stat
 import tempfile
 from typing import Iterable, Mapping
 
@@ -1386,28 +1387,290 @@ def _cleanup_receipt_live_matches(
     return manifest is None
 
 
+def _cleanup_entry_identity(metadata: os.stat_result) -> tuple[int, int, int]:
+    return (
+        stat.S_IFMT(metadata.st_mode),
+        metadata.st_dev,
+        metadata.st_ino,
+    )
+
+
+def _stat_cleanup_entry(directory_fd: int, name: str) -> os.stat_result:
+    try:
+        return os.stat(
+            name,
+            dir_fd=directory_fd,
+            follow_symlinks=False,
+        )
+    except OSError as exc:
+        raise RetargetMemoryError(
+            "replacement memory detached cleanup entry changed"
+        ) from exc
+
+
+def _require_cleanup_entry_missing(directory_fd: int, name: str) -> None:
+    try:
+        os.stat(
+            name,
+            dir_fd=directory_fd,
+            follow_symlinks=False,
+        )
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise RetargetMemoryError(
+            "replacement memory detached cleanup entry removal is uncertain"
+        ) from exc
+    raise RetargetMemoryError(
+        "replacement memory detached cleanup entry changed during removal"
+    )
+
+
+def _open_cleanup_directory_at(directory_fd: int, name: str) -> int:
+    required_flags = (
+        getattr(os, "O_DIRECTORY", 0),
+        getattr(os, "O_NOFOLLOW", 0),
+    )
+    if not all(required_flags):
+        raise RetargetMemoryError(
+            "replacement memory descriptor-bound cleanup is unsupported"
+        )
+    flags = (
+        os.O_RDONLY
+        | required_flags[0]
+        | required_flags[1]
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+    try:
+        return os.open(name, flags, dir_fd=directory_fd)
+    except OSError as exc:
+        raise RetargetMemoryError(
+            "replacement memory detached cleanup path is invalid"
+        ) from exc
+
+
+def _open_authenticated_cleanup_directory(
+    parent_fd: int,
+    cleanup_name: str,
+    *,
+    receipt: Mapping[str, object],
+) -> int:
+    descriptor = _open_cleanup_directory_at(parent_fd, cleanup_name)
+    try:
+        opened = os.fstat(descriptor)
+        parent_entry = _stat_cleanup_entry(parent_fd, cleanup_name)
+        if (
+            not stat.S_ISDIR(opened.st_mode)
+            or _cleanup_entry_identity(parent_entry)
+            != _cleanup_entry_identity(opened)
+            or opened.st_dev != receipt["device"]
+            or opened.st_ino != receipt["inode"]
+        ):
+            raise RetargetMemoryError(
+                "replacement memory detached cleanup identity changed"
+            )
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _remove_bound_cleanup_contents(directory_fd: int) -> None:
+    try:
+        entries = list(os.scandir(directory_fd))
+    except OSError as exc:
+        raise RetargetMemoryError(
+            "replacement memory detached cleanup is unreadable"
+        ) from exc
+    for entry in entries:
+        name = entry.name
+        if name in {"", ".", ".."}:
+            raise RetargetMemoryError(
+                "replacement memory detached cleanup entry is invalid"
+            )
+        try:
+            observed = entry.stat(follow_symlinks=False)
+        except OSError as exc:
+            raise RetargetMemoryError(
+                "replacement memory detached cleanup entry changed"
+            ) from exc
+        current = _stat_cleanup_entry(directory_fd, name)
+        if _cleanup_entry_identity(current) != _cleanup_entry_identity(observed):
+            raise RetargetMemoryError(
+                "replacement memory detached cleanup entry changed"
+            )
+        if stat.S_ISDIR(observed.st_mode):
+            child_fd = _open_cleanup_directory_at(directory_fd, name)
+            try:
+                opened = os.fstat(child_fd)
+                if _cleanup_entry_identity(opened) != _cleanup_entry_identity(
+                    observed
+                ):
+                    raise RetargetMemoryError(
+                        "replacement memory detached cleanup entry changed"
+                    )
+                _remove_bound_cleanup_contents(child_fd)
+                before_remove = _stat_cleanup_entry(directory_fd, name)
+                if _cleanup_entry_identity(before_remove) != _cleanup_entry_identity(
+                    opened
+                ):
+                    raise RetargetMemoryError(
+                        "replacement memory detached cleanup entry changed"
+                    )
+                os.rmdir(name, dir_fd=directory_fd)
+                _require_cleanup_entry_missing(directory_fd, name)
+            except RetargetMemoryError:
+                raise
+            except OSError as exc:
+                raise RetargetMemoryError(
+                    "replacement memory detached cleanup entry removal failed"
+                ) from exc
+            finally:
+                os.close(child_fd)
+        elif stat.S_ISREG(observed.st_mode) or stat.S_ISLNK(observed.st_mode):
+            before_remove = _stat_cleanup_entry(directory_fd, name)
+            if _cleanup_entry_identity(before_remove) != _cleanup_entry_identity(
+                observed
+            ):
+                raise RetargetMemoryError(
+                    "replacement memory detached cleanup entry changed"
+                )
+            try:
+                os.unlink(name, dir_fd=directory_fd)
+                _require_cleanup_entry_missing(directory_fd, name)
+            except OSError as exc:
+                raise RetargetMemoryError(
+                    "replacement memory detached cleanup entry removal failed"
+                ) from exc
+        else:
+            raise RetargetMemoryError(
+                "replacement memory detached cleanup entry type is invalid"
+            )
+    try:
+        os.fsync(directory_fd)
+    except OSError as exc:
+        raise RetargetMemoryError(
+            "replacement memory detached cleanup sync failed"
+        ) from exc
+
+
+def _retire_report_cleanup_receipt(
+    spec_dir: Path,
+    *,
+    cleanup_name: str,
+    receipt: Mapping[str, object],
+) -> None:
+    cleanup_path = spec_dir / cleanup_name
+    if os.path.lexists(cleanup_path):
+        raise RetargetMemoryError(
+            "replacement memory detached cleanup path changed"
+        )
+    receipt_path = spec_dir / _REPORT_CLEANUP_RECEIPT_NAME
+    receipt_content = (
+        json.dumps(
+            dict(receipt),
+            indent=2,
+            sort_keys=True,
+            allow_nan=False,
+        )
+        + "\n"
+    )
+    _unlink_report_file(receipt_path)
+    if os.path.lexists(cleanup_path):
+        try:
+            if not os.path.lexists(receipt_path):
+                _write_text_durable_atomic(receipt_path, receipt_content)
+        except (Exception, SystemExit) as exc:
+            raise RetargetMemoryError(
+                "replacement memory cleanup receipt retirement is uncertain"
+            ) from exc
+        raise RetargetMemoryError(
+            "replacement memory cleanup path changed during receipt retirement"
+        )
+
+
 def _finish_detached_report_cleanup(
     spec_dir: Path,
     *,
     receipt: Mapping[str, object],
 ) -> None:
-    cleanup_path = spec_dir / receipt["cleanup_name"]  # type: ignore[operator]
-    if os.path.lexists(cleanup_path):
-        if cleanup_path.is_symlink() or not cleanup_path.is_dir():
-            raise RetargetMemoryError(
-                "replacement memory detached cleanup path is invalid"
+    cleanup_name = receipt["cleanup_name"]
+    if type(cleanup_name) is not str:
+        raise RetargetMemoryError(
+            "replacement memory cleanup receipt is invalid"
+        )
+    directory_flag = getattr(os, "O_DIRECTORY", 0)
+    no_follow_flag = getattr(os, "O_NOFOLLOW", 0)
+    if not directory_flag or not no_follow_flag:
+        raise RetargetMemoryError(
+            "replacement memory descriptor-bound cleanup is unsupported"
+        )
+    parent_flags = (
+        os.O_RDONLY
+        | directory_flag
+        | no_follow_flag
+        | getattr(os, "O_CLOEXEC", 0)
+    )
+    try:
+        parent_fd = os.open(spec_dir, parent_flags)
+    except OSError as exc:
+        raise RetargetMemoryError(
+            "replacement memory cleanup parent is invalid"
+        ) from exc
+    cleanup_fd: int | None = None
+    try:
+        try:
+            os.stat(
+                cleanup_name,
+                dir_fd=parent_fd,
+                follow_symlinks=False,
             )
-        identity = cleanup_path.stat(follow_symlinks=False)
-        if (
-            identity.st_dev != receipt["device"]
-            or identity.st_ino != receipt["inode"]
-        ):
-            raise RetargetMemoryError(
-                "replacement memory detached cleanup identity changed"
+        except FileNotFoundError:
+            pass
+        else:
+            cleanup_fd = _open_authenticated_cleanup_directory(
+                parent_fd,
+                cleanup_name,
+                receipt=receipt,
             )
-        shutil.rmtree(cleanup_path)
-        _fsync_directory(spec_dir)
-    _unlink_report_file(spec_dir / _REPORT_CLEANUP_RECEIPT_NAME)
+            _remove_bound_cleanup_contents(cleanup_fd)
+            before_remove = _stat_cleanup_entry(parent_fd, cleanup_name)
+            opened = os.fstat(cleanup_fd)
+            if _cleanup_entry_identity(before_remove) != _cleanup_entry_identity(
+                opened
+            ):
+                raise RetargetMemoryError(
+                    "replacement memory detached cleanup identity changed"
+                )
+            try:
+                os.rmdir(cleanup_name, dir_fd=parent_fd)
+                os.fsync(parent_fd)
+            except OSError as exc:
+                raise RetargetMemoryError(
+                    "replacement memory detached cleanup removal failed"
+                ) from exc
+        try:
+            os.stat(
+                cleanup_name,
+                dir_fd=parent_fd,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            pass
+        else:
+            raise RetargetMemoryError(
+                "replacement memory detached cleanup path changed"
+            )
+    finally:
+        if cleanup_fd is not None:
+            os.close(cleanup_fd)
+        os.close(parent_fd)
+    _retire_report_cleanup_receipt(
+        spec_dir,
+        cleanup_name=cleanup_name,
+        receipt=receipt,
+    )
 
 
 def _retire_detached_report_cleanup(spec_dir: Path) -> None:
