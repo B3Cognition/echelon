@@ -144,6 +144,18 @@ def test_materialize_re_run_context_uses_canonical_current_source(tmp_path: Path
     assert artifacts["per_repo"] == [str(root / "re/sources/api")]
     assert artifacts["architecture_map"] is None
     assert artifacts["domain_catalog"] is None
+    descriptors = artifacts["artifact_descriptors"]
+    assert [row["path"] for row in descriptors] == sorted(
+        row["path"] for row in descriptors
+    )
+    assert {row["kind"] for row in descriptors} == {
+        "re-contracts",
+        "re-generated-spec",
+        "re-overview",
+        "re-relationships",
+        "re-source-manifest",
+        "re-workspace-manifest",
+    }
     assert not (run_re / "sources/api").exists()
     source_index = json.loads((run_re / "re-source-index.json").read_text())
     assert source_index["sources"][0]["run_path"] == str(root / "re/sources/api")

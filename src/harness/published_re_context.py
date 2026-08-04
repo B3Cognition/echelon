@@ -11,11 +11,58 @@ import tempfile
 from pathlib import Path, PurePath
 from typing import Any
 
-from harness.re_registry import canonical_re_artifacts, load_published_index
+from harness.re_artifacts import ReArtifactDescriptor
+from harness.re_registry import (
+    canonical_re_artifact_descriptors,
+    canonical_re_artifacts,
+    load_published_index,
+)
 
 _BRIEF_COMPONENT_CAP_BYTES = 24 * 1024
 _BRIEF_TOTAL_CAP_BYTES = 96 * 1024
 _MAX_TARGET_SELECTED_SOURCES = 3
+
+SOURCE_BRIEFING_KINDS = frozenset(
+    {
+        "re-overview",
+        "re-architecture",
+        "re-contracts",
+        "re-components",
+        "re-decision",
+        "re-codegraph-summary",
+        "re-domain-manifest",
+        "re-generated-spec",
+        "re-generated-checklist",
+        "re-supporting-artifacts",
+    }
+)
+WORKSPACE_BRIEFING_KINDS = frozenset(
+    {
+        "re-overview",
+        "re-architecture-map",
+        "re-relationships",
+        "re-contracts",
+        "re-decision",
+        "re-codegraph-summary",
+        "re-domain",
+        "re-strategy",
+        "re-workspace-checklist",
+    }
+)
+REGISTERED_ONLY_KINDS = frozenset(
+    {
+        "re-codegraph-analysis",
+        "re-analysis",
+        "re-structure",
+        "re-configs",
+        "re-dependencies",
+        "re-quality-report",
+    }
+)
+_PROVENANCE_KINDS = frozenset(
+    {"re-source-manifest", "re-workspace-manifest"}
+)
+_OMIT = object()
 
 
 def attach_published_re_context(
@@ -39,18 +86,29 @@ def attach_published_re_context(
     if not resolved_run.is_relative_to(root):
         raise ValueError(f"spec run directory must be inside workspace: {run_dir}")
 
-    canonical = canonical_re_artifacts(root, index)
-    snapshot_root = resolved_run / "context" / "published-re"
-    artifacts = _snapshot_artifact_map(root, snapshot_root, canonical)
     selected_sources, selection_reason = _select_re_sources(
         index,
         root,
         implementation_targets or [],
         re_sources or [],
     )
+    descriptors = canonical_re_artifact_descriptors(root, index)
+    selected_descriptors = _select_context_descriptors(
+        descriptors,
+        selected_sources=selected_sources,
+        preserve_legacy_snapshot=index.workspace.manifest_artifact is None,
+    )
+    canonical = canonical_re_artifacts(root, index)
+    snapshot_root = resolved_run / "context" / "published-re"
+    artifacts = _snapshot_artifact_map(
+        root,
+        snapshot_root,
+        canonical,
+        descriptors=selected_descriptors,
+    )
     rendered_briefings = _write_re_briefings(
         snapshot_root,
-        artifacts,
+        selected_descriptors,
         selected_sources=selected_sources,
     )
     artifacts["rendered_briefings"] = rendered_briefings
@@ -149,20 +207,67 @@ def _artifact_path_values(value: object):
             yield from _artifact_path_values(item)
 
 
+def _select_context_descriptors(
+    descriptors: tuple[ReArtifactDescriptor, ...],
+    *,
+    selected_sources: list[str],
+    preserve_legacy_snapshot: bool,
+) -> tuple[ReArtifactDescriptor, ...]:
+    if preserve_legacy_snapshot:
+        return descriptors
+
+    selected_source_ids = frozenset(selected_sources)
+    selected: list[ReArtifactDescriptor] = []
+    for descriptor in descriptors:
+        if descriptor.kind in REGISTERED_ONLY_KINDS:
+            continue
+        if descriptor.kind in _PROVENANCE_KINDS:
+            selected.append(descriptor)
+        elif (
+            descriptor.scope == "workspace"
+            and descriptor.kind in WORKSPACE_BRIEFING_KINDS
+        ):
+            selected.append(descriptor)
+        elif (
+            descriptor.scope == "source"
+            and descriptor.source_id in selected_source_ids
+            and descriptor.kind in SOURCE_BRIEFING_KINDS
+        ):
+            selected.append(descriptor)
+    return tuple(selected)
+
+
 def _snapshot_artifact_map(
     project_root: Path,
     snapshot_root: Path,
     artifacts: dict[str, object],
+    *,
+    descriptors: tuple[ReArtifactDescriptor, ...],
 ) -> dict[str, object]:
     re_root = (project_root / "re").resolve()
+    selected_files = {
+        (project_root / descriptor.path).resolve() for descriptor in descriptors
+    }
+    selected_files.add((re_root / "index.json").resolve())
     snapshot_root.parent.mkdir(parents=True, exist_ok=True)
     temp = Path(
         tempfile.mkdtemp(prefix=".published-re-", dir=str(snapshot_root.parent))
     )
     try:
-        rewritten = _rewrite_value(artifacts, re_root=re_root, destination=temp)
+        for source in sorted(selected_files):
+            _copy_registered_file(source, re_root=re_root, destination=temp)
+        rewritten = _rewrite_value(
+            artifacts,
+            re_root=re_root,
+            destination=temp,
+            selected_files=selected_files,
+        )
         if not isinstance(rewritten, dict):
             raise TypeError("canonical RE artifact map must be an object")
+        rewritten["context_artifacts"] = [
+            str(temp / source.relative_to(re_root))
+            for source in sorted(selected_files)
+        ]
         if snapshot_root.exists():
             shutil.rmtree(snapshot_root)
         os.replace(temp, snapshot_root)
@@ -172,39 +277,62 @@ def _snapshot_artifact_map(
         raise
 
 
-def _rewrite_value(value: object, *, re_root: Path, destination: Path) -> object:
+def _rewrite_value(
+    value: object,
+    *,
+    re_root: Path,
+    destination: Path,
+    selected_files: set[Path],
+) -> object:
     if isinstance(value, str):
-        return _copy_registered_path(value, re_root=re_root, destination=destination)
+        path = Path(value)
+        if not path.is_absolute():
+            return value
+        resolved = path.resolve()
+        if not resolved.is_relative_to(re_root):
+            raise ValueError(f"published RE artifact escapes registry: {path}")
+        if resolved.is_file():
+            if resolved not in selected_files:
+                return _OMIT
+            return str(destination / resolved.relative_to(re_root))
+        if resolved.is_dir():
+            target = destination / resolved.relative_to(re_root)
+            return str(target) if target.is_dir() else _OMIT
+        raise ValueError(f"published RE artifact is missing: {path}")
     if isinstance(value, list):
-        return [
-            _rewrite_value(item, re_root=re_root, destination=destination)
+        rewritten = (
+            _rewrite_value(
+                item,
+                re_root=re_root,
+                destination=destination,
+                selected_files=selected_files,
+            )
             for item in value
-        ]
+        )
+        return [item for item in rewritten if item is not _OMIT]
     if isinstance(value, dict):
-        return {
-            str(key): _rewrite_value(item, re_root=re_root, destination=destination)
-            for key, item in value.items()
-        }
+        rewritten: dict[str, object] = {}
+        for key, item in value.items():
+            selected = _rewrite_value(
+                item,
+                re_root=re_root,
+                destination=destination,
+                selected_files=selected_files,
+            )
+            if selected is not _OMIT:
+                rewritten[str(key)] = selected
+        return rewritten
     return value
 
 
-def _copy_registered_path(value: str, *, re_root: Path, destination: Path) -> str:
-    path = Path(value)
-    if not path.is_absolute():
-        return value
-    resolved = path.resolve()
-    if not resolved.is_relative_to(re_root):
-        raise ValueError(f"published RE artifact escapes registry: {path}")
-    relative = resolved.relative_to(re_root)
-    target = destination / relative
-    if resolved.is_dir():
-        target.mkdir(parents=True, exist_ok=True)
-    elif resolved.is_file():
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(resolved, target)
-    else:
-        raise ValueError(f"published RE artifact is missing: {path}")
-    return str(target)
+def _copy_registered_file(source: Path, *, re_root: Path, destination: Path) -> None:
+    if not source.is_relative_to(re_root):
+        raise ValueError(f"published RE artifact escapes registry: {source}")
+    if not source.is_file():
+        raise ValueError(f"published RE artifact is missing: {source}")
+    target = destination / source.relative_to(re_root)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, target)
 
 
 def _replace_prefix(value: Any, old: Path, new: Path) -> Any:
@@ -301,48 +429,82 @@ def _normalize_target_ref(project_root: Path, value: str) -> str:
 
 def _write_re_briefings(
     snapshot_root: Path,
-    artifacts: dict[str, object],
+    descriptors: tuple[ReArtifactDescriptor, ...],
     *,
     selected_sources: list[str],
 ) -> dict[str, object]:
     workspace = snapshot_root / "RE-WORKSPACE-BRIEF.md"
-    workspace.write_text(_workspace_brief(snapshot_root, artifacts), encoding="utf-8")
+    workspace.write_text(
+        _workspace_brief(snapshot_root, descriptors), encoding="utf-8"
+    )
     sources: dict[str, str] = {}
     for source_id in selected_sources:
         path = snapshot_root / f"RE-SOURCE-{source_id}-BRIEF.md"
         path.write_text(
-            _source_brief(snapshot_root, artifacts, source_id),
+            _source_brief(snapshot_root, descriptors, source_id),
             encoding="utf-8",
         )
         sources[source_id] = str(path)
     return {"workspace": str(workspace), "sources": sources}
 
 
-def _workspace_brief(snapshot_root: Path, artifacts: Mapping[str, object]) -> str:
+_WORKSPACE_BRIEFING_SECTIONS = (
+    ("re-overview", "Workspace Overview"),
+    ("re-relationships", "Relationships"),
+    ("re-contracts", "Contracts"),
+    ("re-workspace-checklist", "Workspace Checklist"),
+    ("re-architecture-map", "Architecture Map"),
+    ("re-codegraph-summary", "Workspace CodeGraph Summary"),
+    ("re-domain", "Domain Context"),
+    ("re-strategy", "Workspace Strategy"),
+    ("re-decision", "Workspace Decision"),
+)
+
+_SOURCE_BRIEFING_SECTIONS = (
+    ("re-overview", "Source Overview"),
+    ("re-architecture", "Source Architecture"),
+    ("re-contracts", "Source Contracts"),
+    ("re-components", "Source Components"),
+    ("re-decision", "Source ADR"),
+    ("re-codegraph-summary", "CodeGraph Summary"),
+    ("re-domain-manifest", "Domain Manifest"),
+    ("re-generated-spec", "Source RE Spec"),
+    ("re-generated-checklist", "Source RE Checklist"),
+    ("re-supporting-artifacts", "Supporting Artifacts"),
+)
+
+
+def _workspace_brief(
+    snapshot_root: Path,
+    descriptors: tuple[ReArtifactDescriptor, ...],
+) -> str:
     lines = [
         "# Published RE Workspace Brief",
         "",
         "This deterministic briefing is assembled from registered published RE artifacts.",
         "",
     ]
-    for key, title in (
-        ("re_overview", "Workspace Overview"),
-        ("cross_repo", "Relationships"),
-        ("contracts", "Contracts"),
-        ("workspace_checklist", "Workspace Checklist"),
-        ("architecture_map", "Architecture Map"),
-        ("workspace_codegraph_summary", "Workspace CodeGraph Summary"),
-        ("domain_catalog", "Domain Catalog"),
-    ):
-        lines.extend(_artifact_section(snapshot_root, artifacts.get(key), title))
-    strategy = artifacts.get("workspace_strategy")
-    if isinstance(strategy, list):
-        for item in strategy:
-            lines.extend(_artifact_section(snapshot_root, item, "Workspace Strategy"))
-    source_manifests = artifacts.get("source_manifests")
-    if isinstance(source_manifests, dict):
+    for kind, title in _WORKSPACE_BRIEFING_SECTIONS:
+        for descriptor in _briefing_descriptors(
+            descriptors,
+            scope="workspace",
+            kind=kind,
+        ):
+            lines.extend(
+                _artifact_section(
+                    snapshot_root,
+                    _snapshot_descriptor_path(snapshot_root, descriptor),
+                    title,
+                )
+            )
+    source_ids = sorted(
+        descriptor.source_id
+        for descriptor in descriptors
+        if descriptor.kind == "re-source-manifest" and descriptor.source_id
+    )
+    if source_ids:
         lines.extend(["## Available Source RE", ""])
-        for source_id in sorted(source_manifests):
+        for source_id in source_ids:
             lines.append(f"- {source_id}")
         lines.append("")
     return _bounded_text("\n".join(lines).rstrip() + "\n", _BRIEF_TOTAL_CAP_BYTES)
@@ -350,7 +512,7 @@ def _workspace_brief(snapshot_root: Path, artifacts: Mapping[str, object]) -> st
 
 def _source_brief(
     snapshot_root: Path,
-    artifacts: Mapping[str, object],
+    descriptors: tuple[ReArtifactDescriptor, ...],
     source_id: str,
 ) -> str:
     lines = [
@@ -359,61 +521,44 @@ def _source_brief(
         "This deterministic briefing is assembled from registered source-owned RE artifacts.",
         "",
     ]
-    source_root = snapshot_root / "sources" / source_id
-    lines.extend(_artifact_section(snapshot_root, source_root / "overview.md", "Source Overview"))
-    for key, title in (
-        ("source_architecture", "Source Architecture"),
-        ("source_contracts", "Source Contracts"),
-        ("source_components", "Source Components"),
-    ):
-        values = artifacts.get(key)
-        if isinstance(values, dict):
-            lines.extend(_artifact_section(snapshot_root, values.get(source_id), title))
-    source_adrs = artifacts.get("source_adrs")
-    if isinstance(source_adrs, dict):
-        raw_paths = source_adrs.get(source_id)
-        if isinstance(raw_paths, list):
-            for adr_path in raw_paths:
-                lines.extend(_artifact_section(snapshot_root, adr_path, "Source ADR"))
-    for spec in _source_spec_paths(snapshot_root, artifacts, source_id):
-        lines.extend(_artifact_section(snapshot_root, spec, "Source RE Spec"))
-    domain_manifests = artifacts.get("source_domain_manifests")
-    if isinstance(domain_manifests, dict):
-        lines.extend(
-            _artifact_section(snapshot_root, domain_manifests.get(source_id), "Domain Manifest")
-        )
-    supporting = artifacts.get("source_supporting_artifacts")
-    if isinstance(supporting, dict):
-        lines.extend(
-            _artifact_section(snapshot_root, supporting.get(source_id), "Supporting Artifacts")
-        )
-    lines.extend(
-        _artifact_section(
-            snapshot_root,
-            source_root / "codegraph-summary.json",
-            "CodeGraph Summary",
-        )
-    )
+    for kind, title in _SOURCE_BRIEFING_SECTIONS:
+        for descriptor in _briefing_descriptors(
+            descriptors,
+            scope="source",
+            kind=kind,
+            source_id=source_id,
+        ):
+            lines.extend(
+                _artifact_section(
+                    snapshot_root,
+                    _snapshot_descriptor_path(snapshot_root, descriptor),
+                    title,
+                )
+            )
     return _bounded_text("\n".join(lines).rstrip() + "\n", _BRIEF_TOTAL_CAP_BYTES)
 
 
-def _source_spec_paths(
+def _briefing_descriptors(
+    descriptors: tuple[ReArtifactDescriptor, ...],
+    *,
+    scope: str,
+    kind: str,
+    source_id: str | None = None,
+) -> list[ReArtifactDescriptor]:
+    return [
+        descriptor
+        for descriptor in descriptors
+        if descriptor.scope == scope
+        and descriptor.kind == kind
+        and (scope == "workspace" or descriptor.source_id == source_id)
+    ]
+
+
+def _snapshot_descriptor_path(
     snapshot_root: Path,
-    artifacts: Mapping[str, object],
-    source_id: str,
-) -> list[Path]:
-    specs = artifacts.get("re_specs")
-    if not isinstance(specs, list):
-        return []
-    source_prefix = (snapshot_root / "sources" / source_id / "specs").resolve()
-    paths: list[Path] = []
-    for item in specs:
-        if not isinstance(item, str):
-            continue
-        path = Path(item).resolve()
-        if path.is_file() and path.is_relative_to(source_prefix):
-            paths.append(path)
-    return sorted(paths)
+    descriptor: ReArtifactDescriptor,
+) -> Path:
+    return snapshot_root / Path(descriptor.path).relative_to("re")
 
 
 def _artifact_section(snapshot_root: Path, value: object, title: str) -> list[str]:

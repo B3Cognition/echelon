@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from harness.re_artifacts import SUPPORTED_RE_ARTIFACT_KINDS
 from harness.published_re_context import (
     attach_published_re_context,
     write_canonical_re_context,
@@ -42,6 +43,8 @@ def _publish_fixture(root: Path) -> Path:
     spec = source_root / "specs" / "search" / "spec.md"
     spec.parent.mkdir(parents=True)
     spec.write_text("# Search v1\n", encoding="utf-8")
+    checklist = source_root / "specs" / "search" / "checklist.md"
+    checklist.write_text("# Search Checklist Policy Marker\n", encoding="utf-8")
     (source_root / "overview.md").write_text("# API\n", encoding="utf-8")
     (source_root / "architecture.md").write_text("# API Architecture\n", encoding="utf-8")
     (source_root / "contracts.md").write_text("# API Contracts\n", encoding="utf-8")
@@ -54,6 +57,12 @@ def _publish_fixture(root: Path) -> Path:
     _write_json(source_root / "codegraph-summary.json", {"source_id": "api", "symbols": 2})
     _write_json(source_root / "codegraph-analysis.json", {"source_id": "api", "deep": True})
     _write_json(source_root / "analysis.json", {"source_id": "api", "analysis": True})
+    _write_json(source_root / "structure.json", {"registered_only": "structure"})
+    _write_json(source_root / "configs.json", {"registered_only": "configs"})
+    _write_json(source_root / "dependencies.json", {"registered_only": "dependencies"})
+    quality = source_root / "quality" / "report.md"
+    quality.parent.mkdir()
+    quality.write_text("# Registered Only Quality Evidence\n", encoding="utf-8")
     (source_root / "unregistered.txt").write_text("secret\n", encoding="utf-8")
     source_artifacts = [
         _descriptor(
@@ -72,9 +81,14 @@ def _publish_fixture(root: Path) -> Path:
                 "re/sources/api/codegraph-summary.json": "re-codegraph-summary",
                 "re/sources/api/components.md": "re-components",
                 "re/sources/api/contracts.md": "re-contracts",
+                "re/sources/api/configs.json": "re-configs",
+                "re/sources/api/dependencies.json": "re-dependencies",
                 "re/sources/api/domain-manifest.json": "re-domain-manifest",
                 "re/sources/api/overview.md": "re-overview",
+                "re/sources/api/quality/report.md": "re-quality-report",
+                "re/sources/api/specs/search/checklist.md": "re-generated-checklist",
                 "re/sources/api/specs/search/spec.md": "re-generated-spec",
+                "re/sources/api/structure.json": "re-structure",
                 "re/sources/api/supporting-artifacts.md": "re-supporting-artifacts",
             }.items()
         )
@@ -107,6 +121,15 @@ def _publish_fixture(root: Path) -> Path:
     (workspace / "checklist.md").write_text("# Checklist\n", encoding="utf-8")
     _write_json(workspace / "architecture-map.json", {"schema_version": 1, "domains": []})
     _write_json(workspace / "codegraph-summary.json", {"workspace": True})
+    (workspace / "current-domain.md").write_text(
+        "# Workspace Domain Policy Marker\n", encoding="utf-8"
+    )
+    (workspace / "current-strategy.md").write_text(
+        "# Workspace Strategy Policy Marker\n", encoding="utf-8"
+    )
+    decision = workspace / "decisions" / "current.md"
+    decision.parent.mkdir()
+    decision.write_text("# Workspace Decision Policy Marker\n", encoding="utf-8")
     workspace_artifacts = [
         _descriptor(root, path, kind=kind, scope="workspace")
         for path, kind in sorted(
@@ -115,6 +138,9 @@ def _publish_fixture(root: Path) -> Path:
                 "re/workspace/checklist.md": "re-workspace-checklist",
                 "re/workspace/codegraph-summary.json": "re-codegraph-summary",
                 "re/workspace/contracts.md": "re-contracts",
+                "re/workspace/current-domain.md": "re-domain",
+                "re/workspace/current-strategy.md": "re-strategy",
+                "re/workspace/decisions/current.md": "re-decision",
                 "re/workspace/overview.md": "re-overview",
                 "re/workspace/relationships.md": "re-relationships",
             }.items()
@@ -202,7 +228,12 @@ def test_attach_published_re_context_snapshots_only_registered_artifacts(
     canonical_spec = _publish_fixture(tmp_path)
     run_dir = tmp_path / "runs" / "spec-1"
 
-    context = attach_published_re_context(tmp_path, run_dir, ignore=False)
+    context = attach_published_re_context(
+        tmp_path,
+        run_dir,
+        ignore=False,
+        implementation_targets=["sources/api/src/search.ts"],
+    )
 
     assert context["status"] == "attached"
     assert context["generation"] == 3
@@ -216,6 +247,7 @@ def test_attach_published_re_context_snapshots_only_registered_artifacts(
     assert [row["path"] for row in descriptors] == sorted(
         row["path"] for row in descriptors
     )
+    assert {row["kind"] for row in descriptors} == SUPPORTED_RE_ARTIFACT_KINDS
     assert not any(row["path"].endswith("unregistered.txt") for row in descriptors)
     snapshot_specs = artifacts["re_specs"]
     assert isinstance(snapshot_specs, list)
@@ -233,6 +265,45 @@ def test_attach_published_re_context_snapshots_only_registered_artifacts(
     assert "# overview.md" in workspace_text
     assert "Available Source RE" in workspace_text
     assert "api" in workspace_text
+    assert "# relationships.md" in workspace_text
+    assert "# contracts.md" in workspace_text
+    assert '"domains": []' in workspace_text
+    assert '"workspace": true' in workspace_text
+    assert "# Checklist" in workspace_text
+    assert "Workspace Domain Policy Marker" in workspace_text
+    assert "Workspace Strategy Policy Marker" in workspace_text
+    assert "Workspace Decision Policy Marker" in workspace_text
+
+    registered_only = {
+        "re-codegraph-analysis",
+        "re-analysis",
+        "re-structure",
+        "re-configs",
+        "re-dependencies",
+        "re-quality-report",
+    }
+    registered_only_paths = {
+        row["path"] for row in descriptors if row["kind"] in registered_only
+    }
+    assert registered_only_paths
+    assert all(
+        not (snapshot_root / Path(path).relative_to("re")).exists()
+        for path in registered_only_paths
+    )
+    assert all(Path(path).name not in workspace_text for path in registered_only_paths)
+
+    spec_dir = tmp_path / "specs" / "001-search"
+    spec_dir.mkdir(parents=True)
+    canonical_context = json.loads(
+        write_canonical_re_context(tmp_path, spec_dir, context).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert all(set(row) == {"path", "hash"} for row in canonical_context["artifacts"])
+    canonical_paths = {row["path"] for row in canonical_context["artifacts"]}
+    assert "re/sources/api/specs/search/checklist.md" in canonical_paths
+    assert "re/workspace/decisions/current.md" in canonical_paths
+    assert all(path not in canonical_paths for path in registered_only_paths)
 
     canonical_spec.write_text("# Search v2\n", encoding="utf-8")
     assert snapshot_spec.read_text(encoding="utf-8") == "# Search v1\n"
@@ -265,10 +336,16 @@ def test_attach_published_re_context_selects_source_from_target_path(tmp_path: P
     assert "# API Components" in text
     assert "# API ADR" in text
     assert "# Search v1" in text
+    assert "Search Checklist Policy Marker" in text
+    assert '"source_id": "api"' in text
     assert "# Support" in text
     assert '"symbols": 2' in text
     assert "codegraph-analysis.json" not in text
     assert "analysis.json" not in text
+    assert "structure.json" not in text
+    assert "configs.json" not in text
+    assert "dependencies.json" not in text
+    assert "Registered Only Quality Evidence" not in text
 
 
 @pytest.mark.unit

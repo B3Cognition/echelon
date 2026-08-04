@@ -103,6 +103,7 @@ def materialize_re_run_context(
         "domain_catalog": canonical.get("domain_catalog"),
         "source_manifests": canonical.get("source_manifests", {}),
         "workspace_manifest": canonical.get("workspace_manifest"),
+        "artifact_descriptors": canonical.get("artifact_descriptors", []),
         "published_generation": published_index.generation if published_index else 0,
     }
     return artifacts
