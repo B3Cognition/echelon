@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ctypes
 from dataclasses import dataclass
+import errno
 import hashlib
 import json
 import os
@@ -10,6 +12,7 @@ from pathlib import Path, PurePosixPath
 import re
 import shutil
 import stat
+import sys
 import tempfile
 from typing import Iterable, Mapping
 
@@ -48,6 +51,8 @@ _REPORT_MANIFEST_NAME = "mempalace-refresh-manifest.json"
 _REPORT_TRANSACTION_NAME = ".mempalace-refresh-transaction"
 _REPORT_CLEANUP_RECEIPT_NAME = ".mempalace-refresh-cleanup.json"
 _REPORT_DETACHED_PREFIX = ".mempalace-refresh-detached-"
+_REPORT_COMPLETED_RECEIPT_PREFIX = ".mempalace-refresh-completed-"
+_MAX_COMPLETED_REPORT_TRANSACTIONS = 128
 _MAX_REPORT_BYTES = 8 * 1024 * 1024
 
 
@@ -1023,8 +1028,14 @@ def _require_transaction_file(path: Path) -> str:
 
 def _load_report_transaction(
     spec_dir: Path,
+    *,
+    transaction_path: Path | None = None,
 ) -> tuple[dict[str, str | None], dict[str, str], str | None, str]:
-    transaction = spec_dir / _REPORT_TRANSACTION_NAME
+    transaction = (
+        spec_dir / _REPORT_TRANSACTION_NAME
+        if transaction_path is None
+        else transaction_path
+    )
     if transaction.is_symlink() or not transaction.is_dir():
         raise RetargetMemoryError(
             "replacement memory report transaction is invalid"
@@ -1243,30 +1254,24 @@ def _report_cleanup_name(
     *,
     transaction_sha256: str,
     expected_live: str,
+    device: int | None = None,
+    inode: int | None = None,
 ) -> str:
+    identity = "" if device is None or inode is None else f":{device}:{inode}"
     cleanup_key = hashlib.sha256(
-        f"{transaction_sha256}:{expected_live}".encode("ascii")
+        f"{transaction_sha256}:{expected_live}{identity}".encode("ascii")
     ).hexdigest()
     return f"{_REPORT_DETACHED_PREFIX}{cleanup_key}"
 
 
-def _load_report_cleanup_receipt(spec_dir: Path) -> dict[str, object] | None:
-    receipt_path = spec_dir / _REPORT_CLEANUP_RECEIPT_NAME
-    detached = _detached_cleanup_paths(spec_dir)
-    if not os.path.lexists(receipt_path):
-        if detached:
-            raise RetargetMemoryError(
-                "replacement memory detached cleanup is unauthenticated"
-            )
-        return None
-    if receipt_path.is_symlink() or not receipt_path.is_file():
-        raise RetargetMemoryError(
-            "replacement memory cleanup receipt is invalid"
-        )
+def _report_completed_receipt_name(content: str) -> str:
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    return f"{_REPORT_COMPLETED_RECEIPT_PREFIX}{digest}.json"
+
+
+def _parse_report_cleanup_receipt(content: str) -> dict[str, object]:
     try:
-        loaded = loads_strict_json(
-            _read_optional_report_text(receipt_path) or ""
-        )
+        loaded = loads_strict_json(content)
     except (ValueError, TypeError, json.JSONDecodeError) as exc:
         raise RetargetMemoryError(
             "replacement memory cleanup receipt is invalid"
@@ -1308,10 +1313,17 @@ def _load_report_cleanup_receipt(spec_dir: Path) -> dict[str, object] | None:
         raise RetargetMemoryError(
             "replacement memory cleanup receipt is invalid"
         )
-    if loaded["cleanup_name"] != _report_cleanup_name(
+    legacy_name = _report_cleanup_name(
         transaction_sha256=loaded["transaction_sha256"],
         expected_live=loaded["expected_live"],
-    ):
+    )
+    identity_name = _report_cleanup_name(
+        transaction_sha256=loaded["transaction_sha256"],
+        expected_live=loaded["expected_live"],
+        device=loaded["device"],
+        inode=loaded["inode"],
+    )
+    if loaded["cleanup_name"] not in {legacy_name, identity_name}:
         raise RetargetMemoryError(
             "replacement memory cleanup receipt is invalid"
         )
@@ -1357,11 +1369,20 @@ def _load_report_cleanup_receipt(spec_dir: Path) -> dict[str, object] | None:
         raise RetargetMemoryError(
             "replacement memory cleanup receipt is invalid"
         )
-    if detached and [path.name for path in detached] != [loaded["cleanup_name"]]:
-        raise RetargetMemoryError(
-            "replacement memory cleanup artifacts are inconsistent"
-        )
     return loaded
+
+
+def _load_report_cleanup_receipt(spec_dir: Path) -> dict[str, object] | None:
+    receipt_path = spec_dir / _REPORT_CLEANUP_RECEIPT_NAME
+    if not os.path.lexists(receipt_path):
+        return None
+    if receipt_path.is_symlink() or not receipt_path.is_file():
+        raise RetargetMemoryError(
+            "replacement memory cleanup receipt is invalid"
+        )
+    return _parse_report_cleanup_receipt(
+        _read_optional_report_text(receipt_path) or ""
+    )
 
 
 def _cleanup_receipt_live_matches(
@@ -1388,186 +1409,11 @@ def _cleanup_receipt_live_matches(
 
 
 def _cleanup_entry_identity(metadata: os.stat_result) -> tuple[int, int, int]:
+    return (stat.S_IFMT(metadata.st_mode), metadata.st_dev, metadata.st_ino)
+
+
+def _canonical_cleanup_receipt(receipt: Mapping[str, object]) -> str:
     return (
-        stat.S_IFMT(metadata.st_mode),
-        metadata.st_dev,
-        metadata.st_ino,
-    )
-
-
-def _stat_cleanup_entry(directory_fd: int, name: str) -> os.stat_result:
-    try:
-        return os.stat(
-            name,
-            dir_fd=directory_fd,
-            follow_symlinks=False,
-        )
-    except OSError as exc:
-        raise RetargetMemoryError(
-            "replacement memory detached cleanup entry changed"
-        ) from exc
-
-
-def _require_cleanup_entry_missing(directory_fd: int, name: str) -> None:
-    try:
-        os.stat(
-            name,
-            dir_fd=directory_fd,
-            follow_symlinks=False,
-        )
-    except FileNotFoundError:
-        return
-    except OSError as exc:
-        raise RetargetMemoryError(
-            "replacement memory detached cleanup entry removal is uncertain"
-        ) from exc
-    raise RetargetMemoryError(
-        "replacement memory detached cleanup entry changed during removal"
-    )
-
-
-def _open_cleanup_directory_at(directory_fd: int, name: str) -> int:
-    required_flags = (
-        getattr(os, "O_DIRECTORY", 0),
-        getattr(os, "O_NOFOLLOW", 0),
-    )
-    if not all(required_flags):
-        raise RetargetMemoryError(
-            "replacement memory descriptor-bound cleanup is unsupported"
-        )
-    flags = (
-        os.O_RDONLY
-        | required_flags[0]
-        | required_flags[1]
-        | getattr(os, "O_CLOEXEC", 0)
-        | getattr(os, "O_NONBLOCK", 0)
-    )
-    try:
-        return os.open(name, flags, dir_fd=directory_fd)
-    except OSError as exc:
-        raise RetargetMemoryError(
-            "replacement memory detached cleanup path is invalid"
-        ) from exc
-
-
-def _open_authenticated_cleanup_directory(
-    parent_fd: int,
-    cleanup_name: str,
-    *,
-    receipt: Mapping[str, object],
-) -> int:
-    descriptor = _open_cleanup_directory_at(parent_fd, cleanup_name)
-    try:
-        opened = os.fstat(descriptor)
-        parent_entry = _stat_cleanup_entry(parent_fd, cleanup_name)
-        if (
-            not stat.S_ISDIR(opened.st_mode)
-            or _cleanup_entry_identity(parent_entry)
-            != _cleanup_entry_identity(opened)
-            or opened.st_dev != receipt["device"]
-            or opened.st_ino != receipt["inode"]
-        ):
-            raise RetargetMemoryError(
-                "replacement memory detached cleanup identity changed"
-            )
-        return descriptor
-    except BaseException:
-        os.close(descriptor)
-        raise
-
-
-def _remove_bound_cleanup_contents(directory_fd: int) -> None:
-    try:
-        entries = list(os.scandir(directory_fd))
-    except OSError as exc:
-        raise RetargetMemoryError(
-            "replacement memory detached cleanup is unreadable"
-        ) from exc
-    for entry in entries:
-        name = entry.name
-        if name in {"", ".", ".."}:
-            raise RetargetMemoryError(
-                "replacement memory detached cleanup entry is invalid"
-            )
-        try:
-            observed = entry.stat(follow_symlinks=False)
-        except OSError as exc:
-            raise RetargetMemoryError(
-                "replacement memory detached cleanup entry changed"
-            ) from exc
-        current = _stat_cleanup_entry(directory_fd, name)
-        if _cleanup_entry_identity(current) != _cleanup_entry_identity(observed):
-            raise RetargetMemoryError(
-                "replacement memory detached cleanup entry changed"
-            )
-        if stat.S_ISDIR(observed.st_mode):
-            child_fd = _open_cleanup_directory_at(directory_fd, name)
-            try:
-                opened = os.fstat(child_fd)
-                if _cleanup_entry_identity(opened) != _cleanup_entry_identity(
-                    observed
-                ):
-                    raise RetargetMemoryError(
-                        "replacement memory detached cleanup entry changed"
-                    )
-                _remove_bound_cleanup_contents(child_fd)
-                before_remove = _stat_cleanup_entry(directory_fd, name)
-                if _cleanup_entry_identity(before_remove) != _cleanup_entry_identity(
-                    opened
-                ):
-                    raise RetargetMemoryError(
-                        "replacement memory detached cleanup entry changed"
-                    )
-                os.rmdir(name, dir_fd=directory_fd)
-                _require_cleanup_entry_missing(directory_fd, name)
-            except RetargetMemoryError:
-                raise
-            except OSError as exc:
-                raise RetargetMemoryError(
-                    "replacement memory detached cleanup entry removal failed"
-                ) from exc
-            finally:
-                os.close(child_fd)
-        elif stat.S_ISREG(observed.st_mode) or stat.S_ISLNK(observed.st_mode):
-            before_remove = _stat_cleanup_entry(directory_fd, name)
-            if _cleanup_entry_identity(before_remove) != _cleanup_entry_identity(
-                observed
-            ):
-                raise RetargetMemoryError(
-                    "replacement memory detached cleanup entry changed"
-                )
-            try:
-                os.unlink(name, dir_fd=directory_fd)
-                _require_cleanup_entry_missing(directory_fd, name)
-            except OSError as exc:
-                raise RetargetMemoryError(
-                    "replacement memory detached cleanup entry removal failed"
-                ) from exc
-        else:
-            raise RetargetMemoryError(
-                "replacement memory detached cleanup entry type is invalid"
-            )
-    try:
-        os.fsync(directory_fd)
-    except OSError as exc:
-        raise RetargetMemoryError(
-            "replacement memory detached cleanup sync failed"
-        ) from exc
-
-
-def _retire_report_cleanup_receipt(
-    spec_dir: Path,
-    *,
-    cleanup_name: str,
-    receipt: Mapping[str, object],
-) -> None:
-    cleanup_path = spec_dir / cleanup_name
-    if os.path.lexists(cleanup_path):
-        raise RetargetMemoryError(
-            "replacement memory detached cleanup path changed"
-        )
-    receipt_path = spec_dir / _REPORT_CLEANUP_RECEIPT_NAME
-    receipt_content = (
         json.dumps(
             dict(receipt),
             indent=2,
@@ -1576,18 +1422,308 @@ def _retire_report_cleanup_receipt(
         )
         + "\n"
     )
-    _unlink_report_file(receipt_path)
-    if os.path.lexists(cleanup_path):
-        try:
-            if not os.path.lexists(receipt_path):
-                _write_text_durable_atomic(receipt_path, receipt_content)
-        except (Exception, SystemExit) as exc:
-            raise RetargetMemoryError(
-                "replacement memory cleanup receipt retirement is uncertain"
-            ) from exc
-        raise RetargetMemoryError(
-            "replacement memory cleanup path changed during receipt retirement"
+
+
+def _completed_receipt_paths(spec_dir: Path) -> list[Path]:
+    return sorted(
+        (
+            entry
+            for entry in spec_dir.iterdir()
+            if entry.name.startswith(_REPORT_COMPLETED_RECEIPT_PREFIX)
+        ),
+        key=lambda entry: entry.name,
+    )
+
+
+def _cleanup_receipt_matches_transaction(
+    receipt: Mapping[str, object],
+    *,
+    old_contents: Mapping[str, str | None],
+    new_contents: Mapping[str, str],
+    old_manifest: str | None,
+    new_manifest: str,
+) -> bool:
+    expected_contents: Mapping[str, str | None]
+    if receipt["expected_live"] == "new":
+        expected_contents = new_contents
+        expected_manifest = new_manifest
+    else:
+        expected_contents = old_contents
+        expected_manifest = old_manifest
+    return (
+        _type_exact_equal(
+            receipt["files"],
+            _cleanup_live_records(expected_contents),
         )
+        and receipt["manifest_present"] is (expected_manifest is not None)
+        and receipt["manifest_sha256"]
+        == (
+            _sha256_text(expected_manifest)
+            if expected_manifest is not None
+            else None
+        )
+    )
+
+
+def _validate_completed_report_archives(
+    spec_dir: Path,
+    *,
+    active_receipt: Mapping[str, object] | None,
+) -> None:
+    completed_paths = _completed_receipt_paths(spec_dir)
+    if len(completed_paths) > _MAX_COMPLETED_REPORT_TRANSACTIONS:
+        raise RetargetMemoryError(
+            "replacement memory completed transaction history is full"
+        )
+    completed: dict[str, dict[str, object]] = {}
+    for receipt_path in completed_paths:
+        content = _read_optional_report_text(receipt_path)
+        if (
+            content is None
+            or receipt_path.name != _report_completed_receipt_name(content)
+        ):
+            raise RetargetMemoryError(
+                "replacement memory completed cleanup receipt is invalid"
+            )
+        receipt = _parse_report_cleanup_receipt(content)
+        cleanup_name = receipt["cleanup_name"]
+        if type(cleanup_name) is not str or cleanup_name in completed:
+            raise RetargetMemoryError(
+                "replacement memory completed cleanup receipts conflict"
+            )
+        completed[cleanup_name] = receipt
+
+    detached = {path.name: path for path in _detached_cleanup_paths(spec_dir)}
+    active_name = (
+        active_receipt["cleanup_name"]
+        if active_receipt is not None
+        else None
+    )
+    if type(active_name) is str and active_name in completed:
+        raise RetargetMemoryError(
+            "replacement memory cleanup evidence is duplicated"
+        )
+    expected_detached = set(completed)
+    if type(active_name) is str and active_name in detached:
+        expected_detached.add(active_name)
+    if set(detached) != expected_detached:
+        raise RetargetMemoryError(
+            "replacement memory detached cleanup is unauthenticated"
+        )
+
+    for cleanup_name, receipt in completed.items():
+        transaction = detached[cleanup_name]
+        if transaction.is_symlink() or not transaction.is_dir():
+            raise RetargetMemoryError(
+                "replacement memory completed journal is invalid"
+            )
+        identity = transaction.stat(follow_symlinks=False)
+        if (
+            identity.st_dev != receipt["device"]
+            or identity.st_ino != receipt["inode"]
+            or _sha256_text(
+                _require_transaction_file(transaction / "transaction.json")
+            )
+            != receipt["transaction_sha256"]
+        ):
+            raise RetargetMemoryError(
+                "replacement memory completed journal identity changed"
+            )
+        old_contents, new_contents, old_manifest, new_manifest = (
+            _load_report_transaction(
+                spec_dir,
+                transaction_path=transaction,
+            )
+        )
+        if not _cleanup_receipt_matches_transaction(
+            receipt,
+            old_contents=old_contents,
+            new_contents=new_contents,
+            old_manifest=old_manifest,
+            new_manifest=new_manifest,
+        ):
+            raise RetargetMemoryError(
+                "replacement memory completed cleanup receipt is inconsistent"
+            )
+
+
+def _atomic_rename_no_replace_at(
+    parent_fd: int,
+    source_name: str,
+    destination_name: str,
+) -> None:
+    if (
+        source_name in {"", ".", ".."}
+        or destination_name in {"", ".", ".."}
+        or "/" in source_name
+        or "/" in destination_name
+    ):
+        raise RetargetMemoryError(
+            "replacement memory archive name is invalid"
+        )
+    libc = ctypes.CDLL(None, use_errno=True)
+    if sys.platform == "darwin" and hasattr(libc, "renameatx_np"):
+        function = libc.renameatx_np
+        function.argtypes = (
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        )
+        function.restype = ctypes.c_int
+        arguments = (
+            parent_fd,
+            os.fsencode(source_name),
+            parent_fd,
+            os.fsencode(destination_name),
+            0x00000004,
+        )
+    elif sys.platform.startswith("linux") and hasattr(libc, "renameat2"):
+        function = libc.renameat2
+        function.argtypes = (
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        )
+        function.restype = ctypes.c_int
+        arguments = (
+            parent_fd,
+            os.fsencode(source_name),
+            parent_fd,
+            os.fsencode(destination_name),
+            0x00000001,
+        )
+    else:
+        raise RetargetMemoryError(
+            "replacement memory atomic archive is unsupported"
+        )
+    ctypes.set_errno(0)
+    if function(*arguments) != 0:
+        error_number = ctypes.get_errno() or errno.EIO
+        raise OSError(error_number, os.strerror(error_number), destination_name)
+    os.fsync(parent_fd)
+
+
+def _open_entry_at(parent_fd: int, name: str, *, directory: bool) -> int:
+    no_follow = getattr(os, "O_NOFOLLOW", 0)
+    directory_flag = getattr(os, "O_DIRECTORY", 0)
+    if not no_follow or (directory and not directory_flag):
+        raise RetargetMemoryError(
+            "replacement memory descriptor-bound archive is unsupported"
+        )
+    flags = os.O_RDONLY | no_follow | getattr(os, "O_CLOEXEC", 0)
+    if directory:
+        flags |= directory_flag | getattr(os, "O_NONBLOCK", 0)
+    try:
+        return os.open(name, flags, dir_fd=parent_fd)
+    except OSError as exc:
+        raise RetargetMemoryError(
+            "replacement memory cleanup evidence is unavailable"
+        ) from exc
+
+
+def _read_regular_entry_at(parent_fd: int, name: str) -> tuple[int, str]:
+    descriptor = _open_entry_at(parent_fd, name, directory=False)
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > _MAX_REPORT_BYTES:
+            raise RetargetMemoryError(
+                "replacement memory cleanup receipt is invalid"
+            )
+        chunks: list[bytes] = []
+        remaining = _MAX_REPORT_BYTES + 1
+        while remaining > 0:
+            chunk = os.read(descriptor, min(64 * 1024, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        if remaining == 0:
+            raise RetargetMemoryError(
+                "replacement memory cleanup receipt is oversized"
+            )
+        try:
+            content = b"".join(chunks).decode("utf-8")
+        except UnicodeError as exc:
+            raise RetargetMemoryError(
+                "replacement memory cleanup receipt is invalid"
+            ) from exc
+        return descriptor, content
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _retire_report_cleanup_receipt(
+    parent_fd: int,
+    *,
+    source_name: str,
+    receipt: Mapping[str, object],
+) -> None:
+    cleanup_name = receipt["cleanup_name"]
+    if type(cleanup_name) is not str:
+        raise RetargetMemoryError(
+            "replacement memory cleanup receipt is invalid"
+        )
+    journal_fd = _open_entry_at(parent_fd, source_name, directory=True)
+    receipt_fd: int | None = None
+    try:
+        journal_identity = os.fstat(journal_fd)
+        if (
+            journal_identity.st_dev != receipt["device"]
+            or journal_identity.st_ino != receipt["inode"]
+        ):
+            raise RetargetMemoryError(
+                "replacement memory cleanup transaction identity changed"
+            )
+        if source_name != cleanup_name:
+            _atomic_rename_no_replace_at(parent_fd, source_name, cleanup_name)
+        archived_identity = os.stat(
+            cleanup_name,
+            dir_fd=parent_fd,
+            follow_symlinks=False,
+        )
+        if _cleanup_entry_identity(archived_identity) != _cleanup_entry_identity(
+            journal_identity
+        ):
+            raise RetargetMemoryError(
+                "replacement memory completed journal identity changed"
+            )
+
+        receipt_content = _canonical_cleanup_receipt(receipt)
+        receipt_fd, persisted_content = _read_regular_entry_at(
+            parent_fd,
+            _REPORT_CLEANUP_RECEIPT_NAME,
+        )
+        if persisted_content != receipt_content:
+            raise RetargetMemoryError(
+                "replacement memory cleanup receipt changed"
+            )
+        receipt_identity = os.fstat(receipt_fd)
+        archived_receipt_name = _report_completed_receipt_name(receipt_content)
+        _atomic_rename_no_replace_at(
+            parent_fd,
+            _REPORT_CLEANUP_RECEIPT_NAME,
+            archived_receipt_name,
+        )
+        archived_receipt_identity = os.stat(
+            archived_receipt_name,
+            dir_fd=parent_fd,
+            follow_symlinks=False,
+        )
+        if _cleanup_entry_identity(
+            archived_receipt_identity
+        ) != _cleanup_entry_identity(receipt_identity):
+            raise RetargetMemoryError(
+                "replacement memory completed cleanup receipt identity changed"
+            )
+    finally:
+        if receipt_fd is not None:
+            os.close(receipt_fd)
+        os.close(journal_fd)
 
 
 def _finish_detached_report_cleanup(
@@ -1596,10 +1732,6 @@ def _finish_detached_report_cleanup(
     receipt: Mapping[str, object],
 ) -> None:
     cleanup_name = receipt["cleanup_name"]
-    if type(cleanup_name) is not str:
-        raise RetargetMemoryError(
-            "replacement memory cleanup receipt is invalid"
-        )
     directory_flag = getattr(os, "O_DIRECTORY", 0)
     no_follow_flag = getattr(os, "O_NOFOLLOW", 0)
     if not directory_flag or not no_follow_flag:
@@ -1618,63 +1750,46 @@ def _finish_detached_report_cleanup(
         raise RetargetMemoryError(
             "replacement memory cleanup parent is invalid"
         ) from exc
-    cleanup_fd: int | None = None
     try:
+        transaction_present = True
+        cleanup_present = True
         try:
             os.stat(
-                cleanup_name,
+                _REPORT_TRANSACTION_NAME,
                 dir_fd=parent_fd,
                 follow_symlinks=False,
             )
         except FileNotFoundError:
-            pass
-        else:
-            cleanup_fd = _open_authenticated_cleanup_directory(
-                parent_fd,
-                cleanup_name,
-                receipt=receipt,
-            )
-            _remove_bound_cleanup_contents(cleanup_fd)
-            before_remove = _stat_cleanup_entry(parent_fd, cleanup_name)
-            opened = os.fstat(cleanup_fd)
-            if _cleanup_entry_identity(before_remove) != _cleanup_entry_identity(
-                opened
-            ):
-                raise RetargetMemoryError(
-                    "replacement memory detached cleanup identity changed"
-                )
-            try:
-                os.rmdir(cleanup_name, dir_fd=parent_fd)
-                os.fsync(parent_fd)
-            except OSError as exc:
-                raise RetargetMemoryError(
-                    "replacement memory detached cleanup removal failed"
-                ) from exc
+            transaction_present = False
         try:
             os.stat(
-                cleanup_name,
+                cleanup_name,  # type: ignore[arg-type]
                 dir_fd=parent_fd,
                 follow_symlinks=False,
             )
         except FileNotFoundError:
-            pass
-        else:
+            cleanup_present = False
+        if transaction_present == cleanup_present:
             raise RetargetMemoryError(
-                "replacement memory detached cleanup path changed"
+                "replacement memory cleanup journal is missing or duplicated"
             )
+        _retire_report_cleanup_receipt(
+            parent_fd,
+            source_name=(
+                _REPORT_TRANSACTION_NAME if transaction_present else cleanup_name
+            ),  # type: ignore[arg-type]
+            receipt=receipt,
+        )
     finally:
-        if cleanup_fd is not None:
-            os.close(cleanup_fd)
         os.close(parent_fd)
-    _retire_report_cleanup_receipt(
-        spec_dir,
-        cleanup_name=cleanup_name,
-        receipt=receipt,
-    )
 
 
 def _retire_detached_report_cleanup(spec_dir: Path) -> None:
     receipt = _load_report_cleanup_receipt(spec_dir)
+    _validate_completed_report_archives(
+        spec_dir,
+        active_receipt=receipt,
+    )
     if receipt is None:
         return
     if not _cleanup_receipt_live_matches(spec_dir, receipt):
@@ -1721,7 +1836,39 @@ def _retire_detached_report_cleanup(spec_dir: Path) -> None:
             raise RetargetMemoryError(
                 "replacement memory cleanup transaction state is inconsistent"
             )
-        atomic_rename_no_replace(transaction, cleanup_path)
+    elif os.path.lexists(cleanup_path):
+        if cleanup_path.is_symlink() or not cleanup_path.is_dir():
+            raise RetargetMemoryError(
+                "replacement memory detached cleanup path is invalid"
+            )
+        identity = cleanup_path.stat(follow_symlinks=False)
+        if (
+            identity.st_dev != receipt["device"]
+            or identity.st_ino != receipt["inode"]
+            or _sha256_text(
+                _require_transaction_file(cleanup_path / "transaction.json")
+            )
+            != receipt["transaction_sha256"]
+        ):
+            raise RetargetMemoryError(
+                "replacement memory cleanup transaction identity changed"
+            )
+        old_contents, new_contents, old_manifest, new_manifest = (
+            _load_report_transaction(
+                spec_dir,
+                transaction_path=cleanup_path,
+            )
+        )
+        if not _cleanup_receipt_matches_transaction(
+            receipt,
+            old_contents=old_contents,
+            new_contents=new_contents,
+            old_manifest=old_manifest,
+            new_manifest=new_manifest,
+        ):
+            raise RetargetMemoryError(
+                "replacement memory cleanup transaction state is inconsistent"
+            )
     _finish_detached_report_cleanup(spec_dir, receipt=receipt)
 
 
@@ -1760,6 +1907,8 @@ def _remove_report_transaction(
     cleanup_name = _report_cleanup_name(
         transaction_sha256=transaction_digest,
         expected_live=expected_live,
+        device=transaction_identity.st_dev,
+        inode=transaction_identity.st_ino,
     )
     manifest_present = expected_manifest is not None
     receipt = {
@@ -1784,10 +1933,6 @@ def _remove_report_transaction(
             allow_nan=False,
         )
         + "\n",
-    )
-    atomic_rename_no_replace(
-        transaction,
-        spec_dir / cleanup_name,
     )
     _finish_detached_report_cleanup(spec_dir, receipt=receipt)
 

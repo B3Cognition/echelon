@@ -728,27 +728,31 @@ def _prepare_detached_cleanup(
 ) -> tuple[Path, Path]:
     from echelon import mempalace_retarget
 
-    real_rename = mempalace_retarget.atomic_rename_no_replace
+    real_rename = mempalace_retarget._atomic_rename_no_replace_at
     interrupted = False
 
-    def interrupt_after_detach(source: Path, destination: Path) -> None:
+    def interrupt_after_detach(
+        parent_fd: int,
+        source_name: str,
+        destination_name: str,
+    ) -> None:
         nonlocal interrupted
-        real_rename(source, destination)
+        real_rename(parent_fd, source_name, destination_name)
         if (
-            destination.name.startswith(".mempalace-refresh-detached-")
+            destination_name.startswith(".mempalace-refresh-detached-")
             and not interrupted
         ):
             interrupted = True
             raise KeyboardInterrupt("cleanup interrupted after detach")
 
     monkeypatch.setattr(
-        "echelon.mempalace_retarget.atomic_rename_no_replace",
+        "echelon.mempalace_retarget._atomic_rename_no_replace_at",
         interrupt_after_detach,
     )
     with pytest.raises(KeyboardInterrupt, match="cleanup"):
         refresh_retarget_spec_memory(workspace.root, workspace.spec_dir)
     monkeypatch.setattr(
-        "echelon.mempalace_retarget.atomic_rename_no_replace",
+        "echelon.mempalace_retarget._atomic_rename_no_replace_at",
         real_rename,
     )
     detached = next(
@@ -759,46 +763,217 @@ def _prepare_detached_cleanup(
     return detached, receipt
 
 
-def _make_cleanup_replacement(root: Path, kind: str) -> tuple[Path, Path]:
-    replacement = root / f"unrelated-cleanup-{kind}"
-    payload = root / f"unrelated-cleanup-{kind}-payload"
-    if kind == "directory":
-        replacement.mkdir()
-        payload = replacement / "preserve.txt"
-        payload.write_text("preserve directory\n", encoding="utf-8")
-    elif kind == "file":
-        replacement.write_text("preserve file\n", encoding="utf-8")
-        payload = replacement
-    elif kind == "symlink":
-        payload.mkdir()
-        payload.joinpath("preserve.txt").write_text(
-            "preserve symlink target\n",
-            encoding="utf-8",
-        )
-        replacement.symlink_to(payload, target_is_directory=True)
-    else:
-        raise AssertionError(f"unsupported replacement kind: {kind}")
-    return replacement, payload
-
-
-def _assert_cleanup_replacement_survives(
-    replacement: Path,
-    payload: Path,
-    kind: str,
+@pytest.mark.unit
+def test_retarget_refresh_archives_cleanup_evidence_without_deleting_it(
+    memory_workspace: MemoryWorkspace,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    if kind == "directory":
-        assert replacement.is_dir()
-        assert replacement.joinpath("preserve.txt").read_text(
-            encoding="utf-8"
-        ) == "preserve directory\n"
-    elif kind == "file":
-        assert replacement.is_file()
-        assert replacement.read_text(encoding="utf-8") == "preserve file\n"
-    else:
-        assert replacement.is_symlink()
-        assert payload.joinpath("preserve.txt").read_text(
-            encoding="utf-8"
-        ) == "preserve symlink target\n"
+    _stub_refresh_reports(memory_workspace, monkeypatch)
+    from echelon import mempalace_retarget
+
+    recursive_delete_called = False
+    receipt_unlink_called = False
+
+    def reject_recursive_delete(_directory_fd: int) -> None:
+        nonlocal recursive_delete_called
+        recursive_delete_called = True
+        raise AssertionError("completed journals must remain append-only")
+
+    real_unlink_report = mempalace_retarget._unlink_report_file
+
+    def reject_receipt_unlink(path: Path) -> None:
+        nonlocal receipt_unlink_called
+        if path.name == ".mempalace-refresh-cleanup.json":
+            receipt_unlink_called = True
+            raise AssertionError("completion evidence must remain append-only")
+        real_unlink_report(path)
+
+    monkeypatch.setattr(
+        "echelon.mempalace_retarget._remove_bound_cleanup_contents",
+        reject_recursive_delete,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "echelon.mempalace_retarget._unlink_report_file",
+        reject_receipt_unlink,
+    )
+
+    receipt = refresh_retarget_spec_memory(
+        memory_workspace.root,
+        memory_workspace.spec_dir,
+    )
+
+    assert receipt.status == "pass"
+    assert recursive_delete_called is False
+    assert receipt_unlink_called is False
+    completed_journals = list(
+        memory_workspace.spec_dir.glob(".mempalace-refresh-detached-*")
+    )
+    completed_receipts = list(
+        memory_workspace.spec_dir.glob(".mempalace-refresh-completed-*.json")
+    )
+    assert len(completed_journals) == 1
+    assert {entry.name for entry in completed_journals[0].iterdir()} == {
+        "new",
+        "old",
+        "transaction.json",
+    }
+    assert len(completed_receipts) == 1
+    assert not (
+        memory_workspace.spec_dir / ".mempalace-refresh-cleanup.json"
+    ).exists()
+
+
+@pytest.mark.unit
+def test_retarget_refresh_rejects_missing_authenticated_detached_journal(
+    memory_workspace: MemoryWorkspace,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_refresh_reports(memory_workspace, monkeypatch)
+    detached, active_receipt = _prepare_detached_cleanup(
+        memory_workspace,
+        monkeypatch,
+    )
+    moved = memory_workspace.root / "moved-authenticated-journal"
+    detached.rename(moved)
+
+    with pytest.raises(RetargetMemoryError, match="cleanup"):
+        refresh_retarget_spec_memory(
+            memory_workspace.root,
+            memory_workspace.spec_dir,
+        )
+
+    assert moved.is_dir()
+    assert active_receipt.is_file()
+    assert not list(
+        memory_workspace.spec_dir.glob(".mempalace-refresh-completed-*.json")
+    )
+
+
+@pytest.mark.unit
+def test_retarget_refresh_archives_receipt_through_pinned_parent(
+    memory_workspace: MemoryWorkspace,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_refresh_reports(memory_workspace, monkeypatch)
+    from echelon import mempalace_retarget
+
+    real_retire = mempalace_retarget._retire_report_cleanup_receipt
+    saved_parent = memory_workspace.root / "saved-canonical-spec"
+    replacement_parent = memory_workspace.spec_dir
+    replacement_receipt = replacement_parent / ".mempalace-refresh-cleanup.json"
+    swapped = False
+
+    def swap_parent_before_receipt_archive(*args, **kwargs) -> None:
+        nonlocal swapped
+        if not swapped:
+            swapped = True
+            replacement_parent.rename(saved_parent)
+            replacement_parent.mkdir()
+            replacement_receipt.write_text(
+                "preserve replacement parent\n",
+                encoding="utf-8",
+            )
+        real_retire(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "echelon.mempalace_retarget._retire_report_cleanup_receipt",
+        swap_parent_before_receipt_archive,
+    )
+
+    receipt = refresh_retarget_spec_memory(
+        memory_workspace.root,
+        memory_workspace.spec_dir,
+    )
+
+    assert receipt.status == "pass"
+    assert swapped is True
+    assert replacement_receipt.read_text(encoding="utf-8") == (
+        "preserve replacement parent\n"
+    )
+    assert len(list(saved_parent.glob(".mempalace-refresh-detached-*"))) == 1
+    assert len(
+        list(saved_parent.glob(".mempalace-refresh-completed-*.json"))
+    ) == 1
+
+
+@pytest.mark.unit
+def test_retarget_refresh_rejects_missing_completed_journal(
+    memory_workspace: MemoryWorkspace,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_refresh_reports(memory_workspace, monkeypatch)
+    refresh_retarget_spec_memory(
+        memory_workspace.root,
+        memory_workspace.spec_dir,
+    )
+    journal = next(
+        memory_workspace.spec_dir.glob(".mempalace-refresh-detached-*")
+    )
+    moved = memory_workspace.root / "moved-completed-journal"
+    journal.rename(moved)
+
+    with pytest.raises(RetargetMemoryError, match="cleanup"):
+        refresh_retarget_spec_memory(
+            memory_workspace.root,
+            memory_workspace.spec_dir,
+        )
+
+    assert moved.is_dir()
+    assert len(list(
+        memory_workspace.spec_dir.glob(".mempalace-refresh-completed-*.json")
+    )) == 1
+
+
+@pytest.mark.unit
+def test_retarget_refresh_accumulates_unique_completed_transactions(
+    memory_workspace: MemoryWorkspace,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_refresh_reports(memory_workspace, monkeypatch)
+    refresh_retarget_spec_memory(
+        memory_workspace.root,
+        memory_workspace.spec_dir,
+    )
+    first_journals = {
+        path.name
+        for path in memory_workspace.spec_dir.glob(
+            ".mempalace-refresh-detached-*"
+        )
+    }
+    first_receipts = {
+        path.name
+        for path in memory_workspace.spec_dir.glob(
+            ".mempalace-refresh-completed-*.json"
+        )
+    }
+    monkeypatch.setattr(
+        "echelon.mempalace_retarget.render_audit_markdown",
+        lambda _audit_report: "# changed replacement audit\n",
+    )
+
+    receipt = refresh_retarget_spec_memory(
+        memory_workspace.root,
+        memory_workspace.spec_dir,
+    )
+
+    journals = {
+        path.name
+        for path in memory_workspace.spec_dir.glob(
+            ".mempalace-refresh-detached-*"
+        )
+    }
+    receipts = {
+        path.name
+        for path in memory_workspace.spec_dir.glob(
+            ".mempalace-refresh-completed-*.json"
+        )
+    }
+    assert receipt.status == "pass"
+    assert len(journals) == 2
+    assert len(receipts) == 2
+    assert first_journals < journals
+    assert first_receipts < receipts
 
 
 @pytest.mark.unit
@@ -949,7 +1124,7 @@ def test_retarget_refresh_recovers_interrupted_report_publication_on_retry(
 @pytest.mark.unit
 @pytest.mark.parametrize(
     "cleanup_boundary",
-    ["detach", "recursive_remove", "receipt_remove"],
+    ["detach", "receipt_archive"],
 )
 def test_retarget_refresh_recovers_interrupted_transaction_cleanup(
     memory_workspace: MemoryWorkspace,
@@ -960,55 +1135,32 @@ def test_retarget_refresh_recovers_interrupted_transaction_cleanup(
     from echelon import mempalace_retarget
 
     interrupted = False
-    if cleanup_boundary == "detach":
-        real_rename = mempalace_retarget.atomic_rename_no_replace
+    real_rename = mempalace_retarget._atomic_rename_no_replace_at
 
-        def interrupt_detach(source: Path, destination: Path) -> None:
-            nonlocal interrupted
-            if (
-                destination.name.startswith(".mempalace-refresh-detached-")
-                and not interrupted
-            ):
-                interrupted = True
-                raise KeyboardInterrupt("cleanup detach interrupted")
-            real_rename(source, destination)
-
-        monkeypatch.setattr(
-            "echelon.mempalace_retarget.atomic_rename_no_replace",
-            interrupt_detach,
+    def interrupt_archive(
+        parent_fd: int,
+        source_name: str,
+        destination_name: str,
+    ) -> None:
+        nonlocal interrupted
+        is_boundary = (
+            cleanup_boundary == "detach"
+            and destination_name.startswith(".mempalace-refresh-detached-")
+        ) or (
+            cleanup_boundary == "receipt_archive"
+            and destination_name.startswith(".mempalace-refresh-completed-")
         )
-    elif cleanup_boundary == "recursive_remove":
-        real_remove = mempalace_retarget._remove_bound_cleanup_contents
+        if is_boundary and not interrupted:
+            interrupted = True
+            if cleanup_boundary == "receipt_archive":
+                real_rename(parent_fd, source_name, destination_name)
+            raise KeyboardInterrupt(f"cleanup {cleanup_boundary} interrupted")
+        real_rename(parent_fd, source_name, destination_name)
 
-        def interrupt_recursive_remove(directory_fd: int) -> None:
-            nonlocal interrupted
-            if not interrupted:
-                interrupted = True
-                mempalace_retarget.os.unlink(
-                    "transaction.json",
-                    dir_fd=directory_fd,
-                )
-                raise KeyboardInterrupt("cleanup recursive removal interrupted")
-            real_remove(directory_fd)
-
-        monkeypatch.setattr(
-            "echelon.mempalace_retarget._remove_bound_cleanup_contents",
-            interrupt_recursive_remove,
-        )
-    else:
-        real_unlink = mempalace_retarget.os.unlink
-
-        def interrupt_receipt_remove(path, *args, **kwargs) -> None:
-            nonlocal interrupted
-            if Path(path).name == ".mempalace-refresh-cleanup.json" and not interrupted:
-                interrupted = True
-                raise KeyboardInterrupt("cleanup receipt removal interrupted")
-            real_unlink(path, *args, **kwargs)
-
-        monkeypatch.setattr(
-            "echelon.mempalace_retarget.os.unlink",
-            interrupt_receipt_remove,
-        )
+    monkeypatch.setattr(
+        "echelon.mempalace_retarget._atomic_rename_no_replace_at",
+        interrupt_archive,
+    )
 
     with pytest.raises(KeyboardInterrupt, match="cleanup"):
         refresh_retarget_spec_memory(
@@ -1019,9 +1171,16 @@ def test_retarget_refresh_recovers_interrupted_transaction_cleanup(
     manifest_before_retry = memory_workspace.spec_dir.joinpath(
         "mempalace-refresh-manifest.json"
     ).read_text(encoding="utf-8")
-    assert (
-        memory_workspace.spec_dir / ".mempalace-refresh-cleanup.json"
-    ).is_file()
+    if cleanup_boundary == "detach":
+        assert (
+            memory_workspace.spec_dir / ".mempalace-refresh-cleanup.json"
+        ).is_file()
+    else:
+        assert len(list(
+            memory_workspace.spec_dir.glob(
+                ".mempalace-refresh-completed-*.json"
+            )
+        )) == 1
 
     receipt = refresh_retarget_spec_memory(
         memory_workspace.root,
@@ -1038,9 +1197,12 @@ def test_retarget_refresh_recovers_interrupted_transaction_cleanup(
     assert not (
         memory_workspace.spec_dir / ".mempalace-refresh-cleanup.json"
     ).exists()
-    assert not list(
+    assert len(list(
         memory_workspace.spec_dir.glob(".mempalace-refresh-detached-*")
-    )
+    )) == 1
+    assert len(list(
+        memory_workspace.spec_dir.glob(".mempalace-refresh-completed-*.json")
+    )) == 1
 
 
 @pytest.mark.unit
@@ -1071,224 +1233,6 @@ def test_retarget_refresh_rejects_detached_cleanup_symlink_replacement(
     ) == "preserve me\n"
     assert saved.is_dir()
     assert detached.is_symlink()
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize("replacement_kind", ["file", "directory", "symlink"])
-def test_retarget_refresh_never_deletes_replacement_swapped_after_cleanup_validation(
-    memory_workspace: MemoryWorkspace,
-    monkeypatch: pytest.MonkeyPatch,
-    replacement_kind: str,
-) -> None:
-    _stub_refresh_reports(memory_workspace, monkeypatch)
-    detached, receipt = _prepare_detached_cleanup(
-        memory_workspace,
-        monkeypatch,
-    )
-    from echelon import mempalace_retarget
-
-    saved = memory_workspace.root / "saved-authenticated-journal"
-    replacement, payload = _make_cleanup_replacement(
-        memory_workspace.root,
-        replacement_kind,
-    )
-    real_open = mempalace_retarget._open_authenticated_cleanup_directory
-    swapped = False
-
-    def swap_after_authenticated_open(
-        parent_fd: int,
-        cleanup_name: str,
-        *,
-        receipt,
-    ) -> int:
-        nonlocal swapped
-        descriptor = real_open(
-            parent_fd,
-            cleanup_name,
-            receipt=receipt,
-        )
-        if cleanup_name == detached.name and not swapped:
-            swapped = True
-            detached.rename(saved)
-            replacement.rename(detached)
-        return descriptor
-
-    monkeypatch.setattr(
-        "echelon.mempalace_retarget._open_authenticated_cleanup_directory",
-        swap_after_authenticated_open,
-    )
-
-    with pytest.raises(RetargetMemoryError, match="cleanup"):
-        refresh_retarget_spec_memory(
-            memory_workspace.root,
-            memory_workspace.spec_dir,
-        )
-
-    assert swapped
-    assert saved.is_dir()
-    assert not list(saved.iterdir())
-    _assert_cleanup_replacement_survives(
-        detached,
-        payload,
-        replacement_kind,
-    )
-    assert receipt.is_file()
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize("replacement_kind", ["file", "directory", "symlink"])
-def test_retarget_refresh_bound_recursion_ignores_public_path_swap(
-    memory_workspace: MemoryWorkspace,
-    monkeypatch: pytest.MonkeyPatch,
-    replacement_kind: str,
-) -> None:
-    _stub_refresh_reports(memory_workspace, monkeypatch)
-    detached, receipt = _prepare_detached_cleanup(
-        memory_workspace,
-        monkeypatch,
-    )
-    from echelon import mempalace_retarget
-
-    saved = memory_workspace.root / "saved-partly-cleaned-authenticated-journal"
-    replacement, payload = _make_cleanup_replacement(
-        memory_workspace.root,
-        replacement_kind,
-    )
-    real_remove = mempalace_retarget._remove_bound_cleanup_contents
-    swapped = False
-
-    def swap_during_bound_recursion(directory_fd: int) -> None:
-        nonlocal swapped
-        if not swapped:
-            swapped = True
-            mempalace_retarget.os.unlink(
-                "transaction.json",
-                dir_fd=directory_fd,
-            )
-            detached.rename(saved)
-            replacement.rename(detached)
-        real_remove(directory_fd)
-
-    monkeypatch.setattr(
-        "echelon.mempalace_retarget._remove_bound_cleanup_contents",
-        swap_during_bound_recursion,
-    )
-
-    with pytest.raises(RetargetMemoryError, match="cleanup"):
-        refresh_retarget_spec_memory(
-            memory_workspace.root,
-            memory_workspace.spec_dir,
-        )
-
-    assert swapped
-    assert saved.is_dir()
-    assert not list(saved.iterdir())
-    _assert_cleanup_replacement_survives(
-        detached,
-        payload,
-        replacement_kind,
-    )
-    assert receipt.is_file()
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize("replacement_kind", ["file", "directory", "symlink"])
-def test_retarget_refresh_never_removes_replacement_swapped_before_final_rmdir(
-    memory_workspace: MemoryWorkspace,
-    monkeypatch: pytest.MonkeyPatch,
-    replacement_kind: str,
-) -> None:
-    _stub_refresh_reports(memory_workspace, monkeypatch)
-    detached, receipt = _prepare_detached_cleanup(
-        memory_workspace,
-        monkeypatch,
-    )
-    from echelon import mempalace_retarget
-
-    saved = memory_workspace.root / "saved-empty-authenticated-journal"
-    replacement, payload = _make_cleanup_replacement(
-        memory_workspace.root,
-        replacement_kind,
-    )
-    real_rmdir = mempalace_retarget.os.rmdir
-    swapped = False
-
-    def swap_before_final_rmdir(path, *args, **kwargs) -> None:
-        nonlocal swapped
-        if Path(path).name == detached.name and not swapped:
-            swapped = True
-            detached.rename(saved)
-            replacement.rename(detached)
-        real_rmdir(path, *args, **kwargs)
-
-    monkeypatch.setattr(
-        "echelon.mempalace_retarget.os.rmdir",
-        swap_before_final_rmdir,
-    )
-
-    with pytest.raises(RetargetMemoryError, match="cleanup"):
-        refresh_retarget_spec_memory(
-            memory_workspace.root,
-            memory_workspace.spec_dir,
-        )
-
-    assert swapped
-    assert saved.is_dir()
-    assert not list(saved.iterdir())
-    _assert_cleanup_replacement_survives(
-        detached,
-        payload,
-        replacement_kind,
-    )
-    assert receipt.is_file()
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize("replacement_kind", ["file", "directory", "symlink"])
-def test_retarget_refresh_retains_receipt_for_cleanup_path_created_during_retirement(
-    memory_workspace: MemoryWorkspace,
-    monkeypatch: pytest.MonkeyPatch,
-    replacement_kind: str,
-) -> None:
-    _stub_refresh_reports(memory_workspace, monkeypatch)
-    detached, receipt = _prepare_detached_cleanup(
-        memory_workspace,
-        monkeypatch,
-    )
-    from echelon import mempalace_retarget
-
-    replacement, payload = _make_cleanup_replacement(
-        memory_workspace.root,
-        replacement_kind,
-    )
-    real_unlink_report = mempalace_retarget._unlink_report_file
-    inserted = False
-
-    def insert_before_receipt_unlink(path: Path) -> None:
-        nonlocal inserted
-        if path == receipt and not inserted:
-            inserted = True
-            replacement.rename(detached)
-        real_unlink_report(path)
-
-    monkeypatch.setattr(
-        "echelon.mempalace_retarget._unlink_report_file",
-        insert_before_receipt_unlink,
-    )
-
-    with pytest.raises(RetargetMemoryError, match="cleanup"):
-        refresh_retarget_spec_memory(
-            memory_workspace.root,
-            memory_workspace.spec_dir,
-        )
-
-    assert inserted
-    _assert_cleanup_replacement_survives(
-        detached,
-        payload,
-        replacement_kind,
-    )
-    assert receipt.is_file()
 
 
 @pytest.mark.unit
@@ -1337,30 +1281,7 @@ def test_retarget_refresh_rejects_multiple_detached_cleanup_artifacts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _stub_refresh_reports(memory_workspace, monkeypatch)
-    from echelon import mempalace_retarget
-
-    real_rename = mempalace_retarget.atomic_rename_no_replace
-    interrupted = False
-
-    def interrupt_detach(source: Path, destination: Path) -> None:
-        nonlocal interrupted
-        if (
-            destination.name.startswith(".mempalace-refresh-detached-")
-            and not interrupted
-        ):
-            interrupted = True
-            raise KeyboardInterrupt("cleanup interrupted")
-        real_rename(source, destination)
-
-    monkeypatch.setattr(
-        "echelon.mempalace_retarget.atomic_rename_no_replace",
-        interrupt_detach,
-    )
-    with pytest.raises(KeyboardInterrupt, match="cleanup"):
-        refresh_retarget_spec_memory(
-            memory_workspace.root,
-            memory_workspace.spec_dir,
-        )
+    _prepare_detached_cleanup(memory_workspace, monkeypatch)
     extra = memory_workspace.spec_dir / (
         ".mempalace-refresh-detached-" + "f" * 64
     )
@@ -1384,21 +1305,25 @@ def test_retarget_refresh_reauthenticates_active_journal_before_cleanup(
     _stub_refresh_reports(memory_workspace, monkeypatch)
     from echelon import mempalace_retarget
 
-    real_rename = mempalace_retarget.atomic_rename_no_replace
+    real_rename = mempalace_retarget._atomic_rename_no_replace_at
     interrupted = False
 
-    def interrupt_detach(source: Path, destination: Path) -> None:
+    def interrupt_detach(
+        parent_fd: int,
+        source_name: str,
+        destination_name: str,
+    ) -> None:
         nonlocal interrupted
         if (
-            destination.name.startswith(".mempalace-refresh-detached-")
+            destination_name.startswith(".mempalace-refresh-detached-")
             and not interrupted
         ):
             interrupted = True
             raise KeyboardInterrupt("cleanup interrupted")
-        real_rename(source, destination)
+        real_rename(parent_fd, source_name, destination_name)
 
     monkeypatch.setattr(
-        "echelon.mempalace_retarget.atomic_rename_no_replace",
+        "echelon.mempalace_retarget._atomic_rename_no_replace_at",
         interrupt_detach,
     )
     with pytest.raises(KeyboardInterrupt, match="cleanup"):
@@ -1419,10 +1344,12 @@ def test_retarget_refresh_reauthenticates_active_journal_before_cleanup(
         "sha256:" + hashlib.sha256(malformed.encode("utf-8")).hexdigest()
     )
     receipt["transaction_sha256"] = transaction_sha256
-    cleanup_key = hashlib.sha256(
-        f"{transaction_sha256}:{receipt['expected_live']}".encode("ascii")
-    ).hexdigest()
-    receipt["cleanup_name"] = f".mempalace-refresh-detached-{cleanup_key}"
+    receipt["cleanup_name"] = mempalace_retarget._report_cleanup_name(
+        transaction_sha256=transaction_sha256,
+        expected_live=receipt["expected_live"],
+        device=receipt["device"],
+        inode=receipt["inode"],
+    )
     receipt_path.write_text(
         json.dumps(receipt, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
