@@ -1030,6 +1030,19 @@ def test_stale_interrupted_replacement_restores_backup(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("status", ("replacing", "rolling_back"))
+def test_orphan_pending_journal_recovers_and_unblocks_publication(tmp_path: Path, status: str) -> None:
+    paths = ensure_re_layout(tmp_path)
+    (paths.root / "orphan").write_text("new\n", encoding="utf-8")
+    stage = paths.staging / "orphan"
+    backup = stage / "rollback/orphan"; backup.parent.mkdir(parents=True); backup.write_text("old\n", encoding="utf-8")
+    _write_json(stage / "rollback-journal.json", {"schema_version": 1, "status": status, "operations": [{"final": "orphan", "staged": "new/orphan", "backup": "rollback/orphan", "backed_up": True, "installed": True}]})
+    assert recover_interrupted_publication(tmp_path, stale_after_seconds=0)
+    assert (paths.root / "orphan").read_text(encoding="utf-8") == "old\n"
+    assert not stage.exists()
+
+
+@pytest.mark.unit
 def test_invalid_installed_index_rolls_back_before_cleanup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     run_1 = write_valid_re_run(tmp_path, ("api",), run_id="run-1")
     publish_re_run(tmp_path, run_1)

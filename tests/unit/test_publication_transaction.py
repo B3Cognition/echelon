@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path, PurePosixPath
 
 import pytest
@@ -218,3 +219,31 @@ def test_rollback_refuses_unrelated_replacement_and_preserves_journal(tmp_path: 
         rollback_publication_transaction(transaction)
     assert (root / "first").read_text(encoding="utf-8") == "unrelated\n"
     assert transaction.journal.is_file()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("backed_up, installed, final_present, backup_present", ((True, False, True, True), (False, False, True, False)))
+def test_legacy_journal_reconciles_deterministic_install_crash_windows(tmp_path: Path, backed_up: bool, installed: bool, final_present: bool, backup_present: bool) -> None:
+    from harness.publication_transaction import PublicationTransaction, rollback_publication_transaction
+    root = tmp_path / "re"; root.mkdir(); stage = root / ".staging/legacy"; stage.mkdir(parents=True)
+    if final_present: (root / "first").write_text("new\n", encoding="utf-8")
+    if backup_present:
+        backup = stage / "rollback/first"; backup.parent.mkdir(parents=True); backup.write_text("old\n", encoding="utf-8")
+    journal = stage / "rollback-journal.json"
+    journal.write_text(json.dumps({"schema_version": 1, "status": "replacing", "operations": [{"final": "first", "staged": "new/first", "backup": "rollback/first", "backed_up": backed_up, "installed": installed}]}), encoding="utf-8")
+    transaction = PublicationTransaction.from_journal(workspace_root=root, staging_root=stage, journal=journal)
+    rollback_publication_transaction(transaction)
+    if backup_present:
+        assert (root / "first").read_text(encoding="utf-8") == "old\n"
+    else:
+        assert not (root / "first").exists()
+
+
+@pytest.mark.unit
+def test_directory_digest_distinguishes_tree_shape_before_install(tmp_path: Path) -> None:
+    from harness.publication_transaction import apply_publication_transaction, PublicationTransactionError
+    root = tmp_path / "re"; root.mkdir(); (root / "first").write_text("old\n", encoding="utf-8")
+    transaction = _transaction(tmp_path)
+    staged = transaction.staging_root / "new/first"; staged.unlink(); staged.mkdir(); (staged / "ab").write_text("c", encoding="utf-8")
+    with pytest.raises(PublicationTransactionError, match="changed"):
+        apply_publication_transaction(transaction)

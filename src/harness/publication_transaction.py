@@ -166,8 +166,12 @@ class PublicationTransaction:
                     raise PublicationTransactionError("rollback journal operation flags contradict its phase")
                 if phase == "pending" and had_final:
                     raise PublicationTransactionError("rollback journal pending operation cannot have a final backup")
+                if phase in {"backup_intent", "backed_up", "restore_intent"} and not had_final:
+                    raise PublicationTransactionError("rollback journal backup phase requires an original final path")
                 if operation.staged is None and staged_digest is not None:
                     raise PublicationTransactionError("rollback journal deletion operation has a staged digest")
+                if operation.staged is None and phase in {"install_intent", "installed", "rollback_remove_intent"}:
+                    raise PublicationTransactionError("rollback journal deletion operation cannot have an install phase")
                 if operation.staged is not None and staged_digest is None:
                     raise PublicationTransactionError("rollback journal staged operation has no digest")
             states.append({"phase": phase, "had_final": had_final, "staged_digest": staged_digest, "legacy": legacy})
@@ -268,6 +272,7 @@ def rollback_publication_transaction(transaction: PublicationTransaction) -> Non
         state = transaction._states[index]
         final = _contained(transaction.workspace_root, operation.final)
         backup = _contained(transaction.staging_root, operation.backup)
+        staged = _contained(transaction.staging_root, operation.staged) if operation.staged is not None else None
         phase = state["phase"]
         final_exists = final.exists() or final.is_symlink()
         backup_exists = backup.exists() or backup.is_symlink()
@@ -275,6 +280,13 @@ def rollback_publication_transaction(transaction: PublicationTransaction) -> Non
             state["phase"] = "backed_up"
             state["had_final"] = True
             phase = "backed_up"
+        elif state.get("legacy") and backup_exists and final_exists and phase == "backed_up" and staged is not None and not (staged.exists() or staged.is_symlink()):
+            state["phase"] = "installed"
+            phase = "installed"
+        elif state.get("legacy") and not backup_exists and final_exists and phase == "pending" and staged is not None and not (staged.exists() or staged.is_symlink()):
+            state["phase"] = "installed"
+            state["had_final"] = False
+            phase = "installed"
         elif state.get("legacy") and phase == "pending" and backup_exists and final_exists:
             raise PublicationTransactionError("legacy rollback journal has ambiguous final and backup paths")
         if phase == "pending":
@@ -355,10 +367,10 @@ def _path_digest(path: Path) -> str:
             relative = child.relative_to(path).as_posix()
             if child.is_symlink():
                 raise PublicationTransactionError("transaction artifacts must not contain symlinks")
-            digest.update(relative.encode("utf-8") + b"\0")
-            digest.update(b"d\0" if child.is_dir() else b"f\0")
-            if child.is_file():
-                digest.update(child.read_bytes())
+            content = b"" if child.is_dir() else child.read_bytes()
+            entry = json.dumps({"path": relative, "type": "dir" if child.is_dir() else "file", "size": len(content), "sha256": hashlib.sha256(content).hexdigest()}, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            digest.update(len(entry).to_bytes(8, "big"))
+            digest.update(entry)
     else:
         raise PublicationTransactionError(f"transaction staged artifact is missing: {path}")
     return "sha256:" + digest.hexdigest()

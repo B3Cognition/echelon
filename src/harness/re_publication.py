@@ -29,6 +29,7 @@ from harness.publication_transaction import (
     write_publication_journal,
 )
 from harness.re_lock import (
+    claim_orphan_publish_recovery,
     RePublishLock,
     RePublishRecoveryRequired,
     recover_stale_publish_lock,
@@ -338,14 +339,21 @@ def recover_interrupted_publication(
         root,
         stale_after_seconds=stale_after_seconds,
     )
+    claim = None
     if owner is None:
-        return False
-    run_id = str(owner["run_id"])
+        claim = claim_orphan_publish_recovery(root)
+        if claim is None:
+            return False
+        run_id = claim.owner_run_id
+    else:
+        run_id = str(owner["run_id"])
     paths = ensure_re_layout(root)
     stage_root = paths.staging / run_id
     journal = stage_root / "rollback-journal.json"
     data = _read_json(journal)
     if data.get("status") not in {"replacing", "rolling_back"}:
+        if claim is not None:
+            claim.release()
         return recover_stale_publish_lock(
             root,
             stale_after_seconds=stale_after_seconds,
@@ -359,9 +367,11 @@ def recover_interrupted_publication(
     except PublicationTransactionError as exc:
         raise RePublishRecoveryRequired(str(exc)) from exc
     rollback_publication_transaction(transaction)
-    if not recover_stale_publish_lock(root, stale_after_seconds=stale_after_seconds):
-        raise RePublishRecoveryRequired("stale publication lock could not be released")
     shutil.rmtree(stage_root)
+    if claim is not None:
+        claim.release()
+    elif not recover_stale_publish_lock(root, stale_after_seconds=stale_after_seconds):
+        raise RePublishRecoveryRequired("stale publication lock could not be released")
     return True
 
 

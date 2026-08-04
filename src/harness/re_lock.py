@@ -267,6 +267,33 @@ def _pending_publication_journals(staging_root: Path) -> tuple[Path, ...]:
     return tuple(pending)
 
 
+def claim_orphan_publish_recovery(workspace_root: Path) -> RePublishLock | None:
+    """Atomically claim exactly one safe orphan journal for recovery."""
+    root = workspace_root.resolve()
+    paths = ensure_re_layout(root)
+    lock_path = paths.locks / "publish.lock"
+    try:
+        lock_path.mkdir()
+    except FileExistsError:
+        return None
+    try:
+        pending = _pending_publication_journals(paths.staging)
+        if len(pending) != 1:
+            if pending:
+                raise RePublishRecoveryRequired("multiple orphan rollback journals require manual recovery")
+            return None
+        journal = pending[0]
+        stage = journal.parent
+        if stage.is_symlink() or not _SAFE_RUN_ID.fullmatch(stage.name):
+            raise RePublishRecoveryRequired("orphan rollback journal path is unsafe")
+        owner = RePublishLock(path=lock_path, owner_run_id=stage.name, workspace_root=root)
+        _write_json_atomic(lock_path / "owner.json", {"run_id": stage.name, "run_dir": None, "pid": os.getpid(), "hostname": socket.gethostname(), "acquired_at": datetime.now(timezone.utc).isoformat()})
+        return owner
+    except Exception:
+        shutil.rmtree(lock_path, ignore_errors=True)
+        raise
+
+
 def recoverable_publish_lock_owner(
     workspace_root: Path,
     *,
