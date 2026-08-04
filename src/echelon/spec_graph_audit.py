@@ -17,6 +17,7 @@ from echelon.spec_graph import (
     GraphNode,
     SpecArtifactGraph,
     SpecGraphError,
+    _write_spec_graph_bytes,
     _validate_graph,
     build_spec_graph,
 )
@@ -194,11 +195,12 @@ def write_spec_graph_audit(
     spec_dir: Path,
 ) -> Path:
     path = spec_dir / GRAPH_AUDIT_FILENAME
-    path.write_text(
-        json.dumps(report.to_dict(), indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+    return _write_spec_graph_bytes(
+        path,
+        (json.dumps(report.to_dict(), indent=2, sort_keys=True) + "\n").encode(
+            "utf-8"
+        ),
     )
-    return path
 
 
 def _read_graph_payload(graph_bytes: bytes) -> dict[str, object]:

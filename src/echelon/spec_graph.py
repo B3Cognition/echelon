@@ -6,7 +6,10 @@ from dataclasses import dataclass
 import hashlib
 from importlib.metadata import PackageNotFoundError, version
 import json
+import os
 from pathlib import Path
+import stat
+import tempfile
 from typing import Any, Mapping
 
 from echelon import artifact_index
@@ -174,7 +177,49 @@ def render_spec_graph(graph: SpecArtifactGraph) -> bytes:
 
 def write_spec_graph(graph: SpecArtifactGraph, spec_dir: Path) -> Path:
     path = spec_dir / GRAPH_FILENAME
-    path.write_bytes(render_spec_graph(graph))
+    return _write_spec_graph_bytes(path, render_spec_graph(graph))
+
+
+def _write_spec_graph_bytes(path: Path, data: bytes) -> Path:
+    parent = path.parent
+    if parent.is_symlink() or not parent.is_dir():
+        raise OSError("spec graph parent must be a real directory")
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        metadata = None
+    if metadata is not None and not stat.S_ISREG(metadata.st_mode):
+        raise OSError("spec graph target must be a regular file")
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
+    temporary: Path | None = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            descriptor = -1
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        temporary = None
+        directory_fd = os.open(
+            parent,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+        )
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        if temporary is not None:
+            try:
+                temporary.unlink()
+            except OSError:
+                pass
     return path
 
 

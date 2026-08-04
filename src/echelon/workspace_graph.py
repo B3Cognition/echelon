@@ -8,6 +8,7 @@ from importlib.metadata import PackageNotFoundError, version
 import json
 import os
 from pathlib import Path
+import stat
 import tempfile
 from typing import Any, Mapping
 
@@ -319,6 +320,14 @@ def write_workspace_graph(graph: WorkspaceArtifactGraph, project_root: Path) -> 
 def write_workspace_graph_bytes(path: Path, data: bytes) -> Path:
     """Atomically replace one workspace-derived output with exact bytes."""
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.parent.is_symlink() or not path.parent.is_dir():
+        raise OSError("workspace graph parent must be a real directory")
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        metadata = None
+    if metadata is not None and not stat.S_ISREG(metadata.st_mode):
+        raise OSError("workspace graph target must be a regular file")
     temporary_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -334,6 +343,14 @@ def write_workspace_graph_bytes(path: Path, data: bytes) -> Path:
             os.fsync(handle.fileno())
         os.replace(temporary_path, path)
         temporary_path = None
+        directory_fd = os.open(
+            path.parent,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+        )
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
     finally:
         if temporary_path is not None:
             try:

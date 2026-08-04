@@ -905,6 +905,29 @@ def test_write_workspace_graph_bytes_is_atomic_and_preserves_previous_output(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("target_kind", ["symlink", "directory"])
+def test_write_workspace_graph_bytes_rejects_nonregular_targets(
+    tmp_path: Path,
+    target_kind: str,
+) -> None:
+    output = tmp_path / ".echelon" / "runtime" / "graph" / "workspace.json"
+    output.parent.mkdir(parents=True)
+    referent = tmp_path / "outside-workspace.json"
+    if target_kind == "symlink":
+        referent.write_bytes(b"outside\n")
+        output.symlink_to(referent)
+    else:
+        output.mkdir()
+
+    with pytest.raises(OSError, match="regular file"):
+        write_workspace_graph_bytes(output, b"replacement\n")
+
+    if target_kind == "symlink":
+        assert output.is_symlink()
+        assert referent.read_bytes() == b"outside\n"
+
+
+@pytest.mark.unit
 def test_workspace_graph_path_uses_canonical_runtime_directory(tmp_path: Path) -> None:
     assert workspace_graph_path(tmp_path) == (
         tmp_path / ".echelon" / "runtime" / "graph" / "workspace-artifact-graph.json"

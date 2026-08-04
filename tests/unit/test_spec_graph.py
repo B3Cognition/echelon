@@ -15,7 +15,9 @@ from echelon.spec_graph import (
     SpecGraphError,
     build_spec_graph,
     render_spec_graph,
+    write_spec_graph,
 )
+from echelon.spec_graph_audit import write_spec_graph_audit
 from harness.re_registry import ReRegistryError
 
 
@@ -144,6 +146,68 @@ def test_graph_rejects_duplicate_edge_identity() -> None:
 
     with pytest.raises(SpecGraphError, match="duplicate edge"):
         _graph(nodes=nodes, edges=(edge, edge)).to_dict()
+
+
+@pytest.mark.unit
+def test_write_spec_graph_is_atomic_and_preserves_previous_bytes_on_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "spec-artifact-graph.json"
+    path.write_bytes(b"previous\n")
+
+    def failed_replace(source: Path, target: Path) -> None:
+        raise OSError("publication failed")
+
+    monkeypatch.setattr("os.replace", failed_replace)
+
+    with pytest.raises(OSError, match="publication failed"):
+        write_spec_graph(_graph(), tmp_path)
+
+    assert path.read_bytes() == b"previous\n"
+    assert not list(tmp_path.glob(f".{path.name}.*.tmp"))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("target_kind", ["symlink", "directory"])
+def test_write_spec_graph_rejects_nonregular_targets(
+    tmp_path: Path,
+    target_kind: str,
+) -> None:
+    path = tmp_path / "spec-artifact-graph.json"
+    referent = tmp_path / "referent.json"
+    if target_kind == "symlink":
+        referent.write_bytes(b"referent\n")
+        path.symlink_to(referent)
+    else:
+        path.mkdir()
+
+    with pytest.raises(OSError, match="regular file"):
+        write_spec_graph(_graph(), tmp_path)
+
+    if target_kind == "symlink":
+        assert path.is_symlink()
+        assert referent.read_bytes() == b"referent\n"
+
+
+@pytest.mark.unit
+def test_write_spec_graph_audit_is_atomic_and_preserves_previous_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "spec-artifact-graph-audit.json"
+    path.write_bytes(b"previous-audit\n")
+    report = SimpleNamespace(to_dict=lambda: {"schema_version": 1, "status": "pass"})
+
+    def failed_replace(source: Path, target: Path) -> None:
+        raise OSError("audit publication failed")
+
+    monkeypatch.setattr("os.replace", failed_replace)
+
+    with pytest.raises(OSError, match="audit publication failed"):
+        write_spec_graph_audit(report, tmp_path)
+
+    assert path.read_bytes() == b"previous-audit\n"
 
 
 def _write_json(path: Path, payload: object) -> None:

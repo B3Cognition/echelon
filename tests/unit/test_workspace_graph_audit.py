@@ -696,3 +696,27 @@ def test_repeated_audit_and_failed_audit_write_preserve_deterministic_bytes(
     assert first.to_dict() == second.to_dict()
     assert path.read_bytes() == previous
     assert not list(path.parent.glob(f".{path.name}.*.tmp"))
+
+
+@pytest.mark.unit
+def test_write_workspace_audit_rejects_symlink_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current = _candidate()
+    monkeypatch.setattr(
+        "echelon.workspace_graph_audit.build_workspace_graph",
+        lambda project_root: current,
+    )
+    report = audit_workspace_graph(tmp_path, candidate=current)
+    path = workspace_graph_path(tmp_path).with_name(WORKSPACE_GRAPH_AUDIT_FILENAME)
+    path.parent.mkdir(parents=True)
+    referent = tmp_path / "outside-audit.json"
+    referent.write_bytes(b"outside\n")
+    path.symlink_to(referent)
+
+    with pytest.raises(OSError, match="regular file"):
+        write_workspace_graph_audit(report, tmp_path)
+
+    assert path.is_symlink()
+    assert referent.read_bytes() == b"outside\n"

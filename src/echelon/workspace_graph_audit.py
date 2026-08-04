@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import stat
 import tempfile
 from typing import Iterable, Mapping
 
@@ -162,6 +163,14 @@ def write_workspace_graph_audit(
     """Atomically publish a deterministic workspace audit report."""
     path = workspace_graph_path(project_root).with_name(WORKSPACE_GRAPH_AUDIT_FILENAME)
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.parent.is_symlink() or not path.parent.is_dir():
+        raise OSError("workspace graph audit parent must be a real directory")
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        metadata = None
+    if metadata is not None and not stat.S_ISREG(metadata.st_mode):
+        raise OSError("workspace graph audit target must be a regular file")
     data = (json.dumps(report.to_dict(), indent=2, sort_keys=True) + "\n").encode("utf-8")
     temporary_path: Path | None = None
     try:
@@ -178,6 +187,14 @@ def write_workspace_graph_audit(
             os.fsync(handle.fileno())
         os.replace(temporary_path, path)
         temporary_path = None
+        directory_fd = os.open(
+            path.parent,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+        )
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
     finally:
         if temporary_path is not None:
             try:
