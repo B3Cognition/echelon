@@ -33,6 +33,11 @@ def test_audit_reports_current_for_matching_clean_snapshot(
     assert report.status == "current"
     assert report.exit_code == 0
     assert report.sources[0].source_id == "api"
+    assert report.snapshot is not None
+    assert report.snapshot.generation == 3
+    assert report.snapshot.sources[0].source_id == "api"
+    assert report.snapshot.sources[0].source_fingerprint == "0" * 64
+    assert report.snapshot.sources[0].receipt_sha256.startswith("sha256:")
 
 
 @pytest.mark.unit

@@ -41,6 +41,24 @@ class TopologyAuditSource:
 
 
 @dataclass(frozen=True, slots=True)
+class TopologyAuditSnapshotSource:
+    """Publication identity for one source validated by an audit."""
+
+    source_id: str
+    source_path: str
+    source_fingerprint: str
+    receipt_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class TopologyAuditSnapshot:
+    """Canonical publication identity observed during one bounded audit."""
+
+    generation: int
+    sources: tuple[TopologyAuditSnapshotSource, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class TopologyAuditReport:
     """Immutable audit report whose exit policy is safe for the later CLI."""
 
@@ -48,6 +66,7 @@ class TopologyAuditReport:
     exit_code: int
     sources: tuple[TopologyAuditSource, ...]
     findings: tuple[TopologyAuditFinding, ...]
+    snapshot: TopologyAuditSnapshot | None = None
 
 
 def audit_topology(project_root: Path, source_id: str | None = None) -> TopologyAuditReport:
@@ -59,6 +78,7 @@ def audit_topology(project_root: Path, source_id: str | None = None) -> Topology
             return _invalid("topology index is missing")
         selected = _select(index, source_id)
         load_published_topology(root, (source.source_id for source in selected))
+        snapshot = snapshot_topology_index(index, source_id)
     except TopologyRegistryError as exc:
         return _invalid(str(exc), source_id=source_id)
 
@@ -84,6 +104,26 @@ def audit_topology(project_root: Path, source_id: str | None = None) -> Topology
         exit_code=0 if overall == "current" else 2 if overall == "invalid" else 1,
         sources=tuple(sorted(results, key=lambda result: result.source_id)),
         findings=tuple(sorted(findings, key=_finding_key)),
+        snapshot=snapshot,
+    )
+
+
+def snapshot_topology_index(
+    index: TopologyIndex, source_id: str | None = None
+) -> TopologyAuditSnapshot:
+    """Return the bounded publication identity used to validate one read."""
+    selected = _select(index, source_id)
+    return TopologyAuditSnapshot(
+        generation=index.generation,
+        sources=tuple(
+            TopologyAuditSnapshotSource(
+                source_id=source.source_id,
+                source_path=source.source_path,
+                source_fingerprint=source.source_fingerprint.value,
+                receipt_sha256=source.receipt.sha256,
+            )
+            for source in selected
+        ),
     )
 
 

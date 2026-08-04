@@ -1,4 +1,10 @@
-"""Audit-aware services and deterministic renderers for topology CLI reads."""
+"""Audit-aware services and deterministic renderers for topology CLI reads.
+
+Reads use a bounded double-collect guarantee: an initial live audit is bound to
+the loaded publication, then a final live audit and independent publication load
+must agree before rendering. This detects mutation within the command's read
+window without claiming a permanent filesystem lock after final validation.
+"""
 
 from __future__ import annotations
 
@@ -7,10 +13,15 @@ import json
 from pathlib import Path
 from typing import Callable, Mapping
 
+import yaml
+
 from echelon.topology_audit import (
     TopologyAuditFinding,
     TopologyAuditReport,
+    TopologyAuditSnapshot,
+    TopologyAuditSource,
     audit_topology,
+    snapshot_topology_index,
 )
 from echelon.topology_model import (
     TopologyExplainResult,
@@ -39,6 +50,8 @@ from echelon.topology_registry import (
 
 _MAX_DIAGNOSTICS = 10
 _MAX_MESSAGE_LENGTH = 500
+_MAX_CANDIDATE_BYTES = 256
+_MAX_CANDIDATES_TOTAL_BYTES = 2048
 _Node = TopologySource | TopologyFile | TopologySymbol
 
 
@@ -59,25 +72,67 @@ def audit_command(
 ) -> TopologyCliResult:
     """Audit canonical topology without loading or mutating alternate state."""
     root = Path(project_root)
-    report = audit_topology(root, source_id=source)
-    if report.exit_code != 2:
+    initial_report, audit_error = _audit_at_boundary(root, source)
+    if audit_error is not None:
+        return _fatal(
+            "audit",
+            initial_report,
+            str(audit_error),
+            request={"source": source},
+            as_json=as_json,
+            kind="invalid",
+        )
+    if initial_report.exit_code == 2:
+        return _fatal_audit(
+            "audit",
+            initial_report,
+            request={"source": source},
+            as_json=as_json,
+        )
+    if initial_report.exit_code != 2:
         try:
             index = load_topology_index(root)
             if index is None:
                 raise TopologyRegistryError("topology index is missing")
+            snapshot = snapshot_topology_index(index, source)
+            _assert_audit_matches_snapshot(initial_report, snapshot)
             if not _index_has_usable_provider(index, source):
                 return _fatal(
                     "audit",
-                    report,
+                    initial_report,
                     "canonical topology providers are unavailable",
                     request={"source": source},
                     as_json=as_json,
                     kind="unavailable",
                 )
+            final_report, audit_error = _audit_at_boundary(root, source)
+            if audit_error is not None:
+                return _fatal(
+                    "audit",
+                    final_report,
+                    str(audit_error),
+                    request={"source": source},
+                    as_json=as_json,
+                    kind="invalid",
+                )
+            if final_report.exit_code == 2:
+                return _fatal_audit(
+                    "audit",
+                    final_report,
+                    request={"source": source},
+                    as_json=as_json,
+                )
+            _assert_audit_matches_snapshot(final_report, snapshot)
+            final_index = load_topology_index(root)
+            if final_index is None:
+                raise TopologyRegistryError("topology index is missing")
+            if snapshot_topology_index(final_index, source) != snapshot:
+                raise TopologyRegistryError("topology publication changed during read")
+            report = _merge_audit_reports(initial_report, final_report)
         except (OSError, TopologyRegistryError, TopologyValidationError, ValueError) as exc:
             return _fatal(
                 "audit",
-                report,
+                initial_report,
                 str(exc),
                 request={"source": source},
                 as_json=as_json,
@@ -102,21 +157,49 @@ def list_sources_command(
 ) -> TopologyCliResult:
     """List canonical source rows with provider and freshness receipts."""
     root = Path(project_root)
-    report = audit_topology(root)
-    if report.exit_code == 2:
-        return _fatal_audit("list-sources", report, as_json=as_json)
+    initial_report, audit_error = _audit_at_boundary(root)
+    if audit_error is not None:
+        return _fatal(
+            "list-sources",
+            initial_report,
+            str(audit_error),
+            as_json=as_json,
+            kind="invalid",
+        )
+    if initial_report.exit_code == 2:
+        return _fatal_audit("list-sources", initial_report, as_json=as_json)
     try:
         index = load_topology_index(root)
         if index is None:
             raise TopologyRegistryError("topology index is missing")
+        snapshot = snapshot_topology_index(index)
+        _assert_audit_matches_snapshot(initial_report, snapshot)
         if not _index_has_usable_provider(index):
             return _fatal(
                 "list-sources",
-                report,
+                initial_report,
                 "canonical topology providers are unavailable",
                 as_json=as_json,
                 kind="unavailable",
             )
+        final_report, audit_error = _audit_at_boundary(root)
+        if audit_error is not None:
+            return _fatal(
+                "list-sources",
+                final_report,
+                str(audit_error),
+                as_json=as_json,
+                kind="invalid",
+            )
+        if final_report.exit_code == 2:
+            return _fatal_audit("list-sources", final_report, as_json=as_json)
+        _assert_audit_matches_snapshot(final_report, snapshot)
+        final_index = load_topology_index(root)
+        if final_index is None:
+            raise TopologyRegistryError("topology index is missing")
+        if snapshot_topology_index(final_index) != snapshot:
+            raise TopologyRegistryError("topology publication changed during read")
+        report = _merge_audit_reports(initial_report, final_report)
         statuses = _source_statuses(report)
         rows = [
             _source_row(
@@ -128,7 +211,11 @@ def list_sources_command(
         ]
     except (OSError, TopologyRegistryError, TopologyValidationError, ValueError) as exc:
         return _fatal(
-            "list-sources", report, str(exc), as_json=as_json, kind=_error_kind(exc)
+            "list-sources",
+            initial_report,
+            str(exc),
+            as_json=as_json,
+            kind=_error_kind(exc),
         )
     payload = {
         "schema_version": 1,
@@ -300,22 +387,54 @@ def _run_read(
     *,
     as_json: bool,
 ) -> TopologyCliResult:
-    report = audit_topology(root, source_id=source)
-    if report.exit_code == 2:
-        return _fatal_audit(command, report, request=request, as_json=as_json)
+    initial_report, audit_error = _audit_at_boundary(root, source)
+    if audit_error is not None:
+        return _fatal(
+            command,
+            initial_report,
+            str(audit_error),
+            request=request,
+            as_json=as_json,
+            kind="invalid",
+        )
+    if initial_report.exit_code == 2:
+        return _fatal_audit(command, initial_report, request=request, as_json=as_json)
     try:
         selected = (source,) if source is not None else ()
         topology = load_published_topology(root, selected)
-        if not _topology_has_usable_provider(topology, report):
+        source_ids = _read_source_ids(topology, source)
+        _assert_topology_matches_audit(topology, initial_report, source_ids)
+        binding = _topology_binding(topology, source_ids)
+        if not _topology_has_usable_provider(topology, initial_report):
             return _fatal(
                 command,
-                report,
+                initial_report,
                 "canonical topology providers are unavailable",
                 request=request,
                 as_json=as_json,
                 kind="unavailable",
             )
         result = operation(topology)
+        final_report, audit_error = _audit_at_boundary(root, source)
+        if audit_error is not None:
+            return _fatal(
+                command,
+                final_report,
+                str(audit_error),
+                request=request,
+                as_json=as_json,
+                kind="invalid",
+            )
+        if final_report.exit_code == 2:
+            return _fatal_audit(
+                command, final_report, request=request, as_json=as_json
+            )
+        _assert_topology_matches_audit(topology, final_report, source_ids)
+        final_topology = load_published_topology(root, selected)
+        if _topology_binding(final_topology, source_ids) != binding:
+            raise TopologyRegistryError("topology publication changed during read")
+        _assert_topology_matches_audit(final_topology, final_report, source_ids)
+        report = _merge_audit_reports(initial_report, final_report)
     except (
         OSError,
         TopologyNodeResolutionError,
@@ -326,12 +445,14 @@ def _run_read(
     ) as exc:
         return _fatal(
             command,
-            report,
+            initial_report,
             str(exc),
             request=request,
             as_json=as_json,
             kind=_error_kind(exc),
             candidates=getattr(exc, "candidates", ()),
+            candidate_count=getattr(exc, "candidate_count", None),
+            candidates_truncated=getattr(exc, "candidates_truncated", False),
         )
     if as_json:
         payload = {
@@ -469,7 +590,13 @@ def _relationship_payload(
     truncated: bool,
 ) -> dict[str, object]:
     source_node = topology.nodes_by_id[relationship.source_id]
+    target_node = topology.nodes_by_id[relationship.target_id]
     provider_key = _provider_key(receipt, source_node.source_id, relationship.provider)
+    source_relative_path = (
+        relationship.path
+        or getattr(source_node, "path", None)
+        or getattr(target_node, "path", None)
+    )
     return {
         "source_id": source_node.source_id,
         "provider": relationship.provider,
@@ -477,8 +604,8 @@ def _relationship_payload(
         "provider_relation": relationship.provider_kind,
         "source_node_id": relationship.source_id,
         "target_node_id": relationship.target_id,
-        "path": relationship.path,
-        "source_relative_path": relationship.path,
+        "path": source_relative_path,
+        "source_relative_path": source_relative_path,
         "line_start": relationship.line_start,
         "topology_generation": receipt.generation,
         "topology_status": statuses.get(source_node.source_id, "current"),
@@ -539,6 +666,7 @@ def _source_row(
         "provider": "topology",
         "node_id": f"source:{getattr(source, 'source_id')}",
         "path": getattr(source, "source_path"),
+        "source_relative_path": getattr(source, "source_path"),
         "source_fingerprint": getattr(source, "source_fingerprint").value,
         "source_generation": getattr(source, "generation"),
         "topology_generation": topology_generation,
@@ -572,16 +700,41 @@ def _audit_payload(report: TopologyAuditReport) -> dict[str, object]:
     return {
         "status": report.status,
         "exit_code": report.exit_code,
-        "sources": [
-            {
-                "source_id": source.source_id,
-                "status": source.status,
-                "providers": list(source.providers),
-            }
-            for source in report.sources
-        ],
+        "sources": [_audit_source_row(report, source) for source in report.sources],
         "findings": [_finding_payload(finding) for finding in findings],
         "findings_truncated": len(report.findings) > len(findings),
+    }
+
+
+def _audit_source_row(
+    report: TopologyAuditReport, source: TopologyAuditSource
+) -> dict[str, object]:
+    snapshots = (
+        {row.source_id: row for row in report.snapshot.sources}
+        if report.snapshot is not None
+        else {}
+    )
+    bound = snapshots.get(source.source_id)
+    path = bound.source_path if bound is not None else None
+    return {
+        "source_id": source.source_id,
+        "provider": "topology",
+        "node_id": f"source:{source.source_id}",
+        "path": path,
+        "source_relative_path": path,
+        "topology_generation": (
+            report.snapshot.generation if report.snapshot is not None else None
+        ),
+        "status": source.status,
+        "topology_status": source.status,
+        "source_fingerprint": (
+            bound.source_fingerprint if bound is not None else None
+        ),
+        "provider_receipt_hash": (
+            bound.receipt_sha256 if bound is not None else None
+        ),
+        "providers": list(source.providers),
+        "truncated": False,
     }
 
 
@@ -600,9 +753,13 @@ def _render_audit(report: TopologyAuditReport) -> str:
     if report.sources:
         lines.append("Sources:")
         for source in report.sources:
+            row = _audit_source_row(report, source)
             providers = ",".join(source.providers) or "none"
             lines.append(
-                f"- {source.source_id} status={source.status} providers={providers}"
+                f"- node={row['node_id']} source={row['source_id']} "
+                f"provider={row['provider']} path={row['path'] or '-'} "
+                f"generation={row['topology_generation'] or '-'} "
+                f"status={row['topology_status']} truncated=no providers={providers}"
             )
     _append_findings(lines, report)
     return "\n".join(lines) + "\n"
@@ -619,8 +776,10 @@ def _render_source_rows(
             for provider in row["providers"]  # type: ignore[union-attr]
         )
         lines.append(
-            f"- {row['source_id']} path={row['path']} generation={row['topology_generation']} "
-            f"status={row['topology_status']} providers={providers or 'none'}"
+            f"- node={row['node_id']} source={row['source_id']} "
+            f"provider={row['provider']} path={row['source_relative_path']} "
+            f"generation={row['topology_generation']} status={row['topology_status']} "
+            f"truncated={_yes_no(bool(row['truncated']))} providers={providers or 'none'}"
         )
     return "\n".join(lines) + "\n"
 
@@ -671,9 +830,15 @@ def _render_explain(
     lines.append("Relationships:" if result.relationships else "Relationships: (none)")
     for relationship in result.relationships:
         lines.append(
-            f"- {relationship.source_id} -[{relationship.type}]-> "
-            f"{relationship.target_id} provider={relationship.provider} "
-            f"path={relationship.path or '-'}"
+            _render_relationship_row(
+                _relationship_payload(
+                    topology,
+                    relationship,
+                    result.receipt,
+                    statuses,
+                    result.truncated,
+                )
+            )
         )
     return "\n".join(lines) + "\n"
 
@@ -690,12 +855,23 @@ def _render_traversal(
     lines.append("Steps:" if result.steps else "Steps: (none)")
     paths = _traversal_paths(root_id, result.steps)
     for index, step in enumerate(result.steps):
-        node = topology.nodes_by_id[step.node_id]
+        row = _step_payload(
+            topology,
+            step,
+            result.receipt,
+            _source_statuses(report),
+            result.truncated,
+            paths[index],
+        )
         lines.append(
-            f"- depth={step.depth} direction={step.direction} relation={step.relationship.type} "
-            f"node={step.node_id} source={node.source_id} "
-            f"provider={step.relationship.provider} path={getattr(node, 'path', None) or '-'} "
-            f"traversal_path={' -> '.join(paths[index])}"
+            f"- depth={row['depth']} direction={row['direction']} "
+            f"relation={row['relation']} source_node={row['source_node_id']} "
+            f"target_node={row['target_node_id']} node={row['node_id']} "
+            f"source={row['source_id']} provider={row['provider']} "
+            f"path={row['source_relative_path'] or '-'} "
+            f"generation={row['topology_generation']} status={row['topology_status']} "
+            f"truncated={_yes_no(bool(row['truncated']))} "
+            f"traversal_path={' -> '.join(row['traversal_path'])}"
         )
     return "\n".join(lines) + "\n"
 
@@ -707,6 +883,16 @@ def _render_node_row(row: Mapping[str, object]) -> str:
         f"source={row['source_id']} provider={row['provider']} "
         f"path={row['path'] or '-'} generation={row['topology_generation']} "
         f"status={row['topology_status']} truncated={_yes_no(bool(row['truncated']))}"
+    )
+
+
+def _render_relationship_row(row: Mapping[str, object]) -> str:
+    return (
+        f"- relation={row['relation']} source_node={row['source_node_id']} "
+        f"target_node={row['target_node_id']} source={row['source_id']} "
+        f"provider={row['provider']} path={row['source_relative_path'] or '-'} "
+        f"generation={row['topology_generation']} status={row['topology_status']} "
+        f"truncated={_yes_no(bool(row['truncated']))}"
     )
 
 
@@ -744,11 +930,22 @@ def _fatal_audit(
     request: Mapping[str, object] | None = None,
     as_json: bool,
 ) -> TopologyCliResult:
+    message = (
+        report.findings[0].message
+        if report.findings
+        else "topology audit is invalid"
+    )
     payload = {
         "schema_version": 1,
         "command": command,
         "request": dict(request or {}),
         "audit": _audit_payload(report),
+        "error": {
+            "kind": "invalid",
+            "message": _bounded_message(message),
+            "candidates": [],
+            "candidates_truncated": False,
+        },
     }
     rendered = _json(payload) if as_json else _render_audit(report)
     return TopologyCliResult(stderr=rendered, exit_code=2)
@@ -763,8 +960,14 @@ def _fatal(
     as_json: bool,
     kind: str,
     candidates: tuple[str, ...] = (),
+    candidate_count: int | None = None,
+    candidates_truncated: bool = False,
 ) -> TopologyCliResult:
-    bounded_candidates = tuple(sorted(candidates))[:_MAX_DIAGNOSTICS]
+    bounded_candidates, output_truncated = _bounded_candidates(
+        candidates,
+        candidate_count=candidate_count,
+        candidates_truncated=candidates_truncated,
+    )
     payload = {
         "schema_version": 1,
         "command": command,
@@ -774,7 +977,7 @@ def _fatal(
             "kind": kind,
             "message": _bounded_message(message),
             "candidates": list(bounded_candidates),
-            "candidates_truncated": len(candidates) > len(bounded_candidates),
+            "candidates_truncated": output_truncated,
         },
     }
     if as_json:
@@ -783,10 +986,62 @@ def _fatal(
         rendered = f"Topology {command} failed [{kind}]: {_bounded_message(message)}\n"
         for candidate in bounded_candidates:
             rendered += f"- {candidate}\n"
-        if len(candidates) > len(bounded_candidates):
-            omitted = len(candidates) - len(bounded_candidates)
-            rendered += f"- {omitted} additional candidates omitted\n"
+        if output_truncated:
+            total = max(len(candidates), candidate_count or 0)
+            omitted = max(0, total - len(bounded_candidates))
+            if omitted:
+                rendered += f"- {omitted} additional candidates omitted\n"
+            else:
+                rendered += "- candidate output truncated\n"
     return TopologyCliResult(stderr=rendered, exit_code=2)
+
+
+def _bounded_candidates(
+    candidates: tuple[str, ...],
+    *,
+    candidate_count: int | None,
+    candidates_truncated: bool,
+) -> tuple[tuple[str, ...], bool]:
+    selected = tuple(sorted(str(candidate) for candidate in candidates))[
+        :_MAX_DIAGNOSTICS
+    ]
+    bounded: list[str] = []
+    total_bytes = 0
+    content_truncated = False
+    for candidate in selected:
+        value, shortened = _bounded_utf8(candidate, _MAX_CANDIDATE_BYTES)
+        remaining = _MAX_CANDIDATES_TOTAL_BYTES - total_bytes
+        if remaining <= 0:
+            content_truncated = True
+            break
+        if len(value.encode("utf-8")) > remaining:
+            value, shortened_for_total = _bounded_utf8(value, remaining)
+            shortened = shortened or shortened_for_total
+        if not value:
+            content_truncated = True
+            break
+        bounded.append(value)
+        total_bytes += len(value.encode("utf-8"))
+        content_truncated = content_truncated or shortened
+    known_count = max(len(candidates), candidate_count or 0)
+    truncated = (
+        candidates_truncated
+        or known_count > len(bounded)
+        or len(candidates) > len(selected)
+        or content_truncated
+    )
+    return tuple(bounded), truncated
+
+
+def _bounded_utf8(value: str, max_bytes: int) -> tuple[str, bool]:
+    raw = value.encode("utf-8")
+    if len(raw) <= max_bytes:
+        return value, False
+    if max_bytes <= 0:
+        return "", True
+    suffix = b"..."[:max_bytes]
+    prefix = raw[: max_bytes - len(suffix)].decode("utf-8", errors="ignore")
+    return prefix + suffix.decode("ascii"), True
 
 
 def _traversal_paths(
@@ -805,6 +1060,133 @@ def _traversal_paths(
         observed.append(path)
         known.setdefault(step.node_id, path)
     return tuple(observed)
+
+
+def _read_source_ids(
+    topology: PublishedTopology, source_id: str | None
+) -> tuple[str, ...]:
+    if source_id is not None:
+        return (source_id,)
+    return tuple(
+        sorted(
+            node.source_id
+            for node in topology.nodes_by_id.values()
+            if isinstance(node, TopologySource)
+        )
+    )
+
+
+def _topology_binding(
+    topology: PublishedTopology, source_ids: tuple[str, ...]
+) -> tuple[object, ...]:
+    rows: list[tuple[object, ...]] = []
+    for source_id in source_ids:
+        receipt = topology.receipt(source_id)
+        rows.append(
+            (
+                source_id,
+                receipt.source_fingerprint,
+                tuple(receipt.provider_receipt_hashes.items()),
+                tuple(receipt.provider_artifact_paths),
+                tuple(receipt.provider_statuses.items()),
+            )
+        )
+    return (topology.generation, tuple(rows))
+
+
+def _assert_topology_matches_audit(
+    topology: PublishedTopology,
+    report: TopologyAuditReport,
+    source_ids: tuple[str, ...],
+) -> None:
+    snapshot = report.snapshot
+    if snapshot is None:
+        return
+    if topology.generation != snapshot.generation:
+        raise TopologyRegistryError("topology publication changed during read")
+    audited = {source.source_id: source for source in snapshot.sources}
+    if set(audited) != set(source_ids):
+        raise TopologyRegistryError("topology publication changed during read")
+    for source_id in source_ids:
+        receipt = topology.receipt(source_id)
+        expected = audited[source_id]
+        if receipt.source_fingerprint != expected.source_fingerprint:
+            raise TopologyRegistryError("topology publication changed during read")
+        receipt_hashes = set(receipt.provider_receipt_hashes.values())
+        if receipt_hashes and receipt_hashes != {expected.receipt_sha256}:
+            raise TopologyRegistryError("topology publication changed during read")
+
+
+def _assert_audit_matches_snapshot(
+    report: TopologyAuditReport, snapshot: TopologyAuditSnapshot
+) -> None:
+    if report.snapshot is not None and report.snapshot != snapshot:
+        raise TopologyRegistryError("topology publication changed during read")
+
+
+def _merge_audit_reports(
+    initial: TopologyAuditReport, final: TopologyAuditReport
+) -> TopologyAuditReport:
+    priority = {"current": 0, "degraded": 1, "stale": 2, "invalid": 3}
+    source_rows: dict[str, TopologyAuditSource] = {}
+    for source in (*initial.sources, *final.sources):
+        existing = source_rows.get(source.source_id)
+        if existing is None or priority[source.status] > priority[existing.status]:
+            source_rows[source.source_id] = source
+    findings = tuple(
+        sorted(
+            set((*initial.findings, *final.findings)),
+            key=lambda finding: (
+                finding.source_id or "",
+                finding.provider or "",
+                finding.path or "",
+                finding.status,
+                finding.message,
+            ),
+        )
+    )
+    status = max(
+        (initial.status, final.status),
+        key=lambda value: priority[value],
+    )
+    return TopologyAuditReport(
+        status=status,
+        exit_code=0 if status == "current" else 2 if status == "invalid" else 1,
+        sources=tuple(source_rows[source_id] for source_id in sorted(source_rows)),
+        findings=findings,
+        snapshot=final.snapshot,
+    )
+
+
+def _audit_at_boundary(
+    root: Path, source_id: str | None = None
+) -> tuple[TopologyAuditReport, BaseException | None]:
+    try:
+        return audit_topology(root, source_id=source_id), None
+    except (
+        OSError,
+        TopologyProviderError,
+        TopologyRegistryError,
+        TopologyValidationError,
+        ValueError,
+        yaml.YAMLError,
+    ) as exc:
+        message = _bounded_message(f"workspace config or topology audit failed: {exc}")
+        return (
+            TopologyAuditReport(
+                status="invalid",
+                exit_code=2,
+                sources=(),
+                findings=(
+                    TopologyAuditFinding(
+                        "invalid",
+                        message,
+                        source_id=source_id,
+                    ),
+                ),
+            ),
+            ValueError(message),
+        )
 
 
 def _source_statuses(report: TopologyAuditReport) -> dict[str, str]:

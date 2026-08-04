@@ -100,8 +100,22 @@ class TopologyProviderError(RuntimeError):
 class TopologyNodeResolutionError(TopologyProviderError):
     """Raised when a topology node selector is missing or ambiguous."""
 
-    def __init__(self, message: str, *, candidates: Iterable[str] = ()) -> None:
-        self.candidates = tuple(sorted(candidates))[:10]
+    def __init__(
+        self,
+        message: str,
+        *,
+        candidates: Iterable[str] = (),
+        candidate_count: int | None = None,
+        candidates_truncated: bool = False,
+    ) -> None:
+        ordered = tuple(sorted(candidates))
+        self.candidates = ordered[:10]
+        self.candidate_count = max(len(ordered), candidate_count or 0)
+        self.candidates_truncated = (
+            candidates_truncated
+            or self.candidate_count > len(self.candidates)
+            or (candidate_count is None and len(ordered) >= 10)
+        )
         super().__init__(message)
 
 
@@ -547,6 +561,8 @@ class PublishedTopology:
         raise TopologyNodeResolutionError(
             f"ambiguous topology node selector {value!r}: {', '.join(shown)}",
             candidates=shown,
+            candidate_count=len(candidate_ids),
+            candidates_truncated=len(candidate_ids) > len(shown),
         )
 
     def _adjacent(

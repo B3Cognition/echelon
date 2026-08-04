@@ -7,6 +7,7 @@ from types import ModuleType
 
 import pytest
 from typer.testing import CliRunner
+import yaml
 
 
 def _audit_report(
@@ -29,7 +30,7 @@ def _audit_report(
     )
 
 
-def _published_topology():
+def _published_topology(*, generation: int = 7):
     from echelon.topology_provider import PublishedTopology, load_provider_document
     from tests.unit.test_topology_provider import _codegraph, _symbol
 
@@ -67,7 +68,7 @@ def _published_topology():
     )
     return PublishedTopology.from_loaded_providers(
         [api, web],
-        generation=7,
+        generation=generation,
         source_fingerprints={"api": "a" * 64, "web": "b" * 64},
         provider_receipt_hashes={
             "api": {"codegraph": "sha256:" + "c" * 64},
@@ -110,6 +111,63 @@ def _patch_reads(
     monkeypatch.setattr(topology_cli, "audit_topology", audit)
     monkeypatch.setattr(topology_cli, "load_published_topology", load)
     return loaded
+
+
+def _patch_current_then_stale_fingerprint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[object]:
+    from harness.re_fingerprint import SourceFingerprint
+
+    current = SourceFingerprint(
+        "0" * 64,
+        "git",
+        False,
+        "1" * 64,
+        "0123456789abcdef0123456789abcdef01234567",
+    )
+    stale = SourceFingerprint(
+        "f" * 64,
+        "git",
+        False,
+        "1" * 64,
+        "0123456789abcdef0123456789abcdef01234567",
+    )
+    observed: list[object] = []
+    values = iter((current, stale))
+
+    def fingerprint(path: Path, profile: object) -> SourceFingerprint:
+        value = next(values)
+        observed.append(value)
+        return value
+
+    monkeypatch.setattr(
+        "echelon.topology_audit.resolve_re_fingerprint_profile",
+        lambda root: object(),
+    )
+    monkeypatch.setattr("echelon.topology_audit.fingerprint_source", fingerprint)
+    return observed
+
+
+def _invoke_topology_service(
+    topology_cli: object,
+    command: str,
+    root: Path,
+    *,
+    as_json: bool,
+):
+    if command == "audit":
+        return topology_cli.audit_command(root, as_json=as_json)
+    if command == "list-sources":
+        return topology_cli.list_sources_command(root, as_json=as_json)
+    if command == "search":
+        return topology_cli.search_command(root, "shared", as_json=as_json)
+    if command == "explain":
+        return topology_cli.explain_command(root, "api.shared", as_json=as_json)
+    if command == "neighbors":
+        return topology_cli.neighbors_command(root, "api.shared", as_json=as_json)
+    if command == "impact":
+        return topology_cli.impact_command(root, "api.shared", as_json=as_json)
+    raise AssertionError(f"unknown test command: {command}")
 
 
 @pytest.mark.unit
@@ -249,7 +307,7 @@ def test_search_json_is_all_source_ordered_bounded_and_provenanced(
 
     assert result.exit_code == 0
     assert result.stderr == ""
-    assert loaded == [()]
+    assert loaded == [(), ()]
     assert payload["schema_version"] == 1
     assert payload["command"] == "search"
     assert payload["request"] == {
@@ -302,10 +360,138 @@ def test_search_source_scope_and_repeated_json_are_exactly_deterministic(
     )
 
     assert first.stdout == second.stdout
-    assert loaded == [("web",), ("web",)]
+    assert loaded == [("web",), ("web",), ("web",), ("web",)]
     assert [row["source_id"] for row in json.loads(first.stdout)["results"]] == ["web"]
     assert "generated_at" not in first.stdout
     assert "published_at" not in first.stdout
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("command", ("audit", "list", "search"))
+def test_topology_commands_revalidate_live_freshness_before_rendering(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+) -> None:
+    from tests.unit.test_topology_registry import build_topology
+    import echelon.topology_cli as topology_cli
+
+    build_topology(tmp_path)
+    observed = _patch_current_then_stale_fingerprint(monkeypatch)
+
+    if command == "audit":
+        result = topology_cli.audit_command(tmp_path, source="api", as_json=True)
+    elif command == "list":
+        result = topology_cli.list_sources_command(tmp_path, as_json=True)
+    else:
+        result = topology_cli.search_command(
+            tmp_path, "run", source="api", as_json=True
+        )
+
+    assert len(observed) == 2
+    assert result.exit_code in {1, 2}
+    rendered = result.stdout or result.stderr
+    assert json.loads(rendered)["audit"]["status"] in {"stale", "invalid"}
+
+
+@pytest.mark.unit
+def test_topology_read_fails_closed_when_publication_changes_during_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import echelon.topology_cli as topology_cli
+
+    versions = iter(
+        (_published_topology(generation=7), _published_topology(generation=8))
+    )
+    monkeypatch.setattr(
+        topology_cli,
+        "audit_topology",
+        lambda root, source_id=None: _audit_report(
+            "current", source_ids=(source_id or "api",)
+        ),
+    )
+    monkeypatch.setattr(
+        topology_cli,
+        "load_published_topology",
+        lambda root, source_ids=(): next(versions),
+    )
+
+    result = topology_cli.search_command(
+        Path("/workspace"), "shared", source="api", as_json=True
+    )
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    payload = json.loads(result.stderr)
+    assert payload["error"]["kind"] == "invalid"
+    assert "changed during read" in payload["error"]["message"]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "command", ("audit", "list-sources", "search", "explain", "neighbors", "impact")
+)
+@pytest.mark.parametrize(
+    "error",
+    (
+        ValueError("workspace discovery rejected config"),
+        OSError("workspace config cannot be read"),
+        yaml.YAMLError("workspace config YAML is malformed"),
+    ),
+)
+def test_every_topology_service_bounds_workspace_audit_exceptions(
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+    error: Exception,
+) -> None:
+    import echelon.topology_cli as topology_cli
+
+    def fail_audit(root: Path, source_id: str | None = None) -> object:
+        raise error
+
+    monkeypatch.setattr(topology_cli, "audit_topology", fail_audit)
+
+    result = _invoke_topology_service(
+        topology_cli, command, Path("/workspace"), as_json=True
+    )
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    payload = json.loads(result.stderr)
+    assert payload["command"] == command
+    assert payload["audit"]["status"] == "invalid"
+    assert payload["error"]["kind"] == "invalid"
+    assert 0 < len(result.stderr.encode("utf-8")) < 10_000
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "document",
+    (
+        "null\n",
+        "- api\n- web\n",
+        "workspace: [\n",
+    ),
+)
+def test_malformed_workspace_config_is_a_bounded_fatal_result(
+    tmp_path: Path,
+    document: str,
+) -> None:
+    from tests.unit.test_topology_registry import build_topology
+    import echelon.topology_cli as topology_cli
+
+    build_topology(tmp_path)
+    (tmp_path / ".echelon/config.yml").write_text(document, encoding="utf-8")
+
+    result = topology_cli.audit_command(tmp_path, as_json=True)
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    payload = json.loads(result.stderr)
+    assert payload["audit"]["status"] == "invalid"
+    assert payload["error"]["kind"] == "invalid"
+    assert "workspace config" in payload["error"]["message"]
+    assert len(result.stderr.encode("utf-8")) < 10_000
 
 
 @pytest.mark.unit
@@ -337,12 +523,148 @@ def test_explain_exact_node_and_ambiguous_selector_candidates(
         "CALLS",
         "DECLARES",
     ]
+    for row in payload["relationships"]:
+        assert row["source_id"] == "api"
+        assert row["provider"]
+        assert row["source_node_id"] and row["target_node_id"]
+        assert row["source_relative_path"].startswith("src/")
+        assert row["topology_generation"] == 7
+        assert row["topology_status"] == "current"
+        assert row["truncated"] is False
     assert ambiguous.exit_code == 2
     assert ambiguous.stdout == ""
     error = json.loads(ambiguous.stderr)
     assert error["error"]["kind"] == "ambiguous"
     assert len(error["error"]["candidates"]) == 2
     assert error["error"]["candidates"] == sorted(error["error"]["candidates"])
+
+
+@pytest.mark.unit
+def test_ambiguous_candidate_output_bounds_one_million_byte_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.topology_provider import (
+        PublishedTopology,
+        TopologyNodeResolutionError,
+    )
+    import echelon.topology_cli as topology_cli
+
+    _patch_reads(monkeypatch)
+
+    def fail_explain(
+        self: PublishedTopology, source_id: str | None, selector: str
+    ) -> object:
+        raise TopologyNodeResolutionError(
+            "ambiguous topology node selector",
+            candidates=("x" * 1_000_000,),
+            candidate_count=1,
+        )
+
+    monkeypatch.setattr(PublishedTopology, "explain", fail_explain)
+
+    result = topology_cli.explain_command(
+        Path("/workspace"), "api.shared", source="api", as_json=True
+    )
+    payload = json.loads(result.stderr)
+    candidates = payload["error"]["candidates"]
+
+    assert result.exit_code == 2
+    assert len(candidates) == 1
+    assert len(candidates[0].encode("utf-8")) <= topology_cli._MAX_CANDIDATE_BYTES
+    assert (
+        sum(len(candidate.encode("utf-8")) for candidate in candidates)
+        <= topology_cli._MAX_CANDIDATES_TOTAL_BYTES
+    )
+    assert payload["error"]["candidates_truncated"] is True
+    assert len(result.stderr.encode("utf-8")) < 10_000
+
+
+@pytest.mark.unit
+def test_ambiguous_candidates_preserve_exact_total_byte_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.topology_provider import (
+        PublishedTopology,
+        TopologyNodeResolutionError,
+    )
+    import echelon.topology_cli as topology_cli
+
+    _patch_reads(monkeypatch)
+    count = (
+        topology_cli._MAX_CANDIDATES_TOTAL_BYTES
+        // topology_cli._MAX_CANDIDATE_BYTES
+    )
+    candidates = tuple(
+        f"{index}" + "x" * (topology_cli._MAX_CANDIDATE_BYTES - 1)
+        for index in range(count)
+    )
+
+    def fail_explain(
+        self: PublishedTopology, source_id: str | None, selector: str
+    ) -> object:
+        raise TopologyNodeResolutionError(
+            "ambiguous topology node selector",
+            candidates=candidates,
+            candidate_count=len(candidates),
+        )
+
+    monkeypatch.setattr(PublishedTopology, "explain", fail_explain)
+
+    result = topology_cli.explain_command(
+        Path("/workspace"), "api.shared", source="api", as_json=True
+    )
+    error = json.loads(result.stderr)["error"]
+
+    assert sum(len(value.encode("utf-8")) for value in error["candidates"]) == (
+        topology_cli._MAX_CANDIDATES_TOTAL_BYTES
+    )
+    assert error["candidates_truncated"] is False
+
+
+@pytest.mark.unit
+def test_explain_and_traversal_text_rows_have_complete_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import echelon.topology_cli as topology_cli
+
+    topology = _published_topology()
+    _patch_reads(monkeypatch, topology=topology)
+    caller_id = next(
+        node.id
+        for node in topology.nodes_by_id.values()
+        if getattr(node, "qualified_name", "") == "api.caller"
+    )
+
+    explained = topology_cli.explain_command(
+        Path("/workspace"), caller_id, source="api"
+    )
+    neighbors = topology_cli.neighbors_command(
+        Path("/workspace"),
+        caller_id,
+        source="api",
+        relations=("calls",),
+        limit=1,
+    )
+
+    relationship_rows = [
+        line for line in explained.stdout.splitlines() if "source_node=" in line
+    ]
+    assert relationship_rows
+    for line in relationship_rows:
+        assert "target_node=" in line
+        assert "source=api" in line
+        assert "provider=" in line
+        assert "path=src/" in line
+        assert "generation=7" in line
+        assert "status=current" in line
+        assert "truncated=no" in line
+
+    step = next(line for line in neighbors.stdout.splitlines() if line.startswith("- depth="))
+    assert "source_node=" in step and "target_node=" in step
+    assert "node=" in step and "source=api" in step
+    assert "provider=codegraph" in step and "path=src/" in step
+    assert "generation=7" in step and "status=current" in step
+    assert "truncated=yes" in step
 
 
 @pytest.mark.unit
@@ -459,8 +781,13 @@ def test_audit_with_only_unavailable_providers_exits_two(
         topology_cli,
         "load_topology_index",
         lambda root: SimpleNamespace(
+            generation=7,
             sources={
-                "api": SimpleNamespace(
+                    "api": SimpleNamespace(
+                        source_id="api",
+                        source_path="sources/api",
+                        source_fingerprint=SimpleNamespace(value="a" * 64),
+                    receipt=SimpleNamespace(sha256="sha256:" + "b" * 64),
                     providers={
                         "codegraph": SimpleNamespace(status="unavailable")
                     }
@@ -542,12 +869,72 @@ def test_list_sources_uses_canonical_index_and_provider_receipts(
             ],
             "source_fingerprint": "0" * 64,
             "source_id": "api",
+            "source_relative_path": "sources/api",
             "source_generation": 2,
             "topology_generation": 3,
             "topology_status": "current",
             "truncated": False,
         }
     ]
+
+    text_result = topology_cli.list_sources_command(tmp_path)
+    source_line = next(
+        line for line in text_result.stdout.splitlines() if line.startswith("- node=")
+    )
+    assert "node=source:api" in source_line
+    assert "source=api" in source_line
+    assert "provider=topology" in source_line
+    assert "path=sources/api" in source_line
+    assert "generation=3" in source_line
+    assert "status=current" in source_line
+    assert "truncated=no" in source_line
+
+@pytest.mark.unit
+def test_audit_source_rows_have_explicit_snapshot_provenance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace
+    from echelon.topology_audit import snapshot_topology_index
+    from echelon.topology_registry import load_topology_index
+    from tests.unit.test_topology_registry import build_topology
+    import echelon.topology_cli as topology_cli
+
+    build_topology(tmp_path)
+    index = load_topology_index(tmp_path)
+    assert index is not None
+    report = replace(
+        _audit_report("current", source_ids=("api",)),
+        snapshot=snapshot_topology_index(index),
+    )
+    monkeypatch.setattr(
+        topology_cli,
+        "audit_topology",
+        lambda root, source_id=None: report,
+    )
+
+    result = topology_cli.audit_command(tmp_path)
+    source_line = next(
+        line for line in result.stdout.splitlines() if line.startswith("- node=")
+    )
+
+    assert "node=source:api" in source_line
+    assert "source=api" in source_line
+    assert "provider=topology" in source_line
+    assert "path=sources/api" in source_line
+    assert "generation=3" in source_line
+    assert "status=current" in source_line
+    assert "truncated=no" in source_line
+
+    json_result = topology_cli.audit_command(tmp_path, as_json=True)
+    row = json.loads(json_result.stdout)["audit"]["sources"][0]
+    assert row["node_id"] == "source:api"
+    assert row["source_id"] == "api"
+    assert row["provider"] == "topology"
+    assert row["source_relative_path"] == "sources/api"
+    assert row["topology_generation"] == 3
+    assert row["topology_status"] == "current"
+    assert row["truncated"] is False
 
 
 @pytest.mark.unit

@@ -332,6 +332,8 @@ def test_published_topology_resolves_selectors_and_bounds_traversal() -> None:
     with pytest.raises(TopologyNodeResolutionError, match="ambiguous") as error:
         topology.explain(None, "api.shared")
     assert len(error.value.candidates) == 2
+    assert error.value.candidate_count == 2
+    assert error.value.candidates_truncated is False
     first_id = loaded.symbols[0].id
     explained = topology.explain(None, first_id)
     assert explained.node.id == first_id
@@ -349,6 +351,30 @@ def test_published_topology_resolves_selectors_and_bounds_traversal() -> None:
     search = topology.search("api", "shared", frozenset({"SYMBOL"}), 1)
     assert len(search.nodes) == 1
     assert search.truncated is True
+
+
+@pytest.mark.unit
+def test_ambiguous_resolution_retains_cardinality_after_candidate_cap() -> None:
+    from echelon.topology_provider import (
+        PublishedTopology,
+        TopologyNodeResolutionError,
+        load_provider_document,
+    )
+
+    symbols = [_symbol(f"src/{index:02d}.py", "api.shared") for index in range(12)]
+    loaded = load_provider_document(
+        _codegraph(symbols=symbols, relationships=[]),
+        provider="codegraph",
+        source_id="api",
+    )
+    topology = PublishedTopology.from_loaded_providers([loaded], generation=7)
+
+    with pytest.raises(TopologyNodeResolutionError) as error:
+        topology.explain("api", "api.shared")
+
+    assert len(error.value.candidates) == 10
+    assert error.value.candidate_count == 12
+    assert error.value.candidates_truncated is True
 
 
 @pytest.mark.unit

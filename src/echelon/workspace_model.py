@@ -199,9 +199,11 @@ def _configured_workspace(root: Path) -> WorkspaceManifest | None:
     if not config_path.exists():
         return None
 
-    raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    if raw is None:
+        raise ValueError("workspace config must be a mapping, not null")
     if not isinstance(raw, dict):
-        return None
+        raise ValueError("workspace config must be a mapping")
 
     workspace_raw = raw.get("workspace") or {}
     if not isinstance(workspace_raw, dict):
