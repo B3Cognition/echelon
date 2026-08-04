@@ -616,6 +616,39 @@ def test_write_canonical_re_context_hashes_sorted_snapshot_files(
 
 
 @pytest.mark.unit
+def test_write_canonical_re_context_preserves_legacy_snapshot_artifacts(
+    tmp_path: Path,
+) -> None:
+    snapshot_root = tmp_path / "runs" / "spec-1" / "context" / "published-re"
+    overview = snapshot_root / "workspace" / "overview.md"
+    overview.parent.mkdir(parents=True)
+    overview.write_text("# Overview\n", encoding="utf-8")
+    workspace_brief = snapshot_root / "RE-WORKSPACE-BRIEF.md"
+    workspace_brief.write_text("# Generated briefing\n", encoding="utf-8")
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+
+    path = write_canonical_re_context(
+        tmp_path,
+        spec_dir,
+        {
+            "status": "attached",
+            "generation": 6,
+            "snapshot_root": str(snapshot_root),
+            "artifacts": {
+                "re_overview": str(overview),
+                "rendered_briefings": {"workspace": str(workspace_brief)},
+            },
+        },
+    )
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert [row["path"] for row in payload["artifacts"]] == [
+        "re/workspace/overview.md"
+    ]
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize("status", ["ignored", "absent"])
 def test_write_canonical_re_context_records_non_attached_status(
     tmp_path: Path,

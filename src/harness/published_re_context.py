@@ -148,11 +148,16 @@ def write_canonical_re_context(
         if not snapshot_root.is_relative_to(root):
             raise ValueError("published RE snapshot must be inside workspace")
         artifact_map = context.get("artifacts")
-        context_artifacts = (
-            artifact_map.get("context_artifacts")
-            if isinstance(artifact_map, Mapping)
-            else None
-        )
+        context_artifacts: object = None
+        if isinstance(artifact_map, Mapping):
+            if "context_artifacts" in artifact_map:
+                context_artifacts = artifact_map.get("context_artifacts")
+            else:
+                context_artifacts = {
+                    key: value
+                    for key, value in artifact_map.items()
+                    if key != "rendered_briefings"
+                }
         artifacts = _canonical_artifact_rows(
             context_artifacts,
             snapshot_root=snapshot_root,
