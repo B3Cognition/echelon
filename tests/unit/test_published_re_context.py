@@ -42,6 +42,14 @@ def _descriptor(
 
 
 def _publish_fixture(root: Path) -> Path:
+    (root / "sources" / "api").mkdir(parents=True)
+    _write_json(
+        root / ".echelon" / "config.yml",
+        {
+            "workspace": {"git_role": "orchestration"},
+            "sources": [{"id": "api", "path": "sources/api"}],
+        },
+    )
     source_root = root / "re" / "sources" / "api"
     spec = source_root / "specs" / "search" / "spec.md"
     spec.parent.mkdir(parents=True)
@@ -200,6 +208,13 @@ def _publish_fixture(root: Path) -> Path:
 
 
 def _add_source_to_publication(root: Path, source_id: str) -> None:
+    (root / "sources" / source_id).mkdir(parents=True)
+    config_path = root / ".echelon" / "config.yml"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["sources"].append(
+        {"id": source_id, "path": f"sources/{source_id}"}
+    )
+    _write_json(config_path, config)
     source_root = root / "re" / "sources" / source_id
     source_root.mkdir(parents=True)
     overview_path = f"re/sources/{source_id}/overview.md"
@@ -605,11 +620,11 @@ def test_selected_source_manifest_bounds_prompt_and_graph_source_topology(
     }
     assert (
         "spec:001-selected-api",
-        "USES_RE_SOURCE",
-        "re-source:api",
+        "USES_SOURCE",
+        "source:api",
     ) in edges
     assert not any(
-        edge_type == "USES_RE_SOURCE" and target == "re-source:web"
+        edge_type == "USES_SOURCE" and target == "source:web"
         for _, edge_type, target in edges
     )
 

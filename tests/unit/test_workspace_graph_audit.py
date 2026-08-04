@@ -635,6 +635,29 @@ def test_structural_composition_failure_is_not_reported_as_unavailable(
 
 
 @pytest.mark.unit
+def test_canonical_source_conflict_has_stable_identity_finding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = _candidate()
+    monkeypatch.setattr(
+        "echelon.workspace_graph_audit.build_workspace_graph",
+        lambda project_root: (_ for _ in ()).throw(
+            WorkspaceGraphError(
+                "canonical source identity conflict: source:api"
+            )
+        ),
+    )
+
+    report = audit_workspace_graph(tmp_path, candidate=candidate)
+
+    assert report.status == "fail"
+    assert [finding.code for finding in report.findings] == [
+        "workspace_identity_conflict"
+    ]
+
+
+@pytest.mark.unit
 def test_write_workspace_audit_is_atomic_and_deterministic(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

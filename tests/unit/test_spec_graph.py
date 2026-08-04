@@ -282,6 +282,7 @@ def _write_re_index(
     *,
     typed: bool,
     include_source: bool = True,
+    source_path: str = ".",
 ) -> None:
     workspace_root = root / "re" / "workspace"
     workspace_root.mkdir(parents=True, exist_ok=True)
@@ -294,7 +295,7 @@ def _write_re_index(
             path.write_text(f"# {name}\n", encoding="utf-8")
 
     source_entry: dict[str, object] = {
-        "path": ".",
+        "path": source_path,
         "published_path": "re/sources/api",
         "fingerprint": "source-fingerprint",
         "profile_hash": "profile-hash",
@@ -333,6 +334,25 @@ def _write_re_index(
             "workspace": workspace_entry,
             "warnings": [],
         },
+    )
+
+
+def _write_workspace_source(
+    root: Path,
+    *,
+    source_id: str = "api",
+    source_path: str = "sources/api",
+) -> None:
+    (root / source_path).mkdir(parents=True, exist_ok=True)
+    config = root / ".echelon" / "config.yml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(
+        "workspace:\n"
+        "  git_role: orchestration\n"
+        "sources:\n"
+        f"  - id: {source_id}\n"
+        f"    path: {source_path}\n",
+        encoding="utf-8",
     )
 
 
@@ -977,6 +997,7 @@ def test_build_spec_graph_uses_typed_descriptor_kinds_for_re_topology(
     monkeypatch,
 ) -> None:
     spec_dir = _canonical_spec(tmp_path)
+    _write_workspace_source(tmp_path)
     source_root = tmp_path / "re" / "sources" / "api"
     workspace_root = tmp_path / "re" / "workspace"
     source_artifacts = {
@@ -1036,7 +1057,11 @@ def test_build_spec_graph_uses_typed_descriptor_kinds_for_re_topology(
             ],
         },
     )
-    _write_re_index(tmp_path, typed=True)
+    _write_re_index(
+        tmp_path,
+        typed=True,
+        source_path="sources/api",
+    )
     attached_paths = [
         "re/sources/api/manifest.json",
         *[
@@ -1097,7 +1122,7 @@ def test_build_spec_graph_uses_typed_descriptor_kinds_for_re_topology(
         for item in payload["edges"]
     }
 
-    source_id = "re-source:api"
+    source_id = "source:api"
     architecture_id = "artifact:001-demo:re/sources/api/notes/alpha.md"
     contracts_id = "artifact:001-demo:re/sources/api/notes/bravo.md"
     components_id = "artifact:001-demo:re/sources/api/notes/charlie.md"
@@ -1114,6 +1139,12 @@ def test_build_spec_graph_uses_typed_descriptor_kinds_for_re_topology(
     drawer_id = "drawer:001-demo:drawer-re-architecture"
 
     assert nodes[source_id]["properties"]["publication_status"] == "complete"
+    assert nodes[source_id]["type"] == "SourceRoot"
+    assert nodes[source_id]["properties"]["source_id"] == "api"
+    assert nodes[source_id]["properties"]["path"] == "sources/api"
+    assert nodes[source_id]["properties"]["semantic_fingerprint"] == (
+        "source-fingerprint"
+    )
     assert nodes[architecture_id]["properties"]["re_artifact_kind"] == (
         "re-architecture"
     )
@@ -1126,9 +1157,10 @@ def test_build_spec_graph_uses_typed_descriptor_kinds_for_re_topology(
         "workspace"
     )
     assert (source_id, "DESCRIBED_BY", architecture_id) in edges
-    assert (source_id, "DECLARES_CONTRACTS_IN", contracts_id) in edges
-    assert (source_id, "CATALOGS_COMPONENTS_IN", components_id) in edges
-    assert (source_id, "SUMMARIZED_BY", codegraph_id) in edges
+    assert (source_id, "DESCRIBED_BY", contracts_id) in edges
+    assert (source_id, "DESCRIBED_BY", components_id) in edges
+    assert (source_id, "DESCRIBED_BY", codegraph_id) in edges
+    assert ("spec:001-demo", "USES_SOURCE", source_id) in edges
     assert (source_id, "HAS_DECISION", source_decision_id) in edges
     assert (
         source_decision_id,
@@ -1160,6 +1192,7 @@ def test_build_spec_graph_models_linked_re_source_topology(
     monkeypatch,
 ) -> None:
     spec_dir = _canonical_spec(tmp_path)
+    _write_workspace_source(tmp_path)
     source_root = tmp_path / "re" / "sources" / "api"
     source_root.mkdir(parents=True)
     artifacts = {
@@ -1198,7 +1231,34 @@ def test_build_spec_graph_models_linked_re_source_topology(
                 "hash": "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest(),
             }
         )
-    _write_re_index(tmp_path, typed=False)
+    _write_re_index(
+        tmp_path,
+        typed=False,
+        source_path="sources/api",
+    )
+    topology_receipt_path = "re/topology/sources/api/receipt.json"
+    _write_json(
+        tmp_path / topology_receipt_path,
+        {"schema_version": 1, "source_id": "api"},
+    )
+    monkeypatch.setattr(
+        "echelon.spec_graph.load_topology_index",
+        lambda root: SimpleNamespace(
+            generation=7,
+            sources={
+                "api": SimpleNamespace(
+                    source_id="api",
+                    source_path="sources/api",
+                    source_fingerprint=SimpleNamespace(
+                        value="topology-fingerprint"
+                    ),
+                    receipt=SimpleNamespace(path=topology_receipt_path),
+                    providers={},
+                )
+            },
+        ),
+        raising=False,
+    )
     _write_json(
         spec_dir / "re-context.json",
         {
@@ -1258,16 +1318,31 @@ def test_build_spec_graph_models_linked_re_source_topology(
         for item in payload["edges"]
     }
 
-    source_id = "re-source:api"
+    source_id = "source:api"
     decision_id = "decision:api:adrs/ADR-001-boundary.md"
     architecture_id = "artifact:001-demo:re/sources/api/architecture.md"
     contracts_id = "artifact:001-demo:re/sources/api/contracts.md"
     components_id = "artifact:001-demo:re/sources/api/components.md"
     adr_id = "artifact:001-demo:re/sources/api/adrs/ADR-001-boundary.md"
     codegraph_id = "artifact:001-demo:re/sources/api/codegraph-summary.json"
+    topology_receipt_id = (
+        "artifact:001-demo:re/topology/sources/api/receipt.json"
+    )
 
-    assert nodes[source_id]["type"] == "ReverseEngineeringSource"
+    assert nodes[source_id]["type"] == "SourceRoot"
     assert nodes[source_id]["properties"]["publication_status"] == "complete"
+    assert nodes[source_id]["properties"]["path"] == "sources/api"
+    assert nodes[source_id]["properties"]["semantic_generation"] == 2
+    assert nodes[source_id]["properties"]["semantic_fingerprint"] == (
+        "source-fingerprint"
+    )
+    assert nodes[source_id]["properties"]["topology_generation"] == 7
+    assert nodes[source_id]["properties"]["topology_fingerprint"] == (
+        "topology-fingerprint"
+    )
+    assert nodes[source_id]["properties"]["topology_receipt_path"] == (
+        topology_receipt_path
+    )
     assert nodes[decision_id]["type"] == "Decision"
     assert nodes[decision_id]["properties"]["title"] == "ADR-001-boundary"
     assert nodes[architecture_id]["properties"]["re_artifact_kind"] == (
@@ -1279,14 +1354,24 @@ def test_build_spec_graph_models_linked_re_source_topology(
     assert nodes[codegraph_id]["properties"]["mining_status"] == "eligible"
     drawer_id = "drawer:001-demo:drawer-re-architecture"
     assert nodes[drawer_id]["properties"]["artifact_kind"] == "re-architecture"
-    assert ("spec:001-demo", "USES_RE_SOURCE", source_id) in edges
+    assert ("spec:001-demo", "USES_SOURCE", source_id) in edges
     assert (source_id, "DESCRIBED_BY", architecture_id) in edges
-    assert (source_id, "DECLARES_CONTRACTS_IN", contracts_id) in edges
-    assert (source_id, "CATALOGS_COMPONENTS_IN", components_id) in edges
-    assert (source_id, "SUMMARIZED_BY", codegraph_id) in edges
+    assert (source_id, "DESCRIBED_BY", contracts_id) in edges
+    assert (source_id, "DESCRIBED_BY", components_id) in edges
+    assert (source_id, "DESCRIBED_BY", codegraph_id) in edges
     assert (source_id, "HAS_DECISION", decision_id) in edges
+    assert (
+        source_id,
+        "HAS_TOPOLOGY_RECEIPT",
+        topology_receipt_id,
+    ) in edges
     assert (decision_id, "DOCUMENTED_BY", adr_id) in edges
     assert (architecture_id, "STORED_AS", drawer_id) in edges
+    assert not any(node_id.startswith("re-source:") for node_id in nodes)
+    assert not any(
+        node["type"] in {"TopologyFile", "TopologySymbol"}
+        for node in nodes.values()
+    )
 
 
 @pytest.mark.unit
