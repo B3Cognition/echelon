@@ -1,7 +1,149 @@
+import hashlib
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
+
+def _write_json(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def _re_descriptor(
+    root: Path,
+    relative_path: str,
+    *,
+    kind: str,
+    scope: str,
+    source_id: str | None = None,
+) -> dict[str, object]:
+    descriptor: dict[str, object] = {
+        "kind": kind,
+        "path": relative_path,
+        "sha256": "sha256:"
+        + hashlib.sha256((root / relative_path).read_bytes()).hexdigest(),
+        "scope": scope,
+    }
+    if source_id is not None:
+        descriptor["source_id"] = source_id
+    return descriptor
+
+
+def write_typed_re_workspace_with_misleading_names(tmp_path: Path) -> None:
+    (tmp_path / ".echelon").mkdir()
+    (tmp_path / ".echelon" / "config.yml").write_text(
+        "mempalace:\n  wing: demo-wing\n",
+        encoding="utf-8",
+    )
+    source_root = tmp_path / "re" / "sources" / "api"
+    workspace_root = tmp_path / "re" / "workspace"
+    source_root.mkdir(parents=True)
+    workspace_root.mkdir(parents=True)
+
+    source_artifacts = {
+        "notes/alpha.md": ("re-architecture", "# Typed architecture\n"),
+        "notes/bravo.md": ("re-contracts", "# Typed contracts\n"),
+        "notes/charlie.md": ("re-components", "# Typed components\n"),
+        "notes/delta.md": ("re-decision", "# Typed source decision\n"),
+        "evidence/echo.json": ("re-codegraph-summary", '{"summary":"source"}\n'),
+        "evidence/foxtrot.json": ("re-codegraph-analysis", "{}\n"),
+        "evidence/golf.json": ("re-analysis", "{}\n"),
+        "evidence/hotel.json": ("re-structure", "{}\n"),
+        "evidence/india.json": ("re-configs", "{}\n"),
+        "evidence/juliet.json": ("re-dependencies", "{}\n"),
+    }
+    source_descriptors = []
+    for relative_path, (kind, content) in source_artifacts.items():
+        path = source_root / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        source_descriptors.append(
+            _re_descriptor(
+                tmp_path,
+                f"re/sources/api/{relative_path}",
+                kind=kind,
+                scope="source",
+                source_id="api",
+            )
+        )
+    _write_json(
+        source_root / "manifest.json",
+        {
+            "schema_version": 1,
+            "source_id": "api",
+            "artifacts": sorted(source_descriptors, key=lambda row: str(row["path"])),
+        },
+    )
+
+    workspace_artifacts = {
+        "notes/kilo.md": ("re-decision", "# Typed workspace decision\n"),
+        "evidence/lima.json": ("re-codegraph-summary", '{"summary":"workspace"}\n'),
+    }
+    workspace_descriptors = []
+    for relative_path, (kind, content) in workspace_artifacts.items():
+        path = workspace_root / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        workspace_descriptors.append(
+            _re_descriptor(
+                tmp_path,
+                f"re/workspace/{relative_path}",
+                kind=kind,
+                scope="workspace",
+            )
+        )
+    _write_json(
+        workspace_root / "manifest.json",
+        {
+            "schema_version": 1,
+            "artifacts": sorted(
+                workspace_descriptors, key=lambda row: str(row["path"])
+            ),
+        },
+    )
+
+    _write_json(
+        tmp_path / "re" / "index.json",
+        {
+            "schema_version": 1,
+            "generation": 1,
+            "publication_status": "complete",
+            "published_at": "2026-08-04T12:00:00Z",
+            "published_from_run": "re-test",
+            "sources": {
+                "api": {
+                    "path": ".",
+                    "published_path": "re/sources/api",
+                    "fingerprint": "source-fingerprint",
+                    "profile_hash": "profile-hash",
+                    "status": "complete",
+                    "manifest": "re/sources/api/manifest.json",
+                    "manifest_artifact": _re_descriptor(
+                        tmp_path,
+                        "re/sources/api/manifest.json",
+                        kind="re-source-manifest",
+                        scope="source",
+                        source_id="api",
+                    ),
+                }
+            },
+            "workspace": {
+                "manifest": "re/workspace/manifest.json",
+                "overview": "re/workspace/overview.md",
+                "relationships": "re/workspace/relationships.md",
+                "contracts": "re/workspace/contracts.md",
+                "manifest_artifact": _re_descriptor(
+                    tmp_path,
+                    "re/workspace/manifest.json",
+                    kind="re-workspace-manifest",
+                    scope="workspace",
+                ),
+            },
+            "warnings": [],
+        },
+    )
 
 
 def write_re_workspace(tmp_path: Path) -> None:
@@ -174,6 +316,85 @@ def test_load_re_artifact_snapshots_selects_curated_re_outputs(tmp_path: Path) -
 
 
 @pytest.mark.unit
+def test_load_re_artifact_snapshots_uses_typed_kind_for_misleading_names(
+    tmp_path: Path,
+) -> None:
+    write_typed_re_workspace_with_misleading_names(tmp_path)
+    from echelon.mempalace_re import load_re_artifact_snapshots
+
+    snapshots = load_re_artifact_snapshots(tmp_path)
+
+    metadata = {
+        snapshot.source: (
+            snapshot.artifact_metadata["artifact_kind"],
+            snapshot.artifact_metadata["room"],
+        )
+        for snapshot in snapshots
+    }
+    assert metadata["re/sources/api/notes/alpha.md"] == (
+        "re-architecture",
+        "re-source-architecture",
+    )
+    assert metadata["re/sources/api/notes/bravo.md"] == (
+        "re-contracts",
+        "re-source-contracts",
+    )
+    assert metadata["re/sources/api/notes/charlie.md"] == (
+        "re-components",
+        "re-source-components",
+    )
+    assert metadata["re/sources/api/notes/delta.md"] == (
+        "re-decision",
+        "re-source-decisions",
+    )
+    assert metadata["re/sources/api/evidence/echo.json"] == (
+        "re-codegraph-summary",
+        "re-source-codegraph",
+    )
+    assert metadata["re/workspace/notes/kilo.md"] == (
+        "re-decision",
+        "re-workspace-decisions",
+    )
+    assert metadata["re/workspace/evidence/lima.json"] == (
+        "re-codegraph-summary",
+        "re-workspace-codegraph",
+    )
+    assert {
+        snapshot.artifact_metadata["artifact_kind"] for snapshot in snapshots
+    }.isdisjoint(
+        {
+            "re-codegraph-analysis",
+            "re-analysis",
+            "re-structure",
+            "re-configs",
+            "re-dependencies",
+        }
+    )
+    architecture = next(
+        snapshot
+        for snapshot in snapshots
+        if snapshot.source == "re/sources/api/notes/alpha.md"
+    )
+    assert architecture.content == b"# Typed architecture\n"
+
+
+@pytest.mark.unit
+def test_load_re_artifact_snapshots_rejects_changed_registered_bytes(
+    tmp_path: Path,
+) -> None:
+    write_typed_re_workspace_with_misleading_names(tmp_path)
+    (tmp_path / "re" / "sources" / "api" / "notes" / "alpha.md").write_text(
+        "# Changed after publication\n",
+        encoding="utf-8",
+    )
+    from harness.re_registry import ReRegistryError
+    from echelon.mempalace_re import load_re_artifact_snapshots
+
+    with pytest.raises(ReRegistryError, match="artifact hash mismatch"):
+        load_re_artifact_snapshots(tmp_path)
+
+
+@pytest.mark.unit
 def test_mine_re_memory_aggregates_curated_artifacts(tmp_path: Path, monkeypatch) -> None:
     write_re_workspace(tmp_path)
     calls = []
@@ -229,7 +450,9 @@ def test_mine_re_memory_deletes_existing_re_drawers_before_refresh(
                     "components",
                     "decision",
                     "codegraph",
+                    "registered-heavy",
                     "scoped-re",
+                    "provenance-re",
                     "spec-memory",
                 ],
                 "metadatas": [
@@ -239,9 +462,15 @@ def test_mine_re_memory_deletes_existing_re_drawers_before_refresh(
                     {"artifact_kind": "re-components", "wing": "demo-wing"},
                     {"artifact_kind": "re-decision", "wing": "demo-wing"},
                     {"artifact_kind": "re-codegraph-summary", "wing": "demo-wing"},
+                    {"artifact_kind": "re-analysis", "wing": "demo-wing"},
                     {
                         "artifact_kind": "future-re-kind",
                         "scope": "reverse-engineering",
+                        "wing": "demo-wing",
+                    },
+                    {
+                        "artifact_kind": "future-re-kind",
+                        "provenance_type": "reverse_engineering_mine",
                         "wing": "demo-wing",
                     },
                     {"artifact_kind": "supporting-context", "wing": "demo-wing"},
@@ -287,7 +516,9 @@ def test_mine_re_memory_deletes_existing_re_drawers_before_refresh(
         "components",
         "decision",
         "codegraph",
+        "registered-heavy",
         "scoped-re",
+        "provenance-re",
     ]
 
 
@@ -432,6 +663,73 @@ def test_audit_re_memory_reports_missing_drawers(tmp_path: Path, monkeypatch) ->
 
     assert report.status == "fail"
     assert report.missing == ["missing-drawer"]
+
+
+@pytest.mark.unit
+def test_audit_re_memory_requires_typed_snapshot_kind(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    write_typed_re_workspace_with_misleading_names(tmp_path)
+    document = "RE-ARCH-001: Typed architecture."
+    content_hash = hashlib.sha256(document.encode("utf-8")).hexdigest()
+
+    class FakeCollection:
+        def get(self, ids=None, where=None, include=None, limit=None):
+            return {
+                "ids": ["drawer-architecture"],
+                "documents": [document],
+                "metadatas": [
+                    {
+                        "wing": "demo-wing",
+                        "room": "re-source-architecture",
+                        "artifact_kind": "reverse-engineering",
+                        "scope": "reverse-engineering",
+                        "canonical": True,
+                        "artifact_path": "re/sources/api/notes/alpha.md",
+                        "source_file": "re/sources/api/notes/alpha.md",
+                        "artifact_hash": "sha256:artifact",
+                        "canonical_spec_sha256": "artifact",
+                        "requirement_content_sha256": content_hash,
+                        "requirement_id": "RE-ARCH-001",
+                        "deterministic_identity_schema_version": 1,
+                        "lifecycle_status": "active",
+                    }
+                ],
+            }
+
+    class FakeAdapter:
+        wing = "demo-wing"
+        palace_path = tmp_path / ".mempalace"
+
+        def open_collection_read_only(self):
+            return FakeCollection()
+
+        def plan_re_artifact_rows(self, content, *, source, artifact_metadata):
+            if source != "re/sources/api/notes/alpha.md":
+                return []
+            return [
+                SimpleNamespace(
+                    drawer_id="drawer-architecture",
+                    requirement_id="RE-ARCH-001",
+                    room="re-source-architecture",
+                    source=source,
+                    artifact_hash="sha256:artifact",
+                    canonical_spec_sha256="artifact",
+                    requirement_content_sha256=content_hash,
+                )
+            ]
+
+    monkeypatch.setattr(
+        "echelon.mempalace_re.create_re_memory_adapter",
+        lambda project_root, run_id: FakeAdapter(),
+    )
+    from echelon.mempalace_re import audit_re_memory
+
+    report = audit_re_memory(tmp_path)
+
+    assert report.status == "fail"
+    assert report.non_canonical == ["drawer-architecture"]
 
 
 @pytest.mark.unit

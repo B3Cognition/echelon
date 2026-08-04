@@ -12,6 +12,11 @@ from echelon.mempalace_requirements import (
     _read_str_list,
 )
 from echelon.mempalace_memory_audit import audit_artifact_memory
+from harness.re_artifacts import SUPPORTED_RE_ARTIFACT_KINDS, ReArtifactDescriptor
+from harness.re_registry import (
+    canonical_re_artifact_descriptors,
+    load_published_index,
+)
 
 
 @dataclass(frozen=True)
@@ -133,16 +138,49 @@ WORKSPACE_RE_JSON_ARTIFACTS = {
     "manifest.json",
 }
 
-RE_ARTIFACT_KINDS = frozenset(
+MINED_RE_ARTIFACT_KINDS = frozenset(
     {
-        "reverse-engineering",
+        "re-source-manifest",
+        "re-workspace-manifest",
+        "re-overview",
         "re-architecture",
         "re-contracts",
         "re-components",
         "re-decision",
         "re-codegraph-summary",
+        "re-domain-manifest",
+        "re-generated-spec",
+        "re-generated-checklist",
+        "re-supporting-artifacts",
+        "re-architecture-map",
+        "re-relationships",
+        "re-domain",
+        "re-strategy",
+        "re-workspace-checklist",
+        "re-quality-report",
     }
 )
+
+RE_ARTIFACT_ROOMS = {
+    **{(kind, "source"): "re-source-context" for kind in MINED_RE_ARTIFACT_KINDS},
+    **{
+        (kind, "workspace"): "re-workspace-context"
+        for kind in MINED_RE_ARTIFACT_KINDS
+    },
+    ("re-architecture", "source"): "re-source-architecture",
+    ("re-contracts", "source"): "re-source-contracts",
+    ("re-components", "source"): "re-source-components",
+    ("re-decision", "source"): "re-source-decisions",
+    ("re-decision", "workspace"): "re-workspace-decisions",
+    ("re-codegraph-summary", "source"): "re-source-codegraph",
+    ("re-codegraph-summary", "workspace"): "re-workspace-codegraph",
+    ("re-generated-spec", "source"): "re-generated-specs",
+    ("re-generated-checklist", "source"): "re-generated-specs",
+    ("re-domain", "workspace"): "re-domain-context",
+    ("re-strategy", "workspace"): "re-strategy",
+    ("re-quality-report", "source"): "re-quality-review",
+    ("re-quality-report", "workspace"): "re-quality-review",
+}
 
 QUALITY_RE_ARTIFACTS = {
     "semantic-quality-review.json",
@@ -245,6 +283,57 @@ def _is_curated_re_artifact(relative_to_re: Path) -> bool:
 
 def load_re_artifact_snapshots(project_root: Path) -> list[ReArtifactSnapshot]:
     root = project_root.resolve()
+    index = load_published_index(root)
+    if index is not None:
+        return _load_descriptor_re_artifact_snapshots(
+            root,
+            canonical_re_artifact_descriptors(root, index),
+        )
+    return _load_legacy_re_artifact_snapshots(root)
+
+
+def _load_descriptor_re_artifact_snapshots(
+    root: Path,
+    descriptors: tuple[ReArtifactDescriptor, ...],
+) -> list[ReArtifactSnapshot]:
+    re_root = root / "re"
+    snapshots: list[ReArtifactSnapshot] = []
+    for descriptor in descriptors:
+        room = RE_ARTIFACT_ROOMS.get((descriptor.kind, descriptor.scope))
+        if descriptor.kind not in MINED_RE_ARTIFACT_KINDS or room is None:
+            continue
+        artifact = (root / descriptor.path).resolve()
+        snapshots.append(
+            ReArtifactSnapshot(
+                re_root=re_root,
+                artifact_file=artifact,
+                content=artifact.read_bytes(),
+                source=descriptor.path,
+                artifact_metadata={
+                    "scope": "reverse-engineering",
+                    "canonical": True,
+                    "artifact_kind": descriptor.kind,
+                    "artifact_path": descriptor.path,
+                    "artifact_hash": descriptor.sha256,
+                    "source_file": descriptor.path,
+                    "lifecycle_status": "active",
+                    "provenance_type": "reverse_engineering_mine",
+                    "added_by": "echelon",
+                    "phase": "RE",
+                    "room": room,
+                    "re_artifact_scope": descriptor.scope,
+                    **(
+                        {"re_source_id": descriptor.source_id}
+                        if descriptor.source_id is not None
+                        else {}
+                    ),
+                },
+            )
+        )
+    return snapshots
+
+
+def _load_legacy_re_artifact_snapshots(root: Path) -> list[ReArtifactSnapshot]:
     re_root = resolve_re_root(root)
     snapshots: list[ReArtifactSnapshot] = []
     for artifact in sorted(re_root.rglob("*")):
@@ -406,10 +495,7 @@ def _cleanup_existing_re_drawers(adapter: object) -> list[str]:
             for drawer_id, metadata in zip(ids, metadatas)
             if isinstance(drawer_id, str)
             and isinstance(metadata, dict)
-            and (
-                metadata.get("artifact_kind") in RE_ARTIFACT_KINDS
-                or metadata.get("scope") == "reverse-engineering"
-            )
+            and _is_re_owned_memory(metadata)
             and metadata.get("wing") == getattr(adapter, "wing", "")
         ]
         if delete_ids:
@@ -417,6 +503,19 @@ def _cleanup_existing_re_drawers(adapter: object) -> list[str]:
     except (Exception, SystemExit) as exc:
         return [f"re_memory_cleanup_skipped:{type(exc).__name__}"]
     return []
+
+
+def _is_re_owned_memory(metadata: dict[str, Any]) -> bool:
+    artifact_kind = metadata.get("artifact_kind")
+    return (
+        artifact_kind == "reverse-engineering"
+        or (
+            isinstance(artifact_kind, str)
+            and artifact_kind in SUPPORTED_RE_ARTIFACT_KINDS
+        )
+        or metadata.get("scope") == "reverse-engineering"
+        or metadata.get("provenance_type") == "reverse_engineering_mine"
+    )
 
 
 def mine_re_memory(project_root: Path, *, run_id: str) -> ReMemoryMineReport:
