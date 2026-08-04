@@ -17,6 +17,7 @@ from typing import Iterable, Mapping, Sequence
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
+from echelon import atomic_install
 from harness.secret_scan import scan_text
 from kernel.task_contract import parse_task_rows
 
@@ -517,12 +518,7 @@ def clone_product_input_contract(
         if immutable_product_input_tree_digest(temporary) != source_tree_hash:
             raise ProductInputError("product input clone bytes differ from baseline")
         validate_immutable_product_input_package(temporary, raw)
-        os.replace(temporary, destination)
-        directory_fd = os.open(replacement, os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        atomic_install.atomic_rename_no_replace(temporary, destination)
     except Exception:
         shutil.rmtree(temporary, ignore_errors=True)
         raise

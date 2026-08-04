@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import tempfile
 from typing import Mapping
 from uuid import uuid4
 
+from echelon import atomic_install
 from echelon.git_helpers import GitHelperError, current_branch, run_git
 from echelon.product_inputs import (
     ProductInputError,
@@ -80,6 +83,27 @@ class RetargetPhaseAStartOutcome:
 _SAFE_REPLACEMENT_RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _SAFE_OPERATION_ID = re.compile(r"^[A-Za-z0-9._-]+$")
 _RETARGET_STAGING_MARKER = ".echelon-retarget-bootstrap.json"
+_RETARGET_RESERVATION_KEYS = frozenset(
+    {"operation_id", "source_run", "target_run", "spec_id", "staging_name"}
+)
+_RETARGET_STAGING_NAME = re.compile(r"^\.retarget-run-[0-9a-f]{32}$")
+_RETARGET_CONTRACT_KEYS = frozenset(
+    {
+        "operation_id",
+        "revision_id",
+        "status",
+        "baseline_run_id",
+        "replacement_run_id",
+        "old_targets",
+        "replacement_targets",
+        "checkpoint_id",
+        "checkpoint_commit",
+        "failure_code",
+    }
+)
+_MAX_RETARGET_ID_LENGTH = 256
+_MAX_RETARGET_TARGET_LENGTH = 1024
+_MAX_RETARGET_TARGETS = 128
 
 
 def _load_state(run_dir: Path) -> dict[str, object]:
@@ -116,60 +140,127 @@ def _write_json_atomic(path: Path, payload: Mapping[str, object]) -> None:
 
 
 def _write_retarget_prepared_state(
+    run_dir: Path,
+    prepared_state: Mapping[str, object],
+) -> None:
+    spec_id = str(prepared_state["spec_id"])
+    run_spec_dir = run_dir / "specs" / spec_id
+    run_spec_dir.mkdir(parents=True)
+    (run_dir / "staging").mkdir()
+    _write_json_atomic(run_dir / "state.json", prepared_state)
+
+
+def _require_bounded_identity(value: object, *, field: str) -> str:
+    if (
+        type(value) is not str
+        or not value
+        or len(value) > _MAX_RETARGET_ID_LENGTH
+        or _SAFE_OPERATION_ID.fullmatch(value) is None
+    ):
+        raise PhaseAStartError(f"retarget contract has invalid {field}")
+    return value
+
+
+def _require_canonical_targets(value: object, *, field: str) -> tuple[str, ...]:
+    if (
+        type(value) is not list
+        or not value
+        or len(value) > _MAX_RETARGET_TARGETS
+        or any(
+            type(target) is not str
+            or not target
+            or len(target) > _MAX_RETARGET_TARGET_LENGTH
+            for target in value
+        )
+    ):
+        raise PhaseAStartError(f"retarget contract has invalid {field}")
+    normalized = normalize_target_set(value)
+    if tuple(value) != normalized:
+        raise PhaseAStartError(f"retarget contract has noncanonical {field}")
+    return normalized
+
+
+def _validate_retarget_contract(
+    retarget_state: Mapping[str, object],
+    *,
+    baseline: SpecRun,
+    baseline_state: Mapping[str, object],
+    replacement_run_id: str,
+    replacement_targets: tuple[str, ...],
+    checkpoint_commit: str,
+) -> dict[str, object]:
+    if type(retarget_state) is not dict or set(retarget_state) != _RETARGET_CONTRACT_KEYS:
+        raise PhaseAStartError("retarget contract has invalid keys")
+    operation_id = _require_bounded_identity(
+        retarget_state["operation_id"], field="operation_id"
+    )
+    _require_bounded_identity(retarget_state["revision_id"], field="revision_id")
+    _require_bounded_identity(retarget_state["checkpoint_id"], field="checkpoint_id")
+    if retarget_state["status"] != "checkpointed":
+        raise PhaseAStartError("retarget contract has invalid status")
+    if retarget_state["failure_code"] is not None:
+        raise PhaseAStartError("retarget contract has invalid failure_code")
+    if retarget_state["baseline_run_id"] != baseline.run_id:
+        raise PhaseAStartError("retarget contract has mismatched baseline_run_id")
+    if retarget_state["replacement_run_id"] != replacement_run_id:
+        raise PhaseAStartError("retarget contract has mismatched replacement_run_id")
+    raw_old_targets = baseline_state.get("implementation_targets")
+    old_targets = _require_canonical_targets(raw_old_targets, field="baseline old_targets")
+    if _require_canonical_targets(
+        retarget_state["old_targets"], field="old_targets"
+    ) != old_targets:
+        raise PhaseAStartError("retarget contract has mismatched old_targets")
+    if _require_canonical_targets(
+        retarget_state["replacement_targets"], field="replacement_targets"
+    ) != replacement_targets:
+        raise PhaseAStartError("retarget contract has mismatched replacement_targets")
+    if retarget_state["checkpoint_commit"] != checkpoint_commit:
+        raise PhaseAStartError("retarget contract has mismatched checkpoint_commit")
+    if old_targets == replacement_targets:
+        raise PhaseAStartError("retarget contract replacement targets are unchanged")
+    checked = dict(retarget_state)
+    checked["operation_id"] = operation_id
+    return checked
+
+
+def _expected_retarget_prepared_state(
     root: Path,
     run_dir: Path,
     *,
     baseline: SpecRun,
     baseline_state: Mapping[str, object],
     replacement_run_id: str,
-    checkpoint_commit: str,
     replacement_targets: tuple[str, ...],
-    retarget_state: Mapping[str, object],
+    retarget_contract: Mapping[str, object],
     product_inputs: Mapping[str, object],
     ignore_re: bool,
     requested_re_sources: tuple[str, ...],
-    installed_run_dir: Path | None = None,
-) -> None:
-    run_spec_dir = run_dir / "specs" / baseline.spec_id
-    installed_spec_dir = (installed_run_dir or run_dir) / "specs" / baseline.spec_id
-    run_spec_dir.mkdir(parents=True)
-    (run_dir / "staging").mkdir()
-    retarget = dict(retarget_state)
-    retarget.update(
-        {
-            "status": "checkpointed",
-            "baseline_run_id": baseline.run_id,
-            "replacement_run_id": replacement_run_id,
-            "replacement_targets": list(replacement_targets),
-            "checkpoint_commit": checkpoint_commit,
-        }
-    )
+) -> dict[str, object]:
     published_spec_dir = baseline.published_spec_dir
     if published_spec_dir is None:
         raise PhaseAStartError("baseline run has no canonical published spec directory")
-    spec_number = str(baseline_state.get("spec_number") or baseline.spec_id.split("-", 1)[0])
-    payload: dict[str, object] = {
+    installed_spec_dir = run_dir / "specs" / baseline.spec_id
+    return {
         "run_id": replacement_run_id,
         "status": "preparing",
         "phase": "phase0-constitution",
         "completed_phases": [],
-        "user_message": str(baseline_state.get("user_message") or ""),
-        "autonomy_mode": str(baseline_state.get("autonomy_mode") or "semi"),
+        "user_message": baseline_state["user_message"],
+        "autonomy_mode": baseline_state["autonomy_mode"],
         "implementation_targets": list(replacement_targets),
         "product_inputs": dict(product_inputs),
         "ignore_re": ignore_re,
         "requested_re_sources": list(requested_re_sources),
         "spec_id": baseline.spec_id,
-        "spec_number": spec_number,
+        "spec_number": baseline_state["spec_number"],
         "spec_dir": installed_spec_dir.relative_to(root).as_posix(),
         "published_spec_dir": published_spec_dir.relative_to(root).as_posix(),
         "feature_branch": baseline.feature_branch,
-        "phase_a_default_branch": str(baseline_state.get("phase_a_default_branch") or ""),
-        "phase_a_base_commit": str(baseline_state.get("phase_a_base_commit") or ""),
+        "phase_a_default_branch": baseline_state["phase_a_default_branch"],
+        "phase_a_base_commit": baseline_state["phase_a_base_commit"],
         "specify_feature_directory": installed_spec_dir.relative_to(root).as_posix(),
-        "retarget": retarget,
+        "retarget": dict(retarget_contract),
     }
-    _write_json_atomic(run_dir / "state.json", payload)
 
 
 def _recover_original_re_policy(
@@ -259,13 +350,16 @@ def _require_matching_retarget_intent(
         )
 
 
-def _retarget_staging_path(
+def _retarget_reservation_path(
     root: Path,
     *,
     replacement_run_id: str,
     operation_id: str,
 ) -> Path:
-    return root / "runs" / f".retarget-bootstrap-{operation_id}-{replacement_run_id}"
+    digest = hashlib.sha256(
+        f"{operation_id}\0{replacement_run_id}".encode("utf-8")
+    ).hexdigest()[:32]
+    return root / "runs" / f".retarget-bootstrap-{digest}.json"
 
 
 def _retarget_staging_identity(
@@ -280,6 +374,110 @@ def _retarget_staging_identity(
         "target_run": replacement_run_id,
         "spec_id": baseline.spec_id,
     }
+
+
+def _read_regular_json(path: Path, *, label: str) -> dict[str, object]:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise PhaseAStartError(f"cannot open {label}: {path}") from exc
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+            raise PhaseAStartError(f"{label} is not an exclusive regular file: {path}")
+        chunks: list[bytes] = []
+        size = 0
+        while chunk := os.read(descriptor, 65536):
+            size += len(chunk)
+            if size > 65536:
+                raise PhaseAStartError(f"{label} is oversized: {path}")
+            chunks.append(chunk)
+        after = os.fstat(descriptor)
+        if (
+            after.st_dev != before.st_dev
+            or after.st_ino != before.st_ino
+            or after.st_size != before.st_size
+            or after.st_mtime_ns != before.st_mtime_ns
+            or after.st_ctime_ns != before.st_ctime_ns
+        ):
+            raise PhaseAStartError(f"{label} changed while being read: {path}")
+    finally:
+        os.close(descriptor)
+    try:
+        payload = json.loads(b"".join(chunks).decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise PhaseAStartError(f"{label} is malformed: {path}") from exc
+    if type(payload) is not dict:
+        raise PhaseAStartError(f"{label} must be a JSON object: {path}")
+    return payload
+
+
+def _create_retarget_reservation(
+    reservation_path: Path,
+    staging_identity: Mapping[str, object],
+) -> dict[str, object]:
+    staging_name = f".retarget-run-{uuid4().hex}"
+    payload = {**dict(staging_identity), "staging_name": staging_name}
+    temporary = reservation_path.parent / f".retarget-reservation-{uuid4().hex}.tmp"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(temporary, flags, 0o600)
+    try:
+        encoded = (json.dumps(payload, sort_keys=True) + "\n").encode("utf-8")
+        offset = 0
+        while offset < len(encoded):
+            offset += os.write(descriptor, encoded[offset:])
+        os.fsync(descriptor)
+        os.close(descriptor)
+        descriptor = -1
+        atomic_install.atomic_rename_no_replace(temporary, reservation_path)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        temporary.unlink(missing_ok=True)
+    return payload
+
+
+def _load_retarget_reservation(
+    reservation_path: Path,
+    staging_identity: Mapping[str, object],
+) -> dict[str, object]:
+    payload = _read_regular_json(reservation_path, label="retarget staging reservation")
+    if set(payload) != _RETARGET_RESERVATION_KEYS:
+        raise PhaseAStartError("retarget staging reservation has invalid keys")
+    for key, value in staging_identity.items():
+        if payload.get(key) != value:
+            raise PhaseAStartError(
+                f"retarget staging reservation mismatches {key}"
+            )
+    staging_name = payload.get("staging_name")
+    if type(staging_name) is not str or _RETARGET_STAGING_NAME.fullmatch(staging_name) is None:
+        raise PhaseAStartError("retarget staging reservation has invalid staging_name")
+    return payload
+
+
+def _remove_retarget_reservation(
+    reservation_path: Path,
+    staging_identity: Mapping[str, object],
+) -> None:
+    _load_retarget_reservation(reservation_path, staging_identity)
+    reservation_path.unlink()
+    directory_fd = os.open(reservation_path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
+def _create_retarget_staging_directory(staging_dir: Path) -> None:
+    staging_dir.mkdir()
+
+
+def _write_retarget_staging_marker(
+    staging_dir: Path,
+    staging_identity: Mapping[str, object],
+) -> None:
+    _write_json_atomic(staging_dir / _RETARGET_STAGING_MARKER, staging_identity)
 
 
 def _require_owned_retarget_staging(
@@ -307,16 +505,6 @@ def _require_owned_retarget_staging(
         )
 
 
-def _remove_owned_retarget_staging(
-    staging_dir: Path,
-    expected_identity: Mapping[str, object],
-) -> None:
-    if not staging_dir.exists() and not staging_dir.is_symlink():
-        return
-    _require_owned_retarget_staging(staging_dir, expected_identity)
-    shutil.rmtree(staging_dir)
-
-
 def _install_prepared_retarget_run(
     run_dir: Path,
     staging_dir: Path,
@@ -325,12 +513,7 @@ def _install_prepared_retarget_run(
     if run_dir.exists() or run_dir.is_symlink():
         raise PhaseAStartError(f"replacement run directory already exists: {run_dir}")
     _require_owned_retarget_staging(staging_dir, staging_identity)
-    os.replace(staging_dir, run_dir)
-    directory_fd = os.open(run_dir.parent, os.O_RDONLY)
-    try:
-        os.fsync(directory_fd)
-    finally:
-        os.close(directory_fd)
+    atomic_install.atomic_rename_no_replace(staging_dir, run_dir)
     (run_dir / _RETARGET_STAGING_MARKER).unlink()
 
 
@@ -345,66 +528,59 @@ def _discard_installed_retarget_marker(
     marker.unlink()
 
 
+def _require_real_directory(path: Path, *, label: str) -> None:
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise PhaseAStartError(f"prepared run structure is missing {label}") from exc
+    if path.is_symlink() or not stat.S_ISDIR(metadata.st_mode):
+        raise PhaseAStartError(f"prepared run structure has invalid {label}")
+
+
+def _validate_prepared_run_structure(
+    run_dir: Path,
+    *,
+    spec_id: str,
+    has_product_inputs: bool,
+) -> None:
+    _require_real_directory(run_dir, label="run directory")
+    specs_dir = run_dir / "specs"
+    spec_dir = specs_dir / spec_id
+    staging_dir = run_dir / "staging"
+    _require_real_directory(specs_dir, label="specs directory")
+    _require_real_directory(spec_dir, label="run-local spec directory")
+    _require_real_directory(staging_dir, label="staging directory")
+    expected_top = {"state.json", "specs", "staging"}
+    if has_product_inputs:
+        _require_real_directory(run_dir / "inputs", label="product input directory")
+        expected_top.add("inputs")
+    if {path.name for path in run_dir.iterdir()} != expected_top:
+        raise PhaseAStartError("prepared run structure has unexpected top-level entries")
+    if {path.name for path in specs_dir.iterdir()} != {spec_id}:
+        raise PhaseAStartError("prepared run structure has unexpected spec directories")
+    if any(spec_dir.iterdir()) or any(staging_dir.iterdir()):
+        raise PhaseAStartError("prepared run structure has nonempty prepared directories")
+
+
 def _validate_existing_retarget_run(
     root: Path,
     run_dir: Path,
     *,
     baseline: SpecRun,
     replacement_run_id: str,
-    checkpoint_commit: str,
-    replacement_targets: tuple[str, ...],
-    operation_id: str,
-    baseline_state: Mapping[str, object],
-    ignore_re: bool,
-    requested_re_sources: tuple[str, ...],
+    expected_state: Mapping[str, object],
+    expected_product_inputs: Mapping[str, object],
 ) -> SpecRun:
+    _validate_prepared_run_structure(
+        run_dir,
+        spec_id=baseline.spec_id,
+        has_product_inputs=bool(expected_product_inputs),
+    )
     state = _load_state(run_dir)
-    retarget = state.get("retarget")
-    expected = {
-        "run_id": replacement_run_id,
-        "spec_id": baseline.spec_id,
-        "feature_branch": baseline.feature_branch,
-        "implementation_targets": list(replacement_targets),
-        "status": "preparing",
-        "phase": "phase0-constitution",
-        "user_message": baseline_state["user_message"],
-        "autonomy_mode": baseline_state["autonomy_mode"],
-        "ignore_re": ignore_re,
-        "requested_re_sources": list(requested_re_sources),
-        "spec_dir": (run_dir / "specs" / baseline.spec_id).relative_to(root).as_posix(),
-        "published_spec_dir": (
-            baseline.published_spec_dir.relative_to(root).as_posix()
-            if baseline.published_spec_dir is not None
-            else ""
-        ),
-        "specify_feature_directory": (
-            run_dir / "specs" / baseline.spec_id
-        ).relative_to(root).as_posix(),
-    }
-    for key, value in expected.items():
-        if state.get(key) != value:
-            raise PhaseAStartError(f"existing replacement run has mismatched {key}")
-    if not isinstance(retarget, Mapping):
-        raise PhaseAStartError("existing replacement run has no retarget identity")
-    retarget_expected = {
-        "operation_id": operation_id,
-        "baseline_run_id": baseline.run_id,
-        "replacement_run_id": replacement_run_id,
-        "checkpoint_commit": checkpoint_commit,
-        "replacement_targets": list(replacement_targets),
-        "status": "checkpointed",
-    }
-    for key, value in retarget_expected.items():
-        if retarget.get(key) != value:
-            raise PhaseAStartError(f"existing replacement run has mismatched retarget {key}")
+    if state != dict(expected_state):
+        raise PhaseAStartError("existing replacement prepared state postimage is mismatched")
     product_inputs = state.get("product_inputs")
     try:
-        expected_product_inputs = project_cloned_product_input_contract(
-            root,
-            baseline_state,
-            run_dir,
-            baseline_run_dir=baseline.run_dir,
-        )
         if isinstance(product_inputs, Mapping) and product_inputs:
             expected_inputs = run_dir / "inputs"
             validate_product_input_contract_pointers(root, product_inputs, expected_inputs)
@@ -437,14 +613,23 @@ def start_retarget_phase_a_spec(
     """
 
     root = Path(project_root).resolve()
-    if _SAFE_REPLACEMENT_RUN_ID.fullmatch(replacement_run_id) is None:
+    if (
+        type(replacement_run_id) is not str
+        or len(replacement_run_id) > _MAX_RETARGET_ID_LENGTH
+        or _SAFE_REPLACEMENT_RUN_ID.fullmatch(replacement_run_id) is None
+    ):
         raise PhaseAStartError(f"unsafe replacement run ID: {replacement_run_id!r}")
+    if (
+        type(replacement_targets) is not tuple
+        or not replacement_targets
+        or any(type(target) is not str for target in replacement_targets)
+    ):
+        raise PhaseAStartError("replacement target set is not canonical")
     normalized_targets = normalize_target_set(replacement_targets)
-    if not normalized_targets:
-        raise PhaseAStartError("replacement target set must not be empty")
-    operation_id = str(retarget_state.get("operation_id") or "")
-    if _SAFE_OPERATION_ID.fullmatch(operation_id) is None:
-        raise PhaseAStartError(f"unsafe retarget operation ID: {operation_id!r}")
+    if normalized_targets != replacement_targets:
+        raise PhaseAStartError("replacement target set is not canonical")
+    if type(checkpoint_commit) is not str or not checkpoint_commit:
+        raise PhaseAStartError("retarget checkpoint commit is invalid")
 
     canonical_baseline = resolve_spec_run(root, baseline.run_dir_name)
     if canonical_baseline != baseline:
@@ -459,6 +644,24 @@ def start_retarget_phase_a_spec(
     if not isinstance(autonomy_mode, str) or not autonomy_mode.strip():
         raise PhaseAStartError("baseline run is missing its original autonomy mode")
     ignore_re, requested_re_sources = _recover_original_re_policy(baseline_state)
+    for field in ("spec_number", "phase_a_default_branch", "phase_a_base_commit"):
+        value = baseline_state.get(field)
+        if type(value) is not str or not value:
+            raise PhaseAStartError(f"baseline run has invalid {field}")
+    spec_number = baseline_state["spec_number"]
+    if not baseline.spec_id.startswith(f"{spec_number}-"):
+        raise PhaseAStartError("baseline run has invalid spec_number binding")
+    base_commit = baseline_state["phase_a_base_commit"]
+    try:
+        resolved_base_commit = run_git(
+            root, "rev-parse", f"{base_commit}^{{commit}}"
+        ).stdout.strip()
+    except GitHelperError as exc:
+        raise PhaseAStartError("baseline run has invalid phase_a_base_commit") from exc
+    if base_commit != resolved_base_commit:
+        raise PhaseAStartError(
+            "baseline run has noncanonical phase_a_base_commit"
+        )
 
     try:
         resolved_checkpoint = run_git(
@@ -468,6 +671,16 @@ def start_retarget_phase_a_spec(
         raise PhaseAStartError(str(exc)) from exc
     if checkpoint_commit != resolved_checkpoint:
         raise PhaseAStartError("retarget checkpoint commit is not a canonical object ID")
+    retarget_contract = _validate_retarget_contract(
+        retarget_state,
+        baseline=baseline,
+        baseline_state=baseline_state,
+        replacement_run_id=replacement_run_id,
+        replacement_targets=normalized_targets,
+        checkpoint_commit=resolved_checkpoint,
+    )
+    operation_id = retarget_contract["operation_id"]
+    assert type(operation_id) is str
     observed = _require_retarget_git_position(
         root,
         expected_branch=baseline.feature_branch,
@@ -475,7 +688,28 @@ def start_retarget_phase_a_spec(
     )
 
     run_dir = root / "runs" / replacement_run_id
-    staging_dir = _retarget_staging_path(
+    try:
+        expected_product_inputs = project_cloned_product_input_contract(
+            root,
+            baseline_state,
+            run_dir,
+            baseline_run_dir=baseline.run_dir,
+        )
+    except ProductInputError as exc:
+        raise PhaseAStartError(str(exc)) from exc
+    expected_state = _expected_retarget_prepared_state(
+        root,
+        run_dir,
+        baseline=baseline,
+        baseline_state=baseline_state,
+        replacement_run_id=replacement_run_id,
+        replacement_targets=normalized_targets,
+        retarget_contract=retarget_contract,
+        product_inputs=expected_product_inputs,
+        ignore_re=ignore_re,
+        requested_re_sources=requested_re_sources,
+    )
+    reservation_path = _retarget_reservation_path(
         root,
         replacement_run_id=replacement_run_id,
         operation_id=operation_id,
@@ -489,15 +723,21 @@ def start_retarget_phase_a_spec(
     if active != baseline and active.run_dir != run_dir.resolve():
         raise PhaseAStartError("active run drifted from the retarget baseline")
 
-    if staging_dir.exists() or staging_dir.is_symlink():
-        _remove_owned_retarget_staging(staging_dir, staging_identity)
+    reservation: dict[str, object] | None = None
+    if reservation_path.exists() or reservation_path.is_symlink():
+        reservation = _load_retarget_reservation(reservation_path, staging_identity)
+    elif not run_dir.exists() and not run_dir.is_symlink():
+        reservation = _create_retarget_reservation(reservation_path, staging_identity)
 
     if not run_dir.exists() and not run_dir.is_symlink():
-        staging_dir.mkdir()
-        _write_json_atomic(
-            staging_dir / _RETARGET_STAGING_MARKER,
-            staging_identity,
-        )
+        if reservation is None:
+            raise PhaseAStartError("replacement run has no staging reservation")
+        staging_dir = run_dir.parent / str(reservation["staging_name"])
+        if staging_dir.exists() or staging_dir.is_symlink():
+            _require_real_directory(staging_dir, label="reserved staging directory")
+            shutil.rmtree(staging_dir)
+        _create_retarget_staging_directory(staging_dir)
+        _write_retarget_staging_marker(staging_dir, staging_identity)
         product_inputs = clone_product_input_contract(
             root,
             baseline_state,
@@ -505,19 +745,11 @@ def start_retarget_phase_a_spec(
             baseline_run_dir=baseline.run_dir,
             contract_run_dir=run_dir,
         )
+        if product_inputs != expected_product_inputs:
+            raise PhaseAStartError("cloned product inputs differ from the validated baseline")
         _write_retarget_prepared_state(
-            root,
             staging_dir,
-            baseline=baseline,
-            baseline_state=baseline_state,
-            replacement_run_id=replacement_run_id,
-            checkpoint_commit=resolved_checkpoint,
-            replacement_targets=normalized_targets,
-            retarget_state=retarget_state,
-            product_inputs=product_inputs,
-            ignore_re=ignore_re,
-            requested_re_sources=requested_re_sources,
-            installed_run_dir=run_dir,
+            expected_state,
         )
         _install_prepared_retarget_run(
             run_dir,
@@ -531,12 +763,8 @@ def start_retarget_phase_a_spec(
         run_dir,
         baseline=baseline,
         replacement_run_id=replacement_run_id,
-        checkpoint_commit=resolved_checkpoint,
-        replacement_targets=normalized_targets,
-        operation_id=operation_id,
-        baseline_state=baseline_state,
-        ignore_re=ignore_re,
-        requested_re_sources=requested_re_sources,
+        expected_state=expected_state,
+        expected_product_inputs=expected_product_inputs,
     )
     try:
         intent = load_spec_switch_intent(root)
@@ -545,6 +773,8 @@ def start_retarget_phase_a_spec(
 
     if active.run_dir == run_dir.resolve():
         if intent is None:
+            if reservation is not None:
+                _remove_retarget_reservation(reservation_path, staging_identity)
             return RetargetPhaseAStartOutcome(
                 run_dir=run_dir,
                 run=target,
@@ -570,6 +800,8 @@ def start_retarget_phase_a_spec(
             )
         except SpecLifecycleError as exc:
             raise PhaseAStartError(str(exc)) from exc
+        if reservation is not None:
+            _remove_retarget_reservation(reservation_path, staging_identity)
         return RetargetPhaseAStartOutcome(
             run_dir=run_dir,
             run=selected,
@@ -620,6 +852,8 @@ def start_retarget_phase_a_spec(
         selected = commit_spec_switch_pointer(root, operation_id, observed_branch=observed)
     except SpecLifecycleError as exc:
         raise PhaseAStartError(str(exc)) from exc
+    if reservation is not None:
+        _remove_retarget_reservation(reservation_path, staging_identity)
     return RetargetPhaseAStartOutcome(run_dir=run_dir, run=selected, baseline=baseline)
 
 

@@ -498,6 +498,47 @@ def test_clone_product_input_contract_rejects_symlinked_replacement_run(
     assert not (actual_run / "inputs").exists()
 
 
+@pytest.mark.parametrize("collision_kind", ["directory", "file", "symlink"])
+def test_clone_product_inputs_atomic_install_never_overwrites_racing_destination(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    collision_kind: str,
+) -> None:
+    import echelon.atomic_install as atomic_install
+    from echelon.product_inputs import ProductInputError, clone_product_input_contract
+
+    project, _baseline_run, state = _clone_product_input_fixture(tmp_path)
+    replacement = project / f"runs/squad-retarget-race-{collision_kind}"
+    destination = replacement / "inputs"
+    original_install = atomic_install.atomic_rename_no_replace
+
+    def race(source: Path, target: Path) -> None:
+        assert target == destination
+        if collision_kind == "directory":
+            target.mkdir()
+            (target / "keep.txt").write_text("directory", encoding="utf-8")
+        elif collision_kind == "file":
+            target.write_text("file", encoding="utf-8")
+        else:
+            symlink_target = project / "outside-race-target"
+            symlink_target.write_text("target", encoding="utf-8")
+            target.symlink_to(symlink_target)
+        original_install(source, target)
+
+    monkeypatch.setattr(atomic_install, "atomic_rename_no_replace", race)
+    with pytest.raises((ProductInputError, OSError)):
+        clone_product_input_contract(project, state, replacement)
+
+    if collision_kind == "directory":
+        assert (destination / "keep.txt").read_text(encoding="utf-8") == "directory"
+    elif collision_kind == "file":
+        assert destination.read_text(encoding="utf-8") == "file"
+    else:
+        assert destination.is_symlink()
+        assert destination.readlink() == project / "outside-race-target"
+    assert not list(replacement.glob(".inputs-clone-*"))
+
+
 def test_cloned_product_input_contract_authenticates_every_package_byte(
     tmp_path: Path,
 ) -> None:
