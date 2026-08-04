@@ -207,6 +207,138 @@ def test_retarget_history_rejects_updates_to_immutable_revision_content(
         )
 
 
+def test_retarget_append_rejects_same_baseline_and_replacement_run(
+    tmp_path: Path,
+) -> None:
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+
+    with pytest.raises(ValueError, match="replacement_run_id"):
+        append_prepared_revision(
+            spec_dir,
+            operation_id="rt-abc",
+            baseline_run_id="squad-base",
+            replacement_run_id="squad-base",
+            old_targets=("services/api",),
+            replacement_targets=("apps/web",),
+            original_prompt_digest="sha256:" + "a" * 64,
+            recovery=_projection(),
+        )
+
+
+def test_retarget_append_rejects_recovery_targets_different_from_old_targets(
+    tmp_path: Path,
+) -> None:
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    mismatched = replace(
+        _projection(),
+        implementation_targets=("services/other",),
+    )
+
+    with pytest.raises(ValueError, match="recovery implementation_targets"):
+        append_prepared_revision(
+            spec_dir,
+            operation_id="rt-abc",
+            baseline_run_id="squad-base",
+            replacement_run_id="squad-retarget",
+            old_targets=("services/api",),
+            replacement_targets=("apps/web",),
+            original_prompt_digest="sha256:" + "a" * 64,
+            recovery=mismatched,
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda row: row.update(replacement_run_id=row["baseline_run_id"]),
+        lambda row: row["recovery"].update(
+            implementation_targets=["services/other"]
+        ),
+        lambda row: row.update(replacement_targets=row["old_targets"]),
+    ],
+)
+def test_retarget_history_load_enforces_revision_cross_invariants(
+    tmp_path: Path,
+    mutation,
+) -> None:
+    spec_dir, _revision = _prepared_revision(tmp_path)
+    path = spec_dir / "retarget-history.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    mutation(payload["revisions"][0])
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        load_retarget_history(spec_dir)
+
+
+def test_retarget_history_writer_revalidates_directly_constructed_revision(
+    tmp_path: Path,
+) -> None:
+    spec_dir, revision = _prepared_revision(tmp_path)
+    history = load_retarget_history(spec_dir)
+    invalid = replace(
+        revision,
+        replacement_run_id=revision.baseline_run_id,
+    )
+
+    with pytest.raises(ValueError, match="replacement_run_id"):
+        history_module._write_history_atomic(
+            spec_dir,
+            replace(history, revisions=(invalid,)),
+        )
+
+
+@pytest.mark.parametrize(
+    "older_status",
+    ["prepared", "invalidating", "rebuilding", "finalizing", "failed"],
+)
+def test_retarget_history_rejects_nonterminal_or_failed_historical_revision(
+    tmp_path: Path,
+    older_status: str,
+) -> None:
+    spec_dir, _revision = _prepared_revision(tmp_path)
+    path = spec_dir / "retarget-history.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    older = payload["revisions"][0]
+    older["status"] = older_status
+    latest = json.loads(json.dumps(older))
+    latest["revision_id"] = "retarget-" + "b" * 32
+    latest["operation_id"] = "rt-next"
+    latest["replacement_run_id"] = "squad-retarget-next"
+    latest["replacement_targets"] = ["apps/mobile"]
+    latest["status"] = "prepared"
+    payload["revisions"].append(latest)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="historical retarget revision"):
+        load_retarget_history(spec_dir)
+
+
+def test_retarget_append_cannot_supersede_failed_revision(tmp_path: Path) -> None:
+    spec_dir, revision = _prepared_revision(tmp_path)
+    advance_retarget_revision(
+        spec_dir,
+        revision.revision_id,
+        expected_status="prepared",
+        status="failed",
+        updates={"failure_code": "retarget_checkpoint_failed"},
+    )
+
+    with pytest.raises(ValueError, match="not terminal"):
+        append_prepared_revision(
+            spec_dir,
+            operation_id="rt-next",
+            baseline_run_id="squad-base",
+            replacement_run_id="squad-retarget-next",
+            old_targets=("services/api",),
+            replacement_targets=("apps/mobile",),
+            original_prompt_digest="sha256:" + "b" * 64,
+            recovery=_projection(),
+        )
+
+
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [

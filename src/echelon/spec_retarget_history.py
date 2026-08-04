@@ -330,6 +330,30 @@ def _revision_from_raw(value: object) -> RetargetRevision:
     baseline_run_id = _require_identity(raw["baseline_run_id"], field="baseline_run_id")
     if recovery.run_id != baseline_run_id:
         raise ValueError("retarget recovery run_id does not match baseline_run_id")
+    replacement_run_id = _require_identity(
+        raw["replacement_run_id"],
+        field="replacement_run_id",
+    )
+    if replacement_run_id == baseline_run_id:
+        raise ValueError("retarget replacement_run_id must differ from baseline_run_id")
+    old_targets = _require_strings(
+        raw["old_targets"],
+        field="old_targets",
+        maximum_items=_MAX_TARGETS,
+        maximum_length=_MAX_TARGET_LENGTH,
+    )
+    replacement_targets = _require_strings(
+        raw["replacement_targets"],
+        field="replacement_targets",
+        maximum_items=_MAX_TARGETS,
+        maximum_length=_MAX_TARGET_LENGTH,
+    )
+    if recovery.implementation_targets != old_targets:
+        raise ValueError(
+            "retarget recovery implementation_targets do not match old_targets"
+        )
+    if replacement_targets == old_targets:
+        raise ValueError("retarget replacement_targets must differ from old_targets")
     artifact_value = raw["artifact_inventory"]
     if type(artifact_value) not in {list, tuple} or len(artifact_value) > _MAX_ARTIFACTS:
         raise ValueError("invalid retarget artifact_inventory")
@@ -346,22 +370,9 @@ def _revision_from_raw(value: object) -> RetargetRevision:
         created_at=_require_timestamp(raw["created_at"], field="created_at"),
         updated_at=_require_timestamp(raw["updated_at"], field="updated_at"),
         baseline_run_id=baseline_run_id,
-        replacement_run_id=_require_identity(
-            raw["replacement_run_id"],
-            field="replacement_run_id",
-        ),
-        old_targets=_require_strings(
-            raw["old_targets"],
-            field="old_targets",
-            maximum_items=_MAX_TARGETS,
-            maximum_length=_MAX_TARGET_LENGTH,
-        ),
-        replacement_targets=_require_strings(
-            raw["replacement_targets"],
-            field="replacement_targets",
-            maximum_items=_MAX_TARGETS,
-            maximum_length=_MAX_TARGET_LENGTH,
-        ),
+        replacement_run_id=replacement_run_id,
+        old_targets=old_targets,
+        replacement_targets=replacement_targets,
         original_prompt_digest=prompt_digest,
         recovery=recovery,
         checkpoint_id=_require_optional_string(
@@ -420,6 +431,13 @@ def _history_from_raw(value: object, *, spec_id: str) -> RetargetHistory:
     operation_ids = [item.operation_id for item in revisions]
     if len(set(operation_ids)) != len(operation_ids):
         raise ValueError("duplicate retarget operation identity")
+    if any(
+        item.status not in _TERMINAL_APPEND_STATUSES
+        for item in revisions[:-1]
+    ):
+        raise ValueError(
+            "historical retarget revision is not complete or recovered"
+        )
     return RetargetHistory(
         schema_version=RETARGET_HISTORY_SCHEMA_VERSION,
         spec_id=stored_spec_id,
@@ -585,8 +603,6 @@ def append_prepared_revision(
         )
         updated = replace(history, revisions=(*history.revisions, revision))
         validated = _validate_history(updated, spec_id=directory.name)
-        if validated.revisions[-1].old_targets == validated.revisions[-1].replacement_targets:
-            raise ValueError("retarget replacement targets must differ from old targets")
         _write_history_atomic(directory, validated)
         return validated.revisions[-1]
 

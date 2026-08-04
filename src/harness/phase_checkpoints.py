@@ -41,6 +41,23 @@ _CHECKPOINT_GIT_EXCLUDES = (
     "**/.echelon/checkpoints.lock",
     "**/.echelon/.checkpoints.json.*.tmp",
 )
+_RETARGET_CHECKPOINT_LEDGER_MAX_BYTES = 1024 * 1024
+_RETARGET_CHECKPOINT_LEDGER_MAX_ROWS = 512
+_RETARGET_CHECKPOINT_STRING_MAX = 1024
+_CHECKPOINT_LEDGER_KEYS = frozenset({"spec_id", "checkpoints"})
+_CHECKPOINT_ROW_KEYS = frozenset(
+    {
+        "id",
+        "spec_id",
+        "phase",
+        "next_phase",
+        "commit",
+        "metadata_commit",
+        "source",
+        "run_id",
+        "created_at",
+    }
+)
 
 
 class PhaseCheckpointError(RuntimeError):
@@ -95,6 +112,168 @@ def load_checkpoint_ledger(spec_dir: Path) -> CheckpointLedger:
     return CheckpointLedger(
         spec_id=str(raw.get("spec_id") or _spec_id_from_dir(spec_dir)),
         checkpoints=checkpoints,
+    )
+
+
+def _strict_checkpoint_string(
+    value: object,
+    *,
+    field: str,
+    allow_empty: bool = False,
+) -> str:
+    if (
+        type(value) is not str
+        or len(value) > _RETARGET_CHECKPOINT_STRING_MAX
+        or (not value and not allow_empty)
+        or value != " ".join(value.strip().split())
+    ):
+        raise PhaseCheckpointError(f"invalid retarget checkpoint ledger {field}")
+    return value
+
+
+def _strict_checkpoint_timestamp(value: object) -> str:
+    text = _strict_checkpoint_string(value, field="created_at")
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise PhaseCheckpointError(
+            "invalid retarget checkpoint ledger created_at"
+        ) from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise PhaseCheckpointError("invalid retarget checkpoint ledger created_at")
+    return text
+
+
+def _strict_checkpoint_row(value: object, *, spec_id: str) -> PhaseCheckpoint:
+    if type(value) is not dict:
+        raise PhaseCheckpointError("invalid retarget checkpoint ledger row")
+    keys = frozenset(value)
+    allowed = (_CHECKPOINT_ROW_KEYS, _CHECKPOINT_ROW_KEYS | {"completion_id"})
+    if keys not in allowed:
+        raise PhaseCheckpointError("invalid retarget checkpoint ledger row keys")
+    row_spec_id = _strict_checkpoint_string(value["spec_id"], field="spec_id")
+    if row_spec_id != spec_id:
+        raise PhaseCheckpointError("retarget checkpoint ledger spec_id drift")
+    commit = _strict_checkpoint_string(value["commit"], field="commit")
+    if _GIT_OBJECT_ID_PATTERN.fullmatch(commit) is None:
+        raise PhaseCheckpointError("invalid retarget checkpoint ledger commit")
+    metadata_commit = _strict_checkpoint_string(
+        value["metadata_commit"],
+        field="metadata_commit",
+        allow_empty=True,
+    )
+    if (
+        metadata_commit
+        and _GIT_OBJECT_ID_PATTERN.fullmatch(metadata_commit) is None
+    ):
+        raise PhaseCheckpointError(
+            "invalid retarget checkpoint ledger metadata_commit"
+        )
+    completion_id = value.get("completion_id", "")
+    if completion_id:
+        completion_id = _strict_checkpoint_string(
+            completion_id,
+            field="completion_id",
+        )
+        if _COMPLETION_ID_PATTERN.fullmatch(completion_id) is None:
+            raise PhaseCheckpointError(
+                "invalid retarget checkpoint ledger completion_id"
+            )
+    elif type(completion_id) is not str:
+        raise PhaseCheckpointError(
+            "invalid retarget checkpoint ledger completion_id"
+        )
+    return PhaseCheckpoint(
+        id=_strict_checkpoint_string(value["id"], field="id"),
+        spec_id=row_spec_id,
+        phase=_strict_checkpoint_string(value["phase"], field="phase"),
+        next_phase=_strict_checkpoint_string(
+            value["next_phase"],
+            field="next_phase",
+        ),
+        commit=commit,
+        metadata_commit=metadata_commit,
+        source=_strict_checkpoint_string(value["source"], field="source"),
+        run_id=_strict_checkpoint_string(value["run_id"], field="run_id"),
+        created_at=_strict_checkpoint_timestamp(value["created_at"]),
+        completion_id=completion_id,
+    )
+
+
+def _read_strict_checkpoint_ledger_bytes(path: Path) -> bytes:
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        raise
+    if not stat.S_ISREG(metadata.st_mode):
+        raise PhaseCheckpointError(
+            "retarget checkpoint ledger must be a regular file"
+        )
+    if metadata.st_size > _RETARGET_CHECKPOINT_LEDGER_MAX_BYTES:
+        raise PhaseCheckpointError("retarget checkpoint ledger exceeds size limit")
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise PhaseCheckpointError("could not read retarget checkpoint ledger") from exc
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or (opened.st_dev, opened.st_ino)
+            != (metadata.st_dev, metadata.st_ino)
+        ):
+            raise PhaseCheckpointError("retarget checkpoint ledger identity changed")
+        content = bytearray()
+        while len(content) <= _RETARGET_CHECKPOINT_LEDGER_MAX_BYTES:
+            chunk = os.read(
+                descriptor,
+                min(
+                    64 * 1024,
+                    _RETARGET_CHECKPOINT_LEDGER_MAX_BYTES + 1 - len(content),
+                ),
+            )
+            if not chunk:
+                break
+            content.extend(chunk)
+        if len(content) > _RETARGET_CHECKPOINT_LEDGER_MAX_BYTES:
+            raise PhaseCheckpointError(
+                "retarget checkpoint ledger exceeds size limit"
+            )
+        return bytes(content)
+    finally:
+        os.close(descriptor)
+
+
+def _load_retarget_checkpoint_ledger_strict(spec_dir: Path) -> CheckpointLedger:
+    spec_id = _spec_id_from_dir(spec_dir)
+    path = checkpoint_ledger_path(spec_dir)
+    try:
+        content = _read_strict_checkpoint_ledger_bytes(path)
+    except FileNotFoundError:
+        return CheckpointLedger(spec_id=spec_id, checkpoints=[])
+    try:
+        raw = json.loads(content.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise PhaseCheckpointError("invalid retarget checkpoint ledger JSON") from exc
+    if type(raw) is not dict or frozenset(raw) != _CHECKPOINT_LEDGER_KEYS:
+        raise PhaseCheckpointError("invalid retarget checkpoint ledger keys")
+    stored_spec_id = _strict_checkpoint_string(raw["spec_id"], field="spec_id")
+    if stored_spec_id != spec_id:
+        raise PhaseCheckpointError("retarget checkpoint ledger spec_id drift")
+    values = raw["checkpoints"]
+    if type(values) is not list:
+        raise PhaseCheckpointError("invalid retarget checkpoint ledger checkpoints")
+    if len(values) > _RETARGET_CHECKPOINT_LEDGER_MAX_ROWS:
+        raise PhaseCheckpointError("too many retarget checkpoint ledger rows")
+    return CheckpointLedger(
+        spec_id=stored_spec_id,
+        checkpoints=[
+            _strict_checkpoint_row(item, spec_id=stored_spec_id)
+            for item in values
+        ],
     )
 
 
@@ -298,6 +477,38 @@ def _record_phase_checkpoint_unlocked(
         checkpoints=checkpoints,
     )
     _write_checkpoint_ledger_unlocked(spec_dir, updated)
+    return updated
+
+
+def _record_retarget_checkpoint_unlocked(
+    spec_dir: Path,
+    ledger: CheckpointLedger,
+    checkpoint: PhaseCheckpoint,
+) -> CheckpointLedger:
+    """Strictly append one retarget row while the checkpoint lock is held."""
+
+    spec_id = _spec_id_from_dir(spec_dir)
+    if ledger.spec_id != spec_id or checkpoint.spec_id != spec_id:
+        raise PhaseCheckpointError("retarget checkpoint ledger spec_id drift")
+    validated = _strict_checkpoint_row(asdict(checkpoint), spec_id=spec_id)
+    matches = [item for item in ledger.checkpoints if item.id == checkpoint.id]
+    if len(matches) > 1:
+        raise PhaseCheckpointError("duplicate checkpoint identity")
+    if matches:
+        if matches[0] != validated:
+            raise PhaseCheckpointError("retarget checkpoint identity drift")
+        return ledger
+    checkpoints = [*ledger.checkpoints, validated]
+    if len(checkpoints) > _RETARGET_CHECKPOINT_LEDGER_MAX_ROWS:
+        raise PhaseCheckpointError("too many retarget checkpoint ledger rows")
+    updated = CheckpointLedger(spec_id=spec_id, checkpoints=checkpoints)
+    content = _checkpoint_ledger_bytes(updated)
+    if len(content) > _RETARGET_CHECKPOINT_LEDGER_MAX_BYTES:
+        raise PhaseCheckpointError("retarget checkpoint ledger exceeds size limit")
+    _write_checkpoint_ledger_unlocked(spec_dir, updated)
+    persisted = _load_retarget_checkpoint_ledger_strict(spec_dir)
+    if persisted != updated:
+        raise PhaseCheckpointError("retarget checkpoint ledger persistence mismatch")
     return updated
 
 
@@ -814,42 +1025,6 @@ def _record_has_exact_retarget_identity(
     )
 
 
-def _bounded_retarget_commit(
-    project_root: Path,
-    *,
-    identity: Mapping[str, str],
-) -> dict[str, str] | None:
-    try:
-        output = run_git(
-            project_root,
-            "log",
-            "--all",
-            "--max-count=256",
-            "-z",
-            "--format=%H%x00%P%x00%cI%x00%B",
-        ).stdout
-    except GitHelperError as exc:
-        raise PhaseCheckpointError(str(exc)) from exc
-    revision_id = identity["Echelon-Retarget-Revision"]
-    candidates = [
-        record
-        for record in _parse_log_records(output)
-        if revision_id
-        in _parse_commit_trailers(record["message"]).get(
-            "Echelon-Retarget-Revision",
-            (),
-        )
-    ]
-    if any(
-        not _record_has_exact_retarget_identity(record, identity)
-        for record in candidates
-    ):
-        raise PhaseCheckpointError("retarget checkpoint identity drift")
-    if len(candidates) > 1:
-        raise PhaseCheckpointError("duplicate retarget checkpoint identity")
-    return candidates[0] if candidates else None
-
-
 def _bounded_completion_commit(
     project_root: Path,
     *,
@@ -1353,6 +1528,110 @@ def _verify_retarget_commit_tree(
         )
 
 
+def _verify_retarget_commit_scope(
+    project_root: Path,
+    spec_dir: Path,
+    record: Mapping[str, str],
+) -> None:
+    root = Path(project_root).resolve()
+    resolved_spec = Path(spec_dir).resolve()
+    try:
+        relative_spec = resolved_spec.relative_to(root).as_posix()
+    except ValueError as exc:
+        raise PhaseCheckpointError(
+            "owned spec directory must be inside the project root"
+        ) from exc
+    try:
+        output = run_git(
+            root,
+            "diff-tree",
+            "--no-commit-id",
+            "--name-only",
+            "-r",
+            "-z",
+            record["commit"],
+        ).stdout
+    except GitHelperError as exc:
+        raise PhaseCheckpointError(str(exc)) from exc
+    changed_paths = tuple(path for path in output.split("\0") if path)
+    ledger_path = (Path(relative_spec) / "retarget-history.json").as_posix()
+    if (
+        ledger_path not in changed_paths
+        or not changed_paths
+        or any(
+            path != relative_spec and not path.startswith(relative_spec + "/")
+            for path in changed_paths
+        )
+    ):
+        raise PhaseCheckpointError("retarget checkpoint commit scope mismatch")
+
+
+def _current_git_head(project_root: Path) -> str:
+    try:
+        head = run_git(
+            project_root,
+            "rev-parse",
+            "HEAD^{commit}",
+        ).stdout.strip()
+    except GitHelperError as exc:
+        raise PhaseCheckpointError(str(exc)) from exc
+    if _GIT_OBJECT_ID_PATTERN.fullmatch(head) is None:
+        raise PhaseCheckpointError("invalid current Git HEAD")
+    return head
+
+
+def _retarget_checkpoint_from_record(
+    *,
+    record: Mapping[str, str],
+    checkpoint_id: str,
+    spec_id: str,
+    run_id: str,
+) -> PhaseCheckpoint:
+    return PhaseCheckpoint(
+        id=checkpoint_id,
+        spec_id=spec_id,
+        phase="retarget",
+        next_phase="phase0-constitution",
+        commit=record["commit"],
+        metadata_commit="",
+        source="retarget-preflight",
+        run_id=run_id,
+        created_at=record["created_at"],
+    )
+
+
+def _record_claims_retarget_identity(
+    record: Mapping[str, str],
+    *,
+    checkpoint_id: str,
+    revision_id: str,
+) -> bool:
+    trailers = _parse_commit_trailers(record["message"])
+    return (
+        checkpoint_id in trailers.get("Echelon-Checkpoint", ())
+        or revision_id in trailers.get("Echelon-Retarget-Revision", ())
+    )
+
+
+def _validate_retarget_commit_record(
+    *,
+    project_root: Path,
+    spec_dir: Path,
+    record: Mapping[str, str],
+    identity: Mapping[str, str],
+    expected_history: object,
+) -> None:
+    if not _record_has_exact_retarget_identity(record, identity):
+        raise PhaseCheckpointError("retarget checkpoint identity drift")
+    _verify_retarget_commit_tree(
+        project_root,
+        spec_dir,
+        record["commit"],
+        expected_history,
+    )
+    _verify_retarget_commit_scope(project_root, spec_dir, record)
+
+
 def commit_retarget_checkpoint(
     *,
     project_root: Path,
@@ -1368,6 +1647,7 @@ def commit_retarget_checkpoint(
     resolved_spec = Path(spec_dir).resolve()
     spec_id = _spec_id_from_dir(resolved_spec)
     with _checkpoint_ledger_lock(resolved_spec):
+        checkpoint_ledger = _load_retarget_checkpoint_ledger_strict(resolved_spec)
         history = load_retarget_history(resolved_spec)
         if not history.revisions:
             raise PhaseCheckpointError("retarget revision is missing")
@@ -1410,48 +1690,104 @@ def commit_retarget_checkpoint(
             ),
         )
 
-        record = _bounded_retarget_commit(root, identity=identity)
-        if record is None:
+        recorded_rows = [
+            item
+            for item in checkpoint_ledger.checkpoints
+            if item.id == checkpoint_id
+        ]
+        if len(recorded_rows) > 1:
+            raise PhaseCheckpointError("duplicate checkpoint identity")
+        if recorded_rows:
+            recorded_checkpoint = recorded_rows[0]
             try:
-                checkpoint_head = run_git(
+                record = _show_completion_commit(
                     root,
-                    "rev-parse",
-                    "HEAD^{commit}",
-                ).stdout.strip()
-            except GitHelperError as exc:
-                raise PhaseCheckpointError(str(exc)) from exc
-            commit = _commit_spec_changes(root, (resolved_spec,), message)
-            if commit is None:
-                raise PhaseCheckpointError(
-                    "retarget checkpoint produced no selected-spec change"
+                    recorded_checkpoint.commit,
                 )
-            record = _show_completion_commit(root, commit)
-            if (
-                record.get("parents") != checkpoint_head
-                or not _record_has_exact_retarget_identity(record, identity)
-            ):
+            except PhaseCheckpointError as exc:
                 raise PhaseCheckpointError(
-                    "created retarget checkpoint commit identity mismatch"
-                )
+                    "retarget checkpoint identity drift"
+                ) from exc
+            expected_checkpoint = _retarget_checkpoint_from_record(
+                record=record,
+                checkpoint_id=checkpoint_id,
+                spec_id=spec_id,
+                run_id=run_id,
+            )
+            if recorded_checkpoint != expected_checkpoint:
+                raise PhaseCheckpointError("retarget checkpoint identity drift")
+            _validate_retarget_commit_record(
+                project_root=root,
+                spec_dir=resolved_spec,
+                record=record,
+                identity=identity,
+                expected_history=history,
+            )
+            return recorded_checkpoint
 
-        _verify_retarget_commit_tree(
-            root,
-            resolved_spec,
-            record["commit"],
-            history,
+        checkpoint_head = _current_git_head(root)
+        head_record = _show_completion_commit(root, checkpoint_head)
+        if _record_claims_retarget_identity(
+            head_record,
+            checkpoint_id=checkpoint_id,
+            revision_id=revision.revision_id,
+        ):
+            _validate_retarget_commit_record(
+                project_root=root,
+                spec_dir=resolved_spec,
+                record=head_record,
+                identity=identity,
+                expected_history=history,
+            )
+            if _current_git_head(root) != head_record["commit"]:
+                raise PhaseCheckpointError(
+                    "Git HEAD changed before retarget checkpoint recording"
+                )
+            checkpoint = _retarget_checkpoint_from_record(
+                record=head_record,
+                checkpoint_id=checkpoint_id,
+                spec_id=spec_id,
+                run_id=run_id,
+            )
+            _record_retarget_checkpoint_unlocked(
+                resolved_spec,
+                checkpoint_ledger,
+                checkpoint,
+            )
+            return checkpoint
+
+        commit = _commit_spec_changes(root, (resolved_spec,), message)
+        if commit is None:
+            raise PhaseCheckpointError(
+                "retarget checkpoint produced no selected-spec change"
+            )
+        record = _show_completion_commit(root, commit)
+        if record.get("parents") != checkpoint_head:
+            raise PhaseCheckpointError(
+                "created retarget checkpoint commit parent mismatch"
+            )
+        _validate_retarget_commit_record(
+            project_root=root,
+            spec_dir=resolved_spec,
+            record=record,
+            identity=identity,
+            expected_history=history,
         )
-        checkpoint = PhaseCheckpoint(
-            id=checkpoint_id,
+        if _current_git_head(root) != commit:
+            raise PhaseCheckpointError(
+                "Git HEAD changed before retarget checkpoint recording"
+            )
+        checkpoint = _retarget_checkpoint_from_record(
+            record=record,
+            checkpoint_id=checkpoint_id,
             spec_id=spec_id,
-            phase="retarget",
-            next_phase="phase0-constitution",
-            commit=record["commit"],
-            metadata_commit="",
-            source="retarget-preflight",
             run_id=run_id,
-            created_at=record["created_at"],
         )
-        _record_phase_checkpoint_unlocked(resolved_spec, checkpoint)
+        _record_retarget_checkpoint_unlocked(
+            resolved_spec,
+            checkpoint_ledger,
+            checkpoint,
+        )
         return checkpoint
 
 
