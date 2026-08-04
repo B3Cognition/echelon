@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import stat
 import subprocess
 from types import SimpleNamespace
 
@@ -849,6 +850,8 @@ def test_retry_finishes_remaining_destructive_effects_before_dispatch(
     assert (shadow / "targets.yml").read_bytes() == (
         canonical / "targets.yml"
     ).read_bytes()
+    assert stat.S_IMODE((canonical / "targets.yml").stat().st_mode) == 0o600
+    assert stat.S_IMODE((shadow / "targets.yml").stat().st_mode) == 0o600
 
 
 @pytest.mark.unit
@@ -1307,6 +1310,59 @@ def test_artifact_invalidation_swap_race_cannot_delete_outside_root(
 
     assert swapped is True
     assert outside_victim.read_text(encoding="utf-8") == "keep\n"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("race_owner", ("canonical", "shadow"))
+def test_artifact_invalidation_root_swap_before_target_publication_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    race_owner: str,
+) -> None:
+    """A renamed public root must not receive a replacement target contract."""
+    from echelon.artifact_index import plan_retarget_artifacts
+    import echelon.spec_retarget as subject
+
+    spec_dir = tmp_path / "specs/001-demo"
+    shadow = tmp_path / "runs/squad-replacement/specs/001-demo"
+    for root in (spec_dir, shadow):
+        (root / "contracts").mkdir(parents=True)
+        (root / "contracts/owned.txt").write_text("owned\n", encoding="utf-8")
+        (root / "targets.yml").write_text(
+            "targets:\n- services/api\n",
+            encoding="utf-8",
+        )
+    race_root = spec_dir if race_owner == "canonical" else shadow
+    external = tmp_path / f"external-{race_owner}"
+    external.mkdir()
+    (external / "targets.yml").write_text("external\n", encoding="utf-8")
+    real_quarantine = subject._quarantine_invalidations
+    swapped = False
+
+    def swap_after_quarantine(root: object, identities: object) -> None:
+        nonlocal swapped
+        real_quarantine(root, identities)
+        root_path = getattr(root, "path")
+        if root_path != race_root:
+            return
+        swapped = True
+        displaced = root_path.with_name(f"{root_path.name}-displaced")
+        os.rename(root_path, displaced)
+        os.rename(external, root_path)
+
+    monkeypatch.setattr(subject, "_quarantine_invalidations", swap_after_quarantine)
+
+    with pytest.raises(subject.RetargetArtifactError, match="changed during target publication"):
+        subject.invalidate_retarget_artifacts(
+            spec_dir,
+            shadow,
+            plan_retarget_artifacts(spec_dir),
+            ("apps/web",),
+        )
+
+    assert swapped is True
+    assert (race_root / "targets.yml").read_text(encoding="utf-8") == "external\n"
+    assert not list(tmp_path.rglob(".targets.yml.*.tmp"))
 
 
 @pytest.mark.unit

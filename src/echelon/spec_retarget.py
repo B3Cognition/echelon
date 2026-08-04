@@ -398,6 +398,15 @@ def _open_directory_at(parent_fd: int, name: str) -> int:
     return os.open(name, flags, dir_fd=parent_fd)
 
 
+@dataclass(frozen=True)
+class _PinnedRetargetRoot:
+    path: Path
+    name: str
+    parent_fd: int
+    root_fd: int
+    identity: os.stat_result
+
+
 def _same_inode(left: os.stat_result, right: os.stat_result) -> bool:
     return (
         left.st_dev,
@@ -408,6 +417,126 @@ def _same_inode(left: os.stat_result, right: os.stat_result) -> bool:
         right.st_ino,
         stat.S_IFMT(right.st_mode),
     )
+
+
+def _sync_directory_fd(descriptor: int) -> None:
+    os.fsync(descriptor)
+
+
+def _pin_retarget_root(path: Path, *, label: str) -> _PinnedRetargetRoot:
+    root = Path(path)
+    if not root.name or root.name in {".", ".."}:
+        raise RetargetArtifactError(f"{label} has no confined directory name")
+    flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    parent_fd = -1
+    root_fd = -1
+    try:
+        parent_fd = os.open(root.parent, flags)
+        root_fd = _open_directory_at(parent_fd, root.name)
+        identity = os.fstat(root_fd)
+        if not stat.S_ISDIR(identity.st_mode):
+            raise RetargetArtifactError(f"{label} must be a real directory: {root}")
+        observed = os.stat(root.name, dir_fd=parent_fd, follow_symlinks=False)
+        if not _same_inode(identity, observed):
+            raise RetargetArtifactError(f"{label} changed while opening: {root}")
+        return _PinnedRetargetRoot(root, root.name, parent_fd, root_fd, identity)
+    except OSError as exc:
+        if root_fd >= 0:
+            os.close(root_fd)
+        if parent_fd >= 0:
+            os.close(parent_fd)
+        raise RetargetArtifactError(f"{label} changed while opening: {root}") from exc
+    except Exception:
+        if root_fd >= 0:
+            os.close(root_fd)
+        if parent_fd >= 0:
+            os.close(parent_fd)
+        raise
+
+
+def _close_pinned_retarget_root(root: _PinnedRetargetRoot) -> None:
+    os.close(root.root_fd)
+    os.close(root.parent_fd)
+
+
+def _authenticate_pinned_retarget_root(
+    root: _PinnedRetargetRoot,
+    *,
+    stage: str,
+) -> None:
+    try:
+        observed = os.stat(
+            root.name,
+            dir_fd=root.parent_fd,
+            follow_symlinks=False,
+        )
+    except OSError as exc:
+        raise RetargetArtifactError(
+            f"retarget artifact changed during {stage}: {root.path}"
+        ) from exc
+    if not _same_inode(root.identity, observed) or not _same_inode(
+        root.identity,
+        os.fstat(root.root_fd),
+    ):
+        raise RetargetArtifactError(
+            f"retarget artifact changed during {stage}: {root.path}"
+        )
+
+
+def _write_target_contract_at(
+    root: _PinnedRetargetRoot,
+    content: bytes,
+) -> None:
+    """Publish targets.yml only through a still-authenticated pinned root FD."""
+
+    name = "targets.yml"
+    temporary_name = f".{name}.{secrets.token_hex(16)}.tmp"
+    descriptor = -1
+    try:
+        _authenticate_pinned_retarget_root(root, stage="target publication")
+        try:
+            existing = os.stat(name, dir_fd=root.root_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            existing = None
+        if existing is not None and not stat.S_ISREG(existing.st_mode):
+            raise RetargetArtifactError("retarget output must be a regular file: targets.yml")
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        descriptor = os.open(temporary_name, flags, 0o600, dir_fd=root.root_fd)
+        with os.fdopen(descriptor, "wb") as handle:
+            descriptor = -1
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        _authenticate_pinned_retarget_root(root, stage="target publication")
+        os.replace(
+            temporary_name,
+            name,
+            src_dir_fd=root.root_fd,
+            dst_dir_fd=root.root_fd,
+        )
+        _sync_directory_fd(root.root_fd)
+        _authenticate_pinned_retarget_root(root, stage="target publication")
+    except OSError as exc:
+        raise RetargetArtifactError(
+            f"retarget artifact changed during target publication: {root.path}"
+        ) from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        try:
+            os.unlink(temporary_name, dir_fd=root.root_fd)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            raise RetargetArtifactError(
+                f"retarget artifact changed during target publication: {root.path}"
+            ) from exc
 
 
 def _validate_entry_at(
@@ -495,27 +624,22 @@ def _delete_entry_at(
 
 
 def _quarantine_invalidations(
-    root: Path,
+    root: _PinnedRetargetRoot,
     identities: Mapping[str, os.stat_result],
 ) -> None:
     if not identities:
         return
-    root_flags = os.O_RDONLY
-    if hasattr(os, "O_DIRECTORY"):
-        root_flags |= os.O_DIRECTORY
-    if hasattr(os, "O_NOFOLLOW"):
-        root_flags |= os.O_NOFOLLOW
-    root_fd = os.open(root, root_flags)
     quarantine_name = f".retarget-quarantine-{secrets.token_hex(16)}"
     quarantine_fd = -1
     try:
-        os.mkdir(quarantine_name, 0o700, dir_fd=root_fd)
-        quarantine_fd = _open_directory_at(root_fd, quarantine_name)
+        _authenticate_pinned_retarget_root(root, stage="invalidation")
+        os.mkdir(quarantine_name, 0o700, dir_fd=root.root_fd)
+        quarantine_fd = _open_directory_at(root.root_fd, quarantine_name)
         for relative, expected in identities.items():
             try:
                 observed = os.stat(
                     relative,
-                    dir_fd=root_fd,
+                    dir_fd=root.root_fd,
                     follow_symlinks=False,
                 )
             except OSError as exc:
@@ -529,7 +653,7 @@ def _quarantine_invalidations(
             os.rename(
                 relative,
                 relative,
-                src_dir_fd=root_fd,
+                src_dir_fd=root.root_fd,
                 dst_dir_fd=quarantine_fd,
             )
             quarantined = os.stat(
@@ -554,16 +678,16 @@ def _quarantine_invalidations(
             )
         os.close(quarantine_fd)
         quarantine_fd = -1
-        os.rmdir(quarantine_name, dir_fd=root_fd)
-        _sync_directory(root)
+        os.rmdir(quarantine_name, dir_fd=root.root_fd)
+        _sync_directory_fd(root.root_fd)
+        _authenticate_pinned_retarget_root(root, stage="invalidation")
     finally:
         if quarantine_fd >= 0:
             os.close(quarantine_fd)
         try:
-            os.rmdir(quarantine_name, dir_fd=root_fd)
+            os.rmdir(quarantine_name, dir_fd=root.root_fd)
         except OSError:
             pass
-        os.close(root_fd)
 
 
 def _require_real_directory(path: Path, *, label: str) -> Path:
@@ -600,33 +724,41 @@ def invalidate_retarget_artifacts(
     invalidated = tuple(
         sorted((set(artifact_plan.invalidate) | set(shadow_plan.invalidate)) - {"targets.yml"})
     )
-    root_identities: list[tuple[Path, dict[str, os.stat_result]]] = []
+    pinned_roots: list[tuple[_PinnedRetargetRoot, dict[str, os.stat_result]]] = []
     traversal_budget = [0]
-    for root, plan in ((canonical, artifact_plan), (shadow, shadow_plan)):
-        root_fd = os.open(root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-        identities: dict[str, os.stat_result] = {}
-        try:
-            for relative in (*plan.preserve, *plan.invalidate):
-                try:
-                    metadata = _validate_entry_at(
-                        root_fd,
-                        relative,
-                        budget=traversal_budget,
-                    )
-                except FileNotFoundError:
-                    continue
-                if relative in invalidated:
-                    identities[relative] = metadata
-        finally:
-            os.close(root_fd)
-        root_identities.append((root, identities))
-    for root, identities in root_identities:
-        _quarantine_invalidations(root, identities)
-    content = ("targets:\n" + "".join(f"- {target}\n" for target in targets)).encode(
-        "utf-8"
-    )
-    for root in (canonical, shadow):
-        _write_bytes_atomic(root / "targets.yml", content)
+    try:
+        for root, plan, label in (
+            (canonical, artifact_plan, "canonical spec directory"),
+            (shadow, shadow_plan, "active run shadow"),
+        ):
+            pinned = _pin_retarget_root(root, label=label)
+            identities: dict[str, os.stat_result] = {}
+            try:
+                for relative in (*plan.preserve, *plan.invalidate):
+                    try:
+                        metadata = _validate_entry_at(
+                            pinned.root_fd,
+                            relative,
+                            budget=traversal_budget,
+                        )
+                    except FileNotFoundError:
+                        continue
+                    if relative in invalidated:
+                        identities[relative] = metadata
+            except Exception:
+                _close_pinned_retarget_root(pinned)
+                raise
+            pinned_roots.append((pinned, identities))
+        for root, identities in pinned_roots:
+            _quarantine_invalidations(root, identities)
+        content = ("targets:\n" + "".join(f"- {target}\n" for target in targets)).encode(
+            "utf-8"
+        )
+        for root, _identities in pinned_roots:
+            _write_target_contract_at(root, content)
+    finally:
+        for root, _identities in pinned_roots:
+            _close_pinned_retarget_root(root)
     return invalidated
 
 
