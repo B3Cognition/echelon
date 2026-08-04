@@ -19,6 +19,17 @@ function countBy<T extends string>(values: T[]): Array<{ key: T; count: number }
     .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
 }
 
+function countByExactKey(entries: Array<{ key: string; display: string }>): Array<{ key: string; display: string; count: number }> {
+  const counts = new Map<string, { display: string; count: number }>();
+  for (const entry of entries) {
+    const current = counts.get(entry.key);
+    counts.set(entry.key, { display: current?.display ?? entry.display, count: (current?.count ?? 0) + 1 });
+  }
+  return [...counts.entries()]
+    .map(([key, value]) => ({ key, ...value }))
+    .sort((left, right) => right.count - left.count || left.key.localeCompare(right.key));
+}
+
 export function renderSummary(analysis: PerlGraphAnalysis): PerlGraphSummary {
   const symbolKinds = countBy(analysis.symbols.map((symbol) => symbol.kind));
   const relationshipKinds = countBy(analysis.relationships.map((relationship) => relationship.kind));
@@ -26,8 +37,8 @@ export function renderSummary(analysis: PerlGraphAnalysis): PerlGraphSummary {
     ...analysis.relationships.map((relationship) => relationship.confidence),
     ...analysis.unresolved_relationships.map((relationship) => relationship.confidence)
   ]);
-  const callers = countBy(analysis.call_graph.map((edge) => edge.source));
-  const callees = countBy(analysis.call_graph.map((edge) => edge.target));
+  const callers = countByExactKey(analysis.call_graph.map((edge) => ({ key: edge.source_key, display: edge.source })));
+  const callees = countByExactKey(analysis.call_graph.map((edge) => ({ key: edge.target_key, display: edge.target })));
   const modules = countBy(analysis.module_graph.map((edge) => edge.source_module));
   const dynamicPatterns = countBy(analysis.unsupported_patterns.map((pattern) => pattern.kind));
 
@@ -45,8 +56,8 @@ export function renderSummary(analysis: PerlGraphAnalysis): PerlGraphSummary {
     capabilities: analysis.capabilities,
     symbol_kinds: symbolKinds.map(({ key, count }) => ({ kind: key as SymbolKind, count })),
     relationship_kinds: relationshipKinds.map(({ key, count }) => ({ kind: key as RelationshipKind, count })),
-    top_callers: callers.slice(0, 25).map(({ key, count }) => ({ symbol: key, outgoing_calls: count })),
-    top_callees: callees.slice(0, 25).map(({ key, count }) => ({ symbol: key, incoming_calls: count })),
+    top_callers: callers.slice(0, 25).map(({ display, count }) => ({ symbol: display, outgoing_calls: count })),
+    top_callees: callees.slice(0, 25).map(({ display, count }) => ({ symbol: display, incoming_calls: count })),
     top_modules: modules.slice(0, 25).map(({ key, count }) => ({ module: key, outgoing_dependencies: count })),
     confidence_audit: {
       relationships: confidenceCounts.map(({ key, count }) => ({ confidence: key as Confidence, count })),

@@ -37,6 +37,21 @@ describe('output writer', () => {
     expect(summary.confidence_audit.examples).toMatchObject([{ target: 'maybe', notes: expect.stringMatching(/did not resolve/) }]);
   });
 
+  it('does not merge duplicate display names with different exact keys', () => {
+    const payload = analysis();
+    const duplicate = symbol({ qualified_name: 'My::App::run', name: 'run', kind: 'sub', language: 'perl', file_path: 'lib/My/Other.pm', line_start: 3, line_end: 8, provenance: ['tree-sitter'] });
+    payload.call_graph = [
+      ...payload.call_graph,
+      { source_key: duplicate.symbol_key, target_key: payload.symbols[1]!.symbol_key, source: duplicate.qualified_name, target: payload.symbols[1]!.qualified_name, confidence: 'high', provenance: ['tree-sitter'] }
+    ];
+
+    const summary = renderSummary(payload);
+    expect(summary.top_callers.filter((entry) => entry.symbol === 'My::App::run')).toEqual([
+      { symbol: 'My::App::run', outgoing_calls: 1 },
+      { symbol: 'My::App::run', outgoing_calls: 1 }
+    ]);
+  });
+
   it('writes stable pretty JSON', async () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'perlgraph-'));
     const out = path.join(dir, 'analysis.json');

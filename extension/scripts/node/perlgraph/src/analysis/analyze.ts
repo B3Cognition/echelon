@@ -27,8 +27,8 @@ function indexState(totalFiles: number, failedFiles: number, dynamicCount: numbe
 
 function providerStatus(totalFiles: number, symbols: PerlSymbol[], failures: ParseFailure[], diagnostics: ParseDiagnostic[], dynamicPatterns: UnsupportedPattern[]): ProviderStatus {
   if (totalFiles === 0) return 'unsupported';
-  if (symbols.length === 0) return 'empty';
   if (failures.length > 0 || diagnostics.length > 0 || dynamicPatterns.length > 0) return 'degraded';
+  if (symbols.length === 0) return 'empty';
   return 'ready';
 }
 
@@ -211,7 +211,7 @@ export async function analyzeRepository(
     complete: true,
     counts: {
       discovered_files: files.length,
-      emitted_files: files.length,
+      emitted_files: files.length - parseFailures.length,
       discovered_symbols: symbols.length,
       emitted_symbols: symbols.length,
       discovered_relationships: relationships.length + unresolvedRelationships.length,

@@ -230,16 +230,36 @@ export function resolveCalls(
         if (resolved(call, target, 'medium', ['tree-sitter', 'self-method-resolution'])) {
           continue;
         }
-        const inheritedTarget = inheritanceCandidates(callerPackage, context.inheritance)
+        const inheritedTargets = [...new Set(inheritanceCandidates(callerPackage, context.inheritance)
           .map((parent) => `${parent}::${methodParts.method}`)
-          .find((candidate) => byQualifiedName.has(candidate));
-        if (inheritedTarget && resolved(call, inheritedTarget, 'medium', ['tree-sitter', 'inheritance-method-resolution'])) {
+          .filter((candidate) => byQualifiedName.has(candidate)))];
+        if (inheritedTargets.length === 1 && resolved(call, inheritedTargets[0]!, 'medium', ['tree-sitter', 'inheritance-method-resolution'])) {
           continue;
         }
-        const roleTarget = roleCandidates(callerPackage, context.roles)
+        if (inheritedTargets.length > 1) {
+          unresolved(
+            call,
+            methodParts.method,
+            'low',
+            ['tree-sitter', 'ambiguous-inheritance-method-resolution'],
+            `Self call ${call.expression} matched multiple inherited methods: ${inheritedTargets.join(', ')}`
+          );
+          continue;
+        }
+        const roleTargets = [...new Set(roleCandidates(callerPackage, context.roles)
           .map((role) => `${role}::${methodParts.method}`)
-          .find((candidate) => byQualifiedName.has(candidate));
-        if (roleTarget && resolved(call, roleTarget, 'medium', ['tree-sitter', 'role-method-resolution'])) {
+          .filter((candidate) => byQualifiedName.has(candidate)))];
+        if (roleTargets.length === 1 && resolved(call, roleTargets[0]!, 'medium', ['tree-sitter', 'role-method-resolution'])) {
+          continue;
+        }
+        if (roleTargets.length > 1) {
+          unresolved(
+            call,
+            methodParts.method,
+            'low',
+            ['tree-sitter', 'ambiguous-role-method-resolution'],
+            `Self call ${call.expression} matched multiple role methods: ${roleTargets.join(', ')}`
+          );
           continue;
         }
       }
