@@ -5,7 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from harness.re_fingerprint import ReFingerprintProfile, fingerprint_source
+from harness.re_fingerprint import (
+    ReFingerprintProfile,
+    fingerprint_source,
+    resolve_re_fingerprint_profile,
+)
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -150,3 +154,32 @@ def test_re_fingerprint_profile_rejects_invalid_numeric_fields() -> None:
                 "codegraph_version": None,
             }
         )
+
+
+def test_resolve_re_fingerprint_profile_preserves_existing_config_serialization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = {
+        "re": {
+            "profile": "deep",
+            "depth": {"level": "signatures", "max_lines_per_file": 3200},
+            "sources": {"git_history_limit": 1400},
+            "codegraph_version": "cg-2",
+        },
+        "discovery": {"max_lines_per_file": 999, "git_history_limit": 999},
+    }
+    monkeypatch.setattr("harness.re_fingerprint.get_full_resolved_config", lambda root: config)
+
+    profile = resolve_re_fingerprint_profile(tmp_path)
+
+    assert profile == ReFingerprintProfile(
+        profile="deep",
+        depth="signatures",
+        max_lines_per_file=3200,
+        git_history_limit=1400,
+        codegraph_version="cg-2",
+    )
+    assert profile.stable_json() == (
+        '{"codegraph_version":"cg-2","depth":"signatures",'
+        '"git_history_limit":1400,"max_lines_per_file":3200,"profile":"deep"}'
+    )

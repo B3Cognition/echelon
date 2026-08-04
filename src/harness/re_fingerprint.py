@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Literal, Mapping
 
 from echelon.workspace_model import IGNORED_SOURCE_DIRS
+from harness.config import get_full_resolved_config
 
 SourceFingerprintKind = Literal["git", "file-tree"]
 
@@ -101,6 +102,38 @@ class SourceFingerprint:
             profile_hash=profile_hash,
             git_head=git_head,
         )
+
+
+def resolve_re_fingerprint_profile(project_root: Path) -> ReFingerprintProfile:
+    """Resolve the config inputs that participate in RE source fingerprints."""
+    config = get_full_resolved_config(project_root)
+    re_config = config.get("re") if isinstance(config.get("re"), dict) else {}
+    depth_config = (
+        re_config.get("depth") if isinstance(re_config.get("depth"), dict) else {}
+    )
+    sources_config = (
+        re_config.get("sources")
+        if isinstance(re_config.get("sources"), dict)
+        else {}
+    )
+    discovery_config = (
+        config.get("discovery") if isinstance(config.get("discovery"), dict) else {}
+    )
+    return ReFingerprintProfile.from_json_dict(
+        {
+            "profile": re_config.get("profile", "full"),
+            "depth": depth_config.get("level", "full"),
+            "max_lines_per_file": depth_config.get(
+                "max_lines_per_file",
+                discovery_config.get("max_lines_per_file", 5000),
+            ),
+            "git_history_limit": sources_config.get(
+                "git_history_limit",
+                discovery_config.get("git_history_limit", 2500),
+            ),
+            "codegraph_version": re_config.get("codegraph_version"),
+        }
+    )
 
 
 def fingerprint_source(source_path: Path, profile: ReFingerprintProfile) -> SourceFingerprint:

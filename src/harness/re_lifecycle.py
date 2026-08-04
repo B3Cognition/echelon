@@ -17,9 +17,8 @@ from harness.blocked_decision import (
     ensure_blocked_decision,
     mark_blocked_decision_resolved,
 )
-from harness.config import get_full_resolved_config
 from harness.re_controller import ReExtractionController
-from harness.re_fingerprint import ReFingerprintProfile
+from harness.re_fingerprint import ReFingerprintProfile, resolve_re_fingerprint_profile
 from harness.re_materializer import materialize_re_run_context
 from harness.re_planner import build_re_execution_plan
 from harness.re_profiles import migrate_legacy_re_profile, resolve_re_execution_profile
@@ -64,38 +63,6 @@ def resolve_current_re_run(project_root: Path) -> Path | None:
     if not resolved.is_relative_to(runs.resolve()):
         raise ReLifecycleError(f"RE run escapes workspace: {run_id}")
     return resolved
-
-
-def resolve_re_fingerprint_profile(project_root: Path) -> ReFingerprintProfile:
-    """Resolve extraction settings that participate in RE fingerprints."""
-    config = get_full_resolved_config(project_root)
-    re_config = config.get("re") if isinstance(config.get("re"), dict) else {}
-    depth_config = (
-        re_config.get("depth") if isinstance(re_config.get("depth"), dict) else {}
-    )
-    sources_config = (
-        re_config.get("sources")
-        if isinstance(re_config.get("sources"), dict)
-        else {}
-    )
-    discovery_config = (
-        config.get("discovery") if isinstance(config.get("discovery"), dict) else {}
-    )
-    return ReFingerprintProfile.from_json_dict(
-        {
-            "profile": re_config.get("profile", "full"),
-            "depth": depth_config.get("level", "full"),
-            "max_lines_per_file": depth_config.get(
-                "max_lines_per_file",
-                discovery_config.get("max_lines_per_file", 5000),
-            ),
-            "git_history_limit": sources_config.get(
-                "git_history_limit",
-                discovery_config.get("git_history_limit", 2500),
-            ),
-            "codegraph_version": re_config.get("codegraph_version"),
-        }
-    )
 
 
 class ReLifecycleController:
