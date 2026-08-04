@@ -63,7 +63,7 @@ describe('call resolver', () => {
     expect(result.unresolved_relationships).toMatchObject([{
       source_key: symbols[0]!.symbol_key,
       target: 'shared',
-      provenance: ['tree-sitter', 'ambiguous-inheritance-method-resolution']
+      provenance: ['tree-sitter', 'ambiguous-self-method-resolution']
     }]);
   });
 
@@ -80,7 +80,25 @@ describe('call resolver', () => {
     expect(result.unresolved_relationships).toMatchObject([{
       source_key: symbols[0]!.symbol_key,
       target: 'shared',
-      provenance: ['tree-sitter', 'ambiguous-role-method-resolution']
+      provenance: ['tree-sitter', 'ambiguous-self-method-resolution']
+    }]);
+  });
+
+  it('does not prefer one inherited implementation over one role implementation', () => {
+    const parent = symbol({ qualified_name: 'My::Parent::shared', name: 'shared', kind: 'method', language: 'perl', file_path: 'lib/My/Parent.pm', line_start: 2, line_end: 4, provenance: ['tree-sitter'] });
+    const role = symbol({ qualified_name: 'My::Role::shared', name: 'shared', kind: 'method', language: 'perl', file_path: 'lib/My/Role.pm', line_start: 2, line_end: 4, provenance: ['tree-sitter'] });
+    const result = resolveCalls(
+      [{ caller: 'My::App::run', expression: '$self->shared', file_path: 'lib/My/App.pm', line_start: 20 }],
+      [...symbols, parent, role],
+      { inheritance: new Map([['My::App', ['My::Parent']]]), roles: new Map([['My::App', ['My::Role']]]) }
+    );
+
+    expect(result.relationships).toEqual([]);
+    expect(result.unresolved_relationships).toMatchObject([{
+      source_key: symbols[0]!.symbol_key,
+      target: 'shared',
+      provenance: ['tree-sitter', 'ambiguous-self-method-resolution'],
+      notes: 'Self call $self->shared matched multiple methods: My::Parent::shared, My::Role::shared'
     }]);
   });
 

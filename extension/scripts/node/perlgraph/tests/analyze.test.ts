@@ -193,6 +193,22 @@ describe('analyzeRepository', () => {
     }
   });
 
+  it('extracts Moose extends declarations and resolves inherited self calls exactly', async () => {
+    const root = repository('moose-inheritance');
+    try {
+      mkdirSync(path.join(root, 'lib/My'), { recursive: true });
+      writeFileSync(path.join(root, 'lib/My/App.pm'), 'package My::App;\nuse Moose;\nextends "My::Base";\nsub run {\n my ($self) = @_;\n $self->shared();\n}\n1;\n');
+      writeFileSync(path.join(root, 'lib/My/Base.pm'), 'package My::Base;\nsub shared { 1 }\n1;\n');
+      const analysis = await (await loadAnalyzer()).analyzeRepository(root);
+      expect(analysis.relationships).toEqual(expect.arrayContaining([
+        expect.objectContaining({ kind: 'inherits', source: 'My::App', target: 'My::Base', source_key: expect.any(String), target_key: expect.any(String) }),
+        expect.objectContaining({ kind: 'calls', source: 'My::App::run', target: 'My::Base::shared', provenance: ['tree-sitter', 'inheritance-method-resolution'], source_key: expect.any(String), target_key: expect.any(String) })
+      ]));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('normalizes static require paths and constrained concatenation', async () => {
     const root = repository('requires');
     try {

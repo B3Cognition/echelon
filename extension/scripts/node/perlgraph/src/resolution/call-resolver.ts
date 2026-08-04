@@ -232,33 +232,26 @@ export function resolveCalls(
         }
         const inheritedTargets = [...new Set(inheritanceCandidates(callerPackage, context.inheritance)
           .map((parent) => `${parent}::${methodParts.method}`)
-          .filter((candidate) => byQualifiedName.has(candidate)))];
-        if (inheritedTargets.length === 1 && resolved(call, inheritedTargets[0]!, 'medium', ['tree-sitter', 'inheritance-method-resolution'])) {
-          continue;
-        }
-        if (inheritedTargets.length > 1) {
-          unresolved(
-            call,
-            methodParts.method,
-            'low',
-            ['tree-sitter', 'ambiguous-inheritance-method-resolution'],
-            `Self call ${call.expression} matched multiple inherited methods: ${inheritedTargets.join(', ')}`
-          );
-          continue;
-        }
+          .filter((candidate) => byQualifiedName.has(candidate)))].sort();
         const roleTargets = [...new Set(roleCandidates(callerPackage, context.roles)
           .map((role) => `${role}::${methodParts.method}`)
-          .filter((candidate) => byQualifiedName.has(candidate)))];
-        if (roleTargets.length === 1 && resolved(call, roleTargets[0]!, 'medium', ['tree-sitter', 'role-method-resolution'])) {
+          .filter((candidate) => byQualifiedName.has(candidate)))].sort();
+        const selfTargets = [...new Set([...inheritedTargets, ...roleTargets])].sort();
+        if (selfTargets.length === 1 && resolved(
+          call,
+          selfTargets[0]!,
+          'medium',
+          ['tree-sitter', inheritedTargets.includes(selfTargets[0]!) ? 'inheritance-method-resolution' : 'role-method-resolution']
+        )) {
           continue;
         }
-        if (roleTargets.length > 1) {
+        if (selfTargets.length > 1) {
           unresolved(
             call,
             methodParts.method,
             'low',
-            ['tree-sitter', 'ambiguous-role-method-resolution'],
-            `Self call ${call.expression} matched multiple role methods: ${roleTargets.join(', ')}`
+            ['tree-sitter', 'ambiguous-self-method-resolution'],
+            `Self call ${call.expression} matched multiple methods: ${selfTargets.join(', ')}`
           );
           continue;
         }
