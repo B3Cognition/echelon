@@ -59,9 +59,6 @@ REGISTERED_ONLY_KINDS = frozenset(
         "re-quality-report",
     }
 )
-_PROVENANCE_KINDS = frozenset(
-    {"re-source-manifest", "re-workspace-manifest"}
-)
 _OMIT = object()
 
 
@@ -150,8 +147,14 @@ def write_canonical_re_context(
         snapshot_root = Path(snapshot_value).resolve()
         if not snapshot_root.is_relative_to(root):
             raise ValueError("published RE snapshot must be inside workspace")
+        artifact_map = context.get("artifacts")
+        context_artifacts = (
+            artifact_map.get("context_artifacts")
+            if isinstance(artifact_map, Mapping)
+            else None
+        )
         artifacts = _canonical_artifact_rows(
-            context.get("artifacts"),
+            context_artifacts,
             snapshot_root=snapshot_root,
         )
 
@@ -221,7 +224,12 @@ def _select_context_descriptors(
     for descriptor in descriptors:
         if descriptor.kind in REGISTERED_ONLY_KINDS:
             continue
-        if descriptor.kind in _PROVENANCE_KINDS:
+        if descriptor.kind == "re-workspace-manifest":
+            selected.append(descriptor)
+        elif (
+            descriptor.kind == "re-source-manifest"
+            and descriptor.source_id in selected_source_ids
+        ):
             selected.append(descriptor)
         elif (
             descriptor.scope == "workspace"
@@ -256,8 +264,12 @@ def _snapshot_artifact_map(
     try:
         for source in sorted(selected_files):
             _copy_registered_file(source, re_root=re_root, destination=temp)
+        projected_artifacts = dict(artifacts)
+        projected_artifacts["artifact_descriptors"] = [
+            descriptor.to_json_dict() for descriptor in descriptors
+        ]
         rewritten = _rewrite_value(
-            artifacts,
+            projected_artifacts,
             re_root=re_root,
             destination=temp,
             selected_files=selected_files,
@@ -455,9 +467,9 @@ _WORKSPACE_BRIEFING_SECTIONS = (
     ("re-workspace-checklist", "Workspace Checklist"),
     ("re-architecture-map", "Architecture Map"),
     ("re-codegraph-summary", "Workspace CodeGraph Summary"),
-    ("re-domain", "Domain Context"),
     ("re-strategy", "Workspace Strategy"),
     ("re-decision", "Workspace Decision"),
+    ("re-domain", "Domain Context"),
 )
 
 _SOURCE_BRIEFING_SECTIONS = (

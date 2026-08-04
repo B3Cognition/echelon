@@ -6,11 +6,13 @@ from pathlib import Path
 
 import pytest
 
+from echelon.spec_graph import build_spec_graph
 from harness.re_artifacts import SUPPORTED_RE_ARTIFACT_KINDS
 from harness.published_re_context import (
     attach_published_re_context,
     write_canonical_re_context,
 )
+from harness.squad_executors import _render_published_re_context
 
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:
@@ -196,6 +198,78 @@ def _publish_fixture(root: Path) -> Path:
     return spec
 
 
+def _add_source_to_publication(root: Path, source_id: str) -> None:
+    source_root = root / "re" / "sources" / source_id
+    source_root.mkdir(parents=True)
+    overview_path = f"re/sources/{source_id}/overview.md"
+    (root / overview_path).write_text(f"# {source_id}\n", encoding="utf-8")
+    _write_json(
+        source_root / "manifest.json",
+        {
+            "schema_version": 1,
+            "source_id": source_id,
+            "source_path": f"sources/{source_id}",
+            "overview": overview_path,
+            "specs": [],
+            "artifacts": [
+                _descriptor(
+                    root,
+                    overview_path,
+                    kind="re-overview",
+                    scope="source",
+                    source_id=source_id,
+                )
+            ],
+        },
+    )
+    index_path = root / "re" / "index.json"
+    index = json.loads(index_path.read_text(encoding="utf-8"))
+    index["sources"][source_id] = {
+        "path": f"sources/{source_id}",
+        "published_path": f"re/sources/{source_id}",
+        "fingerprint": f"{source_id}-fingerprint",
+        "profile_hash": "profile",
+        "status": "complete",
+        "manifest": f"re/sources/{source_id}/manifest.json",
+        "manifest_artifact": _descriptor(
+            root,
+            f"re/sources/{source_id}/manifest.json",
+            kind="re-source-manifest",
+            scope="source",
+            source_id=source_id,
+        ),
+    }
+    _write_json(index_path, index)
+
+
+def _add_workspace_artifacts(
+    root: Path,
+    artifacts: dict[str, tuple[str, str]],
+) -> None:
+    manifest_path = root / "re" / "workspace" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    descriptors = list(manifest["artifacts"])
+    for relative_path, (kind, content) in artifacts.items():
+        path = root / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        descriptors.append(
+            _descriptor(root, relative_path, kind=kind, scope="workspace")
+        )
+    manifest["artifacts"] = sorted(descriptors, key=lambda row: row["path"])
+    _write_json(manifest_path, manifest)
+
+    index_path = root / "re" / "index.json"
+    index = json.loads(index_path.read_text(encoding="utf-8"))
+    index["workspace"]["manifest_artifact"] = _descriptor(
+        root,
+        "re/workspace/manifest.json",
+        kind="re-workspace-manifest",
+        scope="workspace",
+    )
+    _write_json(index_path, index)
+
+
 @pytest.mark.unit
 def test_attach_published_re_context_records_ignored_without_reading_registry(
     tmp_path: Path,
@@ -247,7 +321,17 @@ def test_attach_published_re_context_snapshots_only_registered_artifacts(
     assert [row["path"] for row in descriptors] == sorted(
         row["path"] for row in descriptors
     )
-    assert {row["kind"] for row in descriptors} == SUPPORTED_RE_ARTIFACT_KINDS
+    registered_only = {
+        "re-codegraph-analysis",
+        "re-analysis",
+        "re-structure",
+        "re-configs",
+        "re-dependencies",
+        "re-quality-report",
+    }
+    assert {row["kind"] for row in descriptors} == (
+        SUPPORTED_RE_ARTIFACT_KINDS - registered_only
+    )
     assert not any(row["path"].endswith("unregistered.txt") for row in descriptors)
     snapshot_specs = artifacts["re_specs"]
     assert isinstance(snapshot_specs, list)
@@ -274,16 +358,13 @@ def test_attach_published_re_context_snapshots_only_registered_artifacts(
     assert "Workspace Strategy Policy Marker" in workspace_text
     assert "Workspace Decision Policy Marker" in workspace_text
 
-    registered_only = {
-        "re-codegraph-analysis",
-        "re-analysis",
-        "re-structure",
-        "re-configs",
-        "re-dependencies",
-        "re-quality-report",
-    }
     registered_only_paths = {
-        row["path"] for row in descriptors if row["kind"] in registered_only
+        "re/sources/api/analysis.json",
+        "re/sources/api/codegraph-analysis.json",
+        "re/sources/api/configs.json",
+        "re/sources/api/dependencies.json",
+        "re/sources/api/quality/report.md",
+        "re/sources/api/structure.json",
     }
     assert registered_only_paths
     assert all(
@@ -304,6 +385,13 @@ def test_attach_published_re_context_snapshots_only_registered_artifacts(
     assert "re/sources/api/specs/search/checklist.md" in canonical_paths
     assert "re/workspace/decisions/current.md" in canonical_paths
     assert all(path not in canonical_paths for path in registered_only_paths)
+    assert "re/RE-WORKSPACE-BRIEF.md" not in canonical_paths
+    assert "re/RE-SOURCE-api-BRIEF.md" not in canonical_paths
+
+    prompt = _render_published_re_context({"published_re_context": context})
+    assert "re/sources/api/architecture.md" in prompt
+    assert "Published RE Workspace Brief" in prompt
+    assert all(Path(path).name not in prompt for path in registered_only_paths)
 
     canonical_spec.write_text("# Search v2\n", encoding="utf-8")
     assert snapshot_spec.read_text(encoding="utf-8") == "# Search v1\n"
@@ -364,6 +452,114 @@ def test_attach_published_re_context_selects_explicit_re_source(tmp_path: Path) 
 
 
 @pytest.mark.unit
+def test_workspace_brief_preserves_strategy_and_all_decisions_before_domain_bulk(
+    tmp_path: Path,
+) -> None:
+    _publish_fixture(tmp_path)
+    domain_body = "domain evidence\n" * 3_000
+    additions = {
+        **{
+            f"re/workspace/domains/domain-{index}.md": (
+                "re-domain",
+                f"# Oversized Domain {index}\n{domain_body}",
+            )
+            for index in range(5)
+        },
+        **{
+            f"re/workspace/decisions/ADR-00{index}-marker.md": (
+                "re-decision",
+                f"# WORKSPACE-ADR-MARKER-{index}\nDecision {index}.\n",
+            )
+            for index in range(2, 5)
+        },
+    }
+    _add_workspace_artifacts(tmp_path, additions)
+
+    context = attach_published_re_context(
+        tmp_path,
+        tmp_path / "runs" / "spec-oversized",
+        ignore=False,
+        re_sources=["api"],
+    )
+
+    workspace_brief = Path(str(context["rendered_briefings"]["workspace"]))
+    text = workspace_brief.read_text(encoding="utf-8")
+    assert len(text.encode("utf-8")) <= 96 * 1024
+    assert "Workspace Strategy Policy Marker" in text
+    assert "Workspace Decision Policy Marker" in text
+    for index in range(2, 5):
+        assert f"WORKSPACE-ADR-MARKER-{index}" in text
+
+
+@pytest.mark.unit
+def test_selected_source_manifest_bounds_prompt_and_graph_source_topology(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _publish_fixture(tmp_path)
+    _add_source_to_publication(tmp_path, "web")
+    run_dir = tmp_path / "runs" / "spec-1"
+
+    context = attach_published_re_context(
+        tmp_path,
+        run_dir,
+        ignore=False,
+        re_sources=["api"],
+    )
+
+    artifacts = context["artifacts"]
+    assert isinstance(artifacts, dict)
+    descriptors = artifacts["artifact_descriptors"]
+    assert isinstance(descriptors, list)
+    descriptor_paths = {row["path"] for row in descriptors}
+    assert "re/workspace/manifest.json" in descriptor_paths
+    assert "re/sources/api/manifest.json" in descriptor_paths
+    assert "re/sources/web/manifest.json" not in descriptor_paths
+    assert "re/sources/web/overview.md" not in descriptor_paths
+    assert not any(
+        row["kind"] in {
+            "re-codegraph-analysis",
+            "re-analysis",
+            "re-structure",
+            "re-configs",
+            "re-dependencies",
+            "re-quality-report",
+        }
+        for row in descriptors
+    )
+
+    prompt = _render_published_re_context({"published_re_context": context})
+    assert "re/sources/api/manifest.json" in prompt
+    assert "Published RE Source Brief: api" in prompt
+    assert "re/sources/web" not in prompt
+    assert "codegraph-analysis.json" not in prompt
+
+    spec_dir = tmp_path / "specs" / "001-selected-api"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text(
+        "# Selected API\n\n- **FR-001**: Use the selected API.\n",
+        encoding="utf-8",
+    )
+    write_canonical_re_context(tmp_path, spec_dir, context)
+    monkeypatch.setattr("echelon.spec_graph._add_re_memory", lambda *args: None)
+
+    graph = build_spec_graph(tmp_path, spec_dir).to_dict()
+    edges = {
+        (edge["source"], edge["type"], edge["target"])
+        for edge in graph["edges"]
+    }
+    assert (
+        "spec:001-selected-api",
+        "USES_RE_SOURCE",
+        "re-source:api",
+    ) in edges
+    assert not any(
+        edge_type == "USES_RE_SOURCE" and target == "re-source:web"
+        for _, edge_type, target in edges
+    )
+
+
+@pytest.mark.unit
 def test_write_canonical_re_context_hashes_sorted_snapshot_files(
     tmp_path: Path,
 ) -> None:
@@ -373,6 +569,8 @@ def test_write_canonical_re_context_hashes_sorted_snapshot_files(
     overview.parent.mkdir(parents=True)
     overview.write_text("# Overview\n", encoding="utf-8")
     manifest.write_text('{"schema_version": 1}\n', encoding="utf-8")
+    workspace_brief = snapshot_root / "RE-WORKSPACE-BRIEF.md"
+    workspace_brief.write_text("# Generated briefing\n", encoding="utf-8")
     spec_dir = tmp_path / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
 
@@ -387,6 +585,8 @@ def test_write_canonical_re_context_hashes_sorted_snapshot_files(
                 "overview": str(overview),
                 "manifest": str(manifest),
                 "duplicate": str(overview),
+                "context_artifacts": [str(overview), str(manifest)],
+                "rendered_briefings": {"workspace": str(workspace_brief)},
             },
         },
     )
@@ -449,6 +649,6 @@ def test_write_canonical_re_context_rejects_paths_outside_snapshot(
                 "status": "attached",
                 "generation": 1,
                 "snapshot_root": str(snapshot_root),
-                "artifacts": {"outside": str(outside)},
+                "artifacts": {"context_artifacts": [str(outside)]},
             },
         )
