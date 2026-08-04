@@ -971,3 +971,47 @@ def test_complete_verify_spec_run_rejects_link_below_workspace_without_mutation(
         complete_verify_spec_run(runs / "active/verify-spec/001-demo")
 
     assert state_path.read_bytes() == before
+
+
+def test_complete_verify_spec_run_normalizes_looping_trusted_workspace(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from harness import verify_spec_run
+
+    workspace = tmp_path / "workspace"
+    run = workspace / "runs/verify-spec-001"
+    run.mkdir(parents=True)
+    state_path = run / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "spec_id": "001-demo",
+                "status": "in_progress",
+                "topology_evidence": "ready",
+                "fulfillment_artifacts": "valid",
+                "reconcile": False,
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    before = state_path.read_bytes()
+    pinned_workspace = tmp_path / "workspace-pinned"
+    original_write = verify_spec_run.write_json_atomic
+
+    def loop_then_write(path, value, *, trusted_root):
+        workspace.rename(pinned_workspace)
+        workspace.symlink_to(workspace.name, target_is_directory=True)
+        return original_write(path, value, trusted_root=trusted_root)
+
+    monkeypatch.setattr(verify_spec_run, "write_json_atomic", loop_then_write)
+
+    with pytest.raises(VerifySpecRunInitError, match="trusted root is unavailable"):
+        complete_verify_spec_run(
+            run,
+            completed_at="2026-08-04T19:00:00+00:00",
+        )
+
+    assert (pinned_workspace / "runs/verify-spec-001/state.json").read_bytes() == before

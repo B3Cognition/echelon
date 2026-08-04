@@ -136,3 +136,23 @@ def test_durable_json_rejects_alias_below_trusted_base_without_external_writes(
         )
 
     assert _tree_snapshot(outside) == before
+
+
+@pytest.mark.unit
+def test_durable_json_normalizes_looping_trusted_root_without_mutation(
+    tmp_path: Path,
+) -> None:
+    from harness.durable_json import DurableJsonError, write_json_atomic
+
+    loop = tmp_path / "trusted-loop"
+    loop.symlink_to(loop.name, target_is_directory=True)
+    before = _tree_snapshot(tmp_path)
+
+    with pytest.raises(DurableJsonError, match="trusted root is unavailable"):
+        write_json_atomic(
+            loop / "state.json",
+            {"status": "complete"},
+            trusted_root=loop,
+        )
+
+    assert _tree_snapshot(tmp_path) == before

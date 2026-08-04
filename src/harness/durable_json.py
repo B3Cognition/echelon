@@ -87,7 +87,7 @@ def _open_destination_parent(
         raise DurableJsonError("JSON destination has no filename below trusted root")
     try:
         canonical_root = lexical_root.resolve(strict=True)
-    except OSError as exc:
+    except (OSError, RuntimeError) as exc:
         raise DurableJsonError(f"JSON trusted root is unavailable: {lexical_root}") from exc
 
     root_fd = _open_directory_strict(canonical_root)
