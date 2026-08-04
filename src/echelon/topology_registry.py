@@ -320,7 +320,7 @@ def _parse_source(
         for artifact in provider_receipt.artifacts.values():
             _read_hashed_artifact(root, source_id, artifact)
     receipt_document = _read_json_bytes(_read_hashed_artifact(root, source_id, receipt), f"receipt {source_id}")
-    receipt_source, receipt_fingerprint, receipt_providers, analyzed_commit, provenance = _parse_source_receipt(
+    receipt_source, receipt_fingerprint, receipt_providers, analyzed_commit, provenance, receipt_generation = _parse_source_receipt(
         receipt_document, source_id, source_path, generation
     )
     if receipt_source != source_id or receipt_fingerprint != fingerprint:
@@ -332,7 +332,7 @@ def _parse_source(
         source_fingerprint=fingerprint,
         receipt=receipt,
         providers=receipt_providers,
-        generation=generation,
+        generation=receipt_generation,
         analyzed_commit=analyzed_commit,
         provenance=provenance,
     )
@@ -340,14 +340,15 @@ def _parse_source(
 
 def _parse_source_receipt(
     document: object, source_id: str, source_path: str, generation: int
-) -> tuple[str, SourceFingerprint, Mapping[str, TopologyProviderReceipt], str | None, Mapping[str, object]]:
+) -> tuple[str, SourceFingerprint, Mapping[str, TopologyProviderReceipt], str | None, Mapping[str, object], int]:
     data = _object(document, f"source receipt {source_id}")
     _exact_keys(
         data,
         {"schema_version", "generation", "source_id", "source_path", "source_fingerprint", "analyzed_commit", "provenance", "providers"},
         f"source receipt {source_id}",
     )
-    if _schema_version(data, f"source receipt {source_id}") != 1 or _positive_int(data, "generation") != generation:
+    receipt_generation = _positive_int(data, "generation")
+    if _schema_version(data, f"source receipt {source_id}") != 1 or receipt_generation > generation:
         raise TopologyRegistryError(f"source receipt generation disagrees with index for {source_id}")
     receipt_source = _source_id(data.get("source_id"))
     if receipt_source != source_id or _source_path(data.get("source_path"), "receipt source_path") != source_path:
@@ -361,7 +362,7 @@ def _parse_source_receipt(
         raise TopologyRegistryError("analyzed_commit must be a string or null")
     _validate_commit(analyzed_commit, fingerprint)
     provenance = _parse_provenance(data.get("provenance"))
-    return receipt_source, fingerprint, providers, analyzed_commit, provenance
+    return receipt_source, fingerprint, providers, analyzed_commit, provenance, receipt_generation
 
 
 def _parse_providers(

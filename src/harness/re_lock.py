@@ -1,4 +1,4 @@
-"""Single-writer locking for workspace RE publication."""
+"""Single-writer locking for workspace artifact publication."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ class RePublishLocked(RuntimeError):
 
     def __init__(self, owner_run_id: str) -> None:
         self.owner_run_id = owner_run_id
-        super().__init__(f"RE publication lock is owned by {owner_run_id}")
+        super().__init__(f"workspace artifact publication lock is owned by {owner_run_id}")
 
 
 class ReExtractLocked(RuntimeError):
@@ -42,7 +42,7 @@ class RePublicationActiveRun(RuntimeError):
     def __init__(self, runs: tuple[Path, ...]) -> None:
         self.runs = runs
         super().__init__(
-            "other active RE runs block publication: "
+            "other active RE runs block workspace artifact publication: "
             + ", ".join(path.name for path in runs)
         )
 

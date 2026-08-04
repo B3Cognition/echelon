@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import shutil
-import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -21,6 +19,15 @@ from harness.re_artifacts import (
     validate_re_artifact_descriptor,
 )
 from harness.re_architecture import validate_re_architecture_catalog
+from harness.publication_transaction import (
+    PublicationOperation,
+    PublicationTransaction,
+    PublicationTransactionError,
+    apply_publication_transaction,
+    rollback_publication_transaction,
+    write_json_atomic,
+    write_publication_journal,
+)
 from harness.re_lock import (
     RePublishLock,
     RePublishRecoveryRequired,
@@ -343,21 +350,19 @@ def recover_interrupted_publication(
             root,
             stale_after_seconds=stale_after_seconds,
         )
-    operations = _validated_journal_operations(data.get("operations"))
-    transaction = _Transaction(root=stage_root, journal=journal, operations=operations)
-    _rollback_transaction(transaction, paths.root)
+    try:
+        transaction = PublicationTransaction.from_journal(
+            workspace_root=paths.root,
+            staging_root=stage_root,
+            journal=journal,
+        )
+    except PublicationTransactionError as exc:
+        raise RePublishRecoveryRequired(str(exc)) from exc
+    rollback_publication_transaction(transaction)
     if not recover_stale_publish_lock(root, stale_after_seconds=stale_after_seconds):
         raise RePublishRecoveryRequired("stale publication lock could not be released")
     shutil.rmtree(stage_root)
     return True
-
-
-@dataclass
-class _Transaction:
-    root: Path
-    journal: Path
-    operations: list[dict[str, Any]]
-    expected_generation: int | None = None
 
 
 def _prepare_transaction(
@@ -366,7 +371,7 @@ def _prepare_transaction(
     candidate: RePublicationCandidate,
     current: PublishedReIndex | None,
     generation: int,
-) -> _Transaction:
+) -> PublicationTransaction:
     stage_root = paths.staging / candidate.run_id
     journal = stage_root / "rollback-journal.json"
     if journal.is_file():
@@ -387,7 +392,7 @@ def _prepare_transaction(
             for source in current.sources.values()
         )
 
-    operations: list[dict[str, Any]] = []
+    operations: list[PublicationOperation] = []
     changed_source_ids = set(candidate.refreshed_sources + candidate.empty_sources)
     if current:
         reused_source_ids = (
@@ -416,7 +421,7 @@ def _prepare_transaction(
                         source_id=source_id,
                     )
                 ]
-                _write_json_atomic(manifest_path, manifest)
+                write_json_atomic(manifest_path, manifest)
                 source_records[source_id]["manifest_artifact"] = (
                     _manifest_artifact(
                         manifest_path,
@@ -530,7 +535,7 @@ def _prepare_transaction(
             )
             cache_stage = new_root / "re" / cache_relative
             _copy_heavy_source_artifacts(staged_source, cache_stage)
-            _write_json_atomic(
+            write_json_atomic(
                 cache_stage / "cache-manifest.json",
                 {
                     "schema_version": 1,
@@ -564,7 +569,7 @@ def _prepare_transaction(
                 )
             ],
         )
-        _write_json_atomic(durable_source / "manifest.json", manifest)
+        write_json_atomic(durable_source / "manifest.json", manifest)
         source_records[source_id] = _index_source_record(
             source,
             source_status,
@@ -611,7 +616,7 @@ def _prepare_transaction(
             )
         ],
     }
-    _write_json_atomic(workspace_stage / "manifest.json", workspace_manifest)
+    write_json_atomic(workspace_stage / "manifest.json", workspace_manifest)
     workspace_manifest_artifact = _manifest_artifact(
         workspace_stage / "manifest.json",
         PurePosixPath("re/workspace/manifest.json"),
@@ -661,12 +666,13 @@ def _prepare_transaction(
         "warnings": list(candidate.warnings),
     }
     staged_index = new_root / "re" / "index.json"
-    _write_json_atomic(staged_index, index_payload)
+    write_json_atomic(staged_index, index_payload)
     operations.append(_operation(stage_root, "index.json", staged="new/re/index.json"))
-    transaction = _Transaction(
-        root=stage_root,
+    transaction = PublicationTransaction(
+        workspace_root=paths.root,
+        staging_root=stage_root,
         journal=journal,
-        operations=operations,
+        operations=tuple(operations),
         expected_generation=generation,
     )
     try:
@@ -674,25 +680,26 @@ def _prepare_transaction(
     except Exception:
         shutil.rmtree(stage_root)
         raise
-    _write_journal(transaction, "prepared")
+    write_publication_journal(transaction, "prepared")
     return transaction
 
 
 def _apply_transaction(
-    transaction: _Transaction,
+    transaction: PublicationTransaction,
     registry: ReRegistryPaths,
     *,
     fault_hook: Callable[[str], None] | None,
 ) -> None:
-    _write_journal(transaction, "replacing")
-    try:
-        for operation in transaction.operations[:-1]:
-            _apply_operation(transaction, registry.root, operation)
-        if fault_hook:
+    def hook(point: str) -> None:
+        if fault_hook is None:
+            return
+        if point == "before_replace:index.json":
             fault_hook("before_index_replace")
-        _apply_operation(transaction, registry.root, transaction.operations[-1])
-        if fault_hook:
+        elif point == "after_replace:index.json":
             fault_hook("after_index_replace")
+
+    try:
+        apply_publication_transaction(transaction, fault_hook=hook)
         published = PublishedReIndex.from_path(registry.index)
         if (
             transaction.expected_generation is not None
@@ -701,65 +708,16 @@ def _apply_transaction(
             raise RePublicationError(
                 "installed RE index generation does not match transaction"
             )
-        _write_journal(transaction, "complete")
     except Exception:
-        _rollback_transaction(transaction, registry.root)
+        rollback_publication_transaction(transaction)
         raise
-    shutil.rmtree(transaction.root)
+    shutil.rmtree(transaction.staging_root)
 
 
-def _apply_operation(
-    transaction: _Transaction,
-    registry_root: Path,
-    operation: dict[str, Any],
-) -> None:
-    final = registry_root / operation["final"]
-    backup = transaction.root / operation["backup"]
-    staged_value = operation.get("staged")
-    staged = transaction.root / staged_value if staged_value else None
-    if final.exists():
-        backup.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(final, backup)
-        operation["backed_up"] = True
-        _write_journal(transaction, "replacing")
-    if staged is not None:
-        final.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(staged, final)
-        operation["installed"] = True
-        _write_journal(transaction, "replacing")
-
-
-def _rollback_transaction(transaction: _Transaction, registry_root: Path) -> None:
-    for operation in reversed(transaction.operations):
-        final = registry_root / operation["final"]
-        backup = transaction.root / operation["backup"]
-        if operation.get("installed") and final.exists():
-            _remove_path(final)
-        if operation.get("backed_up") and backup.exists():
-            final.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(backup, final)
-    _write_journal(transaction, "rolled_back")
-
-
-def _operation(stage_root: Path, final: str, *, staged: str | None) -> dict[str, Any]:
+def _operation(stage_root: Path, final: str, *, staged: str | None) -> PublicationOperation:
     del stage_root
-    return {
-        "final": final,
-        "staged": staged,
-        "backup": f"rollback/{final}",
-        "backed_up": False,
-        "installed": False,
-    }
-
-
-def _write_journal(transaction: _Transaction, status: str) -> None:
-    _write_json_atomic(
-        transaction.journal,
-        {
-            "schema_version": 1,
-            "status": status,
-            "operations": transaction.operations,
-        },
+    return PublicationOperation(
+        PurePosixPath(final), PurePosixPath(staged) if staged is not None else None
     )
 
 
@@ -1159,72 +1117,3 @@ def _read_json(path: Path, *, required: bool = True) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise RePublicationValidationError(f"publication input must be an object: {path}")
     return raw
-
-
-def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(
-        dir=str(path.parent), prefix=f".{path.name}-", suffix=".tmp"
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2, sort_keys=True)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        Path(temporary).replace(path)
-    except Exception:
-        try:
-            os.unlink(temporary)
-        except OSError:
-            pass
-        raise
-
-
-def _remove_path(path: Path) -> None:
-    if path.is_dir() and not path.is_symlink():
-        shutil.rmtree(path)
-    else:
-        path.unlink()
-
-
-def _validated_journal_operations(raw: object) -> list[dict[str, Any]]:
-    if not isinstance(raw, list):
-        raise RePublishRecoveryRequired("rollback journal operations must be a list")
-    operations: list[dict[str, Any]] = []
-    for entry in raw:
-        if not isinstance(entry, dict):
-            raise RePublishRecoveryRequired("rollback journal operation must be an object")
-        final = _safe_transaction_path(entry.get("final"), "final")
-        backup = _safe_transaction_path(entry.get("backup"), "backup")
-        staged_raw = entry.get("staged")
-        staged = (
-            _safe_transaction_path(staged_raw, "staged")
-            if staged_raw is not None
-            else None
-        )
-        backed_up = entry.get("backed_up")
-        installed = entry.get("installed")
-        if not isinstance(backed_up, bool) or not isinstance(installed, bool):
-            raise RePublishRecoveryRequired(
-                "rollback journal operation flags must be booleans"
-            )
-        operations.append(
-            {
-                "final": final,
-                "backup": backup,
-                "staged": staged,
-                "backed_up": backed_up,
-                "installed": installed,
-            }
-        )
-    return operations
-
-
-def _safe_transaction_path(value: object, field: str) -> str:
-    if not isinstance(value, str) or not value:
-        raise RePublishRecoveryRequired(f"rollback journal {field} path is malformed")
-    path = PurePosixPath(value)
-    if path.is_absolute() or ".." in path.parts or "\\" in value:
-        raise RePublishRecoveryRequired(f"rollback journal {field} path is unsafe")
-    return path.as_posix()
