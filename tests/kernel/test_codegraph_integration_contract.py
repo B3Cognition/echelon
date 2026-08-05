@@ -412,6 +412,41 @@ if (summary.schema_version !== 2 || summary.tool !== 'codegraph' ||
     assert completed.returncode == 0, completed.stderr
 
 
+def test_bridge_marks_failed_file_extraction_partial(tmp_path: Path) -> None:
+    script = """
+const bridge = require(process.argv[2]);
+const symbol = {
+  symbol_key: 'sha256:' + 'a'.repeat(64), qualified_name: 'api.run', name: 'run',
+  kind: 'function', file_path: 'src/api.py', line_start: 1, line_end: 2
+};
+const output = bridge.assembleAnalysisOutput({
+  repoPath: '/provider/native/repo', symbols: [symbol], relationships: [],
+  callGraph: [], typeHierarchy: [], impactRadius: [], publicSymbols: [symbol],
+  indexStats: {
+    total_files: 3, supported_files: 3, unsupported_files: 0, failed_files: 2,
+    total_nodes: 1, total_edges: 0, build_time_ms: 1,
+    extraction_success_rate: 33.33, index_state: 'degraded'
+  },
+  extractionSummary: {
+    languages: [{language: 'python', file_count: 1, status: 'supported'}],
+    total_extracted: 1, total_skipped_unsupported: 0, total_skipped_error: 2,
+    unsupported_languages: []
+  }
+});
+if (output.provider_status !== 'partial' || output.complete !== false) process.exit(1);
+"""
+    script_path = tmp_path / "bridge-failed-extraction-contract.js"
+    script_path.write_text(script, encoding="utf-8")
+    completed = subprocess.run(
+        ["node", str(script_path), str(CODEGRAPH_RUNTIME_DIR / "codegraph-bridge.js")],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+
 def test_run_analysis_polyrepo_writes_per_repo_codegraph_artifacts():
     run_analysis = (
         EXT_ROOT / "extension" / "scripts" / "bash" / "re" / "run-analysis.sh"

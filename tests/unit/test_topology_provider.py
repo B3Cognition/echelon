@@ -271,6 +271,18 @@ def test_load_provider_maps_provider_specific_status_vocabularies(
 
 
 @pytest.mark.unit
+def test_codegraph_rejects_complete_artifact_with_failed_extraction() -> None:
+    from echelon.topology_provider import TopologyProviderError, load_provider_document
+
+    document = _codegraph(status="complete", complete=True)
+    document["index_stats"] = {"failed_files": 2}
+    document["extraction_summary"] = {"total_skipped_error": 2}
+
+    with pytest.raises(TopologyProviderError, match="failed extraction"):
+        load_provider_document(document, provider="codegraph", source_id="api")
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     "mutate",
     [

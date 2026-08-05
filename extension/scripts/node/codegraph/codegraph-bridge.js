@@ -245,7 +245,10 @@ function assembleAnalysisOutput(params) {
             languageCoverage[ext] = 'unsupported';
         }
     }
-    const complete = visibleSymbols.length === inScopeSymbols.length &&
+    const extractionComplete = (indexStats.failed_files ?? 0) === 0 &&
+        (extractionSummary.total_skipped_error ?? 0) === 0;
+    const complete = extractionComplete &&
+        visibleSymbols.length === inScopeSymbols.length &&
         visibleRelationships.every((relationship) => hasVisibleRelationshipEndpoints(relationship, visibleSymbolKeys));
     const output = {
         schema_version: integrationTypes.CODEGRAPH_SCHEMA_VERSION,

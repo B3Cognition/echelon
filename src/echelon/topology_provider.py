@@ -740,6 +740,11 @@ def _validate_counts(
             raise TopologyProviderError("CodeGraph symbol counts do not reconcile")
         if values["discovered_relationships"] != values["emitted_relationships"] + values["excluded_relationships"]:
             raise TopologyProviderError("CodeGraph relationship counts do not reconcile")
+        failed_extractions = _codegraph_failed_extractions(document)
+        if failed_extractions and (native_status != "partial" or complete):
+            raise TopologyProviderError(
+                "CodeGraph failed extraction requires partial status and complete=false"
+            )
         if native_status == "complete" and not complete:
             raise TopologyProviderError("complete CodeGraph status requires complete=true")
         if native_status == "partial" and complete:
@@ -798,6 +803,24 @@ def _validate_counts(
     if supported is not (values["discovered_files"] > 0):
         raise TopologyProviderError("PerlGraph supported claim contradicts discovered files")
     return len(unresolved)
+
+
+def _codegraph_failed_extractions(document: Mapping[str, object]) -> int:
+    counts: list[int] = []
+    for section, field in (
+        ("index_stats", "failed_files"),
+        ("extraction_summary", "total_skipped_error"),
+    ):
+        if section not in document:
+            continue
+        counts.append(
+            _require_nonnegative_int(_require_object(document, section), field)
+        )
+    if len(counts) == 2 and counts[0] != counts[1]:
+        raise TopologyProviderError(
+            "CodeGraph failed extraction counts do not reconcile"
+        )
+    return counts[0] if counts else 0
 
 
 def _load_symbols(
