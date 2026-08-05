@@ -129,10 +129,13 @@ def test_re_analysis_delegates_missing_codegraph_to_provider_independent_shell(
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     controller._execute_analysis_command = execute
+    monkeypatch.delenv("ECHELON_CODEGRAPH_RUNTIME_DIR", raising=False)
+    monkeypatch.delenv("ECHELON_PERLGRAPH_RUNTIME_DIR", raising=False)
     monkeypatch.setenv("ECHELON_HOME", str(tmp_path / "empty-ech-home"))
 
     assert controller._run_analysis_script(plan) is None
     assert "ECHELON_CODEGRAPH_RUNTIME_DIR" not in captured
+    assert "ECHELON_PERLGRAPH_RUNTIME_DIR" not in captured
 
 
 def test_perlgraph_complete_deployed_runtime_wins_over_shared(tmp_path: Path) -> None:

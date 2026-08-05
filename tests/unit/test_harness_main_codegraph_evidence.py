@@ -13,6 +13,8 @@ def _run(
     args: list[str], *, echelon_home: Path | None = None
 ) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
+    env.pop("ECHELON_CODEGRAPH_RUNTIME_DIR", None)
+    env.pop("ECHELON_PERLGRAPH_RUNTIME_DIR", None)
     project_root = Path(args[1])
     env["HOME"] = str(project_root / ".test-home")
     env["ECHELON_HOME"] = str(
@@ -520,6 +522,40 @@ def test_write_codegraph_evidence_reports_missing_resolved_runtime(
     assert state["structural_evidence"] == "degraded"
     assert state["codegraph_evidence_quality"] == "manual_fallback_required"
     assert state["codegraph_summary_path"] == str(verify_run_dir / "codegraph-summary.json")
+
+
+def test_write_codegraph_evidence_missing_runtime_ignores_host_overrides(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    host_runtime = tmp_path / "host-codegraph"
+    _write_fake_bridge_at_runtime(host_runtime)
+    monkeypatch.setenv("ECHELON_CODEGRAPH_RUNTIME_DIR", str(host_runtime))
+    monkeypatch.setenv(
+        "ECHELON_PERLGRAPH_RUNTIME_DIR", str(tmp_path / "host-perlgraph")
+    )
+    _write_fake_codegraph_cli(tmp_path / "bin", success=False)
+    _prepend_path(monkeypatch, tmp_path / "bin")
+    verify_run_dir = tmp_path / "runs/verify-spec-001"
+    _write_verify_state(verify_run_dir)
+    spec_dir = project_root / "specs/001-demo"
+    spec_dir.mkdir(parents=True)
+
+    result = _run(
+        [
+            "write-codegraph-evidence",
+            str(project_root),
+            str(verify_run_dir),
+            str(spec_dir),
+        ],
+        echelon_home=tmp_path / "empty-echelon-home",
+    )
+
+    assert result.returncode != 0
+    error = (verify_run_dir / "codegraph-error.txt").read_text(encoding="utf-8")
+    assert "CodeGraph runtime is unavailable" in error
+    assert str(host_runtime) not in error
 
 
 def test_write_codegraph_evidence_cli_requires_init_owned_state(

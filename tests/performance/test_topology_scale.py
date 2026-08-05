@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import resource
 from pathlib import Path
@@ -30,6 +31,122 @@ from harness.topology_publication import (
 
 SYMBOL_COUNT = 31_000
 RELATIONSHIP_COUNT = 65_000
+MEASUREMENT_KEYS = frozenset(
+    {
+        "elapsed",
+        "peak_rss_bytes",
+        "max_payload_bytes",
+        "total_payload_bytes",
+    }
+)
+
+
+def _scale_subprocess_env() -> dict[str, str]:
+    env = {
+        key: os.environ[key]
+        for key in (
+            "HOME",
+            "LANG",
+            "LC_ALL",
+            "PATH",
+            "SYSTEMROOT",
+            "TEMP",
+            "TMP",
+            "TMPDIR",
+            "TZ",
+            "WINDIR",
+        )
+        if key in os.environ
+    }
+    env["PYTHONNOUSERSITE"] = "1"
+    return env
+
+
+def _validate_measurement(value: object) -> dict[str, float | int]:
+    if not isinstance(value, dict) or set(value) != MEASUREMENT_KEYS:
+        raise ValueError("scale measurement has the wrong schema")
+    elapsed = value["elapsed"]
+    if (
+        isinstance(elapsed, bool)
+        or not isinstance(elapsed, (int, float))
+        or not math.isfinite(elapsed)
+        or elapsed <= 0
+    ):
+        raise ValueError("scale elapsed measurement must be finite and positive")
+    for key in ("peak_rss_bytes", "max_payload_bytes", "total_payload_bytes"):
+        metric = value[key]
+        if isinstance(metric, bool) or not isinstance(metric, int) or metric <= 0:
+            raise ValueError(f"scale {key} measurement must be a positive integer")
+    return value
+
+
+@pytest.mark.parametrize(
+    "measurement",
+    (
+        {
+            "elapsed": -1.0,
+            "peak_rss_bytes": 1,
+            "max_payload_bytes": 1,
+            "total_payload_bytes": 1,
+        },
+        {
+            "elapsed": float("nan"),
+            "peak_rss_bytes": 1,
+            "max_payload_bytes": 1,
+            "total_payload_bytes": 1,
+        },
+        {
+            "elapsed": 1.0,
+            "peak_rss_bytes": 1.5,
+            "max_payload_bytes": 1,
+            "total_payload_bytes": 1,
+        },
+        {
+            "elapsed": 1.0,
+            "peak_rss_bytes": 1,
+            "max_payload_bytes": 0,
+            "total_payload_bytes": 1,
+        },
+        {
+            "elapsed": 1.0,
+            "peak_rss_bytes": 1,
+            "max_payload_bytes": 1,
+            "total_payload_bytes": 1,
+            "unexpected": 1,
+        },
+    ),
+)
+def test_validate_measurement_rejects_invalid_worker_output(
+    measurement: object,
+) -> None:
+    with pytest.raises(ValueError):
+        _validate_measurement(measurement)
+
+
+def test_scale_subprocess_env_drops_startup_and_runtime_injection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for key in (
+        "PYTHONPATH",
+        "PYTHONHOME",
+        "PYTHONSTARTUP",
+        "ECHELON_HOME",
+        "ECHELON_CODEGRAPH_RUNTIME_DIR",
+        "ECHELON_PERLGRAPH_RUNTIME_DIR",
+    ):
+        monkeypatch.setenv(key, f"host-{key.lower()}")
+
+    env = _scale_subprocess_env()
+
+    assert env["PYTHONNOUSERSITE"] == "1"
+    assert not set(env) & {
+        "PYTHONPATH",
+        "PYTHONHOME",
+        "PYTHONSTARTUP",
+        "ECHELON_HOME",
+        "ECHELON_CODEGRAPH_RUNTIME_DIR",
+        "ECHELON_PERLGRAPH_RUNTIME_DIR",
+    }
 
 
 def _workspace(root: Path) -> Path:
@@ -387,25 +504,22 @@ def test_published_topology_scales_without_projecting_provider_graphs(
 import json
 import sys
 from pathlib import Path
+repository = Path.cwd()
+sys.path[:0] = [str(repository / "src"), str(repository)]
 from tests.performance.test_topology_scale import _run_scale_workflow
 print(json.dumps(_run_scale_workflow(Path(sys.argv[1]))))
 """
-    env = dict(os.environ)
-    pythonpath = [str(repository / "src"), str(repository)]
-    if env.get("PYTHONPATH"):
-        pythonpath.append(env["PYTHONPATH"])
-    env["PYTHONPATH"] = os.pathsep.join(pythonpath)
 
     completed = subprocess.run(
         [sys.executable, "-c", script, str(tmp_path)],
         cwd=repository,
-        env=env,
+        env=_scale_subprocess_env(),
         check=True,
         capture_output=True,
         text=True,
         timeout=150,
     )
-    measurement = json.loads(completed.stdout)
+    measurement = _validate_measurement(json.loads(completed.stdout))
 
     assert measurement["elapsed"] < 120.0, (
         f"topology scale workflow took {measurement['elapsed']:.2f}s"

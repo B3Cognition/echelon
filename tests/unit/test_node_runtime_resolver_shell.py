@@ -11,6 +11,14 @@ ROOT = Path(__file__).resolve().parents[2]
 RESOLVER = ROOT / "extension" / "scripts" / "bash" / "node-runtime-resolver.sh"
 
 
+def _isolated_env(**values: str) -> dict[str, str]:
+    env = os.environ.copy()
+    env.pop("ECHELON_CODEGRAPH_RUNTIME_DIR", None)
+    env.pop("ECHELON_PERLGRAPH_RUNTIME_DIR", None)
+    env.update(values)
+    return env
+
+
 def _run_resolver(
     function: str,
     local_node_root: Path,
@@ -85,9 +93,34 @@ def test_codegraph_uses_shared_runtime_when_local_is_source_only(
     result = _run_resolver(
         "echelon_resolve_codegraph_runtime",
         local_node_root,
-        env={**os.environ, "ECHELON_HOME": str(tmp_path / "echelon-home")},
+        env=_isolated_env(ECHELON_HOME=str(tmp_path / "echelon-home")),
     )
 
+    assert result.returncode == 0, result.stderr
+    assert Path(result.stdout.strip()) == shared
+
+
+def test_isolated_env_drops_ambient_runtime_overrides(
+    tmp_path: Path, monkeypatch
+) -> None:
+    host = tmp_path / "host-codegraph"
+    shared = tmp_path / "echelon-home/node/codegraph"
+    _write_complete_codegraph(host)
+    _write_complete_codegraph(shared)
+    monkeypatch.setenv("ECHELON_CODEGRAPH_RUNTIME_DIR", str(host))
+    monkeypatch.setenv(
+        "ECHELON_PERLGRAPH_RUNTIME_DIR", str(tmp_path / "host-perlgraph")
+    )
+
+    env = _isolated_env(ECHELON_HOME=str(tmp_path / "echelon-home"))
+    result = _run_resolver(
+        "echelon_resolve_codegraph_runtime",
+        tmp_path / "project/scripts/node",
+        env=env,
+    )
+
+    assert "ECHELON_CODEGRAPH_RUNTIME_DIR" not in env
+    assert "ECHELON_PERLGRAPH_RUNTIME_DIR" not in env
     assert result.returncode == 0, result.stderr
     assert Path(result.stdout.strip()) == shared
 
@@ -105,7 +138,7 @@ def test_codegraph_uses_shared_runtime_when_local_contract_is_stale(
     result = _run_resolver(
         "echelon_resolve_codegraph_runtime",
         local_node_root,
-        env={**os.environ, "ECHELON_HOME": str(tmp_path / "echelon-home")},
+        env=_isolated_env(ECHELON_HOME=str(tmp_path / "echelon-home")),
     )
 
     assert result.returncode == 0, result.stderr
@@ -127,7 +160,7 @@ def test_codegraph_uses_shared_runtime_when_local_sdk_version_is_wrong(
     result = _run_resolver(
         "echelon_resolve_codegraph_runtime",
         local_node_root,
-        env={**os.environ, "ECHELON_HOME": str(tmp_path / "echelon-home")},
+        env=_isolated_env(ECHELON_HOME=str(tmp_path / "echelon-home")),
     )
 
     assert result.returncode == 0, result.stderr
@@ -144,7 +177,7 @@ def test_perlgraph_complete_local_runtime_wins_over_shared(tmp_path: Path) -> No
     result = _run_resolver(
         "echelon_resolve_perlgraph_runtime",
         local_node_root,
-        env={**os.environ, "ECHELON_HOME": str(tmp_path / "echelon-home")},
+        env=_isolated_env(ECHELON_HOME=str(tmp_path / "echelon-home")),
     )
 
     assert result.returncode == 0, result.stderr
@@ -163,11 +196,10 @@ def test_explicit_incomplete_codegraph_override_fails_without_fallback(
     result = _run_resolver(
         "echelon_resolve_codegraph_runtime",
         local_node_root,
-        env={
-            **os.environ,
-            "ECHELON_HOME": str(tmp_path / "echelon-home"),
-            "ECHELON_CODEGRAPH_RUNTIME_DIR": str(incomplete),
-        },
+        env=_isolated_env(
+            ECHELON_HOME=str(tmp_path / "echelon-home"),
+            ECHELON_CODEGRAPH_RUNTIME_DIR=str(incomplete),
+        ),
     )
 
     assert result.returncode != 0
@@ -183,7 +215,7 @@ def test_echelon_home_relocates_context7_runtime(tmp_path: Path) -> None:
     result = _run_resolver(
         "echelon_resolve_context7_runtime",
         local_node_root,
-        env={**os.environ, "ECHELON_HOME": str(tmp_path / "custom-home")},
+        env=_isolated_env(ECHELON_HOME=str(tmp_path / "custom-home")),
     )
 
     assert result.returncode == 0, result.stderr
