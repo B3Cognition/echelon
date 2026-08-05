@@ -151,6 +151,63 @@ def test_only_finalizing_replacement_run_owns_retarget_completion_effect() -> No
     )
 
 
+@pytest.mark.parametrize(
+    "effect_error",
+    ["retarget", "os", "json"],
+)
+def test_retarget_finalization_error_is_persisted_as_bounded_completion_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    effect_error: str,
+) -> None:
+    import echelon.spec_retarget_finalization as finalization
+
+    ctrl, store = _controller(tmp_path)
+    store.initialize("r", "greenfield", "msg", 0, "phase1-what")
+    prepared = prepare_controller_completion(
+        tmp_path,
+        ctrl._squad_dir,
+        completion_id="e" * 32,
+        origin="routed",
+        publication={"kind": "none"},
+        route={
+            "kind": "routed",
+            "from_phase": "phase1-what",
+            "to_phase": "phase1-why1",
+            "manual_phase_run": False,
+            "record_completion": True,
+        },
+        effect_plan=("retarget",),
+        checkpoint_prestate={"kind": "none"},
+        context_reason="retarget failure boundary",
+        mine_phase_a=False,
+        judgment_payload_sha256=(),
+        judgments=(),
+    )
+    _install_prepared_routed_completion(store, prepared)
+    failure = {
+        "retarget": finalization.RetargetFinalizationError(
+            "retarget finalization receipt drifted"
+        ),
+        "os": OSError("retarget report read failed"),
+        "json": json.JSONDecodeError(
+            "retarget manifest parse failed", "{", 0
+        ),
+    }[effect_error]
+    monkeypatch.setattr(
+        finalization,
+        "apply_or_verify_retarget_finalization",
+        MagicMock(side_effect=failure),
+    )
+
+    outcome = ctrl._drain_pending_controller_completion()
+
+    failed = store.load()
+    assert outcome.recovered is False
+    assert failed[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == "retarget"
+    assert failed["controller_completion_failure"]["code"] == "receipts_mismatch"
+
+
 def test_phase4_retarget_enters_finalizing_before_staging(tmp_path: Path) -> None:
     from echelon.spec_retarget_history import (
         RetargetRecoveryProjection,

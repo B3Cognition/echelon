@@ -1731,15 +1731,21 @@ class SquadController:
             return
         if effect == "retarget":
             from echelon.spec_retarget_finalization import (
+                RetargetFinalizationError,
                 apply_or_verify_retarget_finalization,
             )
 
-            receipt = apply_or_verify_retarget_finalization(
-                prepared,
-                project_root=self._project_root,
-                state=state,
-                expected_receipt=existing,
-            )
+            try:
+                receipt = apply_or_verify_retarget_finalization(
+                    prepared,
+                    project_root=self._project_root,
+                    state=state,
+                    expected_receipt=existing,
+                )
+            except RetargetFinalizationError as exc:
+                raise CompletionError("receipts_mismatch") from exc
+            except (Exception, SystemExit) as exc:
+                raise CompletionError("receipts_mismatch") from exc
             persist_completion_effect_receipt(prepared, effect, receipt)
             return
         raise CompletionError("intent_mismatch")

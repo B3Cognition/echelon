@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 import subprocess
 from types import SimpleNamespace
@@ -36,9 +38,9 @@ def _memory_receipt() -> dict[str, object]:
         "spec_id": "001-demo",
         "deleted_count": 0,
         "deleted_ids": [],
-        "drawer_set_digest": "sha256:" + "a" * 64,
-        "mine_status": None,
-        "audit_status": None,
+        "drawer_set_digest": "sha256:" + hashlib.sha256(b"[]").hexdigest(),
+        "mine_status": "not_applicable",
+        "audit_status": "not_applicable",
         "adapter": None,
         "wing": None,
         "palace_path": None,
@@ -64,6 +66,64 @@ def _graph_receipt(*, terminal: bool) -> dict[str, object]:
     }
 
 
+def _mine_report(drawer_ids: list[str]) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "spec_id": "001-demo",
+        "spec_dir": "specs/001-demo",
+        "wing": "test",
+        "palace_path": "test",
+        "status": "complete",
+        "expected_count": len(drawer_ids),
+        "written_count": len(drawer_ids),
+        "adopted_count": 0,
+        "skipped_count": 0,
+        "failed_count": 0,
+        "drifted_count": 0,
+        "unavailable_count": 0,
+        "drawer_ids": drawer_ids,
+        "expected_drawer_ids": drawer_ids,
+        "errors": [],
+    }
+
+
+def _memory_audit(drawer_ids: list[str]) -> SimpleNamespace:
+    return SimpleNamespace(
+        spec_id="001-demo",
+        status="pass",
+        wing="test",
+        palace_path="test",
+        expected_count=len(drawer_ids),
+        present_current_count=len(drawer_ids),
+        missing=[],
+        stale=[],
+        wrong_wing=[],
+        wrong_room=[],
+        duplicate=[],
+        non_canonical=[],
+        lifecycle_excluded=[],
+        errors=[],
+    )
+
+
+def _write_memory_manifest(
+    finalization: object,
+    spec_dir: Path,
+    digest: str,
+) -> None:
+    (spec_dir / "mempalace-refresh-manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "spec_id": "001-demo",
+                "files": finalization._current_memory_report_records(spec_dir),
+                "report_set_digest": digest,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 def _retarget_state(status: str) -> dict[str, object]:
     memory = _memory_receipt()
     baseline_graph = _graph_receipt(terminal=False)
@@ -86,8 +146,6 @@ def _retarget_state(status: str) -> dict[str, object]:
         state["graph_invalidation"] = baseline_graph
     if status == "complete":
         state.update(
-            memory_finalization=memory,
-            graph_finalization=final_graph,
             replacement_commit="d" * 40,
             finalization_receipt={
                 "revision_id": "rt-1",
@@ -284,6 +342,270 @@ def test_state_schema_retarget_receipt_matrix_accepts_valid_status_examples(
 
 
 @pytest.mark.unit
+def test_state_schema_accepts_exact_controller_adopted_complete_state() -> None:
+    value = _retarget_state("complete")
+
+    assert not _retarget_schema_errors(value)
+    assert "memory_finalization" not in value
+    assert "graph_finalization" not in value
+
+    incomplete = __import__("copy").deepcopy(value)
+    del incomplete["finalization_receipt"]["memory"]
+    assert _retarget_schema_errors(incomplete)
+
+    extended = __import__("copy").deepcopy(value)
+    extended["finalization_receipt"]["extra"] = True
+    assert _retarget_schema_errors(extended)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("replay_path", ["persisted_progress", "expected_receipt"])
+@pytest.mark.parametrize(
+    "invalid_part",
+    [
+        "memory_fail",
+        "memory_warn",
+        "memory_invalid",
+        "memory_spec_id",
+        "graph_invalidated",
+        "graph_workspace_fail",
+        "graph_invalid",
+        "graph_spec_id",
+    ],
+)
+def test_replay_paths_reject_nonterminal_or_cross_spec_receipts_before_history(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    replay_path: str,
+    invalid_part: str,
+) -> None:
+    import echelon.spec_retarget_finalization as finalization
+
+    project_root = tmp_path / "project"
+    spec_dir = project_root / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    prepared = SimpleNamespace(
+        _transaction_root=tmp_path / "completion",
+        intent=SimpleNamespace(completion_id="e" * 32),
+    )
+    prepared._transaction_root.mkdir()
+    memory = _memory_receipt()
+    graph = _graph_receipt(terminal=True)
+    if invalid_part == "memory_fail":
+        memory["status"] = "fail"
+        memory["failure_code"] = "mine_failed"
+    elif invalid_part in {"memory_warn", "memory_invalid"}:
+        memory["status"] = invalid_part.removeprefix("memory_")
+    elif invalid_part == "memory_spec_id":
+        memory["spec_id"] = "002-other"
+    elif invalid_part == "graph_invalidated":
+        graph["spec_status"] = "invalidated"
+        graph["spec_graph_hash"] = None
+    elif invalid_part == "graph_workspace_fail":
+        graph["workspace_status"] = "fail"
+    elif invalid_part == "graph_invalid":
+        graph["spec_status"] = "invalid"
+    elif invalid_part == "graph_spec_id":
+        graph["spec_id"] = "002-other"
+    state = {
+        "spec_id": "001-demo",
+        "published_spec_dir": "specs/001-demo",
+        "retarget": {
+            "status": "finalizing",
+            "revision_id": "rt-1",
+            "checkpoint_commit": "a" * 40,
+            "replacement_targets": ["apps/web"],
+            "replacement_run_id": "replacement",
+            "baseline_run_id": "baseline",
+            "graph_invalidation": _graph_receipt(terminal=False),
+        },
+    }
+    if replay_path == "persisted_progress":
+        (prepared._transaction_root / "retarget-progress.json").write_text(
+            json.dumps(
+                {"completion_id": "e" * 32, "memory": memory, "graph": graph}
+            ),
+            encoding="utf-8",
+        )
+        expected: object = None
+    else:
+        expected = {
+            "revision_id": "rt-1",
+            "completion_id": "e" * 32,
+            "checkpoint_commit": "a" * 40,
+            "replacement_targets": ["apps/web"],
+            "memory": memory,
+            "graph": graph,
+            "replacement_commit": "d" * 40,
+            "status": "complete",
+        }
+    monkeypatch.setattr(
+        finalization,
+        "load_retarget_history",
+        lambda *_args: pytest.fail("advanced to history"),
+    )
+
+    with pytest.raises(finalization.RetargetFinalizationError):
+        finalization.apply_or_verify_retarget_finalization(
+            prepared,
+            project_root=project_root,
+            state=state,
+            expected_receipt=expected,
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "failure",
+    ["missing_report", "corrupt_mine", "corrupt_manifest", "audit_error"],
+)
+def test_memory_postimage_normalizes_evidence_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    import echelon.spec_retarget_finalization as finalization
+
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    drawer_ids = ["drawer-1"]
+    for name, payload in {
+        "mempalace-audit.json": b'{"audit":"pass"}\n',
+        "mempalace-audit.md": b"# audit\n",
+        "mempalace-mine.json": json.dumps(_mine_report(drawer_ids)).encode(),
+    }.items():
+        (spec_dir / name).write_bytes(payload)
+    report_digest = finalization._current_memory_report_set_digest(spec_dir)
+    _write_memory_manifest(finalization, spec_dir, report_digest)
+    drawer_digest = "sha256:" + hashlib.sha256(
+        json.dumps(drawer_ids, separators=(",", ":")).encode()
+    ).hexdigest()
+    values = {
+        **_memory_receipt(),
+        "status": "pass",
+        "drawer_set_digest": drawer_digest,
+        "mine_status": "complete",
+        "audit_status": "pass",
+        "adapter": "test",
+        "wing": "test",
+        "palace_path": "test",
+        "report_set_digest": report_digest,
+    }
+    for field in (
+        "deleted_ids",
+        "remaining_owned_ids",
+        "unrelated_missing_ids",
+        "unrelated_changed_ids",
+        "unexpected_added_ids",
+    ):
+        values[field] = tuple(values[field])
+    receipt = finalization.RetargetMemoryReceipt(**values)
+    monkeypatch.setattr(
+        finalization, "_configured_mempalace_wing", lambda *_args: "test"
+    )
+    if failure == "audit_error":
+        monkeypatch.setattr(
+            finalization,
+            "audit_spec_memory",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                RuntimeError("adapter audit failed")
+            ),
+        )
+    else:
+        monkeypatch.setattr(
+            finalization,
+            "audit_spec_memory",
+            lambda *_args, **_kwargs: _memory_audit(drawer_ids),
+        )
+    if failure == "missing_report":
+        (spec_dir / "mempalace-audit.md").unlink()
+    elif failure == "corrupt_mine":
+        (spec_dir / "mempalace-mine.json").write_text("{bad json\n")
+    elif failure == "corrupt_manifest":
+        (spec_dir / "mempalace-refresh-manifest.json").write_text("[]\n")
+
+    with pytest.raises(
+        finalization.RetargetFinalizationError,
+        match="^retarget finalization memory postimage drifted$",
+    ):
+        finalization.verify_retarget_memory_postimage(tmp_path, spec_dir, receipt)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "failure",
+    ["missing_graph", "graph_read_error", "audit_error", "corrupt_member"],
+)
+def test_graph_postimage_normalizes_evidence_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    import echelon.spec_retarget_finalization as finalization
+
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    spec_graph = spec_dir / "spec-artifact-graph.json"
+    workspace_graph = finalization.workspace_graph_path(tmp_path)
+    workspace_graph.parent.mkdir(parents=True, exist_ok=True)
+    spec_graph.write_bytes(b"spec graph")
+    workspace_graph.write_bytes(b"workspace graph")
+    spec_hash = "sha256:" + hashlib.sha256(b"spec graph").hexdigest()
+    workspace_hash = "sha256:" + hashlib.sha256(b"workspace graph").hexdigest()
+    receipt = finalization.RetargetGraphReceipt(
+        "001-demo", "pass", spec_hash, "pass", workspace_hash, ()
+    )
+    monkeypatch.setattr(
+        finalization,
+        "audit_spec_graph",
+        lambda *_args: SimpleNamespace(
+            spec_id="001-demo", graph_hash=spec_hash, status="pass"
+        ),
+    )
+    member = (
+        SimpleNamespace(spec_id="001-demo")
+        if failure == "corrupt_member"
+        else SimpleNamespace(
+            spec_id="001-demo",
+            included=True,
+            graph_hash=spec_hash,
+            audit_status="pass",
+        )
+    )
+    if failure == "audit_error":
+        monkeypatch.setattr(
+            finalization,
+            "audit_workspace_graph",
+            lambda *_args: (_ for _ in ()).throw(RuntimeError("audit failed")),
+        )
+    else:
+        monkeypatch.setattr(
+            finalization,
+            "audit_workspace_graph",
+            lambda *_args: SimpleNamespace(
+                graph_hash=workspace_hash,
+                status="pass",
+                findings=(),
+                members=(member,),
+            ),
+        )
+    if failure == "missing_graph":
+        spec_graph.unlink()
+    elif failure == "graph_read_error":
+        monkeypatch.setattr(
+            finalization,
+            "_sha256_file",
+            lambda *_args: (_ for _ in ()).throw(OSError("read failed")),
+        )
+
+    with pytest.raises(
+        finalization.RetargetFinalizationError,
+        match="^retarget finalization graph postimage drifted$",
+    ):
+        finalization.verify_retarget_graph_postimage(tmp_path, spec_dir, receipt)
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize("drift", ["report_bytes", "report_digest"])
 def test_memory_postimage_rejects_live_report_drift_without_mutation(
     tmp_path: Path,
@@ -303,13 +625,11 @@ def test_memory_postimage_rejects_live_report_drift_without_mutation(
     for name, payload in {
         "mempalace-audit.json": b'{"audit":"pass"}\n',
         "mempalace-audit.md": b"# audit\n",
-        "mempalace-mine.json": json.dumps({"drawer_ids": drawer_ids}).encode(),
+        "mempalace-mine.json": json.dumps(_mine_report(drawer_ids)).encode(),
     }.items():
         (spec_dir / name).write_bytes(payload)
     digest = finalization._current_memory_report_set_digest(spec_dir)
-    (spec_dir / "mempalace-refresh-manifest.json").write_text(
-        json.dumps({"report_set_digest": digest}), encoding="utf-8"
-    )
+    _write_memory_manifest(finalization, spec_dir, digest)
     memory_values = {
         **_memory_receipt(), "status": "pass", "drawer_set_digest": drawer_digest,
         "mine_status": "complete", "audit_status": "pass", "adapter": "test",
@@ -322,12 +642,12 @@ def test_memory_postimage_rejects_live_report_drift_without_mutation(
         memory_values[field] = tuple(memory_values[field])
     receipt = finalization.RetargetMemoryReceipt(**memory_values)
     monkeypatch.setattr(
+        finalization, "_configured_mempalace_wing", lambda *_args: "test"
+    )
+    monkeypatch.setattr(
         finalization,
         "audit_spec_memory",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            status="pass", expected_count=1, present_current_count=1,
-            missing=(), stale=(), errors=(),
-        ),
+        lambda *_args, **_kwargs: _memory_audit(drawer_ids),
     )
     original = {path.name: path.read_bytes() for path in spec_dir.iterdir()}
     if drift == "report_bytes":
@@ -427,7 +747,7 @@ def test_live_postimage_verifiers_reuse_exact_memory_and_graph_bytes(
     for name, payload in {
         "mempalace-audit.json": b'{"audit":"pass"}\n',
         "mempalace-audit.md": b"# audit\n",
-        "mempalace-mine.json": json.dumps({"drawer_ids": drawer_ids}).encode(),
+        "mempalace-mine.json": json.dumps(_mine_report(drawer_ids)).encode(),
         "spec-artifact-graph.json": b"spec graph",
     }.items():
         (spec_dir / name).write_bytes(payload)
@@ -435,9 +755,7 @@ def test_live_postimage_verifiers_reuse_exact_memory_and_graph_bytes(
     workspace_graph.parent.mkdir(parents=True, exist_ok=True)
     workspace_graph.write_bytes(b"workspace graph")
     report_digest = finalization._current_memory_report_set_digest(spec_dir)
-    (spec_dir / "mempalace-refresh-manifest.json").write_text(
-        json.dumps({"report_set_digest": report_digest}), encoding="utf-8"
-    )
+    _write_memory_manifest(finalization, spec_dir, report_digest)
     drawer_digest = "sha256:" + hashlib.sha256(
         json.dumps(drawer_ids, separators=(",", ":")).encode()
     ).hexdigest()
@@ -458,15 +776,17 @@ def test_live_postimage_verifiers_reuse_exact_memory_and_graph_bytes(
         "001-demo", "pass", spec_hash, "pass", workspace_hash, ()
     )
     monkeypatch.setattr(
+        finalization, "_configured_mempalace_wing", lambda *_args: "test"
+    )
+    monkeypatch.setattr(
         finalization, "audit_spec_memory",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            status="pass", expected_count=1, present_current_count=1,
-            missing=(), stale=(), errors=(),
-        ),
+        lambda *_args, **_kwargs: _memory_audit(drawer_ids),
     )
     monkeypatch.setattr(
         finalization, "audit_spec_graph",
-        lambda *_args: SimpleNamespace(graph_hash=spec_hash, status="pass"),
+        lambda *_args: SimpleNamespace(
+            spec_id="001-demo", graph_hash=spec_hash, status="pass"
+        ),
     )
     monkeypatch.setattr(
         finalization, "audit_workspace_graph",

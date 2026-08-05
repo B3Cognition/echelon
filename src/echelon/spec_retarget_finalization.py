@@ -82,8 +82,8 @@ def _sha256_file(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _current_memory_report_set_digest(spec_dir: Path) -> str:
-    files = []
+def _current_memory_report_records(spec_dir: Path) -> list[dict[str, object]]:
+    files: list[dict[str, object]] = []
     for name in _MEMORY_REPORTS:
         content = (spec_dir / name).read_bytes()
         files.append(
@@ -93,6 +93,11 @@ def _current_memory_report_set_digest(spec_dir: Path) -> str:
                 "size": len(content),
             }
         )
+    return files
+
+
+def _current_memory_report_set_digest(spec_dir: Path) -> str:
+    files = _current_memory_report_records(spec_dir)
     encoded = json.dumps(
         files,
         ensure_ascii=True,
@@ -102,43 +107,171 @@ def _current_memory_report_set_digest(spec_dir: Path) -> str:
     return "sha256:" + hashlib.sha256(encoded).hexdigest()
 
 
+def _empty_drawer_set_digest() -> str:
+    return "sha256:" + hashlib.sha256(b"[]").hexdigest()
+
+
+def _require_terminal_memory_receipt(
+    receipt: RetargetMemoryReceipt,
+    *,
+    spec_id: str,
+) -> None:
+    if receipt.spec_id != spec_id:
+        raise RetargetFinalizationError(
+            "retarget finalization memory postimage drifted"
+        )
+    if receipt.status == "not_applicable":
+        if (
+            receipt.deleted_count != 0
+            or receipt.deleted_ids
+            or receipt.drawer_set_digest != _empty_drawer_set_digest()
+            or receipt.mine_status != "not_applicable"
+            or receipt.audit_status != "not_applicable"
+            or receipt.adapter is not None
+            or receipt.wing is not None
+            or receipt.palace_path is not None
+            or receipt.scanned_count != 0
+            or receipt.delete_acknowledged_count is not None
+            or receipt.remaining_owned_ids
+            or receipt.unrelated_missing_ids
+            or receipt.unrelated_changed_ids
+            or receipt.unexpected_added_ids
+            or receipt.report_set_digest is not None
+            or receipt.failure_code is not None
+        ):
+            raise RetargetFinalizationError(
+                "retarget finalization memory postimage drifted"
+            )
+        return
+    if (
+        receipt.status != "pass"
+        or receipt.mine_status != "complete"
+        or receipt.audit_status not in {"pass", "warn"}
+        or not receipt.adapter
+        or not receipt.wing
+        or not receipt.palace_path
+        or receipt.scanned_count != 0
+        or receipt.delete_acknowledged_count is not None
+        or receipt.remaining_owned_ids
+        or receipt.unrelated_missing_ids
+        or receipt.unrelated_changed_ids
+        or receipt.unexpected_added_ids
+        or receipt.report_set_digest is None
+        or receipt.failure_code is not None
+    ):
+        raise RetargetFinalizationError(
+            "retarget finalization memory postimage drifted"
+        )
+
+
 def verify_retarget_memory_postimage(
     project_root: Path,
     spec_dir: Path,
     receipt: RetargetMemoryReceipt,
 ) -> None:
     """Read current memory/audit evidence without mining or deleting drawers."""
-    if receipt.status == "not_applicable":
-        if _configured_mempalace_wing(project_root) is not None:
-            raise RetargetFinalizationError(
-                "retarget finalization memory postimage drifted"
-            )
-        return
     try:
+        _require_terminal_memory_receipt(receipt, spec_id=spec_dir.name)
+        configured_wing = _configured_mempalace_wing(project_root)
+        if receipt.status == "not_applicable":
+            if configured_wing is not None:
+                raise ValueError
+            return
+        if configured_wing != receipt.wing:
+            raise ValueError
         audit = audit_spec_memory(project_root, spec_dir, probe_retrieval=True)
-        mine = json.loads((spec_dir / "mempalace-mine.json").read_text())
-        manifest = json.loads(
-            (spec_dir / "mempalace-refresh-manifest.json").read_text()
+        mine = json.loads(
+            (spec_dir / "mempalace-mine.json").read_text(encoding="utf-8")
         )
-    except (OSError, ValueError) as exc:
-        raise RetargetFinalizationError("retarget finalization memory postimage drifted") from exc
-    drawer_ids = mine.get("drawer_ids") if type(mine) is dict else None
-    if type(drawer_ids) is not list:
-        raise RetargetFinalizationError("retarget finalization memory postimage drifted")
-    digest = "sha256:" + hashlib.sha256(
-        json.dumps(drawer_ids, ensure_ascii=True, separators=(",", ":")).encode()
-    ).hexdigest()
-    if (
-        digest != receipt.drawer_set_digest
-        or audit.status not in {"pass", "warn"}
-        or audit.expected_count != audit.present_current_count
-        or audit.missing
-        or audit.stale
-        or audit.errors
-        or _current_memory_report_set_digest(spec_dir) != receipt.report_set_digest
-        or manifest.get("report_set_digest") != receipt.report_set_digest
-    ):
-        raise RetargetFinalizationError("retarget finalization memory postimage drifted")
+        manifest = json.loads(
+            (spec_dir / "mempalace-refresh-manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        drawer_ids = mine.get("drawer_ids") if type(mine) is dict else None
+        expected_ids = (
+            mine.get("expected_drawer_ids") if type(mine) is dict else None
+        )
+        mine_count_fields = (
+            "expected_count",
+            "written_count",
+            "adopted_count",
+            "skipped_count",
+            "failed_count",
+            "drifted_count",
+            "unavailable_count",
+        )
+        if (
+            type(drawer_ids) is not list
+            or type(expected_ids) is not list
+            or drawer_ids != expected_ids
+            or any(type(value) is not str or not value for value in drawer_ids)
+            or drawer_ids != sorted(set(drawer_ids))
+            or any(type(mine.get(field)) is not int for field in mine_count_fields)
+            or mine.get("spec_id") != receipt.spec_id
+            or mine.get("status") != receipt.mine_status
+            or mine.get("wing") != receipt.wing
+            or mine.get("palace_path") != receipt.palace_path
+            or mine.get("expected_count") != len(drawer_ids)
+            or mine.get("written_count", 0) + mine.get("adopted_count", 0)
+            != len(drawer_ids)
+            or any(
+                mine.get(field) != 0
+                for field in (
+                    "skipped_count",
+                    "failed_count",
+                    "drifted_count",
+                    "unavailable_count",
+                )
+            )
+            or mine.get("errors") != []
+        ):
+            raise ValueError
+        digest = "sha256:" + hashlib.sha256(
+            json.dumps(
+                drawer_ids,
+                ensure_ascii=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        audit_anomalies = (
+            "missing",
+            "stale",
+            "wrong_wing",
+            "wrong_room",
+            "duplicate",
+            "non_canonical",
+            "lifecycle_excluded",
+            "errors",
+        )
+        if (
+            digest != receipt.drawer_set_digest
+            or getattr(audit, "spec_id", None) != receipt.spec_id
+            or getattr(audit, "status", None) != receipt.audit_status
+            or getattr(audit, "wing", None) != receipt.wing
+            or getattr(audit, "palace_path", None) != receipt.palace_path
+            or type(getattr(audit, "expected_count", None)) is not int
+            or type(getattr(audit, "present_current_count", None)) is not int
+            or getattr(audit, "expected_count", None) != len(drawer_ids)
+            or getattr(audit, "present_current_count", None) != len(drawer_ids)
+            or any(getattr(audit, field, None) != [] for field in audit_anomalies)
+            or _current_memory_report_set_digest(spec_dir)
+            != receipt.report_set_digest
+            or type(manifest) is not dict
+            or frozenset(manifest)
+            != {"schema_version", "spec_id", "files", "report_set_digest"}
+            or manifest.get("schema_version") != 1
+            or manifest.get("spec_id") != receipt.spec_id
+            or manifest.get("files") != _current_memory_report_records(spec_dir)
+            or manifest.get("report_set_digest") != receipt.report_set_digest
+        ):
+            raise ValueError
+    except RetargetFinalizationError:
+        raise
+    except (Exception, SystemExit) as exc:
+        raise RetargetFinalizationError(
+            "retarget finalization memory postimage drifted"
+        ) from exc
 
 
 def verify_retarget_graph_postimage(
@@ -147,23 +280,25 @@ def verify_retarget_graph_postimage(
     receipt: RetargetGraphReceipt,
 ) -> None:
     """Read graph bytes and current audits without publishing graph output."""
-    if (
-        receipt.spec_status not in {"pass", "warn"}
-        or receipt.workspace_status not in {"pass", "warn"}
-        or receipt.spec_graph_hash is None
-        or receipt.workspace_graph_hash is None
-    ):
-        raise RetargetFinalizationError(
-            "retarget finalization graph receipt is not terminal"
-        )
     try:
+        if (
+            receipt.spec_id != spec_dir.name
+            or receipt.spec_status not in {"pass", "warn"}
+            or receipt.workspace_status not in {"pass", "warn"}
+            or receipt.spec_graph_hash is None
+            or receipt.workspace_graph_hash is None
+        ):
+            raise RetargetFinalizationError(
+                "retarget finalization graph receipt is not terminal"
+            )
         if receipt.spec_graph_hash is not None:
             graph_path = spec_dir / GRAPH_FILENAME
             if _sha256_file(graph_path) != receipt.spec_graph_hash:
                 raise ValueError
             spec_audit = audit_spec_graph(project_root, spec_dir)
             if (
-                spec_audit.graph_hash != receipt.spec_graph_hash
+                spec_audit.spec_id != receipt.spec_id
+                or spec_audit.graph_hash != receipt.spec_graph_hash
                 or spec_audit.status != receipt.spec_status
                 or spec_audit.status not in {"pass", "warn"}
             ):
@@ -195,11 +330,15 @@ def verify_retarget_graph_postimage(
                 or selected is None
                 or not selected.included
                 or selected.graph_hash != receipt.spec_graph_hash
-                or selected.audit_status not in {"pass", "warn"}
+                or selected.audit_status != receipt.spec_status
             ):
                 raise ValueError
-    except (OSError, ValueError) as exc:
-        raise RetargetFinalizationError("retarget finalization graph postimage drifted") from exc
+    except RetargetFinalizationError:
+        raise
+    except (Exception, SystemExit) as exc:
+        raise RetargetFinalizationError(
+            "retarget finalization graph postimage drifted"
+        ) from exc
 
 
 def require_finalizing_retarget(state: Mapping[str, object]) -> dict[str, object]:

@@ -243,6 +243,71 @@
             {"if": {"properties": {"workspace_status": {"const": "not_applicable_empty_workspace"}}, "required": ["workspace_status"]}, "then": {"properties": {"workspace_graph_hash": {"type": "null"}, "workspace_finding_codes": {"maxItems": 0}}}},
             {"if": {"properties": {"workspace_status": {"enum": ["pass", "warn", "fail", "unavailable"]}}, "required": ["workspace_status"]}, "then": {"properties": {"workspace_graph_hash": {"$ref": "#/properties/retarget/definitions/digest"}}}}
           ]
+        },
+        "terminal_memory_receipt": {
+          "allOf": [
+            {"$ref": "#/properties/retarget/definitions/memory_receipt"},
+            {
+              "properties": {"status": {"enum": ["pass", "not_applicable"]}},
+              "allOf": [
+                {
+                  "if": {"properties": {"status": {"const": "not_applicable"}}, "required": ["status"]},
+                  "then": {
+                    "properties": {
+                      "deleted_count": {"const": 0},
+                      "deleted_ids": {"maxItems": 0},
+                      "drawer_set_digest": {"const": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"},
+                      "mine_status": {"const": "not_applicable"},
+                      "audit_status": {"const": "not_applicable"},
+                      "adapter": {"type": "null"},
+                      "wing": {"type": "null"},
+                      "palace_path": {"type": "null"},
+                      "scanned_count": {"const": 0},
+                      "delete_acknowledged_count": {"type": "null"},
+                      "remaining_owned_ids": {"maxItems": 0},
+                      "unrelated_missing_ids": {"maxItems": 0},
+                      "unrelated_changed_ids": {"maxItems": 0},
+                      "unexpected_added_ids": {"maxItems": 0},
+                      "report_set_digest": {"type": "null"},
+                      "failure_code": {"type": "null"}
+                    }
+                  }
+                },
+                {
+                  "if": {"properties": {"status": {"const": "pass"}}, "required": ["status"]},
+                  "then": {
+                    "properties": {
+                      "mine_status": {"const": "complete"},
+                      "audit_status": {"enum": ["pass", "warn"]},
+                      "adapter": {"type": "string"},
+                      "wing": {"type": "string"},
+                      "palace_path": {"type": "string"},
+                      "scanned_count": {"const": 0},
+                      "delete_acknowledged_count": {"type": "null"},
+                      "remaining_owned_ids": {"maxItems": 0},
+                      "unrelated_missing_ids": {"maxItems": 0},
+                      "unrelated_changed_ids": {"maxItems": 0},
+                      "unexpected_added_ids": {"maxItems": 0},
+                      "failure_code": {"type": "null"}
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "terminal_graph_receipt": {
+          "allOf": [
+            {"$ref": "#/properties/retarget/definitions/graph_receipt"},
+            {
+              "properties": {
+                "spec_status": {"enum": ["pass", "warn"]},
+                "spec_graph_hash": {"$ref": "#/properties/retarget/definitions/digest"},
+                "workspace_status": {"enum": ["pass", "warn"]},
+                "workspace_graph_hash": {"$ref": "#/properties/retarget/definitions/digest"}
+              }
+            }
+          ]
         }
       },
       "required": [
@@ -270,9 +335,7 @@
         "status": {"enum": ["checkpointed", "invalidating", "rebuilding", "finalizing", "complete", "failed", "recovered"]},
         "memory_excluded": {"type": "boolean"},
         "memory_purge": {"$ref": "#/properties/retarget/definitions/memory_receipt"},
-        "memory_finalization": {"$ref": "#/properties/retarget/definitions/memory_receipt"},
         "graph_invalidation": {"$ref": "#/properties/retarget/definitions/graph_receipt"},
-        "graph_finalization": {"$ref": "#/properties/retarget/definitions/graph_receipt"},
         "finalization_receipt": {
           "type": "object",
           "additionalProperties": false,
@@ -282,8 +345,8 @@
             "completion_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
             "checkpoint_commit": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
             "replacement_targets": {"type": "array", "minItems": 1, "maxItems": 128, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 1024}},
-            "memory": {"$ref": "#/properties/retarget/definitions/memory_receipt"},
-            "graph": {"$ref": "#/properties/retarget/definitions/graph_receipt"},
+            "memory": {"$ref": "#/properties/retarget/definitions/terminal_memory_receipt"},
+            "graph": {"$ref": "#/properties/retarget/definitions/terminal_graph_receipt"},
             "replacement_commit": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
             "status": {"const": "complete"}
           }
@@ -297,27 +360,27 @@
       "allOf": [
         {
           "if": {"properties": {"status": {"const": "complete"}}, "required": ["status"]},
-          "then": {"required": ["memory_purge", "graph_invalidation", "memory_finalization", "graph_finalization", "replacement_commit", "finalization_receipt", "comparison_event_id", "comparison_command"], "anyOf": [{"required": ["comparison_pending_completion_id"]}, {"required": ["comparison_emitted_completion_id"]}]}
+          "then": {"required": ["memory_purge", "graph_invalidation", "replacement_commit", "finalization_receipt", "comparison_event_id", "comparison_command"], "anyOf": [{"required": ["comparison_pending_completion_id"]}, {"required": ["comparison_emitted_completion_id"]}]}
         },
         {
           "if": {"properties": {"status": {"const": "finalizing"}}, "required": ["status"]},
-          "then": {"required": ["memory_excluded", "memory_purge", "graph_invalidation"], "not": {"anyOf": [{"required": ["memory_finalization"]}, {"required": ["graph_finalization"]}, {"required": ["replacement_commit"]}, {"required": ["finalization_receipt"]}, {"required": ["comparison_pending_completion_id"]}, {"required": ["comparison_emitted_completion_id"]}, {"required": ["comparison_event_id"]}, {"required": ["comparison_command"]}]}}
+          "then": {"required": ["memory_excluded", "memory_purge", "graph_invalidation"], "not": {"anyOf": [{"required": ["replacement_commit"]}, {"required": ["finalization_receipt"]}, {"required": ["comparison_pending_completion_id"]}, {"required": ["comparison_emitted_completion_id"]}, {"required": ["comparison_event_id"]}, {"required": ["comparison_command"]}]}}
         },
         {
           "if": {"properties": {"status": {"enum": ["checkpointed", "invalidating", "rebuilding", "failed", "recovered"]}}, "required": ["status"]},
-          "then": {"not": {"anyOf": [{"required": ["memory_finalization"]}, {"required": ["graph_finalization"]}, {"required": ["replacement_commit"]}, {"required": ["finalization_receipt"]}, {"required": ["comparison_pending_completion_id"]}, {"required": ["comparison_emitted_completion_id"]}, {"required": ["comparison_event_id"]}, {"required": ["comparison_command"]}]}}
+          "then": {"not": {"anyOf": [{"required": ["replacement_commit"]}, {"required": ["finalization_receipt"]}, {"required": ["comparison_pending_completion_id"]}, {"required": ["comparison_emitted_completion_id"]}, {"required": ["comparison_event_id"]}, {"required": ["comparison_command"]}]}}
         },
         {
           "if": {"properties": {"status": {"enum": ["rebuilding"]}}, "required": ["status"]},
-          "then": {"required": ["memory_excluded", "memory_purge", "graph_invalidation"], "not": {"anyOf": [{"required": ["memory_finalization"]}, {"required": ["graph_finalization"]}, {"required": ["replacement_commit"]}, {"required": ["finalization_receipt"]}, {"required": ["comparison_pending_completion_id"]}, {"required": ["comparison_emitted_completion_id"]}, {"required": ["comparison_event_id"]}, {"required": ["comparison_command"]}]}}
+          "then": {"required": ["memory_excluded", "memory_purge", "graph_invalidation"], "not": {"anyOf": [{"required": ["replacement_commit"]}, {"required": ["finalization_receipt"]}, {"required": ["comparison_pending_completion_id"]}, {"required": ["comparison_emitted_completion_id"]}, {"required": ["comparison_event_id"]}, {"required": ["comparison_command"]}]}}
         },
         {
           "if": {"properties": {"status": {"const": "checkpointed"}}, "required": ["status"]},
-          "then": {"not": {"anyOf": [{"required": ["memory_excluded"]}, {"required": ["memory_purge"]}, {"required": ["graph_invalidation"]}, {"required": ["memory_finalization"]}, {"required": ["graph_finalization"]}]}}
+          "then": {"not": {"anyOf": [{"required": ["memory_excluded"]}, {"required": ["memory_purge"]}, {"required": ["graph_invalidation"]}]}}
         },
         {
           "if": {"properties": {"status": {"const": "invalidating"}}, "required": ["status"]},
-          "then": {"not": {"anyOf": [{"required": ["graph_invalidation"]}, {"required": ["memory_finalization"]}, {"required": ["graph_finalization"]}]}}
+          "then": {"not": {"anyOf": [{"required": ["graph_invalidation"]}]}}
         },
         {
           "if": {"required": ["memory_excluded"]},
