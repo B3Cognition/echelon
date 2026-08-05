@@ -9,8 +9,15 @@ import sys
 from pathlib import Path
 
 
-def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
+def _run(
+    args: list[str], *, echelon_home: Path | None = None
+) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
+    project_root = Path(args[1])
+    env["HOME"] = str(project_root / ".test-home")
+    env["ECHELON_HOME"] = str(
+        echelon_home or project_root / ".test-ech-home"
+    )
     src_path = str(Path(__file__).resolve().parents[2] / "src")
     env["PYTHONPATH"] = (
         src_path
@@ -107,9 +114,21 @@ fs.writeFileSync(outputPath, JSON.stringify({
         encoding="utf-8",
     )
     (runtime_dir / "codegraph-adapter.js").write_text("adapter\n", encoding="utf-8")
+    (runtime_dir / "package.json").write_text(
+        json.dumps(
+            {
+                "echelon_runtime": {
+                    "provider_artifact_schema_version": 2,
+                    "exact_relationship_endpoints": True,
+                    "uncapped_symbols": True,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
     package = runtime_dir / "node_modules/@colbymchenry/codegraph/package.json"
     package.parent.mkdir(parents=True)
-    package.write_text("{}\n", encoding="utf-8")
+    package.write_text('{"version":"1.4.1"}\n', encoding="utf-8")
     return bridge_path
 
 
@@ -365,7 +384,8 @@ def test_write_codegraph_evidence_uses_shared_runtime(
             str(project_root),
             str(verify_run_dir),
             str(spec_dir),
-        ]
+        ],
+        echelon_home=echelon_home,
     )
 
     assert result.returncode == 0, result.stderr
@@ -469,7 +489,7 @@ def test_write_codegraph_evidence_reports_missing_resolved_runtime(
 ) -> None:
     project_root = tmp_path / "project"
     project_root.mkdir()
-    monkeypatch.setenv("ECHELON_HOME", str(tmp_path / "empty-echelon-home"))
+    empty_echelon_home = tmp_path / "empty-echelon-home"
     _write_fake_codegraph_cli(tmp_path / "bin", success=False)
     _prepend_path(monkeypatch, tmp_path / "bin")
     verify_run_dir = tmp_path / "runs" / "verify-spec-001"
@@ -483,7 +503,8 @@ def test_write_codegraph_evidence_reports_missing_resolved_runtime(
             str(project_root),
             str(verify_run_dir),
             str(spec_dir),
-        ]
+        ],
+        echelon_home=empty_echelon_home,
     )
 
     assert result.returncode != 0
