@@ -219,11 +219,35 @@
         "memory_finalization": {"type": "object"},
         "graph_invalidation": {"type": "object"},
         "graph_finalization": {"type": "object"},
-        "finalization_receipt": {"type": "object"},
+        "finalization_receipt": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["revision_id", "completion_id", "checkpoint_commit", "replacement_targets", "memory", "graph", "replacement_commit", "status"],
+          "properties": {
+            "revision_id": {"type": "string", "minLength": 1, "maxLength": 1024},
+            "completion_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+            "checkpoint_commit": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
+            "replacement_targets": {"type": "array", "minItems": 1, "maxItems": 128, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 1024}},
+            "memory": {"type": "object"},
+            "graph": {"type": "object"},
+            "replacement_commit": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
+            "status": {"const": "complete"}
+          }
+        },
         "comparison_pending_completion_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
         "comparison_emitted_completion_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
         "failure_code": {"type": ["string", "null"], "maxLength": 1024}
-      }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "complete"}}, "required": ["status"]},
+          "then": {"required": ["replacement_commit", "finalization_receipt"]}
+        },
+        {
+          "if": {"properties": {"status": {"const": "finalizing"}}, "required": ["status"]},
+          "then": {"not": {"anyOf": [{"required": ["replacement_commit"]}, {"required": ["finalization_receipt"]}]}}
+        }
+      ]
     },
     "escalation_question": {
       "type": "string"

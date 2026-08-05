@@ -1351,8 +1351,10 @@ class SquadController:
             or command is None
         ):
             return False
+        if not self._state_store.mark_retarget_comparison_emitted(completion_id):
+            return False
         print(command, flush=True)
-        return self._state_store.mark_retarget_comparison_emitted(completion_id)
+        return True
 
     def _enter_retarget_finalizing(
         self,

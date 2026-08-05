@@ -126,13 +126,30 @@ def verify_retarget_graph_postimage(
             graph_path = spec_dir / GRAPH_FILENAME
             if _sha256_file(graph_path) != receipt.spec_graph_hash:
                 raise ValueError
-            if audit_spec_graph(project_root, spec_dir).graph_hash != receipt.spec_graph_hash:
+            spec_audit = audit_spec_graph(project_root, spec_dir)
+            if (
+                spec_audit.graph_hash != receipt.spec_graph_hash
+                or spec_audit.status != receipt.spec_status
+                or spec_audit.status not in {"pass", "warn"}
+            ):
                 raise ValueError
         if receipt.workspace_graph_hash is not None:
             workspace = workspace_graph_path(project_root)
             if _sha256_file(workspace) != receipt.workspace_graph_hash:
                 raise ValueError
-            if audit_workspace_graph(project_root).graph_hash != receipt.workspace_graph_hash:
+            workspace_audit = audit_workspace_graph(project_root)
+            findings = tuple(
+                sorted(
+                    f"{finding.code}:{finding.subject_id or 'workspace'}"
+                    for finding in workspace_audit.findings
+                )
+            )
+            if (
+                workspace_audit.graph_hash != receipt.workspace_graph_hash
+                or workspace_audit.status != receipt.workspace_status
+                or workspace_audit.status not in {"pass", "warn"}
+                or findings != receipt.workspace_finding_codes
+            ):
                 raise ValueError
     except (OSError, ValueError) as exc:
         raise RetargetFinalizationError("retarget finalization graph postimage drifted") from exc
@@ -480,6 +497,16 @@ def verify_retarget_finalization_receipt(
     ):
         raise RetargetFinalizationError("retarget finalization receipt drifted")
     spec_dir = _published_spec_dir(project_root, state)
+    verify_retarget_memory_postimage(
+        project_root,
+        spec_dir,
+        _validated_memory_receipt(checked["memory"]),
+    )
+    verify_retarget_graph_postimage(
+        project_root,
+        spec_dir,
+        RetargetGraphReceipt.from_dict(checked["graph"]),
+    )
     history = load_retarget_history(spec_dir)
     if not history.revisions or history.revisions[-1].revision_id != checked["revision_id"]:
         raise RetargetFinalizationError("retarget finalization history drifted")
@@ -519,6 +546,20 @@ def verify_retarget_finalization_receipt(
         capture_output=True,
         text=False,
     )
+    worktree = subprocess.run(
+        ["git", "diff", "--quiet", commit, "--", f"specs/{spec_dir.name}"],
+        cwd=project_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    untracked = subprocess.run(
+        ["git", "ls-files", "--others", "--exclude-standard", "--", f"specs/{spec_dir.name}"],
+        cwd=project_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
     prefix = f"specs/{spec_dir.name}/"
     identity = _retarget_completion_identity(
         spec_dir,
@@ -533,6 +574,9 @@ def verify_retarget_finalization_receipt(
         or paths.returncode != 0
         or committed_history.returncode != 0
         or committed_history.stdout != (spec_dir / "retarget-history.json").read_bytes()
+        or worktree.returncode != 0
+        or untracked.returncode != 0
+        or bool(untracked.stdout.strip())
         or not changed
         or any(not path.startswith(prefix) for path in changed)
         or not _exact_trailers_match(message.stdout, identity)
@@ -551,6 +595,12 @@ def apply_or_verify_retarget_finalization(
     """Run memory then graph finalization, sealing one receipt through completion."""
 
     if expected_receipt is not None:
+        if (
+            type(expected_receipt) is not dict
+            or expected_receipt.get("completion_id")
+            != prepared.intent.completion_id
+        ):
+            raise RetargetFinalizationError("retarget finalization receipt drifted")
         return verify_retarget_finalization_receipt(project_root, state, expected_receipt)
     retarget = require_finalizing_retarget(state)
     spec_dir = _published_spec_dir(project_root, state)

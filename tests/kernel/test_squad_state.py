@@ -1650,7 +1650,11 @@ class TestSquadStateStore:
         }
         state[PENDING_CONTROLLER_COMPLETION_KEY] = prepared.marker.to_dict()
         store.save(state)
-        receipt = {"replacement_commit": "a" * 40, "status": "complete"}
+        receipt = {
+            "completion_id": "c" * 32,
+            "replacement_commit": "a" * 40,
+            "status": "complete",
+        }
         mined = _rewrite_completion_receipts(
             tmp_path,
             store,

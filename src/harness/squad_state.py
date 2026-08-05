@@ -4111,6 +4111,16 @@ class SquadStateStore:
                 )
 
                 receipt = prepared.receipts["effects"].get("retarget")
+                if (
+                    type(receipt) is not dict
+                    or receipt.get("completion_id")
+                    != expected_marker["completion_id"]
+                ):
+                    raise StateAdvanceError(
+                        "retarget completion receipt identity is invalid",
+                        json_path="$.retarget.finalization_receipt",
+                        validator="completion_binding",
+                    )
                 checked = verify_retarget_finalization_receipt(
                     prepared._project_root,
                     desired,
