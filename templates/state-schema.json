@@ -248,6 +248,10 @@
         {
           "if": {"properties": {"status": {"const": "finalizing"}}, "required": ["status"]},
           "then": {"not": {"anyOf": [{"required": ["replacement_commit"]}, {"required": ["finalization_receipt"]}]}}
+        },
+        {
+          "if": {"properties": {"status": {"enum": ["checkpointed", "invalidating", "rebuilding", "failed", "recovered"]}}, "required": ["status"]},
+          "then": {"not": {"anyOf": [{"required": ["replacement_commit"]}, {"required": ["finalization_receipt"]}, {"required": ["comparison_pending_completion_id"]}, {"required": ["comparison_emitted_completion_id"]}, {"required": ["comparison_event_id"]}, {"required": ["comparison_command"]}]}}
         }
       ]
     },

@@ -116,6 +116,31 @@ def test_state_schema_retarget_contract_is_closed_and_requires_identity() -> Non
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    "status",
+    ["checkpointed", "invalidating", "rebuilding", "finalizing", "failed", "recovered"],
+)
+def test_state_schema_retarget_nonterminal_variants_forbid_completion_receipt(status: str) -> None:
+    schema = __import__("json").loads(
+        (Path(__file__).parents[2] / "templates/state-schema.json").read_text()
+    )["properties"]["retarget"]
+    value = {
+        "operation_id": "op-1",
+        "revision_id": "rt-1",
+        "status": status,
+        "baseline_run_id": "baseline",
+        "replacement_run_id": "replacement",
+        "old_targets": ["services/api"],
+        "replacement_targets": ["apps/web"],
+        "checkpoint_id": "checkpoint-1",
+        "checkpoint_commit": "a" * 40,
+        "failure_code": None,
+        "replacement_commit": "b" * 40,
+    }
+    assert list(Draft7Validator(schema).iter_errors(value))
+
+
+@pytest.mark.unit
 def test_retarget_effect_progress_is_bound_to_the_completion_id(tmp_path: Path) -> None:
     from echelon.spec_retarget_finalization import (
         RetargetFinalizationError,
