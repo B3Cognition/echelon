@@ -903,7 +903,7 @@ def test_retarget_checkpoint_routes_before_generic_cleanup_with_prereset_state(
             applied=True,
             spec_id=spec_dir.name,
             checkpoint_id=checkpoint.id,
-            from_commit="c" * 40,
+            from_commit=checkpoint.commit,
             to_commit=checkpoint.commit,
             backup_ref="echelon/backup/test",
             message="Rewind complete.",

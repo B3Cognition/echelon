@@ -187,7 +187,8 @@ def prepare_rewind(
         )
 
     head = run_git(project_root, "rev-parse", "HEAD").stdout.strip()
-    if head == checkpoint.commit:
+    same_head = head == checkpoint.commit
+    if same_head and not recovery_dirty_paths:
         return RewindResult(
             True,
             checkpoint.spec_id,
@@ -200,18 +201,22 @@ def prepare_rewind(
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     backup_ref = f"echelon/backup/{checkpoint.spec_id}-before-rewind-{stamp}"
+    action = (
+        f"Recovery retry will keep branch {branch} at {checkpoint.commit[:7]} "
+        "and discard only recorded recovery-owned spec changes."
+        if same_head
+        else (
+            f"Rewind will move branch {branch}:\n"
+            f"  from: {head[:7]} current HEAD\n"
+            f"  to:   {checkpoint.commit[:7]} {checkpoint.phase} checkpoint"
+        )
+    )
     message = (
-        f"Rewind will move branch {branch}:\n"
-        f"  from: {head[:7]} current HEAD\n"
-        f"  to:   {checkpoint.commit[:7]} {checkpoint.phase} checkpoint\n\n"
+        f"{action}\n\n"
         f"Backup branch:\n  {backup_ref}\n\n"
         "Continue with:\n  "
         f"echelon spec rewind {target}"
-        + (
-            f" --commit {checkpoint_commit}"
-            if checkpoint_commit
-            else ""
-        )
+        + (f" --commit {checkpoint_commit}" if checkpoint_commit else "")
         + " --confirm"
     )
     if dirty_paths:
@@ -237,11 +242,12 @@ def prepare_rewind(
         )
         if remaining_active_dirt:
             raise RewindError("recovery-owned dirty paths could not be discarded")
-        reset_branch_to_commit(
-            project_root,
-            checkpoint.commit,
-            preserve_worktree=bool(dirty_paths),
-        )
+        if not same_head:
+            reset_branch_to_commit(
+                project_root,
+                checkpoint.commit,
+                preserve_worktree=bool(dirty_paths),
+            )
     except GitHelperError as exc:
         if dirty_paths:
             raise RewindError(
@@ -256,5 +262,7 @@ def prepare_rewind(
         head,
         checkpoint.commit,
         created,
-        "Rewind complete.",
+        "Already at checkpoint; recovery-owned changes cleared."
+        if same_head
+        else "Rewind complete.",
     )

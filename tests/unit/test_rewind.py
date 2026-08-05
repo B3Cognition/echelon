@@ -53,6 +53,32 @@ def _repo_with_checkpoint(tmp_path: Path) -> tuple[Path, Path, str, str]:
     return repo, spec_dir, checkpoint, later
 
 
+def _repo_at_retarget_checkpoint(tmp_path: Path) -> tuple[Path, Path, str, str]:
+    repo, spec_dir, checkpoint, _later = _repo_with_checkpoint(tmp_path)
+    _git(repo, "reset", "--hard", checkpoint)
+    history = spec_dir / "retarget-history.json"
+    history.write_text('{"status":"prepared"}\n', encoding="utf-8")
+    _git(repo, "add", "specs/001-demo/retarget-history.json")
+    _git(repo, "commit", "-m", "retarget checkpoint")
+    retarget_checkpoint = _git(repo, "rev-parse", "HEAD")
+    checkpoint_id = "retarget-preflight-retarget-test"
+    record_checkpoint_metadata(
+        spec_dir,
+        PhaseCheckpoint(
+            checkpoint_id,
+            "001-demo",
+            "retarget",
+            "phase0-constitution",
+            retarget_checkpoint,
+            retarget_checkpoint,
+            "retarget-preflight",
+            "squad-base",
+            "2026-08-05T00:00:00Z",
+        ),
+    )
+    return repo, spec_dir, retarget_checkpoint, checkpoint_id
+
+
 def test_rewind_requires_confirmation_when_branch_has_later_commits(tmp_path: Path) -> None:
     repo, _spec_dir, checkpoint, later = _repo_with_checkpoint(tmp_path)
 
@@ -201,6 +227,114 @@ def test_retarget_retry_still_rejects_unowned_active_spec_dirt(
             project_root=repo,
             spec="001",
             target="phase3-plan",
+            confirm=True,
+            discard_active_spec_dirty_paths=frozenset({"retarget-history.json"}),
+        )
+
+
+def test_same_head_retarget_retry_discards_tracked_and_untracked_after_backup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import echelon.rewind as rewind
+
+    repo, spec_dir, checkpoint, checkpoint_id = _repo_at_retarget_checkpoint(
+        tmp_path
+    )
+    history = spec_dir / "retarget-history.json"
+    report = spec_dir / "mempalace-mine.json"
+    history.write_text('{"status":"failed"}\n', encoding="utf-8")
+    report.write_text('{"stale":true}\n', encoding="utf-8")
+    original_discard = rewind._discard_recovery_dirty_paths
+    events: list[str] = []
+
+    def discard_after_backup(project_root: Path, paths: tuple[str, ...]) -> None:
+        refs = _git(
+            repo,
+            "for-each-ref",
+            "--format=%(objectname)",
+            "refs/heads/echelon/backup",
+        )
+        assert checkpoint in refs.splitlines()
+        events.append("backup-before-discard")
+        original_discard(project_root, paths)
+
+    monkeypatch.setattr(rewind, "_discard_recovery_dirty_paths", discard_after_backup)
+
+    result = prepare_rewind(
+        project_root=repo,
+        spec="001",
+        target=checkpoint_id,
+        confirm=True,
+        discard_active_spec_dirty_paths=frozenset(
+            {"retarget-history.json", "mempalace-mine.json"}
+        ),
+    )
+
+    assert result.applied
+    assert result.backup_ref
+    assert _git(repo, "rev-parse", result.backup_ref) == checkpoint
+    assert history.read_text(encoding="utf-8") == '{"status":"prepared"}\n'
+    assert not report.exists()
+    assert events == ["backup-before-discard"]
+
+
+def test_same_head_retarget_preview_is_byte_for_byte_nonmutating(
+    tmp_path: Path,
+) -> None:
+    repo, spec_dir, checkpoint, checkpoint_id = _repo_at_retarget_checkpoint(
+        tmp_path
+    )
+    history = spec_dir / "retarget-history.json"
+    report = spec_dir / "mempalace-mine.json"
+    history.write_text('{"status":"failed"}\n', encoding="utf-8")
+    report.write_text('{"stale":true}\n', encoding="utf-8")
+    before = (
+        _git(repo, "rev-parse", "HEAD"),
+        _git(repo, "status", "--porcelain=v1", "--untracked-files=all"),
+        _git(repo, "for-each-ref", "--format=%(refname):%(objectname)"),
+        history.read_bytes(),
+        report.read_bytes(),
+    )
+
+    result = prepare_rewind(
+        project_root=repo,
+        spec="001",
+        target=checkpoint_id,
+        confirm=False,
+        discard_active_spec_dirty_paths=frozenset(
+            {"retarget-history.json", "mempalace-mine.json"}
+        ),
+    )
+    after = (
+        _git(repo, "rev-parse", "HEAD"),
+        _git(repo, "status", "--porcelain=v1", "--untracked-files=all"),
+        _git(repo, "for-each-ref", "--format=%(refname):%(objectname)"),
+        history.read_bytes(),
+        report.read_bytes(),
+    )
+
+    assert not result.applied
+    assert before == after
+    assert result.from_commit == checkpoint == result.to_commit
+
+
+def test_same_head_retarget_retry_rejects_unowned_spec_dirt(
+    tmp_path: Path,
+) -> None:
+    repo, spec_dir, _checkpoint, checkpoint_id = _repo_at_retarget_checkpoint(
+        tmp_path
+    )
+    (spec_dir / "retarget-history.json").write_text(
+        '{"status":"failed"}\n', encoding="utf-8"
+    )
+    (spec_dir / "spec.md").write_text("user edit\n", encoding="utf-8")
+
+    with pytest.raises(RewindError, match="dirty active spec paths"):
+        prepare_rewind(
+            project_root=repo,
+            spec="001",
+            target=checkpoint_id,
             confirm=True,
             discard_active_spec_dirty_paths=frozenset({"retarget-history.json"}),
         )
