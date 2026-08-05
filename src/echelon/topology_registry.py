@@ -14,7 +14,9 @@ from typing import Iterable, Mapping
 from echelon.topology_model import (
     TopologySource,
     TopologyValidationError,
+    normalize_source_root_path,
     normalize_source_path,
+    source_storage_key,
     validate_generation,
     validate_provider,
     validate_source_id,
@@ -145,7 +147,7 @@ class TopologySourceRecord:
     def __post_init__(self) -> None:
         try:
             source_id = validate_source_id(self.source_id)
-            source_path = normalize_source_path(self.source_path)
+            source_path = normalize_source_root_path(self.source_path)
             generation = validate_generation(self.generation)
         except TopologyValidationError as exc:
             raise TopologyRegistryError(str(exc)) from exc
@@ -540,7 +542,8 @@ def _read_hashed_artifact(root: Path, source_id: str, artifact: TopologyArtifact
 
 
 def _artifact_path(root: Path, source_id: str, artifact: TopologyArtifactReceipt) -> Path:
-    prefix = f"re/topology/sources/{source_id}/"
+    storage_key = source_storage_key(source_id)
+    prefix = f"re/topology/sources/{storage_key}/"
     if not artifact.path.startswith(prefix):
         raise TopologyRegistryError(
             f"topology artifact is outside its exact source directory: {artifact.path}"
@@ -549,7 +552,7 @@ def _artifact_path(root: Path, source_id: str, artifact: TopologyArtifactReceipt
     try:
         canonical_sources = (root / "re/topology/sources").resolve(strict=True)
         canonical_sources.relative_to(root)
-        source_base = root / f"re/topology/sources/{source_id}"
+        source_base = root / f"re/topology/sources/{storage_key}"
         resolved_source_base = source_base.resolve(strict=True)
         resolved_source_base.relative_to(canonical_sources)
         resolved = candidate.resolve(strict=True)
@@ -563,7 +566,9 @@ def _parse_artifact(value: object, name: str, source_id: str) -> TopologyArtifac
     data = _object(value, f"artifact {name}")
     _exact_keys(data, {"path", "sha256"}, f"artifact {name}")
     artifact = TopologyArtifactReceipt(name, _string(data, "path"), _string(data, "sha256"))
-    if not artifact.path.startswith(f"re/topology/sources/{source_id}/"):
+    if not artifact.path.startswith(
+        f"re/topology/sources/{source_storage_key(source_id)}/"
+    ):
         raise TopologyRegistryError(f"topology artifact is outside its exact source directory: {artifact.path}")
     return artifact
 
@@ -848,6 +853,6 @@ def _source_path(value: object, label: str) -> str:
     if not isinstance(value, str):
         raise TopologyRegistryError(f"{label} must be a source-relative path")
     try:
-        return normalize_source_path(value)
+        return normalize_source_root_path(value)
     except TopologyValidationError as exc:
         raise TopologyRegistryError(str(exc)) from exc

@@ -92,6 +92,63 @@ def _delivery_workspace(
     return workspace, source, spec, run, head
 
 
+def _root_delivery_workspace(
+    tmp_path: Path,
+) -> tuple[Path, Path, Path, str]:
+    from harness.topology_evidence import write_topology_evidence_receipt
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _git(workspace, "init", "-b", "main")
+    _git(workspace, "config", "user.email", "test@example.com")
+    _git(workspace, "config", "user.name", "Test User")
+    (workspace / "src").mkdir()
+    (workspace / "src/app.py").write_text(
+        "def run():\n    return 1\n",
+        encoding="utf-8",
+    )
+    (workspace / "pyproject.toml").write_text(
+        "[project]\nname = 'root-app'\n",
+        encoding="utf-8",
+    )
+    _git(workspace, "add", "src/app.py", "pyproject.toml")
+    _git(workspace, "commit", "-m", "feature")
+    head = _git(workspace, "rev-parse", "HEAD")
+
+    spec = workspace / "specs/909-root-delivery-topology"
+    spec.mkdir(parents=True)
+    (spec / "spec.md").write_text(
+        "---\nstatus: landed\ntargets:\n- .\n---\n# Spec\n",
+        encoding="utf-8",
+    )
+    run = workspace / "runs/verify-spec-909-root-20260804-120000"
+    run.mkdir(parents=True)
+    (run / "state.json").write_text(
+        json.dumps(
+            {
+                "spec_id": "909-root-delivery-topology",
+                "verify_scope": "full",
+                "status": "complete",
+                "completed_at": "2026-08-04T09:00:00+00:00",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    codegraph = _codegraph()
+    _write_json(run / "codegraph-analysis.json", codegraph)
+    _write_json(run / "codegraph-summary.json", _summary("codegraph", codegraph))
+    write_topology_evidence_receipt(
+        workspace,
+        run,
+        spec,
+        workspace_root=workspace,
+        source_id=".",
+        source_root=workspace,
+    )
+    return workspace, spec, run, head
+
+
 def _canonical_bytes(workspace: Path) -> dict[str, bytes]:
     root = workspace / "re/topology"
     if not root.exists():
@@ -101,6 +158,31 @@ def _canonical_bytes(workspace: Path) -> dict[str, bytes]:
         for path in sorted(root.rglob("*"))
         if path.is_file()
     }
+
+
+@pytest.mark.unit
+def test_reconciliation_publishes_single_repo_root_source_without_identity_drift(
+    tmp_path: Path,
+) -> None:
+    from echelon.topology_registry import load_topology_index
+    from harness.topology_promotion import reconcile_landed_topology
+
+    workspace, _, run, head = _root_delivery_workspace(tmp_path)
+
+    result = reconcile_landed_topology(
+        workspace,
+        "909-root-delivery-topology",
+        workspace,
+        head,
+        evidence_run=run,
+    )
+
+    assert result.status == "current"
+    assert result.source_id == "."
+    assert (workspace / "re/topology/sources/__root__/receipt.json").is_file()
+    index = load_topology_index(workspace)
+    assert index is not None
+    assert set(index.sources) == {"."}
 
 
 def _copy_receipt_run(

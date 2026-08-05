@@ -246,11 +246,11 @@ def _overall_status(statuses: object) -> AuditStatus:
     values = tuple(statuses)
     if any(value == "invalid" for value in values):
         return "invalid"
-    if any(value == "unavailable" for value in values):
-        return "unavailable"
     if any(value == "stale" for value in values):
         return "stale"
-    if any(value == "degraded" for value in values):
+    if values and all(value == "unavailable" for value in values):
+        return "unavailable"
+    if any(value in {"degraded", "unavailable"} for value in values):
         return "degraded"
     return "current"
 

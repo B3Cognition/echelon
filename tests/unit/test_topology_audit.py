@@ -265,3 +265,21 @@ def test_audit_all_unsupported_completed_provider_is_unavailable(
 
     assert report.status == "unavailable"
     assert report.exit_code == 2
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("statuses", "expected"),
+    (
+        (("stale", "unavailable"), "stale"),
+        (("current", "unavailable"), "degraded"),
+        (("unavailable", "unavailable"), "unavailable"),
+    ),
+)
+def test_audit_overall_status_distinguishes_partial_from_total_unavailability(
+    statuses: tuple[str, ...],
+    expected: str,
+) -> None:
+    from echelon.topology_audit import _overall_status
+
+    assert _overall_status(statuses) == expected

@@ -114,6 +114,37 @@ def test_publish_topology_snapshots_merges_untouched_sources_byte_for_byte(tmp_p
 
 
 @pytest.mark.unit
+def test_single_repo_root_source_publishes_under_reserved_storage_key(
+    tmp_path: Path,
+) -> None:
+    from dataclasses import replace
+
+    from echelon.topology_audit import audit_topology
+    from echelon.topology_registry import load_topology_index
+    from harness.topology_publication import publish_topology_snapshots
+
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    candidate = replace(_candidate("api"), source_id=".", source_path=".")
+
+    result = publish_topology_snapshots(
+        tmp_path,
+        (candidate,),
+        owner_id="run-1",
+        owner_run_dir=None,
+    )
+
+    index = load_topology_index(tmp_path)
+    assert result.generation == 1
+    assert index is not None
+    assert set(index.sources) == {"."}
+    assert index.sources["."].source_path == "."
+    receipt = tmp_path / "re/topology/sources/__root__/receipt.json"
+    assert receipt.is_file()
+    assert json.loads(receipt.read_text(encoding="utf-8"))["source_id"] == "."
+    assert audit_topology(tmp_path, source_id=".").status in {"current", "stale"}
+
+
+@pytest.mark.unit
 def test_first_topology_publication_requires_every_workspace_source(tmp_path: Path) -> None:
     from harness.topology_publication import TopologyPublicationValidationError, publish_topology_snapshots
 

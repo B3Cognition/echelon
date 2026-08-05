@@ -11,6 +11,7 @@ from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 from typing import Callable, Mapping
 
+from echelon.topology_model import source_storage_key
 from echelon.topology_provider import TopologyProviderError, load_provider_document
 from echelon.topology_registry import (
     TopologyArtifactReceipt,
@@ -533,10 +534,16 @@ def _stage_snapshot_tree(
     operations: list[PublicationOperation] = []
     for source_id in sorted(removed_source_ids):
         rows.pop(source_id, None)
-        operations.append(PublicationOperation(PurePosixPath(f"topology/sources/{source_id}"), None))
+        operations.append(
+            PublicationOperation(
+                PurePosixPath(f"topology/sources/{source_storage_key(source_id)}"),
+                None,
+            )
+        )
     for prepared in candidates:
         source = prepared.candidate
-        source_root = new_root / "sources" / source.source_id
+        storage_key = source_storage_key(source.source_id)
+        source_root = new_root / "sources" / storage_key
         source_root.mkdir(parents=True)
         provider_rows: dict[str, object] = {}
         receipt_providers: dict[str, object] = {}
@@ -560,8 +567,8 @@ def _stage_snapshot_tree(
             analysis_path.write_bytes(provider.analysis)
             summary_path.write_bytes(provider.summary)
             artifacts = {
-                "analysis": _artifact(f"re/topology/sources/{source.source_id}/{analysis_name}", provider.analysis),
-                "summary": _artifact(f"re/topology/sources/{source.source_id}/{summary_name}", provider.summary),
+                "analysis": _artifact(f"re/topology/sources/{storage_key}/{analysis_name}", provider.analysis),
+                "summary": _artifact(f"re/topology/sources/{storage_key}/{summary_name}", provider.summary),
             }
             base = {"status": provider.status, "complete": provider.complete, "artifacts": artifacts}
             provider_rows[provider.provider] = base
@@ -588,10 +595,15 @@ def _stage_snapshot_tree(
         rows[source.source_id] = {
             "source_path": source.source_path,
             "source_fingerprint": source.source_fingerprint.to_json_dict(),
-            "receipt": _artifact(f"re/topology/sources/{source.source_id}/receipt.json", receipt_bytes),
+            "receipt": _artifact(f"re/topology/sources/{storage_key}/receipt.json", receipt_bytes),
             "providers": provider_rows,
         }
-        operations.append(PublicationOperation(PurePosixPath(f"topology/sources/{source.source_id}"), PurePosixPath(f"new/re/topology/sources/{source.source_id}")))
+        operations.append(
+            PublicationOperation(
+                PurePosixPath(f"topology/sources/{storage_key}"),
+                PurePosixPath(f"new/re/topology/sources/{storage_key}"),
+            )
+        )
     if set(rows) != set(configured):
         raise TopologyPublicationValidationError("topology rows do not cover every configured workspace source")
     index = {"schema_version": 1, "generation": generation, "published_at": datetime.now(timezone.utc).isoformat(), "sources": {source_id: rows[source_id] for source_id in sorted(rows)}}
@@ -780,15 +792,16 @@ def _validate_provider_receipt_candidate(
                 diagnostics=provider.diagnostics,
             )
             return
+        storage_key = source_storage_key(source_id)
         artifacts = {
             "analysis": TopologyArtifactReceipt(
                 "analysis",
-                f"re/topology/sources/{source_id}/{provider.provider}-analysis.json",
+                f"re/topology/sources/{storage_key}/{provider.provider}-analysis.json",
                 _artifact("ignored", provider.analysis)["sha256"],
             ),
             "summary": TopologyArtifactReceipt(
                 "summary",
-                f"re/topology/sources/{source_id}/{provider.provider}-summary.json",
+                f"re/topology/sources/{storage_key}/{provider.provider}-summary.json",
                 _artifact("ignored", provider.summary)["sha256"],
             ),
         }

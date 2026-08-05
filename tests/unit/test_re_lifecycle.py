@@ -408,7 +408,7 @@ def test_targeted_run_normalizes_malformed_config_before_dispatch(
 @pytest.mark.unit
 @pytest.mark.parametrize(
     ("source_id", "source_path"),
-    (("-api", "sources/api"), ("api", ".")),
+    (("-api", "sources/api"),),
 )
 def test_targeted_run_rejects_topology_incompatible_declarations_before_dispatch(
     tmp_path: Path,

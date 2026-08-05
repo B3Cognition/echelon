@@ -15,6 +15,7 @@ import yaml
 
 from echelon.topology_model import (
     TopologyValidationError,
+    normalize_source_root_path,
     normalize_source_path,
     validate_source_id,
 )
@@ -470,7 +471,7 @@ def validate_topology_source_declarations(sources: Iterable[object]) -> None:
         source_path = getattr(source, "path", None)
         try:
             validate_source_id(source_id)
-            normalize_source_path(source_path)
+            normalize_source_root_path(source_path)
         except (TopologyValidationError, TypeError) as exc:
             raise ValueError(
                 f"workspace source {source_id!r} is not publishable as topology: {exc}"

@@ -10,6 +10,7 @@ from echelon.workspace_model import (
     discover_workspace,
     load_workspace_source_declarations,
     load_workspace_manifest,
+    validate_topology_source_declarations,
 )
 
 
@@ -32,6 +33,7 @@ def test_single_repo_workspace_is_source_root(tmp_path: Path) -> None:
     assert manifest.sources[0].id == "."
     assert manifest.sources[0].git_present is True
     assert "package.json" in manifest.sources[0].project_markers
+    validate_topology_source_declarations(manifest.sources)
 
 
 def test_git_backed_root_with_project_marker_remains_single_source_root(

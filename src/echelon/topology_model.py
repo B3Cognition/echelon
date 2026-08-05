@@ -18,6 +18,7 @@ from typing import Mapping
 
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*\Z")
 _SYMBOL_KEY = re.compile(r"sha256:[0-9a-f]{64}\Z")
+ROOT_SOURCE_STORAGE_KEY = "__root__"
 
 NODE_TYPES = frozenset({"SOURCE", "FILE", "SYMBOL"})
 RELATIONSHIP_TYPES = frozenset(
@@ -45,6 +46,12 @@ class TopologyValidationError(ValueError):
 
 def validate_source_id(source_id: str) -> str:
     """Return one safe configured source identifier."""
+    if source_id == ".":
+        return source_id
+    if source_id == ROOT_SOURCE_STORAGE_KEY:
+        raise TopologyValidationError(
+            f"source id is reserved for root-source storage: {source_id!r}"
+        )
     return _validate_identifier(source_id, "source id")
 
 
@@ -70,6 +77,19 @@ def normalize_source_path(path: str) -> str:
     if normalized != path:
         raise TopologyValidationError(f"source-relative path is not normalized: {path!r}")
     return normalized.removeprefix("./")
+
+
+def normalize_source_root_path(path: str) -> str:
+    """Validate a configured source root, including the workspace root."""
+    if path == ".":
+        return path
+    return normalize_source_path(path)
+
+
+def source_storage_key(source_id: str) -> str:
+    """Return the collision-free directory component for one logical source."""
+    source_id = validate_source_id(source_id)
+    return ROOT_SOURCE_STORAGE_KEY if source_id == "." else source_id
 
 
 def validate_symbol_key(symbol_key: str) -> str:

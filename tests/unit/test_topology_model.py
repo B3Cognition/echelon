@@ -45,6 +45,24 @@ def test_normalized_records_use_stable_public_ids_and_are_immutable() -> None:
 
 
 @pytest.mark.unit
+def test_root_source_keeps_logical_identity_with_reserved_storage_key() -> None:
+    from echelon.topology_model import (
+        TopologySource,
+        TopologyValidationError,
+        normalize_source_root_path,
+        source_storage_key,
+    )
+
+    source = TopologySource(source_id=".")
+
+    assert source.id == "source:."
+    assert normalize_source_root_path(".") == "."
+    assert source_storage_key(".") == "__root__"
+    with pytest.raises(TopologyValidationError, match="reserved"):
+        source_storage_key("__root__")
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ("source_id", "provider", "path"),
     [

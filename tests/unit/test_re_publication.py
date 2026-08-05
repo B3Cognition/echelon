@@ -800,7 +800,7 @@ def test_targeted_publication_does_not_migrate_legacy_reused_sibling(
     assert published_topology.receipt("web").provider_statuses == {
         "codegraph": "unavailable"
     }
-    assert audit_topology(tmp_path).status in {"degraded", "stale"}
+    assert audit_topology(tmp_path).status == "stale"
     assert load_published_index(tmp_path) is not None
 
 
@@ -1182,7 +1182,7 @@ def test_targeted_publication_rejects_implicit_or_empty_source_declarations(
 @pytest.mark.unit
 @pytest.mark.parametrize(
     ("source_id", "source_path"),
-    (("-api", "sources/-api"), ("api", ".")),
+    (("-api", "sources/-api"),),
 )
 def test_targeted_publication_rejects_topology_incompatible_declarations_atomically(
     tmp_path: Path,
