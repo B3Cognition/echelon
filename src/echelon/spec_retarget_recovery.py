@@ -46,6 +46,18 @@ _SPEC_ID = re.compile(r"^(?:[0-9]{3,})-[a-z0-9]+(?:-[a-z0-9]+)*$")
 _GIT_OID = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _TRAILER = re.compile(r"^([A-Za-z0-9-]+):[ \t]*(.*?)\s*$")
 
+RETARGET_RECOVERY_DIRTY_PATHS = frozenset(
+    {
+        "retarget-history.json",
+        "mempalace-audit.json",
+        "mempalace-audit.md",
+        "mempalace-mine.json",
+        "mempalace-refresh-manifest.json",
+        "spec-artifact-graph.json",
+        "spec-artifact-graph-audit.json",
+    }
+)
+
 
 class RetargetRecoveryError(RuntimeError):
     """Checkpoint recovery could not prove one exact retarget postimage."""
@@ -251,6 +263,15 @@ def create_or_recover_retarget_recovery_commit(
             candidate = matches[0]
             if revision.recovery_commit not in {None, candidate}:
                 raise RetargetRecoveryError("retarget recovery commit binding drifted")
+            if not _verify_live_recovery_postimage(
+                root,
+                directory,
+                revision,
+                candidate,
+            ):
+                raise RetargetRecoveryError(
+                    "retarget recovery live postimage drifted"
+                )
             return candidate
         if revision.recovery_commit is not None:
             raise RetargetRecoveryError("bound retarget recovery commit is unavailable")
@@ -276,6 +297,8 @@ def create_or_recover_retarget_recovery_commit(
             identity,
         ):
             raise RetargetRecoveryError("retarget recovery commit cannot be verified")
+        if not _verify_live_recovery_postimage(root, directory, revision, commit):
+            raise RetargetRecoveryError("retarget recovery live postimage drifted")
         return commit
     except RetargetRecoveryError:
         raise
@@ -385,6 +408,46 @@ def _verify_recovery_commit(
             recovery_commit=revision.recovery_commit,
         )
         == revision
+    )
+
+
+def _verify_live_recovery_postimage(
+    project_root: Path,
+    spec_dir: Path,
+    revision: RetargetRevision,
+    commit: str,
+) -> bool:
+    spec_path = f"specs/{spec_dir.name}"
+    history_path = f"{spec_path}/retarget-history.json"
+    tracked = run_git(
+        project_root,
+        "diff",
+        "--quiet",
+        commit,
+        "--",
+        spec_path,
+        f":(exclude){history_path}",
+        check=False,
+    )
+    untracked = run_git(
+        project_root,
+        "ls-files",
+        "--others",
+        "--exclude-standard",
+        "--",
+        spec_path,
+        check=False,
+    )
+    try:
+        history = load_retarget_history(spec_dir)
+    except (OSError, TypeError, ValueError):
+        return False
+    return (
+        tracked.returncode == 0
+        and untracked.returncode == 0
+        and not untracked.stdout.strip()
+        and bool(history.revisions)
+        and history.revisions[-1] == revision
     )
 
 

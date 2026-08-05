@@ -433,6 +433,28 @@ def test_recovery_commit_is_exact_scoped_and_reused_without_touching_other_index
     assert f"Echelon-Retarget-Revision: {recovered.revision_id}" in message
     assert paths and all(path.startswith("specs/001-demo/") for path in paths)
     assert staged == ["unrelated.txt"]
+    (spec_dir / "spec.md").write_text("tampered after recovery\n", encoding="utf-8")
+    with pytest.raises(RetargetRecoveryError, match="live postimage"):
+        create_or_recover_retarget_recovery_commit(
+            project_root,
+            spec_dir,
+            recovered,
+            _checkpoint(recovered.revision_id),
+        )
+    subprocess.run(
+        [
+            "git",
+            "restore",
+            f"--source={commit}",
+            "--staged",
+            "--worktree",
+            "--",
+            "specs/001-demo/spec.md",
+        ],
+        cwd=project_root,
+        check=True,
+        capture_output=True,
+    )
     subprocess.run(
         ["git", "commit", "--only", "-m", message, "--", "unrelated.txt"],
         cwd=project_root,

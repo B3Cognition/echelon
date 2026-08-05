@@ -7979,6 +7979,13 @@ def _cmd_rewind(
                         raise RewindError(reason + suffix) from exc
                     replacement_state = deepcopy(state)
 
+                    recovery_dirty_paths = frozenset()
+                    if checkpoint.source == "retarget-preflight":
+                        from echelon.spec_retarget_recovery import (
+                            RETARGET_RECOVERY_DIRTY_PATHS,
+                        )
+
+                        recovery_dirty_paths = RETARGET_RECOVERY_DIRTY_PATHS
                     result = prepare_rewind(
                         project_root=project_root,
                         spec=spec_dir.name,
@@ -7986,6 +7993,7 @@ def _cmd_rewind(
                         target=target,
                         confirm=confirm,
                         checkpoint_commit=checkpoint_commit,
+                        discard_active_spec_dirty_paths=recovery_dirty_paths,
                     )
                     if not result.applied:
                         print(result.message)

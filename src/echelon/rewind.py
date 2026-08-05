@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import os
 from pathlib import Path
+from pathlib import PurePosixPath
+import stat
 
 from echelon.git_helpers import (
     GitHelperError,
@@ -75,6 +78,61 @@ def _find_spec_dir(project_root: Path, spec: str) -> Path:
     return matches[0]
 
 
+def _allowed_recovery_dirty_paths(
+    project_root: Path,
+    spec_dir: Path,
+    names: frozenset[str],
+) -> frozenset[str]:
+    if type(names) is not frozenset:
+        raise RewindError("recovery-owned dirty path set is invalid")
+    try:
+        spec_path = spec_dir.resolve().relative_to(project_root.resolve()).as_posix()
+    except ValueError as exc:
+        raise RewindError("recovery-owned dirty path root is invalid") from exc
+    resolved: set[str] = set()
+    for name in names:
+        candidate = PurePosixPath(name) if type(name) is str else PurePosixPath("/")
+        if (
+            type(name) is not str
+            or not name
+            or candidate.is_absolute()
+            or candidate.as_posix() != name
+            or any(part in {"", ".", ".."} for part in candidate.parts)
+        ):
+            raise RewindError("recovery-owned dirty path set is invalid")
+        resolved.add(f"{spec_path}/{name}")
+    return frozenset(resolved)
+
+
+def _discard_recovery_dirty_paths(project_root: Path, paths: tuple[str, ...]) -> None:
+    root = project_root.resolve()
+    for relative in paths:
+        target = root / PurePosixPath(relative)
+        in_head = run_git(
+            root,
+            "cat-file",
+            "-e",
+            f"HEAD:{relative}",
+            check=False,
+        ).returncode == 0
+        if in_head:
+            run_git(root, "checkout", "HEAD", "--", relative)
+            continue
+        run_git(root, "reset", "HEAD", "--", relative)
+        try:
+            metadata = os.lstat(target)
+        except FileNotFoundError:
+            continue
+        if not stat.S_ISREG(metadata.st_mode):
+            raise RewindError("recovery-owned dirty path is not a regular file")
+        target.unlink()
+        directory = os.open(target.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+
+
 def prepare_rewind(
     *,
     project_root: Path,
@@ -83,6 +141,7 @@ def prepare_rewind(
     confirm: bool,
     spec_dir: Path | None = None,
     checkpoint_commit: str = "",
+    discard_active_spec_dirty_paths: frozenset[str] = frozenset(),
 ) -> RewindResult:
     resolved_spec_dir = spec_dir or _find_spec_dir(project_root, spec)
     ledger = load_checkpoint_ledger(resolved_spec_dir)
@@ -110,10 +169,21 @@ def prepare_rewind(
     active_spec_dirty_paths = _active_spec_dirty_paths(
         project_root, resolved_spec_dir, dirty_paths
     )
-    if active_spec_dirty_paths:
+    allowed_dirty_paths = _allowed_recovery_dirty_paths(
+        project_root,
+        resolved_spec_dir,
+        discard_active_spec_dirty_paths,
+    )
+    blocking_dirty_paths = [
+        path for path in active_spec_dirty_paths if path not in allowed_dirty_paths
+    ]
+    recovery_dirty_paths = tuple(
+        path for path in active_spec_dirty_paths if path in allowed_dirty_paths
+    )
+    if blocking_dirty_paths:
         raise RewindError(
             "dirty active spec paths block rewind; commit, stash, or discard them first:\n  "
-            + "\n  ".join(active_spec_dirty_paths)
+            + "\n  ".join(blocking_dirty_paths)
         )
 
     head = run_git(project_root, "rev-parse", "HEAD").stdout.strip()
@@ -159,6 +229,14 @@ def prepare_rewind(
 
     try:
         created = create_backup_ref(project_root, backup_ref, "HEAD")
+        _discard_recovery_dirty_paths(project_root, recovery_dirty_paths)
+        remaining_active_dirt = _active_spec_dirty_paths(
+            project_root,
+            resolved_spec_dir,
+            worktree_dirty_paths(project_root),
+        )
+        if remaining_active_dirt:
+            raise RewindError("recovery-owned dirty paths could not be discarded")
         reset_branch_to_commit(
             project_root,
             checkpoint.commit,

@@ -167,6 +167,45 @@ def test_rewind_refuses_dirty_files_owned_by_the_active_spec(tmp_path: Path) -> 
         prepare_rewind(project_root=repo, spec="001", target="phase3-plan", confirm=True)
 
 
+def test_retarget_retry_discards_only_enumerated_recovery_owned_dirty_paths(
+    tmp_path: Path,
+) -> None:
+    repo, spec_dir, checkpoint, _later = _repo_with_checkpoint(tmp_path)
+    history = spec_dir / "retarget-history.json"
+    history.write_text('{"failed":true}\n', encoding="utf-8")
+
+    result = prepare_rewind(
+        project_root=repo,
+        spec="001",
+        target="phase3-plan",
+        confirm=True,
+        discard_active_spec_dirty_paths=frozenset({"retarget-history.json"}),
+    )
+
+    assert result.applied
+    assert _git(repo, "rev-parse", "HEAD") == checkpoint
+    assert not history.exists()
+
+
+def test_retarget_retry_still_rejects_unowned_active_spec_dirt(
+    tmp_path: Path,
+) -> None:
+    repo, spec_dir, _checkpoint, _later = _repo_with_checkpoint(tmp_path)
+    (spec_dir / "retarget-history.json").write_text(
+        '{"failed":true}\n', encoding="utf-8"
+    )
+    (spec_dir / "spec.md").write_text("user edit\n", encoding="utf-8")
+
+    with pytest.raises(RewindError, match="dirty active spec paths"):
+        prepare_rewind(
+            project_root=repo,
+            spec="001",
+            target="phase3-plan",
+            confirm=True,
+            discard_active_spec_dirty_paths=frozenset({"retarget-history.json"}),
+        )
+
+
 def test_rewind_missing_checkpoint_reports_available_targets(tmp_path: Path) -> None:
     repo, _spec_dir, _checkpoint, _later = _repo_with_checkpoint(tmp_path)
 
