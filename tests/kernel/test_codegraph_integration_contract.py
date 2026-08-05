@@ -200,6 +200,84 @@ const adapter = require(process.argv[2]);
     assert completed.returncode == 0, completed.stderr
 
 
+def test_adapter_fails_when_native_node_kind_query_fails(tmp_path: Path) -> None:
+    script = r"""
+const assert = require('assert');
+const adapter = require(process.argv[2]);
+(async () => {
+  const cg = {
+    getNodesByKind: (kind) => {
+      if (kind === 'function') throw new Error('injected node query failure');
+      return [];
+    }
+  };
+  await assert.rejects(
+    adapter.getSymbols(cg),
+    /\[codegraph-adapter\] getNodesByKind failed for kind "function": injected node query failure/
+  );
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+"""
+
+    script_path = tmp_path / "adapter-node-query-failure-contract.js"
+    script_path.write_text(script, encoding="utf-8")
+    completed = subprocess.run(
+        [
+            "node",
+            str(script_path),
+            str(CODEGRAPH_RUNTIME_DIR / "codegraph-adapter.js"),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_adapter_fails_when_native_outgoing_edge_query_fails(tmp_path: Path) -> None:
+    script = r"""
+const assert = require('assert');
+const adapter = require(process.argv[2]);
+(async () => {
+  const source = {
+    id: 'source-node', filePath: 'src/source.ts', qualifiedName: 'Source::run',
+    kind: 'function', startLine: 1, endLine: 2
+  };
+  const cg = {
+    getNodesByKind: (kind) => kind === 'function' ? [source] : [],
+    getOutgoingEdges: () => {
+      throw new Error('injected edge query failure');
+    }
+  };
+  await assert.rejects(
+    adapter.getRelationships(cg),
+    /\[codegraph-adapter\] getOutgoingEdges failed for node source-node \(Source::run\): injected edge query failure/
+  );
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+"""
+
+    script_path = tmp_path / "adapter-edge-query-failure-contract.js"
+    script_path.write_text(script, encoding="utf-8")
+    completed = subprocess.run(
+        [
+            "node",
+            str(script_path),
+            str(CODEGRAPH_RUNTIME_DIR / "codegraph-adapter.js"),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+
 def test_shell_ci_uses_a_node_runtime_supported_by_codegraph_sdk():
     workflow = (EXT_ROOT / ".github" / "workflows" / "ci.yml").read_text()
 

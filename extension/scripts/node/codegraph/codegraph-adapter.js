@@ -99,8 +99,9 @@ function collectNativeNodeData(cg) {
         try {
             nativeNodes = cg.getNodesByKind(kind);
         }
-        catch {
-            nativeNodes = [];
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            throw new Error(`[codegraph-adapter] getNodesByKind failed for kind "${kind}": ${msg}`);
         }
         for (const node of nativeNodes) {
             if (seenNodeIds.has(node.id)) {
@@ -244,8 +245,9 @@ async function getRelationships(cg) {
         try {
             edges = cg.getOutgoingEdges(node.id);
         }
-        catch {
-            continue;
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            throw new Error(`[codegraph-adapter] getOutgoingEdges failed for node ${node.id} (${node.qualifiedName}): ${msg}`);
         }
         for (const edge of edges) {
             const dedupeKey = `${edge.source}|${edge.target}|${edge.kind}`;
