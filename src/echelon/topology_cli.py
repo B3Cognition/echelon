@@ -35,6 +35,7 @@ from echelon.topology_model import (
     TopologyTraversalResult,
     TopologyTraversalStep,
     TopologyValidationError,
+    source_storage_key,
 )
 from echelon.topology_provider import (
     PublishedTopology,
@@ -1174,7 +1175,13 @@ def _assert_audit_matches_snapshot(
 def _merge_audit_reports(
     initial: TopologyAuditReport, final: TopologyAuditReport
 ) -> TopologyAuditReport:
-    priority = {"current": 0, "degraded": 1, "stale": 2, "invalid": 3}
+    priority = {
+        "current": 0,
+        "degraded": 1,
+        "stale": 2,
+        "unavailable": 3,
+        "invalid": 4,
+    }
     source_rows: dict[str, TopologyAuditSource] = {}
     for source in (*initial.sources, *final.sources):
         existing = source_rows.get(source.source_id)
@@ -1198,7 +1205,13 @@ def _merge_audit_reports(
     )
     return TopologyAuditReport(
         status=status,
-        exit_code=0 if status == "current" else 2 if status == "invalid" else 1,
+        exit_code=(
+            0
+            if status == "current"
+            else 2
+            if status in {"unavailable", "invalid"}
+            else 1
+        ),
         sources=tuple(source_rows[source_id] for source_id in sorted(source_rows)),
         findings=findings,
         snapshot=final.snapshot,
@@ -1295,7 +1308,7 @@ def _provider_key(
 def _provider_artifact_path(
     receipt: TopologyReceipt, provider: str, source_id: str
 ) -> str | None:
-    marker = f"/sources/{source_id}/{provider}-analysis.json"
+    marker = f"/sources/{source_storage_key(source_id)}/{provider}-analysis.json"
     matches = [path for path in receipt.provider_artifact_paths if path.endswith(marker)]
     return matches[0] if len(matches) == 1 else None
 

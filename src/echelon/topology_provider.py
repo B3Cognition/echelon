@@ -1069,12 +1069,16 @@ def _normalize_status(
     supported = document.get("supported")
     if supported is not None and not isinstance(supported, bool):
         raise TopologyProviderError("CodeGraph supported must be a boolean when present")
+    if supported is False:
+        if symbol_count or relationship_count:
+            raise TopologyProviderError(
+                "unsupported CodeGraph artifact must not emit graph data"
+            )
+        return "unsupported"
     if symbol_count == 0 and relationship_count == 0:
         capabilities = document.get("capabilities")
         explicitly_unsupported = isinstance(capabilities, dict) and capabilities.get("provider_available") is False
         return "unsupported" if explicitly_unsupported else "empty"
-    if supported is False:
-        raise TopologyProviderError("unsupported CodeGraph artifact must not emit graph data")
     return "ready" if complete else "degraded"
 
 

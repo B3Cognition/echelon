@@ -253,7 +253,7 @@ def test_load_provider_retains_unresolved_observations_without_creating_edges() 
     [
         ("codegraph", _codegraph(), "ready"),
         ("codegraph", _codegraph(status="partial", complete=False), "degraded"),
-        ("codegraph", _codegraph(symbols=[], status="complete", supported=False), "empty"),
+        ("codegraph", _codegraph(symbols=[], status="complete", supported=False), "unsupported"),
         ("perlgraph", _perlgraph(status="empty"), "empty"),
         ("perlgraph", _perlgraph(status="unsupported"), "unsupported"),
     ],

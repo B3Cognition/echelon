@@ -1158,6 +1158,48 @@ def test_audit_with_only_unavailable_providers_exits_two(
 
 
 @pytest.mark.unit
+def test_merge_audit_reports_handles_partial_workspace_unavailability() -> None:
+    from echelon.topology_audit import TopologyAuditReport, TopologyAuditSource
+    from echelon.topology_cli import _merge_audit_reports
+
+    report = TopologyAuditReport(
+        status="degraded",
+        exit_code=1,
+        sources=(
+            TopologyAuditSource("api", "current", ("codegraph",)),
+            TopologyAuditSource("web", "unavailable", ("codegraph",)),
+        ),
+        findings=(),
+    )
+
+    merged = _merge_audit_reports(report, report)
+
+    assert merged.status == "degraded"
+    assert merged.exit_code == 1
+    assert [source.status for source in merged.sources] == [
+        "current",
+        "unavailable",
+    ]
+
+
+@pytest.mark.unit
+def test_root_source_provider_artifact_path_uses_reserved_storage_key() -> None:
+    from echelon.topology_cli import _provider_artifact_path
+    from echelon.topology_model import TopologyReceipt
+
+    path = "re/topology/sources/__root__/codegraph-analysis.json"
+    receipt = TopologyReceipt(
+        generation=1,
+        source_id=".",
+        source_fingerprint="a" * 64,
+        provider_artifact_paths=(path,),
+        provider_statuses={"codegraph": "ready"},
+    )
+
+    assert _provider_artifact_path(receipt, "codegraph", ".") == path
+
+
+@pytest.mark.unit
 def test_audit_fatal_diagnostics_are_bounded_and_written_to_stderr(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

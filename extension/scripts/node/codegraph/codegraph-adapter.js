@@ -316,9 +316,11 @@ async function getImpactRadius(cg, symbols, depth) {
         try {
             subgraph = cg.getImpactRadius(nodeId, clampedDepth);
         }
-        catch {
-            results.push({ symbol_key: requestedSymbolKey, affected_keys: [], depth: clampedDepth });
-            continue;
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            const source = symbolByNodeId.get(nodeId);
+            const name = source?.qualified_name ?? requestedSymbolKey;
+            throw new Error(`[codegraph-adapter] getImpactRadius failed for node ${nodeId} (${name}): ${msg}`);
         }
         // Subgraph.nodes is Map<string, Node>
         const affectedKeys = [];
