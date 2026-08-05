@@ -49,6 +49,7 @@ from harness.blocked_decision import (
 )
 from harness.human_input import (
     HUMAN_INPUT_MAX_OPTIONS,
+    HUMAN_INPUT_OPTION_LABEL_MAX_BYTES,
     HumanInputOption,
     HumanInputPolicy,
     HumanInputPolicyError,
@@ -2533,6 +2534,67 @@ class SquadController:
             )
         return candidate
 
+    @staticmethod
+    def _canonical_dispatch_cap_candidate(
+        candidate: Mapping[str, str],
+    ) -> str:
+        return json.dumps(
+            dict(candidate),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    @classmethod
+    def _dispatch_cap_candidate_digest(
+        cls,
+        candidate: Mapping[str, str],
+    ) -> str:
+        return hashlib.sha256(
+            cls._canonical_dispatch_cap_candidate(candidate).encode("utf-8")
+        ).hexdigest()
+
+    @staticmethod
+    def _bounded_dispatch_cap_label(
+        issue_id: str,
+        title: str,
+    ) -> str:
+        prefix = f"{issue_id}: "
+        label = f"{prefix}{title}"
+        if len(label.encode("utf-8")) <= HUMAN_INPUT_OPTION_LABEL_MAX_BYTES:
+            return label
+        suffix = "…"
+        budget = (
+            HUMAN_INPUT_OPTION_LABEL_MAX_BYTES
+            - len(prefix.encode("utf-8"))
+            - len(suffix.encode("utf-8"))
+        )
+        kept: list[str] = []
+        used = 0
+        for character in title:
+            width = len(character.encode("utf-8"))
+            if used + width > budget:
+                break
+            kept.append(character)
+            used += width
+        return f"{prefix}{''.join(kept)}{suffix}"
+
+    @classmethod
+    def _dispatch_cap_option_reference(
+        cls,
+        candidate: Mapping[str, str],
+    ) -> str:
+        return json.dumps(
+            {
+                "evidence_sha256": cls._dispatch_cap_candidate_digest(
+                    candidate
+                ),
+                "issue_id": candidate["issue_id"],
+                "schema_version": 1,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
     @classmethod
     def _dispatch_cap_options(
         cls,
@@ -2549,12 +2611,11 @@ class SquadController:
         options = tuple(
             HumanInputOption(
                 id=candidate["issue_id"],
-                label=f"{candidate['issue_id']}: {candidate['title']}",
-                description=json.dumps(
-                    candidate,
-                    sort_keys=True,
-                    separators=(",", ":"),
+                label=cls._bounded_dispatch_cap_label(
+                    candidate["issue_id"],
+                    candidate["title"],
                 ),
+                description=cls._dispatch_cap_option_reference(candidate),
                 recommended=False,
                 risk_level="medium",
                 next_phase="phase1-what",
@@ -2562,8 +2623,20 @@ class SquadController:
             )
             for candidate in candidates
         )
-        for option in options:
-            cls._dispatch_cap_candidate_from_option(option)
+        for candidate, option in zip(candidates, options, strict=True):
+            if (
+                option.id != candidate["issue_id"]
+                or option.label
+                != cls._bounded_dispatch_cap_label(
+                    candidate["issue_id"],
+                    candidate["title"],
+                )
+                or option.description
+                != cls._dispatch_cap_option_reference(candidate)
+            ):
+                raise HumanInputPolicyError(
+                    "dispatch-cap option authority is invalid"
+                )
         return options
 
     def _legacy_policy_alias(

@@ -2314,6 +2314,36 @@ def test_dispatch_cap_options_reject_an_empty_candidate_set() -> None:
         SquadController._dispatch_cap_options([])
 
 
+def test_dispatch_cap_options_bound_long_utf8_title() -> None:
+    options = SquadController._dispatch_cap_options([
+        _dispatch_cap_candidate(title="ž" * 200),
+    ])
+
+    label = options[0].label
+    assert len(label.encode("utf-8")) <= 256
+    assert label.encode("utf-8").decode("utf-8") == label
+    assert label.startswith("ISS-001: ")
+    assert label.endswith("…")
+
+
+def test_dispatch_cap_options_reference_large_evidence() -> None:
+    options = SquadController._dispatch_cap_options([
+        _dispatch_cap_candidate(suggested_option="x" * 2_000),
+    ])
+
+    description = options[0].description
+    assert len(description.encode("utf-8")) <= 1_024
+    reference = json.loads(description)
+    assert set(reference) == {
+        "evidence_sha256",
+        "issue_id",
+        "schema_version",
+    }
+    assert reference["schema_version"] == 1
+    assert reference["issue_id"] == "ISS-001"
+    assert len(reference["evidence_sha256"]) == 64
+
+
 def test_controller_rejects_empty_dispatch_cap_request_before_sealing(
     tmp_path: Path,
 ) -> None:
