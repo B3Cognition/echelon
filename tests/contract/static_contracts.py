@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -776,6 +777,82 @@ def validate_state_schema_build_qa_split_contract(root: Path) -> list[str]:
             PatternCheck("CHANGE_PENDING token", schema, r'"CHANGE_PENDING"'),
         ]
     )
+
+
+def validate_spec_retarget_contract(root: Path) -> list[str]:
+    """Retarget must remain installed across both CLIs and durable schemas."""
+
+    failures = _run_checks(
+        [
+            PatternCheck(
+                "Typer exposes spec retarget",
+                root / "src/echelon/cli_app.py",
+                r'@spec_app\.command\("retarget"\)',
+            ),
+            PatternCheck(
+                "legacy help exposes spec retarget",
+                root / "src/echelon/cli.py",
+                r"spec retarget <spec_id> --target",
+            ),
+            PatternCheck(
+                "README documents retarget preview",
+                root / "README.md",
+                r"Preview the complete target replacement first",
+            ),
+            PatternCheck(
+                "README documents exact checkpoint recovery",
+                root / "README.md",
+                r"spec rewind checkpoint:<retarget-checkpoint-id> --confirm",
+            ),
+            PatternCheck(
+                "workspace model says reverse engineering is not rerun",
+                root / "docs/workspace-model.md",
+                r"Reverse engineering is not rerun",
+            ),
+            PatternCheck(
+                "workspace model recalculates automatic RE selection",
+                root / "docs/workspace-model.md",
+                r"automatic RE source selection is recalculated",
+            ),
+            PatternCheck(
+                "workspace model makes MemPalace fail closed",
+                root / "docs/workspace-model.md",
+                r"Configured MemPalace operations are fail-closed",
+            ),
+            PatternCheck(
+                "workspace model documents authoritative Git diff",
+                root / "docs/workspace-model.md",
+                r"git diff <checkpoint-commit>\.\.<replacement-commit> -- specs/001-demo",
+            ),
+        ]
+    )
+    try:
+        state_schema = json.loads(
+            (root / "templates/state-schema.json").read_text(encoding="utf-8")
+        )
+        history_schema = json.loads(
+            (root / "templates/run-history-schema.json").read_text(encoding="utf-8")
+        )
+        state_properties = state_schema["properties"]
+        history_properties = history_schema["properties"]["runs"]["items"][
+            "properties"
+        ]
+    except (KeyError, OSError, TypeError, json.JSONDecodeError) as exc:
+        failures.append(f"retarget schema contract is unreadable: {exc}")
+        return failures
+    if "retarget" not in state_properties:
+        failures.append("state schema does not expose retarget")
+    required_history = {
+        "retarget_revision",
+        "supersedes_run_id",
+        "baseline_checkpoint",
+    }
+    missing = sorted(required_history - set(history_properties))
+    if missing:
+        failures.append(
+            "run history schema omits retarget fields: " + ", ".join(missing)
+        )
+    return failures
 
 
 def validate_build_phase_constitution_preflight_contract(root: Path) -> list[str]:

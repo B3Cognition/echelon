@@ -175,6 +175,23 @@ def test_legacy_retarget_parser_rejects_invalid_shapes_with_exit_2(
 
 
 @pytest.mark.unit
+def test_legacy_retarget_help_prints_exact_installed_usage(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.spec_retarget_cli import run_spec_retarget_command
+
+    with pytest.raises(SystemExit) as raised:
+        run_spec_retarget_command([], tmp_path)
+
+    assert raised.value.code == 2
+    assert (
+        "Usage: echelon spec retarget <spec-id> --target <source-id-or-path> "
+        "[--target <source-id-or-path> ...] [--confirm]"
+    ) in capsys.readouterr().err
+
+
+@pytest.mark.unit
 def test_apply_retarget_holds_locks_revalidates_and_orders_destructive_effects(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

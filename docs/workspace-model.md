@@ -82,6 +82,52 @@ echelon delivery run 001-feature
 
 Repeat `--target` for multi-repo work. Echelon resolves source ids to paths relative to the workspace root, persists them before target-dependent planning, and writes them to `specs/<id>/targets.yml`. Run `echelon delivery target <id>` afterward so Echelon records target-scoped delivery metadata such as the detected `verify_command`. Delivery validates this declaration and never infers or rewrites it.
 
+## Replacing the complete target set
+
+Retarget is allowed only before delivery starts. It keeps the current spec ID,
+original request, product inputs, and feature branch, but replaces the complete
+target set and rebuilds every target-sensitive Phase A artifact.
+
+Preview the complete target replacement first:
+
+```bash
+echelon spec retarget 001-demo --target apps/web
+```
+
+Confirm only after reviewing the preview:
+
+```bash
+echelon spec retarget 001-demo --target apps/web --confirm
+```
+
+Confirmation first creates a mandatory Git checkpoint. Echelon then removes
+the old Phase A result from the buildable surface, purges only memory owned by
+the selected spec, invalidates its spec/workspace graph membership, and starts
+the replacement Phase A run on the same feature branch. Target repositories
+are read-only throughout this orchestration lifecycle.
+
+Reverse engineering is not rerun. Explicitly requested RE sources are reused;
+automatic RE source selection is recalculated against the replacement targets.
+Configured MemPalace operations are fail-closed, so an incomplete scan, delete,
+mine, or audit blocks the spec and preserves the recovery path.
+
+After the checkpoint, do not repair artifacts or state by hand. The only
+rollback is the exact checkpoint command printed by Echelon:
+
+```bash
+echelon spec rewind checkpoint:<retarget-checkpoint-id> --confirm
+```
+
+Successful completion prints the authoritative old-to-new artifact comparison:
+
+```bash
+git diff <checkpoint-commit>..<replacement-commit> -- specs/001-demo
+```
+
+`echelon spec drop-target` remains the narrow path for an unused target with no
+task ownership. Use `echelon spec retarget` to add targets, replace targets, or
+change the complete multi-target set.
+
 For a new implementation repo, let Echelon prepare the target directory, Git
 repository, initial commit, and feature branch:
 

@@ -291,6 +291,48 @@ echelon delivery land 001                  # lands the target repo branch, then 
 echelon review 001 --pr-url https://github.com/org/repo/pull/42
 ```
 
+### Retarget an unimplemented spec
+
+Retarget replaces the complete implementation target set while preserving the
+spec ID, original request, product inputs, and feature branch. It is allowed
+only before delivery starts; any Phase B history, build state, completed task,
+or verification artifact requires a new spec instead.
+
+Preview the complete target replacement first:
+
+```bash
+echelon spec retarget 001-demo --target apps/web
+```
+
+Confirmation creates a mandatory Git checkpoint, removes the current Phase A
+result from the buildable surface, purges spec-owned memory, invalidates its
+artifact graphs, and rebuilds Phase A on the same feature branch:
+
+```bash
+echelon spec retarget 001-demo --target apps/web --confirm
+```
+
+Reverse engineering is not rerun. Explicit RE sources are reused, while
+automatic RE source selection is recalculated for the replacement target set.
+When MemPalace is configured, deletion and refresh are fail-closed: Echelon
+blocks the spec instead of continuing with unproven memory state.
+
+After the checkpoint, the only rollback is the exact command printed by
+Echelon:
+
+```bash
+echelon spec rewind checkpoint:<retarget-checkpoint-id> --confirm
+```
+
+On success, Echelon prints the authoritative comparison command:
+
+```bash
+git diff <checkpoint-commit>..<replacement-commit> -- specs/001-demo
+```
+
+Use `echelon spec drop-target` only for an unused target that owns no task.
+Adding or replacing targets requires `echelon spec retarget`.
+
 ### Artifact graph workflow
 
 The artifact graph connects a canonical specification with the published RE and
@@ -1061,6 +1103,7 @@ This keeps commands readable and makes individual phases independently editable 
 | `echelon spec reopen <id> [from=<report>]` | `speckit.echelon.reopen` | Reopen a spec from fulfillment gaps and append harness-ready `FG-T*` tasks |
 | `echelon spec change <id> "<desc>"` | `speckit.echelon.change` | Handle spec change during build |
 | `echelon spec amend <id> "<desc>" [--input <role:path>]... [--dry-run]` | — | Prepare an isolated product-input amendment for an unbuilt spec |
+| `echelon spec retarget <id> --target <source-path>... [--confirm]` | — | Preview or confirm a destructive complete target-set replacement for an unimplemented spec; confirmation creates the mandatory recovery checkpoint and rebuilds Phase A on the same branch |
 | `echelon spec repair-traceability [--confirm]` | — | Preview or apply a safe repair that removes only contextual task references, then resumes finalization |
 | `echelon cicd` | — | Retired; re-run `echelon delivery init` to auto-detect high-confidence `verify_command` |
 | `echelon spec status` | `speckit.echelon.status` | Re-orient summary — run state, staging artifacts, open issues, cost, next step |

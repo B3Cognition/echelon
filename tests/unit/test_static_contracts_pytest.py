@@ -21,6 +21,7 @@ from tests.contract.static_contracts import (
     validate_sage_decisions_schema_contract,
     validate_sage_understanding_followup_contract,
     validate_sentinel_flakiness_contract,
+    validate_spec_retarget_contract,
     validate_state_schema_build_qa_split_contract,
     validate_veteran_project_scoping_contract,
 )
@@ -115,3 +116,7 @@ def test_auditor_calibration_dashboard_contract() -> None:
 
 def test_state_schema_build_qa_split_contract() -> None:
     assert validate_state_schema_build_qa_split_contract(ROOT) == []
+
+
+def test_spec_retarget_contract() -> None:
+    assert validate_spec_retarget_contract(ROOT) == []

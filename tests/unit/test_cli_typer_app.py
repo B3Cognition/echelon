@@ -163,6 +163,17 @@ def test_spec_retarget_forwards_ordered_targets_and_confirm(monkeypatch):
 
 
 @pytest.mark.unit
+def test_spec_retarget_typer_help_declares_destructive_arguments():
+    result = invoke_help("spec", "retarget")
+
+    assert result.exit_code == 0
+    assert "SPEC_ID" in result.output
+    assert "--target" in result.output
+    assert "--confirm" in result.output
+    assert "complete replacement" in result.output.lower()
+
+
+@pytest.mark.unit
 def test_spec_retarget_dispatches_preserved_phase_a_arguments(monkeypatch, tmp_path):
     from echelon import cli
     from echelon.spec_retarget import RetargetCommandResult
