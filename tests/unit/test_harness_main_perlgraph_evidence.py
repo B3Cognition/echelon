@@ -11,6 +11,8 @@ from pathlib import Path
 
 def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
+    env.pop("ECHELON_CODEGRAPH_RUNTIME_DIR", None)
+    env.pop("ECHELON_PERLGRAPH_RUNTIME_DIR", None)
     src_path = str(Path(__file__).resolve().parents[2] / "src")
     env["PYTHONPATH"] = (
         src_path
@@ -168,6 +170,14 @@ def test_delivery_commands_finalize_exact_run_local_topology_receipt(
 
     _write_fake_bridge(source)
     _write_fake_perlgraph_cli(source)
+    monkeypatch.setenv(
+        "ECHELON_CODEGRAPH_RUNTIME_DIR", str(tmp_path / "host-codegraph")
+    )
+    host_perlgraph = tmp_path / "host-perlgraph"
+    _write_fake_perlgraph_cli_at_runtime(
+        host_perlgraph, stale_repo=tmp_path / "host-repo"
+    )
+    monkeypatch.setenv("ECHELON_PERLGRAPH_RUNTIME_DIR", str(host_perlgraph))
     spec_dir = workspace / "specs/909-delivery-topology"
     spec_dir.mkdir(parents=True)
     (spec_dir / "spec.md").write_text("---\nstatus: ready_to_land\n---\n", encoding="utf-8")
