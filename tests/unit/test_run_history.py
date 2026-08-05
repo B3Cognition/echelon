@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
+from jsonschema import Draft7Validator
 
 from harness.run_history import append_implementation_run, append_phase_a_run
 
@@ -93,3 +95,38 @@ class TestRunHistory:
         assert entry["retarget_revision"] == "retarget-1"
         assert entry["supersedes_run_id"] == "squad-base"
         assert entry["baseline_checkpoint"] == "retarget-preflight-retarget-1"
+
+    def test_run_history_schema_binds_retarget_linkage_to_complete_phase_a_rows(self):
+        schema = json.loads(
+            (Path(__file__).parents[2] / "templates/run-history-schema.json").read_text()
+        )
+        validator = Draft7Validator(schema)
+        partial_phase_a = {
+            "spec_id": "001-demo",
+            "runs": [
+                {
+                    "run_id": "replacement",
+                    "phase": "A",
+                    "status": "done",
+                    "timestamp": "2026-08-05T00:00:00Z",
+                    "retarget_revision": "retarget-1",
+                }
+            ],
+        }
+        phase_b_linkage = {
+            "spec_id": "001-demo",
+            "runs": [
+                {
+                    "run_id": "implementation",
+                    "phase": "B",
+                    "status": "done",
+                    "timestamp": "2026-08-05T00:00:00Z",
+                    "retarget_revision": "retarget-1",
+                    "supersedes_run_id": "baseline",
+                    "baseline_checkpoint": "checkpoint",
+                }
+            ],
+        }
+
+        assert list(validator.iter_errors(partial_phase_a))
+        assert list(validator.iter_errors(phase_b_linkage))

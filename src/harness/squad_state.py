@@ -4127,6 +4127,9 @@ class SquadStateStore:
                 updated_retarget["status"] = "complete"
                 updated_retarget["replacement_commit"] = checked["replacement_commit"]
                 updated_retarget["finalization_receipt"] = checked
+                updated_retarget["comparison_pending_completion_id"] = (
+                    expected_marker["completion_id"]
+                )
                 updated_retarget.pop("memory_excluded", None)
                 desired["retarget"] = updated_retarget
             desired.pop(PENDING_CONTROLLER_COMPLETION_KEY, None)
@@ -4136,6 +4139,28 @@ class SquadStateStore:
                 desired,
                 json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
             )
+
+    def mark_retarget_comparison_emitted(self, completion_id: str) -> bool:
+        """Durably consume one post-adoption retarget comparison event."""
+        with self._lock(exclusive=True):
+            state = self._load_unlocked()
+            retarget = state.get("retarget")
+            if (
+                type(retarget) is not dict
+                or retarget.get("comparison_pending_completion_id") != completion_id
+            ):
+                return False
+            desired = deepcopy(state)
+            updated = deepcopy(retarget)
+            updated.pop("comparison_pending_completion_id", None)
+            updated["comparison_emitted_completion_id"] = completion_id
+            desired["retarget"] = updated
+            self._save_exact_completion_state_unlocked(
+                state,
+                desired,
+                json_path="$.retarget.comparison_pending_completion_id",
+            )
+            return True
 
     def set_blocked(self, reason: str) -> None:
         with self._lock(exclusive=True):

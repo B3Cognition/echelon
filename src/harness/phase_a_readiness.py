@@ -146,6 +146,7 @@ def _retarget_contract_blockers(state: Mapping[str, object], spec_dir: Path) -> 
 
     retarget = state.get("retarget")
     if not isinstance(retarget, Mapping) or retarget.get("status") not in {
+        "finalizing",
         "complete",
         "recovered",
     }:

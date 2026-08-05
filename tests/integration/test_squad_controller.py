@@ -223,6 +223,49 @@ def test_phase4_retarget_enters_finalizing_before_staging(tmp_path: Path) -> Non
     )
 
 
+def test_phase4_staging_never_mutates_a_captured_routing_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The caller, not staging, must persist finalizing before its snapshot."""
+    ctrl, store = _controller(tmp_path)
+    state = store.load()
+    state.update(
+        {
+            "phase": "phase4-document",
+            "run_id": "squad-replacement",
+            "retarget": {
+                "status": "rebuilding",
+                "replacement_run_id": "squad-replacement",
+            },
+        }
+    )
+    store.save(state)
+    snapshot = store.capture_routing_snapshot(expected_phase="phase4-document")
+    result = SquadAgentResult(
+        exit_code=0,
+        echelon_result={"verdict": "DONE", "state_updates": {}},
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    monkeypatch.setattr(
+        SquadPublicationTransaction,
+        "begin",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("staging reached")),
+    )
+
+    with pytest.raises(RuntimeError, match="staging reached"):
+        ctrl._prepare_external_phase_effects(
+            result,
+            "phase4-document",
+            snapshot.state,
+            manual_phase_run=False,
+        )
+
+    assert store.load()["state_revision"] == snapshot.state_revision
+
+
 def test_completed_retarget_exposes_one_authoritative_comparison_command() -> None:
     assert SquadController._retarget_comparison_command(
         {
@@ -237,6 +280,63 @@ def test_completed_retarget_exposes_one_authoritative_comparison_command() -> No
         "Compare old and replacement artifacts:\n"
         "  git diff " + "a" * 40 + ".." + "b" * 40 + " -- specs/001-demo"
     )
+
+
+def test_pending_retarget_comparison_is_durably_consumed_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctrl, store = _controller(tmp_path)
+    state = store.load()
+    state.update(
+        {
+            "spec_id": "001-demo",
+            "retarget": {
+                "status": "complete",
+                "checkpoint_commit": "a" * 40,
+                "replacement_commit": "b" * 40,
+                "comparison_pending_completion_id": "c" * 32,
+                "finalization_receipt": {"completion_id": "c" * 32},
+            },
+        }
+    )
+    store.save(state)
+    output = MagicMock()
+    monkeypatch.setattr("builtins.print", output)
+
+    assert ctrl._emit_pending_retarget_comparison()
+    assert not ctrl._emit_pending_retarget_comparison()
+    assert output.call_count == 1
+    retarget = store.load()["retarget"]
+    assert "comparison_pending_completion_id" not in retarget
+    assert retarget["comparison_emitted_completion_id"] == "c" * 32
+
+
+def test_pending_retarget_comparison_rejects_a_receipt_binding_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctrl, store = _controller(tmp_path)
+    state = store.load()
+    state.update(
+        {
+            "spec_id": "001-demo",
+            "retarget": {
+                "status": "complete",
+                "checkpoint_commit": "a" * 40,
+                "replacement_commit": "b" * 40,
+                "comparison_pending_completion_id": "c" * 32,
+                "finalization_receipt": {"completion_id": "d" * 32},
+            },
+        }
+    )
+    store.save(state)
+    output = MagicMock()
+    monkeypatch.setattr("builtins.print", output)
+
+    assert not ctrl._emit_pending_retarget_comparison()
+    assert output.call_count == 0
+    assert store.load()["retarget"]["comparison_pending_completion_id"] == "c" * 32
 
 
 def test_deterministic_structural_executor_repairs_without_provider(

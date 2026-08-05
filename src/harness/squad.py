@@ -1335,6 +1335,25 @@ class SquadController:
             f"  git diff {checkpoint}..{replacement} -- specs/{spec_id}"
         )
 
+    def _emit_pending_retarget_comparison(self) -> bool:
+        """Print and durably consume the one completed-retarget comparison."""
+        state = self._state_store.load()
+        retarget = state.get("retarget")
+        if not isinstance(retarget, Mapping):
+            return False
+        completion_id = retarget.get("comparison_pending_completion_id")
+        receipt = retarget.get("finalization_receipt")
+        command = self._retarget_comparison_command(state)
+        if (
+            type(completion_id) is not str
+            or not isinstance(receipt, Mapping)
+            or receipt.get("completion_id") != completion_id
+            or command is None
+        ):
+            return False
+        print(command, flush=True)
+        return self._state_store.mark_retarget_comparison_emitted(completion_id)
+
     def _enter_retarget_finalizing(
         self,
         state: Mapping[str, object],
@@ -2070,11 +2089,8 @@ class SquadController:
                         self._state_store.complete_controller_completion(
                             prepared,
                         )
-                    comparison = self._retarget_comparison_command(
-                        self._state_store.load()
-                    )
-                    if comparison is not None:
-                        print(comparison, flush=True)
+                    if "retarget" in prepared.intent.effect_plan:
+                        self._emit_pending_retarget_comparison()
                     self._discard_completed_controller_stage(prepared)
                     return CompletionRecoveryOutcome(
                         True,
@@ -2134,6 +2150,7 @@ class SquadController:
                     recovery = (
                         self._drain_pending_controller_completion()
                     )
+                    self._emit_pending_retarget_comparison()
                     recovered_state = self._state_store.load()
                     if (
                         PENDING_CONTROLLER_COMPLETION_KEY
@@ -4755,6 +4772,8 @@ class SquadController:
                 )
                 return SquadResult.from_state(self._state_store.load())
 
+            if node.id == "phase4-document":
+                self._enter_retarget_finalizing(self._state_store.load())
             snapshot = self._state_store.capture_routing_snapshot(
                 expected_phase=node.id
             )
@@ -6307,13 +6326,6 @@ class SquadController:
         if not (needs_product or needs_phase_a or needs_manual):
             return None
 
-        if (
-            needs_phase_a
-            and isinstance(state.get("retarget"), Mapping)
-            and state["retarget"].get("status") in {"rebuilding", "finalizing"}
-        ):
-            state = self._enter_retarget_finalizing(state)
-
         transaction = SquadPublicationTransaction.begin(
             self._project_root,
             self._squad_dir,
@@ -6484,6 +6496,9 @@ class SquadController:
                     state,
                     [self._absolute_project_path(published_ref)],
                 )
+        if str(state.get("phase") or "") == "phase4-document":
+            self._enter_retarget_finalizing(state)
+            state = self._state_store.load()
         snapshot = self._state_store.capture_routing_snapshot(
             expected_phase=str(state.get("phase") or "")
         )

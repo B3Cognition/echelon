@@ -57,7 +57,44 @@
             "type": "string",
             "format": "date-time"
           }
-        }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {"phase": {"const": "A"}},
+              "required": ["phase"]
+            },
+            "then": {
+              "oneOf": [
+                {
+                  "not": {
+                    "anyOf": [
+                      {"required": ["retarget_revision"]},
+                      {"required": ["supersedes_run_id"]},
+                      {"required": ["baseline_checkpoint"]}
+                    ]
+                  }
+                },
+                {
+                  "required": [
+                    "retarget_revision",
+                    "supersedes_run_id",
+                    "baseline_checkpoint"
+                  ]
+                }
+              ]
+            },
+            "else": {
+              "not": {
+                "anyOf": [
+                  {"required": ["retarget_revision"]},
+                  {"required": ["supersedes_run_id"]},
+                  {"required": ["baseline_checkpoint"]}
+                ]
+              }
+            }
+          }
+        ]
       }
     },
     "authoritative_run": {

@@ -1685,6 +1685,7 @@ class TestSquadStateStore:
         assert retarget["status"] == "complete"
         assert retarget["replacement_commit"] == "a" * 40
         assert retarget["finalization_receipt"] == receipt
+        assert retarget["comparison_pending_completion_id"] == "c" * 32
         assert "memory_excluded" not in retarget
 
     def test_terminal_controller_completion_records_reconciled_inventories(

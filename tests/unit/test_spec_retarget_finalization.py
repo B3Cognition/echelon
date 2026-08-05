@@ -7,11 +7,13 @@ import subprocess
 from types import SimpleNamespace
 
 import pytest
+from jsonschema import Draft7Validator
 
 
 def _receipt(*, memory: dict[str, object]) -> dict[str, object]:
     return {
         "revision_id": "retarget-1",
+        "completion_id": "a" * 32,
         "checkpoint_commit": "a" * 40,
         "replacement_targets": ["apps/web"],
         "memory": memory,
@@ -53,6 +55,41 @@ def test_retarget_finalization_rejects_unvalidated_memory_receipt() -> None:
 
     with pytest.raises(RetargetFinalizationError, match="memory"):
         validate_finalization_receipt(_receipt(memory={"forged": "receipt"}))
+
+
+@pytest.mark.unit
+def test_retarget_completion_trailers_reject_unknown_or_duplicate_identity() -> None:
+    from echelon.spec_retarget_finalization import _exact_trailers_match
+
+    identity = {"Echelon-Action": "retarget-complete"}
+
+    assert not _exact_trailers_match(
+        "Echelon-Action: retarget-complete\nEchelon-Action: retarget-complete\n",
+        identity,
+    )
+    assert not _exact_trailers_match(
+        "Echelon-Action: retarget-complete\nEchelon-Injected: forged\n",
+        identity,
+    )
+
+
+@pytest.mark.unit
+def test_state_schema_retarget_contract_is_closed_and_requires_identity() -> None:
+    schema = __import__("json").loads(
+        (Path(__file__).parents[2] / "templates/state-schema.json").read_text()
+    )["properties"]["retarget"]
+    validator = Draft7Validator(schema)
+
+    assert list(validator.iter_errors({}))
+    assert list(
+        validator.iter_errors(
+            {
+                "status": "finalizing",
+                "revision_id": "rt-1",
+                "unknown": True,
+            }
+        )
+    )
 
 
 @pytest.mark.unit
@@ -194,6 +231,7 @@ def test_retarget_finalization_replays_private_effect_progress_after_a_crash(
         },
     }
     history = {"status": "finalizing"}
+    calls = {"memory": 0, "graph": 0, "memory_verify": 0, "graph_verify": 0}
 
     def revision() -> SimpleNamespace:
         return SimpleNamespace(
@@ -208,22 +246,32 @@ def test_retarget_finalization_replays_private_effect_progress_after_a_crash(
         "load_retarget_history",
         lambda *_args: SimpleNamespace(revisions=(revision(),)),
     )
-    monkeypatch.setattr(
-        finalization,
-        "refresh_retarget_spec_memory",
-        lambda *_args: finalization.RetargetMemoryReceipt(**{
+    def refresh(*_args):
+        calls["memory"] += 1
+        return finalization.RetargetMemoryReceipt(**{
             **memory,
             "deleted_ids": (),
             "remaining_owned_ids": (),
             "unrelated_missing_ids": (),
             "unrelated_changed_ids": (),
             "unexpected_added_ids": (),
-        }),
+        })
+
+    def finalize(*_args):
+        calls["graph"] += 1
+        return finalization.RetargetGraphReceipt.from_dict(graph)
+
+    monkeypatch.setattr(finalization, "refresh_retarget_spec_memory", refresh)
+    monkeypatch.setattr(finalization, "finalize_retarget_graphs", finalize)
+    monkeypatch.setattr(
+        finalization,
+        "verify_retarget_memory_postimage",
+        lambda *_args: calls.__setitem__("memory_verify", calls["memory_verify"] + 1),
     )
     monkeypatch.setattr(
         finalization,
-        "finalize_retarget_graphs",
-        lambda *_args: finalization.RetargetGraphReceipt.from_dict(graph),
+        "verify_retarget_graph_postimage",
+        lambda *_args: calls.__setitem__("graph_verify", calls["graph_verify"] + 1),
     )
     monkeypatch.setattr(
         finalization,
@@ -249,23 +297,13 @@ def test_retarget_finalization_replays_private_effect_progress_after_a_crash(
         state=state,
         expected_receipt=None,
     )
-    monkeypatch.setattr(
-        finalization,
-        "refresh_retarget_spec_memory",
-        lambda *_args: pytest.fail("memory effect must not rerun"),
-    )
-    monkeypatch.setattr(
-        finalization,
-        "finalize_retarget_graphs",
-        lambda *_args: pytest.fail("graph effect must not rerun"),
-    )
-
     assert finalization.apply_or_verify_retarget_finalization(
         prepared,
         project_root=project_root,
         state=state,
         expected_receipt=None,
     ) == first
+    assert calls == {"memory": 1, "graph": 1, "memory_verify": 1, "graph_verify": 1}
 
 
 @pytest.mark.unit
@@ -293,6 +331,10 @@ def test_retarget_finalization_recovers_the_unique_committed_effect(
     message = """chore: finalize retargeted spec
 
 Echelon-Action: retarget-complete
+Echelon-Origin: phase-a
+Echelon-Spec: 001-demo
+Echelon-Run: run-replacement
+Echelon-Checkpoint: dddddddddddddddddddddddddddddddddddddddd
 Echelon-Completion: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 Echelon-Retarget-Revision: retarget-1
 Echelon-Baseline-Run: run-baseline
@@ -316,6 +358,7 @@ Echelon-Replacement-Run: run-replacement
             "revision_id": "retarget-1",
             "baseline_run_id": "run-baseline",
             "replacement_run_id": "run-replacement",
+            "checkpoint_commit": "d" * 40,
         },
         "a" * 32,
     ) == commit

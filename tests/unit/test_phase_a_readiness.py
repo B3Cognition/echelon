@@ -243,10 +243,19 @@ def test_active_retarget_blocks_public_readiness(tmp_path: Path) -> None:
 def test_controller_staging_can_validate_finalizing_retarget(tmp_path: Path) -> None:
     spec_dir = tmp_path / "specs" / "001-demo"
     _write_required(spec_dir)
+    (spec_dir / "targets.yml").write_text(
+        "targets:\n  - apps/web\n", encoding="utf-8"
+    )
+    (spec_dir / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=REQ-1 depends=none "
+        "target=apps/web\n",
+        encoding="utf-8",
+    )
 
     result = validate_phase_a_readiness(
         {
             "status": "done",
+            "implementation_targets": ["apps/web"],
             "retarget": {
                 "revision_id": "rt-1",
                 "status": "finalizing",
@@ -258,6 +267,38 @@ def test_controller_staging_can_validate_finalizing_retarget(tmp_path: Path) -> 
     )
 
     assert result.ready is True
+
+
+def test_finalizing_bypass_still_enforces_replacement_target_contract(
+    tmp_path: Path,
+) -> None:
+    spec_dir = tmp_path / "specs" / "001-demo"
+    _write_required(spec_dir)
+    (spec_dir / "targets.yml").write_text(
+        "targets:\n  - services/api\n", encoding="utf-8"
+    )
+    (spec_dir / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=REQ-1 depends=none "
+        "target=apps/web\n",
+        encoding="utf-8",
+    )
+
+    result = validate_phase_a_readiness(
+        {
+            "status": "done",
+            "implementation_targets": ["apps/web"],
+            "retarget": {
+                "revision_id": "rt-1",
+                "status": "finalizing",
+                "replacement_targets": ["apps/web"],
+            },
+        },
+        [spec_dir],
+        allow_pending_retarget_finalization=True,
+    )
+
+    assert not result.ready
+    assert any("replacement target" in blocker for blocker in result.blockers)
 
 
 def test_completed_retarget_readiness_requires_authoritative_target_contract(
