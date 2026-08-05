@@ -952,6 +952,133 @@ def test_retarget_checkpoint_routes_before_generic_cleanup_with_prereset_state(
     assert captured["state"]["run_id"] == "squad-replacement"
 
 
+def test_retarget_checkpoint_resumes_committed_recovery_before_git_reset(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "run_id": "squad-replacement",
+            "spec_id": "006-element-creator",
+            "feature_branch": "006-element-creator",
+            "status": "blocked",
+            "phase": "phase0-constitution",
+            "spec_dir": "specs/006-element-creator",
+            "retarget": {
+                "revision_id": "retarget-1",
+                "baseline_run_id": "squad-base",
+                "replacement_run_id": "squad-replacement",
+                "replacement_targets": ["apps/web"],
+                "artifact_invalidation": ["spec.md", "targets.yml"],
+            },
+        },
+    )
+    spec_dir = tmp_path / "specs" / "006-element-creator"
+    spec_dir.mkdir(parents=True)
+    checkpoint = PhaseCheckpoint(
+        id="retarget-preflight-retarget-1",
+        spec_id=spec_dir.name,
+        phase="phase4-document",
+        next_phase="phase0-constitution",
+        commit="b" * 40,
+        metadata_commit="b" * 40,
+        source="retarget-preflight",
+        run_id="squad-base",
+        created_at="2026-08-05T00:00:00+00:00",
+    )
+    record_checkpoint_metadata(spec_dir, checkpoint)
+    calls: list[str] = []
+
+    def fake_resume(
+        project_root: Path,
+        selected: PhaseCheckpoint,
+        replacement_state: dict[str, object],
+    ) -> object:
+        assert project_root == tmp_path
+        assert selected == checkpoint
+        assert replacement_state["run_id"] == "squad-replacement"
+        calls.append("resume")
+        return SimpleNamespace(revision_id="retarget-1")
+
+    monkeypatch.setattr(
+        "echelon.spec_retarget_recovery.resume_committed_retarget_recovery",
+        fake_resume,
+    )
+    monkeypatch.setattr(
+        "echelon.spec_retarget_recovery.verified_committed_retarget_recovery",
+        lambda *_args: "d" * 40,
+    )
+    monkeypatch.setattr(
+        "echelon.rewind.prepare_rewind",
+        lambda **_kwargs: pytest.fail("committed recovery must resume before reset"),
+    )
+    monkeypatch.setattr(
+        "echelon.spec_retarget_recovery.retarget_recovery_dirty_paths",
+        lambda *_args: pytest.fail("committed recovery must not authorize reset dirt"),
+    )
+
+    _cmd_rewind([checkpoint.id, "--confirm"], project_root=tmp_path)
+
+    assert calls == ["resume"]
+    assert (run_dir / "state.json").exists()
+
+
+def test_unconfirmed_committed_recovery_is_read_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _write_run_state(
+        tmp_path,
+        {
+            "run_id": "squad-replacement",
+            "spec_id": "006-element-creator",
+            "feature_branch": "006-element-creator",
+            "status": "blocked",
+            "phase": "phase0-constitution",
+            "spec_dir": "specs/006-element-creator",
+            "retarget": {
+                "revision_id": "retarget-1",
+                "baseline_run_id": "squad-base",
+                "replacement_run_id": "squad-replacement",
+                "replacement_targets": ["apps/web"],
+                "artifact_invalidation": ["spec.md", "targets.yml"],
+            },
+        },
+    )
+    spec_dir = tmp_path / "specs" / "006-element-creator"
+    spec_dir.mkdir(parents=True)
+    checkpoint = PhaseCheckpoint(
+        id="retarget-preflight-retarget-1",
+        spec_id=spec_dir.name,
+        phase="phase4-document",
+        next_phase="phase0-constitution",
+        commit="b" * 40,
+        metadata_commit="b" * 40,
+        source="retarget-preflight",
+        run_id="squad-base",
+        created_at="2026-08-05T00:00:00+00:00",
+    )
+    record_checkpoint_metadata(spec_dir, checkpoint)
+    monkeypatch.setattr(
+        "echelon.spec_retarget_recovery.verified_committed_retarget_recovery",
+        lambda *_args: "d" * 40,
+    )
+    monkeypatch.setattr(
+        "echelon.spec_retarget_recovery.resume_committed_retarget_recovery",
+        lambda *_args: pytest.fail("unconfirmed recovery must not publish"),
+    )
+    monkeypatch.setattr(
+        "echelon.rewind.prepare_rewind",
+        lambda **_kwargs: pytest.fail("committed recovery preview must not reset Git"),
+    )
+
+    _cmd_rewind([checkpoint.id], project_root=tmp_path)
+
+    assert f"echelon spec rewind checkpoint:{checkpoint.id} --confirm" in capsys.readouterr().out
+
+
 def test_traceability_repair_resumes_finalization_without_replanning(
     tmp_path: Path,
     capsys,

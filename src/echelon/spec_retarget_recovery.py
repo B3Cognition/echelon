@@ -57,18 +57,65 @@ _SPEC_ID = re.compile(r"^(?:[0-9]{3,})-[a-z0-9]+(?:-[a-z0-9]+)*$")
 _GIT_OID = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _TRAILER = re.compile(r"^([A-Za-z0-9-]+):[ \t]*(.*?)\s*$")
 
-RETARGET_RECOVERY_DIRTY_PATHS = frozenset(
-    {
-        "retarget-history.json",
-        "mempalace-audit.json",
-        "mempalace-audit.md",
-        "mempalace-mine.json",
-        "mempalace-refresh-manifest.json",
-        "spec-artifact-graph.json",
-        "spec-artifact-graph-audit.json",
-        ".spec.md.retarget-recovery",
-    }
-)
+def _artifact_invalidation_from_revision(
+    revision: RetargetRevision,
+) -> tuple[str, ...]:
+    paths: list[str] = []
+    for item in revision.artifact_inventory:
+        if (
+            type(item) is not dict
+            or frozenset(item) != {"path", "disposition"}
+            or item.get("disposition") != "invalidate"
+            or type(item.get("path")) is not str
+        ):
+            raise RetargetRecoveryError("retarget recovery artifact inventory is invalid")
+        path = str(item["path"])
+        candidate = PurePosixPath(path)
+        if (
+            not path
+            or candidate.is_absolute()
+            or len(candidate.parts) != 1
+            or candidate.as_posix() != path
+            or path in {".", "..", ".echelon", "retarget-history.json"}
+        ):
+            raise RetargetRecoveryError("retarget recovery artifact inventory is invalid")
+        paths.append(path)
+    if not paths or len(paths) != len(set(paths)) or tuple(paths) != tuple(sorted(paths)):
+        raise RetargetRecoveryError("retarget recovery artifact inventory is invalid")
+    return tuple(paths)
+
+
+def _checkpoint_revision(
+    project_root: Path,
+    spec_dir: Path,
+    commit: str,
+    revision_id: object,
+) -> RetargetRevision:
+    if type(commit) is not str or _GIT_OID.fullmatch(commit) is None:
+        raise RetargetRecoveryError("retarget recovery checkpoint proof is invalid")
+    shown = run_git(
+        project_root,
+        "show",
+        f"{commit}:specs/{spec_dir.name}/retarget-history.json",
+        check=False,
+    )
+    if shown.returncode != 0:
+        raise RetargetRecoveryError("retarget recovery checkpoint proof is unavailable")
+    try:
+        history = _history_from_raw(
+            loads_strict_json(shown.stdout),
+            spec_id=spec_dir.name,
+        )
+    except (TypeError, ValueError) as exc:
+        raise RetargetRecoveryError(
+            "retarget recovery checkpoint proof is invalid"
+        ) from exc
+    matches = tuple(
+        revision for revision in history.revisions if revision.revision_id == revision_id
+    )
+    if len(matches) != 1:
+        raise RetargetRecoveryError("retarget recovery checkpoint proof is invalid")
+    return matches[0]
 
 
 def retarget_recovery_dirty_paths(
@@ -131,16 +178,96 @@ def retarget_recovery_dirty_paths(
         or tuple(targets) != history.revisions[-1].replacement_targets
     ):
         raise RetargetRecoveryError("retarget recovery target plan drifted")
+    live_revision = history.revisions[-1]
+    checkpoint_revision = _checkpoint_revision(
+        root,
+        directory,
+        str(retarget.get("checkpoint_commit") or ""),
+        retarget.get("revision_id"),
+    )
+    immutable_fields = (
+        "revision_id",
+        "operation_id",
+        "baseline_run_id",
+        "replacement_run_id",
+        "old_targets",
+        "replacement_targets",
+        "original_prompt_digest",
+        "recovery",
+        "checkpoint_parent",
+        "artifact_inventory",
+    )
+    if any(
+        getattr(live_revision, field) != getattr(checkpoint_revision, field)
+        for field in immutable_fields
+    ):
+        raise RetargetRecoveryError("retarget recovery checkpoint proof drifted")
+    mutable_state_fields = {
+        "status": live_revision.status,
+        "checkpoint_id": live_revision.checkpoint_id,
+        "checkpoint_commit": live_revision.checkpoint_commit,
+        "failure_code": live_revision.failure_code,
+    }
+    if live_revision.memory_purge is not None:
+        mutable_state_fields["memory_purge"] = live_revision.memory_purge
+    if live_revision.graph_invalidation is not None:
+        mutable_state_fields["graph_invalidation"] = live_revision.graph_invalidation
+    if any(retarget.get(field) != value for field, value in mutable_state_fields.items()):
+        raise RetargetRecoveryError("retarget recovery controller history drifted")
+    authenticated_invalidation = _artifact_invalidation_from_revision(
+        checkpoint_revision
+    )
+    if tuple(raw_invalidation) != authenticated_invalidation:
+        raise RetargetRecoveryError("retarget recovery artifact plan drifted")
     expected_targets = (
         "targets:\n" + "".join(f"- {target}\n" for target in targets)
     ).encode("utf-8")
     relative_spec = directory.relative_to(root).as_posix()
     prefix = f"{relative_spec}/"
-    allowed = set(RETARGET_RECOVERY_DIRTY_PATHS)
+    staged_result = run_git(
+        root,
+        "diff",
+        "--cached",
+        "--name-only",
+        "--",
+        relative_spec,
+        check=False,
+    )
+    if staged_result.returncode != 0:
+        raise RetargetRecoveryError("retarget recovery staged paths are unavailable")
+    staged_paths = frozenset(staged_result.stdout.splitlines())
+    allowed: set[str] = set()
     for repo_path in worktree_dirty_paths(root):
         if not repo_path.startswith(prefix):
             continue
+        if repo_path in staged_paths:
+            continue
         relative = repo_path.removeprefix(prefix)
+        if relative == "retarget-history.json":
+            allowed.add(relative)
+            continue
+        if relative == ".spec.md.retarget-recovery":
+            staging = directory / relative
+            canonical = directory / "spec.md"
+            checkpoint_spec = run_git(
+                root,
+                "show",
+                f"{retarget['checkpoint_commit']}:specs/{directory.name}/spec.md",
+                check=False,
+            )
+            try:
+                if (
+                    checkpoint_spec.returncode == 0
+                    and not canonical.exists()
+                    and not canonical.is_symlink()
+                    and staging.is_file()
+                    and not staging.is_symlink()
+                    and staging.read_bytes() == checkpoint_spec.stdout.encode("utf-8")
+                ):
+                    allowed.add(relative)
+            except OSError:
+                pass
+            continue
         candidate = PurePosixPath(relative)
         if not candidate.parts or candidate.parts[0] not in invalidation:
             continue
@@ -193,6 +320,26 @@ class RetargetRecoveryResult:
             raise RetargetRecoveryError("retarget recovery result is invalid")
 
 
+def _recovered_retarget_contract(
+    revision: RetargetRevision,
+    recovery_commit: str,
+) -> dict[str, object]:
+    return {
+        "operation_id": revision.operation_id,
+        "revision_id": revision.revision_id,
+        "status": "recovered",
+        "baseline_run_id": revision.baseline_run_id,
+        "replacement_run_id": revision.replacement_run_id,
+        "old_targets": list(revision.old_targets),
+        "replacement_targets": list(revision.replacement_targets),
+        "artifact_invalidation": list(_artifact_invalidation_from_revision(revision)),
+        "checkpoint_id": revision.checkpoint_id,
+        "checkpoint_commit": revision.checkpoint_commit,
+        "failure_code": None,
+        "recovery_commit": recovery_commit,
+    }
+
+
 def restore_or_recreate_baseline_state(
     project_root: Path,
     spec_dir: Path,
@@ -225,6 +372,7 @@ def restore_or_recreate_baseline_state(
     run_dir.mkdir(exist_ok=True)
     state_path = run_dir / "state.json"
     try:
+        preserve_recovered = False
         if state_path.exists() or state_path.is_symlink():
             state_stat = os.lstat(state_path)
             if stat.S_ISLNK(state_stat.st_mode) or not stat.S_ISREG(state_stat.st_mode):
@@ -243,6 +391,35 @@ def restore_or_recreate_baseline_state(
                 or existing_spec_ref.resolve() != canonical_spec_dir
             ):
                 raise RetargetRecoveryError("retarget baseline state identity drifted")
+            if (
+                revision.status == "recovered"
+                and revision.recovery_commit is not None
+                and existing.get("status") == revision.recovery.status
+                and existing.get("phase") == revision.recovery.phase
+                and existing.get("completed_phases")
+                == list(revision.recovery.completed_phases)
+                and existing.get("implementation_targets")
+                == list(revision.recovery.implementation_targets)
+                and existing.get("spec_status") == revision.recovery.spec_status
+                and existing.get("ready_to_build") is revision.recovery.ready_to_build
+                and "blocked_reason" not in existing
+                and existing.get("retarget")
+                == _recovered_retarget_contract(
+                    revision,
+                    revision.recovery_commit,
+                )
+            ):
+                preserve_recovered = True
+        if preserve_recovered:
+            return SpecRun(
+                run_dir=run_dir.resolve(),
+                run_dir_name=run_dir.name,
+                run_id=revision.baseline_run_id,
+                spec_id=canonical_spec_dir.name,
+                feature_branch=feature_branch,
+                spec_dir=canonical_spec_dir,
+                published_spec_dir=canonical_spec_dir,
+            )
         store = SquadStateStore(run_dir)
         store.initialize(
             revision.baseline_run_id,
@@ -316,6 +493,8 @@ def create_or_recover_retarget_recovery_commit(
     spec_dir: Path,
     revision: RetargetRevision,
     checkpoint: PhaseCheckpoint,
+    *,
+    required_existing_commit: str | None = None,
 ) -> str:
     root = Path(project_root).resolve()
     supplied_spec_dir = Path(spec_dir)
@@ -332,36 +511,34 @@ def create_or_recover_retarget_recovery_commit(
         or directory.parent != root / "specs"
         or not directory.is_dir()
         or supplied_spec_dir.is_symlink()
+        or (
+            required_existing_commit is not None
+            and (
+                type(required_existing_commit) is not str
+                or _GIT_OID.fullmatch(required_existing_commit) is None
+            )
+        )
     ):
         raise RetargetRecoveryError("retarget recovery commit identity is invalid")
     identity = _recovery_commit_identity(directory, revision, checkpoint)
     try:
-        discovered = run_git(
-            root,
-            "log",
-            "--all",
-            "--fixed-strings",
-            "--all-match",
-            "--grep=Echelon-Action: retarget-recovered",
-            f"--grep=Echelon-Retarget-Revision: {revision.revision_id}",
-            "--format=%H",
-        )
-        candidates = tuple(line for line in discovered.stdout.splitlines() if line)
-        matches: list[str] = []
-        for candidate in candidates:
-            if not _verify_recovery_commit(
+        matches = list(
+            _verified_existing_recovery_commits(
                 root,
                 directory,
                 revision,
-                candidate,
                 identity,
-            ):
-                raise RetargetRecoveryError("retarget recovery commit proof drifted")
-            matches.append(candidate)
+            )
+        )
         if len(matches) > 1:
             raise RetargetRecoveryError("duplicate retarget recovery commits")
         if matches:
             candidate = matches[0]
+            if (
+                required_existing_commit is not None
+                and candidate != required_existing_commit
+            ):
+                raise RetargetRecoveryError("retarget recovery commit proof drifted")
             if revision.recovery_commit not in {None, candidate}:
                 raise RetargetRecoveryError("retarget recovery commit binding drifted")
             if not _verify_live_recovery_postimage(
@@ -374,6 +551,8 @@ def create_or_recover_retarget_recovery_commit(
                     "retarget recovery live postimage drifted"
                 )
             return candidate
+        if required_existing_commit is not None:
+            raise RetargetRecoveryError("required retarget recovery commit is unavailable")
         if revision.recovery_commit is not None:
             raise RetargetRecoveryError("bound retarget recovery commit is unavailable")
         message = build_echelon_commit_message(
@@ -405,6 +584,37 @@ def create_or_recover_retarget_recovery_commit(
         raise
     except (GitHelperError, PhaseCheckpointError, OSError, TypeError, ValueError) as exc:
         raise RetargetRecoveryError("retarget recovery commit is unavailable") from exc
+
+
+def _verified_existing_recovery_commits(
+    project_root: Path,
+    spec_dir: Path,
+    revision: RetargetRevision,
+    identity: Mapping[str, str],
+) -> tuple[str, ...]:
+    discovered = run_git(
+        project_root,
+        "log",
+        "--all",
+        "--fixed-strings",
+        "--all-match",
+        "--grep=Echelon-Action: retarget-recovered",
+        f"--grep=Echelon-Retarget-Revision: {revision.revision_id}",
+        "--format=%H",
+    )
+    candidates = tuple(line for line in discovered.stdout.splitlines() if line)
+    matches: list[str] = []
+    for candidate in candidates:
+        if not _verify_recovery_commit(
+            project_root,
+            spec_dir,
+            revision,
+            candidate,
+            identity,
+        ):
+            raise RetargetRecoveryError("retarget recovery commit proof drifted")
+        matches.append(candidate)
+    return tuple(matches)
 
 
 def _recovery_commit_identity(
@@ -587,6 +797,8 @@ def persist_recovered_baseline_state(
         or revision.recovery_commit not in {None, recovery_commit}
     ):
         raise RetargetRecoveryError("retarget recovered baseline identity drifted")
+    if revision.checkpoint_id is None or revision.checkpoint_commit is None:
+        raise RetargetRecoveryError("retarget recovered baseline identity drifted")
     try:
         store = SquadStateStore(baseline.run_dir)
         state = store.load()
@@ -600,7 +812,6 @@ def persist_recovered_baseline_state(
         state.update(
             {
                 "status": revision.recovery.status,
-                "blocked_reason": None,
                 "phase": revision.recovery.phase,
                 "completed_phases": list(revision.recovery.completed_phases),
                 "implementation_targets": list(
@@ -608,20 +819,17 @@ def persist_recovered_baseline_state(
                 ),
                 "spec_status": revision.recovery.spec_status,
                 "ready_to_build": revision.recovery.ready_to_build,
-                "retarget": {
-                    "revision_id": revision.revision_id,
-                    "baseline_run_id": revision.baseline_run_id,
-                    "replacement_run_id": revision.replacement_run_id,
-                    "status": "recovered",
-                    "recovery_commit": recovery_commit,
-                },
+                "retarget": _recovered_retarget_contract(
+                    revision,
+                    recovery_commit,
+                ),
             }
         )
+        state.pop("blocked_reason", None)
         store.save(state)
         durable = store.load()
         controlled = (
             "status",
-            "blocked_reason",
             "phase",
             "completed_phases",
             "implementation_targets",
@@ -629,7 +837,9 @@ def persist_recovered_baseline_state(
             "ready_to_build",
             "retarget",
         )
-        if any(durable.get(key) != state[key] for key in controlled):
+        if "blocked_reason" in durable or any(
+            durable.get(key) != state[key] for key in controlled
+        ):
             raise RetargetRecoveryError("retarget recovered baseline was not durable")
     except RetargetRecoveryError:
         raise
@@ -690,10 +900,17 @@ def _require_recovery_revision(
     checkpoint_unbound = (
         revision.checkpoint_id is None and revision.checkpoint_commit is None
     )
+    state_run_id = replacement_state.get("run_id")
+    state_status = retarget.get("status") if type(retarget) is dict else None
+    state_run_matches = state_run_id == revision.replacement_run_id or (
+        revision.status == "recovered"
+        and state_status == "recovered"
+        and state_run_id == revision.baseline_run_id
+    )
     if (
         type(replacement_state) is not dict
         or type(retarget) is not dict
-        or replacement_state.get("run_id") != revision.replacement_run_id
+        or not state_run_matches
         or replacement_state.get("spec_id") != checkpoint.spec_id
         or type(replacement_state.get("feature_branch")) is not str
         or not replacement_state.get("feature_branch")
@@ -753,6 +970,73 @@ def _require_recovery_revision(
     return spec_dir, revision
 
 
+def verified_committed_retarget_recovery(
+    project_root: Path,
+    checkpoint: PhaseCheckpoint,
+    replacement_state: Mapping[str, object],
+) -> str | None:
+    """Return one verified existing recovery commit without mutating state."""
+
+    root = Path(project_root).resolve()
+    if type(checkpoint) is not PhaseCheckpoint or checkpoint.source != "retarget-preflight":
+        return None
+    spec_dir = root / "specs" / checkpoint.spec_id
+    try:
+        history = load_retarget_history(spec_dir)
+        if not history.revisions or history.revisions[-1].status != "recovered":
+            return None
+        spec_dir, revision = _require_recovery_revision(
+            root,
+            checkpoint,
+            replacement_state,
+        )
+        identity = _recovery_commit_identity(spec_dir, revision, checkpoint)
+        matches = _verified_existing_recovery_commits(
+            root,
+            spec_dir,
+            revision,
+            identity,
+        )
+    except RetargetRecoveryError:
+        raise
+    except (GitHelperError, OSError, TypeError, ValueError) as exc:
+        raise RetargetRecoveryError(
+            "retarget recovery commit proof is unavailable"
+        ) from exc
+    if len(matches) > 1:
+        raise RetargetRecoveryError("duplicate retarget recovery commits")
+    if not matches:
+        return None
+    candidate = matches[0]
+    if revision.recovery_commit not in {None, candidate}:
+        raise RetargetRecoveryError("retarget recovery commit binding drifted")
+    if not _verify_live_recovery_postimage(root, spec_dir, revision, candidate):
+        raise RetargetRecoveryError("retarget recovery live postimage drifted")
+    return candidate
+
+
+def resume_committed_retarget_recovery(
+    project_root: Path,
+    checkpoint: PhaseCheckpoint,
+    replacement_state: Mapping[str, object],
+) -> RetargetRecoveryResult | None:
+    """Finish publication only when the same recovery commit already exists."""
+
+    recovery_commit = verified_committed_retarget_recovery(
+        project_root,
+        checkpoint,
+        replacement_state,
+    )
+    if recovery_commit is None:
+        return None
+    return recover_retarget_checkpoint(
+        project_root,
+        checkpoint,
+        replacement_state,
+        required_existing_commit=recovery_commit,
+    )
+
+
 def _memory_receipt_from_history(value: object) -> RetargetMemoryReceipt:
     if type(value) is not dict or frozenset(value) != frozenset(
         RetargetMemoryReceipt.__dataclass_fields__
@@ -796,6 +1080,8 @@ def recover_retarget_checkpoint(
     project_root: Path,
     checkpoint: PhaseCheckpoint,
     replacement_state: Mapping[str, object],
+    *,
+    required_existing_commit: str | None = None,
 ) -> RetargetRecoveryResult:
     """Recover one authenticated destructive revision from its checkpoint."""
     spec_dir, revision = _require_recovery_revision(
@@ -874,12 +1160,21 @@ def recover_retarget_checkpoint(
             )
         else:
             raise RetargetRecoveryError("retarget revision is not recoverable")
-        recovery_commit = create_or_recover_retarget_recovery_commit(
-            project_root,
-            spec_dir,
-            revision,
-            checkpoint,
-        )
+        if required_existing_commit is None:
+            recovery_commit = create_or_recover_retarget_recovery_commit(
+                project_root,
+                spec_dir,
+                revision,
+                checkpoint,
+            )
+        else:
+            recovery_commit = create_or_recover_retarget_recovery_commit(
+                project_root,
+                spec_dir,
+                revision,
+                checkpoint,
+                required_existing_commit=required_existing_commit,
+            )
         bind_retarget_recovery_commit(
             spec_dir,
             revision.revision_id,

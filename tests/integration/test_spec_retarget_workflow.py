@@ -338,7 +338,13 @@ class RetargetWorkspace:
         result = validate_phase_a_readiness(self.active_state(), [self.spec_dir])
         return CommandOutcome(0 if result.ready else 1, stderr="\n".join(result.blockers))
 
-    def rewind_printed_checkpoint(self, failed: CommandOutcome) -> CommandOutcome:
+    def rewind_printed_checkpoint(
+        self,
+        failed: CommandOutcome,
+        *,
+        crash_after_commit: bool = False,
+        forbid_replayed_effects: bool = False,
+    ) -> CommandOutcome:
         from echelon import cli as legacy_cli
 
         match = re.search(r"checkpoint:([^\s]+)", failed.stderr)
@@ -346,22 +352,38 @@ class RetargetWorkspace:
         assert checkpoint_id is not None
         stdout = io.StringIO()
         stderr = io.StringIO()
-        with (
-            patch(
-                "echelon.spec_retarget_recovery.purge_retarget_spec_memory",
-                return_value=self._memory_receipt(),
-            ),
-            patch(
-                "echelon.spec_retarget_recovery.refresh_retarget_spec_memory",
-                return_value=self._memory_receipt(),
-            ),
-            patch(
-                "echelon.spec_retarget_recovery.finalize_retarget_graphs",
-                return_value=self._graph_receipt(),
-            ),
-            redirect_stdout(stdout),
-            redirect_stderr(stderr),
-        ):
+        effect_failure = AssertionError("committed recovery effect was replayed")
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch(
+                    "echelon.spec_retarget_recovery.purge_retarget_spec_memory",
+                    side_effect=effect_failure if forbid_replayed_effects else None,
+                    return_value=self._memory_receipt(),
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "echelon.spec_retarget_recovery.refresh_retarget_spec_memory",
+                    side_effect=effect_failure if forbid_replayed_effects else None,
+                    return_value=self._memory_receipt(),
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "echelon.spec_retarget_recovery.finalize_retarget_graphs",
+                    side_effect=effect_failure if forbid_replayed_effects else None,
+                    return_value=self._graph_receipt(),
+                )
+            )
+            if crash_after_commit:
+                stack.enter_context(
+                    patch(
+                        "echelon.spec_retarget_recovery.persist_recovered_baseline_state",
+                        side_effect=OSError("injected crash after recovery commit"),
+                    )
+                )
+            stack.enter_context(redirect_stdout(stdout))
+            stack.enter_context(redirect_stderr(stderr))
             try:
                 legacy_cli._cmd_rewind(
                     [f"checkpoint:{checkpoint_id}", "--confirm"],
@@ -524,16 +546,16 @@ def retarget_workspace(tmp_path: Path) -> RetargetWorkspace:
         tmp_path,
     )
 
-    run_dir = tmp_path / "runs/squad-base"
+    run_dir = tmp_path / "runs/squad-001-1"
     shadow = run_dir / "specs/001-demo"
     shadow.mkdir(parents=True)
     for name, contents in artifacts.items():
         (shadow / name).write_text(contents, encoding="utf-8")
     state = {
-        "run_id": "squad-base",
+        "run_id": "squad-001-1",
         "spec_id": "001-demo",
         "feature_branch": "001-demo",
-        "spec_dir": "runs/squad-base/specs/001-demo",
+        "spec_dir": "runs/squad-001-1/specs/001-demo",
         "published_spec_dir": "specs/001-demo",
         "spec_number": "001",
         "phase_a_default_branch": "001-demo",
@@ -549,7 +571,7 @@ def retarget_workspace(tmp_path: Path) -> RetargetWorkspace:
         "requested_re_sources": [],
     }
     (run_dir / "state.json").write_text(json.dumps(state, indent=2) + "\n")
-    (tmp_path / "runs/.current").write_text("squad-base\n", encoding="utf-8")
+    (tmp_path / "runs/.current").write_text("squad-001-1\n", encoding="utf-8")
     _git(tmp_path, "add", ".")
     _git(tmp_path, "commit", "-m", "ready baseline")
     _git(tmp_path, "branch", "-f", "main", "HEAD")
@@ -597,6 +619,110 @@ def test_failed_retarget_recovers_only_through_checkpoint(
     history = load_retarget_history(retarget_workspace.spec_dir)
     assert history.revisions[-1].status == "recovered"
     assert history.revisions[-1].recovery_commit == retarget_workspace.git_head()
+
+
+def test_recovery_commit_crash_retries_without_replaying_effects_and_state_validates(
+    retarget_workspace: RetargetWorkspace,
+) -> None:
+    from jsonschema import Draft7Validator
+
+    failed = retarget_workspace.run_retarget(
+        ("apps/web",),
+        fail_after="artifact_invalidation",
+    )
+    first = retarget_workspace.rewind_printed_checkpoint(
+        failed,
+        crash_after_commit=True,
+    )
+
+    assert first.exit_code == 1
+    recovery_head = retarget_workspace.git_head()
+    second = retarget_workspace.rewind_printed_checkpoint(
+        failed,
+        forbid_replayed_effects=True,
+    )
+
+    assert second.exit_code == 0, second.stderr
+    assert retarget_workspace.git_head() == recovery_head
+    state = retarget_workspace.active_state()
+    schema = json.loads(
+        (Path(__file__).parents[2] / "templates/state-schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert list(Draft7Validator(schema).iter_errors(state)) == []
+    repeated = retarget_workspace.rewind_printed_checkpoint(
+        failed,
+        forbid_replayed_effects=True,
+    )
+    assert repeated.exit_code == 0, repeated.stderr
+    assert retarget_workspace.git_head() == recovery_head
+    history = load_retarget_history(retarget_workspace.spec_dir)
+    assert len(history.revisions) == 1
+    assert history.revisions[-1].recovery_commit == recovery_head
+
+
+def test_recovery_refuses_and_preserves_staged_user_edit_to_generated_filename(
+    retarget_workspace: RetargetWorkspace,
+) -> None:
+    failed = retarget_workspace.run_retarget(
+        ("apps/web",),
+        fail_after="artifact_invalidation",
+    )
+    user_bytes = b"user-authored spec recovery notes\n"
+    spec = retarget_workspace.spec_dir / "spec.md"
+    spec.write_bytes(user_bytes)
+    _git(retarget_workspace.root, "add", "specs/001-demo/spec.md")
+    staged_before = retarget_workspace.git_staged_names()
+
+    refused = retarget_workspace.rewind_printed_checkpoint(failed)
+
+    assert refused.exit_code == 1
+    assert spec.read_bytes() == user_bytes
+    assert retarget_workspace.git_staged_names() == staged_before
+    assert "specs/001-demo/spec.md" in staged_before
+
+
+def _mutate_history_updated_at(path: Path) -> None:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["revisions"][-1]["updated_at"] = "2026-08-05T12:34:56+00:00"
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def _write_user_staging_bytes(path: Path) -> None:
+    path.write_bytes(b"user-owned staging bytes\n")
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "mutate"),
+    (
+        ("retarget-history.json", _mutate_history_updated_at),
+        (".spec.md.retarget-recovery", _write_user_staging_bytes),
+    ),
+)
+def test_recovery_preserves_staged_edits_to_reserved_controller_names(
+    retarget_workspace: RetargetWorkspace,
+    relative_path: str,
+    mutate: object,
+) -> None:
+    failed = retarget_workspace.run_retarget(
+        ("apps/web",),
+        fail_after="artifact_invalidation",
+    )
+    path = retarget_workspace.spec_dir / relative_path
+    original = path.read_bytes() if path.exists() else None
+    assert callable(mutate)
+    mutate(path)
+    user_bytes = path.read_bytes()
+    assert user_bytes != original
+    _git(retarget_workspace.root, "add", f"specs/001-demo/{relative_path}")
+    staged_before = retarget_workspace.git_staged_names()
+
+    refused = retarget_workspace.rewind_printed_checkpoint(failed)
+
+    assert refused.exit_code == 1
+    assert path.read_bytes() == user_bytes
+    assert retarget_workspace.git_staged_names() == staged_before
 
 
 @pytest.mark.parametrize(

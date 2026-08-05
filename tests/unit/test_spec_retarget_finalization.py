@@ -162,6 +162,8 @@ def _retarget_state(status: str) -> dict[str, object]:
             comparison_event_id="retarget-comparison-" + "e" * 32,
             comparison_command="git diff a..b -- specs/001-demo",
         )
+    if status == "recovered":
+        state["recovery_commit"] = "d" * 40
     return state
 
 
@@ -263,6 +265,18 @@ def test_state_schema_retarget_contract_is_closed_and_requires_identity() -> Non
             }
         )
     )
+
+
+@pytest.mark.unit
+def test_state_schema_accepts_only_commit_bound_recovered_state() -> None:
+    recovered = _retarget_state("recovered")
+
+    assert _retarget_schema_errors(recovered) == []
+    recovered.pop("recovery_commit")
+    assert _retarget_schema_errors(recovered)
+    failed = _retarget_state("failed")
+    failed["recovery_commit"] = "d" * 40
+    assert _retarget_schema_errors(failed)
 
 
 @pytest.mark.unit

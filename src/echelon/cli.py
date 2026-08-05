@@ -8002,14 +8002,54 @@ def _cmd_rewind(
                     recovery_dirty_paths = frozenset()
                     if checkpoint.source == "retarget-preflight":
                         from echelon.spec_retarget_recovery import (
+                            RetargetRecoveryError,
+                            resume_committed_retarget_recovery,
                             retarget_recovery_dirty_paths,
+                            verified_committed_retarget_recovery,
                         )
 
-                        recovery_dirty_paths = retarget_recovery_dirty_paths(
-                            project_root,
-                            spec_dir,
-                            replacement_state,
-                        )
+                        try:
+                            recovery_commit = verified_committed_retarget_recovery(
+                                project_root,
+                                checkpoint,
+                                replacement_state,
+                            )
+                        except RetargetRecoveryError as exc:
+                            raise RewindError(str(exc)) from exc
+                        if recovery_commit is not None and not confirm:
+                            print(
+                                "Retarget recovery is already committed. No changes "
+                                "were made.\n"
+                                f"  echelon spec rewind checkpoint:{checkpoint.id} "
+                                "--confirm"
+                            )
+                            return
+                        if recovery_commit is not None:
+                            try:
+                                resumed = resume_committed_retarget_recovery(
+                                    project_root,
+                                    checkpoint,
+                                    replacement_state,
+                                )
+                            except RetargetRecoveryError as exc:
+                                raise RewindError(str(exc)) from exc
+                            if resumed is None:
+                                raise RewindError(
+                                    "verified retarget recovery commit became unavailable"
+                                )
+                            print(
+                                "Retarget recovery was already committed; "
+                                "state and active-run publication are complete."
+                            )
+                            return
+                        try:
+                            recovery_dirty_paths = retarget_recovery_dirty_paths(
+                                project_root,
+                                spec_dir,
+                                replacement_state,
+                            )
+                        except RetargetRecoveryError as exc:
+                            raise RewindError(str(exc)) from exc
                     result = prepare_rewind(
                         project_root=project_root,
                         spec=spec_dir.name,

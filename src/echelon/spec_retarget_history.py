@@ -592,6 +592,7 @@ def append_prepared_revision(
     replacement_targets: tuple[str, ...],
     original_prompt_digest: str,
     recovery: RetargetRecoveryProjection,
+    artifact_inventory: tuple[Mapping[str, object], ...] = (),
 ) -> RetargetRevision:
     directory = Path(spec_dir)
     with _checkpoint_ledger_lock(directory):
@@ -611,6 +612,7 @@ def append_prepared_revision(
             replacement_targets=tuple(replacement_targets),
             original_prompt_digest=original_prompt_digest,
             recovery=recovery,
+            artifact_inventory=tuple(dict(item) for item in artifact_inventory),
         )
         updated = replace(history, revisions=(*history.revisions, revision))
         validated = _validate_history(updated, spec_id=directory.name)

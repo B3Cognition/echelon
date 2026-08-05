@@ -1131,6 +1131,10 @@ def append_prepared_revision_from_preview(preview: RetargetPreview) -> RetargetR
             + hashlib.sha256(preview.original_user_message.encode("utf-8")).hexdigest()
         ),
         recovery=projection,
+        artifact_inventory=tuple(
+            {"path": path, "disposition": "invalidate"}
+            for path in preview.artifact_plan.invalidate
+        ),
     )
 
 

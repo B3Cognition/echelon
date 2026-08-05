@@ -331,6 +331,7 @@
         "checkpoint_id": {"type": "string", "maxLength": 1024},
         "checkpoint_commit": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
         "replacement_commit": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
+        "recovery_commit": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
         "old_targets": {"type": "array", "minItems": 1, "maxItems": 128, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 1024}},
         "replacement_targets": {"type": "array", "minItems": 1, "maxItems": 128, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 1024}},
         "artifact_invalidation": {"type": "array", "minItems": 1, "maxItems": 512, "uniqueItems": true, "items": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+$", "minLength": 1, "maxLength": 1024}},
@@ -371,6 +372,11 @@
         {
           "if": {"properties": {"status": {"enum": ["checkpointed", "invalidating", "rebuilding", "failed", "recovered"]}}, "required": ["status"]},
           "then": {"not": {"anyOf": [{"required": ["replacement_commit"]}, {"required": ["finalization_receipt"]}, {"required": ["comparison_pending_completion_id"]}, {"required": ["comparison_emitted_completion_id"]}, {"required": ["comparison_event_id"]}, {"required": ["comparison_command"]}]}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "recovered"}}, "required": ["status"]},
+          "then": {"required": ["recovery_commit"]},
+          "else": {"not": {"required": ["recovery_commit"]}}
         },
         {
           "if": {"properties": {"status": {"enum": ["rebuilding"]}}, "required": ["status"]},
