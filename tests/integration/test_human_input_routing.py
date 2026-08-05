@@ -318,6 +318,7 @@ def _seal_dispatch_cap_decision(
     candidates: tuple[dict[str, str], ...],
     *,
     initial_status: str = "awaiting_human",
+    legacy: bool = False,
 ) -> tuple[str, int]:
     request = controller._human_input_registry.prepare(
         source_kind=policy.source_kind,
@@ -329,7 +330,11 @@ def _seal_dispatch_cap_decision(
     )
     request = replace(
         request,
-        options=tuple(_dispatch_cap_option(item) for item in candidates),
+        options=(
+            tuple(_dispatch_cap_option(item) for item in candidates)
+            if legacy
+            else controller._dispatch_cap_options(list(candidates))
+        ),
     )
     store.set_human_input_decision(request, initial_status=initial_status)
     state = store.load()
@@ -1948,7 +1953,7 @@ def test_human_input_handler_phase_dispatch_limit_reuses_issue_lifecycle(
     assert state["issue_resolution_repair_baseline"]["issue_id"] == "ISS-001"
 
 
-def test_task6_fix_round1_dispatch_cap_uses_sealed_options_after_evidence_drift(
+def test_dispatch_cap_rejects_evidence_drift_after_sealing(
     tmp_path: Path,
 ) -> None:
     policy = replace(
@@ -2012,6 +2017,57 @@ def test_task6_fix_round1_dispatch_cap_uses_sealed_options_after_evidence_drift(
         )
     assert store.load() == before
 
+    with pytest.raises(HumanInputPolicyError, match="evidence.*changed"):
+        controller.apply_human_input_resolution(
+            decision_id,
+            expected_state_revision=revision,
+            resolution=HumanInputResolution(
+                selected_option_id="ISS-001",
+                answer_text=None,
+                resolved_by="user",
+            ),
+        )
+
+    assert store.load() == before
+
+
+def test_dispatch_cap_accepts_legacy_candidate_description(
+    tmp_path: Path,
+) -> None:
+    policy = replace(
+        _safeguard_policy(
+            "phase_dispatch_limit",
+            phase_id="phase1-what",
+        ),
+        allow_free_text=False,
+        allowed_target_phases=frozenset({"phase1-what"}),
+    )
+    controller, store, _provider = _controller(
+        tmp_path,
+        autonomy_mode="guided",
+        policy=policy,
+    )
+    spec_dir = tmp_path / "spec"
+    spec_dir.mkdir()
+    (spec_dir / "issues.md").write_text(
+        """### ISS-001: Retry policy
+
+### Resolution Guidance
+- **Decision required:** Retry behavior.
+- **Suggested option:** Use exponential backoff.
+- **Evidence basis:** The API reference documents idempotent reads.
+- **Banzai eligible:** yes
+""",
+        encoding="utf-8",
+    )
+    decision_id, revision = _seal_dispatch_cap_decision(
+        controller,
+        store,
+        policy,
+        (_dispatch_cap_candidate(),),
+        legacy=True,
+    )
+
     assert controller.apply_human_input_resolution(
         decision_id,
         expected_state_revision=revision,
@@ -2021,10 +2077,7 @@ def test_task6_fix_round1_dispatch_cap_uses_sealed_options_after_evidence_drift(
             resolved_by="user",
         ),
     )
-
-    state = store.load()
-    assert state["selected_issue_resolution"] == "ISS-001"
-    assert "ISS-002" not in state["issue_resolution_ledger"]
+    assert store.load()["selected_issue_resolution"] == "ISS-001"
 
 
 def test_task6_fix_round1_dispatch_cap_rejects_conflicting_legacy_phase(
@@ -2302,9 +2355,9 @@ def test_phase_dispatch_limit_uses_human_input_setter_path(
     assert request.reason_code == "phase_dispatch_limit"
     assert request.phase_id == "phase1-what"
     assert request.source_state_revision == store.load()["state_revision"]
-    assert request.options == (
-        _dispatch_cap_option(_dispatch_cap_candidate()),
-    )
+    assert request.options == controller._dispatch_cap_options([
+        _dispatch_cap_candidate(),
+    ])
     assert call.kwargs == {}
     provider.exec_agent.assert_not_called()
 
@@ -2605,6 +2658,7 @@ def test_unresolvable_dispatch_cap_retires_prior_terminal_decision_authority(
         store,
         policy,
         (_dispatch_cap_candidate(),),
+        legacy=True,
     )
     assert controller.resume_with_human_input("ISS-001")
     assert store.load()["blocked_decision"]["status"] == "resolved"

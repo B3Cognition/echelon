@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import codecs
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -2482,15 +2483,27 @@ class SquadController:
         )
 
     @staticmethod
-    def _dispatch_cap_candidate_from_option(
+    def _dispatch_cap_option_payload(
         option: HumanInputOption,
-    ) -> dict[str, str]:
+    ) -> dict[str, object]:
         try:
-            raw_candidate = json.loads(option.description)
+            payload = json.loads(option.description)
         except (TypeError, ValueError) as exc:
             raise HumanInputPolicyError(
                 "dispatch-cap option authority is invalid"
             ) from exc
+        if not isinstance(payload, dict):
+            raise HumanInputPolicyError(
+                "dispatch-cap option authority is invalid"
+            )
+        return payload
+
+    @classmethod
+    def _dispatch_cap_candidate_from_option(
+        cls,
+        option: HumanInputOption,
+    ) -> dict[str, str]:
+        raw_candidate = cls._dispatch_cap_option_payload(option)
         fields = {
             "issue_id",
             "title",
@@ -2499,8 +2512,7 @@ class SquadController:
             "evidence_basis",
         }
         if (
-            not isinstance(raw_candidate, dict)
-            or set(raw_candidate) != fields
+            set(raw_candidate) != fields
             or not all(
                 isinstance(raw_candidate[field], str)
                 and raw_candidate[field].strip()
@@ -2533,6 +2545,87 @@ class SquadController:
                 "dispatch-cap option authority is invalid"
             )
         return candidate
+
+    @classmethod
+    def _validate_dispatch_cap_option(
+        cls,
+        option: HumanInputOption,
+    ) -> None:
+        payload = cls._dispatch_cap_option_payload(option)
+        legacy_fields = {
+            "issue_id",
+            "title",
+            "decision_required",
+            "suggested_option",
+            "evidence_basis",
+        }
+        if set(payload) == legacy_fields:
+            cls._dispatch_cap_candidate_from_option(option)
+            return
+        reference_fields = {
+            "evidence_sha256",
+            "issue_id",
+            "schema_version",
+        }
+        issue_id = payload.get("issue_id")
+        digest = payload.get("evidence_sha256")
+        prefix = f"{issue_id}: "
+        canonical = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        if (
+            set(payload) != reference_fields
+            or payload.get("schema_version") != 1
+            or not isinstance(issue_id, str)
+            or not issue_id.strip()
+            or not isinstance(digest, str)
+            or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+            or option.id != issue_id
+            or not option.label.startswith(prefix)
+            or len(option.label) <= len(prefix)
+            or option.description != canonical
+            or option.recommended
+            or option.risk_level != "medium"
+            or option.next_phase != "phase1-what"
+            or option.outcome is not None
+        ):
+            raise HumanInputPolicyError(
+                "dispatch-cap option authority is invalid"
+            )
+
+    def _dispatch_cap_candidate_for_resolution(
+        self,
+        state: Mapping[str, object],
+        option: HumanInputOption,
+    ) -> dict[str, str]:
+        payload = self._dispatch_cap_option_payload(option)
+        if "schema_version" not in payload:
+            return self._dispatch_cap_candidate_from_option(option)
+        self._validate_dispatch_cap_option(option)
+        issue_id = str(payload["issue_id"])
+        try:
+            candidates = self._banzai_issue_resolution_candidates(
+                dict(state)
+            )
+        except _DispatchCapEvidenceError as exc:
+            raise HumanInputPolicyError(
+                "dispatch-cap evidence changed after decision sealing"
+            ) from exc
+        matches = [
+            candidate
+            for candidate in candidates
+            if candidate["issue_id"] == issue_id
+        ]
+        if len(matches) != 1 or not hmac.compare_digest(
+            self._dispatch_cap_candidate_digest(matches[0]),
+            str(payload["evidence_sha256"]),
+        ):
+            raise HumanInputPolicyError(
+                "dispatch-cap evidence changed after decision sealing"
+            )
+        return matches[0]
 
     @staticmethod
     def _canonical_dispatch_cap_candidate(
@@ -2714,7 +2807,7 @@ class SquadController:
                 next_phase=raw_option["next_phase"],
                 outcome=None,
             )
-            cls._dispatch_cap_candidate_from_option(option)
+            cls._validate_dispatch_cap_option(option)
             options.append(option)
         return tuple(options)
 
@@ -3064,7 +3157,7 @@ class SquadController:
         dynamic_dispatch_cap = self._is_dynamic_dispatch_cap_policy(policy)
         if dynamic_dispatch_cap:
             for option in options:
-                self._dispatch_cap_candidate_from_option(option)
+                self._validate_dispatch_cap_option(option)
         elif (
             policy.source_kind != "provider_escalation"
             and options != policy.options
@@ -3120,7 +3213,7 @@ class SquadController:
                     "phase dispatch limit requires at least one eligible option"
                 )
             for option in request.options:
-                self._dispatch_cap_candidate_from_option(option)
+                self._validate_dispatch_cap_option(option)
         elif (
             request.source_kind != "provider_escalation"
             and request.options != policy.options
@@ -3584,7 +3677,10 @@ class SquadController:
             raise HumanInputPolicyError(
                 "dispatch-cap resolution must select one sealed issue option"
             )
-        candidate = self._dispatch_cap_candidate_from_option(selected)
+        candidate = self._dispatch_cap_candidate_for_resolution(
+            state,
+            selected,
+        )
         raw_selection = {
             "issue_id": candidate["issue_id"],
             "decision": candidate["suggested_option"],
