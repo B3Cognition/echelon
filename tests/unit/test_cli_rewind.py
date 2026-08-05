@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 
@@ -856,6 +857,88 @@ def test_checkpoint_rewind_uses_run_local_ledger_and_resets_run_state(
         "phase3-plan",
     ]
     assert "echelon spec continue" in capsys.readouterr().out
+
+
+def test_retarget_checkpoint_routes_before_generic_cleanup_with_prereset_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "run_id": "squad-replacement",
+            "spec_id": "006-element-creator",
+            "feature_branch": "006-element-creator",
+            "status": "blocked",
+            "phase": "phase0-constitution",
+            "spec_dir": "specs/006-element-creator",
+            "retarget": {
+                "revision_id": "retarget-1",
+                "baseline_run_id": "squad-base",
+                "replacement_run_id": "squad-replacement",
+            },
+        },
+    )
+    spec_dir = tmp_path / "specs" / "006-element-creator"
+    spec_dir.mkdir(parents=True)
+    checkpoint = PhaseCheckpoint(
+        id="retarget-preflight-retarget-1",
+        spec_id=spec_dir.name,
+        phase="phase4-document",
+        next_phase="phase0-constitution",
+        commit="b" * 40,
+        metadata_commit="b" * 40,
+        source="retarget-preflight",
+        run_id="squad-base",
+        created_at="2026-08-05T00:00:00+00:00",
+    )
+    record_checkpoint_metadata(spec_dir, checkpoint)
+    captured: dict[str, object] = {}
+
+    def fake_prepare_rewind(**_kwargs: object) -> RewindResult:
+        changed = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+        changed["run_id"] = "mutated-after-reset"
+        (run_dir / "state.json").write_text(json.dumps(changed), encoding="utf-8")
+        return RewindResult(
+            applied=True,
+            spec_id=spec_dir.name,
+            checkpoint_id=checkpoint.id,
+            from_commit="c" * 40,
+            to_commit=checkpoint.commit,
+            backup_ref="echelon/backup/test",
+            message="Rewind complete.",
+        )
+
+    def fake_recover(
+        project_root: Path,
+        selected: PhaseCheckpoint,
+        replacement_state: dict[str, object],
+    ) -> object:
+        captured.update(
+            root=project_root,
+            checkpoint=selected,
+            state=replacement_state,
+        )
+        return SimpleNamespace(revision_id="retarget-1")
+
+    monkeypatch.setattr("echelon.rewind.prepare_rewind", fake_prepare_rewind)
+    monkeypatch.setattr(
+        "echelon.spec_retarget_recovery.recover_retarget_checkpoint",
+        fake_recover,
+    )
+    monkeypatch.setattr(
+        "echelon.cli._cleanup_rewind_outputs",
+        lambda *_args: pytest.fail("generic rewind cleanup must not run"),
+    )
+    monkeypatch.setattr(
+        "echelon.cli._reset_rewind_state",
+        lambda *_args, **_kwargs: pytest.fail("generic state reset must not run"),
+    )
+
+    _cmd_rewind([checkpoint.id, "--confirm"], project_root=tmp_path)
+
+    assert captured["checkpoint"] == checkpoint
+    assert captured["state"]["run_id"] == "squad-replacement"
 
 
 def test_traceability_repair_resumes_finalization_without_replanning(

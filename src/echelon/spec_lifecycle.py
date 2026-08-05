@@ -663,6 +663,62 @@ def commit_spec_switch_pointer(
     return target
 
 
+def activate_same_branch_spec_run(
+    project_root: Path,
+    source: SpecRun,
+    target: SpecRun,
+    *,
+    observed_branch: str,
+    operation_id: str,
+) -> SpecRun:
+    """Journal and complete an idempotent pointer-only same-branch switch."""
+
+    canonical_source = _resolve_run_dir_name(project_root, source.run_dir_name)
+    canonical_target = _resolve_run_dir_name(project_root, target.run_dir_name)
+    if (
+        canonical_source.run_dir == canonical_target.run_dir
+        or canonical_source.feature_branch != canonical_target.feature_branch
+        or observed_branch != canonical_source.feature_branch
+    ):
+        raise SpecLifecycleError("same-branch spec switch identity drifted")
+    active = resolve_active_spec_run(project_root)
+    intent = load_spec_switch_intent(project_root)
+    if intent is None and active.run_dir == canonical_target.run_dir:
+        return canonical_target
+    if intent is None:
+        if active.run_dir != canonical_source.run_dir:
+            raise SpecLifecycleError("same-branch spec switch source is not active")
+        intent = begin_spec_switch(
+            project_root,
+            canonical_source,
+            canonical_target,
+            observed_branch=observed_branch,
+            operation_id=operation_id,
+        )
+    elif (
+        intent.operation_id != operation_id
+        or intent.source_run != canonical_source.run_dir_name
+        or intent.target_run != canonical_target.run_dir_name
+        or intent.source_branch != observed_branch
+        or intent.target_branch != observed_branch
+        or active.run_dir not in {canonical_source.run_dir, canonical_target.run_dir}
+    ):
+        raise SpecLifecycleRecoveryRequired("same-branch spec switch intent drifted")
+    if intent.stage == "prepared":
+        intent = mark_spec_switch_checked_out(
+            project_root,
+            operation_id,
+            observed_branch=observed_branch,
+        )
+    if intent.stage != "checked_out":
+        raise SpecLifecycleRecoveryRequired("same-branch spec switch stage drifted")
+    return commit_spec_switch_pointer(
+        project_root,
+        operation_id,
+        observed_branch=observed_branch,
+    )
+
+
 def recover_spec_switch(
     project_root: Path,
     *,

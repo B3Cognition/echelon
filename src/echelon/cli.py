@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from contextlib import nullcontext
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -7976,6 +7977,7 @@ def _cmd_rewind(
                             else "\nNo checkpoints are recorded for this spec."
                         )
                         raise RewindError(reason + suffix) from exc
+                    replacement_state = deepcopy(state)
 
                     result = prepare_rewind(
                         project_root=project_root,
@@ -7995,17 +7997,39 @@ def _cmd_rewind(
                         checkpoints=ledger.checkpoints[: target_index + 1],
                     )
                     write_checkpoint_ledger(spec_dir, retained_ledger)
-                    checkpoint_phases_before_target = {
-                        item.phase for item in ledger.checkpoints[:target_index]
-                    }
-                    removed = _cleanup_rewind_outputs(spec_dir, checkpoint.phase, squad_dir)
-                    rewound = _reset_rewind_state(
-                        state,
-                        checkpoint.phase,
-                        spec_dir_ref,
-                        checkpoint_phases_before_target=checkpoint_phases_before_target,
-                    )
-                    store.save(rewound)
+                    if checkpoint.source == "retarget-preflight":
+                        from echelon.spec_retarget_recovery import (
+                            RetargetRecoveryError,
+                            recover_retarget_checkpoint,
+                        )
+
+                        try:
+                            recover_retarget_checkpoint(
+                                project_root,
+                                checkpoint,
+                                replacement_state,
+                            )
+                        except RetargetRecoveryError as exc:
+                            raise RewindError(str(exc)) from exc
+                        removed = ()
+                    else:
+                        checkpoint_phases_before_target = {
+                            item.phase for item in ledger.checkpoints[:target_index]
+                        }
+                        removed = _cleanup_rewind_outputs(
+                            spec_dir,
+                            checkpoint.phase,
+                            squad_dir,
+                        )
+                        rewound = _reset_rewind_state(
+                            state,
+                            checkpoint.phase,
+                            spec_dir_ref,
+                            checkpoint_phases_before_target=(
+                                checkpoint_phases_before_target
+                            ),
+                        )
+                        store.save(rewound)
     except SpecLifecycleLocked as exc:
         print(
             "✗ Cannot rewind while the active spec run is still running.\n"

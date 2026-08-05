@@ -707,3 +707,40 @@ def advance_retarget_revision(
         validated = _validate_history(updated, spec_id=directory.name)
         _write_history_atomic(directory, validated)
         return validated.revisions[-1]
+
+
+def bind_recovered_revision_commit(
+    spec_dir: Path,
+    revision_id: str,
+    *,
+    recovery_commit: str,
+) -> RetargetRevision:
+    """Bind the proven recovery commit once without another status transition."""
+
+    directory = Path(spec_dir)
+    commit = _require_git_oid(recovery_commit, field="recovery_commit")
+    if commit is None:
+        raise ValueError("invalid retarget recovery_commit")
+    with _checkpoint_ledger_lock(directory):
+        history = load_retarget_history(directory)
+        if not history.revisions:
+            raise ValueError("retarget revision precondition changed")
+        latest = history.revisions[-1]
+        if latest.revision_id != revision_id or latest.status != "recovered":
+            raise ValueError("retarget revision precondition changed")
+        if latest.recovery_commit is not None:
+            if latest.recovery_commit == commit:
+                return latest
+            raise ValueError("retarget recovery_commit is already bound")
+        replacement_revision = replace(
+            latest,
+            recovery_commit=commit,
+            updated_at=_now(),
+        )
+        updated = replace(
+            history,
+            revisions=(*history.revisions[:-1], replacement_revision),
+        )
+        validated = _validate_history(updated, spec_id=directory.name)
+        _write_history_atomic(directory, validated)
+        return validated.revisions[-1]
