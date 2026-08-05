@@ -70,7 +70,7 @@ def materialize_re_run_context(
     ]
     _write_json_atomic(analysis_manifest_path, analysis_manifest)
 
-    workspace_inputs = _workspace_inputs(
+    workspace_inputs = build_re_workspace_inputs(
         plan,
         run_relative=run_relative,
     )
@@ -182,7 +182,7 @@ def _source_index_entry(
     return entry
 
 
-def _workspace_inputs(
+def build_re_workspace_inputs(
     plan: ReExecutionPlan,
     *,
     run_relative: str,

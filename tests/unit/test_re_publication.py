@@ -216,6 +216,7 @@ def write_valid_re_run(
             "reuse": "current",
             "skip-empty": "empty",
             "missing": "unavailable",
+            "exclude": "unavailable",
         }[action]
         fingerprint = _fingerprint(source_id, version, profile)
         plan_source = RePlanSource(
@@ -804,6 +805,77 @@ def test_targeted_publication_does_not_migrate_legacy_reused_sibling(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    ("sibling_status", "without_specs"),
+    (("partial", False), ("complete", True)),
+)
+def test_targeted_topology_bootstrap_accepts_durable_sibling_identity(
+    tmp_path: Path,
+    sibling_status: str,
+    without_specs: bool,
+) -> None:
+    from echelon.topology_registry import load_topology_index
+
+    run_1 = write_valid_re_run(tmp_path, ("api", "web"), run_id="run-1")
+    publish_re_run(tmp_path, run_1)
+    _finish_run(run_1)
+
+    sibling_manifest_path = tmp_path / "re/sources/web/manifest.json"
+    sibling_manifest = _read_json(sibling_manifest_path)
+    sibling_manifest["publication_status"] = sibling_status
+    if without_specs:
+        sibling_manifest["specs"] = []
+    _write_json(sibling_manifest_path, sibling_manifest)
+    semantic_index_path = tmp_path / "re/index.json"
+    semantic_index = _read_json(semantic_index_path)
+    semantic_index["publication_status"] = sibling_status
+    semantic_index["sources"]["web"]["status"] = sibling_status
+    semantic_index["sources"]["web"]["manifest_artifact"]["sha256"] = (
+        "sha256:" + hashlib.sha256(sibling_manifest_path.read_bytes()).hexdigest()
+    )
+    _write_json(semantic_index_path, semantic_index)
+    sibling_before = {
+        path.relative_to(tmp_path / "re/sources/web").as_posix(): path.read_bytes()
+        for path in sorted((tmp_path / "re/sources/web").rglob("*"))
+        if path.is_file()
+    }
+
+    config = tmp_path / ".echelon/config.yml"
+    config.parent.mkdir()
+    config.write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n"
+        "    - id: web\n      path: sources/web\n",
+        encoding="utf-8",
+    )
+    run_2 = write_valid_re_run(
+        tmp_path,
+        ("api", "web"),
+        run_id="run-2",
+        versions={"api": "v2", "web": "v1"},
+        actions={"api": "refresh", "web": "reuse"},
+    )
+    _mark_target_only(run_2, tmp_path, "api")
+    analysis = _topology_codegraph("api")
+    _write_json(run_2 / "re/sources/api/codegraph-analysis.json", analysis)
+    _write_json(
+        run_2 / "re/sources/api/codegraph-summary.json",
+        _topology_summary(analysis),
+    )
+
+    result = publish_re_run(tmp_path, run_2, expected_generation=1)
+
+    assert result.changed_sources == ("api",)
+    assert {
+        path.relative_to(tmp_path / "re/sources/web").as_posix(): path.read_bytes()
+        for path in sorted((tmp_path / "re/sources/web").rglob("*"))
+        if path.is_file()
+    } == sibling_before
+    topology = load_topology_index(tmp_path)
+    assert topology is not None
+    assert topology.sources["web"].providers["codegraph"].status == "unavailable"
+
+
+@pytest.mark.unit
 def test_targeted_topology_bootstrap_failure_rolls_back_semantic_and_topology(
     tmp_path: Path,
 ) -> None:
@@ -970,7 +1042,7 @@ def test_targeted_topology_bootstrap_rejects_unusable_sibling_baseline_atomicall
 
     sibling_manifest_path = tmp_path / "re/sources/web/manifest.json"
     sibling_manifest = _read_json(sibling_manifest_path)
-    sibling_manifest["specs"] = []
+    sibling_manifest["overview"] = "re/sources/web/missing-overview.md"
     _write_json(sibling_manifest_path, sibling_manifest)
     semantic_index_path = tmp_path / "re/index.json"
     semantic_index = _read_json(semantic_index_path)
@@ -1015,7 +1087,7 @@ def test_targeted_topology_bootstrap_rejects_unusable_sibling_baseline_atomicall
 
     with pytest.raises(
         RePublicationValidationError,
-        match="usable durable semantic baseline.*web",
+        match="current RE publication is structurally invalid.*missing-overview",
     ):
         publish_re_run(tmp_path, run_2, expected_generation=1)
 

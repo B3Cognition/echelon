@@ -60,6 +60,50 @@ def _patch_claude_popen(lines: list[dict] | None = None, returncode: int = 0):
 @pytest.mark.unit
 class TestAICodingCliProvider:
 
+    @pytest.mark.parametrize(
+        ("cli", "expected"),
+        [
+            ("claude", True),
+            ("openai-compatible", True),
+            ("codex", False),
+            ("copilot", False),
+            ("opencode", False),
+        ],
+    )
+    def test_provider_reports_workspace_synthesis_boundary(self, cli, expected):
+        with patch(
+            "harness.llm_provider.host_workspace_synthesis_boundary_available",
+            return_value=True,
+        ):
+            provider = AICodingCliProvider(_config(cli=cli))
+
+        assert provider.enforces_workspace_synthesis_boundary is expected
+
+    def test_unsafe_claude_provider_keeps_host_workspace_boundary(self):
+        with patch(
+            "harness.llm_provider.host_workspace_synthesis_boundary_available",
+            return_value=True,
+        ):
+            provider = AICodingCliProvider(
+                _config(
+                    cli="claude",
+                    tool_policy=LlmToolPolicy(
+                        allow_unsafe_host_execution=True,
+                        approval_reason="approved test bypass",
+                    ),
+                )
+            )
+
+            assert provider.enforces_workspace_synthesis_boundary is True
+
+    def test_claude_provider_requires_host_workspace_boundary(self):
+        with patch(
+            "harness.llm_provider.host_workspace_synthesis_boundary_available",
+            return_value=False,
+        ):
+            provider = AICodingCliProvider(_config(cli="claude"))
+            assert provider.enforces_workspace_synthesis_boundary is False
+
     def test_provider_has_no_verify_spec_orchestration_method(self):
         assert not hasattr(AICodingCliProvider, "exec_verify_spec")
 

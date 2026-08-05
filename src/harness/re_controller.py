@@ -10,6 +10,7 @@ import hashlib
 import subprocess
 import time
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +22,7 @@ from harness.re_architecture import (
     write_re_architecture_catalog,
 )
 from harness.re_lock import ReExtractLocked, ReExtractionLock
+from harness.re_materializer import build_re_workspace_inputs
 from harness.re_domain_manifest import (
     DOMAIN_PARTITION_VERSION,
     discover_source_domains,
@@ -29,6 +31,13 @@ from harness.re_domain_manifest import (
     write_domain_manifest,
 )
 from harness.re_planner import ReExecutionPlan
+from harness.re_registry import (
+    PublishedReIndex,
+    ReRegistryError,
+    canonical_re_artifacts,
+    load_published_index,
+    published_source_is_usable,
+)
 from harness.re_quality_gate import (
     ReQualityReport,
     ReSpecQualityFailure,
@@ -96,6 +105,7 @@ _ARCHITECTURE_OVERLAY_OUTPUTS = frozenset(
 _TARGET_QUALITY_PROTOCOL_VERSION = 1
 _SEMANTIC_QUALITY_REVIEW_PROTOCOL_VERSION = 2
 _SEMANTIC_DOMAIN_AUDIT_PROTOCOL_VERSION = 1
+_WORKSPACE_SYNTHESIS_SCOPE_PROTOCOL_VERSION = 1
 _RETARGET_MARKER = "[REQUIRES INPUT]"
 _RETARGET_STRATEGY_FILES = (
     "constitution.md",
@@ -270,7 +280,7 @@ class ReExtractionController:
                         self._run_re_dir,
                         plan,
                         aggregate,
-                        expected_domains=self._semantic_expected_domains(plan),
+                        expected_domains=self._semantic_expected_domains(plan) or None,
                     )
                     if semantic_error is not None or semantic_report is None:
                         state["re_agent_result_detail"] = semantic_error or (
@@ -313,6 +323,51 @@ class ReExtractionController:
                 }
                 return self._block(state, budget.reason)
 
+            dispatch_kwargs: dict[str, object] = {}
+            if phase != "re-extract-1-analyze":
+                if getattr(self._provider, "supports_result_contract", False):
+                    dispatch_kwargs["result_contract"] = self._result_contract_for_phase(
+                        phase
+                    )
+                prompt_metadata: dict[str, object] = {}
+                if isinstance(target, dict) and target.get("kind") == "workspace-synthesis":
+                    if (
+                        getattr(
+                            self._provider,
+                            "enforces_workspace_synthesis_boundary",
+                            None,
+                        )
+                        is not True
+                    ):
+                        state["re_agent_result_detail"] = (
+                            "selected provider cannot enforce workspace synthesis "
+                            "file scopes"
+                        )
+                        return self._block(
+                            state, "re_workspace_synthesis_scope_unsupported"
+                        )
+                    try:
+                        self._clean_workspace_synthesis_sources(state, plan)
+                        prompt_metadata = self._prompt_metadata_for_target(plan, target)
+                    except (OSError, ValueError, json.JSONDecodeError) as exc:
+                        state["re_agent_result_detail"] = (
+                            f"workspace synthesis canonical inputs are invalid: {exc}"
+                        )
+                        return self._block(
+                            state, "re_workspace_synthesis_inputs_invalid"
+                        )
+                elif getattr(self._provider, "supports_prompt_metadata", False):
+                    prompt_metadata = self._prompt_metadata_for_target(plan, target)
+                if (
+                    prompt_metadata
+                    and getattr(self._provider, "supports_prompt_metadata", False)
+                ):
+                    dispatch_kwargs["prompt_metadata"] = prompt_metadata
+                if isinstance(target, dict) and target.get("kind") == "workspace-synthesis":
+                    state["re_workspace_synthesis_scope_protocol_version"] = (
+                        _WORKSPACE_SYNTHESIS_SCOPE_PROTOCOL_VERSION
+                    )
+
             state = write_last_dispatch(state, phase, _PHASES[phase])
             self._save_state(state)
             if phase == "re-extract-1-analyze":
@@ -323,15 +378,6 @@ class ReExtractionController:
                 payload = self._analysis_result()
             else:
                 dispatch_started = datetime.now(timezone.utc)
-                dispatch_kwargs: dict[str, object] = {}
-                if getattr(self._provider, "supports_result_contract", False):
-                    dispatch_kwargs["result_contract"] = self._result_contract_for_phase(
-                        phase
-                    )
-                if getattr(self._provider, "supports_prompt_metadata", False):
-                    prompt_metadata = self._prompt_metadata_for_target(plan, target)
-                    if prompt_metadata:
-                        dispatch_kwargs["prompt_metadata"] = prompt_metadata
                 result = self._provider.exec_agent(
                     str(self._project_root),
                     self._prompt_for(
@@ -1963,6 +2009,8 @@ class ReExtractionController:
         if not isinstance(target, dict):
             return {}
         kind = target.get("kind")
+        if kind == "workspace-synthesis":
+            return self._workspace_synthesis_prompt_metadata(plan)
         source_id = target.get("source_id")
         if kind not in {"source-domain", "source-support"} or not isinstance(
             source_id, str
@@ -2007,6 +2055,196 @@ class ReExtractionController:
             "tool_read_roots": read_roots,
             "tool_write_paths": write_paths,
         }
+
+    def _workspace_synthesis_prompt_metadata(
+        self, plan: ReExecutionPlan
+    ) -> dict[str, object]:
+        published, canonical_source_ids = self._validated_workspace_inputs(plan)
+        read_roots = [self._run_re_dir.resolve()]
+        if canonical_source_ids:
+            if published is None:
+                raise ValueError("canonical input index is missing")
+            try:
+                canonical = canonical_re_artifacts(self._project_root, published)
+            except ReRegistryError as exc:
+                raise ValueError(
+                    f"cannot authenticate canonical RE artifacts: {exc}"
+                ) from exc
+            source_manifests = canonical.get("source_manifests")
+            if not isinstance(source_manifests, dict):
+                raise ValueError("canonical source manifest registry is invalid")
+            for source_id in canonical_source_ids:
+                expected_manifest = (
+                    self._project_root
+                    / "re"
+                    / "sources"
+                    / source_id
+                    / "manifest.json"
+                )
+                if source_manifests.get(source_id) != str(expected_manifest):
+                    raise ValueError(
+                        f"canonical source manifest mismatch for {source_id}"
+                    )
+                source_root = expected_manifest.parent
+                if source_root.is_symlink() or source_root.resolve() != source_root:
+                    raise ValueError(
+                        f"canonical source root is unsafe for {source_id}"
+                    )
+                read_roots.append(source_root)
+            workspace_root = self._project_root / "re" / "workspace"
+            if workspace_root.is_symlink() or workspace_root.resolve() != workspace_root:
+                raise ValueError("canonical workspace root is unsafe")
+            read_roots.append(workspace_root)
+
+        write_paths = self._workspace_synthesis_output_paths(plan)
+        return {
+            "tool_read_roots": [str(path) for path in read_roots],
+            "tool_write_paths": [str(path) for path in write_paths],
+            "tool_forbidden_roots": sorted(
+                {
+                    str(Path(source.absolute_path).resolve())
+                    for source in plan.sources
+                }
+            ),
+        }
+
+    def _workspace_synthesis_output_paths(
+        self, plan: ReExecutionPlan
+    ) -> tuple[Path, ...]:
+        write_paths = {
+            self._workspace_synthesis_run_path("workspace", name)
+            for name in ("overview.md", "relationships.md", "contracts.md")
+        }
+        for source in plan.refresh_sources:
+            source_id = self._workspace_synthesis_component(source.id)
+            write_paths.update(
+                self._workspace_synthesis_run_path("sources", source_id, name)
+                for name in (
+                    "overview.md",
+                    "architecture.md",
+                    "contracts.md",
+                    "components.md",
+                )
+            )
+        architecture = load_re_architecture_map(
+            self._run_re_dir / "workspace" / "architecture-map.json"
+        )
+        write_paths.update(
+            self._workspace_synthesis_run_path(
+                "workspace",
+                "domains",
+                f"{self._workspace_synthesis_component(domain_id)}.md",
+            )
+            for domain_id in {domain.domain_id for domain in architecture.domains}
+        )
+        return tuple(sorted(write_paths))
+
+    def _validated_workspace_inputs(
+        self, plan: ReExecutionPlan
+    ) -> tuple[PublishedReIndex | None, tuple[str, ...]]:
+        path = self._run_re_dir / "re-workspace-inputs.json"
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f"cannot read workspace inputs {path}: {exc}") from exc
+        try:
+            run_relative = self._run_re_dir.relative_to(self._project_root).as_posix()
+        except ValueError as exc:
+            raise ValueError("run RE directory is outside the workspace") from exc
+        expected = build_re_workspace_inputs(plan, run_relative=run_relative)
+        if payload != expected:
+            raise ValueError("workspace inputs do not match the execution plan")
+        index_path = self._project_root / "re" / "index.json"
+        if index_path.exists() and (
+            index_path.is_symlink()
+            or not index_path.is_file()
+            or index_path.resolve() != index_path
+        ):
+            raise ValueError(f"published RE index is unsafe: {index_path}")
+        try:
+            published = load_published_index(self._project_root)
+        except ReRegistryError as exc:
+            raise ValueError(f"cannot authenticate canonical input index: {exc}") from exc
+
+        canonical: list[str] = []
+        for source in plan.sources:
+            if source.action in {"refresh", "skip-empty"}:
+                continue
+            registered = published.sources.get(source.id) if published is not None else None
+            usable = bool(
+                registered is not None
+                and registered.source_path == source.path
+                and registered.fingerprint == source.fingerprint.value
+                and registered.profile_hash == source.fingerprint.profile_hash
+                and published_source_is_usable(
+                    self._project_root, published, source.id
+                )
+            )
+            if usable:
+                canonical.append(source.id)
+            elif source.action == "reuse":
+                raise ValueError(
+                    f"canonical input authentication failed for {source.id}"
+                )
+        return published, tuple(sorted(canonical))
+
+    def _workspace_synthesis_run_path(self, *parts: str) -> Path:
+        candidate = self._run_re_dir.joinpath(*parts)
+        cursor = self._run_re_dir
+        for part in parts:
+            cursor /= part
+            if cursor.is_symlink():
+                raise ValueError(
+                    f"symlinked workspace synthesis path: {candidate}"
+                )
+        if candidate.exists():
+            if not candidate.is_file():
+                raise ValueError(f"unsafe workspace synthesis path: {candidate}")
+            if candidate.stat().st_nlink != 1:
+                raise ValueError(
+                    f"hardlinked workspace synthesis path: {candidate}"
+                )
+        resolved = candidate.resolve(strict=False)
+        if not resolved.is_relative_to(self._run_re_dir.resolve()):
+            raise ValueError(f"unsafe workspace synthesis path: {candidate}")
+        return resolved
+
+    @staticmethod
+    def _workspace_synthesis_component(value: str) -> str:
+        if (
+            not value
+            or value in {".", ".."}
+            or "/" in value
+            or "\\" in value
+            or Path(value).name != value
+        ):
+            raise ValueError(f"unsafe workspace synthesis component: {value}")
+        return value
+
+    def _clean_workspace_synthesis_sources(
+        self,
+        state: dict,
+        plan: ReExecutionPlan,
+    ) -> None:
+        sources_root = self._run_re_dir / "sources"
+        if sources_root.is_symlink():
+            raise ValueError(f"unsafe workspace synthesis path: {sources_root}")
+        if not sources_root.exists():
+            return
+        refresh_ids = {source.id for source in plan.refresh_sources}
+        removed: list[str] = []
+        for path in sources_root.iterdir():
+            if path.name in refresh_ids:
+                continue
+            relative = path.relative_to(self._run_re_dir).as_posix()
+            if path.is_dir() and not path.is_symlink():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+            removed.append(relative)
+        if removed:
+            state["re_workspace_synthesis_cleanup"] = sorted(removed)
+            self._save_state(state)
 
     def _evaluate_specification_target(
         self,
@@ -2302,11 +2540,49 @@ class ReExtractionController:
     def _specification_target_prompt(self, target: dict[str, object]) -> str:
         kind = target.get("kind")
         if kind == "workspace-synthesis":
+            plan = self._load_plan()
+            refreshed = self._workspace_synthesis_id_list(
+                source.id for source in plan.sources if source.action == "refresh"
+            )
+            reused = self._workspace_synthesis_id_list(
+                source.id for source in plan.sources if source.action == "reuse"
+            )
+            empty = self._workspace_synthesis_id_list(
+                source.id for source in plan.sources if source.action == "skip-empty"
+            )
+            unavailable = self._workspace_synthesis_id_list(
+                source.id
+                for source in plan.sources
+                if source.action in {"missing", "exclude"}
+            )
+            removed = self._workspace_synthesis_id_list(plan.removed_sources)
+            required_outputs = "\n".join(
+                f"- `{path}`"
+                for path in self._workspace_synthesis_output_paths(plan)
+            )
             return (
                 "\n## Controller-Owned Specification Target\n"
-                "Generate source overviews, source-owned synthesis, and workspace synthesis only. All required "
-                "source-domain specs have already been dispatched independently. Do not "
-                "create, rename, or rewrite any source-domain spec. Return an "
+                "Generate source overviews, source-owned synthesis, and workspace synthesis only. "
+                "Source-owned outputs are permitted only for refreshed source IDs. All required "
+                "source-domain specs have already been dispatched independently.\n"
+                f"Refreshed source IDs: {refreshed}\n"
+                f"Reused source IDs: {reused}\n"
+                f"Empty source IDs: {empty}\n"
+                f"Missing/excluded source IDs: {unavailable}\n"
+                f"Removed source IDs: {removed}\n"
+                "Required workspace-synthesis output files (write every file exactly once):\n"
+                f"{required_outputs}\n"
+                "Read source semantics only from the current run RE output directory and "
+                "canonical published RE artifacts referenced by `re-workspace-inputs.json`. "
+                "Do not inspect, search, count, summarize, or cite any configured live source root, "
+                "including the selected source, a `sources/{source-id}` path, or its absolute equivalent. "
+                "Do not use `source_path` as a filesystem input. If a reused source's canonical input "
+                "is missing or unreadable, return BLOCKED; never fall back to a live source root.\n"
+                "Write source-owned overview, architecture, contracts, and components synthesis only "
+                "for the refreshed source IDs above. Do not create any staged source file or directory "
+                "for reused, empty, unavailable, or removed sources. Empty-source semantic artifacts "
+                "are controller/publication-owned. Do not create, rename, or rewrite any source-domain "
+                "spec. Return an "
                 "`echelon_result` with `state_updates: {}`; lifecycle routing and "
                 "workspace-synthesis completion are controller-owned.\n"
             )
@@ -2461,6 +2737,11 @@ class ReExtractionController:
             "Do not invoke a function named `echelon_result` and do not call more tools "
             "after the target artifact is complete.\n"
         )
+
+    @staticmethod
+    def _workspace_synthesis_id_list(source_ids: Iterable[str]) -> str:
+        values = sorted(source_ids)
+        return ", ".join(f"`{source_id}`" for source_id in values) or "(none)"
 
     def _ensure_architecture_overlay(
         self,
@@ -3067,6 +3348,26 @@ class ReExtractionController:
 
     def _workspace_synthesis_error(self, plan: ReExecutionPlan) -> str | None:
         """Return a deterministic error for an incomplete staged synthesis."""
+        forbidden: list[str] = []
+        refresh_ids = {source.id for source in plan.refresh_sources}
+        sources_root = self._run_re_dir / "sources"
+        try:
+            if sources_root.is_symlink():
+                forbidden.append("sources")
+            elif sources_root.is_dir():
+                forbidden.extend(
+                    path.relative_to(self._run_re_dir).as_posix()
+                    for path in sources_root.iterdir()
+                    if path.name not in refresh_ids
+                )
+        except OSError:
+            forbidden.append("sources")
+        if forbidden:
+            return (
+                "workspace synthesis created non-refresh source artifacts: "
+                + ", ".join(sorted(forbidden))
+            )
+
         required = [
             self._run_re_dir / "workspace" / "overview.md",
             self._run_re_dir / "workspace" / "relationships.md",
@@ -3104,6 +3405,7 @@ class ReExtractionController:
                 if (
                     path.is_symlink()
                     or not path.is_file()
+                    or path.stat().st_nlink != 1
                     or not path.read_text(encoding="utf-8").strip()
                 ):
                     invalid.append(relative)
@@ -3138,6 +3440,8 @@ class ReExtractionController:
             and bool(targets)
             and isinstance(targets[0], dict)
             and targets[0].get("kind") == "workspace-synthesis"
+            and state.get("re_workspace_synthesis_scope_protocol_version")
+            == _WORKSPACE_SYNTHESIS_SCOPE_PROTOCOL_VERSION
         ):
             return False
         if self._workspace_synthesis_error(plan) is not None:

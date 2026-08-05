@@ -1171,12 +1171,11 @@ def _bootstrap_targeted_topology_candidates(
             or published.source_path != source.path
             or published.fingerprint != source.fingerprint.value
             or published.profile_hash != source.fingerprint.profile_hash
-            or published.status not in {"complete", "empty"}
+            or published.status not in {"complete", "empty", "partial"}
             or not published_source_is_usable(
                 workspace_root,
                 current,
                 source_id,
-                expect_empty=published.status == "empty",
             )
         ):
             raise TopologyPublicationValidationError(

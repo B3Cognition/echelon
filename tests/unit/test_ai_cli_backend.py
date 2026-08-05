@@ -3049,6 +3049,75 @@ def test_claude_backend_ignores_unknown_model_tier(tmp_path) -> None:
     assert "--model" not in captured["command"]
 
 
+def test_claude_backend_enforces_prompt_file_scopes(tmp_path) -> None:
+    backend = ClaudeCliBackend(_config("claude"))
+    captured = {}
+
+    class FakeProcess:
+        stdout = io.BytesIO(b"")
+        returncode = 0
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self) -> int:
+            return self.returncode
+
+    def fake_popen(command, **_kwargs):
+        captured["command"] = command
+        return FakeProcess()
+
+    run_root = (tmp_path / "runs" / "run-1" / "re").resolve()
+    canonical_root = (tmp_path / "re" / "sources" / "web").resolve()
+    write_path = (run_root / "workspace" / "overview.md").resolve()
+    forbidden_root = (tmp_path / "sources" / "web").resolve()
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Synthesize workspace artifacts.",
+        env={},
+        timeout_s=10,
+        metadata={
+            "prompt_metadata": {
+                "tool_read_roots": [str(run_root), str(canonical_root)],
+                "tool_write_paths": [str(write_path)],
+                "tool_forbidden_roots": [str(forbidden_root)],
+            }
+        },
+    )
+
+    with (
+        patch("harness.ai_cli_backends.claude.subprocess.Popen", fake_popen),
+        patch(
+            "harness.ai_cli_backends.claude._sandbox_exec_path",
+            return_value="/usr/bin/sandbox-exec",
+        ),
+    ):
+        backend.run_prompt(request)
+
+    command = captured["command"]
+    assert command[:2] == ["/usr/bin/sandbox-exec", "-p"]
+    profile = command[2]
+    assert f'(literal "{forbidden_root}")' in profile
+    assert f'(subpath "{forbidden_root}")' in profile
+    assert "(deny default)" in profile
+    assert "allow file-read*" in profile
+    assert "allow file-write*" in profile
+    assert "require-not" in profile
+    tools = command[command.index("--tools") + 1]
+    allowed = set(command[command.index("--allowedTools") + 1].split(","))
+    assert tools == "Read,Write,Edit"
+    assert "--safe-mode" in command
+    assert command[command.index("--setting-sources") + 1] == ""
+    assert "--strict-mcp-config" in command
+    assert "--disable-slash-commands" in command
+    assert allowed == {
+        f"Read(/{run_root}/**)",
+        f"Read(/{canonical_root}/**)",
+        f"Write(/{write_path})",
+        f"Edit(/{write_path})",
+    }
+
+
 def test_claude_backend_allows_task_tools_without_canonical_task_metadata(
     tmp_path,
 ) -> None:
