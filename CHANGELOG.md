@@ -102,6 +102,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Source topology foundation** — CodeGraph and PerlGraph now publish
+  schema-2 evidence with stable symbol keys, exact relationship endpoints,
+  explicit completeness and capability receipts, and no symbol cap. Canonical
+  topology lives under `re/topology/` with independent semantic/topology
+  freshness, atomic source-scoped publication, bounded `audit`, `list-sources`,
+  `search`, `explain`, `neighbors`, and `impact` reads, compact artifact-graph
+  receipts, targeted `echelon re refresh --source`, and exact-commit delivery
+  promotion with non-fatal recovery after landing.
+
 - **Execution telemetry and bounded RE profiles** — New RE runs default to a
   `balanced` 5,000,000-token/180-active-minute hard budget with a 60-minute
   performance target; `fast` and `high` goals provide smaller and larger bounded

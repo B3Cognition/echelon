@@ -211,6 +211,43 @@ re/
   .locks/                       # ignored single-writer lock
 ```
 
+### Source topology
+
+Canonical source topology is published under `re/topology/`. Its generation,
+source fingerprints, provider receipts, and artifact hashes are independent of
+semantic RE freshness. CodeGraph and PerlGraph normalize to `ready`,
+`degraded`, `empty`, `unsupported`, or `unavailable`; a usable degraded
+snapshot remains historical evidence rather than being presented as complete.
+Artifact graphs retain only source nodes and lightweight topology receipts, not
+the complete file, symbol, or relationship graph.
+
+`echelon re refresh --source <source-id>` selects one configured source,
+refreshes dependent workspace synthesis, and publishes through the normal RE
+transaction. Publication remains quality-gated: partial semantic output does
+not auto-publish and still requires the explicit `--allow-partial` recovery
+path.
+
+```bash
+echelon topology audit [--source <source-id>] [--json]
+echelon topology list-sources [--json]
+echelon topology search <query> [--source <source-id>] [--type SYMBOL] [--limit 50] [--json]
+echelon topology explain <node-id> [--source <source-id>] [--json]
+echelon topology neighbors <node-id> [--source <source-id>] [--direction in|out|both] [--relation CALLS] [--limit 50] [--json]
+echelon topology impact <node-id> [--source <source-id>] [--max-depth 3] [--relation CALLS] [--json]
+```
+
+Topology reads are deterministic and bounded. Exact IDs disambiguate symbols
+that share a qualified name across files. Audit exits `0` for current usable
+topology, `1` for usable degraded or stale topology, and `2` for unavailable,
+malformed, ambiguous, or unsafe evidence. Stale snapshots remain queryable but
+are labeled stale; read commands never generate or publish topology.
+
+Delivery topology stays run-local until landing. Exact fast-forward commit and
+fingerprint matches permit topology-only promotion. A no-fast-forward landing
+requires recapture at the landed commit. Promotion failure does not reverse a
+successful source merge: topology is reported stale or unavailable and
+`echelon re refresh --source <source-id>` is the supported recovery command.
+
 `<source-id>` is the stable `sources[].id` from `.echelon/config.yml`; its
 manifest records the matching `sources[].path`. Source content/fingerprint
 changes, dirty Git state, or any profile-hash change trigger refresh. The
