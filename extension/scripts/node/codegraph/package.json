@@ -3,6 +3,11 @@
   "version": "1.0.0",
   "private": true,
   "description": "CodeGraph bridge for the Echelon reverse-engineering pipeline",
+  "echelon_runtime": {
+    "provider_artifact_schema_version": 2,
+    "exact_relationship_endpoints": true,
+    "uncapped_symbols": true
+  },
   "dependencies": {
     "@colbymchenry/codegraph": "1.4.1",
     "commander": "^14.0.2",

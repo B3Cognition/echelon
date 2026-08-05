@@ -487,6 +487,42 @@ def test_workspace_synthesis_prompt_declares_file_only_result_contract(
 
 
 @pytest.mark.unit
+def test_workspace_synthesis_retry_prompt_includes_controller_feedback(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    controller = ReExtractionController(
+        provider=_ShallowSpecifierProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    )
+    state = {
+        "re_agent_result_detail": (
+            "workspace synthesis has missing or empty artifacts: "
+            "workspace/domains/001-re-domain.md"
+        )
+    }
+    plan = ReExecutionPlan.from_json_dict(
+        json.loads(
+            (run_dir / "re" / "re-execution-plan.json").read_text(
+                encoding="utf-8"
+            )
+        )
+    )
+
+    prompt = controller._prompt_for(
+        "re-extract-2-specify",
+        state,
+        plan,
+        {"kind": "workspace-synthesis"},
+    )
+
+    assert "Controller Validation Feedback" in prompt
+    assert "workspace/domains/001-re-domain.md" in prompt
+
+
+@pytest.mark.unit
 def test_continue_recovers_valid_completed_workspace_synthesis_without_redispatch(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

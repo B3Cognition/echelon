@@ -63,6 +63,11 @@ def test_codegraph_runtime_is_pinned_to_current_supported_release():
     install_script = (EXT_ROOT / "scripts" / "install.sh").read_text()
 
     assert package["dependencies"][CODEGRAPH_PACKAGE] == CODEGRAPH_VERSION
+    assert package["echelon_runtime"] == {
+        "provider_artifact_schema_version": 2,
+        "exact_relationship_endpoints": True,
+        "uncapped_symbols": True,
+    }
     assert lock["packages"][""]["dependencies"][CODEGRAPH_PACKAGE] == CODEGRAPH_VERSION
     assert lock["packages"][f"node_modules/{CODEGRAPH_PACKAGE}"]["version"] == CODEGRAPH_VERSION
     assert f'require("{CODEGRAPH_PACKAGE}")' in adapter
@@ -169,7 +174,9 @@ const adapter = require(process.argv[2]);
   }
   const duplicate = {...node, id: 'two', filePath: 'src/lib/demo.ts'};
   const cg = {getNodesByKind: (kind) => kind === 'function' ? [node, duplicate] : []};
-  await assert.rejects(adapter.getSymbols(cg), /duplicate canonical locator/);
+  const symbols = await adapter.getSymbols(cg);
+  assert.strictEqual(symbols.length, 2);
+  assert(symbols.every((symbol) => symbol.symbol_key === undefined));
 })().catch((error) => {
   console.error(error);
   process.exit(1);

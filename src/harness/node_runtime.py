@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+import json
 import os
 from pathlib import Path
 from typing import Callable
@@ -22,7 +23,7 @@ class _RuntimeSpec:
 
 
 def _codegraph_is_ready(runtime: Path) -> bool:
-    return (
+    if not (
         (runtime / "codegraph-bridge.js").is_file()
         and (runtime / "codegraph-adapter.js").is_file()
         and (
@@ -32,7 +33,17 @@ def _codegraph_is_ready(runtime: Path) -> bool:
             / "codegraph"
             / "package.json"
         ).is_file()
-    )
+    ):
+        return False
+    try:
+        package = json.loads((runtime / "package.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return package.get("echelon_runtime") == {
+        "provider_artifact_schema_version": 2,
+        "exact_relationship_endpoints": True,
+        "uncapped_symbols": True,
+    }
 
 
 def _perlgraph_is_ready(runtime: Path) -> bool:

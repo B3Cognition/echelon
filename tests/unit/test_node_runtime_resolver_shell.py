@@ -1,6 +1,7 @@
 """Behavior tests for the extension-local Bash Node runtime resolver."""
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -42,6 +43,18 @@ def _write_complete_codegraph(runtime: Path) -> None:
     (runtime / "node_modules/@colbymchenry/codegraph/package.json").write_text(
         "{}\n", encoding="utf-8"
     )
+    (runtime / "package.json").write_text(
+        json.dumps(
+            {
+                "echelon_runtime": {
+                    "provider_artifact_schema_version": 2,
+                    "exact_relationship_endpoints": True,
+                    "uncapped_symbols": True,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def _write_complete_perlgraph(runtime: Path) -> None:
@@ -68,6 +81,26 @@ def test_codegraph_uses_shared_runtime_when_local_is_source_only(
     (local / "codegraph-bridge.js").write_text("source only\n", encoding="utf-8")
     shared = tmp_path / "echelon-home" / "node" / "codegraph"
     _write_complete_codegraph(shared)
+
+    result = _run_resolver(
+        "echelon_resolve_codegraph_runtime",
+        local_node_root,
+        env={**os.environ, "ECHELON_HOME": str(tmp_path / "echelon-home")},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert Path(result.stdout.strip()) == shared
+
+
+def test_codegraph_uses_shared_runtime_when_local_contract_is_stale(
+    tmp_path: Path,
+) -> None:
+    local_node_root = tmp_path / "project" / "scripts" / "node"
+    local = local_node_root / "codegraph"
+    shared = tmp_path / "echelon-home" / "node" / "codegraph"
+    _write_complete_codegraph(local)
+    _write_complete_codegraph(shared)
+    (local / "package.json").write_text("{}\n", encoding="utf-8")
 
     result = _run_resolver(
         "echelon_resolve_codegraph_runtime",

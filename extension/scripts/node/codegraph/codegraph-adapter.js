@@ -94,6 +94,8 @@ function collectNativeNodeData(cg) {
     const seenNodeIds = new Set();
     const keyToNodeId = new Map();
     const symbolByNodeId = new Map();
+    const ambiguousSymbols = [];
+    const ambiguousKeys = new Set();
     for (const kind of NODE_KINDS) {
         let nativeNodes;
         try {
@@ -107,17 +109,29 @@ function collectNativeNodeData(cg) {
                 continue;
             }
             seenNodeIds.add(node.id);
+            nodes.push(node);
             const symbol = nodeToOutputSymbol(node);
+            if (ambiguousKeys.has(symbol.symbol_key)) {
+                ambiguousSymbols.push({ ...symbol, symbol_key: undefined });
+                continue;
+            }
             const existingNodeId = keyToNodeId.get(symbol.symbol_key);
             if (existingNodeId !== undefined && existingNodeId !== node.id) {
-                throw new Error(`[codegraph-adapter] contract error: duplicate canonical locator for native nodes ${existingNodeId} and ${node.id}`);
+                const existing = symbolByNodeId.get(existingNodeId);
+                if (existing) {
+                    ambiguousSymbols.push({ ...existing, symbol_key: undefined });
+                }
+                ambiguousSymbols.push({ ...symbol, symbol_key: undefined });
+                symbolByNodeId.delete(existingNodeId);
+                keyToNodeId.delete(symbol.symbol_key);
+                ambiguousKeys.add(symbol.symbol_key);
+                continue;
             }
             keyToNodeId.set(symbol.symbol_key, node.id);
             symbolByNodeId.set(node.id, symbol);
-            nodes.push(node);
         }
     }
-    return { nodes, keyToNodeId, symbolByNodeId };
+    return { nodes, keyToNodeId, symbolByNodeId, ambiguousSymbols };
 }
 // ---------------------------------------------------------------------------
 // Adapter public API
@@ -226,7 +240,8 @@ async function openIndex(repoPath) {
  * Uses getNodesByKind for each kind to avoid the internal-only getAllNodes().
  */
 async function getSymbols(cg) {
-    return [...collectNativeNodeData(cg).symbolByNodeId.values()];
+    const { symbolByNodeId, ambiguousSymbols } = collectNativeNodeData(cg);
+    return [...symbolByNodeId.values(), ...ambiguousSymbols];
 }
 /**
  * 5. getRelationships

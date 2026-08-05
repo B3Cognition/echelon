@@ -7,7 +7,13 @@ echelon_codegraph_runtime_ready() {
   local runtime_dir="$1"
   [ -f "$runtime_dir/codegraph-bridge.js" ] &&
     [ -f "$runtime_dir/codegraph-adapter.js" ] &&
-    [ -f "$runtime_dir/node_modules/@colbymchenry/codegraph/package.json" ]
+    [ -f "$runtime_dir/node_modules/@colbymchenry/codegraph/package.json" ] &&
+    node -e '
+      const contract = require(process.argv[1]).echelon_runtime;
+      process.exit(contract?.provider_artifact_schema_version === 2 &&
+        contract?.exact_relationship_endpoints === true &&
+        contract?.uncapped_symbols === true ? 0 : 1);
+    ' "$runtime_dir/package.json" 2>/dev/null
 }
 
 echelon_perlgraph_runtime_ready() {
