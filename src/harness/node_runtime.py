@@ -23,27 +23,33 @@ class _RuntimeSpec:
 
 
 def _codegraph_is_ready(runtime: Path) -> bool:
+    sdk_package_path = (
+        runtime
+        / "node_modules"
+        / "@colbymchenry"
+        / "codegraph"
+        / "package.json"
+    )
     if not (
         (runtime / "codegraph-bridge.js").is_file()
         and (runtime / "codegraph-adapter.js").is_file()
-        and (
-            runtime
-            / "node_modules"
-            / "@colbymchenry"
-            / "codegraph"
-            / "package.json"
-        ).is_file()
+        and sdk_package_path.is_file()
     ):
         return False
     try:
         package = json.loads((runtime / "package.json").read_text(encoding="utf-8"))
+        sdk_package = json.loads(sdk_package_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
-    return package.get("echelon_runtime") == {
-        "provider_artifact_schema_version": 2,
-        "exact_relationship_endpoints": True,
-        "uncapped_symbols": True,
-    }
+    return (
+        package.get("echelon_runtime")
+        == {
+            "provider_artifact_schema_version": 2,
+            "exact_relationship_endpoints": True,
+            "uncapped_symbols": True,
+        }
+        and sdk_package.get("version") == "1.4.1"
+    )
 
 
 def _perlgraph_is_ready(runtime: Path) -> bool:

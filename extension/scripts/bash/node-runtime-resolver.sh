@@ -10,10 +10,13 @@ echelon_codegraph_runtime_ready() {
     [ -f "$runtime_dir/node_modules/@colbymchenry/codegraph/package.json" ] &&
     node -e '
       const contract = require(process.argv[1]).echelon_runtime;
+      const sdk = require(process.argv[2]);
       process.exit(contract?.provider_artifact_schema_version === 2 &&
         contract?.exact_relationship_endpoints === true &&
-        contract?.uncapped_symbols === true ? 0 : 1);
-    ' "$runtime_dir/package.json" 2>/dev/null
+        contract?.uncapped_symbols === true &&
+        sdk?.version === "1.4.1" ? 0 : 1);
+    ' "$runtime_dir/package.json" \
+      "$runtime_dir/node_modules/@colbymchenry/codegraph/package.json" 2>/dev/null
 }
 
 echelon_perlgraph_runtime_ready() {

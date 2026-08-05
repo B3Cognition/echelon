@@ -174,9 +174,10 @@ const adapter = require(process.argv[2]);
   }
   const duplicate = {...node, id: 'two', filePath: 'src/lib/demo.ts'};
   const cg = {getNodesByKind: (kind) => kind === 'function' ? [node, duplicate] : []};
-  const symbols = await adapter.getSymbols(cg);
-  assert.strictEqual(symbols.length, 2);
-  assert(symbols.every((symbol) => symbol.symbol_key === undefined));
+  await assert.rejects(
+    adapter.getSymbols(cg),
+    /contract error: duplicate canonical locator for native nodes one and two/
+  );
 })().catch((error) => {
   console.error(error);
   process.exit(1);

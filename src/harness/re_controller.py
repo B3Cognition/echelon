@@ -47,7 +47,6 @@ from kernel.re_state import complete_dispatch, init_re_state, write_last_dispatc
 from echelon.telemetry.model import ExecutionSpan, TokenUsage
 from echelon.telemetry.store import TelemetryStore
 from harness.re_budget import evaluate_re_budget
-from harness.node_runtime import NodeRuntimeResolutionError, resolve_codegraph_bridge
 from harness.re_repair_packet import ReRepairFinding, ReRepairPacket
 from harness.squad_executors import _canonical_echelon_result_contract
 
@@ -2629,13 +2628,6 @@ class ReExtractionController:
         ]
         environment = os.environ.copy()
         environment["EXTENSION_PATH"] = str(self._extension_root)
-        try:
-            codegraph_bridge = resolve_codegraph_bridge(self._project_root)
-        except NodeRuntimeResolutionError as exc:
-            return f"CodeGraph runtime is unavailable: {exc}"
-        environment["ECHELON_CODEGRAPH_RUNTIME_DIR"] = str(
-            codegraph_bridge.parent
-        )
         try:
             completed = self._execute_analysis_command(command, environment)
         except subprocess.TimeoutExpired:

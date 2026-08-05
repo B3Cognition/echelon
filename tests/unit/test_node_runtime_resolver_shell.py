@@ -41,7 +41,7 @@ def _write_complete_codegraph(runtime: Path) -> None:
     (runtime / "codegraph-bridge.js").write_text("bridge\n", encoding="utf-8")
     (runtime / "codegraph-adapter.js").write_text("adapter\n", encoding="utf-8")
     (runtime / "node_modules/@colbymchenry/codegraph/package.json").write_text(
-        "{}\n", encoding="utf-8"
+        '{"version":"1.4.1"}\n', encoding="utf-8"
     )
     (runtime / "package.json").write_text(
         json.dumps(
@@ -101,6 +101,28 @@ def test_codegraph_uses_shared_runtime_when_local_contract_is_stale(
     _write_complete_codegraph(local)
     _write_complete_codegraph(shared)
     (local / "package.json").write_text("{}\n", encoding="utf-8")
+
+    result = _run_resolver(
+        "echelon_resolve_codegraph_runtime",
+        local_node_root,
+        env={**os.environ, "ECHELON_HOME": str(tmp_path / "echelon-home")},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert Path(result.stdout.strip()) == shared
+
+
+def test_codegraph_uses_shared_runtime_when_local_sdk_version_is_wrong(
+    tmp_path: Path,
+) -> None:
+    local_node_root = tmp_path / "project/scripts/node"
+    local = local_node_root / "codegraph"
+    shared = tmp_path / "echelon-home/node/codegraph"
+    _write_complete_codegraph(local)
+    _write_complete_codegraph(shared)
+    (local / "node_modules/@colbymchenry/codegraph/package.json").write_text(
+        '{"version":"1.4.0"}\n', encoding="utf-8"
+    )
 
     result = _run_resolver(
         "echelon_resolve_codegraph_runtime",
