@@ -2071,35 +2071,42 @@ class SquadController:
                 if step == "awaiting_publication":
                     raise CompletionError("intent_mismatch")
                 if step == "complete":
-                    digests = self._phase_a_inventory_digests(
-                        current_state
+                    from echelon.spec_retarget_finalization import (
+                        RetargetFinalizationError,
                     )
-                    if (
-                        prepared.marker.origin == "routed"
-                        and prepared.intent.route.get("from_phase")
-                        == "phase4-document"
-                    ):
-                        if digests is None:
-                            raise CompletionError("receipts_mismatch")
-                        self._state_store.complete_controller_completion(
-                            prepared,
-                            phase_a_active_source_sha256=digests[0],
-                            phase_a_published_postimage_sha256=digests[1],
+
+                    try:
+                        digests = self._phase_a_inventory_digests(
+                            current_state
                         )
-                    elif (
-                        prepared.marker.origin == "terminal"
-                    ):
-                        if digests is None:
-                            raise CompletionError("receipts_mismatch")
-                        self._state_store.complete_controller_completion(
-                            prepared,
-                            phase_a_active_source_sha256=digests[0],
-                            phase_a_published_postimage_sha256=digests[1],
-                        )
-                    else:
-                        self._state_store.complete_controller_completion(
-                            prepared,
-                        )
+                        if (
+                            prepared.marker.origin == "routed"
+                            and prepared.intent.route.get("from_phase")
+                            == "phase4-document"
+                        ):
+                            if digests is None:
+                                raise CompletionError("receipts_mismatch")
+                            self._state_store.complete_controller_completion(
+                                prepared,
+                                phase_a_active_source_sha256=digests[0],
+                                phase_a_published_postimage_sha256=digests[1],
+                            )
+                        elif (
+                            prepared.marker.origin == "terminal"
+                        ):
+                            if digests is None:
+                                raise CompletionError("receipts_mismatch")
+                            self._state_store.complete_controller_completion(
+                                prepared,
+                                phase_a_active_source_sha256=digests[0],
+                                phase_a_published_postimage_sha256=digests[1],
+                            )
+                        else:
+                            self._state_store.complete_controller_completion(
+                                prepared,
+                            )
+                    except RetargetFinalizationError as exc:
+                        raise CompletionError("receipts_mismatch") from exc
                     if "retarget" in prepared.intent.effect_plan:
                         self._emit_pending_retarget_comparison()
                     self._discard_completed_controller_stage(prepared)

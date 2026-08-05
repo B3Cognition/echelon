@@ -54,6 +54,7 @@ from harness.squad_publication import (
 from harness.squad_completion import (
     CompletionError,
     load_prepared_controller_completion,
+    persist_completion_effect_receipt,
     prepare_controller_completion,
 )
 from harness.squad_state import (
@@ -206,6 +207,195 @@ def test_retarget_finalization_error_is_persisted_as_bounded_completion_failure(
     assert outcome.recovered is False
     assert failed[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == "retarget"
     assert failed["controller_completion_failure"]["code"] == "receipts_mismatch"
+
+
+def test_late_retarget_report_drift_keeps_durable_receipt_for_adoption_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A live postimage failure after effects are durable is retryable, not fatal."""
+    import echelon.spec_retarget_finalization as finalization
+
+    ctrl, store = _controller(tmp_path)
+    store.initialize("r", "greenfield", "msg", 0, "phase1-what")
+    prepared = prepare_controller_completion(
+        tmp_path,
+        ctrl._squad_dir,
+        completion_id="e" * 32,
+        origin="routed",
+        publication={"kind": "none"},
+        route={
+            "kind": "routed",
+            "from_phase": "phase1-what",
+            "to_phase": "phase1-why1",
+            "manual_phase_run": False,
+            "record_completion": True,
+        },
+        effect_plan=("retarget",),
+        checkpoint_prestate={"kind": "none"},
+        context_reason="late retarget report drift",
+        mine_phase_a=False,
+        judgment_payload_sha256=(),
+        judgments=(),
+    )
+    _install_prepared_routed_completion(store, prepared)
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    state = store.load()
+    state.update(
+        spec_id="001-demo",
+        published_spec_dir="specs/001-demo",
+        retarget={
+            "status": "finalizing",
+            "revision_id": "retarget-1",
+            "checkpoint_commit": "a" * 40,
+            "replacement_targets": ["apps/web"],
+            "replacement_run_id": "replacement",
+            "baseline_run_id": "baseline",
+            "memory_excluded": True,
+            "graph_invalidation": {
+                "spec_id": "001-demo",
+                "spec_status": "invalidated",
+                "spec_graph_hash": None,
+                "workspace_status": "not_applicable_empty_workspace",
+                "workspace_graph_hash": None,
+                "workspace_finding_codes": [],
+            },
+        },
+    )
+    store.save(state)
+    drawer_ids = ["drawer-1"]
+    mine = {
+        "schema_version": 1,
+        "spec_id": "001-demo",
+        "spec_dir": "specs/001-demo",
+        "wing": "test",
+        "palace_path": "test",
+        "status": "complete",
+        "expected_count": 1,
+        "written_count": 1,
+        "adopted_count": 0,
+        "skipped_count": 0,
+        "failed_count": 0,
+        "drifted_count": 0,
+        "unavailable_count": 0,
+        "drawer_ids": drawer_ids,
+        "expected_drawer_ids": drawer_ids,
+        "errors": [],
+    }
+    for name, contents in {
+        "mempalace-audit.json": b'{"status":"pass"}\n',
+        "mempalace-audit.md": b"# audit\n",
+        "mempalace-mine.json": json.dumps(mine).encode(),
+    }.items():
+        (spec_dir / name).write_bytes(contents)
+    report_digest = finalization._current_memory_report_set_digest(spec_dir)
+    (spec_dir / "mempalace-refresh-manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "spec_id": "001-demo",
+                "files": finalization._current_memory_report_records(spec_dir),
+                "report_set_digest": report_digest,
+            }
+        ),
+        encoding="utf-8",
+    )
+    drawer_digest = "sha256:" + hashlib.sha256(
+        json.dumps(drawer_ids, separators=(",", ":")).encode()
+    ).hexdigest()
+    receipt = {
+        "revision_id": "retarget-1",
+        "completion_id": "e" * 32,
+        "checkpoint_commit": "a" * 40,
+        "replacement_targets": ["apps/web"],
+        "memory": {
+            "status": "pass",
+            "spec_id": "001-demo",
+            "deleted_count": 0,
+            "deleted_ids": [],
+            "drawer_set_digest": drawer_digest,
+            "mine_status": "complete",
+            "audit_status": "pass",
+            "adapter": "test",
+            "wing": "test",
+            "palace_path": "test",
+            "scanned_count": 0,
+            "delete_acknowledged_count": None,
+            "remaining_owned_ids": [],
+            "unrelated_missing_ids": [],
+            "unrelated_changed_ids": [],
+            "unexpected_added_ids": [],
+            "report_set_digest": report_digest,
+            "failure_code": None,
+        },
+        "graph": {
+            "spec_id": "001-demo",
+            "spec_status": "pass",
+            "spec_graph_hash": "sha256:" + "b" * 64,
+            "workspace_status": "pass",
+            "workspace_graph_hash": "sha256:" + "c" * 64,
+            "workspace_finding_codes": [],
+        },
+        "replacement_commit": "d" * 40,
+        "status": "complete",
+    }
+    persist_completion_effect_receipt(prepared, "retarget", receipt)
+    one_ahead = load_prepared_controller_completion(
+        tmp_path, ctrl._squad_dir, store.load()[PENDING_CONTROLLER_COMPLETION_KEY]
+    )
+    store.advance_controller_completion(one_ahead)
+    monkeypatch.setattr(
+        finalization,
+        "_configured_mempalace_wing", lambda *_args: "test"
+    )
+    monkeypatch.setattr(
+        finalization,
+        "audit_spec_memory",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            spec_id="001-demo",
+            status="pass",
+            wing="test",
+            palace_path="test",
+            expected_count=1,
+            present_current_count=1,
+            missing=[], stale=[], wrong_wing=[], wrong_room=[], duplicate=[],
+            non_canonical=[], lifecycle_excluded=[], errors=[],
+        ),
+    )
+    (spec_dir / "mempalace-audit.md").unlink()
+    monkeypatch.setattr(ctrl, "_emit_pending_retarget_comparison", lambda: pytest.fail("emitted comparison"))
+
+    outcome = ctrl._drain_pending_controller_completion()
+
+    failed = store.load()
+    assert outcome.recovered is False
+    assert failed[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == "complete"
+    assert failed["controller_completion_failure"]["code"] == "receipts_mismatch"
+    assert failed["retarget"]["status"] == "finalizing"
+    assert failed["retarget"]["memory_excluded"] is True
+    durable = load_prepared_controller_completion(
+        tmp_path, ctrl._squad_dir, failed[PENDING_CONTROLLER_COMPLETION_KEY]
+    )
+    assert durable.receipts["effects"]["retarget"] == receipt
+
+    (spec_dir / "mempalace-audit.md").write_bytes(b"# audit\n")
+    monkeypatch.setattr(
+        finalization, "verify_retarget_finalization_receipt", lambda *_args: receipt
+    )
+    monkeypatch.setattr(
+        ctrl, "_apply_controller_completion_effect", lambda *_args: pytest.fail("reran effect")
+    )
+    monkeypatch.setattr(ctrl, "_emit_pending_retarget_comparison", lambda: True)
+
+    retried = ctrl._drain_pending_controller_completion()
+
+    adopted = store.load()
+    assert retried.recovered is True
+    assert PENDING_CONTROLLER_COMPLETION_KEY not in adopted
+    assert adopted["retarget"]["status"] == "complete"
+    assert adopted["retarget"]["finalization_receipt"] == receipt
+    assert "memory_excluded" not in adopted["retarget"]
 
 
 def test_phase4_retarget_enters_finalizing_before_staging(tmp_path: Path) -> None:
