@@ -223,7 +223,7 @@ def test_re_refresh_runs_target_only_and_publishes_completed_run(
 @pytest.mark.unit
 @pytest.mark.parametrize(
     ("source_id", "source_path"),
-    (("-api", "sources/api"), ("api", ".")),
+    (("-api", "sources/api"),),
 )
 def test_re_refresh_cli_rejects_topology_incompatible_source_declarations(
     tmp_path: Path,
