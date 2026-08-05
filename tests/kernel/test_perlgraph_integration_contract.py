@@ -52,6 +52,26 @@ def test_perlgraph_runtime_is_pinned_to_release() -> None:
     assert "package version `0.1.0`" in provenance
 
 
+def test_perlgraph_schema_two_declares_exact_topology_contract() -> None:
+    types = (PERLGRAPH_RUNTIME_DIR / "src" / "types.ts").read_text()
+    analyzer = (PERLGRAPH_RUNTIME_DIR / "src" / "analysis" / "analyze.ts").read_text()
+    resolver = (PERLGRAPH_RUNTIME_DIR / "src" / "resolution" / "call-resolver.ts").read_text()
+
+    assert "schema_version: 2" in types
+    assert "tool_version: string" in types
+    assert "ProviderStatus = 'ready' | 'degraded' | 'empty' | 'unsupported'" in types
+    assert "complete: boolean" in types
+    assert "counts: ProviderCounts" in types
+    assert "capabilities: ProviderCapabilities" in types
+    assert "symbol_key: string" in types
+    assert "source_key: string" in types
+    assert "target_key: string" in types
+    assert "unresolved_relationships: UnresolvedRelationship[]" in types
+    assert "schema_version: 2" in analyzer
+    assert "duplicate canonical locator" in analyzer
+    assert "return { relationships, unresolved_relationships: unresolvedRelationships };" in resolver
+
+
 def test_re_state_tracks_perlgraph_artifacts_by_default() -> None:
     state = init_re_state(output_dir="/custom/re")
 
@@ -105,7 +125,8 @@ def test_run_analysis_writes_perlgraph_artifacts() -> None:
     assert '"$REPO_OUTPUT/perlgraph-summary.json"' in run_analysis
     assert '"$OUTPUT_DIR/perlgraph-analysis.json"' in run_analysis
     assert '"$OUTPUT_DIR/perlgraph-summary.json"' in run_analysis
-    assert "write_polyrepo_perlgraph_summary()" in run_analysis
+    assert "write_polyrepo_perlgraph_summary()" not in run_analysis
+    assert "index_state" not in run_analysis
 
 
 def test_re_controller_tracks_perlgraph_artifacts(tmp_path) -> None:

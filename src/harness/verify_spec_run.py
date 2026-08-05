@@ -5,8 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 from typing import Iterable
+
+from harness.durable_json import DurableJsonError, write_json_atomic
 
 
 @dataclass(frozen=True)
@@ -29,6 +32,77 @@ class VerifySpecRunInitResult:
 
 class VerifySpecRunInitError(ValueError):
     """Raised when verify-spec run initialization inputs are invalid."""
+
+
+def complete_verify_spec_run(
+    verify_run_dir: Path,
+    *,
+    completed_at: str | None = None,
+) -> Path:
+    """Durably mark a fully validated verify-spec lifecycle complete."""
+    run_dir = Path(os.path.abspath(os.fspath(verify_run_dir)))
+    trusted_workspace = _trusted_workspace_for_verify_run(run_dir)
+    if run_dir.is_symlink() or not run_dir.is_dir():
+        raise VerifySpecRunInitError("verify run directory is unavailable or symlinked")
+    state_path = run_dir / "state.json"
+    if state_path.is_symlink() or not state_path.is_file():
+        raise VerifySpecRunInitError("verify state is unavailable or symlinked")
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise VerifySpecRunInitError("verify state is malformed") from exc
+    if not isinstance(state, dict):
+        raise VerifySpecRunInitError("verify state must be a JSON object")
+    if state.get("status") not in {"in_progress", "complete"}:
+        raise VerifySpecRunInitError("verify state is not in progress or complete")
+    _validate_completion_evidence(state)
+    if state.get("status") == "complete":
+        if _completion_time(state.get("completed_at")) is None:
+            raise VerifySpecRunInitError("completed verify state has no valid completed_at")
+        return state_path
+
+    timestamp = completed_at or datetime.now(timezone.utc).isoformat()
+    if _completion_time(timestamp) is None:
+        raise VerifySpecRunInitError("verify completion timestamp is invalid")
+    state.update({"status": "complete", "completed_at": timestamp})
+    try:
+        write_json_atomic(state_path, state, trusted_root=trusted_workspace)
+    except DurableJsonError as exc:
+        raise VerifySpecRunInitError(str(exc)) from exc
+    return state_path
+
+
+def _trusted_workspace_for_verify_run(run_dir: Path) -> Path:
+    if run_dir.parent.name == "runs":
+        return run_dir.parent.parent
+    if (
+        run_dir.parent.name == "verify-spec"
+        and run_dir.parent.parent.parent.name == "runs"
+    ):
+        return run_dir.parent.parent.parent.parent
+    raise VerifySpecRunInitError("verify run path has no valid runs ancestry")
+
+
+def _validate_completion_evidence(state: dict[str, object]) -> None:
+    if state.get("topology_evidence") not in {"ready", "degraded", "unavailable"}:
+        raise VerifySpecRunInitError("verify topology evidence is not finalized")
+    if state.get("fulfillment_artifacts") != "valid":
+        raise VerifySpecRunInitError("verify fulfillment artifacts are not valid")
+    if state.get("reconcile") is True and state.get("progress_reconciliation") not in {
+        "applied",
+        "dry_run",
+    }:
+        raise VerifySpecRunInitError("verify progress reconciliation is not finalized")
+
+
+def _completion_time(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None
 
 
 def init_verify_spec_run(

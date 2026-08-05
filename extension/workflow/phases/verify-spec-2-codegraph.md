@@ -55,6 +55,19 @@ PerlGraph evidence degraded means Perl-specific structural evidence is weaker,
 not that fulfillment failed. Do not hand-edit `state.json`; the command already
 recorded degradation.
 
+Then run exactly:
+
+```bash
+python -m harness write-topology-evidence-receipt "{project_root}" "{verify_run_dir}" "{spec_dir}"
+```
+
+This deterministic finalizer runs only after both providers. It always writes
+`{verify_run_dir}/topology-receipt.json`, including explicit unavailable or
+unsupported provider rows, and records `topology_evidence` as `ready`,
+`degraded`, or `unavailable` in `{verify_run_dir}/state.json`.
+It does not write `status` or `completed_at`; the final verify-spec lifecycle
+phase owns completion.
+
 ## Output
 
 Proceed to `verify-spec-3-audit`.

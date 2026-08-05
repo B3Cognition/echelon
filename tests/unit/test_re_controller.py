@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from dataclasses import replace
 from pathlib import Path
@@ -12,7 +13,11 @@ from harness.re_domain_manifest import DOMAIN_PARTITION_VERSION
 from harness.re_planner import ReExecutionPlan
 from harness.re_quality_gate import ReQualityReport
 from harness.squad_provider import SquadAgentResult
-from tests.unit.test_re_publication import _deep_spec, write_valid_re_run
+from tests.unit.test_re_publication import (
+    _deep_spec,
+    publish_re_run,
+    write_valid_re_run,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -25,6 +30,8 @@ def _stub_controller_analysis_script(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class _ShallowSpecifierProvider:
+    enforces_workspace_synthesis_boundary = True
+
     def __init__(self) -> None:
         self.phases: list[str] = []
 
@@ -398,7 +405,11 @@ def test_controller_records_dispatch_tokens_and_content_free_spans(tmp_path: Pat
     assert "RE phase:" not in ledger
 
 
-def _strand_completed_workspace_synthesis(run_dir: Path) -> None:
+def _strand_completed_workspace_synthesis(
+    run_dir: Path,
+    *,
+    scoped: bool = True,
+) -> None:
     state_path = run_dir / "re" / "state.json"
     state = json.loads(state_path.read_text(encoding="utf-8"))
     state.update(
@@ -447,6 +458,8 @@ def _strand_completed_workspace_synthesis(run_dir: Path) -> None:
             "re_domain_partition_version": DOMAIN_PARTITION_VERSION,
         }
     )
+    if scoped:
+        state["re_workspace_synthesis_scope_protocol_version"] = 1
     state_path.write_text(json.dumps(state), encoding="utf-8")
 
 
@@ -487,6 +500,369 @@ def test_workspace_synthesis_prompt_declares_file_only_result_contract(
 
 
 @pytest.mark.unit
+def test_workspace_synthesis_prompt_names_exact_decisions_and_forbids_live_roots(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(
+        tmp_path,
+        ("api", "web", "docs"),
+        actions={"api": "refresh", "web": "reuse", "docs": "skip-empty"},
+        removed_sources=("legacy",),
+    )
+    controller = ReExtractionController(
+        provider=_ShallowSpecifierProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    )
+
+    prompt = controller._specification_target_prompt({"kind": "workspace-synthesis"})
+
+    assert "Refreshed source IDs: `api`" in prompt
+    assert "Reused source IDs: `web`" in prompt
+    assert "Empty source IDs: `docs`" in prompt
+    assert "Missing/excluded source IDs:" in prompt
+    assert "Removed source IDs: `legacy`" in prompt
+    assert "configured live source root" in prompt
+    assert "inspect, search, count, summarize, or cite" in prompt
+    assert "reused source's canonical input" in prompt
+    assert "return BLOCKED" in prompt
+
+
+@pytest.mark.unit
+def test_workspace_synthesis_metadata_uses_only_authenticated_re_inputs(
+    tmp_path: Path,
+) -> None:
+    baseline = write_valid_re_run(tmp_path, ("web",), run_id="run-1")
+    publish_re_run(tmp_path, baseline)
+    run_dir = write_valid_re_run(
+        tmp_path,
+        ("api", "web"),
+        run_id="run-2",
+        actions={"api": "refresh", "web": "reuse"},
+    )
+    controller = ReExtractionController(
+        provider=_ShallowSpecifierProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    )
+    plan = controller._load_plan()
+
+    metadata = controller._prompt_metadata_for_target(
+        plan, {"kind": "workspace-synthesis"}
+    )
+
+    assert metadata["tool_read_roots"] == [
+        str((run_dir / "re").resolve()),
+        str((tmp_path / "re" / "sources" / "web").resolve()),
+        str((tmp_path / "re" / "workspace").resolve()),
+    ]
+    live_roots = {str(Path(source.absolute_path).resolve()) for source in plan.sources}
+    assert live_roots.isdisjoint(metadata["tool_read_roots"])
+    assert set(metadata["tool_forbidden_roots"]) == live_roots
+    assert metadata["tool_write_paths"] == [
+        str((run_dir / "re" / "sources" / "api" / "architecture.md").resolve()),
+        str((run_dir / "re" / "sources" / "api" / "components.md").resolve()),
+        str((run_dir / "re" / "sources" / "api" / "contracts.md").resolve()),
+        str((run_dir / "re" / "sources" / "api" / "overview.md").resolve()),
+        str((run_dir / "re" / "workspace" / "contracts.md").resolve()),
+        str(
+            (
+                run_dir
+                / "re"
+                / "workspace"
+                / "domains"
+                / "001-re-domain.md"
+            ).resolve()
+        ),
+        str(
+            (
+                run_dir
+                / "re"
+                / "workspace"
+                / "domains"
+                / "001-re-src.md"
+            ).resolve()
+        ),
+        str((run_dir / "re" / "workspace" / "overview.md").resolve()),
+        str((run_dir / "re" / "workspace" / "relationships.md").resolve()),
+    ]
+
+
+@pytest.mark.unit
+def test_workspace_synthesis_metadata_rejects_untrusted_workspace_input_path(
+    tmp_path: Path,
+) -> None:
+    baseline = write_valid_re_run(tmp_path, ("web",), run_id="run-1")
+    publish_re_run(tmp_path, baseline)
+    run_dir = write_valid_re_run(
+        tmp_path,
+        ("api", "web"),
+        run_id="run-2",
+        actions={"api": "refresh", "web": "reuse"},
+    )
+    inputs_path = run_dir / "re" / "re-workspace-inputs.json"
+    inputs = json.loads(inputs_path.read_text(encoding="utf-8"))
+    web = next(item for item in inputs["sources"] if item["id"] == "web")
+    web["input_path"] = str(tmp_path / "sources" / "web")
+    inputs_path.write_text(json.dumps(inputs), encoding="utf-8")
+    controller = ReExtractionController(
+        provider=_ShallowSpecifierProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    )
+
+    with pytest.raises(ValueError, match="workspace inputs do not match the execution plan"):
+        controller._prompt_metadata_for_target(
+            controller._load_plan(), {"kind": "workspace-synthesis"}
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("action", ["missing", "exclude"])
+def test_workspace_synthesis_metadata_does_not_require_unavailable_inputs(
+    tmp_path: Path,
+    action: str,
+) -> None:
+    run_dir = write_valid_re_run(
+        tmp_path,
+        ("api", "unavailable"),
+        actions={"api": "refresh", "unavailable": action},
+    )
+    controller = ReExtractionController(
+        provider=_ShallowSpecifierProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    )
+
+    metadata = controller._prompt_metadata_for_target(
+        controller._load_plan(), {"kind": "workspace-synthesis"}
+    )
+
+    assert metadata["tool_read_roots"] == [str((run_dir / "re").resolve())]
+    assert str((tmp_path / "sources" / "unavailable").resolve()) not in metadata[
+        "tool_read_roots"
+    ]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("action", ["missing", "exclude"])
+def test_workspace_synthesis_metadata_includes_usable_retained_inputs(
+    tmp_path: Path,
+    action: str,
+) -> None:
+    baseline = write_valid_re_run(tmp_path, ("retained",), run_id="run-1")
+    publish_re_run(tmp_path, baseline)
+    run_dir = write_valid_re_run(
+        tmp_path,
+        ("api", "retained"),
+        run_id="run-2",
+        actions={"api": "refresh", "retained": action},
+    )
+    controller = ReExtractionController(
+        provider=_ShallowSpecifierProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    )
+
+    metadata = controller._prompt_metadata_for_target(
+        controller._load_plan(), {"kind": "workspace-synthesis"}
+    )
+
+    assert str((tmp_path / "re" / "sources" / "retained").resolve()) in metadata[
+        "tool_read_roots"
+    ]
+
+
+@pytest.mark.unit
+def test_workspace_synthesis_metadata_rejects_symlinked_write_parent(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    staged_source = run_dir / "re" / "sources" / "api"
+    shutil.rmtree(staged_source)
+    staged_source.symlink_to(tmp_path / "sources" / "api", target_is_directory=True)
+    controller = ReExtractionController(
+        provider=_ShallowSpecifierProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    )
+
+    with pytest.raises(ValueError, match="symlinked workspace synthesis path"):
+        controller._prompt_metadata_for_target(
+            controller._load_plan(), {"kind": "workspace-synthesis"}
+        )
+
+
+@pytest.mark.unit
+def test_workspace_synthesis_metadata_rejects_run_internal_output_symlink(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    output = run_dir / "re" / "workspace" / "overview.md"
+    output.unlink()
+    output.symlink_to(run_dir / "re" / "state.json")
+    controller = ReExtractionController(
+        provider=_ShallowSpecifierProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    )
+
+    with pytest.raises(ValueError, match="symlinked workspace synthesis path"):
+        controller._prompt_metadata_for_target(
+            controller._load_plan(), {"kind": "workspace-synthesis"}
+        )
+
+
+@pytest.mark.unit
+def test_workspace_synthesis_metadata_rejects_hardlinked_output(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    output = run_dir / "re" / "workspace" / "overview.md"
+    output.unlink()
+    os.link(tmp_path / "sources" / "api" / "src" / "file-1.ts", output)
+    controller = ReExtractionController(
+        provider=_ShallowSpecifierProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    )
+
+    with pytest.raises(ValueError, match="hardlinked workspace synthesis path"):
+        controller._prompt_metadata_for_target(
+            controller._load_plan(), {"kind": "workspace-synthesis"}
+        )
+
+
+@pytest.mark.unit
+def test_workspace_synthesis_metadata_rejects_unsafe_domain_id(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    architecture_path = run_dir / "re" / "workspace" / "architecture-map.json"
+    architecture = json.loads(architecture_path.read_text(encoding="utf-8"))
+    architecture["domains"][0]["domain_id"] = "../../outside"
+    architecture_path.write_text(json.dumps(architecture), encoding="utf-8")
+    controller = ReExtractionController(
+        provider=_ShallowSpecifierProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    )
+
+    with pytest.raises(ValueError, match="unsafe workspace synthesis component"):
+        controller._prompt_metadata_for_target(
+            controller._load_plan(), {"kind": "workspace-synthesis"}
+        )
+
+
+@pytest.mark.unit
+def test_workspace_synthesis_blocks_before_dispatch_when_canonical_input_is_missing(
+    tmp_path: Path,
+) -> None:
+    baseline = write_valid_re_run(tmp_path, ("web",), run_id="run-1")
+    publish_re_run(tmp_path, baseline)
+    run_dir = write_valid_re_run(
+        tmp_path,
+        ("api", "web"),
+        run_id="run-2",
+        actions={"api": "refresh", "web": "reuse"},
+    )
+    (tmp_path / "re" / "sources" / "web" / "manifest.json").unlink()
+    _initialize_re_state(run_dir, max_repairs=1)
+
+    provider = _ShallowSpecifierProvider()
+    result = ReExtractionController(
+        provider=provider,
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert result.blocked_reason == "re_workspace_synthesis_inputs_invalid"
+    assert result.blocked_detail is not None
+    assert "canonical input" in result.blocked_detail
+    assert provider.phases.count("re-extract-2-specify") == 1
+
+
+@pytest.mark.unit
+def test_workspace_synthesis_retry_prompt_includes_controller_feedback(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    controller = ReExtractionController(
+        provider=_ShallowSpecifierProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    )
+    state = {
+        "re_agent_result_detail": (
+            "workspace synthesis has missing or empty artifacts: "
+            "workspace/domains/001-re-domain.md"
+        )
+    }
+    plan = ReExecutionPlan.from_json_dict(
+        json.loads(
+            (run_dir / "re" / "re-execution-plan.json").read_text(
+                encoding="utf-8"
+            )
+        )
+    )
+
+    prompt = controller._prompt_for(
+        "re-extract-2-specify",
+        state,
+        plan,
+        {"kind": "workspace-synthesis"},
+    )
+
+    assert "Controller Validation Feedback" in prompt
+    assert "workspace/domains/001-re-domain.md" in prompt
+
+
+@pytest.mark.unit
+def test_workspace_synthesis_prompt_lists_every_exact_required_output(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    controller = ReExtractionController(
+        provider=_ShallowSpecifierProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    )
+    plan = controller._load_plan()
+
+    prompt = controller._prompt_for(
+        "re-extract-2-specify",
+        {},
+        plan,
+        {"kind": "workspace-synthesis"},
+    )
+
+    assert "Required workspace-synthesis output files" in prompt
+    for path in (
+        run_dir / "re/sources/api/overview.md",
+        run_dir / "re/sources/api/architecture.md",
+        run_dir / "re/sources/api/contracts.md",
+        run_dir / "re/sources/api/components.md",
+        run_dir / "re/workspace/overview.md",
+        run_dir / "re/workspace/relationships.md",
+        run_dir / "re/workspace/contracts.md",
+        run_dir / "re/workspace/domains/001-re-domain.md",
+    ):
+        assert f"- `{path.resolve()}`" in prompt
+
+
+@pytest.mark.unit
 def test_continue_recovers_valid_completed_workspace_synthesis_without_redispatch(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -514,6 +890,27 @@ def test_continue_recovers_valid_completed_workspace_synthesis_without_redispatc
     assert state["last_dispatch"]["post_dispatch_complete"] is True
     assert "re_agent_result_detail" not in state
     assert "recovered completed workspace synthesis" in capsys.readouterr().out
+
+
+@pytest.mark.unit
+def test_continue_redispatches_legacy_unscoped_workspace_synthesis(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    _strand_completed_workspace_synthesis(run_dir, scoped=False)
+    provider = _ShallowSpecifierProvider()
+
+    result = ReExtractionController(
+        provider=provider,
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert result.completed
+    assert provider.phases.count("re-extract-2-specify") == 1
+    state = json.loads((run_dir / "re" / "state.json").read_text(encoding="utf-8"))
+    assert state["re_workspace_synthesis_scope_protocol_version"] == 1
 
 
 @pytest.mark.unit
@@ -551,6 +948,208 @@ def test_continue_does_not_recover_incomplete_workspace_synthesis(
     assert provider.phases.count("re-extract-2-specify") == 1
     assert result.blocked_detail is not None
     assert "workspace/domains/001-re-domain.md" in result.blocked_detail
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("action", ["reuse", "skip-empty"])
+def test_workspace_synthesis_rejects_staged_non_refresh_source_artifacts(
+    tmp_path: Path,
+    action: str,
+) -> None:
+    if action == "reuse":
+        baseline = write_valid_re_run(tmp_path, ("sibling",), run_id="run-1")
+        publish_re_run(tmp_path, baseline)
+    run_dir = write_valid_re_run(
+        tmp_path,
+        ("api", "sibling"),
+        run_id="run-2",
+        actions={"api": "refresh", "sibling": action},
+    )
+    forbidden = run_dir / "re" / "sources" / "sibling"
+    shutil.rmtree(forbidden, ignore_errors=True)
+    _initialize_re_state(run_dir, max_repairs=1)
+
+    class OutOfScopeWorkspaceProvider(_ShallowSpecifierProvider):
+        def exec_agent(self, project_root: str, prompt: str) -> SquadAgentResult:
+            result = super().exec_agent(project_root, prompt)
+            if self.phases[-1] == "re-extract-2-specify" and "workspace-synthesis" in prompt:
+                forbidden.mkdir(parents=True)
+                (forbidden / "overview.md").write_text(
+                    "# Out-of-scope synthesis\n", encoding="utf-8"
+                )
+            return result
+
+    provider = OutOfScopeWorkspaceProvider()
+    result = ReExtractionController(
+        provider=provider,
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert result.blocked_reason == "re_workspace_synthesis_incomplete"
+    assert result.blocked_detail is not None
+    assert "non-refresh source artifacts" in result.blocked_detail
+    assert "sources/sibling" in result.blocked_detail
+    state = json.loads((run_dir / "re" / "state.json").read_text(encoding="utf-8"))
+    assert state["re_workspace_synthesis_complete"] is False
+
+
+@pytest.mark.unit
+def test_workspace_synthesis_removes_preexisting_non_refresh_source_artifacts(
+    tmp_path: Path,
+) -> None:
+    baseline = write_valid_re_run(tmp_path, ("sibling",), run_id="run-1")
+    publish_re_run(tmp_path, baseline)
+    run_dir = write_valid_re_run(
+        tmp_path,
+        ("api", "sibling"),
+        run_id="run-2",
+        actions={"api": "refresh", "sibling": "reuse"},
+    )
+    forbidden = run_dir / "re" / "sources" / "sibling"
+    forbidden.mkdir(parents=True)
+    (forbidden / "overview.md").write_text(
+        "# Stranded out-of-scope synthesis\n", encoding="utf-8"
+    )
+    _initialize_re_state(run_dir, max_repairs=1)
+
+    class CleanWorkspaceProvider(_ShallowSpecifierProvider):
+        def exec_agent(self, project_root: str, prompt: str) -> SquadAgentResult:
+            if "workspace-synthesis" in prompt:
+                assert not forbidden.exists()
+            return super().exec_agent(project_root, prompt)
+
+    result = ReExtractionController(
+        provider=CleanWorkspaceProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert result.completed
+    assert not forbidden.exists()
+
+
+@pytest.mark.unit
+def test_workspace_synthesis_blocks_provider_without_enforced_file_scopes(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    _initialize_re_state(run_dir, max_repairs=1)
+
+    class UnscopedProvider(_ShallowSpecifierProvider):
+        supports_prompt_metadata = True
+        enforces_workspace_synthesis_boundary = False
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.workspace_dispatched = False
+
+        def exec_agent(
+            self, project_root: str, prompt: str, **kwargs: object
+        ) -> SquadAgentResult:
+            del kwargs
+            if "workspace-synthesis" in prompt:
+                self.workspace_dispatched = True
+            return super().exec_agent(project_root, prompt)
+
+    provider = UnscopedProvider()
+    result = ReExtractionController(
+        provider=provider,
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert result.blocked_reason == "re_workspace_synthesis_scope_unsupported"
+    assert provider.workspace_dispatched is False
+
+
+@pytest.mark.unit
+def test_target_only_empty_source_completes_from_canonical_inputs_without_discovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    baseline = write_valid_re_run(tmp_path, ("sibling",), run_id="run-1")
+    publish_re_run(tmp_path, baseline)
+    run_dir = write_valid_re_run(
+        tmp_path,
+        ("sibling", "empty"),
+        run_id="run-2",
+        actions={"sibling": "reuse", "empty": "skip-empty"},
+    )
+    plan_path = run_dir / "re" / "re-execution-plan.json"
+    plan = ReExecutionPlan.from_json_dict(
+        json.loads(plan_path.read_text(encoding="utf-8"))
+    )
+    plan = replace(
+        plan,
+        policy="target-only",
+        requested_policy="target-only",
+        target_source="empty",
+        sources=tuple(
+            replace(source, selected=source.id == "empty") for source in plan.sources
+        ),
+        analysis_required=False,
+    )
+    plan_path.write_text(json.dumps(plan.to_json_dict()), encoding="utf-8")
+    shutil.rmtree(run_dir / "re" / "sources" / "empty")
+    shutil.rmtree(tmp_path / "sources" / "sibling")
+    (run_dir / "re" / "quality" / "semantic-quality-review.json").unlink()
+    _initialize_re_state(run_dir, max_repairs=1)
+
+    monkeypatch.setattr(
+        "harness.re_controller.discover_source_domains",
+        lambda source: pytest.fail("target-only empty flow discovered a source root"),
+    )
+
+    class MetadataCapturingProvider(_ShallowSpecifierProvider):
+        supports_prompt_metadata = True
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.metadata: list[object] = []
+
+        def exec_agent(
+            self, project_root: str, prompt: str, **kwargs: object
+        ) -> SquadAgentResult:
+            self.metadata.append(kwargs.get("prompt_metadata"))
+            return super().exec_agent(project_root, prompt)
+
+    provider = MetadataCapturingProvider()
+    result = ReExtractionController(
+        provider=provider,
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert result.completed
+    assert "re-extract-1-analyze" not in provider.phases
+    workspace_metadata = next(
+        item
+        for item in provider.metadata
+        if isinstance(item, dict)
+        and str(tmp_path / "re" / "sources" / "sibling")
+        in item.get("tool_read_roots", [])
+    )
+    assert str(tmp_path / "sources" / "sibling") not in workspace_metadata[
+        "tool_read_roots"
+    ]
+    assert workspace_metadata["tool_write_paths"] == [
+        str((run_dir / "re" / "workspace" / "contracts.md").resolve()),
+        str((run_dir / "re" / "workspace" / "overview.md").resolve()),
+        str((run_dir / "re" / "workspace" / "relationships.md").resolve()),
+    ]
+    assert not (run_dir / "re" / "sources" / "empty").exists()
+    semantic_report = json.loads(
+        (run_dir / "re" / "quality" / "semantic-quality-review.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert semantic_report["passed"] is True
+    assert semantic_report["failures"] == []
 
 
 @pytest.mark.unit

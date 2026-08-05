@@ -8,7 +8,7 @@ import sys
 
 import pytest
 
-from harness.verify_spec_run import init_verify_spec_run
+from harness.verify_spec_run import complete_verify_spec_run, init_verify_spec_run
 from harness.verify_spec_run import VerifySpecRunInitError
 
 
@@ -784,3 +784,234 @@ def test_init_verify_spec_run_cli_rejects_path_like_spec_id_cleanly(
     assert "Traceback" not in completed.stderr
     assert not (project / "runs").exists()
     assert not (tmp_path / "escape-20260709-170000").exists()
+
+
+def test_complete_verify_spec_run_owns_final_completion_timestamp(tmp_path: Path) -> None:
+    run = tmp_path / "runs/verify-spec-001"
+    run.mkdir(parents=True)
+    state_path = run / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "spec_id": "001-demo",
+                "status": "in_progress",
+                "topology_evidence": "ready",
+                "fulfillment_artifacts": "valid",
+                "reconcile": False,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    complete_verify_spec_run(
+        run,
+        completed_at="2026-08-04T17:00:00+00:00",
+    )
+
+    state = json.loads(state_path.read_text())
+    assert state["status"] == "complete"
+    assert state["completed_at"] == "2026-08-04T17:00:00+00:00"
+
+
+@pytest.mark.parametrize(
+    "invalid_update",
+    (
+        {"topology_evidence": "pending"},
+        {"fulfillment_artifacts": "invalid"},
+        {"reconcile": True, "progress_reconciliation": "pending"},
+    ),
+)
+def test_complete_verify_spec_run_revalidates_forged_complete_state_without_mutation(
+    tmp_path: Path,
+    invalid_update: dict[str, object],
+) -> None:
+    run = tmp_path / "runs/verify-spec-001"
+    run.mkdir(parents=True)
+    state_path = run / "state.json"
+    state = {
+        "spec_id": "001-demo",
+        "status": "complete",
+        "completed_at": "2026-08-04T17:00:00+00:00",
+        "topology_evidence": "ready",
+        "fulfillment_artifacts": "valid",
+        "reconcile": False,
+    }
+    state.update(invalid_update)
+    state_path.write_text(json.dumps(state, sort_keys=True) + "\n", encoding="utf-8")
+    before = state_path.read_bytes()
+
+    with pytest.raises(VerifySpecRunInitError):
+        complete_verify_spec_run(run)
+
+    assert state_path.read_bytes() == before
+
+
+def test_complete_verify_spec_run_accepts_valid_complete_state_idempotently(
+    tmp_path: Path,
+) -> None:
+    run = tmp_path / "runs/verify-spec-001"
+    run.mkdir(parents=True)
+    state_path = run / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "spec_id": "001-demo",
+                "status": "complete",
+                "completed_at": "2026-08-04T17:00:00+00:00",
+                "topology_evidence": "ready",
+                "fulfillment_artifacts": "valid",
+                "reconcile": False,
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    before = state_path.read_bytes()
+
+    assert complete_verify_spec_run(run) == state_path
+    assert state_path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "run_relative",
+    (
+        Path("runs/verify-spec-001"),
+        Path("runs/spec-20260804/verify-spec/001-demo"),
+    ),
+)
+def test_complete_verify_spec_run_honors_trusted_workspace_alias(
+    tmp_path: Path,
+    run_relative: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    run = workspace / run_relative
+    run.mkdir(parents=True)
+    state_path = run / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "spec_id": "001-demo",
+                "status": "in_progress",
+                "topology_evidence": "ready",
+                "fulfillment_artifacts": "valid",
+                "reconcile": False,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    workspace_alias = tmp_path / "workspace-alias"
+    workspace_alias.symlink_to(workspace, target_is_directory=True)
+
+    result = complete_verify_spec_run(
+        workspace_alias / run_relative,
+        completed_at="2026-08-04T18:00:00+00:00",
+    )
+
+    assert result == workspace_alias / run_relative / "state.json"
+    assert json.loads(state_path.read_text())["status"] == "complete"
+
+
+def test_complete_verify_spec_run_rejects_path_without_runs_ancestry(
+    tmp_path: Path,
+) -> None:
+    run = tmp_path / "verify-spec-001"
+    run.mkdir()
+    state_path = run / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "spec_id": "001-demo",
+                "status": "in_progress",
+                "topology_evidence": "ready",
+                "fulfillment_artifacts": "valid",
+                "reconcile": False,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    before = state_path.read_bytes()
+
+    with pytest.raises(VerifySpecRunInitError, match="runs ancestry"):
+        complete_verify_spec_run(run)
+
+    assert state_path.read_bytes() == before
+
+
+def test_complete_verify_spec_run_rejects_link_below_workspace_without_mutation(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    runs = workspace / "runs"
+    runs.mkdir(parents=True)
+    outside_run = tmp_path / "outside-run"
+    run = outside_run / "verify-spec/001-demo"
+    run.mkdir(parents=True)
+    state_path = run / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "spec_id": "001-demo",
+                "status": "in_progress",
+                "topology_evidence": "ready",
+                "fulfillment_artifacts": "valid",
+                "reconcile": False,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    before = state_path.read_bytes()
+    (runs / "active").symlink_to(outside_run, target_is_directory=True)
+
+    with pytest.raises(VerifySpecRunInitError, match="unsafe|directory"):
+        complete_verify_spec_run(runs / "active/verify-spec/001-demo")
+
+    assert state_path.read_bytes() == before
+
+
+def test_complete_verify_spec_run_normalizes_looping_trusted_workspace(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from harness import verify_spec_run
+
+    workspace = tmp_path / "workspace"
+    run = workspace / "runs/verify-spec-001"
+    run.mkdir(parents=True)
+    state_path = run / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "spec_id": "001-demo",
+                "status": "in_progress",
+                "topology_evidence": "ready",
+                "fulfillment_artifacts": "valid",
+                "reconcile": False,
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    before = state_path.read_bytes()
+    pinned_workspace = tmp_path / "workspace-pinned"
+    original_write = verify_spec_run.write_json_atomic
+
+    def loop_then_write(path, value, *, trusted_root):
+        workspace.rename(pinned_workspace)
+        workspace.symlink_to(workspace.name, target_is_directory=True)
+        return original_write(path, value, trusted_root=trusted_root)
+
+    monkeypatch.setattr(verify_spec_run, "write_json_atomic", loop_then_write)
+
+    with pytest.raises(VerifySpecRunInitError, match="trusted root is unavailable"):
+        complete_verify_spec_run(
+            run,
+            completed_at="2026-08-04T19:00:00+00:00",
+        )
+
+    assert (pinned_workspace / "runs/verify-spec-001/state.json").read_bytes() == before

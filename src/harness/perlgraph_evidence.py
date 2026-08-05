@@ -152,7 +152,37 @@ def _summary_is_usable(
     data = _read_json_object(summary_path)
     if data is None:
         return False
-    if data.get("tool") != "perlgraph" or not isinstance(data.get("index_stats"), dict):
+    expected_fields = {
+        "schema_version",
+        "tool",
+        "tool_version",
+        "repo_path",
+        "provider_status",
+        "complete",
+        "counts",
+        "capabilities",
+        "diagnostics",
+    }
+    if set(data) != expected_fields:
+        return False
+    if (
+        data.get("schema_version") != 2
+        or data.get("tool") != "perlgraph"
+        or not isinstance(data.get("tool_version"), str)
+        or data.get("provider_status") not in {"ready", "degraded", "empty", "unsupported"}
+        or not isinstance(data.get("complete"), bool)
+        or not isinstance(data.get("counts"), dict)
+        or not isinstance(data.get("capabilities"), dict)
+        or not isinstance(data.get("diagnostics"), dict)
+    ):
+        return False
+    diagnostics = data["diagnostics"]
+    if set(diagnostics) != {
+        "unresolved_relationships",
+        "parse_failures",
+        "parse_diagnostics",
+        "unsupported_patterns",
+    } or any(not isinstance(value, list) for value in diagnostics.values()):
         return False
     return _repo_path_matches(data, expected_repo_path)
 

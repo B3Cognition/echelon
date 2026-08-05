@@ -82,6 +82,13 @@ def test_verify_spec_runs_perlgraph_as_deterministic_structural_evidence() -> No
     assert "PerlGraph evidence degraded" in text
 
 
+def test_verify_spec_receipt_phase_does_not_claim_run_completion() -> None:
+    text = (PHASE_DIR / "verify-spec-2-codegraph.md").read_text(encoding="utf-8")
+
+    assert "does not write `status` or `completed_at`" in text
+    assert "final verify-spec lifecycle\nphase owns completion" in text
+
+
 def test_verify_spec_codegraph_forbids_prompt_side_discovery() -> None:
     text = (PHASE_DIR / "verify-spec-2-codegraph.md").read_text(encoding="utf-8")
 
@@ -301,6 +308,37 @@ def test_verify_spec_stage5_validation_stamps_state() -> None:
         '  "{verify_run_dir}/state.json"'
     ) in text
     assert "stamps `fulfillment_artifacts: valid` in `state.json`" in text
+
+
+def test_verify_spec_final_lifecycle_owns_completion_state() -> None:
+    definition = (ROOT / "extension" / "workflow" / "definition.yaml").read_text(
+        encoding="utf-8"
+    )
+    finalizer = (PHASE_DIR / "verify-spec-7-finalize.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "to: verify-spec-7-finalize" in definition
+    assert 'python -m harness complete-verify-spec-run "{verify_run_dir}"' in finalizer
+    assert "status: complete" in finalizer
+    assert "completed_at" in finalizer
+
+
+def test_verify_spec_reconciliation_routes_through_finalizer_in_prompt_and_definition() -> None:
+    definition = (ROOT / "extension" / "workflow" / "definition.yaml").read_text(
+        encoding="utf-8"
+    )
+    phase_six_definition = definition.split(
+        "    - id: verify-spec-6-reconcile", 1
+    )[1].split("    - id: verify-spec-7-finalize", 1)[0]
+    phase_six_prompt = (PHASE_DIR / "verify-spec-6-reconcile.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "to: verify-spec-7-finalize" in phase_six_definition
+    assert "to: DONE" not in phase_six_definition
+    assert "Proceed to `verify-spec-7-finalize`." in phase_six_prompt
+    assert "Proceed to `DONE`." not in phase_six_prompt
 
 
 def test_spec_guard_prompt_forbids_restatement_of_mechanical_rows() -> None:

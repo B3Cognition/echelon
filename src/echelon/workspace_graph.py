@@ -172,6 +172,7 @@ def build_workspace_graph(project_root: Path) -> WorkspaceGraphBuildResult:
     """Compose persisted member graphs using authoritative live audits."""
     root = project_root.resolve()
     workspace_role, sources, config_digest = _load_workspace_config(root)
+    source_by_id = {source.id: source for source in sources}
     spec_dirs = discover_canonical_spec_dirs(root)
     if not spec_dirs:
         raise WorkspaceGraphError("no canonical spec directories were found")
@@ -250,7 +251,7 @@ def build_workspace_graph(project_root: Path) -> WorkspaceGraphBuildResult:
         assert nodes is not None and edges is not None
         remapped_ids: dict[str, str] = {}
         for node in nodes:
-            _ensure_member_node_identity_is_not_reserved(node.id)
+            node = _validate_member_node_identity(root, node, source_by_id)
             normalized = _normalized_node_id(node)
             remapped_ids[node.id] = normalized
             properties = dict(node.properties)
@@ -417,7 +418,9 @@ def _load_workspace_config(root: Path) -> tuple[str | None, tuple[_Source, ...],
                 f"workspace source path is not a directory: {source_path}"
             )
         source_ids.add(source_id)
-        sources.append(_Source(source_id, source_path))
+        sources.append(
+            _Source(source_id, _relative_path(root, resolved_source_path))
+        )
     projection = {
         "workspace": {"git_role": git_role},
         "sources": [
@@ -659,19 +662,77 @@ def _add_workspace_nodes(
         GraphNode("workspace:current", "Workspace", properties),
     )
     for source in sources:
-        _add_workspace_node(
+        _merge_workspace_source_node(
             records,
-            GraphNode(
-                f"source:{source.id}",
-                "SourceRoot",
-                {"source_id": source.id, "path": source.path},
-            ),
+            source,
         )
 
 
-def _ensure_member_node_identity_is_not_reserved(node_id: str) -> None:
-    if node_id == "workspace:current" or node_id.startswith("source:"):
-        raise WorkspaceGraphError(f"reserved workspace node identity: {node_id}")
+def _merge_workspace_source_node(
+    records: dict[str, tuple[GraphNode, set[str]]],
+    source: _Source,
+) -> None:
+    node_id = f"source:{source.id}"
+    existing = records.get(node_id)
+    if existing is None:
+        records[node_id] = (
+            GraphNode(
+                node_id,
+                "SourceRoot",
+                {"source_id": source.id, "path": source.path},
+            ),
+            set(),
+        )
+        return
+    node, member_specs = existing
+    if (
+        node.type != "SourceRoot"
+        or node.properties.get("source_id") != source.id
+        or node.properties.get("path") != source.path
+    ):
+        raise WorkspaceGraphError(
+            f"canonical source identity conflict: {node_id}"
+        )
+    properties = dict(node.properties)
+    properties["source_id"] = source.id
+    properties["path"] = source.path
+    records[node_id] = (GraphNode(node_id, "SourceRoot", properties), member_specs)
+
+
+def _validate_member_node_identity(
+    root: Path,
+    node: GraphNode,
+    source_by_id: Mapping[str, _Source],
+) -> GraphNode:
+    if node.id == "workspace:current":
+        raise WorkspaceGraphError(f"reserved workspace node identity: {node.id}")
+    if not node.id.startswith("source:"):
+        return node
+    source_id = node.id.removeprefix("source:")
+    canonical = source_by_id.get(source_id)
+    member_source_id = node.properties.get("source_id")
+    member_path = node.properties.get("path")
+    try:
+        normalized_path = (
+            _relative_path(root, _resolve_workspace_path(root, member_path))
+            if isinstance(member_path, str) and member_path.strip()
+            else None
+        )
+    except WorkspaceGraphError:
+        normalized_path = None
+    if (
+        canonical is None
+        or node.type != "SourceRoot"
+        or member_source_id != source_id
+        or normalized_path != canonical.path
+    ):
+        raise WorkspaceGraphError(
+            f"canonical source identity conflict: {node.id}"
+        )
+    properties = dict(node.properties)
+    properties["source_id"] = canonical.id
+    properties["path"] = canonical.path
+    return GraphNode(node.id, node.type, properties)
 
 
 def _add_workspace_node(

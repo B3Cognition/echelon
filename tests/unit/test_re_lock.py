@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+import harness.re_lock as re_lock
 from harness.re_lock import (
     ReExtractLocked,
     ReExtractionLock,
@@ -15,6 +16,7 @@ from harness.re_lock import (
     RePublishLock,
     RePublishLocked,
     RePublishRecoveryRequired,
+    claim_orphan_publish_recovery,
     find_other_active_runs,
     recover_stale_publish_lock,
 )
@@ -179,6 +181,257 @@ def test_stale_lock_recovery_refuses_unfinished_rollback(tmp_path: Path) -> None
     with pytest.raises(RePublishRecoveryRequired, match="rollback"):
         recover_stale_publish_lock(tmp_path, stale_after_seconds=0)
     assert lock_dir.exists()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("status", ("replacing", "rolling_back"))
+def test_pending_journal_keeps_owner_lock_and_blocks_a_second_publisher(
+    tmp_path: Path, status: str
+) -> None:
+    with RePublishLock.acquire(tmp_path, "run-a", None) as lock:
+        _write_json(
+            tmp_path / "re/.staging/run-a/rollback-journal.json",
+            {"schema_version": 1, "status": status, "operations": []},
+        )
+    assert lock.path.exists()
+    with pytest.raises(RePublishLocked, match="run-a"):
+        RePublishLock.acquire(tmp_path, "run-b", None)
+
+
+@pytest.mark.unit
+def test_orphan_pending_journal_blocks_new_publication(tmp_path: Path) -> None:
+    _write_json(
+        tmp_path / "re/.staging/orphan/rollback-journal.json",
+        {"schema_version": 1, "status": "replacing", "operations": []},
+    )
+    with pytest.raises(RePublishRecoveryRequired, match="rollback journal"):
+        RePublishLock.acquire(tmp_path, "run-next", None)
+
+
+@pytest.mark.unit
+def test_orphan_claim_error_does_not_leave_a_publish_lock(tmp_path: Path) -> None:
+    _write_json(
+        tmp_path / "re/.staging/first/rollback-journal.json",
+        {"schema_version": 1, "status": "replacing", "operations": []},
+    )
+    _write_json(
+        tmp_path / "re/.staging/second/rollback-journal.json",
+        {"schema_version": 1, "status": "rolling_back", "operations": []},
+    )
+
+    with pytest.raises(RePublishRecoveryRequired, match="multiple orphan"):
+        claim_orphan_publish_recovery(tmp_path)
+    assert not (tmp_path / "re/.locks/publish.lock").exists()
+
+
+@pytest.mark.unit
+def test_orphan_claim_recheck_no_work_cleans_its_temporary_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    journal = tmp_path / "re/.staging/orphan/rollback-journal.json"
+    observations = [(journal,), ()]
+
+    def observed_pending(_staging: Path) -> tuple[Path, ...]:
+        return observations.pop(0)
+
+    monkeypatch.setattr(re_lock, "_pending_publication_journals", observed_pending)
+    assert claim_orphan_publish_recovery(tmp_path) is None
+    assert not (tmp_path / "re/.locks/publish.lock").exists()
+
+
+@pytest.mark.unit
+def test_recovery_claim_never_replaces_an_empty_or_nonempty_publish_lock(
+    tmp_path: Path,
+) -> None:
+    paths = ensure_re_layout(tmp_path)
+    _write_json(
+        paths.staging / "orphan/rollback-journal.json",
+        {"schema_version": 1, "status": "replacing", "operations": []},
+    )
+    lock = paths.locks / "publish.lock"
+    lock.mkdir()
+
+    assert claim_orphan_publish_recovery(tmp_path) is None
+    assert lock.exists()
+    assert not (lock / "owner.json").exists()
+
+    _write_json(
+        lock / "owner.json",
+        {
+            "run_id": "publisher",
+            "run_dir": None,
+            "pid": os.getpid(),
+            "hostname": socket.gethostname(),
+            "acquired_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    assert claim_orphan_publish_recovery(tmp_path) is None
+    with pytest.raises(RePublishLocked, match="publisher"):
+        RePublishLock.acquire(tmp_path, "next", None)
+
+
+@pytest.mark.unit
+def test_two_orphan_recovery_claimants_have_one_exclusive_owner(tmp_path: Path) -> None:
+    paths = ensure_re_layout(tmp_path)
+    _write_json(
+        paths.staging / "orphan/rollback-journal.json",
+        {"schema_version": 1, "status": "replacing", "operations": []},
+    )
+
+    first = claim_orphan_publish_recovery(tmp_path)
+    second = claim_orphan_publish_recovery(tmp_path)
+
+    assert first is not None
+    assert second is None
+    assert json.loads((first.path / "owner.json").read_text(encoding="utf-8"))["run_id"] == "orphan"
+    _write_json(
+        paths.staging / "orphan/rollback-journal.json",
+        {"schema_version": 1, "status": "rolled_back", "operations": []},
+    )
+    first.release()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("failure", ("lock_mkdir", "lock_fsync", "owner_write", "claim_remove"))
+def test_normal_claim_acquisition_errors_leave_no_permanent_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    paths = ensure_re_layout(tmp_path)
+    lock = paths.locks / "publish.lock"
+    original_mkdir = Path.mkdir
+    original_fsync = re_lock._fsync_directory
+    original_write = re_lock._write_json_atomic
+    original_release = re_lock._release_publication_claim
+    release_calls = 0
+
+    if failure == "lock_mkdir":
+        def fail_mkdir(path: Path, *args: object, **kwargs: object) -> None:
+            if path == lock:
+                raise OSError("lock mkdir failed")
+            original_mkdir(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "mkdir", fail_mkdir)
+    elif failure == "lock_fsync":
+        def fail_fsync(path: Path) -> None:
+            if path == paths.locks and lock.exists():
+                raise OSError("lock fsync failed")
+            original_fsync(path)
+
+        monkeypatch.setattr(re_lock, "_fsync_directory", fail_fsync)
+    elif failure == "owner_write":
+        def fail_owner_write(path: Path, *args: object, **kwargs: object) -> None:
+            if path == lock / "owner.json":
+                raise OSError("owner write failed")
+            original_write(path, *args, **kwargs)
+
+        monkeypatch.setattr(re_lock, "_write_json_atomic", fail_owner_write)
+    else:
+        def fail_first_claim_remove(*args: object, **kwargs: object) -> None:
+            nonlocal release_calls
+            release_calls += 1
+            if release_calls == 1:
+                raise OSError("claim remove failed")
+            original_release(*args, **kwargs)
+
+        monkeypatch.setattr(re_lock, "_release_publication_claim", fail_first_claim_remove)
+
+    with pytest.raises(OSError):
+        RePublishLock.acquire(tmp_path, "run-a", None)
+    assert not lock.exists()
+    assert not (paths.locks / ".publish-claim.json").exists()
+
+
+@pytest.mark.unit
+def test_claim_publication_error_leaves_only_an_ignored_temp(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = ensure_re_layout(tmp_path)
+
+    def fail_link(*_args: object, **_kwargs: object) -> None:
+        raise OSError("claim publication failed")
+
+    monkeypatch.setattr(re_lock.os, "link", fail_link)
+    with pytest.raises(OSError, match="claim publication failed"):
+        RePublishLock.acquire(tmp_path, "run-a", None)
+
+    assert not (paths.locks / "publish.lock").exists()
+    assert not (paths.locks / ".publish-claim.json").exists()
+
+
+@pytest.mark.unit
+def test_dead_fixed_claim_is_taken_over_without_leaving_an_orphan(tmp_path: Path) -> None:
+    paths = ensure_re_layout(tmp_path)
+    _write_json(
+        paths.locks / ".publish-claim.json",
+        {
+            "run_id": "dead",
+            "run_dir": None,
+            "pid": 999_999_999,
+            "hostname": socket.gethostname(),
+            "acquired_at": (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat(),
+            "claim_kind": "publisher",
+        },
+    )
+
+    with RePublishLock.acquire(tmp_path, "next", None):
+        assert (paths.locks / "publish.lock/owner.json").is_file()
+        assert not (paths.locks / ".publish-claim.json").exists()
+
+    assert not (paths.locks / "publish.lock").exists()
+    assert not (paths.locks / ".publish-claim.json").exists()
+
+
+@pytest.mark.unit
+def test_normal_and_recovery_share_one_fixed_claim(tmp_path: Path) -> None:
+    paths = ensure_re_layout(tmp_path)
+    _write_json(
+        paths.staging / "orphan/rollback-journal.json",
+        {"schema_version": 1, "status": "replacing", "operations": []},
+    )
+    metadata = re_lock._owner_metadata("publisher", None, claim_kind="publisher")
+    claim = re_lock._acquire_publication_claim(paths, tmp_path, metadata)
+    assert claim is not None
+
+    assert claim_orphan_publish_recovery(tmp_path) is None
+    re_lock._release_publication_claim(paths, claim)
+    assert not (paths.locks / ".publish-claim.json").exists()
+
+
+@pytest.mark.unit
+def test_publication_claim_guard_rejects_symlink_to_external_file(tmp_path: Path) -> None:
+    paths = ensure_re_layout(tmp_path)
+    external = tmp_path / "external-guard"
+    external.write_text("outside\n", encoding="utf-8")
+    guard = paths.locks / ".publish-claim.guard"
+    guard.symlink_to(external)
+
+    with pytest.raises(RePublishRecoveryRequired, match="guard"):
+        RePublishLock.acquire(tmp_path, "run-a", None)
+    assert external.read_text(encoding="utf-8") == "outside\n"
+
+
+@pytest.mark.unit
+def test_publication_claim_guard_rejects_inode_replacement_after_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = ensure_re_layout(tmp_path)
+    guard = paths.locks / ".publish-claim.guard"
+    replacement = paths.locks / ".replacement-guard"
+    replacement.write_text("replacement\n", encoding="utf-8")
+    original_flock = re_lock.fcntl.flock
+
+    def replace_after_lock(descriptor: int, operation: int) -> None:
+        original_flock(descriptor, operation)
+        if operation & re_lock.fcntl.LOCK_EX and replacement.exists():
+            os.replace(replacement, guard)
+
+    monkeypatch.setattr(re_lock.fcntl, "flock", replace_after_lock)
+    with pytest.raises(RePublishRecoveryRequired, match="replaced"):
+        RePublishLock.acquire(tmp_path, "run-a", None)
 
 
 @pytest.mark.unit

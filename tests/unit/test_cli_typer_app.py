@@ -90,6 +90,17 @@ def test_re_publish_help_declares_manual_safety_flags():
 
 
 @pytest.mark.unit
+def test_re_help_exposes_explicit_one_source_refresh():
+    group = invoke_help("re")
+    refresh = invoke_help("re", "refresh")
+
+    assert group.exit_code == 0
+    assert "refresh" in group.output
+    assert refresh.exit_code == 0
+    assert "--source" in refresh.output
+
+
+@pytest.mark.unit
 def test_spec_rewind_help_declares_a_ledger_checkpoint_target():
     result = invoke_help("spec", "rewind")
 
@@ -607,11 +618,62 @@ def test_typer_front_door_declares_all_top_level_commands():
         "spec",
         "stack",
         "status",
+        "topology",
         "verify-spec",
         "version",
         "wiki",
         "workspace",
     }.issubset(command.commands)
+
+
+@pytest.mark.unit
+def test_topology_help_declares_deterministic_read_commands_and_options():
+    group = invoke_help("topology")
+
+    assert group.exit_code == 0
+    for command in (
+        "audit",
+        "list-sources",
+        "search",
+        "explain",
+        "neighbors",
+        "impact",
+    ):
+        assert command in group.output
+
+    audit = invoke_help("topology", "audit")
+    list_sources = invoke_help("topology", "list-sources")
+    search = invoke_help("topology", "search")
+    explain = invoke_help("topology", "explain")
+    neighbors = invoke_help("topology", "neighbors")
+    impact = invoke_help("topology", "impact")
+
+    assert all(result.exit_code == 0 for result in (
+        audit,
+        list_sources,
+        search,
+        explain,
+        neighbors,
+        impact,
+    ))
+    assert "--source" in audit.output
+    assert "--json" in audit.output
+    assert "--json" in list_sources.output
+    assert "QUERY" in search.output
+    assert "--source" in search.output
+    assert "--type" in search.output
+    assert "--limit" in search.output
+    assert "--json" in search.output
+    assert "NODE" in explain.output
+    assert "--source" in explain.output
+    assert "--json" in explain.output
+    assert "--direction" in neighbors.output
+    assert "--relation" in neighbors.output
+    assert "--limit" in neighbors.output
+    assert "--json" in neighbors.output
+    assert "--max-depth" in impact.output
+    assert "--relation" in impact.output
+    assert "--json" in impact.output
 
 
 @pytest.mark.unit

@@ -400,6 +400,7 @@ fi
 run_codegraph_bridge() {
     local bridge_script="$1"
     local output_path="$2"
+    local summary_path="$3"
     local codegraph_dir
     local codegraph_preexisted=false
 
@@ -411,6 +412,7 @@ run_codegraph_bridge() {
     node "$bridge_script" analyze \
         --repo-path "$(pwd)" \
         --output-path "$output_path" \
+        --summary-path "$summary_path" \
         2>&1 | grep -v "^$" >&2 || true
 
     # Echelon only needs the normalized JSON artifact. Avoid dirtying target repos
@@ -418,89 +420,6 @@ run_codegraph_bridge() {
     if [[ "$codegraph_preexisted" == "false" && -d "$codegraph_dir" ]]; then
         rm -rf "$codegraph_dir"
     fi
-}
-
-write_codegraph_summary() {
-    local analysis_path="$1"
-    local summary_path="$2"
-
-    if [[ ! -f "$analysis_path" ]]; then
-        return 0
-    fi
-
-    jq '{
-        version,
-        generated_at,
-        repo_path,
-        supported,
-        index_state: (.index_stats.index_state // "unknown"),
-        index_stats,
-        language_coverage,
-        coverage,
-        symbol_kinds: ((.symbols // [])
-            | group_by(.kind)
-            | map({kind: (.[0].kind // "unknown"), count: length})
-            | sort_by(.count)
-            | reverse),
-        top_callers: ((.call_graph // [])
-            | group_by(.caller)
-            | map({symbol: (.[0].caller // "unknown"), outgoing_calls: length})
-            | sort_by(.outgoing_calls)
-            | reverse
-            | .[:25]),
-        top_callees: ((.call_graph // [])
-            | group_by(.callee)
-            | map({symbol: (.[0].callee // "unknown"), incoming_calls: length})
-            | sort_by(.incoming_calls)
-            | reverse
-            | .[:25])
-    }' "$analysis_path" > "$summary_path" || true
-}
-
-write_polyrepo_codegraph_summary() {
-    local output_dir="$1"
-    local manifest_path="$2"
-    local workspace_manifest="$3"
-    local source_output_root="$4"
-    local summary_path="$output_dir/codegraph-summary.json"
-    local repo_summaries="[]"
-    local repo_count
-    local repo_name
-    local repo_summary
-    local index_state
-    local symbols
-
-    repo_count=$(manifest_source_count "$manifest_path" "$workspace_manifest")
-    for (( i=0; i<repo_count; i++ )); do
-        repo_name=$(manifest_source_name "$manifest_path" "$workspace_manifest" "$i")
-        repo_summary="$source_output_root/$repo_name/codegraph-summary.json"
-        if [[ -f "$repo_summary" ]]; then
-            index_state=$(jq -r '.index_state // "unknown"' "$repo_summary" 2>/dev/null || echo "unknown")
-            symbols=$(jq -r '.index_stats.total_symbols // .index_stats.symbol_count // 0' "$repo_summary" 2>/dev/null || echo 0)
-            repo_summaries=$(echo "$repo_summaries" | jq \
-                --arg name "$repo_name" \
-                --arg path "${repo_summary#"$output_dir"/}" \
-                --arg state "$index_state" \
-                --argjson symbols "$symbols" \
-                '. + [{repo: $name, summary_path: $path, index_state: $state, symbols: $symbols}]')
-        fi
-    done
-
-    if [[ "$(echo "$repo_summaries" | jq 'length')" -eq 0 ]]; then
-        return 0
-    fi
-
-    jq -n \
-        --arg generated_at "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
-        --argjson repo_count "$repo_count" \
-        --argjson repos "$repo_summaries" \
-        '{
-            "mode": "polyrepo",
-            "generated_at": $generated_at,
-            "index_state": "polyrepo",
-            "repo_count": $repo_count,
-            "repos": $repos
-        }' > "$summary_path"
 }
 
 run_perlgraph() {
@@ -513,53 +432,6 @@ run_perlgraph() {
         --output-path "$analysis_path" \
         --summary-path "$summary_path" \
         2>&1 | grep -v "^$" >&2 || true
-}
-
-write_polyrepo_perlgraph_summary() {
-    local output_dir="$1"
-    local manifest_path="$2"
-    local workspace_manifest="$3"
-    local source_output_root="$4"
-    local summary_path="$output_dir/perlgraph-summary.json"
-    local repo_summaries="[]"
-    local repo_count
-    local repo_name
-    local repo_summary
-    local index_state
-    local symbols
-
-    repo_count=$(manifest_source_count "$manifest_path" "$workspace_manifest")
-    for (( i=0; i<repo_count; i++ )); do
-        repo_name=$(manifest_source_name "$manifest_path" "$workspace_manifest" "$i")
-        repo_summary="$source_output_root/$repo_name/perlgraph-summary.json"
-        if [[ -f "$repo_summary" ]]; then
-            index_state=$(jq -r '.index_state // "unknown"' "$repo_summary" 2>/dev/null || echo "unknown")
-            symbols=$(jq -r '.index_stats.symbol_count // 0' "$repo_summary" 2>/dev/null || echo 0)
-            repo_summaries=$(echo "$repo_summaries" | jq \
-                --arg name "$repo_name" \
-                --arg path "${repo_summary#"$output_dir"/}" \
-                --arg state "$index_state" \
-                --argjson symbols "$symbols" \
-                '. + [{repo: $name, summary_path: $path, index_state: $state, symbols: $symbols}]')
-        fi
-    done
-
-    if [[ "$(echo "$repo_summaries" | jq 'length')" -eq 0 ]]; then
-        return 0
-    fi
-
-    jq -n \
-        --arg generated_at "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
-        --argjson repo_count "$repo_count" \
-        --argjson repos "$repo_summaries" \
-        '{
-            "mode": "polyrepo",
-            "tool": "perlgraph",
-            "generated_at": $generated_at,
-            "index_state": "polyrepo",
-            "repo_count": $repo_count,
-            "repos": $repos
-        }' > "$summary_path"
 }
 
 resolve_structural_runtimes() {
@@ -707,8 +579,7 @@ if [[ "$USE_MANIFEST" == "true" ]]; then
 
         if [[ "$CODEGRAPH_AVAILABLE" == "true" ]]; then
             echo "  Running structural analysis (CodeGraph) for $REPO_NAME..." >&2
-            (cd "$REPO_PATH" && run_codegraph_bridge "$BRIDGE_SCRIPT" "$REPO_OUTPUT/codegraph-analysis.json") 2>>"$REPO_LOG" || true
-            write_codegraph_summary "$REPO_OUTPUT/codegraph-analysis.json" "$REPO_OUTPUT/codegraph-summary.json"
+            (cd "$REPO_PATH" && run_codegraph_bridge "$BRIDGE_SCRIPT" "$REPO_OUTPUT/codegraph-analysis.json" "$REPO_OUTPUT/codegraph-summary.json") 2>>"$REPO_LOG" || true
         fi
         if [[ "$PERLGRAPH_AVAILABLE" == "true" ]]; then
             echo "  Running Perl structural analysis (PerlGraph) for $REPO_NAME..." >&2
@@ -797,9 +668,6 @@ if [[ "$USE_MANIFEST" == "true" ]]; then
             }' > "$OUTPUT_DIR/analysis.json"
     fi
 
-    write_polyrepo_codegraph_summary "$OUTPUT_DIR" "$MANIFEST_PATH" "$WORKSPACE_MANIFEST" "$SOURCE_OUTPUT_ROOT"
-    write_polyrepo_perlgraph_summary "$OUTPUT_DIR" "$MANIFEST_PATH" "$WORKSPACE_MANIFEST" "$SOURCE_OUTPUT_ROOT"
-
     echo "Analysis complete! ($REPO_COUNT repo(s))" >&2
     echo "Per-source outputs in: $SOURCE_OUTPUT_ROOT/{source-id}/" >&2
     [[ -n "$CROSS_REPO_PATH" ]] && echo "Cross-repo map: $OUTPUT_DIR/cross-repo.json" >&2
@@ -881,8 +749,7 @@ jq -n \
 # Structural Code Intelligence (conditional — fail-open, non-blocking)
 if [[ "$CODEGRAPH_AVAILABLE" == "true" ]]; then
     echo "Running structural analysis (CodeGraph)..." >&2
-    run_codegraph_bridge "$BRIDGE_SCRIPT" "$OUTPUT_DIR/codegraph-analysis.json"
-    write_codegraph_summary "$OUTPUT_DIR/codegraph-analysis.json" "$OUTPUT_DIR/codegraph-summary.json"
+    run_codegraph_bridge "$BRIDGE_SCRIPT" "$OUTPUT_DIR/codegraph-analysis.json" "$OUTPUT_DIR/codegraph-summary.json"
 fi
 
 # Perl Structural Code Intelligence (conditional — fail-open, non-blocking)

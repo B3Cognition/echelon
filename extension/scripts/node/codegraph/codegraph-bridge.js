@@ -43,22 +43,22 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.UsageError = exports.BRIDGE_TIMEOUT_MS = exports.MAX_DEPTH = exports.MIN_DEPTH = exports.DEFAULT_MAX_SYMBOLS = exports.DEFAULT_DEPTH = exports.DEFAULT_OUTPUT_RELATIVE = void 0;
+exports.UsageError = exports.BRIDGE_TIMEOUT_MS = exports.MAX_DEPTH = exports.MIN_DEPTH = exports.DEFAULT_DEPTH = exports.DEFAULT_OUTPUT_RELATIVE = void 0;
 exports.parseArgs = parseArgs;
 exports.usageMessage = usageMessage;
 exports.atomicWrite = atomicWrite;
 exports.assembleAnalysisOutput = assembleAnalysisOutput;
-exports.truncateSymbols = truncateSymbols;
+exports.assembleSummary = assembleSummary;
 exports.runBridge = runBridge;
 const path = __importStar(require("path"));
 const fs = __importStar(require("fs"));
 const adapter = __importStar(require("./codegraph-adapter"));
+const integrationTypes = require("./integration-types");
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 exports.DEFAULT_OUTPUT_RELATIVE = '.specify/echelon/re/codegraph-analysis.json';
 exports.DEFAULT_DEPTH = 3;
-exports.DEFAULT_MAX_SYMBOLS = 10000;
 exports.MIN_DEPTH = 1;
 exports.MAX_DEPTH = 10;
 exports.BRIDGE_TIMEOUT_MS = 600_000; // 600 seconds
@@ -81,9 +81,9 @@ function parseArgs(argv) {
     const command = args[0] && !args[0].startsWith('--') ? args[0] : 'analyze';
     let repoPathRaw;
     let outputPathRaw;
+    let summaryPathRaw;
     let languagesRaw;
     let depthRaw;
-    let maxSymbolsRaw;
     for (let i = 0; i < args.length; i++) {
         const arg = args[i] ?? '';
         if (arg === '--repo-path' || arg.startsWith('--repo-path=')) {
@@ -92,14 +92,14 @@ function parseArgs(argv) {
         else if (arg === '--output-path' || arg.startsWith('--output-path=')) {
             outputPathRaw = arg.includes('=') ? arg.split('=').slice(1).join('=') : args[++i];
         }
+        else if (arg === '--summary-path' || arg.startsWith('--summary-path=')) {
+            summaryPathRaw = arg.includes('=') ? arg.split('=').slice(1).join('=') : args[++i];
+        }
         else if (arg === '--languages' || arg.startsWith('--languages=')) {
             languagesRaw = arg.includes('=') ? arg.split('=').slice(1).join('=') : args[++i];
         }
         else if (arg === '--depth' || arg.startsWith('--depth=')) {
             depthRaw = arg.includes('=') ? arg.split('=').slice(1).join('=') : args[++i];
-        }
-        else if (arg === '--max-symbols' || arg.startsWith('--max-symbols=')) {
-            maxSymbolsRaw = arg.includes('=') ? arg.split('=').slice(1).join('=') : args[++i];
         }
         // Unknown arguments are silently ignored for forward compatibility
     }
@@ -128,25 +128,16 @@ function parseArgs(argv) {
         }
         depth = parsed;
     }
-    // Validate --max-symbols
-    let maxSymbols = exports.DEFAULT_MAX_SYMBOLS;
-    if (maxSymbolsRaw !== undefined) {
-        const parsed = parseInt(maxSymbolsRaw, 10);
-        if (isNaN(parsed) || parsed < 1) {
-            throw new UsageError(`--max-symbols must be a positive integer, got: "${maxSymbolsRaw}"\n` +
-                usageMessage());
-        }
-        maxSymbols = parsed;
-    }
     // Resolve output path
     const outputPath = outputPathRaw
         ? path.resolve(outputPathRaw)
         : path.join(repoPath, exports.DEFAULT_OUTPUT_RELATIVE);
+    const summaryPath = summaryPathRaw ? path.resolve(summaryPathRaw) : undefined;
     // Parse --languages
     const languages = languagesRaw && languagesRaw.trim().length > 0
         ? languagesRaw.split(',').map(l => l.trim()).filter(l => l.length > 0)
         : undefined;
-    return { command, repoPath, outputPath, languages, depth, maxSymbols };
+    return { command, repoPath, outputPath, summaryPath, languages, depth };
 }
 // ---------------------------------------------------------------------------
 // UsageError — signals argument validation failure (exit 1)
@@ -167,12 +158,12 @@ function usageMessage() {
 Options:
   --repo-path <path>       Required. Absolute or relative path to the repository.
   --output-path <path>     Output JSON path. Default: <repo-path>/${exports.DEFAULT_OUTPUT_RELATIVE}
+  --summary-path <path>    Optional provider summary JSON path.
   --languages <list>       Comma-separated list of languages to extract (e.g. typescript,python).
   --depth <n>              Impact radius traversal depth (${exports.MIN_DEPTH}-${exports.MAX_DEPTH}). Default: ${exports.DEFAULT_DEPTH}.
-  --max-symbols <n>        Maximum symbols in output. Default: ${exports.DEFAULT_MAX_SYMBOLS}.
 
 Exit codes:
-  0  Success (or partial extraction — check index_stats.index_state)
+  0  Success (or partial extraction — check provider_status and complete)
   1  Invalid arguments or missing dependency
   2  System error (index build failure, write failure, timeout)
 `;
@@ -225,21 +216,20 @@ function assembleAnalysisOutput(params) {
     // CodeGraph follows git-tracked source by default, which can include
     // repository metadata such as .github/skills. Keep that data outside the
     // RE artifact boundary even when the upstream indexer includes it.
-    const visibleSymbols = symbols.filter((symbol) => !isHiddenDirectoryPath(symbol.file_path));
-    const visibleQualifiedNames = new Set(visibleSymbols.map((symbol) => symbol.qualified_name));
-    const visibleRelationships = relationships.filter((relationship) => visibleQualifiedNames.has(relationship.source) &&
-        visibleQualifiedNames.has(relationship.target));
-    const visibleCallGraph = callGraph.filter((edge) => visibleQualifiedNames.has(edge.caller) && visibleQualifiedNames.has(edge.callee));
-    const visibleTypeHierarchy = typeHierarchy.filter((edge) => visibleQualifiedNames.has(edge.child) && visibleQualifiedNames.has(edge.parent));
+    const inScopeSymbols = symbols.filter((symbol) => !isHiddenDirectoryPath(symbol.file_path));
+    const visibleSymbols = inScopeSymbols.filter((symbol) => hasSymbolKey(symbol.symbol_key));
+    const discoveredSymbolKeys = new Set(symbols.filter((symbol) => hasSymbolKey(symbol.symbol_key)).map((symbol) => symbol.symbol_key));
+    const visibleSymbolKeys = new Set(visibleSymbols.map((symbol) => symbol.symbol_key));
+    const visibleRelationships = relationships.filter((relationship) => hasVisibleRelationshipEndpoints(relationship, visibleSymbolKeys));
+    const visibleCallGraph = callGraph.filter((edge) => hasVisibleCallEndpoints(edge, visibleSymbolKeys));
+    const visibleTypeHierarchy = typeHierarchy.filter((edge) => hasVisibleTypeEndpoints(edge, visibleSymbolKeys));
     const visibleImpactRadius = impactRadius
-        .filter((entry) => visibleQualifiedNames.has(entry.symbol))
-        .map((entry) => ({
-        ...entry,
-        affected: Array.isArray(entry.affected)
-            ? entry.affected.filter((symbol) => visibleQualifiedNames.has(symbol))
-            : entry.affected,
-    }));
-    const visiblePublicSymbols = publicSymbols.filter((symbol) => !isHiddenDirectoryPath(symbol.file_path));
+        .filter((entry) => hasSymbolKey(entry.symbol_key) && visibleSymbolKeys.has(entry.symbol_key))
+        .map((entry) => filterVisibleImpactEntry(entry, visibleSymbolKeys));
+    const visiblePublicSymbols = publicSymbols.filter((symbol) => hasSymbolKey(symbol.symbol_key) && visibleSymbolKeys.has(symbol.symbol_key));
+    const unresolvedRelationships = relationships
+        .filter((relationship) => !hasKnownRelationshipEndpoints(relationship, discoveredSymbolKeys))
+        .map(unresolvedRelationshipObservation);
     // Build language_coverage map from extraction summary
     const languageCoverage = {};
     for (const lang of extractionSummary.languages) {
@@ -255,8 +245,29 @@ function assembleAnalysisOutput(params) {
             languageCoverage[ext] = 'unsupported';
         }
     }
+    const extractionComplete = (indexStats.failed_files ?? 0) === 0 &&
+        (extractionSummary.total_skipped_error ?? 0) === 0;
+    const complete = extractionComplete &&
+        visibleSymbols.length === inScopeSymbols.length &&
+        visibleRelationships.every((relationship) => hasVisibleRelationshipEndpoints(relationship, visibleSymbolKeys));
     const output = {
-        version: '1.0.0',
+        schema_version: integrationTypes.CODEGRAPH_SCHEMA_VERSION,
+        version: '2.0.0',
+        tool: integrationTypes.CODEGRAPH_TOOL,
+        tool_version: integrationTypes.CODEGRAPH_TOOL_VERSION,
+        provider_status: complete ? 'complete' : 'partial',
+        complete,
+        counts: {
+            discovered_symbols: symbols.length,
+            emitted_symbols: visibleSymbols.length,
+            excluded_symbols: symbols.length - visibleSymbols.length,
+            discovered_relationships: relationships.length,
+            emitted_relationships: visibleRelationships.length,
+            excluded_relationships: relationships.length - visibleRelationships.length,
+        },
+        diagnostics: {
+            unresolved_relationships: unresolvedRelationships,
+        },
         generated_at: new Date().toISOString(),
         repo_path: repoPath,
         supported: extractionSummary.total_extracted > 0,
@@ -275,6 +286,62 @@ function assembleAnalysisOutput(params) {
         extraction_summary: extractionSummary,
     };
     return output;
+}
+/** Build the provider-owned receipt without copying the full graph artifact. */
+function assembleSummary(output) {
+    return {
+        schema_version: output.schema_version,
+        tool: output.tool,
+        tool_version: output.tool_version,
+        provider_status: output.provider_status,
+        complete: output.complete,
+        counts: output.counts,
+        diagnostics: output.diagnostics,
+    };
+}
+
+function hasSymbolKey(value) {
+    return typeof value === 'string' && /^sha256:[0-9a-f]{64}$/.test(value);
+}
+function hasVisibleRelationshipEndpoints(relationship, visibleSymbolKeys) {
+    return hasSymbolKey(relationship.source_key) && hasSymbolKey(relationship.target_key) &&
+        visibleSymbolKeys.has(relationship.source_key) && visibleSymbolKeys.has(relationship.target_key);
+}
+function hasKnownRelationshipEndpoints(relationship, discoveredSymbolKeys) {
+    return hasSymbolKey(relationship.source_key) && hasSymbolKey(relationship.target_key) &&
+        discoveredSymbolKeys.has(relationship.source_key) && discoveredSymbolKeys.has(relationship.target_key);
+}
+function hasVisibleCallEndpoints(edge, visibleSymbolKeys) {
+    return hasSymbolKey(edge.caller_key) && hasSymbolKey(edge.callee_key) &&
+        visibleSymbolKeys.has(edge.caller_key) && visibleSymbolKeys.has(edge.callee_key);
+}
+function hasVisibleTypeEndpoints(edge, visibleSymbolKeys) {
+    return hasSymbolKey(edge.child_key) && hasSymbolKey(edge.parent_key) &&
+        visibleSymbolKeys.has(edge.child_key) && visibleSymbolKeys.has(edge.parent_key);
+}
+function filterVisibleImpactEntry(entry, visibleSymbolKeys) {
+    const affectedKeys = Array.isArray(entry.affected_keys) ? entry.affected_keys : [];
+    const affectedNames = Array.isArray(entry.affected_names) ? entry.affected_names : [];
+    const retainedIndexes = affectedKeys.reduce((indexes, key, index) => {
+        if (hasSymbolKey(key) && visibleSymbolKeys.has(key)) {
+            indexes.push(index);
+        }
+        return indexes;
+    }, []);
+    return {
+        ...entry,
+        affected_keys: retainedIndexes.map((index) => affectedKeys[index]),
+        ...(affectedNames.length ? { affected_names: retainedIndexes.map((index) => affectedNames[index]) } : {}),
+    };
+}
+function unresolvedRelationshipObservation(relationship) {
+    return {
+        kind: relationship.kind,
+        ...(relationship.source_key ? { source_key: relationship.source_key } : {}),
+        ...(relationship.target_key ? { target_key: relationship.target_key } : {}),
+        ...(relationship.source_name ? { source_name: relationship.source_name } : {}),
+        ...(relationship.target_name ? { target_name: relationship.target_name } : {}),
+    };
 }
 
 function isHiddenDirectoryPath(filePath) {
@@ -310,26 +377,6 @@ function languageToExtension(language) {
     };
     return map[language.toLowerCase()];
 }
-/**
- * Truncates symbols to maxSymbols by incoming call count (T009).
- * Symbols with more incoming calls are retained first.
- */
-function truncateSymbols(symbols, callGraph, maxSymbols) {
-    if (symbols.length <= maxSymbols)
-        return symbols;
-    // Count incoming calls per symbol qualified name
-    const incomingCount = new Map();
-    for (const edge of callGraph) {
-        incomingCount.set(edge.callee, (incomingCount.get(edge.callee) ?? 0) + 1);
-    }
-    // Sort by incoming count descending, stable sort
-    const sorted = [...symbols].sort((a, b) => {
-        const countA = incomingCount.get(a.qualified_name) ?? 0;
-        const countB = incomingCount.get(b.qualified_name) ?? 0;
-        return countB - countA;
-    });
-    return sorted.slice(0, maxSymbols);
-}
 // ---------------------------------------------------------------------------
 // Bridge main entry point (T007)
 // ---------------------------------------------------------------------------
@@ -356,7 +403,7 @@ async function main() {
         }
         throw err;
     }
-    const { repoPath, outputPath, languages, depth, maxSymbols } = parsed;
+    const { repoPath, outputPath, summaryPath, languages, depth } = parsed;
     // Timeout guard (T015)
     let timeoutId;
     const timeoutPromise = new Promise((_, reject) => {
@@ -367,7 +414,7 @@ async function main() {
     });
     try {
         await Promise.race([
-            runBridge(repoPath, outputPath, languages, depth, maxSymbols),
+            runBridge(repoPath, outputPath, languages, depth, summaryPath),
             timeoutPromise,
         ]);
         clearTimeout(timeoutId);
@@ -384,7 +431,7 @@ async function main() {
  * Full bridge orchestration pipeline.
  * Exported for integration testing.
  */
-async function runBridge(repoPath, outputPath, languages, depth, maxSymbols) {
+async function runBridge(repoPath, outputPath, languages, depth, summaryPath) {
     // Step 1: Grammar init
     process.stderr.write('[codegraph-bridge] INFO: grammar init: starting\n');
     try {
@@ -411,13 +458,28 @@ async function runBridge(repoPath, outputPath, languages, depth, maxSymbols) {
     process.stderr.write('[codegraph-bridge] INFO: index build: complete\n');
     // Steps 3-9: Query
     process.stderr.write('[codegraph-bridge] INFO: query execution: starting\n');
-    const [symbols, relationships, callGraph, typeHierarchy, publicSymbols] = await Promise.all([
+    const [symbols, relationships] = await Promise.all([
         adapter.getSymbols(cg),
         adapter.getRelationships(cg),
-        adapter.getCallGraph(cg),
-        adapter.getTypeHierarchy(cg),
-        adapter.getPublicSymbols(cg),
     ]);
+    const callGraph = relationships
+        .filter((relationship) => relationship.kind === 'calls' && relationship.source_key && relationship.target_key)
+        .map((relationship) => ({
+        caller_key: relationship.source_key,
+        callee_key: relationship.target_key,
+        ...(relationship.source_name ? { caller_name: relationship.source_name } : {}),
+        ...(relationship.target_name ? { callee_name: relationship.target_name } : {}),
+    }));
+    const typeHierarchy = relationships
+        .filter((relationship) => (relationship.kind === 'extends' || relationship.kind === 'implements') && relationship.source_key && relationship.target_key)
+        .map((relationship) => ({
+        child_key: relationship.source_key,
+        parent_key: relationship.target_key,
+        ...(relationship.source_name ? { child_name: relationship.source_name } : {}),
+        ...(relationship.target_name ? { parent_name: relationship.target_name } : {}),
+        kind: relationship.kind,
+    }));
+    const publicSymbols = symbols.filter((symbol) => symbol.visibility === 'public' || symbol.is_exported === true);
     // Step 8: Impact radius for top 50 symbols by outgoing edge count
     const topSymbols = selectTopSymbols(symbols, callGraph, 50);
     const impactRadius = await adapter.getImpactRadius(cg, topSymbols, depth);
@@ -425,15 +487,10 @@ async function runBridge(repoPath, outputPath, languages, depth, maxSymbols) {
     // Step 10-11: Stats
     const indexStats = adapter.getIndexStats(indexResult);
     const extractionSummary = adapter.getExtractionSummary(indexResult);
-    // Step 9: Truncate symbols (T009)
-    const truncatedSymbols = truncateSymbols(symbols, callGraph, maxSymbols);
-    if (truncatedSymbols.length < symbols.length) {
-        process.stderr.write(`[codegraph-bridge] WARN: symbols truncated: ${symbols.length} → ${truncatedSymbols.length} (--max-symbols=${maxSymbols})\n`);
-    }
     // Step 12: Assemble output
     const output = assembleAnalysisOutput({
         repoPath,
-        symbols: truncatedSymbols,
+        symbols,
         relationships,
         callGraph,
         typeHierarchy,
@@ -452,10 +509,13 @@ async function runBridge(repoPath, outputPath, languages, depth, maxSymbols) {
     }
     // Step 14: Close index
     await adapter.closeIndex(cg);
-    // Step 15: Atomic write
+    // Step 15: Atomic writes
     process.stderr.write(`[codegraph-bridge] INFO: writing output: ${outputPath}\n`);
     try {
         await atomicWrite(outputPath, json);
+        if (summaryPath) {
+            await atomicWrite(summaryPath, JSON.stringify(assembleSummary(output), null, 2));
+        }
     }
     catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -470,12 +530,12 @@ async function runBridge(repoPath, outputPath, languages, depth, maxSymbols) {
 function selectTopSymbols(symbols, callGraph, n) {
     const outgoing = new Map();
     for (const edge of callGraph) {
-        outgoing.set(edge.caller, (outgoing.get(edge.caller) ?? 0) + 1);
+        outgoing.set(edge.caller_key, (outgoing.get(edge.caller_key) ?? 0) + 1);
     }
     return [...symbols]
-        .sort((a, b) => (outgoing.get(b.qualified_name) ?? 0) - (outgoing.get(a.qualified_name) ?? 0))
+        .sort((a, b) => (outgoing.get(b.symbol_key) ?? 0) - (outgoing.get(a.symbol_key) ?? 0))
         .slice(0, n)
-        .map(s => s.qualified_name);
+        .map(s => s.symbol_key);
 }
 // Run when invoked directly
 if (require.main === module || process.argv[1]?.endsWith('codegraph-bridge.ts') ||

@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -75,7 +76,14 @@ def write_evidence_workspace(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     verify_dir.joinpath("state.json").write_text(
-        '{"status":"in_progress"}\n',
+        json.dumps(
+            {
+                "spec_id": "003-demo",
+                "completed_at": "2026-07-28T12:30:00+00:00",
+                "status": "complete",
+            }
+        )
+        + "\n",
         encoding="utf-8",
     )
     stale_dir = tmp_path / "runs" / "spec-old" / "verify-spec" / "003-demo"
@@ -94,9 +102,25 @@ def mark_spec_unlanded(spec_dir: Path) -> None:
     )
 
 
-def write_complete_verify_candidate(path: Path, marker: str) -> Path:
+def write_complete_verify_candidate(
+    path: Path,
+    marker: str,
+    *,
+    spec_id: str = "906-cli-output-styling",
+    completed_at: str = "2026-08-04T12:00:00+00:00",
+) -> Path:
     path.mkdir(parents=True)
-    path.joinpath("state.json").write_text("{}\n", encoding="utf-8")
+    path.joinpath("state.json").write_text(
+        json.dumps(
+            {
+                "spec_id": spec_id,
+                "completed_at": completed_at,
+                "status": "complete",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     path.joinpath("implementation-map.md").write_text(marker, encoding="utf-8")
     return path
 
@@ -130,6 +154,7 @@ def test_verify_evidence_resolver_selects_latest_complete_alias_candidate(
     numeric = write_complete_verify_candidate(
         tmp_path / "runs" / "build-old" / "verify-spec" / "906",
         "old numeric evidence",
+        completed_at="2026-08-04T10:00:00+00:00",
     )
     canonical = write_complete_verify_candidate(
         tmp_path
@@ -138,6 +163,7 @@ def test_verify_evidence_resolver_selects_latest_complete_alias_candidate(
         / "verify-spec"
         / "906-cli-output-styling",
         "new canonical evidence",
+        completed_at="2026-08-04T11:00:00+00:00",
     )
     os.utime(numeric / "implementation-map.md", (1, 1))
     os.utime(canonical / "implementation-map.md", (2, 2))
@@ -153,6 +179,33 @@ def test_verify_evidence_resolver_selects_latest_complete_alias_candidate(
         "906-cli-output-styling",
         None,
     ) == canonical
+
+
+@pytest.mark.unit
+def test_verify_evidence_resolver_merges_artifact_queries_by_utc_completion(
+    tmp_path: Path,
+) -> None:
+    from echelon.mempalace_spec_evidence import _resolve_verify_evidence_run_dir
+
+    earlier = write_complete_verify_candidate(
+        tmp_path / "runs/verify-spec-906-earlier",
+        "earlier implementation",
+        completed_at="2026-08-04T12:00:00+02:00",
+    )
+    later = write_complete_verify_candidate(
+        tmp_path / "runs/verify-spec-906-later",
+        "unused implementation",
+        completed_at="2026-08-04T11:00:00+00:00",
+    )
+    (later / "implementation-map.md").unlink()
+    (later / "requirement-audit.md").write_text("later audit", encoding="utf-8")
+
+    assert _resolve_verify_evidence_run_dir(
+        tmp_path,
+        "906-cli-output-styling",
+        None,
+    ) == later
+    assert earlier.is_dir()
 
 
 @pytest.mark.unit
@@ -182,14 +235,13 @@ def test_explicit_run_prefers_matching_nested_candidate_over_newer_root(
     run_root = write_complete_verify_candidate(
         tmp_path / "runs" / "build-mixed",
         "unrelated root evidence",
-    )
-    run_root.joinpath("state.json").write_text(
-        '{"spec_id":"other-spec"}\n',
-        encoding="utf-8",
+        spec_id="other-spec",
+        completed_at="2026-08-04T12:00:00+00:00",
     )
     nested = write_complete_verify_candidate(
         run_root / "verify-spec" / "906",
         "matching nested evidence",
+        completed_at="2026-08-04T10:00:00+00:00",
     )
     os.utime(nested / "implementation-map.md", (1, 1))
     os.utime(run_root / "implementation-map.md", (2, 2))
@@ -209,10 +261,7 @@ def test_explicit_standalone_run_requires_matching_identity(tmp_path: Path) -> N
     run_root = write_complete_verify_candidate(
         tmp_path / "runs" / "manual-run",
         "unrelated evidence",
-    )
-    run_root.joinpath("state.json").write_text(
-        '{"spec_id":"other-spec"}\n',
-        encoding="utf-8",
+        spec_id="other-spec",
     )
 
     with pytest.raises(SpecMemoryError):

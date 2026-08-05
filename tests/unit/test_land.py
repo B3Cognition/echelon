@@ -6,6 +6,7 @@ import shlex
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -1237,6 +1238,7 @@ class TestDeleteHarnessBranches:
             with (
                 patch("harness.land._default_branch_already_contains_feature", return_value=False),
                 patch("harness.land.prepare_feature_branch") as prepare,
+                patch("harness.land._post_land_topology_reconciliation"),
             ):
                 prepare.return_value = LandPrepareResult(status="prepared", branch="042-my-feature")
                 land("042", project_dir=tmp_path, gitops=gitops)
@@ -1441,6 +1443,193 @@ def test_land_prepares_feature_branch_before_direct_merge(tmp_path: Path) -> Non
         _git(repo, "merge-base", "--is-ancestor", main_commit, "001-feature", check=False).returncode
         == 0
     )
+
+
+@pytest.mark.unit
+def test_finish_landing_runs_one_topology_hook_after_checkout_and_status(
+    tmp_path: Path,
+) -> None:
+    from harness.land import _finish_landing
+    from harness.spec_frontmatter import read_frontmatter
+
+    spec_dir = tmp_path / "specs/001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text(
+        "---\nstatus: ready_to_land\n---\n# Spec\n",
+        encoding="utf-8",
+    )
+    gitops = _make_gitops()
+
+    def assert_post_land(spec_id: str, workspace_root: Path, target_root: Path) -> None:
+        assert spec_id == "001-demo"
+        assert workspace_root == tmp_path
+        assert target_root == tmp_path
+        assert read_frontmatter(spec_dir)["status"] == "landed"
+        gitops.ensure_on_default_branch.assert_called_once_with(str(tmp_path))
+
+    with (
+        patch("harness.land._origin_remote_url", return_value=None),
+        patch("harness.land._delete_local_branch"),
+        patch("harness.land._cleanup_worktrees"),
+        patch("harness.land._delete_harness_branches"),
+        patch(
+            "harness.land._post_land_topology_reconciliation",
+            side_effect=assert_post_land,
+        ) as post_land,
+    ):
+        assert _finish_landing(
+            "001-demo",
+            "001-feature",
+            tmp_path,
+            gitops,
+            spec_project_dir=tmp_path,
+        )
+
+    post_land.assert_called_once_with("001-demo", tmp_path, tmp_path)
+
+
+@pytest.mark.unit
+def test_branchless_idempotent_land_runs_same_post_land_topology_hook(
+    tmp_path: Path,
+) -> None:
+    from harness.land import _finish_branchless_landing
+
+    spec_dir = tmp_path / "specs/001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text(
+        "---\nstatus: landed\n---\n# Spec\n",
+        encoding="utf-8",
+    )
+    gitops = _make_gitops(feature_branch=None)
+    order: list[str] = []
+    gitops.ensure_on_default_branch.side_effect = lambda path: order.append("checkout")
+
+    with patch(
+        "harness.land._post_land_topology_reconciliation",
+        side_effect=lambda *args: order.append("topology"),
+    ) as post_land:
+        assert _finish_branchless_landing(
+            "001-demo",
+            wrapper_project_dir=tmp_path,
+            project_dir=tmp_path,
+            spec_dir=spec_dir,
+            gitops=gitops,
+            options=LandOptions(),
+        )
+
+    assert order == ["checkout", "topology"]
+    post_land.assert_called_once_with("001-demo", tmp_path, tmp_path)
+
+
+@pytest.mark.unit
+def test_post_land_topology_failure_is_nonfatal_with_source_refresh_guidance(
+    tmp_path: Path,
+    caplog,
+) -> None:
+    from harness.land import _post_land_topology_reconciliation
+    from harness.topology_promotion import TopologyPromotionResult
+
+    source = tmp_path / "sources/api"
+    source.mkdir(parents=True)
+    _init_repo(source)
+    head = _commit(source, "src/app.py", "pass\n", "landed")
+    with (
+        patch(
+            "harness.topology_promotion.reconcile_landed_topology",
+            return_value=TopologyPromotionResult(
+                status="stale",
+                source_id="api",
+                message="expected generation 1, found 2",
+            ),
+        ),
+        patch(
+            "echelon.topology_audit.audit_topology",
+            return_value=SimpleNamespace(status="stale"),
+        ),
+    ):
+        _post_land_topology_reconciliation("001-demo", tmp_path, source)
+
+    assert "topology: stale" in caplog.text
+    assert "next: echelon re refresh --source api" in caplog.text
+
+
+@pytest.mark.unit
+def test_post_land_reports_topology_and_semantic_re_independently(
+    tmp_path: Path,
+    caplog,
+) -> None:
+    from harness.land import _post_land_topology_reconciliation
+    from harness.topology_promotion import TopologyPromotionResult
+
+    source = tmp_path / "sources/api"
+    caplog.set_level("INFO")
+    source.mkdir(parents=True)
+    _init_repo(source)
+    _commit(source, "src/app.py", "pass\n", "landed")
+    with (
+        patch(
+            "harness.topology_promotion.reconcile_landed_topology",
+            return_value=TopologyPromotionResult(
+                status="current",
+                source_id="api",
+                message="published",
+            ),
+        ),
+        patch(
+            "echelon.topology_audit.audit_topology",
+            return_value=SimpleNamespace(status="stale"),
+        ),
+        patch(
+            "harness.land._landed_semantic_re_status",
+            return_value="current",
+            create=True,
+        ),
+    ):
+        _post_land_topology_reconciliation("001-demo", tmp_path, source)
+
+    assert "topology: stale" in caplog.text
+    assert "semantic RE: current" in caplog.text
+    assert caplog.text.count("next: echelon re refresh --source api") == 1
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("audit_status", ("degraded", "invalid", "unavailable"))
+def test_post_land_maps_unusable_topology_audit_status_to_unavailable(
+    tmp_path: Path,
+    caplog,
+    audit_status: str,
+) -> None:
+    from harness.land import _post_land_topology_reconciliation
+    from harness.topology_promotion import TopologyPromotionResult
+
+    source = tmp_path / "sources/api"
+    source.mkdir(parents=True)
+    _init_repo(source)
+    _commit(source, "src/app.py", "pass\n", "landed")
+    with (
+        patch(
+            "harness.topology_promotion.reconcile_landed_topology",
+            return_value=TopologyPromotionResult(
+                status="current",
+                source_id="api",
+                message="published",
+            ),
+        ),
+        patch(
+            "echelon.topology_audit.audit_topology",
+            return_value=SimpleNamespace(status=audit_status),
+        ),
+        patch(
+            "harness.land._landed_semantic_re_status",
+            return_value="current",
+        ),
+    ):
+        _post_land_topology_reconciliation("001-demo", tmp_path, source)
+
+    assert "topology: unavailable" in caplog.text
+    if audit_status != "unavailable":
+        assert f"topology: {audit_status}" not in caplog.text
+    assert "next: echelon re refresh --source api" in caplog.text
 
 
 @pytest.mark.unit

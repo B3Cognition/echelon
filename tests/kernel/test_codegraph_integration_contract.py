@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -27,9 +28,10 @@ def test_install_script_installs_codegraph_in_shared_runtime_with_npm_ci():
     )
     assert 'CODEGRAPH_NODE_DIR="$NODE_RUNTIME_ROOT/codegraph"' in install_script
     assert (
-        '_refresh_node_runtime "$CODEGRAPH_SOURCE_DIR" "$CODEGRAPH_NODE_DIR" vendor dist'
+        '_refresh_node_runtime "$CODEGRAPH_SOURCE_DIR" "$CODEGRAPH_NODE_DIR" dist'
         in install_script
     )
+    assert not (CODEGRAPH_RUNTIME_DIR / "vendor").exists()
     assert '_npm_ci_in_runtime "$CODEGRAPH_NODE_DIR"' in install_script
     assert "CodeGraph bridge" in install_script
     assert 'npm ci --prefix "$CODEGRAPH_NODE_DIR"' not in install_script
@@ -61,11 +63,255 @@ def test_codegraph_runtime_is_pinned_to_current_supported_release():
     install_script = (EXT_ROOT / "scripts" / "install.sh").read_text()
 
     assert package["dependencies"][CODEGRAPH_PACKAGE] == CODEGRAPH_VERSION
+    assert package["echelon_runtime"] == {
+        "provider_artifact_schema_version": 2,
+        "exact_relationship_endpoints": True,
+        "uncapped_symbols": True,
+    }
     assert lock["packages"][""]["dependencies"][CODEGRAPH_PACKAGE] == CODEGRAPH_VERSION
     assert lock["packages"][f"node_modules/{CODEGRAPH_PACKAGE}"]["version"] == CODEGRAPH_VERSION
     assert f'require("{CODEGRAPH_PACKAGE}")' in adapter
     assert "vendor/codegraph" not in adapter
     assert f'CODEGRAPH_CLI_VERSION="{CODEGRAPH_VERSION}"' in install_script
+
+
+def test_bridge_emits_more_than_ten_thousand_symbols_without_truncation(
+    tmp_path: Path,
+) -> None:
+    script = """
+const bridge = require(process.argv[2]);
+const symbols = Array.from({length: 10001}, (_, i) => ({
+  symbol_key: `sha256:${String(i).padStart(64, '0')}`,
+  qualified_name: `f${i}`,
+  name: `f${i}`,
+  kind: 'function',
+  file_path: `src/f${i}.ts`,
+  line_start: 1,
+  line_end: 1
+}));
+const out = bridge.assembleAnalysisOutput({
+  repoPath: process.cwd(), symbols, relationships: [], callGraph: [],
+  typeHierarchy: [], impactRadius: [], publicSymbols: symbols,
+  indexStats: {}, extractionSummary: {languages: [], unsupported_languages: [], total_extracted: 10001}
+});
+if (
+  out.symbols.length !== 10001 ||
+  !out.complete ||
+  out.counts.discovered_symbols !== 10001 ||
+  out.counts.emitted_symbols !== 10001
+) process.exit(1);
+"""
+
+    script_path = tmp_path / "bridge-contract.js"
+    script_path.write_text(script, encoding="utf-8")
+    completed = subprocess.run(
+        [
+            "node",
+            str(script_path),
+            str(CODEGRAPH_RUNTIME_DIR / "codegraph-bridge.js"),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_bridge_does_not_expose_or_apply_symbol_limits() -> None:
+    bridge = (CODEGRAPH_RUNTIME_DIR / "codegraph-bridge.js").read_text()
+
+    for removed_symbol in ("--max-symbols", "DEFAULT_MAX_SYMBOLS", "truncateSymbols"):
+        assert removed_symbol not in bridge
+
+
+def test_adapter_preserves_exact_impact_keys_for_zero_node_id(tmp_path: Path) -> None:
+    script = """
+const adapter = require(process.argv[2]);
+const source = {id: 0, filePath: 'src/source.ts', qualifiedName: 'Source::run', kind: 'function', startLine: 1, endLine: 2};
+const target = {id: 1, filePath: 'src/target.ts', qualifiedName: 'Target::run', kind: 'function', startLine: 1, endLine: 2};
+const cg = {
+  getNodesByKind: (kind) => kind === 'function' ? [source, target] : [],
+  getImpactRadius: (nodeId) => nodeId === 0 ? {nodes: new Map([[0, source], [1, target]])} : null
+};
+adapter.getImpactRadius(cg, [adapter.symbolKey(source)], 3).then((entries) => {
+  if (entries[0].symbol_name !== 'Source::run' || entries[0].affected_keys[0] !== adapter.symbolKey(target)) process.exit(1);
+});
+"""
+
+    script_path = tmp_path / "adapter-impact-contract.js"
+    script_path.write_text(script, encoding="utf-8")
+    completed = subprocess.run(
+        [
+            "node",
+            str(script_path),
+            str(CODEGRAPH_RUNTIME_DIR / "codegraph-adapter.js"),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_adapter_enforces_canonical_symbol_locator_contract(tmp_path: Path) -> None:
+    script = """
+const assert = require('assert');
+const adapter = require(process.argv[2]);
+(async () => {
+  const node = {
+    id: 'one', filePath: 'src\\\\lib\\\\demo.ts', qualifiedName: 'Demo::run',
+    kind: 'function', signature: '(value: string): void', startLine: 1, endLine: 2
+  };
+  assert.strictEqual(adapter.normalizeSourcePath(node.filePath), 'src/lib/demo.ts');
+  assert.strictEqual(
+    adapter.symbolKey(node),
+    'sha256:4c73745373df4a89cecb6bbadf524f2a1a5db321b3139332d926a916517cb131'
+  );
+  for (const invalidPath of ['/tmp/demo.ts', '../demo.ts', 'src/../demo.ts']) {
+    assert.throws(() => adapter.normalizeSourcePath(invalidPath), /contract error/);
+  }
+  const duplicate = {...node, id: 'two', filePath: 'src/lib/demo.ts'};
+  const cg = {getNodesByKind: (kind) => kind === 'function' ? [node, duplicate] : []};
+  await assert.rejects(
+    adapter.getSymbols(cg),
+    /contract error: duplicate canonical locator for native nodes one and two/
+  );
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+"""
+
+    script_path = tmp_path / "adapter-symbol-contract.js"
+    script_path.write_text(script, encoding="utf-8")
+    completed = subprocess.run(
+        [
+            "node",
+            str(script_path),
+            str(CODEGRAPH_RUNTIME_DIR / "codegraph-adapter.js"),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_adapter_fails_when_native_node_kind_query_fails(tmp_path: Path) -> None:
+    script = r"""
+const assert = require('assert');
+const adapter = require(process.argv[2]);
+(async () => {
+  const cg = {
+    getNodesByKind: (kind) => {
+      if (kind === 'function') throw new Error('injected node query failure');
+      return [];
+    }
+  };
+  await assert.rejects(
+    adapter.getSymbols(cg),
+    /\[codegraph-adapter\] getNodesByKind failed for kind "function": injected node query failure/
+  );
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+"""
+
+    script_path = tmp_path / "adapter-node-query-failure-contract.js"
+    script_path.write_text(script, encoding="utf-8")
+    completed = subprocess.run(
+        [
+            "node",
+            str(script_path),
+            str(CODEGRAPH_RUNTIME_DIR / "codegraph-adapter.js"),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_adapter_fails_when_native_outgoing_edge_query_fails(tmp_path: Path) -> None:
+    script = r"""
+const assert = require('assert');
+const adapter = require(process.argv[2]);
+(async () => {
+  const source = {
+    id: 'source-node', filePath: 'src/source.ts', qualifiedName: 'Source::run',
+    kind: 'function', startLine: 1, endLine: 2
+  };
+  const cg = {
+    getNodesByKind: (kind) => kind === 'function' ? [source] : [],
+    getOutgoingEdges: () => {
+      throw new Error('injected edge query failure');
+    }
+  };
+  await assert.rejects(
+    adapter.getRelationships(cg),
+    /\[codegraph-adapter\] getOutgoingEdges failed for node source-node \(Source::run\): injected edge query failure/
+  );
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+"""
+
+    script_path = tmp_path / "adapter-edge-query-failure-contract.js"
+    script_path.write_text(script, encoding="utf-8")
+    completed = subprocess.run(
+        [
+            "node",
+            str(script_path),
+            str(CODEGRAPH_RUNTIME_DIR / "codegraph-adapter.js"),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_adapter_fails_when_native_impact_query_fails(tmp_path: Path) -> None:
+    script = r"""
+const assert = require('assert');
+const adapter = require(process.argv[2]);
+(async () => {
+  const source = {
+    id: 'source-node', filePath: 'src/source.ts', qualifiedName: 'Source::run',
+    kind: 'function', startLine: 1, endLine: 2
+  };
+  const cg = {
+    getNodesByKind: (kind) => kind === 'function' ? [source] : [],
+    getImpactRadius: () => { throw new Error('injected impact query failure'); }
+  };
+  await assert.rejects(
+    adapter.getImpactRadius(cg, [adapter.symbolKey(source)], 3),
+    /\[codegraph-adapter\] getImpactRadius failed for node source-node \(Source::run\): injected impact query failure/
+  );
+})();
+"""
+
+    script_path = tmp_path / "adapter-impact-query-failure-contract.js"
+    script_path.write_text(script, encoding="utf-8")
+    completed = subprocess.run(
+        [
+            "node",
+            str(script_path),
+            str(CODEGRAPH_RUNTIME_DIR / "codegraph-adapter.js"),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
 
 
 def test_shell_ci_uses_a_node_runtime_supported_by_codegraph_sdk():
@@ -125,13 +371,80 @@ def test_re_state_accepts_codegraph_analysis_artifact_updates():
     )
 
 
-def test_run_analysis_writes_compact_codegraph_summary():
+def test_run_analysis_requests_provider_owned_schema_two_codegraph_summary():
     run_analysis = (
         EXT_ROOT / "extension" / "scripts" / "bash" / "re" / "run-analysis.sh"
     ).read_text()
 
-    assert "write_codegraph_summary()" in run_analysis
+    bridge = (CODEGRAPH_RUNTIME_DIR / "codegraph-bridge.js").read_text()
+    assert "--summary-path" in run_analysis
+    assert "assembleSummary(output)" in bridge
+    assert "provider_status: output.provider_status" in bridge
+    assert "counts: output.counts" in bridge
+    assert "diagnostics: output.diagnostics" in bridge
+    assert "cp \"$analysis_path\" \"$summary_path\"" not in run_analysis
     assert "codegraph-summary.json" in run_analysis
+
+
+def test_bridge_compact_summary_carries_schema_two_provider_fields(tmp_path: Path) -> None:
+    script = """
+const bridge = require(process.argv[2]);
+const summary = bridge.assembleSummary({
+  schema_version: 2, tool: 'codegraph', tool_version: '1.4.1',
+  provider_status: 'complete', complete: true,
+  counts: {discovered_symbols: 1, emitted_symbols: 1},
+  diagnostics: {unresolved_relationships: []}, symbols: [{name: 'not-a-summary'}]
+});
+if (summary.schema_version !== 2 || summary.tool !== 'codegraph' ||
+    summary.provider_status !== 'complete' || !summary.complete ||
+    summary.counts.emitted_symbols !== 1 || !Array.isArray(summary.diagnostics.unresolved_relationships) ||
+    'symbols' in summary) process.exit(1);
+"""
+    script_path = tmp_path / "summary-contract.js"
+    script_path.write_text(script, encoding="utf-8")
+    completed = subprocess.run(
+        ["node", str(script_path), str(CODEGRAPH_RUNTIME_DIR / "codegraph-bridge.js")],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_bridge_marks_failed_file_extraction_partial(tmp_path: Path) -> None:
+    script = """
+const bridge = require(process.argv[2]);
+const symbol = {
+  symbol_key: 'sha256:' + 'a'.repeat(64), qualified_name: 'api.run', name: 'run',
+  kind: 'function', file_path: 'src/api.py', line_start: 1, line_end: 2
+};
+const output = bridge.assembleAnalysisOutput({
+  repoPath: '/provider/native/repo', symbols: [symbol], relationships: [],
+  callGraph: [], typeHierarchy: [], impactRadius: [], publicSymbols: [symbol],
+  indexStats: {
+    total_files: 3, supported_files: 3, unsupported_files: 0, failed_files: 2,
+    total_nodes: 1, total_edges: 0, build_time_ms: 1,
+    extraction_success_rate: 33.33, index_state: 'degraded'
+  },
+  extractionSummary: {
+    languages: [{language: 'python', file_count: 1, status: 'supported'}],
+    total_extracted: 1, total_skipped_unsupported: 0, total_skipped_error: 2,
+    unsupported_languages: []
+  }
+});
+if (output.provider_status !== 'partial' || output.complete !== false) process.exit(1);
+"""
+    script_path = tmp_path / "bridge-failed-extraction-contract.js"
+    script_path.write_text(script, encoding="utf-8")
+    completed = subprocess.run(
+        ["node", str(script_path), str(CODEGRAPH_RUNTIME_DIR / "codegraph-bridge.js")],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
 
 
 def test_run_analysis_polyrepo_writes_per_repo_codegraph_artifacts():
@@ -141,8 +454,8 @@ def test_run_analysis_polyrepo_writes_per_repo_codegraph_artifacts():
 
     assert '"$REPO_OUTPUT/codegraph-analysis.json"' in run_analysis
     assert '"$REPO_OUTPUT/codegraph-summary.json"' in run_analysis
-    assert "write_polyrepo_codegraph_summary()" in run_analysis
-    assert '"mode": "polyrepo"' in run_analysis
+    assert "write_polyrepo_codegraph_summary()" not in run_analysis
+    assert "index_state" not in run_analysis
 
 
 def test_re_controller_tracks_codegraph_artifacts(tmp_path):

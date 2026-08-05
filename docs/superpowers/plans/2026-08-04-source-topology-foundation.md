@@ -325,7 +325,24 @@ Use this authoritative shape:
       "source_path": "sources/api",
       "source_fingerprint": {"value": "0000000000000000000000000000000000000000000000000000000000000000", "kind": "git", "dirty": false, "profile_hash": "1111111111111111111111111111111111111111111111111111111111111111", "git_head": "0123456789abcdef0123456789abcdef01234567"},
       "receipt": {"path": "re/topology/sources/api/receipt.json", "sha256": "sha256:2222222222222222222222222222222222222222222222222222222222222222"},
-      "provider_status": {"codegraph": "ready", "perlgraph": "unsupported"}
+      "providers": {
+        "codegraph": {
+          "status": "ready",
+          "complete": true,
+          "artifacts": {
+            "analysis": {"path": "re/topology/sources/api/codegraph-analysis.json", "sha256": "sha256:3333333333333333333333333333333333333333333333333333333333333333"},
+            "summary": {"path": "re/topology/sources/api/codegraph-summary.json", "sha256": "sha256:4444444444444444444444444444444444444444444444444444444444444444"}
+          }
+        },
+        "perlgraph": {
+          "status": "unsupported",
+          "complete": true,
+          "artifacts": {
+            "analysis": {"path": "re/topology/sources/api/perlgraph-analysis.json", "sha256": "sha256:5555555555555555555555555555555555555555555555555555555555555555"},
+            "summary": {"path": "re/topology/sources/api/perlgraph-summary.json", "sha256": "sha256:6666666666666666666666666666666666666666666666666666666666666666"}
+          }
+        }
+      }
     }
   }
 }
@@ -333,7 +350,9 @@ Use this authoritative shape:
 
 Assert every source artifact is contained below its exact `re/topology/sources/<source-id>/` directory, with safe source IDs, sorted provider/artifact maps, receipt/index generation equality, configured source path equality, and exact hashes.
 
-The source receipt has this exact ownership shape:
+The source receipt elaborates tool versions, capabilities, counts, diagnostics,
+and provenance for exactly the providers and artifacts already named by the
+index source row. It has this exact ownership shape:
 
 ```json
 {

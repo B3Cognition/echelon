@@ -20,6 +20,8 @@ from echelon.mempalace_requirements import (
     load_supporting_artifact_snapshots,
     resolve_spec_dir,
 )
+from echelon.topology_registry import load_topology_index
+from echelon.workspace_model import discover_workspace
 from harness.canonical_requirements import (
     _category_for,
     extract_canonical_requirements,
@@ -333,7 +335,7 @@ def build_spec_graph(
         inputs,
         memory_receipts,
     )
-    _add_re_topology(root, spec_dir, nodes, edges)
+    _add_re_topology(root, spec_dir, nodes, edges, inputs)
 
     return SpecArtifactGraph(
         spec_id=spec_id,
@@ -420,6 +422,7 @@ def _add_re_topology(
     spec_dir: Path,
     nodes: dict[str, GraphNode],
     edges: list[GraphEdge],
+    inputs: dict[str, GraphInput],
 ) -> None:
     context_path = spec_dir / "re-context.json"
     linked_artifacts = sorted(
@@ -432,7 +435,13 @@ def _add_re_topology(
     stored_artifacts = {
         edge.source for edge in edges if edge.type == "STORED_AS"
     }
-    descriptor_lookup = _re_artifact_descriptor_lookup(root)
+    re_index = load_published_index(root)
+    if re_index is None:
+        return
+    descriptor_lookup = {
+        descriptor.path: descriptor
+        for descriptor in canonical_re_artifact_descriptors(root, re_index)
+    }
     descriptors: list[tuple[Path, ReArtifactDescriptor]] = []
     for path in linked_artifacts:
         descriptor = descriptor_lookup.get(_workspace_path(root, path))
@@ -455,7 +464,7 @@ def _add_re_topology(
             properties["re_source_id"] = descriptor.source_id
         if artifact_id in stored_artifacts:
             properties["mining_status"] = "mined"
-        elif descriptor.kind in _RE_SEMANTIC_EDGE_TYPES:
+        elif descriptor.kind != "re-decision":
             properties["mining_status"] = "eligible"
         nodes[artifact_id] = GraphNode(artifact_id, artifact_node.type, properties)
 
@@ -491,47 +500,97 @@ def _add_re_topology(
             continue
         by_source.setdefault(descriptor.source_id, []).append((path, descriptor))
 
+    if not by_source:
+        return
+    workspace_sources = _canonical_workspace_sources(root)
+    topology_index = load_topology_index(root)
     for source_id, source_artifacts in sorted(by_source.items()):
-        source_node_id = f"re-source:{source_id}"
-        source_properties: dict[str, object] = {"source_id": source_id}
-        manifest_entry = next(
-            (
-                (path, descriptor)
-                for path, descriptor in source_artifacts
-                if descriptor.kind == "re-source-manifest"
-            ),
-            None,
+        source_node_id = f"source:{source_id}"
+        workspace_source = workspace_sources.get(source_id)
+        semantic_source = re_index.sources.get(source_id)
+        if workspace_source is None or semantic_source is None:
+            raise SpecGraphError(
+                f"canonical source identity conflict: {source_node_id}"
+            )
+        semantic_path = _canonical_source_path(
+            root,
+            semantic_source.source_path,
+            source_node_id,
         )
-        if manifest_entry is not None:
-            manifest_path = manifest_entry[0]
-            source_properties["manifest_path"] = _workspace_path(root, manifest_path)
-            try:
-                manifest = _read_json_object(manifest_path, "RE source manifest")
-            except SpecGraphError:
-                manifest = {}
-            for key in ("publication_status", "source_fingerprint"):
-                value = manifest.get(key)
-                if isinstance(value, str) and value:
-                    source_properties[key] = value
+        if semantic_path != workspace_source:
+            raise SpecGraphError(
+                f"canonical source identity conflict: {source_node_id}"
+            )
+        source_properties: dict[str, object] = {
+            "source_id": source_id,
+            "path": workspace_source,
+            "publication_status": semantic_source.status,
+            "semantic_generation": re_index.generation,
+            "semantic_fingerprint": semantic_source.fingerprint,
+            "semantic_receipt_path": semantic_source.manifest,
+        }
+
+        topology_source = (
+            topology_index.sources.get(source_id)
+            if topology_index is not None
+            else None
+        )
+        topology_receipt_id: str | None = None
+        if topology_source is not None:
+            topology_path = _canonical_source_path(
+                root,
+                topology_source.source_path,
+                source_node_id,
+            )
+            if (
+                topology_source.source_id != source_id
+                or topology_path != workspace_source
+            ):
+                raise SpecGraphError(
+                    f"canonical source identity conflict: {source_node_id}"
+                )
+            topology_receipt_path = topology_source.receipt.path
+            source_properties.update(
+                {
+                    "topology_generation": topology_index.generation,
+                    "topology_fingerprint": topology_source.source_fingerprint.value,
+                    "topology_receipt_path": topology_receipt_path,
+                }
+            )
+            topology_receipt_id = _add_artifact(
+                root,
+                spec_dir,
+                root / topology_receipt_path,
+                nodes,
+                inputs,
+                role="topology-receipt",
+            )
         nodes[source_node_id] = GraphNode(
             source_node_id,
-            "ReverseEngineeringSource",
+            "SourceRoot",
             source_properties,
         )
         edges.append(
-            GraphEdge(f"spec:{spec_dir.name}", "USES_RE_SOURCE", source_node_id, {})
+            GraphEdge(f"spec:{spec_dir.name}", "USES_SOURCE", source_node_id, {})
         )
+        if topology_receipt_id is not None:
+            edges.append(
+                GraphEdge(
+                    source_node_id,
+                    "HAS_TOPOLOGY_RECEIPT",
+                    topology_receipt_id,
+                    {},
+                )
+            )
 
         for path, descriptor in source_artifacts:
             artifact_id = f"artifact:{spec_dir.name}:{_workspace_path(root, path)}"
             if artifact_id not in nodes:
                 continue
-            edge_type = _RE_SEMANTIC_EDGE_TYPES.get(
-                descriptor.kind,
-                "EVIDENCED_BY",
-            )
-            edges.append(GraphEdge(source_node_id, edge_type, artifact_id, {}))
             if descriptor.kind != "re-decision":
+                edges.append(
+                    GraphEdge(source_node_id, "DESCRIBED_BY", artifact_id, {})
+                )
                 continue
             source_relative_path = descriptor.path.removeprefix(
                 f"re/sources/{source_id}/"
@@ -550,26 +609,48 @@ def _add_re_topology(
             edges.append(GraphEdge(decision_id, "DOCUMENTED_BY", artifact_id, {}))
 
 
-_RE_SEMANTIC_EDGE_TYPES = {
-    "re-overview": "DESCRIBED_BY",
-    "re-architecture": "DESCRIBED_BY",
-    "re-contracts": "DECLARES_CONTRACTS_IN",
-    "re-components": "CATALOGS_COMPONENTS_IN",
-    "re-decision": "DECIDED_BY",
-    "re-codegraph-summary": "SUMMARIZED_BY",
-}
+def _canonical_workspace_sources(root: Path) -> dict[str, str]:
+    config_path = root / ".echelon" / "config.yml"
+    if not config_path.is_file():
+        raise SpecGraphError("canonical workspace config is missing")
+    try:
+        manifest = discover_workspace(root)
+    except Exception as exc:
+        raise SpecGraphError("canonical workspace config is invalid") from exc
+    sources: dict[str, str] = {}
+    for source in manifest.sources:
+        if source.id in sources:
+            raise SpecGraphError(f"duplicate workspace source id: {source.id}")
+        sources[source.id] = _canonical_source_path(
+            root,
+            source.path,
+            f"source:{source.id}",
+        )
+    return sources
 
 
-def _re_artifact_descriptor_lookup(
-    root: Path,
-) -> dict[str, ReArtifactDescriptor]:
-    index = load_published_index(root)
-    if index is None:
-        return {}
-    return {
-        descriptor.path: descriptor
-        for descriptor in canonical_re_artifact_descriptors(root, index)
-    }
+def _canonical_source_path(root: Path, value: object, subject_id: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise SpecGraphError(
+            f"canonical source identity conflict: {subject_id}"
+        )
+    candidate = Path(value.strip())
+    if candidate.is_absolute():
+        raise SpecGraphError(
+            f"canonical source identity conflict: {subject_id}"
+        )
+    resolved = (root / candidate).resolve()
+    try:
+        relative = resolved.relative_to(root)
+    except ValueError as exc:
+        raise SpecGraphError(
+            f"canonical source identity conflict: {subject_id}"
+        ) from exc
+    if not resolved.is_dir():
+        raise SpecGraphError(
+            f"canonical source identity conflict: {subject_id}"
+        )
+    return relative.as_posix()
 
 
 def _adr_title(path: Path) -> str:

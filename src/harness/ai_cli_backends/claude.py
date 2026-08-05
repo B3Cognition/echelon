@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
 import threading
 from collections.abc import Mapping
+from pathlib import Path
 
 from harness.ai_cli_backend import CliRunRequest, CliRunResult
 from harness.config import HarnessConfig
@@ -44,6 +46,48 @@ class ClaudeCliBackend:
         )
         if model:
             cmd.extend(["--model", model])
+        scope_args = _prompt_file_scope_args(request)
+        if scope_args:
+            cmd.extend(scope_args)
+        raw_prompt_metadata = request.metadata.get("prompt_metadata")
+        read_roots = (
+            _prompt_scope_paths(request, raw_prompt_metadata, "tool_read_roots")
+            if isinstance(raw_prompt_metadata, Mapping)
+            else ()
+        )
+        write_paths = (
+            _prompt_scope_paths(request, raw_prompt_metadata, "tool_write_paths")
+            if isinstance(raw_prompt_metadata, Mapping)
+            else ()
+        )
+        forbidden_roots = (
+            _prompt_scope_paths(
+                request,
+                raw_prompt_metadata,
+                "tool_forbidden_roots",
+            )
+            if isinstance(raw_prompt_metadata, Mapping)
+            else ()
+        )
+        if forbidden_roots:
+            sandbox_exec = _sandbox_exec_path()
+            if sandbox_exec is None:
+                return CliRunResult(
+                    exit_code=125,
+                    stdout="",
+                    stderr="workspace synthesis host boundary is unavailable",
+                    metadata={"workspace_synthesis_boundary": "unavailable"},
+                )
+            cmd = [
+                sandbox_exec,
+                "-p",
+                _workspace_sandbox_profile(
+                    forbidden_roots,
+                    read_roots=read_roots,
+                    write_paths=write_paths,
+                ),
+                *cmd,
+            ]
         return self._run_stream_json(cmd, request)
 
     def run_agent(self, request: CliRunRequest) -> CliRunResult:
@@ -179,6 +223,108 @@ def _prompt_metadata_str(request: CliRunRequest, key: str) -> str:
         return ""
     value = metadata.get(key)
     return value.strip() if isinstance(value, str) else ""
+
+
+def _prompt_file_scope_args(request: CliRunRequest) -> list[str]:
+    metadata = request.metadata.get("prompt_metadata")
+    if not isinstance(metadata, Mapping):
+        return []
+    read_roots = _prompt_scope_paths(request, metadata, "tool_read_roots")
+    write_paths = _prompt_scope_paths(request, metadata, "tool_write_paths")
+    if not read_roots and not write_paths:
+        return []
+
+    rules: list[str] = []
+    for root in read_roots:
+        rules.append(f"Read({_claude_absolute_rule_path(root)}/**)")
+    for path in write_paths:
+        rule_path = _claude_absolute_rule_path(path)
+        rules.extend(f"{tool}({rule_path})" for tool in ("Write", "Edit"))
+    return [
+        "--safe-mode",
+        "--setting-sources",
+        "",
+        "--strict-mcp-config",
+        "--disable-slash-commands",
+        "--tools",
+        "Read,Write,Edit",
+        "--allowedTools",
+        ",".join(rules),
+    ]
+
+
+def _prompt_scope_paths(
+    request: CliRunRequest,
+    metadata: Mapping[object, object],
+    key: str,
+) -> tuple[str, ...]:
+    raw = metadata.get(key)
+    if not isinstance(raw, list):
+        return ()
+    cwd = Path(request.cwd).resolve()
+    paths: set[str] = set()
+    for value in raw:
+        if not isinstance(value, str) or not value.strip():
+            continue
+        candidate = Path(value).expanduser()
+        if not candidate.is_absolute():
+            candidate = cwd / candidate
+        paths.add(str(candidate.resolve(strict=False)))
+    return tuple(sorted(paths))
+
+
+def _claude_absolute_rule_path(path: str) -> str:
+    return f"/{path}" if path.startswith("/") else path
+
+
+def host_workspace_synthesis_boundary_available() -> bool:
+    return sys.platform == "darwin" and _sandbox_exec_path() is not None
+
+
+def _sandbox_exec_path() -> str | None:
+    return shutil.which("sandbox-exec")
+
+
+def _workspace_sandbox_profile(
+    forbidden_roots: tuple[str, ...],
+    *,
+    read_roots: tuple[str, ...] = (),
+    write_paths: tuple[str, ...] = (),
+) -> str:
+    exclusions: list[str] = []
+    for root in forbidden_roots:
+        quoted = json.dumps(root)
+        exclusions.extend(
+            (
+                f"(require-not (literal {quoted}))",
+                f"(require-not (subpath {quoted}))",
+            )
+        )
+    allowed_files = f"(require-all {' '.join(exclusions)})"
+    lines = [
+        "(version 1)",
+        "(deny default)",
+        "(allow process*)",
+        f"(allow file-read* {allowed_files})",
+        f"(allow file-write* {allowed_files})",
+        *(
+            f"(allow file-read* (subpath {json.dumps(root)}))"
+            for root in read_roots
+        ),
+        *(
+            rule
+            for path in write_paths
+            for rule in (
+                f"(allow file-write* (literal {json.dumps(str(Path(path).parent))}))",
+                f"(allow file-write* (literal {json.dumps(path)}))",
+            )
+        ),
+        "(allow network*)",
+        "(allow sysctl-read)",
+        "(allow mach-lookup)",
+        "(allow ipc-posix*)",
+    ]
+    return "\n".join(lines)
 
 
 def _claude_model_for_request(request: CliRunRequest) -> str:

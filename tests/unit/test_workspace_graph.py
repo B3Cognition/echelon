@@ -668,15 +668,25 @@ def test_workspace_graph_deduplicates_re_source_topology(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _write_config(tmp_path)
+    (tmp_path / "sources" / "api").mkdir(parents=True)
+    _write_config(
+        tmp_path,
+        sources=[{"id": "api", "path": "sources/./api"}],
+    )
     alpha = _spec_dir(tmp_path, "001-alpha")
     beta = _spec_dir(tmp_path, "002-beta")
     artifact_path = "re/sources/api/adrs/ADR-001-boundary.md"
     decision_id = "decision:api:adrs/ADR-001-boundary.md"
     source_node = GraphNode(
-        "re-source:api",
-        "ReverseEngineeringSource",
-        {"source_id": "api", "publication_status": "complete"},
+        "source:api",
+        "SourceRoot",
+        {
+            "source_id": "api",
+            "path": "sources/api",
+            "publication_status": "complete",
+            "semantic_fingerprint": "semantic-fingerprint",
+            "topology_fingerprint": "topology-fingerprint",
+        },
     )
     decision_node = GraphNode(
         decision_id,
@@ -702,8 +712,8 @@ def test_workspace_graph_deduplicates_re_source_topology(
                 },
                 extra_nodes=(source_node, decision_node),
                 extra_edges=(
-                    GraphEdge(f"spec:{spec_id}", "USES_RE_SOURCE", "re-source:api", {}),
-                    GraphEdge("re-source:api", "HAS_DECISION", decision_id, {}),
+                    GraphEdge(f"spec:{spec_id}", "USES_SOURCE", "source:api", {}),
+                    GraphEdge("source:api", "HAS_DECISION", decision_id, {}),
                     GraphEdge(decision_id, "DOCUMENTED_BY", artifact_id, {}),
                 ),
             ),
@@ -726,7 +736,8 @@ def test_workspace_graph_deduplicates_re_source_topology(
         "001-alpha",
         "002-beta",
     ]
-    assert nodes["re-source:api"].properties["member_specs"] == [
+    assert nodes["source:api"].properties["path"] == "sources/api"
+    assert nodes["source:api"].properties["member_specs"] == [
         "001-alpha",
         "002-beta",
     ]
@@ -734,7 +745,7 @@ def test_workspace_graph_deduplicates_re_source_topology(
         "001-alpha",
         "002-beta",
     ]
-    assert edges[("re-source:api", "HAS_DECISION", decision_id)].properties[
+    assert edges[("source:api", "HAS_DECISION", decision_id)].properties[
         "member_specs"
     ] == ["001-alpha", "002-beta"]
     assert edges[(decision_id, "DOCUMENTED_BY", normalized_artifact_id)].properties[
@@ -743,6 +754,8 @@ def test_workspace_graph_deduplicates_re_source_topology(
     assert edges[
         (normalized_artifact_id, "STORED_AS", "drawer:shared-re-drawer")
     ].properties["member_specs"] == ["001-alpha", "002-beta"]
+    assert sum(node.id == "source:api" for node in result.graph.nodes) == 1
+    assert not any(node.id.startswith("re-source:") for node in result.graph.nodes)
 
 
 @pytest.mark.unit
@@ -773,22 +786,12 @@ def test_reports_unresolved_workspace_relationships(
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize(
-    ("node", "sources"),
-    [
-        (GraphNode("workspace:current", "Workspace", {}), []),
-        (GraphNode("source:app", "SourceRoot", {}), [{"id": "app", "path": "app"}]),
-    ],
-)
 def test_rejects_reserved_workspace_node_identities(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    node: GraphNode,
-    sources: list[dict[str, str]],
 ) -> None:
-    if sources:
-        (tmp_path / "app").mkdir()
-    _write_config(tmp_path, sources=sources)
+    node = GraphNode("workspace:current", "Workspace", {})
+    _write_config(tmp_path)
     alpha = _spec_dir(tmp_path, "001-alpha")
     _write_member_graph(alpha, _member_graph("001-alpha", extra_nodes=(node,)))
     monkeypatch.setattr(
@@ -797,6 +800,51 @@ def test_rejects_reserved_workspace_node_identities(
     )
 
     with pytest.raises(WorkspaceGraphError, match="reserved workspace node identity"):
+        build_workspace_graph(tmp_path)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "node",
+    [
+        GraphNode(
+            "source:api",
+            "SourceRoot",
+            {"source_id": "api", "path": "sources/other"},
+        ),
+        GraphNode(
+            "source:api",
+            "Artifact",
+            {"source_id": "api", "path": "sources/api"},
+        ),
+        GraphNode(
+            "source:api",
+            "SourceRoot",
+            {"source_id": "other", "path": "sources/api"},
+        ),
+    ],
+)
+def test_rejects_conflicting_canonical_source_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    node: GraphNode,
+) -> None:
+    (tmp_path / "sources" / "api").mkdir(parents=True)
+    _write_config(
+        tmp_path,
+        sources=[{"id": "api", "path": "sources/api"}],
+    )
+    alpha = _spec_dir(tmp_path, "001-alpha")
+    _write_member_graph(alpha, _member_graph("001-alpha", extra_nodes=(node,)))
+    monkeypatch.setattr(
+        "echelon.workspace_graph.audit_spec_graph",
+        lambda root, selector: _audit_for_current_graph(Path(selector)),
+    )
+
+    with pytest.raises(
+        WorkspaceGraphError,
+        match="canonical source identity conflict: source:api",
+    ):
         build_workspace_graph(tmp_path)
 
 

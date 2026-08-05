@@ -10,6 +10,9 @@ from pathlib import Path
 from typing import Mapping
 
 from harness.ai_cli_backend import CliRunRequest, CliRunResult, create_ai_cli_backend
+from harness.ai_cli_backends.claude import (
+    host_workspace_synthesis_boundary_available,
+)
 from harness.config import HarnessConfig
 from harness.llm_tool_policy import build_llm_cli_command
 from harness.provider_capability import (
@@ -63,6 +66,16 @@ class AICodingCliProvider:
         if self._cli == "openai-compatible":
             return ARTIFACT_PROVIDER_CAPABILITIES
         return CLI_PROVIDER_CAPABILITIES
+
+    @property
+    def enforces_workspace_synthesis_boundary(self) -> bool:
+        """Return whether workspace synthesis cannot access live source roots."""
+        if self._cli == "openai-compatible":
+            return True
+        return bool(
+            self._cli == "claude"
+            and host_workspace_synthesis_boundary_available()
+        )
 
     def _build_cmd(self, prompt: str) -> list[str]:
         """Compatibility helper for tests and call sites that inspect command shape."""

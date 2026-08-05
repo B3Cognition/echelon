@@ -6,22 +6,29 @@ import json
 import os
 import re
 import tempfile
-from dataclasses import replace
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Literal
 
-from echelon.workspace_model import discover_workspace
+from echelon.workspace_model import (
+    WorkspaceManifest,
+    discover_workspace,
+    validate_topology_source_declarations,
+)
 from harness.blocked_decision import (
     ensure_blocked_decision,
     mark_blocked_decision_resolved,
 )
-from harness.config import get_full_resolved_config
 from harness.re_controller import ReExtractionController
-from harness.re_fingerprint import ReFingerprintProfile
+from harness.re_fingerprint import ReFingerprintProfile, resolve_re_fingerprint_profile
 from harness.re_materializer import materialize_re_run_context
-from harness.re_planner import build_re_execution_plan
+from harness.re_planner import (
+    ReExecutionPlan,
+    RePlanError,
+    build_re_execution_plan,
+    resolve_re_target_source,
+)
 from harness.re_profiles import migrate_legacy_re_profile, resolve_re_execution_profile
 from harness.re_registry import load_published_index
 from kernel.re_state import init_re_state
@@ -66,38 +73,6 @@ def resolve_current_re_run(project_root: Path) -> Path | None:
     return resolved
 
 
-def resolve_re_fingerprint_profile(project_root: Path) -> ReFingerprintProfile:
-    """Resolve extraction settings that participate in RE fingerprints."""
-    config = get_full_resolved_config(project_root)
-    re_config = config.get("re") if isinstance(config.get("re"), dict) else {}
-    depth_config = (
-        re_config.get("depth") if isinstance(re_config.get("depth"), dict) else {}
-    )
-    sources_config = (
-        re_config.get("sources")
-        if isinstance(re_config.get("sources"), dict)
-        else {}
-    )
-    discovery_config = (
-        config.get("discovery") if isinstance(config.get("discovery"), dict) else {}
-    )
-    return ReFingerprintProfile.from_json_dict(
-        {
-            "profile": re_config.get("profile", "full"),
-            "depth": depth_config.get("level", "full"),
-            "max_lines_per_file": depth_config.get(
-                "max_lines_per_file",
-                discovery_config.get("max_lines_per_file", 5000),
-            ),
-            "git_history_limit": sources_config.get(
-                "git_history_limit",
-                discovery_config.get("git_history_limit", 2500),
-            ),
-            "codegraph_version": re_config.get("codegraph_version"),
-        }
-    )
-
-
 class ReLifecycleController:
     """Own RE freshness planning and the dedicated RE run namespace."""
 
@@ -116,6 +91,8 @@ class ReLifecycleController:
         self,
         *,
         policy: str = "",
+        target_source: str = "",
+        force_selected_refresh: bool = False,
         re_max_inner: int | None = None,
         reset: bool = False,
         profile_name: str | None = None,
@@ -125,6 +102,30 @@ class ReLifecycleController:
     ) -> ReLifecycleResult:
         if re_max_inner is not None and re_max_inner < 1:
             raise ReLifecycleError("--re-max-inner requires a positive integer")
+        manifest = None
+        resolved_target = ""
+        if target_source.strip():
+            try:
+                manifest = discover_workspace(self._project_root)
+                target = resolve_re_target_source(manifest.sources, target_source)
+            except (OSError, ValueError) as exc:
+                raise ReLifecycleError(str(exc)) from exc
+            if target is None:  # pragma: no cover - guarded by the non-empty selector.
+                raise ReLifecycleError("target source selector did not resolve")
+            resolved_target = target.id
+            if force_selected_refresh:
+                self._validate_target_root_isolation(manifest, resolved_target)
+                try:
+                    validate_topology_source_declarations(manifest.sources)
+                except ValueError as exc:
+                    raise ReLifecycleError(str(exc)) from exc
+            target_path = Path(target.path)
+            if not target_path.is_absolute():
+                target_path = self._project_root / target_path
+            if not target_path.exists():
+                raise ReLifecycleError(
+                    f"selected source {resolved_target} is unavailable: {target_path}"
+                )
         if reset:
             marker = self._project_root / "runs" / ".current-re"
             marker.unlink(missing_ok=True)
@@ -133,9 +134,17 @@ class ReLifecycleController:
             if current is not None:
                 state = self._load_state(current)
                 if state.get("status") != "done":
+                    if resolved_target:
+                        self._validate_active_target(
+                            current,
+                            state,
+                            manifest,
+                            resolved_target,
+                            require_forced=force_selected_refresh,
+                        )
                     return self._execute_run(current, state, re_max_inner=re_max_inner)
 
-        manifest = discover_workspace(self._project_root)
+        manifest = manifest or discover_workspace(self._project_root)
         try:
             execution_profile = resolve_re_execution_profile(
                 self._project_root,
@@ -147,30 +156,29 @@ class ReLifecycleController:
             raise ReLifecycleError(str(exc)) from exc
         profile = resolve_re_fingerprint_profile(self._project_root)
         published = load_published_index(self._project_root)
-        plan = build_re_execution_plan(
-            project_root=self._project_root,
-            manifest=manifest,
-            target_source="",
-            requested_policy=policy,
-            profile=profile,
-            published_index=published,
-        )
-        if published is not None and plan.policy not in {"none", "cached-only"}:
-            # A fresh RE run is an improvement pass over the one durable
-            # baseline.  It never inherits budgets or counters from its run.
-            plan = replace(
-                plan,
-                sources=tuple(
-                    replace(source, action="refresh", classification="refresh")
-                    if source.action == "reuse" or not reuse_published
-                    else source
-                    for source in plan.sources
-                ),
-                analysis_required=True,
-                workspace_synthesis_required=True,
-                publication_required=True,
+        try:
+            plan = build_re_execution_plan(
+                project_root=self._project_root,
+                manifest=manifest,
+                target_source=resolved_target,
+                requested_policy=policy,
+                profile=profile,
+                published_index=published,
+                force_selected_refresh=force_selected_refresh,
+                reuse_published=reuse_published,
             )
+        except RePlanError as exc:
+            raise ReLifecycleError(str(exc)) from exc
         missing = sorted(source.id for source in plan.sources if source.action == "missing")
+        if force_selected_refresh and resolved_target in missing:
+            raise ReLifecycleError(
+                f"selected source {resolved_target} is unavailable"
+            )
+        if force_selected_refresh and missing:
+            return ReLifecycleResult(
+                status="blocked",
+                blocked_reason="target-only missing published RE: " + ", ".join(missing),
+            )
         if plan.policy == "cached-only" and missing:
             return ReLifecycleResult(
                 status="blocked",
@@ -199,6 +207,8 @@ class ReLifecycleController:
             "phase": "re-extract-0-preflight",
             "requested_re_policy": policy,
             "re_policy": plan.policy,
+            "target_source": plan.target_source,
+            "force_selected_refresh": force_selected_refresh,
             "expected_generation": expected_generation,
             "extraction_complete": False,
             "publication_complete": False,
@@ -216,6 +226,136 @@ class ReLifecycleController:
             run_dir, re_max_inner, execution_profile.to_json_dict()
         )
         return self._execute_run(run_dir, state, re_max_inner=re_max_inner)
+
+    def _validate_active_target(
+        self,
+        run_dir: Path,
+        state: dict,
+        manifest: WorkspaceManifest,
+        source_id: str,
+        *,
+        require_forced: bool,
+    ) -> None:
+        try:
+            plan = ReExecutionPlan.from_json_dict(
+                self._load_json(run_dir / "re" / "re-execution-plan.json")
+            )
+        except (OSError, ValueError) as exc:
+            raise ReLifecycleError(
+                f"cannot validate active targeted RE run {run_dir.name}: {exc}"
+            ) from exc
+        if plan.policy != "target-only" or plan.target_source != source_id:
+            raise ReLifecycleError(
+                f"active RE run {run_dir.name} targets "
+                f"{plan.target_source or 'the workspace'}, not {source_id}; "
+                "continue or publish it before refreshing another source"
+            )
+        if not require_forced:
+            return
+        if (
+            state.get("force_selected_refresh") is not True
+            or state.get("re_policy") != "target-only"
+            or state.get("target_source") != source_id
+        ):
+            self._raise_incompatible_active_refresh(run_dir, source_id)
+        try:
+            published = load_published_index(self._project_root)
+            expected = build_re_execution_plan(
+                project_root=self._project_root,
+                manifest=manifest,
+                target_source=source_id,
+                requested_policy="target-only",
+                profile=resolve_re_fingerprint_profile(self._project_root),
+                published_index=published,
+                force_selected_refresh=True,
+                reuse_published=True,
+            )
+        except (OSError, ValueError) as exc:
+            raise ReLifecycleError(
+                f"cannot authenticate active targeted RE run {run_dir.name}: {exc}"
+            ) from exc
+        if (
+            plan != expected
+            or plan.removed_sources
+            or not plan.workspace_synthesis_required
+            or not plan.publication_required
+            or any(source.action == "missing" for source in plan.sources)
+            or state.get("expected_generation")
+            != (published.generation if published is not None else 0)
+        ):
+            self._raise_incompatible_active_refresh(run_dir, source_id)
+
+    @staticmethod
+    def _raise_incompatible_active_refresh(run_dir: Path, source_id: str) -> None:
+        raise ReLifecycleError(
+            f"active RE run {run_dir.name} is not an authenticated forced selected "
+            f"refresh for {source_id}"
+        )
+
+    def _validate_target_root_isolation(
+        self,
+        manifest: WorkspaceManifest,
+        source_id: str,
+    ) -> None:
+        sources = manifest.sources
+        target = next(source for source in sources if source.id == source_id)
+        target_path = self._source_root(target.path)
+        for sibling in sources:
+            if sibling.id == source_id:
+                continue
+            sibling_path = self._source_root(sibling.path)
+            if (
+                target_path == sibling_path
+                or target_path.is_relative_to(sibling_path)
+                or sibling_path.is_relative_to(target_path)
+            ):
+                raise ReLifecycleError(
+                    "overlapping source roots are unsafe for targeted refresh: "
+                    f"{source_id} ({target_path}) and {sibling.id} ({sibling_path})"
+                )
+
+    def _source_root(self, configured_path: str) -> Path:
+        path = Path(configured_path)
+        if not path.is_absolute():
+            path = self._project_root / path
+        try:
+            return path.resolve()
+        except (OSError, RuntimeError) as exc:
+            raise ReLifecycleError(f"cannot resolve source root {path}: {exc}") from exc
+
+    def _validate_forced_target_invocation(
+        self,
+        run_dir: Path,
+        state: dict,
+    ) -> None:
+        if state.get("force_selected_refresh") is not True:
+            return
+        source_id = state.get("target_source")
+        if not isinstance(source_id, str) or not source_id:
+            self._raise_incompatible_active_refresh(run_dir, "the selected source")
+        try:
+            manifest = discover_workspace(self._project_root)
+            target = resolve_re_target_source(manifest.sources, source_id)
+        except (OSError, ValueError) as exc:
+            raise ReLifecycleError(
+                f"cannot authenticate active targeted RE run {run_dir.name}: {exc}"
+            ) from exc
+        if target is None:  # pragma: no cover - source_id is non-empty above.
+            self._raise_incompatible_active_refresh(run_dir, source_id)
+        self._validate_target_root_isolation(manifest, source_id)
+        try:
+            validate_topology_source_declarations(manifest.sources)
+        except ValueError as exc:
+            raise ReLifecycleError(str(exc)) from exc
+        if not self._source_root(target.path).exists():
+            raise ReLifecycleError(f"selected source {source_id} is unavailable")
+        self._validate_active_target(
+            run_dir,
+            state,
+            manifest,
+            source_id,
+            require_forced=True,
+        )
 
     def continue_run(self, re_max_inner: int | None = None) -> ReLifecycleResult:
         if re_max_inner is not None and re_max_inner < 1:
@@ -258,6 +398,7 @@ class ReLifecycleController:
         if run_dir is None:
             raise ReLifecycleError("no active RE run; start one with echelon re run")
         state = self._load_state(run_dir)
+        self._validate_forced_target_invocation(run_dir, state)
         ensure_blocked_decision(state)
         decision = state.get("blocked_decision")
         if not isinstance(decision, dict) or decision.get("status") != "pending":
@@ -316,6 +457,8 @@ class ReLifecycleController:
         *,
         re_max_inner: int | None,
     ) -> ReLifecycleResult:
+        state = self._load_state(run_dir)
+        self._validate_forced_target_invocation(run_dir, state)
         if not isinstance(state.get("re_execution_profile"), dict):
             re_state = self._load_json(run_dir / "re" / "state.json")
             execution_profile = migrate_legacy_re_profile(re_state).to_json_dict()

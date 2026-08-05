@@ -18,8 +18,10 @@ Subcommands:
   apply-progress-reconciliation — apply verify-spec task-progress reconciliation
   plan-reopen-gaps — plan deterministic reopen work from fulfillment gaps
   init-verify-spec-run — create verify-spec runtime directory and state.json
+  complete-verify-spec-run — durably mark verified run evidence complete
   write-codegraph-evidence — write verify-spec CodeGraph evidence artifacts
   write-perlgraph-evidence — write verify-spec PerlGraph evidence artifacts
+  write-topology-evidence-receipt — finalize run-local delivery topology evidence
   write-codegraph-evidence-map — write deterministic requirement-to-CodeGraph map
   write-requirement-audit — write deterministic requirement audit from canonical inventory
   validate-fulfillment-artifacts — validate fulfillment report row-set integrity
@@ -419,6 +421,29 @@ def _init_verify_spec_run() -> None:
         print(str(exc), file=sys.stderr)
         sys.exit(2)
     print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+
+
+def _complete_verify_spec_run() -> None:
+    if len(sys.argv) != 3:
+        print(
+            "Usage: python -m harness complete-verify-spec-run <verify-run-dir>",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    from pathlib import Path
+
+    from harness.verify_spec_run import (
+        VerifySpecRunInitError,
+        complete_verify_spec_run,
+    )
+
+    try:
+        state_path = complete_verify_spec_run(Path(sys.argv[2]))
+    except VerifySpecRunInitError as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(2)
+    print(f"OK: completed verify-spec run at {state_path.parent}")
 
 
 def _write_judgment_prepass() -> None:
@@ -960,6 +985,50 @@ def _write_perlgraph_evidence() -> None:
     print(f"OK: wrote PerlGraph evidence to {result.analysis_path}")
 
 
+def _write_topology_evidence_receipt() -> None:
+    if len(sys.argv) != 5:
+        print(
+            "Usage: python -m harness write-topology-evidence-receipt "
+            "<project-root> <verify-run-dir> <spec-dir>",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    from pathlib import Path
+
+    from harness.topology_evidence import (
+        TopologyEvidenceError,
+        write_topology_evidence_receipt,
+    )
+
+    verify_run_dir = Path(sys.argv[3])
+    _require_verify_spec_state(verify_run_dir)
+    workspace_root = os.environ.get("ECHELON_WORKSPACE_ROOT", "").strip()
+    source_id = os.environ.get("ECHELON_SOURCE_ID", "").strip()
+    source_root = os.environ.get("ECHELON_SOURCE_ROOT", "").strip()
+    if not workspace_root or not source_id or not source_root:
+        print(
+            "ECHELON_WORKSPACE_ROOT, ECHELON_SOURCE_ID, and ECHELON_SOURCE_ROOT are required",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    try:
+        result = write_topology_evidence_receipt(
+            Path(sys.argv[2]),
+            verify_run_dir,
+            Path(sys.argv[4]),
+            workspace_root=Path(workspace_root),
+            source_id=source_id,
+            source_root=Path(source_root),
+        )
+    except (OSError, ValueError, TopologyEvidenceError) as exc:
+        print(f"topology evidence receipt failed: {exc}", file=sys.stderr)
+        sys.exit(2)
+    print(
+        f"OK: wrote {result.status} topology evidence receipt to {result.receipt_path}"
+    )
+
+
 def _stamp_verify_spec_state(verify_run_dir: "Path", updates: dict[str, object]) -> None:
     state_path = verify_run_dir / "state.json"
     _stamp_existing_json_state_file(state_path, updates)
@@ -1414,6 +1483,8 @@ def main() -> None:
         _plan_reopen_gaps()
     elif subcommand == "init-verify-spec-run":
         _init_verify_spec_run()
+    elif subcommand == "complete-verify-spec-run":
+        _complete_verify_spec_run()
     elif subcommand == "write-canonical-requirements":
         _write_canonical_requirements()
     elif subcommand == "write-requirement-audit":
@@ -1432,6 +1503,8 @@ def main() -> None:
         _write_codegraph_evidence()
     elif subcommand == "write-perlgraph-evidence":
         _write_perlgraph_evidence()
+    elif subcommand == "write-topology-evidence-receipt":
+        _write_topology_evidence_receipt()
     elif subcommand == "write-codegraph-evidence-map":
         _write_codegraph_evidence_map()
     elif subcommand == "inspect-fulfillment-report":
@@ -1453,11 +1526,12 @@ def main() -> None:
             "'apply-task-requirement-mapping', "
             "'write-progress-reconciliation-candidates', "
             "'apply-progress-reconciliation', 'plan-reopen-gaps', "
-            "'init-verify-spec-run', 'write-canonical-requirements', "
+            "'init-verify-spec-run', 'complete-verify-spec-run', 'write-canonical-requirements', "
             "'write-requirement-audit', 'write-judgment-prepass', "
             "'write-fallback-fulfillment-template', "
             "'assemble-fulfillment-report', 'apply-deferred-scope', 'validate-fulfillment-artifacts', "
             "'write-codegraph-evidence', 'write-perlgraph-evidence', "
+            "'write-topology-evidence-receipt', "
             "'write-codegraph-evidence-map', 'inspect-fulfillment-report', "
             "'verify-docs', 'migrate-tasks', 'validate-plan', or 'migrate-plan'.",
             file=sys.stderr,

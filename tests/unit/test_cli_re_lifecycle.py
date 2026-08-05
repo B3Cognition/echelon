@@ -19,6 +19,18 @@ def test_re_run_help_exposes_clean_reconstruction_switch() -> None:
 
 
 @pytest.mark.unit
+def test_re_refresh_help_requires_one_source_selector() -> None:
+    from echelon.cli_app import app
+
+    help_result = CliRunner().invoke(app, ["re", "refresh", "--help"])
+    missing_result = CliRunner().invoke(app, ["re", "refresh"])
+
+    assert help_result.exit_code == 0
+    assert "--source" in help_result.output
+    assert missing_result.exit_code == 2
+
+
+@pytest.mark.unit
 def test_re_continue_prints_controller_summary_before_provider_dispatch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -146,6 +158,9 @@ def test_re_lifecycle_typed_commands_route_options(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(
         "echelon.cli._cmd_re_resume", lambda args: calls.append(("resume", args))
     )
+    monkeypatch.setattr(
+        "echelon.cli._cmd_re_refresh", lambda args: calls.append(("refresh", args))
+    )
     runner = CliRunner()
 
     assert runner.invoke(
@@ -157,12 +172,136 @@ def test_re_lifecycle_typed_commands_route_options(monkeypatch: pytest.MonkeyPat
         app,
         ["re", "resume", "Use v2", "--re-max-inner", "11"],
     ).exit_code == 0
+    assert runner.invoke(app, ["re", "refresh", "--source", "api"]).exit_code == 0
 
     assert calls == [
         ("run", ["--re-policy", "refresh-all", "--re-max-inner", "9", "--reset"]),
         ("continue", ["--re-max-inner", "10"]),
         ("resume", ["Use v2", "--re-max-inner", "11"]),
+        ("refresh", ["--source", "api"]),
     ]
+
+
+@pytest.mark.unit
+def test_re_refresh_runs_target_only_and_publishes_completed_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.cli import _cmd_re_refresh
+
+    observed: dict[str, object] = {}
+
+    class FakeController:
+        def run(self, **kwargs: object) -> SimpleNamespace:
+            observed.update(kwargs)
+            return SimpleNamespace(
+                status="done",
+                run_id="re-20260804-120000-000001",
+                generation=4,
+                no_work=False,
+            )
+
+    published: list[list[str]] = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "echelon.cli._re_lifecycle_controller", lambda _root: FakeController()
+    )
+    monkeypatch.setattr(
+        "echelon.cli._cmd_re_publish", lambda args: published.append(args)
+    )
+
+    _cmd_re_refresh(["--source", "api"])
+
+    assert observed == {
+        "policy": "target-only",
+        "target_source": "api",
+        "force_selected_refresh": True,
+    }
+    assert published == [["re-20260804-120000-000001"]]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("source_id", "source_path"),
+    (("-api", "sources/api"),),
+)
+def test_re_refresh_cli_rejects_topology_incompatible_source_declarations(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    source_id: str,
+    source_path: str,
+) -> None:
+    from echelon.cli import _cmd_re_refresh
+    from harness.re_lifecycle import ReLifecycleController
+
+    source = tmp_path if source_path == "." else tmp_path / source_path
+    source.mkdir(parents=True, exist_ok=True)
+    (source / "app.py").write_text("pass\n", encoding="utf-8")
+    config = tmp_path / ".echelon/config.yml"
+    config.parent.mkdir()
+    config.write_text(
+        f"workspace:\n  sources:\n    - id: {source_id}\n      path: {source_path}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "echelon.cli._re_lifecycle_controller",
+        lambda root: ReLifecycleController(
+            project_root=root,
+            extension_root=tmp_path / "extension",
+            provider_factory=lambda: pytest.fail(
+                "unpublishable declaration must not construct provider"
+            ),
+        ),
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        _cmd_re_refresh(["--source", source_id])
+
+    assert exc.value.code == 2
+    assert "not publishable as topology" in capsys.readouterr().err
+    assert not (tmp_path / "runs").exists()
+    assert not (tmp_path / "re").exists()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("provenance", ("canonical", "legacy"))
+def test_re_refresh_cli_exits_two_for_malformed_workspace_yaml(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    provenance: str,
+) -> None:
+    from echelon.cli import _cmd_re_refresh
+    from harness.re_lifecycle import ReLifecycleController
+
+    config = (
+        tmp_path / ".echelon/config.yml"
+        if provenance == "canonical"
+        else tmp_path / ".specify/extensions/echelon/echelon-config.yml"
+    )
+    config.parent.mkdir(parents=True)
+    config.write_text("workspace:\n  sources: [api\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "echelon.cli._re_lifecycle_controller",
+        lambda root: ReLifecycleController(
+            project_root=root,
+            extension_root=tmp_path / "extension",
+            provider_factory=lambda: pytest.fail(
+                "malformed config must not construct provider"
+            ),
+        ),
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        _cmd_re_refresh(["--source", "api"])
+
+    assert exc.value.code == 2
+    assert "cannot parse workspace config" in capsys.readouterr().err
+    assert not (tmp_path / "runs").exists()
+    assert not (tmp_path / "re").exists()
 
 
 @pytest.mark.unit

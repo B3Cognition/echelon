@@ -3,10 +3,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from echelon.workspace_model import (
     count_source_files,
     discover_workspace,
+    load_workspace_source_declarations,
     load_workspace_manifest,
+    validate_topology_source_declarations,
 )
 
 
@@ -29,6 +33,7 @@ def test_single_repo_workspace_is_source_root(tmp_path: Path) -> None:
     assert manifest.sources[0].id == "."
     assert manifest.sources[0].git_present is True
     assert "package.json" in manifest.sources[0].project_markers
+    validate_topology_source_declarations(manifest.sources)
 
 
 def test_git_backed_root_with_project_marker_remains_single_source_root(
@@ -129,6 +134,173 @@ def test_configured_sources_override_auto_discovery(tmp_path: Path) -> None:
     assert "pyproject.toml" in manifest.sources[0].project_markers
 
 
+def test_declaration_loader_reports_canonical_config_without_reading_sources(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".echelon").mkdir()
+    (tmp_path / ".echelon/config.yml").write_text(
+        "workspace:\n  git_role: orchestration\n  sources:\n"
+        "    - id: api\n      path: sources/api\n",
+        encoding="utf-8",
+    )
+
+    declarations = load_workspace_source_declarations(tmp_path)
+
+    assert declarations is not None
+    assert declarations.provenance == "canonical"
+    assert declarations.config_relative_path == ".echelon/config.yml"
+    assert declarations.config_sha256.startswith("sha256:")
+    assert len(declarations.config_sha256) == 71
+    assert declarations.mode == "explicit"
+    assert [(source.id, source.path) for source in declarations.sources] == [
+        ("api", "sources/api")
+    ]
+
+
+def test_declaration_loader_reports_legacy_config_provenance(tmp_path: Path) -> None:
+    config = tmp_path / ".specify/extensions/echelon/echelon-config.yml"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n",
+        encoding="utf-8",
+    )
+
+    declarations = load_workspace_source_declarations(tmp_path)
+
+    assert declarations is not None
+    assert declarations.provenance == "legacy"
+    assert declarations.config_relative_path == (
+        ".specify/extensions/echelon/echelon-config.yml"
+    )
+    assert declarations.mode == "explicit"
+
+
+@pytest.mark.parametrize(
+    ("provenance", "symlink_component"),
+    (
+        ("canonical", "file"),
+        ("canonical", "parent"),
+        ("legacy", "file"),
+        ("legacy", "parent"),
+    ),
+)
+def test_declaration_loader_rejects_symlinked_config_components(
+    tmp_path: Path,
+    provenance: str,
+    symlink_component: str,
+) -> None:
+    forbidden = tmp_path / "sources/web/config"
+    forbidden.mkdir(parents=True)
+    config_name = (
+        "config.yml"
+        if provenance == "canonical"
+        else "echelon-config.yml"
+    )
+    (forbidden / config_name).write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n",
+        encoding="utf-8",
+    )
+    relative = (
+        Path(".echelon/config.yml")
+        if provenance == "canonical"
+        else Path(".specify/extensions/echelon/echelon-config.yml")
+    )
+    config = tmp_path / relative
+    if symlink_component == "file":
+        config.parent.mkdir(parents=True)
+        config.symlink_to(forbidden / config_name)
+    elif provenance == "canonical":
+        (tmp_path / ".echelon").symlink_to(forbidden, target_is_directory=True)
+    else:
+        (tmp_path / ".specify").symlink_to(forbidden, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="unsafe workspace config path"):
+        load_workspace_source_declarations(tmp_path)
+
+
+@pytest.mark.parametrize("provenance", ("canonical", "legacy"))
+def test_ordinary_discovery_normalizes_malformed_workspace_yaml(
+    tmp_path: Path,
+    provenance: str,
+) -> None:
+    config = (
+        tmp_path / ".echelon/config.yml"
+        if provenance == "canonical"
+        else tmp_path / ".specify/extensions/echelon/echelon-config.yml"
+    )
+    config.parent.mkdir(parents=True)
+    config.write_text("workspace:\n  sources: [api\n", encoding="utf-8")
+
+    with pytest.raises(
+        ValueError,
+        match=r"cannot parse workspace config .*config\.yml: invalid YAML",
+    ):
+        discover_workspace(tmp_path)
+
+
+def test_declaration_loader_supports_repo_and_null_or_missing_id_fallback(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".echelon").mkdir()
+    (tmp_path / ".echelon/config.yml").write_text(
+        "sources:\n"
+        "  - repo: api\n"
+        "  - id: null\n    path: web\n"
+        "  - path: docs\n",
+        encoding="utf-8",
+    )
+
+    declarations = load_workspace_source_declarations(tmp_path)
+
+    assert declarations is not None
+    assert [(source.id, source.path) for source in declarations.sources] == [
+        ("api", "api"),
+        ("web", "web"),
+        ("docs", "docs"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("sources", "message"),
+    (
+        ("  - id: '../api'\n    path: sources/api\n", "unsafe source id"),
+        ("  - id: api\n    path: ../api\n", "unsafe source path"),
+        (
+            "  - id: api\n    path: sources/api\n"
+            "  - id: api\n    path: sources/web\n",
+            "duplicate source id",
+        ),
+    ),
+)
+def test_declaration_loader_rejects_unsafe_or_duplicate_sources(
+    tmp_path: Path,
+    sources: str,
+    message: str,
+) -> None:
+    (tmp_path / ".echelon").mkdir()
+    (tmp_path / ".echelon/config.yml").write_text(
+        "sources:\n" + sources,
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=message):
+        load_workspace_source_declarations(tmp_path)
+
+
+def test_ordinary_discovery_preserves_topology_incompatible_declarations(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".echelon").mkdir()
+    (tmp_path / ".echelon/config.yml").write_text(
+        "workspace:\n  sources:\n    - id: -api\n      path: .\n",
+        encoding="utf-8",
+    )
+
+    manifest = discover_workspace(tmp_path)
+
+    assert [(source.id, source.path) for source in manifest.sources] == [("-api", ".")]
+
+
 def test_configured_empty_sources_without_sources_directory_means_planning_only(
     tmp_path: Path,
 ) -> None:
@@ -170,6 +342,54 @@ def test_configured_empty_sources_discovers_sources_directory_children(
     assert manifest.workspace.git_role == "orchestration"
     assert [source.id for source in manifest.sources] == ["optasearch-pro"]
     assert [source.path for source in manifest.sources] == ["sources/optasearch-pro"]
+
+
+@pytest.mark.parametrize(
+    ("document", "message"),
+    (
+        ("workspace: null\nsources: []\n", "workspace must be a mapping"),
+        ("workspace: []\nsources: []\n", "workspace must be a mapping"),
+        ("workspace: source\nsources: []\n", "workspace must be a mapping"),
+        ("sources: null\n", "sources must be a list"),
+        ("sources:\n  api: sources/api\n", "sources must be a list"),
+        ("sources: api\n", "sources must be a list"),
+        ("sources:\n  - 42\n", "sources entry 1 must be"),
+        ("sources:\n  - ''\n", "sources entry 1 must not be blank"),
+        ("sources:\n  - id: api\n", "sources entry 1 requires a path"),
+        ("sources:\n  - path: 42\n", "sources entry 1 path must be a string"),
+        ("sources:\n  - id: 42\n    path: sources/api\n", "sources entry 1 id must be a string"),
+    ),
+)
+def test_explicit_malformed_workspace_shapes_never_fall_back_to_discovery(
+    tmp_path: Path,
+    document: str,
+    message: str,
+) -> None:
+    (tmp_path / ".echelon").mkdir()
+    (tmp_path / ".echelon/config.yml").write_text(document, encoding="utf-8")
+    auto = tmp_path / "auto-discovered"
+    auto.mkdir()
+    (auto / "package.json").write_text("{}\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match=message):
+        discover_workspace(tmp_path)
+
+
+def test_config_without_workspace_or_sources_intentionally_uses_discovery(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".echelon").mkdir()
+    (tmp_path / ".echelon/config.yml").write_text(
+        "telemetry:\n  enabled: true\n",
+        encoding="utf-8",
+    )
+    source = tmp_path / "auto-discovered"
+    source.mkdir()
+    (source / "package.json").write_text("{}\n", encoding="utf-8")
+
+    manifest = discover_workspace(tmp_path)
+
+    assert [row.path for row in manifest.sources] == ["auto-discovered"]
 
 
 def test_planning_only_workspace_has_no_sources(tmp_path: Path) -> None:

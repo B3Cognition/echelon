@@ -1,8 +1,8 @@
 """Deterministic CodeGraph evidence writer for verify-spec."""
 from __future__ import annotations
 
-from collections import Counter
 from dataclasses import dataclass
+import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -138,7 +138,78 @@ def _analysis_is_usable(
         data = json.loads(analysis_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
-    if not isinstance(data, dict) or not isinstance(data.get("symbols"), list):
+    if not isinstance(data, dict):
+        return False
+    if (
+        data.get("schema_version") != 2
+        or data.get("version") != "2.0.0"
+        or data.get("tool") != "codegraph"
+        or data.get("tool_version") != "1.4.1"
+        or data.get("provider_status") != "complete"
+        or data.get("complete") is not True
+    ):
+        return False
+    symbols = data.get("symbols")
+    relationships = data.get("relationships")
+    call_graph = data.get("call_graph")
+    type_hierarchy = data.get("type_hierarchy")
+    impact_radius = data.get("impact_radius")
+    counts = data.get("counts")
+    diagnostics = data.get("diagnostics")
+    if not all(
+        isinstance(collection, list)
+        for collection in (symbols, relationships, call_graph, type_hierarchy, impact_radius)
+    ):
+        return False
+    if not isinstance(counts, dict) or not isinstance(diagnostics, dict):
+        return False
+    if not isinstance(diagnostics.get("unresolved_relationships"), list):
+        return False
+    count_fields = (
+        "discovered_symbols",
+        "emitted_symbols",
+        "excluded_symbols",
+        "discovered_relationships",
+        "emitted_relationships",
+        "excluded_relationships",
+    )
+    if any(not isinstance(counts.get(field), int) for field in count_fields):
+        return False
+    if counts["emitted_symbols"] != len(symbols) or counts["emitted_relationships"] != len(relationships):
+        return False
+    if not all(_has_canonical_symbol_locator(symbol) for symbol in symbols):
+        return False
+    symbol_keys = {symbol["symbol_key"] for symbol in symbols}
+    if len(symbol_keys) != len(symbols):
+        return False
+    if not all(
+        isinstance(relationship, dict)
+        and relationship.get("source_key") in symbol_keys
+        and relationship.get("target_key") in symbol_keys
+        for relationship in relationships
+    ):
+        return False
+    if not all(
+        isinstance(edge, dict)
+        and edge.get("caller_key") in symbol_keys
+        and edge.get("callee_key") in symbol_keys
+        for edge in call_graph
+    ):
+        return False
+    if not all(
+        isinstance(edge, dict)
+        and edge.get("child_key") in symbol_keys
+        and edge.get("parent_key") in symbol_keys
+        for edge in type_hierarchy
+    ):
+        return False
+    if not all(
+        isinstance(entry, dict)
+        and entry.get("symbol_key") in symbol_keys
+        and isinstance(entry.get("affected_keys"), list)
+        and all(key in symbol_keys for key in entry["affected_keys"])
+        for entry in impact_radius
+    ):
         return False
     if expected_repo_path is None:
         return True
@@ -151,6 +222,46 @@ def _analysis_is_usable(
     except OSError:
         return False
     return actual == expected
+
+
+def _is_symbol_key(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 71
+        and value.startswith("sha256:")
+        and all(character in "0123456789abcdef" for character in value[7:])
+    )
+
+
+def _has_canonical_symbol_locator(symbol: object) -> bool:
+    if not isinstance(symbol, dict):
+        return False
+    file_path = symbol.get("file_path")
+    qualified_name = symbol.get("qualified_name")
+    kind = symbol.get("kind")
+    signature = symbol.get("signature")
+    if not (
+        _is_normalized_source_path(file_path)
+        and isinstance(qualified_name, str)
+        and isinstance(kind, str)
+        and (signature is None or isinstance(signature, str))
+    ):
+        return False
+    locator = json.dumps(
+        [file_path, qualified_name, kind, signature or ""],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    expected_key = "sha256:" + hashlib.sha256(locator.encode("utf-8")).hexdigest()
+    return symbol.get("symbol_key") == expected_key
+
+
+def _is_normalized_source_path(value: object) -> bool:
+    if not isinstance(value, str) or not value or "\\" in value:
+        return False
+    if value.startswith("/") or (len(value) >= 3 and value[0].isalpha() and value[1:3] == ":/"):
+        return False
+    return all(part not in {"", ".", ".."} for part in value.split("/"))
 
 
 def _provider_failure(
@@ -218,47 +329,17 @@ def _remove_if_exists(path: Path) -> None:
 
 def _write_summary(analysis_path: Path, summary_path: Path) -> None:
     data = json.loads(analysis_path.read_text(encoding="utf-8"))
-    symbols = data.get("symbols")
-    if not isinstance(symbols, list):
-        symbols = []
-    calls = data.get("call_graph")
-    if not isinstance(calls, list):
-        calls = []
-
-    symbol_kinds = Counter(
-        str(symbol.get("kind") or "unknown")
-        for symbol in symbols
-        if isinstance(symbol, dict)
-    )
-    callers = Counter(
-        str(edge.get("caller") or "unknown") for edge in calls if isinstance(edge, dict)
-    )
-    callees = Counter(
-        str(edge.get("callee") or "unknown") for edge in calls if isinstance(edge, dict)
-    )
-    index_stats = data.get("index_stats") if isinstance(data.get("index_stats"), dict) else {}
-
     summary = {
-        "version": data.get("version"),
-        "generated_at": data.get("generated_at"),
-        "repo_path": data.get("repo_path"),
-        "supported": data.get("supported"),
-        "index_state": index_stats.get("index_state", "unknown"),
-        "index_stats": data.get("index_stats"),
-        "language_coverage": data.get("language_coverage"),
-        "coverage": data.get("coverage"),
-        "symbol_kinds": [
-            {"kind": kind, "count": count}
-            for kind, count in symbol_kinds.most_common()
-        ],
-        "top_callers": [
-            {"symbol": symbol, "outgoing_calls": count}
-            for symbol, count in callers.most_common(25)
-        ],
-        "top_callees": [
-            {"symbol": symbol, "incoming_calls": count}
-            for symbol, count in callees.most_common(25)
-        ],
+        field: data.get(field)
+        for field in (
+            "schema_version",
+            "tool",
+            "tool_version",
+            "provider_status",
+            "complete",
+            "counts",
+            "diagnostics",
+        )
     }
 
     summary_path.write_text(

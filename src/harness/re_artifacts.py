@@ -40,6 +40,14 @@ SUPPORTED_RE_ARTIFACT_KINDS = frozenset(
 _SUPPORTED_SCOPES = frozenset({"source", "workspace"})
 _SHA256_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 _SAFE_SOURCE_ID = re.compile(r"^[A-Za-z0-9._-]+$")
+_TOPOLOGY_PROVIDER_FILENAMES = frozenset(
+    {
+        "codegraph-analysis.json",
+        "codegraph-summary.json",
+        "perlgraph-analysis.json",
+        "perlgraph-summary.json",
+    }
+)
 
 
 class ReArtifactCatalogError(RuntimeError):
@@ -90,6 +98,8 @@ def build_re_artifact_catalog(
         relative = PurePosixPath(path.relative_to(directory).as_posix())
         if relative == PurePosixPath("manifest.json"):
             continue
+        if scope == "source" and is_topology_provider_artifact(relative):
+            continue
         published_path = prefix / relative
         path_string = published_path.as_posix()
         if path_string in seen_paths:
@@ -107,6 +117,11 @@ def build_re_artifact_catalog(
             )
         )
     return tuple(sorted(descriptors, key=lambda descriptor: descriptor.path))
+
+
+def is_topology_provider_artifact(relative_path: PurePosixPath) -> bool:
+    """Return whether a source-local graph file belongs to canonical topology."""
+    return relative_path.name in _TOPOLOGY_PROVIDER_FILENAMES
 
 
 def validate_re_artifact_descriptor(

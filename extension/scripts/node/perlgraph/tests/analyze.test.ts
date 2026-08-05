@@ -7,575 +7,234 @@ async function loadAnalyzer(): Promise<typeof import('../src/analysis/analyze.js
   return import('../src/analysis/analyze.js');
 }
 
+function repository(name: string): string {
+  const root = path.join(tmpdir(), `perlgraph-${name}-${Date.now()}-${Math.random()}`);
+  mkdirSync(root, { recursive: true });
+  return root;
+}
+
 describe('analyzeRepository', () => {
   afterEach(() => {
     vi.doUnmock('../src/extraction/perl-extractor.js');
     vi.resetModules();
   });
 
-  it('builds symbols, module graph, and call graph for a tiny Perl repo', async () => {
-    const { analyzeRepository } = await loadAnalyzer();
-    const root = path.join(tmpdir(), `perlgraph-analyze-${Date.now()}`);
+  it('emits schema 2 exact symbols and relationships for a healthy Perl repository', async () => {
+    const root = repository('ready');
     try {
       mkdirSync(path.join(root, 'lib/My'), { recursive: true });
-      mkdirSync(path.join(root, 't'), { recursive: true });
-      writeFileSync(path.join(root, 'lib/My/App.pm'), [
-        'package My::App;',
-        'use My::Service;',
-        'sub run {',
-        '  return My::Service::execute();',
-        '}',
-        '1;'
-      ].join('\n'));
-      writeFileSync(path.join(root, 'lib/My/Service.pm'), [
-        'package My::Service;',
-        'sub execute { return 1; }',
-        '1;'
-      ].join('\n'));
-      writeFileSync(path.join(root, 't/app.t'), [
-        'use Test::More;',
-        'use My::App;',
-        'ok(My::App::run());',
-        'done_testing;'
-      ].join('\n'));
+      writeFileSync(path.join(root, 'lib/My/App.pm'), 'package My::App;\nuse My::Service;\nsub run {\n  My::Service::execute();\n}\n1;\n');
+      writeFileSync(path.join(root, 'lib/My/Service.pm'), 'package My::Service;\nsub execute { 1 }\n1;\n');
+      const analysis = await (await loadAnalyzer()).analyzeRepository(root);
 
-      const analysis = await analyzeRepository(root);
-
-      expect(analysis.supported).toBe(true);
-      expect(analysis.index_stats.index_state).toBe('ready');
-      expect(analysis.symbols.some((symbol) => symbol.qualified_name === 'My::App::run')).toBe(true);
-      expect(analysis.module_graph).toContainEqual({
-        source_module: 'My::App',
-        target_module: 'My::Service',
-        source_file: 'lib/My/App.pm',
-        target_file: 'lib/My/Service.pm',
-        kind: 'use',
-        confidence: 'high'
-      });
-      expect(analysis.call_graph).toContainEqual({
-        source: 'My::App::run',
-        target: 'My::Service::execute',
-        confidence: 'high',
-        provenance: ['tree-sitter', 'name-resolution']
-      });
-      expect(analysis.parse_failures).toEqual([]);
-      expect(analysis.parse_diagnostics).toEqual([]);
+      expect(analysis).toMatchObject({ schema_version: 2, tool: 'perlgraph', tool_version: '0.1.0', provider_status: 'ready', complete: true });
+      expect(analysis.counts.emitted_symbols).toBe(analysis.symbols.length);
+      expect(analysis.symbols.every((symbol) => /^sha256:[0-9a-f]{64}$/.test(symbol.symbol_key))).toBe(true);
+      expect(analysis.relationships).toEqual(expect.arrayContaining([
+        expect.objectContaining({ kind: 'calls', source: 'My::App::run', target: 'My::Service::execute', source_key: expect.any(String), target_key: expect.any(String) })
+      ]));
+      expect(analysis.relationships.every((relationship) => analysis.symbols.some((symbol) => symbol.symbol_key === relationship.source_key) && analysis.symbols.some((symbol) => symbol.symbol_key === relationship.target_key))).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it('rejects when the repository path does not exist', async () => {
-    const { analyzeRepository } = await loadAnalyzer();
-    const missingRoot = path.join(tmpdir(), `perlgraph-missing-${Date.now()}`);
-
-    await expect(analyzeRepository(missingRoot)).rejects.toThrow(/Repository path does not exist/);
+  it('reports no Perl files as a complete unsupported capability result', async () => {
+    const root = repository('unsupported');
+    try {
+      const analysis = await (await loadAnalyzer()).analyzeRepository(root);
+      expect(analysis).toMatchObject({ supported: false, provider_status: 'unsupported', complete: true });
+      expect(analysis.counts).toMatchObject({ discovered_files: 0, emitted_symbols: 0 });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
-  it('continues after extraction failures and reports degraded index stats', async () => {
+  it('reports Perl files with no symbols as complete but empty', async () => {
     vi.doMock('../src/extraction/perl-extractor.js', async (importOriginal) => {
       const actual = await importOriginal<typeof import('../src/extraction/perl-extractor.js')>();
-      return {
-        ...actual,
-        extractPerlFile(filePath: string, content: string) {
-          if (filePath === 'lib/My/Broken.pm') {
-            throw new Error('synthetic extraction failure');
-          }
-          return actual.extractPerlFile(filePath, content);
-        }
-      };
+      return { ...actual, extractPerlFile: () => ({ symbols: [], dependencies: [], role_applications: [], exports: [], calls: [], unsupported_patterns: [], parse_diagnostics: [] }) };
     });
-    const { analyzeRepository } = await loadAnalyzer();
-    const root = path.join(tmpdir(), `perlgraph-failure-${Date.now()}`);
+    const root = repository('empty');
     try {
-      mkdirSync(path.join(root, 'lib/My'), { recursive: true });
-      writeFileSync(path.join(root, 'lib/My/Ok.pm'), [
-        'package My::Ok;',
-        'sub ready { return 1; }',
-        '1;'
-      ].join('\n'));
-      writeFileSync(path.join(root, 'lib/My/Broken.pm'), [
-        'package My::Broken;',
-        'sub nope { return 0; }',
-        '1;'
-      ].join('\n'));
-
-      const analysis = await analyzeRepository(root);
-
-      expect(analysis.index_stats.index_state).toBe('degraded');
-      expect(analysis.index_stats.total_files).toBe(2);
-      expect(analysis.index_stats.parsed_files).toBe(1);
-      expect(analysis.index_stats.failed_files).toBe(1);
-      expect(analysis.index_stats.parse_error_count).toBe(0);
-      expect(analysis.parse_failures).toEqual([{
-        file_path: 'lib/My/Broken.pm',
-        error: 'synthetic extraction failure'
-      }]);
-      expect(analysis.symbols.some((symbol) => symbol.qualified_name === 'My::Ok::ready')).toBe(true);
+      writeFileSync(path.join(root, 'Empty.pm'), 'package Empty;\n1;\n');
+      const analysis = await (await loadAnalyzer()).analyzeRepository(root);
+      expect(analysis).toMatchObject({ supported: true, provider_status: 'empty', complete: true });
+      expect(analysis.counts).toMatchObject({ discovered_files: 1, emitted_symbols: 0 });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it('reports parse diagnostics without failing partial analysis', async () => {
-    const { analyzeRepository } = await loadAnalyzer();
-    const root = path.join(tmpdir(), `perlgraph-parse-diagnostic-${Date.now()}`);
+  it('reports parse diagnostics as degraded without discarding extracted symbols', async () => {
+    const root = repository('degraded');
     try {
-      mkdirSync(path.join(root, 'lib'), { recursive: true });
-      writeFileSync(path.join(root, 'lib/Broken.pm'), [
-        'package Broken;',
-        'sub ok { return 1; }',
-        'sub broken { if ('
-      ].join('\n'));
-
-      const analysis = await analyzeRepository(root);
-
-      expect(analysis.parse_failures).toEqual([]);
-      expect(analysis.parse_diagnostics).toEqual([{
-        file_path: 'lib/Broken.pm',
-        error_count: expect.any(Number),
-        notes: 'tree-sitter reported parse errors; extraction may be partial'
-      }]);
-      expect(analysis.parse_diagnostics[0]!.error_count).toBeGreaterThan(0);
-      expect(analysis.index_stats.parse_error_count).toBe(analysis.parse_diagnostics[0]!.error_count);
-      expect(analysis.index_stats.index_state).toBe('degraded');
+      writeFileSync(path.join(root, 'Broken.pm'), 'package Broken;\nsub okay { 1 }\nsub broken { if (\n');
+      const analysis = await (await loadAnalyzer()).analyzeRepository(root);
+      expect(analysis.provider_status).toBe('degraded');
+      expect(analysis.complete).toBe(true);
+      expect(analysis.counts.parse_diagnostics).toBeGreaterThan(0);
+      expect(analysis.symbols.length).toBeGreaterThan(0);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it('omits undefined optional properties for module resolution output', async () => {
-    const { analyzeRepository } = await loadAnalyzer();
-    const root = path.join(tmpdir(), `perlgraph-unresolved-${Date.now()}`);
+  it('reports complete extraction failures as degraded and only counts emitted files', async () => {
+    vi.doMock('../src/extraction/perl-extractor.js', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('../src/extraction/perl-extractor.js')>();
+      return { ...actual, extractPerlFile: () => { throw new Error('synthetic extraction failure'); } };
+    });
+    const root = repository('failed');
+    try {
+      writeFileSync(path.join(root, 'Failed.pm'), 'package Failed;\n1;\n');
+      const analysis = await (await loadAnalyzer()).analyzeRepository(root);
+      expect(analysis).toMatchObject({ provider_status: 'degraded', complete: true });
+      expect(analysis.counts).toMatchObject({ discovered_files: 1, emitted_files: 0, emitted_symbols: 0, parse_failures: 1 });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects duplicate canonical locators before relationship resolution', async () => {
+    vi.doMock('../src/extraction/perl-extractor.js', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('../src/extraction/perl-extractor.js')>();
+      const duplicate = { qualified_name: 'Duplicate::run', name: 'run', kind: 'sub' as const, language: 'perl' as const, file_path: 'Duplicate.pm', line_start: 2, line_end: 2, signature: 'sub run', provenance: ['test'] };
+      return { ...actual, extractPerlFile: () => ({ symbols: [duplicate, duplicate], dependencies: [], role_applications: [], exports: [], calls: [], unsupported_patterns: [], parse_diagnostics: [] }) };
+    });
+    const root = repository('duplicate');
+    try {
+      writeFileSync(path.join(root, 'Duplicate.pm'), 'package Duplicate;\n1;\n');
+      await expect((await loadAnalyzer()).analyzeRepository(root)).rejects.toThrow(/duplicate canonical locator/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a repository path that does not exist', async () => {
+    await expect((await loadAnalyzer()).analyzeRepository(path.join(tmpdir(), `missing-perlgraph-${Date.now()}`))).rejects.toThrow(/Repository path does not exist/);
+  });
+
+  it('continues after a partial extraction failure and reports only successfully emitted files', async () => {
+    vi.doMock('../src/extraction/perl-extractor.js', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('../src/extraction/perl-extractor.js')>();
+      return { ...actual, extractPerlFile(filePath: string, content: string) {
+        if (filePath === 'lib/My/Broken.pm') throw new Error('synthetic extraction failure');
+        return actual.extractPerlFile(filePath, content);
+      } };
+    });
+    const root = repository('partial-failure');
     try {
       mkdirSync(path.join(root, 'lib/My'), { recursive: true });
-      writeFileSync(path.join(root, 'lib/My/App.pm'), [
-        'package My::App;',
-        'use My::Service;',
-        'use Missing::Thing;',
-        '1;'
-      ].join('\n'));
-      writeFileSync(path.join(root, 'lib/My/Service.pm'), [
-        'package My::Service;',
-        '1;'
-      ].join('\n'));
+      writeFileSync(path.join(root, 'lib/My/Ok.pm'), 'package My::Ok;\nsub ready { 1 }\n1;\n');
+      writeFileSync(path.join(root, 'lib/My/Broken.pm'), 'package My::Broken;\nsub nope { 0 }\n1;\n');
+      const analysis = await (await loadAnalyzer()).analyzeRepository(root);
+      expect(analysis).toMatchObject({ provider_status: 'degraded', complete: true });
+      expect(analysis.counts).toMatchObject({ discovered_files: 2, emitted_files: 1, parse_failures: 1 });
+      expect(analysis.parse_failures).toEqual([{ file_path: 'lib/My/Broken.pm', error: 'synthetic extraction failure' }]);
+      expect(analysis.symbols.some((entry) => entry.qualified_name === 'My::Ok::ready')).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 
-      const analysis = await analyzeRepository(root);
+  it('retains resolved module edges and moves unresolved module observations to diagnostics', async () => {
+    const root = repository('module-diagnostics');
+    try {
+      mkdirSync(path.join(root, 'lib/My'), { recursive: true });
+      writeFileSync(path.join(root, 'lib/My/App.pm'), 'package My::App;\nuse My::Service;\nuse Missing::Thing;\n1;\n');
+      writeFileSync(path.join(root, 'lib/My/Service.pm'), 'package My::Service;\n1;\n');
+      const analysis = await (await loadAnalyzer()).analyzeRepository(root);
       const resolvedModule = analysis.module_graph.find((entry) => entry.target_module === 'My::Service');
       const unresolvedModule = analysis.module_graph.find((entry) => entry.target_module === 'Missing::Thing');
-      const resolvedRelationship = analysis.relationships.find((relationship) => relationship.target === 'My::Service');
-      const unresolvedRelationship = analysis.relationships.find((relationship) => relationship.target === 'Missing::Thing');
-
-      expect(resolvedModule).toMatchObject({
-        source_module: 'My::App',
-        target_module: 'My::Service',
-        target_file: 'lib/My/Service.pm',
-        confidence: 'high'
-      });
-      expect(Object.hasOwn(resolvedRelationship!, 'notes')).toBe(false);
-      expect(unresolvedModule).toMatchObject({
-        source_module: 'My::App',
-        target_module: 'Missing::Thing',
-        confidence: 'low'
-      });
+      expect(resolvedModule).toMatchObject({ target_file: 'lib/My/Service.pm', confidence: 'high' });
       expect(Object.hasOwn(unresolvedModule!, 'target_file')).toBe(false);
-      expect(JSON.stringify(unresolvedModule)).not.toContain('target_file');
-      expect(unresolvedRelationship).toMatchObject({
-        target: 'Missing::Thing',
-        notes: 'Module Missing::Thing did not resolve to a repository file'
-      });
-      expect(Object.hasOwn(unresolvedRelationship!, 'notes')).toBe(true);
+      expect(analysis.relationships).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'imports', source: 'My::App', target: 'My::Service', source_key: expect.any(String), target_key: expect.any(String) })]));
+      expect(analysis.unresolved_relationships).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'imports', target: 'Missing::Thing', notes: 'Module Missing::Thing did not resolve to a repository file' })]));
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it('resolves safe local method inference while preserving dynamic diagnostics', async () => {
-    const { analyzeRepository } = await loadAnalyzer();
-    const root = path.join(tmpdir(), `perlgraph-dynamic-roadmap-${Date.now()}`);
+  it('preserves local receiver inference, self methods, and dynamic call diagnostics', async () => {
+    const root = repository('local-inference');
     try {
       mkdirSync(path.join(root, 'lib/My'), { recursive: true });
-      writeFileSync(path.join(root, 'lib/My/App.pm'), [
-        'package My::App;',
-        'use Moo;',
-        'use My::Service;',
-        'with "My::Role";',
-        'has service => (is => "ro");',
-        'sub run {',
-        '  my ($self) = @_;',
-        '  my $svc = My::Service->new();',
-        '  $self->helper();',
-        '  $self->service();',
-        '  return $svc->execute();',
-        '}',
-        'sub helper { return 1; }',
-        'eval $code;',
-        '1;'
-      ].join('\n'));
-      writeFileSync(path.join(root, 'lib/My/Role.pm'), [
-        'package My::Role;',
-        'use Moo::Role;',
-        '1;'
-      ].join('\n'));
-      writeFileSync(path.join(root, 'lib/My/Service.pm'), [
-        'package My::Service;',
-        'sub new { bless {}, shift }',
-        'sub execute { return 1; }',
-        '1;'
-      ].join('\n'));
-
-      const analysis = await analyzeRepository(root);
-
-      expect(analysis.call_graph).toContainEqual({
-        source: 'My::App::run',
-        target: 'My::App::helper',
-        confidence: 'medium',
-        provenance: ['tree-sitter', 'self-method-resolution']
-      });
-      expect(analysis.call_graph).toContainEqual({
-        source: 'My::App::run',
-        target: 'My::App::service',
-        confidence: 'medium',
-        provenance: ['tree-sitter', 'self-method-resolution']
-      });
-      expect(analysis.call_graph).toContainEqual({
-        source: 'My::App::run',
-        target: 'My::Service::execute',
-        confidence: 'medium',
-        provenance: ['tree-sitter', 'local-constructor-flow']
-      });
-      expect(analysis.relationships).toContainEqual({
-        source: 'My::App',
-        target: 'My::Role',
-        kind: 'uses_role',
-        file_path: 'lib/My/App.pm',
-        line_start: 4,
-        confidence: 'high',
-        provenance: ['moose-moo-role', 'module-resolution']
-      });
-      expect(analysis.unsupported_patterns).toContainEqual({
-        kind: 'eval_string',
-        file_path: 'lib/My/App.pm',
-        line_start: 14,
-        snippet: 'eval $code;',
-        notes: 'String eval cannot be statically resolved'
-      });
-      expect(analysis.index_stats.index_state).toBe('degraded');
+      writeFileSync(path.join(root, 'lib/My/App.pm'), 'package My::App;\nsub run {\n my ($self) = @_;\n my $svc = My::Service->new();\n $self->helper();\n $svc->execute();\n $dbh->prepare();\n}\nsub helper { 1 }\n1;\n');
+      writeFileSync(path.join(root, 'lib/My/Service.pm'), 'package My::Service;\nsub new { bless {}, shift }\nsub execute { 1 }\n1;\n');
+      const analysis = await (await loadAnalyzer()).analyzeRepository(root);
+      expect(analysis.relationships).toEqual(expect.arrayContaining([
+        expect.objectContaining({ target: 'My::App::helper', provenance: ['tree-sitter', 'self-method-resolution'] }),
+        expect.objectContaining({ target: 'My::Service::execute', provenance: ['tree-sitter', 'local-constructor-flow'] })
+      ]));
+      expect(analysis.unresolved_relationships).toEqual(expect.arrayContaining([expect.objectContaining({ target: 'DBI::db::prepare', provenance: ['tree-sitter', 'external-api-resolution'] })]));
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it('resolves self method calls through static parent inheritance', async () => {
-    const { analyzeRepository } = await loadAnalyzer();
-    const root = path.join(tmpdir(), `perlgraph-inherited-method-${Date.now()}`);
+  it('resolves static inheritance and transitive role composition with exact endpoints', async () => {
+    const root = repository('inheritance-roles');
     try {
       mkdirSync(path.join(root, 'lib/My'), { recursive: true });
-      writeFileSync(path.join(root, 'lib/My/Child.pm'), [
-        'package My::Child;',
-        'use parent "My::Base";',
-        'sub run {',
-        '  my ($self) = @_;',
-        '  return $self->shared();',
-        '}',
-        '1;'
-      ].join('\n'));
-      writeFileSync(path.join(root, 'lib/My/Base.pm'), [
-        'package My::Base;',
-        'sub shared { return 1; }',
-        '1;'
-      ].join('\n'));
-
-      const analysis = await analyzeRepository(root);
-
-      expect(analysis.call_graph).toContainEqual({
-        source: 'My::Child::run',
-        target: 'My::Base::shared',
-        confidence: 'medium',
-        provenance: ['tree-sitter', 'inheritance-method-resolution']
-      });
+      writeFileSync(path.join(root, 'lib/My/App.pm'), 'package My::App;\nuse Moo;\nextends "My::Child";\nwith "My::OuterRole";\nsub run {\n my ($self) = @_;\n $self->shared();\n $self->provided();\n}\n1;\n');
+      writeFileSync(path.join(root, 'lib/My/Child.pm'), 'package My::Child;\nuse parent "My::Base";\n1;\n');
+      writeFileSync(path.join(root, 'lib/My/Base.pm'), 'package My::Base;\nsub shared { 1 }\n1;\n');
+      writeFileSync(path.join(root, 'lib/My/OuterRole.pm'), 'package My::OuterRole;\nuse Moo::Role;\nwith "My::InnerRole";\n1;\n');
+      writeFileSync(path.join(root, 'lib/My/InnerRole.pm'), 'package My::InnerRole;\nuse Moo::Role;\nsub provided { 1 }\n1;\n');
+      const analysis = await (await loadAnalyzer()).analyzeRepository(root);
+      expect(analysis.relationships).toEqual(expect.arrayContaining([
+        expect.objectContaining({ kind: 'inherits', source: 'My::App', target: 'My::Child', source_key: expect.any(String), target_key: expect.any(String) }),
+        expect.objectContaining({ target: 'My::Base::shared', provenance: ['tree-sitter', 'inheritance-method-resolution'] }),
+        expect.objectContaining({ target: 'My::InnerRole::provided', provenance: ['tree-sitter', 'role-method-resolution'] })
+      ]));
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it('resolves self method calls supplied by static Moose and Moo roles', async () => {
-    const { analyzeRepository } = await loadAnalyzer();
-    const root = path.join(tmpdir(), `perlgraph-role-method-${Date.now()}`);
+  it('extracts Moose extends declarations and resolves inherited self calls exactly', async () => {
+    const root = repository('moose-inheritance');
     try {
       mkdirSync(path.join(root, 'lib/My'), { recursive: true });
-      writeFileSync(path.join(root, 'lib/My/App.pm'), [
-        'package My::App;',
-        'use Moo;',
-        'with "My::Role";',
-        'sub run {',
-        '  my ($self) = @_;',
-        '  return $self->provided();',
-        '}',
-        '1;'
-      ].join('\n'));
-      writeFileSync(path.join(root, 'lib/My/Role.pm'), [
-        'package My::Role;',
-        'use Moo::Role;',
-        'sub provided { return 1; }',
-        '1;'
-      ].join('\n'));
-
-      const analysis = await analyzeRepository(root);
-
-      expect(analysis.call_graph).toContainEqual({
-        source: 'My::App::run',
-        target: 'My::Role::provided',
-        confidence: 'medium',
-        provenance: ['tree-sitter', 'role-method-resolution']
-      });
+      writeFileSync(path.join(root, 'lib/My/App.pm'), 'package My::App;\nuse Moose;\nextends "My::Base";\nsub run {\n my ($self) = @_;\n $self->shared();\n}\n1;\n');
+      writeFileSync(path.join(root, 'lib/My/Base.pm'), 'package My::Base;\nsub shared { 1 }\n1;\n');
+      const analysis = await (await loadAnalyzer()).analyzeRepository(root);
+      expect(analysis.relationships).toEqual(expect.arrayContaining([
+        expect.objectContaining({ kind: 'inherits', source: 'My::App', target: 'My::Base', source_key: expect.any(String), target_key: expect.any(String) }),
+        expect.objectContaining({ kind: 'calls', source: 'My::App::run', target: 'My::Base::shared', provenance: ['tree-sitter', 'inheritance-method-resolution'], source_key: expect.any(String), target_key: expect.any(String) })
+      ]));
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it('resolves self method calls through transitive static role composition', async () => {
-    const { analyzeRepository } = await loadAnalyzer();
-    const root = path.join(tmpdir(), `perlgraph-transitive-role-${Date.now()}`);
+  it('normalizes static require paths and constrained concatenation', async () => {
+    const root = repository('requires');
     try {
       mkdirSync(path.join(root, 'lib/My'), { recursive: true });
-      writeFileSync(path.join(root, 'lib/My/App.pm'), [
-        'package My::App;',
-        'use Moo;',
-        'with "My::OuterRole";',
-        'sub run {',
-        '  my ($self) = @_;',
-        '  return $self->inner_method();',
-        '}',
-        '1;'
-      ].join('\n'));
-      writeFileSync(path.join(root, 'lib/My/OuterRole.pm'), [
-        'package My::OuterRole;',
-        'use Moo::Role;',
-        'with "My::InnerRole";',
-        '1;'
-      ].join('\n'));
-      writeFileSync(path.join(root, 'lib/My/InnerRole.pm'), [
-        'package My::InnerRole;',
-        'use Moo::Role;',
-        'sub inner_method { return 1; }',
-        '1;'
-      ].join('\n'));
-
-      const analysis = await analyzeRepository(root);
-
-      expect(analysis.call_graph).toContainEqual({
-        source: 'My::App::run',
-        target: 'My::InnerRole::inner_method',
-        confidence: 'medium',
-        provenance: ['tree-sitter', 'role-method-resolution']
-      });
+      writeFileSync(path.join(root, 'lib/My/App.pm'), 'package My::App;\nrequire "My/Service.pm";\nrequire "My" . "/Other.pm";\n1;\n');
+      writeFileSync(path.join(root, 'lib/My/Service.pm'), 'package My::Service;\n1;\n');
+      writeFileSync(path.join(root, 'lib/My/Other.pm'), 'package My::Other;\n1;\n');
+      const analysis = await (await loadAnalyzer()).analyzeRepository(root);
+      expect(analysis.module_graph).toEqual(expect.arrayContaining([
+        expect.objectContaining({ target_module: 'My::Service', kind: 'require', target_file: 'lib/My/Service.pm' }),
+        expect.objectContaining({ target_module: 'My::Other', kind: 'require', target_file: 'lib/My/Other.pm' })
+      ]));
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it('treats literal Moose and Moo extends declarations as inheritance', async () => {
-    const { analyzeRepository } = await loadAnalyzer();
-    const root = path.join(tmpdir(), `perlgraph-moose-extends-${Date.now()}`);
+  it('resolves implicit exports from repository modules and records external explicit imports as diagnostics', async () => {
+    const root = repository('exports');
     try {
       mkdirSync(path.join(root, 'lib/My'), { recursive: true });
-      writeFileSync(path.join(root, 'lib/My/Child.pm'), [
-        'package My::Child;',
-        'use Moose;',
-        'extends "My::Base";',
-        'sub run {',
-        '  my ($self) = @_;',
-        '  return $self->shared();',
-        '}',
-        '1;'
-      ].join('\n'));
-      writeFileSync(path.join(root, 'lib/My/Base.pm'), [
-        'package My::Base;',
-        'sub shared { return 1; }',
-        '1;'
-      ].join('\n'));
-
-      const analysis = await analyzeRepository(root);
-
-      expect(analysis.relationships).toContainEqual({
-        source: 'My::Child',
-        target: 'My::Base',
-        kind: 'inherits',
-        file_path: 'lib/My/Child.pm',
-        line_start: 3,
-        confidence: 'high',
-        provenance: ['tree-sitter', 'module-resolution']
-      });
-      expect(analysis.call_graph).toContainEqual({
-        source: 'My::Child::run',
-        target: 'My::Base::shared',
-        confidence: 'medium',
-        provenance: ['tree-sitter', 'inheritance-method-resolution']
-      });
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it('normalizes static quoted require module paths', async () => {
-    const { analyzeRepository } = await loadAnalyzer();
-    const root = path.join(tmpdir(), `perlgraph-quoted-require-${Date.now()}`);
-    try {
-      mkdirSync(path.join(root, 'lib/My'), { recursive: true });
-      writeFileSync(path.join(root, 'lib/My/App.pm'), [
-        'package My::App;',
-        'require "My/Service.pm";',
-        '1;'
-      ].join('\n'));
-      writeFileSync(path.join(root, 'lib/My/Service.pm'), [
-        'package My::Service;',
-        '1;'
-      ].join('\n'));
-
-      const analysis = await analyzeRepository(root);
-
-      expect(analysis.module_graph).toContainEqual({
-        source_module: 'My::App',
-        target_module: 'My::Service',
-        source_file: 'lib/My/App.pm',
-        target_file: 'lib/My/Service.pm',
-        kind: 'require',
-        confidence: 'high'
-      });
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it('resolves self method calls through transitive static inheritance', async () => {
-    const { analyzeRepository } = await loadAnalyzer();
-    const root = path.join(tmpdir(), `perlgraph-transitive-inheritance-${Date.now()}`);
-    try {
-      mkdirSync(path.join(root, 'lib/My'), { recursive: true });
-      writeFileSync(path.join(root, 'lib/My/Child.pm'), [
-        'package My::Child;',
-        'use parent "My::Middle";',
-        'sub run {',
-        '  my ($self) = @_;',
-        '  return $self->shared();',
-        '}',
-        '1;'
-      ].join('\n'));
-      writeFileSync(path.join(root, 'lib/My/Middle.pm'), [
-        'package My::Middle;',
-        'use parent "My::Base";',
-        '1;'
-      ].join('\n'));
-      writeFileSync(path.join(root, 'lib/My/Base.pm'), [
-        'package My::Base;',
-        'sub shared { return 1; }',
-        '1;'
-      ].join('\n'));
-
-      const analysis = await analyzeRepository(root);
-
-      expect(analysis.call_graph).toContainEqual({
-        source: 'My::Child::run',
-        target: 'My::Base::shared',
-        confidence: 'medium',
-        provenance: ['tree-sitter', 'inheritance-method-resolution']
-      });
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it('resolves constrained static require concatenation', async () => {
-    const { analyzeRepository } = await loadAnalyzer();
-    const root = path.join(tmpdir(), `perlgraph-require-concat-${Date.now()}`);
-    try {
-      mkdirSync(path.join(root, 'lib/My'), { recursive: true });
-      writeFileSync(path.join(root, 'lib/My/App.pm'), [
-        'package My::App;',
-        'require "My/" . "Service.pm";',
-        '1;'
-      ].join('\n'));
-      writeFileSync(path.join(root, 'lib/My/Service.pm'), [
-        'package My::Service;',
-        '1;'
-      ].join('\n'));
-
-      const analysis = await analyzeRepository(root);
-
-      expect(analysis.module_graph).toContainEqual({
-        source_module: 'My::App',
-        target_module: 'My::Service',
-        source_file: 'lib/My/App.pm',
-        target_file: 'lib/My/Service.pm',
-        kind: 'require',
-        confidence: 'high'
-      });
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it('resolves implicit exports from imported repository modules when unambiguous', async () => {
-    const { analyzeRepository } = await loadAnalyzer();
-    const root = path.join(tmpdir(), `perlgraph-implicit-export-${Date.now()}`);
-    try {
-      mkdirSync(path.join(root, 'lib/My'), { recursive: true });
-      writeFileSync(path.join(root, 'lib/My/Log.pm'), [
-        'package My::Log;',
-        'use Exporter "import";',
-        'our @EXPORT = qw(qlog INFO);',
-        'sub qlog { return 1; }',
-        '1;'
-      ].join('\n'));
-      writeFileSync(path.join(root, 'lib/My/Other.pm'), [
-        'package My::Other;',
-        'use Exporter "import";',
-        'our @EXPORT = qw(helper);',
-        'sub helper { return 1; }',
-        '1;'
-      ].join('\n'));
-      writeFileSync(path.join(root, 'lib/My/Ambiguous.pm'), [
-        'package My::Ambiguous;',
-        'use Exporter "import";',
-        'our @EXPORT = qw(helper);',
-        'sub helper { return 1; }',
-        '1;'
-      ].join('\n'));
-      writeFileSync(path.join(root, 'lib/My/App.pm'), [
-        'package My::App;',
-        'use My::Log;',
-        'use My::Other;',
-        'use My::Ambiguous;',
-        'sub run {',
-        '  qlog(INFO, __PACKAGE__, "hello");',
-        '  helper();',
-        '}',
-        '1;'
-      ].join('\n'));
-
-      const analysis = await analyzeRepository(root);
-
-      expect(analysis.relationships).toContainEqual({
-        source: 'My::App::run',
-        target: 'My::Log::qlog',
-        kind: 'calls',
-        file_path: 'lib/My/App.pm',
-        line_start: 6,
-        confidence: 'medium',
-        provenance: ['tree-sitter', 'implicit-export-resolution'],
-        notes: 'Bare call qlog matched implicit export from My::Log'
-      });
-      expect(analysis.relationships).toContainEqual({
-        source: 'My::App::run',
-        target: 'helper',
-        kind: 'calls',
-        file_path: 'lib/My/App.pm',
-        line_start: 7,
-        confidence: 'low',
-        provenance: ['unresolved-call'],
-        notes: 'Call expression helper did not resolve to a known symbol'
-      });
+      writeFileSync(path.join(root, 'lib/My/App.pm'), 'package My::App;\nuse My::Log;\nuse JSON qw(decode_json);\nsub run {\n qlog();\n decode_json();\n}\n1;\n');
+      writeFileSync(path.join(root, 'lib/My/Log.pm'), 'package My::Log;\nour @EXPORT = qw(qlog);\nsub qlog { 1 }\n1;\n');
+      const analysis = await (await loadAnalyzer()).analyzeRepository(root);
+      expect(analysis.relationships).toEqual(expect.arrayContaining([expect.objectContaining({ target: 'My::Log::qlog', provenance: ['tree-sitter', 'implicit-export-resolution'] })]));
+      expect(analysis.unresolved_relationships).toEqual(expect.arrayContaining([expect.objectContaining({ target: 'JSON::decode_json', provenance: ['tree-sitter', 'explicit-import-resolution'] })]));
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

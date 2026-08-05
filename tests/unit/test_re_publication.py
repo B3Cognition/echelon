@@ -4,6 +4,8 @@ import hashlib
 import json
 import shutil
 import socket
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
@@ -11,8 +13,10 @@ from typing import Callable
 
 import pytest
 
+import harness.re_lock as re_lock
 import harness.re_publication as re_publication
 from harness.re_artifacts import ReArtifactDescriptor
+from harness.publication_transaction import PublicationTransactionError
 from harness.re_architecture import build_re_architecture_map, write_re_architecture_catalog
 from harness.re_quality_gate import (
     QUALITY_CONTRACT_VERSION,
@@ -23,11 +27,13 @@ from harness.re_fingerprint import ReFingerprintProfile, SourceFingerprint
 from harness.re_planner import ReExecutionPlan, RePlanSource
 from harness.re_publication import (
     RePublicationConflict,
+    RePublicationError,
     RePublicationValidationError,
     publish_re_run,
     recover_interrupted_publication,
 )
-from harness.re_registry import ensure_re_layout
+from harness.re_lock import RePublishLock
+from harness.re_registry import ensure_re_layout, load_published_index
 from harness.re_registry import ReRegistryError
 
 
@@ -62,6 +68,60 @@ def _fingerprint(source_id: str, version: str, profile: ReFingerprintProfile) ->
         dirty=False,
         profile_hash=profile.profile_hash(),
     )
+
+
+def _topology_codegraph(source_id: str) -> dict[str, object]:
+    locator = ["src/api.py", f"{source_id}.run", "function", "()"]
+    key = "sha256:" + hashlib.sha256(
+        json.dumps(locator, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return {
+        "schema_version": 2,
+        "version": "2.0.0",
+        "tool": "codegraph",
+        "tool_version": "1.4.1",
+        "repo_path": "/provider/native/path",
+        "provider_status": "complete",
+        "complete": True,
+        "supported": True,
+        "counts": {
+            "discovered_symbols": 1,
+            "emitted_symbols": 1,
+            "excluded_symbols": 0,
+            "discovered_relationships": 0,
+            "emitted_relationships": 0,
+            "excluded_relationships": 0,
+        },
+        "diagnostics": {"unresolved_relationships": []},
+        "symbols": [
+            {
+                "symbol_key": key,
+                "file_path": "src/api.py",
+                "qualified_name": f"{source_id}.run",
+                "name": "run",
+                "kind": "function",
+                "signature": "()",
+                "line_start": 1,
+                "line_end": 1,
+            }
+        ],
+        "relationships": [],
+        "call_graph": [],
+        "type_hierarchy": [],
+        "impact_radius": [],
+    }
+
+
+def _topology_summary(analysis: dict[str, object]) -> dict[str, object]:
+    return {
+        "schema_version": 2,
+        "tool": "codegraph",
+        "tool_version": analysis["tool_version"],
+        "provider_status": analysis["provider_status"],
+        "complete": analysis["complete"],
+        "counts": analysis["counts"],
+        "diagnostics": analysis["diagnostics"],
+    }
 
 
 def _deep_spec(source_id: str, version: str) -> str:
@@ -156,6 +216,7 @@ def write_valid_re_run(
             "reuse": "current",
             "skip-empty": "empty",
             "missing": "unavailable",
+            "exclude": "unavailable",
         }[action]
         fingerprint = _fingerprint(source_id, version, profile)
         plan_source = RePlanSource(
@@ -325,6 +386,27 @@ def _finish_run(run_dir: Path) -> None:
     _write_json(run_dir / "state.json", state)
 
 
+def _mark_target_only(run_dir: Path, root: Path, target_source: str) -> None:
+    plan_path = run_dir / "re/re-execution-plan.json"
+    plan = _read_json(plan_path)
+    plan["policy"] = "target-only"
+    plan["requested_policy"] = "target-only"
+    plan["target_source"] = target_source
+    plan["forbidden_source_roots"] = [
+        str(root / source["path"])
+        for source in plan["sources"]
+        if source["id"] != target_source
+    ]
+    for source in plan["sources"]:
+        source["selected"] = source["id"] == target_source
+    _write_json(plan_path, plan)
+    source_index_path = run_dir / "re/re-source-index.json"
+    source_index = _read_json(source_index_path)
+    for source in source_index["sources"]:
+        source["selected"] = source["id"] == target_source
+    _write_json(source_index_path, source_index)
+
+
 def _assert_corrupt_catalog_blocks_publication(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -383,8 +465,6 @@ def test_complete_two_source_publish_creates_generation_with_typed_artifact_cata
         "# Supporting Artifacts\n",
         encoding="utf-8",
     )
-    _write_json(source_re / "codegraph-summary.json", {"source_id": "api", "summary": True})
-    _write_json(source_re / "codegraph-analysis.json", {"source_id": "api", "analysis": True})
     _write_json(
         run_dir / "re" / "codegraph-summary.json",
         {"workspace": True, "sources": ["api"]},
@@ -411,8 +491,8 @@ def test_complete_two_source_publish_creates_generation_with_typed_artifact_cata
         "dependencies": "re/sources/api/dependencies.json",
         "structure": "re/sources/api/structure.json",
     }
-    assert manifest["codegraph_summary"] == "re/sources/api/codegraph-summary.json"
-    assert manifest["codegraph_analysis"] == "re/sources/api/codegraph-analysis.json"
+    assert "codegraph_summary" not in manifest
+    assert "codegraph_analysis" not in manifest
     assert (tmp_path / "re/sources/api/domain-manifest.json").is_file()
     assert (tmp_path / "re/sources/api/architecture.md").is_file()
     assert (tmp_path / "re/sources/api/contracts.md").is_file()
@@ -423,24 +503,15 @@ def test_complete_two_source_publish_creates_generation_with_typed_artifact_cata
         "source_id": "api",
         "structure": True,
     }
-    assert json.loads((tmp_path / "re/sources/api/codegraph-summary.json").read_text()) == {
-        "source_id": "api",
-        "summary": True,
-    }
-    assert json.loads((tmp_path / "re/sources/api/codegraph-analysis.json").read_text()) == {
-        "source_id": "api",
-        "analysis": True,
-    }
+    assert not (tmp_path / "re/sources/api/codegraph-summary.json").exists()
+    assert not (tmp_path / "re/sources/api/codegraph-analysis.json").exists()
     fingerprint = index["sources"]["api"]["fingerprint"]
     assert (tmp_path / f"re/.cache/sources/api/{fingerprint}/analysis.json").is_file()
     assert (tmp_path / "re/workspace/contracts.md").is_file()
     assert (tmp_path / "re/workspace/architecture-map.json").is_file()
     assert (tmp_path / "re/workspace/domain-catalog.md").is_file()
-    assert index["workspace"]["codegraph_summary"] == "re/workspace/codegraph-summary.json"
-    assert json.loads((tmp_path / "re/workspace/codegraph-summary.json").read_text()) == {
-        "workspace": True,
-        "sources": ["api"],
-    }
+    assert "codegraph_summary" not in index["workspace"]
+    assert not (tmp_path / "re/workspace/codegraph-summary.json").exists()
     source_manifest = _read_json(tmp_path / "re/sources/api/manifest.json")
     assert source_manifest["artifacts"] == sorted(
         source_manifest["artifacts"], key=lambda row: row["path"]
@@ -468,6 +539,977 @@ def test_complete_two_source_publish_creates_generation_with_typed_artifact_cata
     assert index["workspace"]["manifest_artifact"]["kind"] == (
         "re-workspace-manifest"
     )
+
+
+@pytest.mark.unit
+def test_publication_stages_semantic_and_topology_authorities_together(tmp_path: Path) -> None:
+    from echelon.topology_registry import load_topology_index
+
+    run_dir = write_valid_re_run(tmp_path, ("api", "web"))
+    (tmp_path / ".echelon").mkdir()
+    (tmp_path / ".echelon" / "config.yml").write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n    - id: web\n      path: sources/web\n",
+        encoding="utf-8",
+    )
+    for source_id in ("api", "web"):
+        source = run_dir / "re" / "sources" / source_id
+        _write_json(source / "codegraph-analysis.json", _topology_codegraph(source_id))
+        _write_json(source / "codegraph-summary.json", _topology_summary(_topology_codegraph(source_id)))
+
+    result = publish_re_run(tmp_path, run_dir)
+
+    semantic = _read_json(tmp_path / "re" / "index.json")
+    topology = load_topology_index(tmp_path)
+    assert result.generation == semantic["generation"] == 1
+    assert result.topology_generation == 1
+    assert topology is not None and topology.generation == 1
+    assert semantic["sources"]["api"]["fingerprint"] == (
+        topology.sources["api"].source_fingerprint.value
+    )
+    assert topology.sources["api"].providers["codegraph"].counts[
+        "discovered_symbols"
+    ] == 1
+    assert not (tmp_path / "re/sources/api/codegraph-analysis.json").exists()
+    assert not (tmp_path / "re/sources/api/codegraph-summary.json").exists()
+    assert (tmp_path / "re/topology/sources/api/codegraph-analysis.json").is_file()
+    assert (tmp_path / "re/topology/sources/api/codegraph-summary.json").is_file()
+    manifest = _read_json(tmp_path / "re/sources/api/manifest.json")
+    assert "codegraph_analysis" not in manifest
+    assert "codegraph_summary" not in manifest
+
+
+@pytest.mark.unit
+def test_targeted_publication_preserves_sibling_receipts_and_resynthesizes_workspace(
+    tmp_path: Path,
+) -> None:
+    config = tmp_path / ".echelon/config.yml"
+    config.parent.mkdir()
+    config.write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n"
+        "    - id: web\n      path: sources/web\n",
+        encoding="utf-8",
+    )
+    run_1 = write_valid_re_run(tmp_path, ("api", "web"), run_id="run-1")
+    for source_id in ("api", "web"):
+        analysis = _topology_codegraph(source_id)
+        _write_json(run_1 / f"re/sources/{source_id}/codegraph-analysis.json", analysis)
+        _write_json(
+            run_1 / f"re/sources/{source_id}/codegraph-summary.json",
+            _topology_summary(analysis),
+        )
+    publish_re_run(tmp_path, run_1)
+    _finish_run(run_1)
+    sibling_semantic_before = _source_child_snapshot(tmp_path / "re/sources/web")
+    sibling_topology_before = {
+        path.relative_to(tmp_path / "re/topology/sources/web").as_posix(): path.read_bytes()
+        for path in sorted((tmp_path / "re/topology/sources/web").rglob("*"))
+        if path.is_file()
+    }
+    workspace_before = _source_child_snapshot(tmp_path / "re/workspace")
+
+    run_2 = write_valid_re_run(
+        tmp_path,
+        ("api", "web"),
+        run_id="run-2",
+        versions={"api": "v2", "web": "v1"},
+        actions={"api": "refresh", "web": "reuse"},
+    )
+    plan_path = run_2 / "re/re-execution-plan.json"
+    plan = _read_json(plan_path)
+    plan["policy"] = "target-only"
+    plan["requested_policy"] = "target-only"
+    plan["target_source"] = "api"
+    plan["forbidden_source_roots"] = [str(tmp_path / "sources/web")]
+    plan["sources"][1]["selected"] = False
+    _write_json(plan_path, plan)
+    source_index_path = run_2 / "re/re-source-index.json"
+    source_index = _read_json(source_index_path)
+    source_index["sources"][1]["selected"] = False
+    _write_json(source_index_path, source_index)
+    analysis = _topology_codegraph("api")
+    _write_json(run_2 / "re/sources/api/codegraph-analysis.json", analysis)
+    _write_json(
+        run_2 / "re/sources/api/codegraph-summary.json",
+        _topology_summary(analysis),
+    )
+
+    result = publish_re_run(tmp_path, run_2, expected_generation=1)
+
+    assert result.changed_sources == ("api",)
+    assert _source_child_snapshot(tmp_path / "re/sources/web") == sibling_semantic_before
+    assert {
+        path.relative_to(tmp_path / "re/topology/sources/web").as_posix(): path.read_bytes()
+        for path in sorted((tmp_path / "re/topology/sources/web").rglob("*"))
+        if path.is_file()
+    } == sibling_topology_before
+    assert _source_child_snapshot(tmp_path / "re/workspace") != workspace_before
+    assert (tmp_path / "re/workspace/overview.md").read_text(encoding="utf-8") == (
+        "# Workspace run-2\n"
+    )
+
+
+@pytest.mark.unit
+def test_targeted_publication_is_atomic_when_selected_source_disappears(
+    tmp_path: Path,
+) -> None:
+    config = tmp_path / ".echelon/config.yml"
+    config.parent.mkdir()
+    config.write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n",
+        encoding="utf-8",
+    )
+    run_1 = write_valid_re_run(tmp_path, ("api",), run_id="run-1")
+    analysis = _topology_codegraph("api")
+    _write_json(run_1 / "re/sources/api/codegraph-analysis.json", analysis)
+    _write_json(
+        run_1 / "re/sources/api/codegraph-summary.json",
+        _topology_summary(analysis),
+    )
+    publish_re_run(tmp_path, run_1)
+    _finish_run(run_1)
+    before = _durable_snapshot(tmp_path)
+
+    run_2 = write_valid_re_run(
+        tmp_path,
+        ("api",),
+        run_id="run-2",
+        versions={"api": "v2"},
+    )
+    plan_path = run_2 / "re/re-execution-plan.json"
+    plan = _read_json(plan_path)
+    plan["policy"] = "target-only"
+    plan["requested_policy"] = "target-only"
+    plan["target_source"] = "api"
+    _write_json(plan_path, plan)
+    analysis = _topology_codegraph("api")
+    _write_json(run_2 / "re/sources/api/codegraph-analysis.json", analysis)
+    _write_json(
+        run_2 / "re/sources/api/codegraph-summary.json",
+        _topology_summary(analysis),
+    )
+    shutil.rmtree(tmp_path / "sources/api")
+
+    with pytest.raises(
+        RePublicationValidationError,
+        match="selected source api is unavailable",
+    ):
+        publish_re_run(tmp_path, run_2, expected_generation=1)
+
+    assert _durable_snapshot(tmp_path) == before
+
+
+@pytest.mark.unit
+def test_targeted_publication_does_not_migrate_legacy_reused_sibling(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.topology_audit import audit_topology
+    from echelon.topology_registry import load_published_topology, load_topology_index
+
+    run_1 = write_valid_re_run(tmp_path, ("api", "web"), run_id="run-1")
+    analysis = _topology_codegraph("web")
+    _write_json(run_1 / "re/sources/web/codegraph-analysis.json", analysis)
+    _write_json(
+        run_1 / "re/sources/web/codegraph-summary.json",
+        _topology_summary(analysis),
+    )
+    publish_re_run(tmp_path, run_1)
+    _finish_run(run_1)
+
+    sibling = tmp_path / "re/sources/web"
+    sibling_semantic_before = {
+        path.relative_to(sibling).as_posix(): path.read_bytes()
+        for path in sorted(sibling.rglob("*"))
+        if path.is_file()
+    }
+    assert not (tmp_path / "re/topology/sources/web").exists()
+
+    config = tmp_path / ".echelon/config.yml"
+    config.parent.mkdir()
+    config.write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n"
+        "    - id: web\n      path: sources/web\n",
+        encoding="utf-8",
+    )
+    run_2 = write_valid_re_run(
+        tmp_path,
+        ("api", "web"),
+        run_id="run-2",
+        versions={"api": "v2", "web": "v1"},
+        actions={"api": "refresh", "web": "reuse"},
+    )
+    plan_path = run_2 / "re/re-execution-plan.json"
+    plan = _read_json(plan_path)
+    plan["policy"] = "target-only"
+    plan["requested_policy"] = "target-only"
+    plan["target_source"] = "api"
+    plan["forbidden_source_roots"] = [str(tmp_path / "sources/web")]
+    plan["sources"][1]["selected"] = False
+    _write_json(plan_path, plan)
+    source_index_path = run_2 / "re/re-source-index.json"
+    source_index = _read_json(source_index_path)
+    source_index["sources"][1]["selected"] = False
+    _write_json(source_index_path, source_index)
+    target_analysis = _topology_codegraph("api")
+    _write_json(run_2 / "re/sources/api/codegraph-analysis.json", target_analysis)
+    _write_json(
+        run_2 / "re/sources/api/codegraph-summary.json",
+        _topology_summary(target_analysis),
+    )
+    with monkeypatch.context() as no_discovery:
+        no_discovery.setattr(
+            "harness.re_publication.discover_workspace",
+            lambda root: pytest.fail("targeted bootstrap read live sibling roots"),
+        )
+        no_discovery.setattr(
+            "harness.topology_publication.discover_workspace",
+            lambda root: pytest.fail("topology staging read live sibling roots"),
+        )
+        no_discovery.setattr(
+            "echelon.topology_registry.discover_workspace",
+            lambda root: pytest.fail("topology registry read live sibling roots"),
+        )
+
+        result = publish_re_run(tmp_path, run_2, expected_generation=1)
+
+    assert result.changed_sources == ("api",)
+    assert {
+        path.relative_to(sibling).as_posix(): path.read_bytes()
+        for path in sorted(sibling.rglob("*"))
+        if path.is_file()
+    } == sibling_semantic_before
+    topology = load_topology_index(tmp_path)
+    assert result.topology_generation == 1
+    assert topology is not None
+    assert set(topology.sources) == {"api", "web"}
+    assert topology.sources["api"].providers["codegraph"].status == "ready"
+    assert topology.sources["web"].providers["codegraph"].status == "unavailable"
+    assert (tmp_path / "re/topology/sources/api/codegraph-analysis.json").is_file()
+    assert (tmp_path / "re/topology/sources/api/codegraph-summary.json").is_file()
+    assert (tmp_path / "re/topology/sources/api/receipt.json").is_file()
+    sibling_receipt = _read_json(tmp_path / "re/topology/sources/web/receipt.json")
+    assert sibling_receipt["providers"]["codegraph"]["status"] == "unavailable"
+    assert sibling_receipt["providers"]["codegraph"]["diagnostics"] == [
+        {
+            "kind": "bootstrap",
+            "message": "topology unavailable until this source is explicitly refreshed",
+        }
+    ]
+    assert not (tmp_path / "re/topology/sources/web/codegraph-analysis.json").exists()
+    published_topology = load_published_topology(tmp_path)
+    assert published_topology.receipt("web").provider_statuses == {
+        "codegraph": "unavailable"
+    }
+    assert audit_topology(tmp_path).status == "stale"
+    assert load_published_index(tmp_path) is not None
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("sibling_status", "without_specs"),
+    (("partial", False), ("complete", True)),
+)
+def test_targeted_topology_bootstrap_accepts_durable_sibling_identity(
+    tmp_path: Path,
+    sibling_status: str,
+    without_specs: bool,
+) -> None:
+    from echelon.topology_registry import load_topology_index
+
+    run_1 = write_valid_re_run(tmp_path, ("api", "web"), run_id="run-1")
+    publish_re_run(tmp_path, run_1)
+    _finish_run(run_1)
+
+    sibling_manifest_path = tmp_path / "re/sources/web/manifest.json"
+    sibling_manifest = _read_json(sibling_manifest_path)
+    sibling_manifest["publication_status"] = sibling_status
+    if without_specs:
+        sibling_manifest["specs"] = []
+    _write_json(sibling_manifest_path, sibling_manifest)
+    semantic_index_path = tmp_path / "re/index.json"
+    semantic_index = _read_json(semantic_index_path)
+    semantic_index["publication_status"] = sibling_status
+    semantic_index["sources"]["web"]["status"] = sibling_status
+    semantic_index["sources"]["web"]["manifest_artifact"]["sha256"] = (
+        "sha256:" + hashlib.sha256(sibling_manifest_path.read_bytes()).hexdigest()
+    )
+    _write_json(semantic_index_path, semantic_index)
+    sibling_before = {
+        path.relative_to(tmp_path / "re/sources/web").as_posix(): path.read_bytes()
+        for path in sorted((tmp_path / "re/sources/web").rglob("*"))
+        if path.is_file()
+    }
+
+    config = tmp_path / ".echelon/config.yml"
+    config.parent.mkdir()
+    config.write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n"
+        "    - id: web\n      path: sources/web\n",
+        encoding="utf-8",
+    )
+    run_2 = write_valid_re_run(
+        tmp_path,
+        ("api", "web"),
+        run_id="run-2",
+        versions={"api": "v2", "web": "v1"},
+        actions={"api": "refresh", "web": "reuse"},
+    )
+    _mark_target_only(run_2, tmp_path, "api")
+    analysis = _topology_codegraph("api")
+    _write_json(run_2 / "re/sources/api/codegraph-analysis.json", analysis)
+    _write_json(
+        run_2 / "re/sources/api/codegraph-summary.json",
+        _topology_summary(analysis),
+    )
+
+    result = publish_re_run(tmp_path, run_2, expected_generation=1)
+
+    assert result.changed_sources == ("api",)
+    assert {
+        path.relative_to(tmp_path / "re/sources/web").as_posix(): path.read_bytes()
+        for path in sorted((tmp_path / "re/sources/web").rglob("*"))
+        if path.is_file()
+    } == sibling_before
+    topology = load_topology_index(tmp_path)
+    assert topology is not None
+    assert topology.sources["web"].providers["codegraph"].status == "unavailable"
+
+
+@pytest.mark.unit
+def test_targeted_topology_bootstrap_failure_rolls_back_semantic_and_topology(
+    tmp_path: Path,
+) -> None:
+    run_1 = write_valid_re_run(tmp_path, ("api", "web"), run_id="run-1")
+    publish_re_run(tmp_path, run_1)
+    _finish_run(run_1)
+    before = _durable_snapshot(tmp_path)
+
+    config = tmp_path / ".echelon/config.yml"
+    config.parent.mkdir()
+    config.write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n"
+        "    - id: web\n      path: sources/web\n",
+        encoding="utf-8",
+    )
+    run_2 = write_valid_re_run(
+        tmp_path,
+        ("api", "web"),
+        run_id="run-2",
+        versions={"api": "v2", "web": "v1"},
+        actions={"api": "refresh", "web": "reuse"},
+    )
+    plan_path = run_2 / "re/re-execution-plan.json"
+    plan = _read_json(plan_path)
+    plan["policy"] = "target-only"
+    plan["requested_policy"] = "target-only"
+    plan["target_source"] = "api"
+    plan["forbidden_source_roots"] = [str(tmp_path / "sources/web")]
+    plan["sources"][1]["selected"] = False
+    _write_json(plan_path, plan)
+    source_index_path = run_2 / "re/re-source-index.json"
+    source_index = _read_json(source_index_path)
+    source_index["sources"][1]["selected"] = False
+    _write_json(source_index_path, source_index)
+    analysis = _topology_codegraph("api")
+    _write_json(run_2 / "re/sources/api/codegraph-analysis.json", analysis)
+    _write_json(
+        run_2 / "re/sources/api/codegraph-summary.json",
+        _topology_summary(analysis),
+    )
+
+    def fail_after_sibling_receipt(step: str) -> None:
+        if step == "after_replace:topology/sources/web":
+            raise OSError("injected topology bootstrap failure")
+
+    with pytest.raises(OSError, match="injected topology bootstrap failure"):
+        publish_re_run(
+            tmp_path,
+            run_2,
+            expected_generation=1,
+            fault_hook=fail_after_sibling_receipt,
+        )
+
+    assert _durable_snapshot(tmp_path) == before
+    assert not (tmp_path / "re/topology/index.json").exists()
+    assert not (tmp_path / "re/topology/sources/api").exists()
+    assert not (tmp_path / "re/topology/sources/web").exists()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("provenance", ("canonical", "legacy"))
+@pytest.mark.parametrize("mutation", ("change", "remove", "replace", "malformed"))
+def test_targeted_publication_rolls_back_when_declarations_change_during_apply(
+    tmp_path: Path,
+    provenance: str,
+    mutation: str,
+) -> None:
+    from echelon.topology_registry import load_published_topology, load_topology_index
+
+    config = (
+        tmp_path / ".echelon/config.yml"
+        if provenance == "canonical"
+        else tmp_path / ".specify/extensions/echelon/echelon-config.yml"
+    )
+    config.parent.mkdir(parents=True)
+    original_config = (
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n"
+        "    - id: web\n      path: sources/web\n"
+    )
+    config.write_text(original_config, encoding="utf-8")
+    run_1 = write_valid_re_run(tmp_path, ("api", "web"), run_id="run-1")
+    for source_id in ("api", "web"):
+        analysis = _topology_codegraph(source_id)
+        _write_json(
+            run_1 / f"re/sources/{source_id}/codegraph-analysis.json",
+            analysis,
+        )
+        _write_json(
+            run_1 / f"re/sources/{source_id}/codegraph-summary.json",
+            _topology_summary(analysis),
+        )
+    publish_re_run(tmp_path, run_1)
+    _finish_run(run_1)
+    before = _durable_snapshot(tmp_path)
+
+    run_2 = write_valid_re_run(
+        tmp_path,
+        ("api", "web"),
+        run_id="run-2",
+        versions={"api": "v2", "web": "v1"},
+        actions={"api": "refresh", "web": "reuse"},
+    )
+    _mark_target_only(run_2, tmp_path, "api")
+    analysis = _topology_codegraph("api")
+    _write_json(run_2 / "re/sources/api/codegraph-analysis.json", analysis)
+    _write_json(
+        run_2 / "re/sources/api/codegraph-summary.json",
+        _topology_summary(analysis),
+    )
+
+    def mutate_config_after_install(step: str) -> None:
+        if step != "after_replace:topology/index.json":
+            return
+        if mutation == "change":
+            config.write_text(original_config + "# changed during apply\n", encoding="utf-8")
+        elif mutation == "remove":
+            config.unlink()
+        elif mutation == "replace":
+            replacement = config.with_name(config.name + ".replacement")
+            replacement.write_text(
+                "workspace:\n  sources:\n    - id: api\n      path: sources/api-v2\n"
+                "    - id: web\n      path: sources/web\n",
+                encoding="utf-8",
+            )
+            replacement.replace(config)
+        else:
+            replacement = config.with_name(config.name + ".malformed")
+            replacement.write_text(
+                "workspace:\n  sources: [api\n",
+                encoding="utf-8",
+            )
+            replacement.replace(config)
+
+    with pytest.raises(
+        RePublicationValidationError,
+        match="workspace source declarations changed during publication",
+    ):
+        publish_re_run(
+            tmp_path,
+            run_2,
+            expected_generation=1,
+            fault_hook=mutate_config_after_install,
+        )
+
+    assert _durable_snapshot(tmp_path) == before
+    if mutation == "malformed":
+        assert config.read_text(encoding="utf-8") == "workspace:\n  sources: [api\n"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(original_config, encoding="utf-8")
+    published = load_published_index(tmp_path)
+    topology = load_topology_index(tmp_path)
+    assert published is not None and published.generation == 1
+    assert topology is not None and topology.generation == 1
+    assert load_published_topology(tmp_path).generation == 1
+
+
+@pytest.mark.unit
+def test_targeted_topology_bootstrap_rejects_unusable_sibling_baseline_atomically(
+    tmp_path: Path,
+) -> None:
+    run_1 = write_valid_re_run(tmp_path, ("api", "web"), run_id="run-1")
+    publish_re_run(tmp_path, run_1)
+    _finish_run(run_1)
+
+    sibling_manifest_path = tmp_path / "re/sources/web/manifest.json"
+    sibling_manifest = _read_json(sibling_manifest_path)
+    sibling_manifest["overview"] = "re/sources/web/missing-overview.md"
+    _write_json(sibling_manifest_path, sibling_manifest)
+    semantic_index_path = tmp_path / "re/index.json"
+    semantic_index = _read_json(semantic_index_path)
+    semantic_index["sources"]["web"]["manifest_artifact"]["sha256"] = (
+        "sha256:" + hashlib.sha256(sibling_manifest_path.read_bytes()).hexdigest()
+    )
+    _write_json(semantic_index_path, semantic_index)
+    before = _durable_snapshot(tmp_path)
+
+    config = tmp_path / ".echelon/config.yml"
+    config.parent.mkdir()
+    config.write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n"
+        "    - id: web\n      path: sources/web\n",
+        encoding="utf-8",
+    )
+    run_2 = write_valid_re_run(
+        tmp_path,
+        ("api", "web"),
+        run_id="run-2",
+        versions={"api": "v2", "web": "v1"},
+        actions={"api": "refresh", "web": "reuse"},
+    )
+    plan_path = run_2 / "re/re-execution-plan.json"
+    plan = _read_json(plan_path)
+    plan["policy"] = "target-only"
+    plan["requested_policy"] = "target-only"
+    plan["target_source"] = "api"
+    plan["forbidden_source_roots"] = [str(tmp_path / "sources/web")]
+    plan["sources"][1]["selected"] = False
+    _write_json(plan_path, plan)
+    source_index_path = run_2 / "re/re-source-index.json"
+    source_index = _read_json(source_index_path)
+    source_index["sources"][1]["selected"] = False
+    _write_json(source_index_path, source_index)
+    analysis = _topology_codegraph("api")
+    _write_json(run_2 / "re/sources/api/codegraph-analysis.json", analysis)
+    _write_json(
+        run_2 / "re/sources/api/codegraph-summary.json",
+        _topology_summary(analysis),
+    )
+
+    with pytest.raises(
+        RePublicationValidationError,
+        match="current RE publication is structurally invalid.*missing-overview",
+    ):
+        publish_re_run(tmp_path, run_2, expected_generation=1)
+
+    assert _durable_snapshot(tmp_path) == before
+    assert not (tmp_path / "re/topology/index.json").exists()
+
+
+@pytest.mark.unit
+def test_targeted_topology_bootstrap_supports_legacy_config_provenance(
+    tmp_path: Path,
+) -> None:
+    from echelon.topology_registry import load_topology_index
+
+    run_1 = write_valid_re_run(tmp_path, ("api", "web"), run_id="run-1")
+    publish_re_run(tmp_path, run_1)
+    _finish_run(run_1)
+    legacy_config = tmp_path / ".specify/extensions/echelon/echelon-config.yml"
+    legacy_config.parent.mkdir(parents=True)
+    legacy_config.write_text(
+        "workspace:\n  sources:\n    - id: api\n      repo: sources/api\n"
+        "    - id: web\n      repo: sources/web\n",
+        encoding="utf-8",
+    )
+    run_2 = write_valid_re_run(
+        tmp_path,
+        ("api", "web"),
+        run_id="run-2",
+        versions={"api": "v2", "web": "v1"},
+        actions={"api": "refresh", "web": "reuse"},
+    )
+    _mark_target_only(run_2, tmp_path, "api")
+    analysis = _topology_codegraph("api")
+    _write_json(run_2 / "re/sources/api/codegraph-analysis.json", analysis)
+    _write_json(
+        run_2 / "re/sources/api/codegraph-summary.json",
+        _topology_summary(analysis),
+    )
+
+    result = publish_re_run(tmp_path, run_2, expected_generation=1)
+
+    topology = load_topology_index(tmp_path)
+    assert result.topology_generation == 1
+    assert topology is not None
+    assert set(topology.sources) == {"api", "web"}
+    assert topology.sources["web"].providers["codegraph"].status == "unavailable"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "config_document",
+    (
+        "workspace:\n  git_role: orchestration\n  sources: []\n",
+        "workspace:\n  git_role: orchestration\ntelemetry:\n  enabled: true\n",
+    ),
+)
+def test_targeted_publication_rejects_implicit_or_empty_source_declarations(
+    tmp_path: Path,
+    config_document: str,
+) -> None:
+    run_1 = write_valid_re_run(tmp_path, ("api", "web"), run_id="run-1")
+    publish_re_run(tmp_path, run_1)
+    _finish_run(run_1)
+    before = _durable_snapshot(tmp_path)
+    config = tmp_path / ".echelon/config.yml"
+    config.parent.mkdir()
+    config.write_text(config_document, encoding="utf-8")
+    run_2 = write_valid_re_run(
+        tmp_path,
+        ("api", "web"),
+        run_id="run-2",
+        versions={"api": "v2", "web": "v1"},
+        actions={"api": "refresh", "web": "reuse"},
+    )
+    _mark_target_only(run_2, tmp_path, "api")
+    analysis = _topology_codegraph("api")
+    _write_json(run_2 / "re/sources/api/codegraph-analysis.json", analysis)
+    _write_json(
+        run_2 / "re/sources/api/codegraph-summary.json",
+        _topology_summary(analysis),
+    )
+
+    with pytest.raises(
+        RePublicationValidationError,
+        match="targeted refresh requires explicitly declared workspace sources",
+    ):
+        publish_re_run(tmp_path, run_2, expected_generation=1)
+
+    assert _durable_snapshot(tmp_path) == before
+    assert not (tmp_path / "re/topology/index.json").exists()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("source_id", "source_path"),
+    (("-api", "sources/-api"),),
+)
+def test_targeted_publication_rejects_topology_incompatible_declarations_atomically(
+    tmp_path: Path,
+    source_id: str,
+    source_path: str,
+) -> None:
+    config = tmp_path / ".echelon/config.yml"
+    config.parent.mkdir()
+    config.write_text(
+        f"workspace:\n  sources:\n    - id: {source_id}\n      path: {source_path}\n",
+        encoding="utf-8",
+    )
+    run_dir = write_valid_re_run(tmp_path, (source_id,), run_id="run-1")
+    _mark_target_only(run_dir, tmp_path, source_id)
+    before = _durable_snapshot(tmp_path)
+
+    with pytest.raises(
+        RePublicationValidationError,
+        match="not publishable as topology",
+    ):
+        publish_re_run(tmp_path, run_dir)
+
+    assert _durable_snapshot(tmp_path) == before
+
+
+@pytest.mark.unit
+def test_configured_refresh_without_provider_evidence_is_atomic_failure(tmp_path: Path) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    (tmp_path / ".echelon").mkdir()
+    (tmp_path / ".echelon" / "config.yml").write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RePublicationValidationError, match="no usable topology evidence"):
+        publish_re_run(tmp_path, run_dir)
+
+    assert not (tmp_path / "re/index.json").exists()
+    assert not (tmp_path / "re/topology/index.json").exists()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("topology_target", ("topology/index.json", "topology/sources/api"))
+def test_topology_staging_corruption_rolls_back_both_authorities(
+    tmp_path: Path,
+    topology_target: str,
+) -> None:
+    config = tmp_path / ".echelon/config.yml"
+    config.parent.mkdir()
+    config.write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n",
+        encoding="utf-8",
+    )
+    run_1 = write_valid_re_run(tmp_path, ("api",), run_id="run-1")
+    _write_json(run_1 / "re/sources/api/codegraph-analysis.json", _topology_codegraph("api"))
+    _write_json(run_1 / "re/sources/api/codegraph-summary.json", _topology_summary(_topology_codegraph("api")))
+    publish_re_run(tmp_path, run_1)
+    _finish_run(run_1)
+    before = _durable_snapshot(tmp_path)
+
+    run_2 = write_valid_re_run(tmp_path, ("api",), run_id="run-2", versions={"api": "v2"})
+    _write_json(run_2 / "re/sources/api/codegraph-analysis.json", _topology_codegraph("api"))
+    _write_json(run_2 / "re/sources/api/codegraph-summary.json", _topology_summary(_topology_codegraph("api")))
+
+    def corrupt_topology_index(step: str) -> None:
+        if step == f"after_backup:{topology_target}":
+            staged = tmp_path / "re/.staging/run-2/new/re" / topology_target
+            if staged.is_dir():
+                staged = staged / "receipt.json"
+            staged.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(PublicationTransactionError, match="staged artifact changed before install"):
+        publish_re_run(tmp_path, run_2, expected_generation=1, fault_hook=corrupt_topology_index)
+
+    assert _durable_snapshot(tmp_path) == before
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("topology_target", ("topology/index.json", "topology/sources/api"))
+def test_post_install_topology_validation_restores_both_authorities(
+    tmp_path: Path, topology_target: str
+) -> None:
+    from echelon.topology_registry import load_published_topology, load_topology_index
+
+    config = tmp_path / ".echelon/config.yml"
+    config.parent.mkdir()
+    config.write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n",
+        encoding="utf-8",
+    )
+    run_1 = write_valid_re_run(tmp_path, ("api",), run_id="run-1")
+    _write_json(run_1 / "re/sources/api/codegraph-analysis.json", _topology_codegraph("api"))
+    _write_json(run_1 / "re/sources/api/codegraph-summary.json", _topology_summary(_topology_codegraph("api")))
+    publish_re_run(tmp_path, run_1)
+    _finish_run(run_1)
+    before = _durable_snapshot(tmp_path)
+
+    run_2 = write_valid_re_run(tmp_path, ("api",), run_id="run-2", versions={"api": "v2"})
+    _write_json(run_2 / "re/sources/api/codegraph-analysis.json", _topology_codegraph("api"))
+    _write_json(run_2 / "re/sources/api/codegraph-summary.json", _topology_summary(_topology_codegraph("api")))
+
+    def corrupt_installed_topology(step: str) -> None:
+        if step == f"after_replace:{topology_target}":
+            path = tmp_path / "re" / topology_target
+            if path.is_dir():
+                path = path / "receipt.json"
+            path.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(Exception, match="topology|schema_version|hash"):
+        publish_re_run(tmp_path, run_2, expected_generation=1, fault_hook=corrupt_installed_topology)
+
+    assert _durable_snapshot(tmp_path) == before
+    assert _read_json(tmp_path / "re/index.json")["generation"] == 1
+    assert load_topology_index(tmp_path).generation == 1  # type: ignore[union-attr]
+    assert load_published_topology(tmp_path).generation == 1
+    assert _read_json(tmp_path / "re/.staging/run-2/rollback-journal.json")["status"] == "rolled_back"
+
+
+@pytest.mark.unit
+def test_removing_a_configured_source_removes_its_topology_in_the_same_publication(
+    tmp_path: Path,
+) -> None:
+    from echelon.topology_registry import load_topology_index
+
+    run_1 = write_valid_re_run(tmp_path, ("api", "web"), run_id="run-1")
+    config = tmp_path / ".echelon" / "config.yml"
+    config.parent.mkdir()
+    config.write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n    - id: web\n      path: sources/web\n",
+        encoding="utf-8",
+    )
+    for source_id in ("api", "web"):
+        source = run_1 / "re" / "sources" / source_id
+        _write_json(source / "codegraph-analysis.json", _topology_codegraph(source_id))
+        _write_json(source / "codegraph-summary.json", _topology_summary(_topology_codegraph(source_id)))
+    publish_re_run(tmp_path, run_1)
+    _finish_run(run_1)
+
+    config.write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n",
+        encoding="utf-8",
+    )
+    run_2 = write_valid_re_run(
+        tmp_path,
+        ("api",),
+        run_id="run-2",
+        actions={"api": "reuse"},
+        removed_sources=("web",),
+    )
+    result = publish_re_run(tmp_path, run_2, expected_generation=1)
+
+    topology = load_topology_index(tmp_path)
+    assert result.generation == 2
+    assert result.topology_generation == 2
+    assert topology is not None and set(topology.sources) == {"api"}
+    assert not (tmp_path / "re/sources/web").exists()
+    assert not (tmp_path / "re/topology/sources/web").exists()
+
+
+@pytest.mark.unit
+def test_reuse_migrates_valid_schema_two_provider_artifacts_from_legacy_semantic_source(
+    tmp_path: Path,
+) -> None:
+    from echelon.topology_registry import load_topology_index
+
+    run_1 = write_valid_re_run(tmp_path, ("api",), run_id="run-1")
+    publish_re_run(tmp_path, run_1)
+    _finish_run(run_1)
+    config = tmp_path / ".echelon" / "config.yml"
+    config.parent.mkdir()
+    config.write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n",
+        encoding="utf-8",
+    )
+    legacy = tmp_path / "re/sources/api"
+    _write_json(legacy / "codegraph-analysis.json", _topology_codegraph("api"))
+    _write_json(legacy / "codegraph-summary.json", _topology_summary(_topology_codegraph("api")))
+
+    run_2 = write_valid_re_run(
+        tmp_path,
+        ("api",),
+        run_id="run-2",
+        actions={"api": "reuse"},
+    )
+    result = publish_re_run(tmp_path, run_2, expected_generation=1)
+
+    topology = load_topology_index(tmp_path)
+    assert result.topology_generation == 1
+    assert topology is not None and set(topology.sources) == {"api"}
+    assert not (legacy / "codegraph-analysis.json").exists()
+    assert (tmp_path / "re/topology/sources/api/codegraph-analysis.json").is_file()
+
+
+@pytest.mark.unit
+def test_reuse_upgrades_actual_codegraph_v1_without_discarding_valid_perlgraph(
+    tmp_path: Path,
+) -> None:
+    from echelon.topology_registry import load_topology_index
+    from tests.unit.test_topology_evidence import _perl_unsupported, _summary
+
+    run_1 = write_valid_re_run(tmp_path, ("api",), run_id="run-1")
+    publish_re_run(tmp_path, run_1)
+    _finish_run(run_1)
+    config = tmp_path / ".echelon/config.yml"
+    config.parent.mkdir()
+    config.write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n",
+        encoding="utf-8",
+    )
+    legacy = tmp_path / "re/sources/api"
+    _write_json(
+        legacy / "codegraph-analysis.json",
+        {
+            "version": "1.0.0",
+            "repo_path": "/provider/native/path",
+            "supported": True,
+            "symbols": [
+                {"file_path": "src/api.py", "qualified_name": "api.run", "kind": "function", "signature": "()", "line_start": 1, "line_end": 1}
+            ],
+            "relationships": [],
+        },
+    )
+    _write_json(legacy / "codegraph-summary.json", {"legacy": True})
+    perlgraph = _perl_unsupported()
+    _write_json(legacy / "perlgraph-analysis.json", perlgraph)
+    _write_json(legacy / "perlgraph-summary.json", _summary("perlgraph", perlgraph))
+
+    run_2 = write_valid_re_run(tmp_path, ("api",), run_id="run-2", actions={"api": "reuse"})
+    result = publish_re_run(tmp_path, run_2, expected_generation=1)
+
+    topology = load_topology_index(tmp_path)
+    assert result.topology_generation == 1
+    assert topology is not None
+    assert set(topology.sources["api"].providers) == {"codegraph", "perlgraph"}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "field,value",
+    (
+        ("source_fingerprint", "f" * 64),
+        ("profile_hash", "e" * 64),
+        ("dirty", True),
+        ("source_path", "sources/other"),
+        ("git_head", "0123456789abcdef0123456789abcdef01234567"),
+    ),
+)
+def test_untrusted_legacy_topology_bytes_do_not_block_semantic_republish(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    run_1 = write_valid_re_run(tmp_path, ("api",), run_id="run-1")
+    publish_re_run(tmp_path, run_1)
+    _finish_run(run_1)
+    config = tmp_path / ".echelon/config.yml"
+    config.parent.mkdir()
+    config.write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n",
+        encoding="utf-8",
+    )
+    legacy = tmp_path / "re/sources/api"
+    _write_json(legacy / "codegraph-analysis.json", _topology_codegraph("api"))
+    _write_json(legacy / "codegraph-summary.json", _topology_summary(_topology_codegraph("api")))
+    manifest = _read_json(legacy / "manifest.json")
+    manifest[field] = value
+    _write_json(legacy / "manifest.json", manifest)
+    index = _read_json(tmp_path / "re/index.json")
+    index["sources"]["api"]["manifest_artifact"]["sha256"] = "sha256:" + hashlib.sha256(
+        (legacy / "manifest.json").read_bytes()
+    ).hexdigest()
+    _write_json(tmp_path / "re/index.json", index)
+
+    run_2 = write_valid_re_run(tmp_path, ("api",), run_id="run-2", actions={"api": "reuse"})
+    result = publish_re_run(tmp_path, run_2, expected_generation=1)
+
+    assert result.generation == 2
+    assert result.topology_generation is None
+    assert not (tmp_path / "re/topology/index.json").exists()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("legacy_case", ("malformed", "ambiguous-schema-one"))
+def test_optional_reused_legacy_failures_reject_partial_first_topology_atomically(
+    tmp_path: Path, legacy_case: str
+) -> None:
+    run_1 = write_valid_re_run(tmp_path, ("api", "web"), run_id="run-1")
+    publish_re_run(tmp_path, run_1)
+    _finish_run(run_1)
+    config = tmp_path / ".echelon/config.yml"
+    config.parent.mkdir()
+    config.write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n    - id: web\n      path: sources/web\n",
+        encoding="utf-8",
+    )
+    legacy = tmp_path / "re/sources/web"
+    _write_json(legacy / "codegraph-summary.json", {"legacy": True})
+    if legacy_case == "malformed":
+        (legacy / "codegraph-analysis.json").write_text("{", encoding="utf-8")
+    else:
+        _write_json(
+            legacy / "codegraph-analysis.json",
+            {
+                "symbols": [
+                    {"file_path": "a.py", "qualified_name": "duplicate", "kind": "function", "line_start": 1, "line_end": 1},
+                    {"file_path": "b.py", "qualified_name": "duplicate", "kind": "function", "line_start": 1, "line_end": 1},
+                ],
+                "relationships": [{"kind": "calls", "source": "duplicate", "target": "duplicate"}],
+            },
+        )
+    before = _durable_snapshot(tmp_path)
+    run_2 = write_valid_re_run(
+        tmp_path,
+        ("api", "web"),
+        run_id="run-2",
+        versions={"api": "v2", "web": "v1"},
+        actions={"api": "refresh", "web": "reuse"},
+    )
+    _write_json(run_2 / "re/sources/api/codegraph-analysis.json", _topology_codegraph("api"))
+    _write_json(run_2 / "re/sources/api/codegraph-summary.json", _topology_summary(_topology_codegraph("api")))
+
+    with pytest.raises(
+        RePublicationValidationError,
+        match="first topology publication must cover every configured",
+    ):
+        publish_re_run(tmp_path, run_2, expected_generation=1)
+
+    assert _durable_snapshot(tmp_path) == before
+    assert not (tmp_path / "re/topology/index.json").exists()
 
 
 @pytest.mark.unit
@@ -762,6 +1804,12 @@ def test_legacy_reused_source_is_atomically_upgraded_to_typed_catalog(
 
 @pytest.mark.unit
 def test_empty_source_publishes_manifest_without_specs(tmp_path: Path) -> None:
+    config = tmp_path / ".echelon/config.yml"
+    config.parent.mkdir()
+    config.write_text(
+        "workspace:\n  sources:\n    - id: empty\n      path: sources/empty\n",
+        encoding="utf-8",
+    )
     run_dir = write_valid_re_run(
         tmp_path,
         ("empty",),
@@ -775,6 +1823,8 @@ def test_empty_source_publishes_manifest_without_specs(tmp_path: Path) -> None:
     assert manifest["publication_status"] == "empty"
     assert manifest["specs"] == []
     assert "No analyzable source files" in (tmp_path / "re/sources/empty/overview.md").read_text()
+    topology = _read_json(tmp_path / "re/topology/sources/empty/receipt.json")
+    assert topology["providers"]["codegraph"]["status"] == "empty"
 
 
 @pytest.mark.unit
@@ -878,6 +1928,7 @@ def test_failure_before_index_replace_rolls_back_byte_for_byte(tmp_path: Path) -
 
     def fail_before_index(step: str) -> None:
         if step == "before_index_replace":
+            assert (tmp_path / "re/index.json").read_bytes() == before["index.json"]
             raise OSError("injected failure")
 
     with pytest.raises(OSError, match="injected failure"):
@@ -1029,7 +2080,232 @@ def test_stale_interrupted_replacement_restores_backup(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
-def test_invalid_installed_index_rolls_back_before_cleanup(tmp_path: Path) -> None:
+def test_concurrent_stale_recovery_has_one_rollback_owner(tmp_path: Path) -> None:
+    paths = ensure_re_layout(tmp_path)
+    final = paths.root / "canonical"
+    final.write_text("new\n", encoding="utf-8")
+    stage = paths.staging / "run-stale"
+    backup = stage / "rollback/canonical"
+    backup.parent.mkdir(parents=True)
+    backup.write_text("old\n", encoding="utf-8")
+    _write_json(
+        stage / "rollback-journal.json",
+        {
+            "schema_version": 1,
+            "status": "replacing",
+            "operations": [
+                {
+                    "final": "canonical",
+                    "staged": "new/canonical",
+                    "backup": "rollback/canonical",
+                    "backed_up": True,
+                    "installed": True,
+                }
+            ],
+        },
+    )
+    lock = paths.locks / "publish.lock"
+    lock.mkdir()
+    _write_json(
+        lock / "owner.json",
+        {
+            "run_id": "run-stale",
+            "run_dir": None,
+            "pid": 999_999_999,
+            "hostname": socket.gethostname(),
+            "acquired_at": (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat(),
+        },
+    )
+    barrier = threading.Barrier(3)
+
+    def recover() -> bool:
+        barrier.wait()
+        return recover_interrupted_publication(tmp_path, stale_after_seconds=0)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(recover)
+        second = executor.submit(recover)
+        barrier.wait()
+        outcomes = [first.result(), second.result()]
+
+    assert sorted(outcomes) == [False, True]
+    assert final.read_text(encoding="utf-8") == "old\n"
+    assert not backup.exists()
+    assert not lock.exists()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("status", ("replacing", "rolling_back"))
+def test_orphan_pending_journal_recovers_and_unblocks_publication(tmp_path: Path, status: str) -> None:
+    paths = ensure_re_layout(tmp_path)
+    (paths.root / "orphan").write_text("new\n", encoding="utf-8")
+    stage = paths.staging / "orphan"
+    backup = stage / "rollback/orphan"; backup.parent.mkdir(parents=True); backup.write_text("old\n", encoding="utf-8")
+    _write_json(stage / "rollback-journal.json", {"schema_version": 1, "status": status, "operations": [{"final": "orphan", "staged": "new/orphan", "backup": "rollback/orphan", "backed_up": True, "installed": True}]})
+    assert recover_interrupted_publication(tmp_path, stale_after_seconds=0)
+    assert (paths.root / "orphan").read_text(encoding="utf-8") == "old\n"
+    assert not stage.exists()
+
+
+@pytest.mark.unit
+def test_recovery_clean_workspace_does_not_leave_a_publish_lock(tmp_path: Path) -> None:
+    assert recover_interrupted_publication(tmp_path, stale_after_seconds=0) is False
+    assert not (tmp_path / "re/.locks/publish.lock").exists()
+
+
+@pytest.mark.unit
+def test_orphan_claim_metadata_interruption_does_not_permanently_block_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = ensure_re_layout(tmp_path)
+    (paths.root / "orphan").write_text("new\n", encoding="utf-8")
+    stage = paths.staging / "orphan"
+    backup = stage / "rollback/orphan"
+    backup.parent.mkdir(parents=True)
+    backup.write_text("old\n", encoding="utf-8")
+    _write_json(
+        stage / "rollback-journal.json",
+        {
+            "schema_version": 1,
+            "status": "replacing",
+            "operations": [
+                {
+                    "final": "orphan",
+                    "staged": "new/orphan",
+                    "backup": "rollback/orphan",
+                    "backed_up": True,
+                    "installed": True,
+                }
+            ],
+        },
+    )
+    original = re_lock._write_claim_temp
+
+    def interrupt(*_args: object, **_kwargs: object) -> None:
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(re_lock, "_write_claim_temp", interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        recover_interrupted_publication(tmp_path, stale_after_seconds=0)
+    assert not (paths.locks / "publish.lock").exists()
+
+    monkeypatch.setattr(re_lock, "_write_claim_temp", original)
+    assert recover_interrupted_publication(tmp_path, stale_after_seconds=0)
+    assert (paths.root / "orphan").read_text(encoding="utf-8") == "old\n"
+
+
+@pytest.mark.unit
+def test_ownerless_recovery_lock_claim_blocks_publishers_and_recovers_after_death(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = ensure_re_layout(tmp_path)
+    (paths.root / "orphan").write_text("new\n", encoding="utf-8")
+    stage = paths.staging / "orphan"
+    backup = stage / "rollback/orphan"
+    backup.parent.mkdir(parents=True)
+    backup.write_text("old\n", encoding="utf-8")
+    _write_json(
+        stage / "rollback-journal.json",
+        {
+            "schema_version": 1,
+            "status": "replacing",
+            "operations": [
+                {
+                    "final": "orphan",
+                    "staged": "new/orphan",
+                    "backup": "rollback/orphan",
+                    "backed_up": True,
+                    "installed": True,
+                }
+            ],
+        },
+    )
+    original = re_lock._write_json_atomic
+
+    def interrupt_owner_install(path: Path, *args: object, **kwargs: object) -> None:
+        if path == paths.locks / "publish.lock/owner.json":
+            raise KeyboardInterrupt()
+        original(path, *args, **kwargs)
+
+    monkeypatch.setattr(re_lock, "_write_json_atomic", interrupt_owner_install)
+    with pytest.raises(KeyboardInterrupt):
+        recover_interrupted_publication(tmp_path, stale_after_seconds=0)
+    assert (paths.locks / "publish.lock").is_dir()
+    with pytest.raises(re_lock.RePublishLocked, match="orphan"):
+        RePublishLock.acquire(tmp_path, "next", None)
+
+    monkeypatch.setattr(re_lock, "_write_json_atomic", original)
+    claim = paths.locks / ".publish-claim.json"
+    owner = _read_json(claim)
+    owner["pid"] = 999_999_999
+    _write_json(claim, owner)
+
+    assert recover_interrupted_publication(tmp_path, stale_after_seconds=0)
+    assert (paths.root / "orphan").read_text(encoding="utf-8") == "old\n"
+    assert not (paths.locks / "publish.lock").exists()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("with_stale_lock", (False, True))
+def test_recovery_releases_lock_before_harmless_rolled_back_stage_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    with_stale_lock: bool,
+) -> None:
+    paths = ensure_re_layout(tmp_path)
+    (paths.root / "orphan").write_text("new\n", encoding="utf-8")
+    stage = paths.staging / "orphan"
+    backup = stage / "rollback/orphan"
+    backup.parent.mkdir(parents=True)
+    backup.write_text("old\n", encoding="utf-8")
+    _write_json(
+        stage / "rollback-journal.json",
+        {
+            "schema_version": 1,
+            "status": "replacing",
+            "operations": [
+                {
+                    "final": "orphan",
+                    "staged": "new/orphan",
+                    "backup": "rollback/orphan",
+                    "backed_up": True,
+                    "installed": True,
+                }
+            ],
+        },
+    )
+    if with_stale_lock:
+        lock = paths.locks / "publish.lock"
+        lock.mkdir()
+        _write_json(
+            lock / "owner.json",
+            {
+                "run_id": "orphan",
+                "run_dir": None,
+                "pid": 999_999_999,
+                "hostname": socket.gethostname(),
+                "acquired_at": (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat(),
+            },
+        )
+    original_rmtree = re_publication.shutil.rmtree
+
+    def fail_stage_cleanup(path: Path, *args: object, **kwargs: object) -> None:
+        if Path(path) == stage:
+            raise OSError("cleanup interrupted")
+        original_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(re_publication.shutil, "rmtree", fail_stage_cleanup)
+    with pytest.raises(OSError, match="cleanup interrupted"):
+        recover_interrupted_publication(tmp_path, stale_after_seconds=0)
+    assert not (paths.locks / "publish.lock").exists()
+    assert _read_json(stage / "rollback-journal.json")["status"] == "rolled_back"
+    with RePublishLock.acquire(tmp_path, "next", None):
+        pass
+
+
+@pytest.mark.unit
+def test_invalid_installed_index_rolls_back_before_cleanup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     run_1 = write_valid_re_run(tmp_path, ("api",), run_id="run-1")
     publish_re_run(tmp_path, run_1)
     _finish_run(run_1)
@@ -1041,16 +2317,20 @@ def test_invalid_installed_index_rolls_back_before_cleanup(tmp_path: Path) -> No
         versions={"api": "v2"},
     )
 
-    def corrupt_index(step: str) -> None:
-        if step == "after_index_replace":
-            (tmp_path / "re/index.json").write_text("not json\n", encoding="utf-8")
+    original = re_publication.PublishedReIndex.from_path
 
-    with pytest.raises(ReRegistryError, match="cannot read RE index"):
+    def reject_installed_index(path: Path):
+        if path == tmp_path / "re/index.json":
+            raise ReRegistryError("injected installed index validation failure")
+        return original(path)
+
+    monkeypatch.setattr(re_publication.PublishedReIndex, "from_path", reject_installed_index)
+
+    with pytest.raises(ReRegistryError, match="injected installed index"):
         publish_re_run(
             tmp_path,
             run_2,
             expected_generation=1,
-            fault_hook=corrupt_index,
         )
 
     assert _durable_snapshot(tmp_path) == before

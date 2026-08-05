@@ -518,6 +518,12 @@ def _finish_branchless_landing(
     verified_commit = metadata.get("verified_commit")
 
     if status == "landed" and not verified_commit:
+        gitops.ensure_on_default_branch(str(project_dir))
+        _post_land_topology_reconciliation(
+            spec_id,
+            wrapper_project_dir,
+            project_dir,
+        )
         logger.info("land: %s is already landed (legacy status evidence)", spec_id)
         return True
 
@@ -603,6 +609,12 @@ def _finish_branchless_landing(
                 wrapper_project_dir,
                 spec_id,
                 "",
+            )
+            gitops.ensure_on_default_branch(str(project_dir))
+            _post_land_topology_reconciliation(
+                spec_id,
+                wrapper_project_dir,
+                project_dir,
             )
             logger.info(
                 "land: %s has no feature branch, but verified commit %s is on %s",
@@ -1555,9 +1567,168 @@ def _finish_landing(
     if spec_dir:
         write_status(spec_dir, "landed")
     _clear_landed_active_authoring_pointer(spec_project_dir, spec_id, feature_branch)
+    _post_land_topology_reconciliation(
+        spec_id,
+        spec_project_dir,
+        project_dir,
+    )
 
     logger.info("land: %s — landed successfully", spec_id)
     return True
+
+
+def _post_land_topology_reconciliation(
+    spec_id: str,
+    workspace_root: Path,
+    target_root: Path,
+) -> None:
+    """Report independent topology and semantic freshness after successful landing."""
+    source_id = _configured_source_id_for_target(workspace_root, target_root)
+    default_head = _current_git_commit(target_root)
+    reconciliation_detail = ""
+    if default_head is None:
+        reconciliation_detail = "could not resolve landed default HEAD"
+    else:
+        try:
+            from harness.topology_promotion import reconcile_landed_topology
+
+            result = reconcile_landed_topology(
+                workspace_root,
+                spec_id,
+                target_root,
+                default_head,
+            )
+            source_id = result.source_id or source_id
+            if result.status != "current":
+                reconciliation_detail = result.message
+        except Exception as exc:  # noqa: BLE001 - landing must remain successful.
+            reconciliation_detail = str(exc)
+
+    topology_status = _landed_topology_status(workspace_root, source_id)
+    semantic_status = _landed_semantic_re_status(workspace_root, source_id)
+    _log_landed_freshness("topology", topology_status, reconciliation_detail)
+    _log_landed_freshness("semantic RE", semantic_status)
+    if source_id is not None and (
+        topology_status != "current" or semantic_status != "current"
+    ):
+        logger.warning("next: echelon re refresh --source %s", source_id)
+
+
+def _landed_topology_status(workspace_root: Path, source_id: str | None) -> str:
+    if source_id is None:
+        return "unavailable"
+    try:
+        from echelon.topology_audit import audit_topology
+
+        status = audit_topology(workspace_root, source_id=source_id).status
+    except Exception:  # noqa: BLE001 - landing reporting is deliberately nonfatal.
+        return "unavailable"
+    if status in {"current", "stale"}:
+        return status
+    return "unavailable"
+
+
+def _landed_semantic_re_status(
+    workspace_root: Path,
+    source_id: str | None,
+) -> str:
+    if source_id is None:
+        return "unavailable"
+    try:
+        from echelon.workspace_model import discover_workspace
+        from harness.re_fingerprint import (
+            fingerprint_source,
+            resolve_re_fingerprint_profile,
+        )
+        from harness.re_quality_contract import QUALITY_CONTRACT_VERSION
+        from harness.re_registry import (
+            load_published_index,
+            published_source_is_current,
+            published_source_is_usable,
+        )
+
+        root = Path(workspace_root).resolve()
+        matches = [
+            source
+            for source in discover_workspace(root).sources
+            if source.id == source_id
+        ]
+        if len(matches) != 1:
+            return "unavailable"
+        source = matches[0]
+        source_path = Path(source.path)
+        if not source_path.is_absolute():
+            source_path = root / source_path
+        if not source_path.exists():
+            return "unavailable"
+        index = load_published_index(root)
+        if index is None or source_id not in index.sources:
+            return "unavailable"
+        profile = resolve_re_fingerprint_profile(root)
+        fingerprint = fingerprint_source(source_path, profile)
+        expect_empty = source.source_file_count <= 0
+        if published_source_is_current(
+            root,
+            index,
+            source_id,
+            source_path=source.path,
+            fingerprint=fingerprint.value,
+            profile_hash=fingerprint.profile_hash,
+            expect_empty=expect_empty,
+            quality_contract_version=QUALITY_CONTRACT_VERSION,
+        ):
+            return "current"
+        published = index.sources[source_id]
+        if not published_source_is_usable(
+            root,
+            index,
+            source_id,
+            expect_empty=expect_empty,
+        ):
+            return "unavailable"
+        if (
+            expect_empty
+            and published.status == "empty"
+            and published.source_path == source.path
+            and published.fingerprint == fingerprint.value
+            and published.profile_hash == fingerprint.profile_hash
+        ):
+            return "current"
+        return "stale"
+    except Exception:  # noqa: BLE001 - landing reporting is deliberately nonfatal.
+        return "unavailable"
+
+
+def _log_landed_freshness(authority: str, status: str, detail: str = "") -> None:
+    suffix = f" ({detail})" if detail and status != "current" else ""
+    if status == "current":
+        logger.info("%s: current", authority)
+    else:
+        logger.warning("%s: %s%s", authority, status, suffix)
+
+
+def _configured_source_id_for_target(
+    workspace_root: Path,
+    target_root: Path,
+) -> str | None:
+    try:
+        from echelon.workspace_model import discover_workspace
+
+        workspace = Path(workspace_root).resolve()
+        target = Path(target_root).resolve()
+        matches = [
+            source.id
+            for source in discover_workspace(workspace).sources
+            if (
+                workspace
+                if source.path == "."
+                else workspace / source.path
+            ).resolve()
+            == target
+        ]
+    except (OSError, ValueError):
+        return None
+    return matches[0] if len(matches) == 1 else None
 
 
 def _clear_landed_active_authoring_pointer(

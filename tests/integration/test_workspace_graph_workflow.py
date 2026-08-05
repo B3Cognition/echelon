@@ -12,7 +12,11 @@ from typer.testing import CliRunner
 
 from echelon.spec_graph import GraphNode, SpecArtifactGraph, write_spec_graph
 from echelon.spec_graph_audit import GraphFinding, SpecGraphAuditReport
-from tests.unit.test_re_publication import write_valid_re_run
+from tests.unit.test_re_publication import (
+    _topology_codegraph,
+    _topology_summary,
+    write_valid_re_run,
+)
 from tests.unit.test_spec_publish import _create_spec_branch, _git, _init_repo
 
 
@@ -193,7 +197,17 @@ class _MemoryWriter:
 def _write_verify_evidence(root: Path, spec_id: str) -> Path:
     verify_dir = root / "runs" / f"verify-{spec_id}" / "verify-spec" / spec_id
     verify_dir.mkdir(parents=True)
-    (verify_dir / "state.json").write_text('{"status": "complete"}\n', encoding="utf-8")
+    (verify_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "complete",
+                "spec_id": spec_id,
+                "completed_at": "2026-08-05T00:00:00Z",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     (verify_dir / "implementation-map.md").write_text(
         "# Implementation Map\n\nFixture evidence for the published specification.\n",
         encoding="utf-8",
@@ -245,10 +259,18 @@ def _publish_fixture_workspace(root: Path) -> str:
     assert spec_publication.created_commit is True
     published_spec_id = spec_publication.published[0].spec_id
 
-    re_publication = publish_re_run(
-        root,
-        write_valid_re_run(root, ("fixture-source",), run_id="fixture-re"),
+    re_run = write_valid_re_run(root, ("fixture-source",), run_id="fixture-re")
+    source_output = re_run / "re/sources/fixture-source"
+    analysis = _topology_codegraph("fixture-source")
+    (source_output / "codegraph-analysis.json").write_text(
+        json.dumps(analysis, indent=2) + "\n",
+        encoding="utf-8",
     )
+    (source_output / "codegraph-summary.json").write_text(
+        json.dumps(_topology_summary(analysis), indent=2) + "\n",
+        encoding="utf-8",
+    )
+    re_publication = publish_re_run(root, re_run)
     assert re_publication.generation == 1
 
     from echelon.mempalace_spec_evidence import publish_spec_evidence_package

@@ -513,6 +513,9 @@ def impact_model() -> GraphReadModel:
         _node("drawer:one", "MemPalaceDrawer"),
         _node("amendment:one", "Amendment"),
         _node("source:app", "SourceRoot"),
+        _node("artifact:source-description", "Artifact"),
+        _node("artifact:topology-receipt", "Artifact"),
+        _node("decision:app:ADR-001.md", "Decision"),
         _node("excluded", "Other"),
         _node("incoming-excluded", "Other"),
     )
@@ -521,7 +524,14 @@ def impact_model() -> GraphReadModel:
         _edge("spec:new", "SUPERSEDES", "spec:old"),
         _edge("spec:old", "HAS_REQUIREMENT", "req:one"),
         _edge("spec:old", "AMENDED_BY", "amendment:one"),
-        _edge("spec:old", "TARGETS", "source:app"),
+        _edge("spec:old", "USES_SOURCE", "source:app"),
+        _edge("source:app", "DESCRIBED_BY", "artifact:source-description"),
+        _edge(
+            "source:app",
+            "HAS_TOPOLOGY_RECEIPT",
+            "artifact:topology-receipt",
+        ),
+        _edge("source:app", "HAS_DECISION", "decision:app:ADR-001.md"),
         _edge("req:one", "DERIVED_FROM", "artifact:source"),
         _edge("task:one", "IMPLEMENTS", "req:one"),
         _edge("req:one", "VERIFIED_BY", "artifact:verified"),
@@ -559,6 +569,11 @@ def test_impact_default_follows_only_the_approved_typed_directions(
             "task:one",
         },
         "task:one": {"deferral:task"},
+        "source:app": {
+            "artifact:source-description",
+            "artifact:topology-receipt",
+            "decision:app:ADR-001.md",
+        },
     }
 
     for start, expected in cases.items():

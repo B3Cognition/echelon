@@ -267,7 +267,10 @@ def _reference_graph(
 
 def _composition_failure(exc: WorkspaceGraphError) -> tuple[str, bool]:
     message = str(exc)
-    if "conflicting normalized" in message:
+    if (
+        "conflicting normalized" in message
+        or "canonical source identity conflict" in message
+    ):
         return "workspace_identity_conflict", False
     if (
         "canonical workspace config" in message

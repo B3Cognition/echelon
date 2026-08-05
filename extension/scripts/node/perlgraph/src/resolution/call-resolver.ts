@@ -1,4 +1,4 @@
-import type { PerlRelationship, PerlSymbol } from '../types.js';
+import type { PerlRelationship, PerlSymbol, UnresolvedRelationship } from '../types.js';
 import type { ExtractedCall } from '../extraction/perl-extractor.js';
 
 export interface CallResolutionContext {
@@ -140,13 +140,78 @@ function implicitExportTarget(
   return candidates.length === 1 ? candidates[0] : undefined;
 }
 
+export interface CallResolutionResult {
+  relationships: PerlRelationship[];
+  unresolved_relationships: UnresolvedRelationship[];
+}
+
 export function resolveCalls(
   calls: ExtractedCall[],
   symbols: PerlSymbol[],
   context: CallResolutionContext = {}
-): PerlRelationship[] {
-  const byQualifiedName = new Map(symbols.map((symbol) => [symbol.qualified_name, symbol]));
+): CallResolutionResult {
+  const candidatesByQualifiedName = new Map<string, PerlSymbol[]>();
+  for (const symbol of symbols) {
+    const candidates = candidatesByQualifiedName.get(symbol.qualified_name) ?? [];
+    candidates.push(symbol);
+    candidatesByQualifiedName.set(symbol.qualified_name, candidates);
+  }
+  const byQualifiedName = new Map<string, PerlSymbol>();
+  for (const [qualifiedName, candidates] of candidatesByQualifiedName) {
+    if (candidates.length === 1) byQualifiedName.set(qualifiedName, candidates[0]!);
+  }
   const relationships: PerlRelationship[] = [];
+  const unresolvedRelationships: UnresolvedRelationship[] = [];
+
+  const sourceFor = (call: ExtractedCall): PerlSymbol | undefined => {
+    const candidates = candidatesByQualifiedName.get(call.caller) ?? [];
+    const inFile = candidates.filter((candidate) => candidate.file_path === call.file_path);
+    return inFile.length === 1 ? inFile[0] : candidates.length === 1 ? candidates[0] : undefined;
+  };
+  const resolved = (
+    call: ExtractedCall,
+    target: string,
+    confidence: PerlRelationship['confidence'],
+    provenance: string[],
+    notes?: string
+  ): boolean => {
+    const source = sourceFor(call);
+    const targetSymbol = byQualifiedName.get(target);
+    if (!source || !targetSymbol) return false;
+    relationships.push({
+      source_key: source.symbol_key,
+      target_key: targetSymbol.symbol_key,
+      source: source.qualified_name,
+      target: targetSymbol.qualified_name,
+      kind: 'calls',
+      file_path: call.file_path,
+      line_start: call.line_start,
+      confidence,
+      provenance,
+      ...(notes ? { notes } : {})
+    });
+    return true;
+  };
+  const unresolved = (
+    call: ExtractedCall,
+    target: string,
+    confidence: UnresolvedRelationship['confidence'],
+    provenance: string[],
+    notes: string
+  ): void => {
+    const source = sourceFor(call);
+    unresolvedRelationships.push({
+      ...(source ? { source_key: source.symbol_key } : {}),
+      source: call.caller,
+      target,
+      kind: 'calls',
+      file_path: call.file_path,
+      line_start: call.line_start,
+      confidence,
+      provenance,
+      notes
+    });
+  };
 
   for (const call of calls) {
     const callerPackage = packageOf(call.caller);
@@ -156,103 +221,53 @@ export function resolveCalls(
       const receiver = methodParts.receiver.replace(/^[']|[']$/g, '').replace(/^["]|["]$/g, '');
       if (!receiver.startsWith('$')) {
         const target = `${receiver}::${methodParts.method}`;
-        if (byQualifiedName.has(target)) {
-          relationships.push({
-            source: call.caller,
-            target,
-            kind: 'calls',
-            file_path: call.file_path,
-            line_start: call.line_start,
-            confidence: 'high',
-            provenance: ['tree-sitter', 'package-method-resolution']
-          });
+        if (resolved(call, target, 'high', ['tree-sitter', 'package-method-resolution'])) {
           continue;
         }
       }
       if (receiver === '$self' || receiver === '$class') {
         const target = `${callerPackage}::${methodParts.method}`;
-        if (byQualifiedName.has(target)) {
-          relationships.push({
-            source: call.caller,
-            target,
-            kind: 'calls',
-            file_path: call.file_path,
-            line_start: call.line_start,
-            confidence: 'medium',
-            provenance: ['tree-sitter', 'self-method-resolution']
-          });
+        if (resolved(call, target, 'medium', ['tree-sitter', 'self-method-resolution'])) {
           continue;
         }
-        const inheritedTarget = inheritanceCandidates(callerPackage, context.inheritance)
+        const inheritedTargets = [...new Set(inheritanceCandidates(callerPackage, context.inheritance)
           .map((parent) => `${parent}::${methodParts.method}`)
-          .find((candidate) => byQualifiedName.has(candidate));
-        if (inheritedTarget) {
-          relationships.push({
-            source: call.caller,
-            target: inheritedTarget,
-            kind: 'calls',
-            file_path: call.file_path,
-            line_start: call.line_start,
-            confidence: 'medium',
-            provenance: ['tree-sitter', 'inheritance-method-resolution']
-          });
+          .filter((candidate) => byQualifiedName.has(candidate)))].sort();
+        const roleTargets = [...new Set(roleCandidates(callerPackage, context.roles)
+          .map((role) => `${role}::${methodParts.method}`)
+          .filter((candidate) => byQualifiedName.has(candidate)))].sort();
+        const selfTargets = [...new Set([...inheritedTargets, ...roleTargets])].sort();
+        if (selfTargets.length === 1 && resolved(
+          call,
+          selfTargets[0]!,
+          'medium',
+          ['tree-sitter', inheritedTargets.includes(selfTargets[0]!) ? 'inheritance-method-resolution' : 'role-method-resolution']
+        )) {
           continue;
         }
-        const roleTarget = roleCandidates(callerPackage, context.roles)
-          .map((role) => `${role}::${methodParts.method}`)
-          .find((candidate) => byQualifiedName.has(candidate));
-        if (roleTarget) {
-          relationships.push({
-            source: call.caller,
-            target: roleTarget,
-            kind: 'calls',
-            file_path: call.file_path,
-            line_start: call.line_start,
-            confidence: 'medium',
-            provenance: ['tree-sitter', 'role-method-resolution']
-          });
+        if (selfTargets.length > 1) {
+          unresolved(
+            call,
+            methodParts.method,
+            'low',
+            ['tree-sitter', 'ambiguous-self-method-resolution'],
+            `Self call ${call.expression} matched multiple methods: ${selfTargets.join(', ')}`
+          );
           continue;
         }
       }
       if (call.receiver_type) {
         const target = `${call.receiver_type}::${methodParts.method}`;
-        if (byQualifiedName.has(target)) {
-          relationships.push({
-            source: call.caller,
-            target,
-            kind: 'calls',
-            file_path: call.file_path,
-            line_start: call.line_start,
-            confidence: 'medium',
-            provenance: ['tree-sitter', 'local-constructor-flow']
-          });
+        if (resolved(call, target, 'medium', ['tree-sitter', 'local-constructor-flow'])) {
           continue;
         }
       }
       const externalTarget = externalApiTarget(receiver, methodParts.method, call.receiver_type);
       if (externalTarget) {
-        relationships.push({
-          source: call.caller,
-          target: externalTarget.target,
-          kind: 'calls',
-          file_path: call.file_path,
-          line_start: call.line_start,
-          confidence: 'medium',
-          provenance: ['tree-sitter', 'external-api-resolution'],
-          notes: externalTarget.notes
-        });
+        unresolved(call, externalTarget.target, 'medium', ['tree-sitter', 'external-api-resolution'], externalTarget.notes);
         continue;
       }
-      relationships.push({
-        source: call.caller,
-        target: methodParts.method,
-        kind: 'calls',
-        file_path: call.file_path,
-        line_start: call.line_start,
-        confidence: 'low',
-        provenance: ['method-name-match'],
-        notes: `Receiver type for ${call.expression} was not statically resolved`
-      });
+      unresolved(call, methodParts.method, 'low', ['method-name-match'], `Receiver type for ${call.expression} was not statically resolved`);
       continue;
     }
 
@@ -260,59 +275,25 @@ export function resolveCalls(
       ? call.expression
       : `${callerPackage}::${call.expression}`;
 
-    if (byQualifiedName.has(qualifiedTarget)) {
-      relationships.push({
-        source: call.caller,
-        target: qualifiedTarget,
-        kind: 'calls',
-        file_path: call.file_path,
-        line_start: call.line_start,
-        confidence: 'high',
-        provenance: ['tree-sitter', 'name-resolution']
-      });
+    if (resolved(call, qualifiedTarget, 'high', ['tree-sitter', 'name-resolution'])) {
       continue;
     }
 
     if (call.imported_from) {
-      relationships.push({
-        source: call.caller,
-        target: `${call.imported_from}::${call.expression}`,
-        kind: 'calls',
-        file_path: call.file_path,
-        line_start: call.line_start,
-        confidence: 'medium',
-        provenance: ['tree-sitter', 'explicit-import-resolution'],
-        notes: `Bare call ${call.expression} matched explicit import from ${call.imported_from}`
-      });
+      const target = `${call.imported_from}::${call.expression}`;
+      const notes = `Bare call ${call.expression} matched explicit import from ${call.imported_from}`;
+      if (resolved(call, target, 'medium', ['tree-sitter', 'explicit-import-resolution'], notes)) continue;
+      unresolved(call, target, 'medium', ['tree-sitter', 'explicit-import-resolution'], notes);
       continue;
     }
 
     const implicitTarget = implicitExportTarget(callerPackage, call.expression, context.packageImports, context.moduleExports, byQualifiedName);
-    if (implicitTarget) {
-      relationships.push({
-        source: call.caller,
-        target: implicitTarget,
-        kind: 'calls',
-        file_path: call.file_path,
-        line_start: call.line_start,
-        confidence: 'medium',
-        provenance: ['tree-sitter', 'implicit-export-resolution'],
-        notes: `Bare call ${call.expression} matched implicit export from ${packageOf(implicitTarget)}`
-      });
+    if (implicitTarget && resolved(call, implicitTarget, 'medium', ['tree-sitter', 'implicit-export-resolution'], `Bare call ${call.expression} matched implicit export from ${packageOf(implicitTarget)}`)) {
       continue;
     }
 
-    relationships.push({
-      source: call.caller,
-      target: call.expression,
-      kind: 'calls',
-      file_path: call.file_path,
-      line_start: call.line_start,
-      confidence: 'low',
-      provenance: ['unresolved-call'],
-      notes: `Call expression ${call.expression} did not resolve to a known symbol`
-    });
+    unresolved(call, call.expression, 'low', ['unresolved-call'], `Call expression ${call.expression} did not resolve to a known symbol`);
   }
 
-  return relationships;
+  return { relationships, unresolved_relationships: unresolvedRelationships };
 }

@@ -90,7 +90,13 @@ IMPACT_RELATIONS: Mapping[
         ("Spec", "HAS_REQUIREMENT"): frozenset({("out", "Requirement")}),
         ("Spec", "AMENDED_BY"): frozenset({("out", "Amendment")}),
         ("Spec", "TARGETS"): frozenset({("out", "SourceRoot")}),
+        ("Spec", "USES_SOURCE"): frozenset({("out", "SourceRoot")}),
         ("Spec", "SUPERSEDES"): frozenset({("in", "Spec")}),
+        ("SourceRoot", "DESCRIBED_BY"): frozenset({("out", "Artifact")}),
+        ("SourceRoot", "HAS_DECISION"): frozenset({("out", "Decision")}),
+        ("SourceRoot", "HAS_TOPOLOGY_RECEIPT"): frozenset(
+            {("out", "Artifact")}
+        ),
         ("Workspace", "CONTAINS_SPEC"): frozenset({("out", "Spec")}),
     }
 )

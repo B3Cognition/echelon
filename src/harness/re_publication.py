@@ -4,27 +4,49 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import shutil
-import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Literal
+
+from echelon.topology_registry import (
+    TopologyRegistryError,
+    _load_topology_index_for_configured_sources,
+    load_published_topology_from_index,
+    load_topology_index,
+)
+from echelon.workspace_model import (
+    WorkspaceSourceDeclarations,
+    discover_workspace,
+    load_workspace_source_declarations,
+    validate_topology_source_declarations,
+)
 
 from harness.re_artifacts import (
     ReArtifactCatalogError,
     ReArtifactDescriptor,
     build_re_artifact_catalog,
     classify_re_artifact,
+    is_topology_provider_artifact,
     validate_re_artifact_descriptor,
 )
 from harness.re_architecture import validate_re_architecture_catalog
+from harness.publication_transaction import (
+    PublicationOperation,
+    PublicationTransaction,
+    PublicationTransactionError,
+    apply_publication_transaction,
+    rollback_publication_transaction,
+    write_json_atomic,
+    write_publication_journal,
+)
 from harness.re_lock import (
+    claim_orphan_publish_recovery,
+    claim_stale_publish_recovery,
     RePublishLock,
     RePublishRecoveryRequired,
-    recover_stale_publish_lock,
     recoverable_publish_lock_owner,
 )
 from harness.re_planner import ReExecutionPlan, RePlanSource
@@ -42,9 +64,22 @@ from harness.re_registry import (
     canonical_re_artifacts,
     ensure_re_layout,
     load_published_index,
+    published_source_is_usable,
 )
-
-
+from harness.topology_evidence import (
+    ProviderArtifactPaths,
+    TopologyEvidenceError,
+    build_empty_topology_snapshot_candidate,
+    build_topology_snapshot_candidate,
+    is_historical_codegraph_v1_artifact,
+    upgrade_legacy_codegraph_candidate,
+)
+from harness.topology_publication import (
+    TopologyProviderCandidate,
+    TopologyPublicationValidationError,
+    TopologySnapshotCandidate,
+    stage_topology_snapshots,
+)
 _SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9._-]+$")
 class RePublicationError(RuntimeError):
     """Base error for deterministic RE publication."""
@@ -79,6 +114,7 @@ class RePublicationResult:
     changed_sources: tuple[str, ...]
     removed_sources: tuple[str, ...]
     warnings: tuple[str, ...]
+    topology_generation: int | None = None
 
 
 def validate_re_run(
@@ -114,6 +150,7 @@ def validate_re_run(
         raise RePublicationValidationError(f"invalid RE execution plan: {exc}") from exc
     if not plan.publication_required:
         raise RePublicationValidationError("RE execution plan does not require publication")
+    _validate_target_source_available(root, plan)
     partial_sources = _partial_quality_debt_sources(run_re, re_state, plan)
     if status == "complete" and partial_sources:
         if allow_partial and status_override is None:
@@ -304,8 +341,16 @@ def publish_re_run(
                 f"expected generation {expected_generation}, found {current_generation}"
             )
         generation = current_generation + 1
-        transaction = _prepare_transaction(root, paths, candidate, current, generation)
-        _apply_transaction(transaction, paths, fault_hook=fault_hook)
+        transaction, topology_generation, declaration_snapshot = _prepare_transaction(
+            root, paths, candidate, current, generation
+        )
+        _apply_transaction(
+            transaction,
+            paths,
+            topology_generation=topology_generation,
+            declaration_snapshot=declaration_snapshot,
+            fault_hook=fault_hook,
+        )
         published = PublishedReIndex.from_path(paths.index)
         if published.generation != generation:
             raise RePublicationError("published RE generation failed post-write validation")
@@ -317,6 +362,7 @@ def publish_re_run(
         changed_sources=tuple(sorted(candidate.refreshed_sources + candidate.empty_sources)),
         removed_sources=candidate.removed_sources,
         warnings=candidate.warnings,
+        topology_generation=topology_generation,
     )
 
 
@@ -331,33 +377,42 @@ def recover_interrupted_publication(
         root,
         stale_after_seconds=stale_after_seconds,
     )
+    recovery_lock = None
     if owner is None:
-        return False
-    run_id = str(owner["run_id"])
-    paths = ensure_re_layout(root)
-    stage_root = paths.staging / run_id
-    journal = stage_root / "rollback-journal.json"
-    data = _read_json(journal)
-    if data.get("status") != "replacing":
-        return recover_stale_publish_lock(
+        recovery_lock = claim_orphan_publish_recovery(root)
+        if recovery_lock is None:
+            return False
+        run_id = recovery_lock.owner_run_id
+    else:
+        recovery_lock = claim_stale_publish_recovery(
             root,
             stale_after_seconds=stale_after_seconds,
         )
-    operations = _validated_journal_operations(data.get("operations"))
-    transaction = _Transaction(root=stage_root, journal=journal, operations=operations)
-    _rollback_transaction(transaction, paths.root)
-    if not recover_stale_publish_lock(root, stale_after_seconds=stale_after_seconds):
-        raise RePublishRecoveryRequired("stale publication lock could not be released")
+        if recovery_lock is None:
+            return False
+        run_id = recovery_lock.owner_run_id
+    paths = ensure_re_layout(root)
+    stage_root = paths.staging / run_id
+    journal = stage_root / "rollback-journal.json"
+    if not journal.is_file():
+        recovery_lock.release()
+        return False
+    data = _read_json(journal)
+    if data.get("status") not in {"replacing", "rolling_back"}:
+        recovery_lock.release()
+        return True
+    try:
+        transaction = PublicationTransaction.from_journal(
+            workspace_root=paths.root,
+            staging_root=stage_root,
+            journal=journal,
+        )
+    except PublicationTransactionError as exc:
+        raise RePublishRecoveryRequired(str(exc)) from exc
+    rollback_publication_transaction(transaction)
+    recovery_lock.release()
     shutil.rmtree(stage_root)
     return True
-
-
-@dataclass
-class _Transaction:
-    root: Path
-    journal: Path
-    operations: list[dict[str, Any]]
-    expected_generation: int | None = None
 
 
 def _prepare_transaction(
@@ -366,12 +421,16 @@ def _prepare_transaction(
     candidate: RePublicationCandidate,
     current: PublishedReIndex | None,
     generation: int,
-) -> _Transaction:
+) -> tuple[
+    PublicationTransaction,
+    int | None,
+    WorkspaceSourceDeclarations | None,
+]:
     stage_root = paths.staging / candidate.run_id
     journal = stage_root / "rollback-journal.json"
     if journal.is_file():
         journal_data = _read_json(journal)
-        if journal_data.get("status") == "replacing":
+        if journal_data.get("status") in {"replacing", "rolling_back"}:
             raise RePublicationError(f"unfinished publication transaction exists: {journal}")
     if stage_root.exists():
         shutil.rmtree(stage_root)
@@ -387,8 +446,11 @@ def _prepare_transaction(
             for source in current.sources.values()
         )
 
-    operations: list[dict[str, Any]] = []
+    operations: list[PublicationOperation] = []
     changed_source_ids = set(candidate.refreshed_sources + candidate.empty_sources)
+    preserve_reused_sources = bool(
+        candidate.plan.policy == "target-only" and candidate.plan.target_source
+    )
     if current:
         reused_source_ids = (
             set(current.sources)
@@ -402,7 +464,10 @@ def _prepare_transaction(
                 workspace_root / "re" / "sources" / source_id,
                 durable_source,
             )
-            if source.manifest_artifact is None:
+            if preserve_reused_sources:
+                continue
+            topology_removed = _strip_legacy_topology_artifacts(durable_source)
+            if source.manifest_artifact is None or topology_removed:
                 manifest_path = durable_source / "manifest.json"
                 manifest = _read_json(manifest_path)
                 manifest["artifacts"] = [
@@ -416,7 +481,7 @@ def _prepare_transaction(
                         source_id=source_id,
                     )
                 ]
-                _write_json_atomic(manifest_path, manifest)
+                write_json_atomic(manifest_path, manifest)
                 source_records[source_id]["manifest_artifact"] = (
                     _manifest_artifact(
                         manifest_path,
@@ -446,8 +511,6 @@ def _prepare_transaction(
         source = plan_by_id[source_id]
         durable_source = new_root / "re" / "sources" / source_id
         cache_relative = f".cache/sources/{source_id}/{source.fingerprint.value}"
-        codegraph_summary = None
-        codegraph_analysis = None
         domain_manifest = None
         supporting_artifacts = None
         extraction_artifacts: dict[str, str] = {}
@@ -486,18 +549,6 @@ def _prepare_transaction(
                 shutil.copytree(staged_specs, durable_source / "specs")
             else:
                 (durable_source / "specs").mkdir()
-            codegraph_summary = _copy_optional_source_artifact(
-                staged_source,
-                durable_source,
-                source_id,
-                "codegraph-summary.json",
-            )
-            codegraph_analysis = _copy_optional_source_artifact(
-                staged_source,
-                durable_source,
-                source_id,
-                "codegraph-analysis.json",
-            )
             domain_manifest = _copy_optional_source_artifact(
                 staged_source,
                 durable_source,
@@ -530,7 +581,7 @@ def _prepare_transaction(
             )
             cache_stage = new_root / "re" / cache_relative
             _copy_heavy_source_artifacts(staged_source, cache_stage)
-            _write_json_atomic(
+            write_json_atomic(
                 cache_stage / "cache-manifest.json",
                 {
                     "schema_version": 1,
@@ -549,8 +600,6 @@ def _prepare_transaction(
             status=source_status,
             cache_path=f"re/{cache_relative}",
             specs=specs,
-            codegraph_summary=codegraph_summary,
-            codegraph_analysis=codegraph_analysis,
             domain_manifest=domain_manifest,
             supporting_artifacts=supporting_artifacts,
             extraction_artifacts=extraction_artifacts,
@@ -564,7 +613,7 @@ def _prepare_transaction(
                 )
             ],
         )
-        _write_json_atomic(durable_source / "manifest.json", manifest)
+        write_json_atomic(durable_source / "manifest.json", manifest)
         source_records[source_id] = _index_source_record(
             source,
             source_status,
@@ -585,10 +634,6 @@ def _prepare_transaction(
 
     workspace_stage = new_root / "re" / "workspace"
     shutil.copytree(candidate.run_dir / "re" / "workspace", workspace_stage)
-    workspace_codegraph_summary = _copy_workspace_codegraph_summary(
-        candidate.run_dir / "re",
-        workspace_stage,
-    )
     workspace_manifest = {
         "schema_version": 1,
         "generation": generation,
@@ -611,7 +656,7 @@ def _prepare_transaction(
             )
         ],
     }
-    _write_json_atomic(workspace_stage / "manifest.json", workspace_manifest)
+    write_json_atomic(workspace_stage / "manifest.json", workspace_manifest)
     workspace_manifest_artifact = _manifest_artifact(
         workspace_stage / "manifest.json",
         PurePosixPath("re/workspace/manifest.json"),
@@ -652,21 +697,75 @@ def _prepare_transaction(
             "overview": "re/workspace/overview.md",
             "relationships": "re/workspace/relationships.md",
             "contracts": "re/workspace/contracts.md",
-            **(
-                {"codegraph_summary": workspace_codegraph_summary}
-                if workspace_codegraph_summary
-                else {}
-            ),
         },
         "warnings": list(candidate.warnings),
     }
     staged_index = new_root / "re" / "index.json"
-    _write_json_atomic(staged_index, index_payload)
+    write_json_atomic(staged_index, index_payload)
     operations.append(_operation(stage_root, "index.json", staged="new/re/index.json"))
-    transaction = _Transaction(
-        root=stage_root,
+    try:
+        declarations = load_workspace_source_declarations(workspace_root)
+        if preserve_reused_sources:
+            declarations = _require_explicit_source_declarations(declarations)
+            _validate_targeted_topology_declarations(declarations)
+            configured_sources = declarations.source_paths
+        else:
+            configured_sources = {
+                source.id: source.path
+                for source in discover_workspace(workspace_root).sources
+            }
+        configured_ids = set(configured_sources)
+        topology_current = load_topology_index(
+            workspace_root,
+            allow_removed_source_ids=candidate.removed_sources,
+        )
+        required_topology_sources = tuple(
+            sorted(
+                configured_ids
+                & set(candidate.refreshed_sources + candidate.empty_sources)
+            )
+        )
+        topology_candidates = _topology_candidates(
+            candidate,
+            configured_ids,
+            migrate_legacy=(
+                topology_current is None and not preserve_reused_sources
+            ),
+            workspace_root=workspace_root,
+        )
+        unavailable_bootstrap = bool(
+            topology_current is None and preserve_reused_sources
+        )
+        if unavailable_bootstrap:
+            topology_candidates = _bootstrap_targeted_topology_candidates(
+                workspace_root,
+                candidate,
+                current,
+                configured_ids,
+                topology_candidates,
+            )
+        topology = stage_topology_snapshots(
+            workspace_root,
+            stage_root,
+            topology_candidates,
+            removed_source_ids=candidate.removed_sources,
+            required_source_ids=required_topology_sources,
+            allow_unavailable_bootstrap=unavailable_bootstrap,
+            configured_sources=configured_sources,
+        )
+    except (
+        TopologyEvidenceError,
+        TopologyPublicationValidationError,
+        TopologyRegistryError,
+    ) as exc:
+        raise RePublicationValidationError(f"topology evidence is not publishable: {exc}") from exc
+    if topology is not None:
+        operations.extend(topology.operations)
+    transaction = PublicationTransaction(
+        workspace_root=paths.root,
+        staging_root=stage_root,
         journal=journal,
-        operations=operations,
+        operations=tuple(operations),
         expected_generation=generation,
     )
     try:
@@ -674,25 +773,48 @@ def _prepare_transaction(
     except Exception:
         shutil.rmtree(stage_root)
         raise
-    _write_journal(transaction, "prepared")
-    return transaction
+    write_publication_journal(transaction, "prepared")
+    return (
+        transaction,
+        topology.generation if topology is not None else None,
+        declarations if preserve_reused_sources else None,
+    )
 
 
 def _apply_transaction(
-    transaction: _Transaction,
+    transaction: PublicationTransaction,
     registry: ReRegistryPaths,
     *,
+    topology_generation: int | None,
+    declaration_snapshot: WorkspaceSourceDeclarations | None,
     fault_hook: Callable[[str], None] | None,
 ) -> None:
-    _write_journal(transaction, "replacing")
-    try:
-        for operation in transaction.operations[:-1]:
-            _apply_operation(transaction, registry.root, operation)
-        if fault_hook:
+    def hook(point: str) -> None:
+        if fault_hook is None:
+            return
+        if point == "before_operation:index.json":
             fault_hook("before_index_replace")
-        _apply_operation(transaction, registry.root, transaction.operations[-1])
-        if fault_hook:
+        elif point == "after_replace:index.json":
             fault_hook("after_index_replace")
+        else:
+            # Keep the established semantic aliases while exposing the shared
+            # transaction's topology operation points to fault-injection tests.
+            fault_hook(point)
+
+    if declaration_snapshot is not None:
+        try:
+            _validate_declaration_snapshot(registry.root.parent, declaration_snapshot)
+        except Exception:
+            shutil.rmtree(transaction.staging_root)
+            raise
+    try:
+        apply_publication_transaction(transaction, fault_hook=hook)
+    except Exception:
+        # The transaction applies its normal digest-protected rollback here.
+        raise
+    try:
+        if declaration_snapshot is not None:
+            _validate_declaration_snapshot(registry.root.parent, declaration_snapshot)
         published = PublishedReIndex.from_path(registry.index)
         if (
             transaction.expected_generation is not None
@@ -701,65 +823,58 @@ def _apply_transaction(
             raise RePublicationError(
                 "installed RE index generation does not match transaction"
             )
-        _write_journal(transaction, "complete")
+        if topology_generation is not None:
+            topology = (
+                _load_topology_index_for_configured_sources(
+                    registry.root.parent,
+                    declaration_snapshot.source_paths,
+                )
+                if declaration_snapshot is not None
+                else load_topology_index(registry.root.parent)
+            )
+            if topology is None or topology.generation != topology_generation:
+                raise RePublicationError(
+                    "installed topology generation does not match transaction"
+                )
+            # Re-hash provider bytes from the already validated immutable index.
+            load_published_topology_from_index(registry.root.parent, topology)
     except Exception:
-        _rollback_transaction(transaction, registry.root)
+        # This is the narrow post-install validation window. The same fixed
+        # claim is still held, every operation is journaled as installed, and
+        # only current topology finals may be force-restored from their backups.
+        # Ordinary rollback/recovery retains Task 5's strict digest ownership.
+        rollback_publication_transaction(
+            transaction,
+            _active_validation_owned_finals=frozenset(
+                operation.final
+                for operation in transaction.operations
+                if operation.final.parts and operation.final.parts[0] == "topology"
+            ),
+        )
         raise
-    shutil.rmtree(transaction.root)
+    shutil.rmtree(transaction.staging_root)
 
 
-def _apply_operation(
-    transaction: _Transaction,
-    registry_root: Path,
-    operation: dict[str, Any],
+def _validate_declaration_snapshot(
+    workspace_root: Path,
+    expected: WorkspaceSourceDeclarations,
 ) -> None:
-    final = registry_root / operation["final"]
-    backup = transaction.root / operation["backup"]
-    staged_value = operation.get("staged")
-    staged = transaction.root / staged_value if staged_value else None
-    if final.exists():
-        backup.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(final, backup)
-        operation["backed_up"] = True
-        _write_journal(transaction, "replacing")
-    if staged is not None:
-        final.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(staged, final)
-        operation["installed"] = True
-        _write_journal(transaction, "replacing")
+    try:
+        observed = load_workspace_source_declarations(workspace_root)
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        raise RePublicationValidationError(
+            "workspace source declarations changed during publication"
+        ) from exc
+    if observed != expected:
+        raise RePublicationValidationError(
+            "workspace source declarations changed during publication"
+        )
 
 
-def _rollback_transaction(transaction: _Transaction, registry_root: Path) -> None:
-    for operation in reversed(transaction.operations):
-        final = registry_root / operation["final"]
-        backup = transaction.root / operation["backup"]
-        if operation.get("installed") and final.exists():
-            _remove_path(final)
-        if operation.get("backed_up") and backup.exists():
-            final.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(backup, final)
-    _write_journal(transaction, "rolled_back")
-
-
-def _operation(stage_root: Path, final: str, *, staged: str | None) -> dict[str, Any]:
+def _operation(stage_root: Path, final: str, *, staged: str | None) -> PublicationOperation:
     del stage_root
-    return {
-        "final": final,
-        "staged": staged,
-        "backup": f"rollback/{final}",
-        "backed_up": False,
-        "installed": False,
-    }
-
-
-def _write_journal(transaction: _Transaction, status: str) -> None:
-    _write_json_atomic(
-        transaction.journal,
-        {
-            "schema_version": 1,
-            "status": status,
-            "operations": transaction.operations,
-        },
+    return PublicationOperation(
+        PurePosixPath(final), PurePosixPath(staged) if staged is not None else None
     )
 
 
@@ -983,6 +1098,308 @@ def _validate_current_source(
         )
 
 
+def _validate_target_source_available(
+    workspace_root: Path,
+    plan: ReExecutionPlan,
+) -> None:
+    if plan.policy != "target-only" or not plan.target_source:
+        return
+    planned = next(
+        (source for source in plan.sources if source.id == plan.target_source),
+        None,
+    )
+    try:
+        declarations = _require_explicit_source_declarations(
+            load_workspace_source_declarations(workspace_root)
+        )
+        _validate_targeted_topology_declarations(declarations)
+        declared_path = declarations.source_paths.get(plan.target_source)
+    except (OSError, ValueError) as exc:
+        raise RePublicationValidationError(
+            f"cannot resolve selected source {plan.target_source}: {exc}"
+        ) from exc
+    if planned is None or declared_path != planned.path:
+        raise RePublicationValidationError(
+            f"selected source {plan.target_source} is no longer declared"
+        )
+    source_path = Path(declared_path)
+    if not source_path.is_absolute():
+        source_path = workspace_root / source_path
+    if not source_path.exists():
+        raise RePublicationValidationError(
+            f"selected source {plan.target_source} is unavailable: {source_path}"
+        )
+
+
+def _require_explicit_source_declarations(
+    declarations: WorkspaceSourceDeclarations | None,
+) -> WorkspaceSourceDeclarations:
+    if declarations is None or declarations.mode != "explicit":
+        raise RePublicationValidationError(
+            "targeted refresh requires explicitly declared workspace sources; "
+            "declare every source in the canonical or legacy workspace config"
+        )
+    return declarations
+
+
+def _validate_targeted_topology_declarations(
+    declarations: WorkspaceSourceDeclarations,
+) -> None:
+    try:
+        validate_topology_source_declarations(declarations.sources)
+    except ValueError as exc:
+        raise RePublicationValidationError(str(exc)) from exc
+
+
+def _bootstrap_targeted_topology_candidates(
+    workspace_root: Path,
+    candidate: RePublicationCandidate,
+    current: PublishedReIndex | None,
+    configured_source_ids: set[str],
+    selected_candidates: tuple[TopologySnapshotCandidate, ...],
+) -> tuple[TopologySnapshotCandidate, ...]:
+    """Complete an absent topology authority from durable semantic identities."""
+    candidates = {item.source_id: item for item in selected_candidates}
+    planned = {source.id: source for source in candidate.plan.sources}
+    for source_id in sorted(configured_source_ids - set(candidates)):
+        source = planned.get(source_id)
+        published = current.sources.get(source_id) if current is not None else None
+        if (
+            source is None
+            or source.action != "reuse"
+            or published is None
+            or published.source_path != source.path
+            or published.fingerprint != source.fingerprint.value
+            or published.profile_hash != source.fingerprint.profile_hash
+            or published.status not in {"complete", "empty", "partial"}
+            or not published_source_is_usable(
+                workspace_root,
+                current,
+                source_id,
+            )
+        ):
+            raise TopologyPublicationValidationError(
+                "cannot bootstrap topology without a usable durable semantic "
+                f"baseline for sibling source: {source_id}"
+            )
+        candidates[source_id] = TopologySnapshotCandidate(
+            source_id=source_id,
+            source_path=source.path,
+            source_fingerprint=source.fingerprint,
+            analyzed_commit=source.fingerprint.git_head,
+            provenance={"kind": "re", "run_id": candidate.run_id},
+            providers=(
+                TopologyProviderCandidate(
+                    provider="codegraph",
+                    unavailable_reason={
+                        "kind": "bootstrap",
+                        "message": (
+                            "topology unavailable until this source is explicitly refreshed"
+                        ),
+                    },
+                ),
+            ),
+        )
+    if set(candidates) != configured_source_ids:
+        raise TopologyPublicationValidationError(
+            "targeted topology bootstrap does not cover every configured source"
+        )
+    return tuple(candidates[source_id] for source_id in sorted(candidates))
+
+
+def _topology_candidates(
+    candidate: RePublicationCandidate,
+    configured_source_ids: set[str],
+    *,
+    migrate_legacy: bool,
+    workspace_root: Path,
+) -> tuple[TopologySnapshotCandidate, ...]:
+    """Capture only the provider artifacts explicitly emitted for refreshed sources."""
+    plan_by_id = {source.id: source for source in candidate.plan.sources}
+    provenance = {"kind": "re", "run_id": candidate.run_id}
+    snapshots: list[TopologySnapshotCandidate] = []
+    for source_id in candidate.refreshed_sources:
+        if source_id not in configured_source_ids:
+            continue
+        source = plan_by_id[source_id]
+        output = candidate.run_dir / "re" / "sources" / source_id
+        paths = {
+            provider: ProviderArtifactPaths(
+                owner_dir=output,
+                analysis=output / f"{provider}-analysis.json",
+                summary=output / f"{provider}-summary.json",
+                error=output / f"{provider}-error.json",
+            )
+            for provider in ("codegraph", "perlgraph")
+        }
+        try:
+            snapshots.append(
+                build_topology_snapshot_candidate(
+                    source.id,
+                    source.path,
+                    source.fingerprint,
+                    paths,
+                    provenance,
+                ).candidate
+            )
+        except TopologyEvidenceError as exc:
+            if "no usable provider evidence" in str(exc):
+                raise TopologyEvidenceError(
+                    f"no usable topology evidence for refreshed source: {source.id}"
+                ) from exc
+            raise
+    for source_id in candidate.empty_sources:
+        if source_id not in configured_source_ids:
+            continue
+        source = plan_by_id[source_id]
+        snapshots.append(
+            build_empty_topology_snapshot_candidate(
+                source.id,
+                source.path,
+                source.fingerprint,
+                provenance,
+            ).candidate
+        )
+    if migrate_legacy:
+        for source in candidate.plan.sources:
+            if source.action != "reuse" or source.id not in configured_source_ids:
+                continue
+            output = workspace_root / "re" / "sources" / source.id
+            try:
+                manifest = _read_json(output / "manifest.json")
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not _legacy_manifest_matches_source(manifest, source):
+                continue
+            paths = {
+                provider: ProviderArtifactPaths(
+                    owner_dir=output,
+                    analysis=output / f"{provider}-analysis.json",
+                    summary=output / f"{provider}-summary.json",
+                    error=output / f"{provider}-error.json",
+                )
+                for provider in ("codegraph", "perlgraph")
+            }
+            if not any(
+                path.is_file()
+                for artifact in paths.values()
+                for path in (artifact.analysis, artifact.summary)
+            ):
+                continue
+            if is_historical_codegraph_v1_artifact(paths["codegraph"]):
+                upgraded = upgrade_legacy_codegraph_candidate(
+                    source.id,
+                    source.path,
+                    source.fingerprint,
+                    paths["codegraph"],
+                    provenance,
+                )
+                if upgraded is not None:
+                    providers = list(upgraded.candidate.providers)
+                    if _provider_schema_version(paths["perlgraph"]) == 2:
+                        try:
+                            perl_evidence = build_topology_snapshot_candidate(
+                                source.id,
+                                source.path,
+                                source.fingerprint,
+                                {"perlgraph": paths["perlgraph"]},
+                                provenance,
+                            )
+                        except TopologyEvidenceError:
+                            continue
+                        providers.extend(perl_evidence.candidate.providers)
+                    snapshots.append(
+                        TopologySnapshotCandidate(
+                            source_id=upgraded.candidate.source_id,
+                            source_path=upgraded.candidate.source_path,
+                            source_fingerprint=upgraded.candidate.source_fingerprint,
+                            analyzed_commit=upgraded.candidate.analyzed_commit,
+                            provenance=upgraded.candidate.provenance,
+                            providers=tuple(sorted(providers, key=lambda item: item.provider)),
+                        )
+                    )
+                continue
+            if not _all_present_schema_two(paths):
+                continue
+            try:
+                snapshots.append(
+                    build_topology_snapshot_candidate(
+                        source.id,
+                        source.path,
+                        source.fingerprint,
+                        paths,
+                        provenance,
+                    ).candidate
+                )
+            except TopologyEvidenceError:
+                # Reused legacy bytes are optional migration evidence. Their
+                # corruption cannot invalidate an independently valid semantic RE.
+                continue
+    return tuple(snapshots)
+
+
+def _legacy_manifest_matches_source(manifest: object, source: RePlanSource) -> bool:
+    """Authenticate old provider bytes against every semantic capture field."""
+    if not isinstance(manifest, dict):
+        return False
+    fingerprint = source.fingerprint
+    inferred_kind = "git" if manifest.get("git_head") is not None else "file-tree"
+    return (
+        manifest.get("source_id") == source.id
+        and manifest.get("source_path") == source.path
+        and manifest.get("source_fingerprint") == fingerprint.value
+        and manifest.get("profile_hash") == fingerprint.profile_hash
+        and manifest.get("dirty") is fingerprint.dirty
+        and inferred_kind == fingerprint.kind
+        and manifest.get("git_head") == fingerprint.git_head
+    )
+
+
+def _all_present_schema_two(paths: dict[str, ProviderArtifactPaths]) -> bool:
+    """Schema-1 graph data is intentionally not guessed into exact topology."""
+    for artifact in paths.values():
+        if not artifact.analysis.is_file() or not artifact.summary.is_file():
+            continue
+        try:
+            data = json.loads(artifact.analysis.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return True
+        if isinstance(data, dict) and data.get("schema_version") != 2:
+            return False
+    return True
+
+
+def _provider_schema_version(paths: ProviderArtifactPaths) -> int | None:
+    if not paths.analysis.is_file() or not paths.summary.is_file():
+        return None
+    try:
+        data = json.loads(paths.analysis.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data.get("schema_version") if isinstance(data, dict) else None
+
+
+def _strip_legacy_topology_artifacts(source_dir: Path) -> bool:
+    """Remove provider files from a semantic source copy before recataloguing it."""
+    changed = False
+    for path in sorted(source_dir.rglob("*")):
+        if not path.is_file() or not is_topology_provider_artifact(
+            PurePosixPath(path.relative_to(source_dir).as_posix())
+        ):
+            continue
+        path.unlink()
+        changed = True
+    if not changed:
+        return False
+    manifest = _read_json(source_dir / "manifest.json")
+    manifest.pop("codegraph_summary", None)
+    manifest.pop("codegraph_analysis", None)
+    manifest.pop("perlgraph_summary", None)
+    manifest.pop("perlgraph_analysis", None)
+    write_json_atomic(source_dir / "manifest.json", manifest)
+    return True
+
+
 def _source_manifest(
     source: RePlanSource,
     plan: ReExecutionPlan,
@@ -991,8 +1408,6 @@ def _source_manifest(
     cache_path: str,
     specs: list[str],
     artifacts: list[dict[str, str]],
-    codegraph_summary: str | None = None,
-    codegraph_analysis: str | None = None,
     domain_manifest: str | None = None,
     supporting_artifacts: str | None = None,
     extraction_artifacts: dict[str, str] | None = None,
@@ -1017,10 +1432,6 @@ def _source_manifest(
         "artifacts": artifacts,
         "warnings": [],
     }
-    if codegraph_summary:
-        manifest["codegraph_summary"] = codegraph_summary
-    if codegraph_analysis:
-        manifest["codegraph_analysis"] = codegraph_analysis
     if domain_manifest:
         manifest["domain_manifest"] = domain_manifest
     if supporting_artifacts:
@@ -1089,6 +1500,10 @@ def _copy_heavy_source_artifacts(source: Path, destination: Path) -> None:
             "contracts.md",
             "components.md",
             "manifest.json",
+            "codegraph-analysis.json",
+            "codegraph-summary.json",
+            "perlgraph-analysis.json",
+            "perlgraph-summary.json",
         } or relative.parts[0] == "adrs":
             continue
         target = destination / relative
@@ -1129,17 +1544,6 @@ def _copy_optional_source_artifacts(
     }
 
 
-def _copy_workspace_codegraph_summary(run_re: Path, workspace_stage: Path) -> str | None:
-    for source in (
-        run_re / "workspace" / "codegraph-summary.json",
-        run_re / "codegraph-summary.json",
-    ):
-        if source.is_file():
-            shutil.copy2(source, workspace_stage / "codegraph-summary.json")
-            return "re/workspace/codegraph-summary.json"
-    return None
-
-
 def _inside_run_roots(workspace_root: Path, run_dir: Path) -> bool:
     return any(
         run_dir.is_relative_to((workspace_root / base).resolve())
@@ -1159,72 +1563,3 @@ def _read_json(path: Path, *, required: bool = True) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise RePublicationValidationError(f"publication input must be an object: {path}")
     return raw
-
-
-def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(
-        dir=str(path.parent), prefix=f".{path.name}-", suffix=".tmp"
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2, sort_keys=True)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        Path(temporary).replace(path)
-    except Exception:
-        try:
-            os.unlink(temporary)
-        except OSError:
-            pass
-        raise
-
-
-def _remove_path(path: Path) -> None:
-    if path.is_dir() and not path.is_symlink():
-        shutil.rmtree(path)
-    else:
-        path.unlink()
-
-
-def _validated_journal_operations(raw: object) -> list[dict[str, Any]]:
-    if not isinstance(raw, list):
-        raise RePublishRecoveryRequired("rollback journal operations must be a list")
-    operations: list[dict[str, Any]] = []
-    for entry in raw:
-        if not isinstance(entry, dict):
-            raise RePublishRecoveryRequired("rollback journal operation must be an object")
-        final = _safe_transaction_path(entry.get("final"), "final")
-        backup = _safe_transaction_path(entry.get("backup"), "backup")
-        staged_raw = entry.get("staged")
-        staged = (
-            _safe_transaction_path(staged_raw, "staged")
-            if staged_raw is not None
-            else None
-        )
-        backed_up = entry.get("backed_up")
-        installed = entry.get("installed")
-        if not isinstance(backed_up, bool) or not isinstance(installed, bool):
-            raise RePublishRecoveryRequired(
-                "rollback journal operation flags must be booleans"
-            )
-        operations.append(
-            {
-                "final": final,
-                "backup": backup,
-                "staged": staged,
-                "backed_up": backed_up,
-                "installed": installed,
-            }
-        )
-    return operations
-
-
-def _safe_transaction_path(value: object, field: str) -> str:
-    if not isinstance(value, str) or not value:
-        raise RePublishRecoveryRequired(f"rollback journal {field} path is malformed")
-    path = PurePosixPath(value)
-    if path.is_absolute() or ".." in path.parts or "\\" in value:
-        raise RePublishRecoveryRequired(f"rollback journal {field} path is unsafe")
-    return path.as_posix()
