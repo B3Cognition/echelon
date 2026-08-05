@@ -130,6 +130,115 @@ def test_project_authoring_verdict_rejects_noncanonical_input(
     assert caught.value.validator == "projection"
 
 
+def test_only_finalizing_replacement_run_owns_retarget_completion_effect() -> None:
+    assert SquadController._active_retarget(
+        {
+            "run_id": "squad-replacement",
+            "retarget": {
+                "status": "finalizing",
+                "replacement_run_id": "squad-replacement",
+            },
+        }
+    )
+    assert not SquadController._active_retarget(
+        {
+            "run_id": "squad-replacement",
+            "retarget": {
+                "status": "rebuilding",
+                "replacement_run_id": "squad-replacement",
+            },
+        }
+    )
+
+
+def test_phase4_retarget_enters_finalizing_before_staging(tmp_path: Path) -> None:
+    from echelon.spec_retarget_history import (
+        RetargetRecoveryProjection,
+        advance_retarget_revision,
+        append_prepared_revision,
+        load_retarget_history,
+    )
+
+    ctrl, store = _controller(tmp_path)
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    revision = append_prepared_revision(
+        spec_dir,
+        operation_id="retarget-operation",
+        baseline_run_id="squad-base",
+        replacement_run_id="squad-replacement",
+        old_targets=("services/api",),
+        replacement_targets=("apps/web",),
+        original_prompt_digest="sha256:" + "a" * 64,
+        recovery=RetargetRecoveryProjection(
+            run_id="squad-base",
+            status="done",
+            phase="phase4-document",
+            spec_status="planned",
+            completed_phases=(),
+            implementation_targets=("services/api",),
+            ready_to_build=True,
+        ),
+    )
+    advance_retarget_revision(
+        spec_dir,
+        revision.revision_id,
+        expected_status="prepared",
+        status="invalidating",
+        updates={},
+    )
+    advance_retarget_revision(
+        spec_dir,
+        revision.revision_id,
+        expected_status="invalidating",
+        status="rebuilding",
+        updates={},
+    )
+    state = store.load()
+    state.update(
+        {
+            "run_id": "squad-replacement",
+            "spec_id": "001-demo",
+            "retarget": {
+                "revision_id": revision.revision_id,
+                "status": "rebuilding",
+                "replacement_run_id": "squad-replacement",
+            },
+        }
+    )
+    store.save(state)
+
+    updated = ctrl._enter_retarget_finalizing(store.load())
+
+    assert updated["retarget"]["status"] == "finalizing"
+    assert load_retarget_history(spec_dir).revisions[-1].status == "finalizing"
+    assert not SquadController._active_retarget(
+        {
+            "run_id": "squad-baseline",
+            "retarget": {
+                "status": "finalizing",
+                "replacement_run_id": "squad-replacement",
+            },
+        }
+    )
+
+
+def test_completed_retarget_exposes_one_authoritative_comparison_command() -> None:
+    assert SquadController._retarget_comparison_command(
+        {
+            "spec_id": "001-demo",
+            "retarget": {
+                "status": "complete",
+                "checkpoint_commit": "a" * 40,
+                "replacement_commit": "b" * 40,
+            },
+        }
+    ) == (
+        "Compare old and replacement artifacts:\n"
+        "  git diff " + "a" * 40 + ".." + "b" * 40 + " -- specs/001-demo"
+    )
+
+
 def test_deterministic_structural_executor_repairs_without_provider(
     tmp_path: Path,
 ) -> None:

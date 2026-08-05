@@ -47,8 +47,20 @@ def append_phase_a_run(
     run_id: str,
     spec_status: str,
     constitution_hash: str,
+    retarget_revision: str | None = None,
+    supersedes_run_id: str | None = None,
+    baseline_checkpoint: str | None = None,
 ) -> None:
     """Append or refresh a Phase A spec-authoring run completion record."""
+    retarget_fields = (
+        retarget_revision,
+        supersedes_run_id,
+        baseline_checkpoint,
+    )
+    if any(value is not None for value in retarget_fields) and not all(
+        type(value) is str and value for value in retarget_fields
+    ):
+        raise ValueError("retarget Phase A history linkage must be supplied together")
     history_path = spec_dir / "run-history.json"
     history = _read_history(history_path)
     runs = history.setdefault("runs", [])
@@ -64,6 +76,14 @@ def append_phase_a_run(
         "spec_status": spec_status,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+    if retarget_revision is not None:
+        entry.update(
+            {
+                "retarget_revision": retarget_revision,
+                "supersedes_run_id": supersedes_run_id,
+                "baseline_checkpoint": baseline_checkpoint,
+            }
+        )
     runs[:] = [
         run for run in runs
         if not (

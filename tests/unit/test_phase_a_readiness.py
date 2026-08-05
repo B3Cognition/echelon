@@ -218,3 +218,75 @@ def test_blocked_state_is_never_ready_even_with_artifacts(tmp_path: Path) -> Non
 
     assert not result.ready
     assert result.blockers == ["run status is blocked: missing_echelon_result"]
+
+
+def test_active_retarget_blocks_public_readiness(tmp_path: Path) -> None:
+    spec_dir = tmp_path / "specs" / "001-demo"
+    _write_required(spec_dir)
+
+    result = validate_phase_a_readiness(
+        {
+            "status": "done",
+            "retarget": {
+                "revision_id": "rt-1",
+                "status": "finalizing",
+                "replacement_targets": ["apps/web"],
+            },
+        },
+        [spec_dir],
+    )
+
+    assert result.ready is False
+    assert result.blockers == ["retarget revision rt-1 is finalizing"]
+
+
+def test_controller_staging_can_validate_finalizing_retarget(tmp_path: Path) -> None:
+    spec_dir = tmp_path / "specs" / "001-demo"
+    _write_required(spec_dir)
+
+    result = validate_phase_a_readiness(
+        {
+            "status": "done",
+            "retarget": {
+                "revision_id": "rt-1",
+                "status": "finalizing",
+                "replacement_targets": ["apps/web"],
+            },
+        },
+        [spec_dir],
+        allow_pending_retarget_finalization=True,
+    )
+
+    assert result.ready is True
+
+
+def test_completed_retarget_readiness_requires_authoritative_target_contract(
+    tmp_path: Path,
+) -> None:
+    spec_dir = tmp_path / "specs" / "001-demo"
+    _write_required(spec_dir)
+    (spec_dir / "targets.yml").write_text("targets:\n  - services/api\n", encoding="utf-8")
+    (spec_dir / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=REQ-1 depends=none target=apps/web\n"
+        "**Files:**\n"
+        "- `sources/apps/ui.ts`\n"
+        "- [ ] T-002 complexity=standard phase=build req=REQ-1 depends=none\n",
+        encoding="utf-8",
+    )
+
+    result = validate_phase_a_readiness(
+        {
+            "status": "done",
+            "implementation_targets": ["apps/web"],
+            "retarget": {
+                "revision_id": "rt-1",
+                "status": "complete",
+                "replacement_targets": ["apps/web"],
+            },
+        },
+        [spec_dir],
+    )
+
+    assert result.ready is False
+    assert any("replacement target" in blocker for blocker in result.blockers)
+    assert any("exactly one target" in blocker for blocker in result.blockers), result.blockers

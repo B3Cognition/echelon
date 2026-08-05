@@ -188,6 +188,26 @@
     "blocked_reason": {
       "type": "string"
     },
+    "retarget": {
+      "type": "object",
+      "properties": {
+        "revision_id": {"type": "string", "maxLength": 1024},
+        "baseline_run_id": {"type": "string", "maxLength": 1024},
+        "replacement_run_id": {"type": "string", "maxLength": 1024},
+        "checkpoint_id": {"type": "string", "maxLength": 1024},
+        "checkpoint_commit": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
+        "replacement_commit": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
+        "replacement_targets": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1, "maxLength": 1024}},
+        "status": {"enum": ["checkpointed", "invalidating", "rebuilding", "finalizing", "complete", "failed", "recovered"]},
+        "memory_excluded": {"type": "boolean"},
+        "memory_purge": {"type": "object"},
+        "memory_finalization": {"type": "object"},
+        "graph_invalidation": {"type": "object"},
+        "graph_finalization": {"type": "object"},
+        "finalization_receipt": {"type": "object"},
+        "failure_code": {"type": ["string", "null"], "maxLength": 1024}
+      }
+    },
     "escalation_question": {
       "type": "string"
     },

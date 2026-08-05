@@ -57,6 +57,7 @@ _COMPLETION_STEPS = frozenset(
         "checkpoint",
         "context",
         "mining",
+        "retarget",
         "complete",
     }
 )

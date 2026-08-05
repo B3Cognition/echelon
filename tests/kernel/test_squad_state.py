@@ -1628,6 +1628,65 @@ class TestSquadStateStore:
             "terminal_phase": "DONE",
         }
 
+    def test_terminal_retarget_completion_adopts_only_a_verified_receipt(
+        self,
+        tmp_path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "DONE")
+        prepared = _prepare_completion(
+            tmp_path,
+            store,
+            origin="terminal",
+            effect_plan=("mining", "retarget"),
+            from_phase="DONE",
+        )
+        state = store.load()
+        state["retarget"] = {
+            "status": "finalizing",
+            "revision_id": "retarget-1",
+            "memory_excluded": True,
+        }
+        state[PENDING_CONTROLLER_COMPLETION_KEY] = prepared.marker.to_dict()
+        store.save(state)
+        receipt = {"replacement_commit": "a" * 40, "status": "complete"}
+        mined = _rewrite_completion_receipts(
+            tmp_path,
+            store,
+            prepared,
+            {"mining": {"status": "not_applicable"}},
+        )
+        store.advance_controller_completion(mined)
+        retarget_marker = store.load()[PENDING_CONTROLLER_COMPLETION_KEY]
+        retarget_prepared = load_prepared_controller_completion(
+            tmp_path, store.squad_dir, retarget_marker
+        )
+        complete_receipts = _rewrite_completion_receipts(
+            tmp_path,
+            store,
+            retarget_prepared,
+            {"mining": {"status": "not_applicable"}, "retarget": receipt},
+        )
+        store.advance_controller_completion(complete_receipts)
+        completed = load_prepared_controller_completion(
+            tmp_path,
+            store.squad_dir,
+            store.load()[PENDING_CONTROLLER_COMPLETION_KEY],
+        )
+        monkeypatch.setattr(
+            "echelon.spec_retarget_finalization.verify_retarget_finalization_receipt",
+            lambda *_args: receipt,
+        )
+
+        store.complete_controller_completion(completed)
+
+        retarget = store.load()["retarget"]
+        assert retarget["status"] == "complete"
+        assert retarget["replacement_commit"] == "a" * 40
+        assert retarget["finalization_receipt"] == receipt
+        assert "memory_excluded" not in retarget
+
     def test_terminal_controller_completion_records_reconciled_inventories(
         self,
         tmp_path,

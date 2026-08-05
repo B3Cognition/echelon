@@ -5,6 +5,10 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 import re
+from typing import Mapping
+
+from harness.spec_frontmatter import read_canonical_target_entries
+from harness.task_targets import analyze_task_targets
 
 
 REQUIRED_PHASE_A_BUILD_INPUTS = (
@@ -52,7 +56,23 @@ class PhaseAReadinessResult:
 def validate_phase_a_readiness(
     state: dict,
     candidate_spec_dirs: list[Path],
+    *,
+    allow_pending_retarget_finalization: bool = False,
 ) -> PhaseAReadinessResult:
+    retarget = state.get("retarget")
+    if isinstance(retarget, Mapping):
+        status = str(retarget.get("status") or "")
+        if status not in {"complete", "recovered"} and not (
+            allow_pending_retarget_finalization and status == "finalizing"
+        ):
+            return PhaseAReadinessResult(
+                ready=False,
+                blockers=[
+                    f"retarget revision {retarget.get('revision_id')} is {status}"
+                ],
+                missing={},
+                ready_spec_dir=None,
+            )
     status = str(state.get("status") or "").strip()
     blocked_reason = str(state.get("blocked_reason") or "").strip()
     if status in {"blocked", "interrupted"}:
@@ -67,6 +87,9 @@ def validate_phase_a_readiness(
     normalized_dirs = _dedupe_existing_or_referenced_dirs(candidate_spec_dirs)
     for spec_dir in normalized_dirs:
         if all((spec_dir / name).exists() for name in REQUIRED_PHASE_A_BUILD_INPUTS):
+            retarget_blockers = _retarget_contract_blockers(state, spec_dir)
+            if retarget_blockers:
+                continue
             conformance_blocker = _plan_conformance_blocker(
                 spec_dir / "plan-conformance.json"
             )
@@ -95,6 +118,9 @@ def validate_phase_a_readiness(
             blockers.append(f"{name} absent")
 
     for spec_dir in checked_dirs:
+        for blocker in _retarget_contract_blockers(state, spec_dir):
+            if blocker not in blockers:
+                blockers.append(blocker)
         conformance_blocker = _plan_conformance_blocker(
             spec_dir / "plan-conformance.json"
         )
@@ -113,6 +139,60 @@ def validate_phase_a_readiness(
         missing=missing,
         ready_spec_dir=None,
     )
+
+
+def _retarget_contract_blockers(state: Mapping[str, object], spec_dir: Path) -> list[str]:
+    """Validate the public replacement contract only for terminal retargets."""
+
+    retarget = state.get("retarget")
+    if not isinstance(retarget, Mapping) or retarget.get("status") not in {
+        "complete",
+        "recovered",
+    }:
+        return []
+    replacement = retarget.get("replacement_targets")
+    implementation = state.get("implementation_targets")
+    if (
+        type(replacement) is not list
+        or type(implementation) is not list
+        or any(type(item) is not str or not item for item in replacement)
+        or any(type(item) is not str or not item for item in implementation)
+    ):
+        return ["retarget replacement target contract is invalid"]
+    authoritative = [
+        str(entry["path"])
+        for entry in read_canonical_target_entries(spec_dir)
+        if isinstance(entry.get("path"), str)
+    ]
+    blockers: list[str] = []
+    if authoritative != implementation or authoritative != replacement:
+        blockers.append(
+            "retarget replacement targets do not match authoritative targets.yml"
+        )
+    try:
+        analysis = analyze_task_targets(
+            (spec_dir / "tasks.md").read_text(encoding="utf-8")
+        )
+    except OSError:
+        return blockers
+    replacement_set = set(replacement)
+    assigned = {
+        target: task_ids
+        for target, task_ids in analysis.target_tasks.items()
+        if target in replacement_set
+    }
+    if (
+        analysis.unowned_tasks
+        or analysis.cross_target_tasks
+        or analysis.path_target_mismatches
+        or set(analysis.target_tasks) != replacement_set
+        or set(task_id for task_ids in assigned.values() for task_id in task_ids)
+        != set(analysis.all_task_ids)
+    ):
+        blockers.append(
+            "retarget tasks must declare exactly one target from the replacement target set per canonical task"
+        )
+    return blockers
 
 
 def _dedupe_existing_or_referenced_dirs(paths: list[Path]) -> list[Path]:

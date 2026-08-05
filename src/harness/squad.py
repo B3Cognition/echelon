@@ -96,6 +96,10 @@ from harness.published_re_context import (
 )
 from harness.run_history import append_phase_a_run
 from harness.spec_frontmatter import find_spec_dir, write_targets
+from echelon.spec_retarget_history import (
+    advance_retarget_revision,
+    load_retarget_history,
+)
 from harness.spec_lexicon_gate import has_current_spec_lexicon_evidence
 from harness.squad_executors import (
     AgentExecutor,
@@ -1293,6 +1297,100 @@ class SquadController:
             ),
         }
 
+    @staticmethod
+    def _active_retarget(state: Mapping[str, object]) -> bool:
+        retarget = state.get("retarget")
+        return (
+            isinstance(retarget, Mapping)
+            and retarget.get("status") == "finalizing"
+            and retarget.get("replacement_run_id") == state.get("run_id")
+        )
+
+    @staticmethod
+    def _retarget_comparison_command(
+        state: Mapping[str, object],
+    ) -> str | None:
+        """Return the one authoritative comparison command for a completion."""
+        retarget = state.get("retarget")
+        spec_id = state.get("spec_id")
+        if (
+            not isinstance(retarget, Mapping)
+            or retarget.get("status") != "complete"
+            or type(spec_id) is not str
+            or re.fullmatch(r"[0-9]{3,}-[a-z0-9]+(?:-[a-z0-9]+)*", spec_id)
+            is None
+        ):
+            return None
+        checkpoint = retarget.get("checkpoint_commit")
+        replacement = retarget.get("replacement_commit")
+        if (
+            type(checkpoint) is not str
+            or type(replacement) is not str
+            or re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", checkpoint) is None
+            or re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", replacement) is None
+        ):
+            return None
+        return (
+            "Compare old and replacement artifacts:\n"
+            f"  git diff {checkpoint}..{replacement} -- specs/{spec_id}"
+        )
+
+    def _enter_retarget_finalizing(
+        self,
+        state: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Persist finalizing before Phase 4 staging exposes replacement output."""
+        raw = state.get("retarget")
+        if not isinstance(raw, Mapping):
+            return dict(state)
+        retarget = dict(raw)
+        if (
+            retarget.get("replacement_run_id") != state.get("run_id")
+            or retarget.get("status") not in {"rebuilding", "finalizing"}
+        ):
+            raise StateAdvanceError(
+                "retarget finalization binding is invalid",
+                json_path="$.retarget",
+                validator="completion_binding",
+            )
+        spec_id = state.get("spec_id")
+        revision_id = retarget.get("revision_id")
+        if type(spec_id) is not str or type(revision_id) is not str:
+            raise StateAdvanceError(
+                "retarget finalization identity is invalid",
+                json_path="$.retarget",
+                validator="type",
+            )
+        spec_dir = self._project_root / "specs" / spec_id
+        history = load_retarget_history(spec_dir)
+        if not history.revisions or history.revisions[-1].revision_id != revision_id:
+            raise StateAdvanceError(
+                "retarget finalization history drifted",
+                json_path="$.retarget.revision_id",
+                validator="completion_binding",
+            )
+        if history.revisions[-1].status == "rebuilding":
+            advance_retarget_revision(
+                spec_dir,
+                revision_id,
+                expected_status="rebuilding",
+                status="finalizing",
+                updates={},
+            )
+        elif history.revisions[-1].status != "finalizing":
+            raise StateAdvanceError(
+                "retarget finalization history is not resumable",
+                json_path="$.retarget.status",
+                validator="completion_binding",
+            )
+        if retarget.get("status") == "finalizing":
+            return dict(state)
+        updated = dict(state)
+        retarget["status"] = "finalizing"
+        updated["retarget"] = retarget
+        self._state_store.save(updated)
+        return self._state_store.load()
+
     def _prepare_controller_completion(
         self,
         *,
@@ -1312,11 +1410,12 @@ class SquadController:
                 "kind": "terminal",
                 "terminal_phase": from_phase,
             }
-            effect_plan = (
-                ("mining",)
-                if self._active_phase_a_spec_dir(snapshot.state) is not None
-                else ()
-            )
+            effects = []
+            if self._active_phase_a_spec_dir(snapshot.state) is not None:
+                effects.append("mining")
+            if self._active_retarget(self._state_store.load()):
+                effects.append("retarget")
+            effect_plan = tuple(effects)
             judgment_records: tuple[dict[str, object], ...] = ()
         else:
             route = {
@@ -1354,6 +1453,8 @@ class SquadController:
                 effects.append("context")
                 if from_phase == "phase4-document":
                     effects.append("mining")
+                    if self._active_retarget(self._state_store.load()):
+                        effects.append("retarget")
                 effect_plan = tuple(effects)
         publication = (
             {
@@ -1603,6 +1704,19 @@ class SquadController:
                 artifact_metadata=metadata,
                 expected_receipt=existing,
             )
+            return
+        if effect == "retarget":
+            from echelon.spec_retarget_finalization import (
+                apply_or_verify_retarget_finalization,
+            )
+
+            receipt = apply_or_verify_retarget_finalization(
+                prepared,
+                project_root=self._project_root,
+                state=state,
+                expected_receipt=existing,
+            )
+            persist_completion_effect_receipt(prepared, effect, receipt)
             return
         raise CompletionError("intent_mismatch")
 
@@ -1956,6 +2070,11 @@ class SquadController:
                         self._state_store.complete_controller_completion(
                             prepared,
                         )
+                    comparison = self._retarget_comparison_command(
+                        self._state_store.load()
+                    )
+                    if comparison is not None:
+                        print(comparison, flush=True)
                     self._discard_completed_controller_stage(prepared)
                     return CompletionRecoveryOutcome(
                         True,
@@ -5923,6 +6042,9 @@ class SquadController:
                 validate_phase_a_readiness(
                     detached_state,
                     self._phase_a_readiness_candidate_dirs(detached_state),
+                    allow_pending_retarget_finalization=self._active_retarget(
+                        detached_state
+                    ),
                 ),
             )
         active_spec_dir = self._absolute_project_path(active_spec_dir)
@@ -6046,6 +6168,7 @@ class SquadController:
         readiness = validate_phase_a_readiness(
             updated,
             [virtual_spec_dir],
+            allow_pending_retarget_finalization=self._active_retarget(updated),
         )
         if not readiness.ready:
             return 0, readiness
@@ -6183,6 +6306,13 @@ class SquadController:
         needs_manual = manual_phase_run and not needs_phase_a
         if not (needs_product or needs_phase_a or needs_manual):
             return None
+
+        if (
+            needs_phase_a
+            and isinstance(state.get("retarget"), Mapping)
+            and state["retarget"].get("status") in {"rebuilding", "finalizing"}
+        ):
+            state = self._enter_retarget_finalizing(state)
 
         transaction = SquadPublicationTransaction.begin(
             self._project_root,
@@ -6659,11 +6789,27 @@ class SquadController:
         constitution_hash = self._constitution_hash(
             published_spec_dir / "constitution.md"
         )
+        retarget = state.get("retarget")
+        retarget_linkage: dict[str, str] = {}
+        if isinstance(retarget, Mapping):
+            revision = retarget.get("revision_id")
+            baseline = retarget.get("baseline_run_id")
+            checkpoint = retarget.get("checkpoint_id")
+            if all(
+                type(value) is str and value
+                for value in (revision, baseline, checkpoint)
+            ):
+                retarget_linkage = {
+                    "retarget_revision": revision,
+                    "supersedes_run_id": baseline,
+                    "baseline_checkpoint": checkpoint,
+                }
         append_phase_a_run(
             published_spec_dir,
             run_id=run_id,
             spec_status=spec_status,
             constitution_hash=constitution_hash,
+            **retarget_linkage,
         )
         self._write_squad_report(published_spec_dir, state)
 

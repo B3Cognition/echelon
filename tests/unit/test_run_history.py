@@ -74,3 +74,22 @@ class TestRunHistory:
         assert data["runs"][0]["status"] == "done"
         assert data["runs"][0]["spec_status"] == "planned"
         assert data["runs"][0]["constitution_hash"] == "def456"
+
+    def test_append_phase_a_run_records_complete_retarget_linkage(self, tmp_path):
+        spec_dir = tmp_path / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+
+        append_phase_a_run(
+            spec_dir,
+            run_id="squad-replacement",
+            spec_status="planned",
+            constitution_hash="abc123",
+            retarget_revision="retarget-1",
+            supersedes_run_id="squad-base",
+            baseline_checkpoint="retarget-preflight-retarget-1",
+        )
+
+        entry = json.loads((spec_dir / "run-history.json").read_text())["runs"][0]
+        assert entry["retarget_revision"] == "retarget-1"
+        assert entry["supersedes_run_id"] == "squad-base"
+        assert entry["baseline_checkpoint"] == "retarget-preflight-retarget-1"

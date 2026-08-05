@@ -51,7 +51,7 @@ _SHA256_PATTERN = re.compile(r"\A[0-9a-f]{64}\Z")
 _GIT_OBJECT_ID_PATTERN = re.compile(
     r"\A(?:[0-9a-f]{40}|[0-9a-f]{64})\Z"
 )
-_EFFECT_ORDER = ("journal", "timing", "checkpoint", "context", "mining")
+_EFFECT_ORDER = ("journal", "timing", "checkpoint", "context", "mining", "retarget")
 _ERROR_CODES = frozenset(
     {
         "intent_invalid",
@@ -523,8 +523,10 @@ def _validate_intent(value: object) -> dict[str, object]:
         and effect_plan != ["journal", "checkpoint"]
     ):
         _raise("intent_invalid")
-    if origin == "terminal" and any(
-        effect != "mining" for effect in effect_plan
+    if origin == "terminal" and effect_plan not in (
+        [],
+        ["mining"],
+        ["mining", "retarget"],
     ):
         _raise("intent_invalid")
     checkpoint_prestate = _validate_checkpoint_prestate(

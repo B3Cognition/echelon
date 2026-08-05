@@ -33,6 +33,18 @@
             "type": "string",
             "description": "SHA of constitution.md at run start. If changed between runs, Phase A must re-run."
           },
+          "retarget_revision": {
+            "type": "string",
+            "description": "Optional retarget revision for a replacement Phase A run."
+          },
+          "supersedes_run_id": {
+            "type": "string",
+            "description": "Baseline Phase A run replaced by this retarget run."
+          },
+          "baseline_checkpoint": {
+            "type": "string",
+            "description": "Mandatory retarget preflight checkpoint identity."
+          },
           "verification_result": {
             "type": "string",
             "enum": ["PASS", "FAIL", "PARTIAL", "SKIPPED"]

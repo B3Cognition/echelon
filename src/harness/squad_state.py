@@ -118,6 +118,7 @@ _COMPLETION_EFFECT_ORDER = (
     "checkpoint",
     "context",
     "mining",
+    "retarget",
 )
 _SHA256_CHARACTERS = frozenset("0123456789abcdef")
 _MAX_COMPLETION_DOCUMENT_BYTES = 4_194_304
@@ -4104,6 +4105,30 @@ class SquadStateStore:
                         }
                     )
                 desired["last_terminal_completion"] = terminal_receipt
+            if "retarget" in intent["effect_plan"]:
+                from echelon.spec_retarget_finalization import (
+                    verify_retarget_finalization_receipt,
+                )
+
+                receipt = prepared.receipts["effects"].get("retarget")
+                checked = verify_retarget_finalization_receipt(
+                    prepared._project_root,
+                    desired,
+                    receipt,
+                )
+                retarget = desired.get("retarget")
+                if type(retarget) is not dict or retarget.get("status") != "finalizing":
+                    raise StateAdvanceError(
+                        "retarget completion state is invalid",
+                        json_path="$.retarget.status",
+                        validator="completion_binding",
+                    )
+                updated_retarget = deepcopy(retarget)
+                updated_retarget["status"] = "complete"
+                updated_retarget["replacement_commit"] = checked["replacement_commit"]
+                updated_retarget["finalization_receipt"] = checked
+                updated_retarget.pop("memory_excluded", None)
+                desired["retarget"] = updated_retarget
             desired.pop(PENDING_CONTROLLER_COMPLETION_KEY, None)
             desired.pop(_CONTROLLER_COMPLETION_FAILURE_KEY, None)
             self._save_exact_completion_state_unlocked(

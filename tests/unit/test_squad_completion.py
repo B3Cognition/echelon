@@ -636,6 +636,20 @@ def test_terminal_completion_permits_only_mining_effect(
     assert prepared.marker.step == "mining"
 
 
+def test_terminal_completion_permits_retarget_after_mining(
+    tmp_path: Path,
+) -> None:
+    _, _, prepared = _prepare_minimal(
+        tmp_path,
+        origin="terminal",
+        route={"kind": "terminal", "terminal_phase": "DONE"},
+        effect_plan=("mining", "retarget"),
+        mine_phase_a=True,
+    )
+
+    assert prepared.intent.effect_plan == ("mining", "retarget")
+
+
 @pytest.mark.parametrize(
     "effect_plan",
     [
