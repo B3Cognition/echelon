@@ -813,9 +813,10 @@ def _codegraph_failed_extractions(document: Mapping[str, object]) -> int:
     ):
         if section not in document:
             continue
-        counts.append(
-            _require_nonnegative_int(_require_object(document, section), field)
-        )
+        section_data = _require_object(document, section)
+        if field not in section_data:
+            continue
+        counts.append(_require_nonnegative_int(section_data, field))
     if len(counts) == 2 and counts[0] != counts[1]:
         raise TopologyProviderError(
             "CodeGraph failed extraction counts do not reconcile"
