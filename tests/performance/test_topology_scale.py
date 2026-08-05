@@ -2,12 +2,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+import resource
 from pathlib import Path
-from types import SimpleNamespace
+import sys
+import time
 
 import pytest
 
-from echelon.spec_graph import GraphEdge, GraphNode, SpecArtifactGraph, render_spec_graph
+from echelon.spec_graph import build_spec_graph, write_spec_graph
+from echelon.topology_cli import (
+    explain_command,
+    impact_command,
+    neighbors_command,
+    search_command,
+)
 from echelon.topology_model import TopologySymbol, canonical_symbol_key
 from echelon.workspace_graph import build_workspace_graph
 from harness.re_fingerprint import fingerprint_source, resolve_re_fingerprint_profile
@@ -121,63 +129,134 @@ def _analysis() -> tuple[bytes, bytes, tuple[str, ...]]:
     )
 
 
-def _compact_artifact_graphs(
-    root: Path, monkeypatch: pytest.MonkeyPatch, receipt_path: str
+def _write_json(path: Path, payload: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def _artifact_descriptor(root: Path, path: str, kind: str, scope: str) -> dict[str, str]:
+    return {
+        "kind": kind,
+        "path": path,
+        "sha256": "sha256:" + hashlib.sha256((root / path).read_bytes()).hexdigest(),
+        "scope": scope,
+        "source_id": "scale",
+    }
+
+
+def _production_artifact_graphs(
+    root: Path, fingerprint: object
 ) -> tuple[dict[str, object], dict[str, object]]:
+    source_root = root / "re/sources/scale"
+    source_root.mkdir(parents=True)
+    for name in ("overview.md", "architecture.md", "contracts.md", "components.md"):
+        (source_root / name).write_text(f"# Scale {name}\n", encoding="utf-8")
+    source_artifacts = [
+        _artifact_descriptor(
+            root,
+            f"re/sources/scale/{name}",
+            f"re-{name.removesuffix('.md')}",
+            "source",
+        )
+        for name in ("architecture.md", "components.md", "contracts.md", "overview.md")
+    ]
+    _write_json(
+        source_root / "manifest.json",
+        {
+            "schema_version": 1,
+            "source_id": "scale",
+            "publication_status": "complete",
+            "source_fingerprint": fingerprint.value,
+            "overview": "re/sources/scale/overview.md",
+            "architecture": "re/sources/scale/architecture.md",
+            "contracts": "re/sources/scale/contracts.md",
+            "components": "re/sources/scale/components.md",
+            "specs": [],
+            "artifacts": source_artifacts,
+        },
+    )
+    source_manifest_descriptor = _artifact_descriptor(
+        root, "re/sources/scale/manifest.json", "re-source-manifest", "source"
+    )
+
+    workspace_root = root / "re/workspace"
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    for name in ("overview.md", "relationships.md", "contracts.md"):
+        (workspace_root / name).write_text(f"# Scale {name}\n", encoding="utf-8")
+    _write_json(
+        workspace_root / "manifest.json",
+        {"schema_version": 1, "sources": [], "artifacts": []},
+    )
+    workspace_manifest = _artifact_descriptor(
+        root, "re/workspace/manifest.json", "re-workspace-manifest", "workspace"
+    )
+    workspace_manifest.pop("source_id")
+    _write_json(
+        root / "re/index.json",
+        {
+            "schema_version": 1,
+            "generation": 1,
+            "publication_status": "complete",
+            "published_at": "2026-08-05T00:00:00Z",
+            "published_from_run": "re-scale",
+            "sources": {
+                "scale": {
+                    "path": "sources/scale",
+                    "published_path": "re/sources/scale",
+                    "fingerprint": fingerprint.value,
+                    "profile_hash": fingerprint.profile_hash,
+                    "status": "complete",
+                    "manifest": "re/sources/scale/manifest.json",
+                    "manifest_artifact": source_manifest_descriptor,
+                }
+            },
+            "workspace": {
+                "manifest": "re/workspace/manifest.json",
+                "manifest_artifact": workspace_manifest,
+                "overview": "re/workspace/overview.md",
+                "relationships": "re/workspace/relationships.md",
+                "contracts": "re/workspace/contracts.md",
+            },
+            "warnings": [],
+        },
+    )
+
     spec_dir = root / "specs" / "001-scale"
     spec_dir.mkdir(parents=True)
-    spec_dir.joinpath("spec.md").write_text("# Scale\n", encoding="utf-8")
-    member = SpecArtifactGraph(
-        spec_id="001-scale",
-        generator_version="test",
-        inputs=(),
-        nodes=(
-            GraphNode("spec:001-scale", "Spec", {"spec_id": "001-scale"}),
-            GraphNode(
-                "source:scale",
-                "SourceRoot",
-                {"source_id": "scale", "path": "sources/scale"},
-            ),
-            GraphNode(
-                f"artifact:001-scale:{receipt_path}",
-                "Artifact",
-                {"path": receipt_path, "role": "topology-receipt"},
-            ),
-        ),
-        edges=(
-            GraphEdge("spec:001-scale", "USES_SOURCE", "source:scale", {}),
-            GraphEdge(
-                "source:scale",
-                "HAS_TOPOLOGY_RECEIPT",
-                f"artifact:001-scale:{receipt_path}",
-                {},
-            ),
-        ),
-        memory_receipts=(),
+    spec_dir.joinpath("spec.md").write_text(
+        "# Scale\n\n- **FR-001**: Preserve bounded topology evidence.\n",
+        encoding="utf-8",
     )
-    graph_path = spec_dir / "spec-artifact-graph.json"
-    graph_path.write_bytes(render_spec_graph(member))
-    graph_hash = "sha256:" + hashlib.sha256(graph_path.read_bytes()).hexdigest()
-    monkeypatch.setattr(
-        "echelon.workspace_graph.audit_spec_graph",
-        lambda project_root, selector: SimpleNamespace(
-            status="pass",
-            graph_hash=graph_hash,
-            findings=(),
-            to_dict=lambda: {"status": "pass", "graph_hash": graph_hash},
-        ),
+    overview_path = "re/sources/scale/overview.md"
+    _write_json(
+        spec_dir / "re-context.json",
+        {
+            "schema_version": 1,
+            "status": "attached",
+            "generation": 1,
+            "artifacts": [
+                {
+                    "path": overview_path,
+                    "hash": "sha256:"
+                    + hashlib.sha256((root / overview_path).read_bytes()).hexdigest(),
+                }
+            ],
+        },
     )
+    member = build_spec_graph(root, spec_dir)
+    write_spec_graph(member, spec_dir)
     return member.to_dict(), build_workspace_graph(root).graph.to_dict()
 
 
 @pytest.mark.performance
 def test_published_topology_scales_without_projecting_provider_graphs(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
     from echelon.topology_audit import audit_topology
     from echelon.topology_provider import TopologyNodeResolutionError
     from echelon.topology_registry import load_published_topology, load_topology_index
 
+    started = time.perf_counter()
     source = _workspace(tmp_path)
     fingerprint = fingerprint_source(source, resolve_re_fingerprint_profile(tmp_path))
     analysis, summary, keys = _analysis()
@@ -249,10 +328,7 @@ def test_published_topology_scales_without_projecting_provider_graphs(
 
     index = load_topology_index(tmp_path)
     assert index is not None
-    receipt_path = index.sources["scale"].receipt.path
-    spec_graph, workspace_graph = _compact_artifact_graphs(
-        tmp_path, monkeypatch, receipt_path
-    )
+    spec_graph, workspace_graph = _production_artifact_graphs(tmp_path, fingerprint)
     for graph in (spec_graph, workspace_graph):
         node_ids = [node["id"] for node in graph["nodes"]]
         assert len(node_ids) < 20
@@ -260,3 +336,39 @@ def test_published_topology_scales_without_projecting_provider_graphs(
         assert not any(
             edge["type"] in {"CALLS", "DECLARES"} for edge in graph["edges"]
         )
+
+    payloads = (
+        search_command(
+            tmp_path, "scale.symbol", source="scale", limit=20, as_json=True
+        ).stdout,
+        explain_command(tmp_path, exact_ids[0], source="scale", as_json=True).stdout,
+        neighbors_command(
+            tmp_path,
+            exact_ids[4],
+            source="scale",
+            direction="in",
+            relations=("CALLS",),
+            limit=20,
+            as_json=True,
+        ).stdout,
+        impact_command(
+            tmp_path,
+            exact_ids[3],
+            source="scale",
+            max_depth=3,
+            relations=("CALLS",),
+            as_json=True,
+        ).stdout,
+    )
+    repeated = search_command(
+        tmp_path, "scale.symbol", source="scale", limit=20, as_json=True
+    ).stdout
+    assert payloads[0] == repeated
+    assert all(len(payload.encode("utf-8")) < 128 * 1024 for payload in payloads)
+    assert sum(len(payload.encode("utf-8")) for payload in payloads) < 256 * 1024
+
+    elapsed = time.perf_counter() - started
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    peak_bytes = peak if sys.platform == "darwin" else peak * 1024
+    assert elapsed < 120.0, f"topology scale workflow took {elapsed:.2f}s"
+    assert peak_bytes < 1536 * 1024 * 1024
