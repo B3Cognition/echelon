@@ -19,7 +19,7 @@ from echelon.topology_registry import (
 from harness.re_fingerprint import fingerprint_source, resolve_re_fingerprint_profile
 
 
-AuditStatus = Literal["current", "degraded", "stale", "invalid"]
+AuditStatus = Literal["current", "degraded", "stale", "unavailable", "invalid"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,7 +112,13 @@ def audit_topology(project_root: Path, source_id: str | None = None) -> Topology
     overall = _overall_status(result.status for result in results)
     return TopologyAuditReport(
         status=overall,
-        exit_code=0 if overall == "current" else 2 if overall == "invalid" else 1,
+        exit_code=(
+            0
+            if overall == "current"
+            else 2
+            if overall in {"unavailable", "invalid"}
+            else 1
+        ),
         sources=tuple(sorted(results, key=lambda result: result.source_id)),
         findings=tuple(sorted(findings, key=_finding_key)),
         snapshot=snapshot,
@@ -191,6 +197,20 @@ def _audit_source(root: Path, source: TopologySourceRecord, profile: object) -> 
     if live != source.source_fingerprint:
         stale = True
         findings.append(TopologyAuditFinding("stale", "live source fingerprint differs from published snapshot", source.source_id, path=source.source_path))
+    if not source.providers or all(
+        receipt.status in {"unsupported", "unavailable"}
+        for receipt in source.providers.values()
+    ):
+        for provider, receipt in source.providers.items():
+            findings.append(
+                TopologyAuditFinding(
+                    "unavailable",
+                    f"provider topology is {receipt.status}",
+                    source.source_id,
+                    provider,
+                )
+            )
+        return "unavailable", findings
     degraded = [
         provider
         for provider, receipt in source.providers.items()
@@ -226,6 +246,8 @@ def _overall_status(statuses: object) -> AuditStatus:
     values = tuple(statuses)
     if any(value == "invalid" for value in values):
         return "invalid"
+    if any(value == "unavailable" for value in values):
+        return "unavailable"
     if any(value == "stale" for value in values):
         return "stale"
     if any(value == "degraded" for value in values):

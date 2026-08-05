@@ -152,7 +152,7 @@ def test_audit_reports_degraded_provider_without_marking_snapshot_invalid(
 
 
 @pytest.mark.unit
-def test_audit_reports_structurally_valid_unavailable_provider_as_degraded(
+def test_audit_reports_only_unavailable_and_unsupported_providers_as_unavailable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     index = build_topology(tmp_path)
@@ -179,7 +179,8 @@ def test_audit_reports_structurally_valid_unavailable_provider_as_degraded(
     monkeypatch.setattr("echelon.topology_audit.fingerprint_source", lambda path, profile: fingerprint)
     report = audit_topology(tmp_path)
 
-    assert report.status == "degraded"
+    assert report.status == "unavailable"
+    assert report.exit_code == 2
     assert report.findings[0].provider == "codegraph"
 
 
@@ -243,7 +244,7 @@ def test_audit_fingerprint_execution_failure_is_invalid_with_exit_two(
 
 
 @pytest.mark.unit
-def test_audit_all_unsupported_completed_provider_is_current(
+def test_audit_all_unsupported_completed_provider_is_unavailable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     index = build_topology(tmp_path)
@@ -262,5 +263,5 @@ def test_audit_all_unsupported_completed_provider_is_current(
     monkeypatch.setattr("echelon.topology_audit.fingerprint_source", lambda path, profile: fingerprint)
     report = audit_topology(tmp_path)
 
-    assert report.status == "current"
-    assert report.exit_code == 0
+    assert report.status == "unavailable"
+    assert report.exit_code == 2

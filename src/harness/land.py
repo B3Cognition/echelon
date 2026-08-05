@@ -1623,7 +1623,7 @@ def _landed_topology_status(workspace_root: Path, source_id: str | None) -> str:
         status = audit_topology(workspace_root, source_id=source_id).status
     except Exception:  # noqa: BLE001 - landing reporting is deliberately nonfatal.
         return "unavailable"
-    if status in {"current", "degraded", "stale", "invalid"}:
+    if status in {"current", "stale"}:
         return status
     return "unavailable"
 

@@ -1593,8 +1593,8 @@ def test_post_land_reports_topology_and_semantic_re_independently(
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("audit_status", ("degraded", "invalid"))
-def test_post_land_preserves_exact_topology_audit_status(
+@pytest.mark.parametrize("audit_status", ("degraded", "invalid", "unavailable"))
+def test_post_land_maps_unusable_topology_audit_status_to_unavailable(
     tmp_path: Path,
     caplog,
     audit_status: str,
@@ -1626,7 +1626,9 @@ def test_post_land_preserves_exact_topology_audit_status(
     ):
         _post_land_topology_reconciliation("001-demo", tmp_path, source)
 
-    assert f"topology: {audit_status}" in caplog.text
+    assert "topology: unavailable" in caplog.text
+    if audit_status != "unavailable":
+        assert f"topology: {audit_status}" not in caplog.text
     assert "next: echelon re refresh --source api" in caplog.text
 
 
