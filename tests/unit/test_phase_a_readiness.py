@@ -331,3 +331,35 @@ def test_completed_retarget_readiness_requires_authoritative_target_contract(
     assert result.ready is False
     assert any("replacement target" in blocker for blocker in result.blockers)
     assert any("exactly one target" in blocker for blocker in result.blockers), result.blockers
+
+
+def test_recovered_retarget_readiness_uses_restored_old_target_contract(
+    tmp_path: Path,
+) -> None:
+    spec_dir = tmp_path / "specs" / "001-demo"
+    _write_required(spec_dir)
+    (spec_dir / "targets.yml").write_text(
+        "targets:\n  - services/api\n", encoding="utf-8"
+    )
+    (spec_dir / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=REQ-1 depends=none "
+        "target=services/api\n",
+        encoding="utf-8",
+    )
+
+    result = validate_phase_a_readiness(
+        {
+            "status": "done",
+            "implementation_targets": ["services/api"],
+            "retarget": {
+                "revision_id": "rt-1",
+                "status": "recovered",
+                "old_targets": ["services/api"],
+                "replacement_targets": ["apps/web"],
+            },
+        },
+        [spec_dir],
+    )
+
+    assert result.ready is True
+    assert result.blockers == []

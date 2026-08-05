@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import os
 from pathlib import Path
 import subprocess
 from types import SimpleNamespace
@@ -69,7 +70,11 @@ def _invalidation_receipt() -> RetargetGraphReceipt:
     )
 
 
-def _failed_revision(project_root: Path):
+def _failed_revision(
+    project_root: Path,
+    *,
+    checkpoint_commit: str = "b" * 40,
+):
     spec_dir = project_root / "specs" / "001-demo"
     spec_dir.mkdir(parents=True, exist_ok=True)
     revision = append_prepared_revision(
@@ -103,21 +108,25 @@ def _failed_revision(project_root: Path):
         status="failed",
         updates={
             "checkpoint_id": f"retarget-preflight-{revision.revision_id}",
-            "checkpoint_commit": "b" * 40,
+            "checkpoint_commit": checkpoint_commit,
             "graph_invalidation": _invalidation_receipt().to_dict(),
             "failure_code": "retarget_artifact_invalidation_failed",
         },
     )
 
 
-def _checkpoint(revision_id: str) -> PhaseCheckpoint:
+def _checkpoint(
+    revision_id: str,
+    *,
+    commit: str = "b" * 40,
+) -> PhaseCheckpoint:
     return PhaseCheckpoint(
         id=f"retarget-preflight-{revision_id}",
         spec_id="001-demo",
         phase="phase4-document",
         next_phase="phase0-constitution",
-        commit="b" * 40,
-        metadata_commit="b" * 40,
+        commit=commit,
+        metadata_commit=commit,
         source="retarget-preflight",
         run_id="squad-base",
         created_at="2026-08-05T00:00:00+00:00",
@@ -323,7 +332,7 @@ def test_baseline_reconstruction_rejects_identity_drift_and_symlinks(
 
 
 @pytest.mark.unit
-def test_recovery_commit_binding_is_exact_idempotent_and_fail_closed(
+def test_recovery_commit_binding_rejects_an_unverified_oid(
     tmp_path: Path,
 ) -> None:
     spec_dir, failed = _failed_revision(tmp_path)
@@ -339,24 +348,11 @@ def test_recovery_commit_binding_is_exact_idempotent_and_fail_closed(
         },
     )
 
-    bound = bind_recovered_revision_commit(
-        spec_dir,
-        recovered.revision_id,
-        recovery_commit="d" * 40,
-    )
-    repeated = bind_recovered_revision_commit(
-        spec_dir,
-        recovered.revision_id,
-        recovery_commit="d" * 40,
-    )
-
-    assert bound.recovery_commit == "d" * 40
-    assert repeated == bound
-    with pytest.raises(ValueError, match="already bound"):
+    with pytest.raises(ValueError, match="cannot be verified"):
         bind_recovered_revision_commit(
             spec_dir,
             recovered.revision_id,
-            recovery_commit="e" * 40,
+            recovery_commit="d" * 40,
         )
     with pytest.raises(ValueError, match="precondition"):
         bind_recovered_revision_commit(
@@ -367,8 +363,10 @@ def test_recovery_commit_binding_is_exact_idempotent_and_fail_closed(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("invalid_candidate", ("wrong_parent", "wrong_tree"))
 def test_recovery_commit_is_exact_scoped_and_reused_without_touching_other_index(
     tmp_path: Path,
+    invalid_candidate: str,
 ) -> None:
     project_root = tmp_path / "project"
     project_root.mkdir()
@@ -380,6 +378,23 @@ def test_recovery_commit_is_exact_scoped_and_reused_without_touching_other_index
         subprocess.run(
             ["git", *args], cwd=project_root, check=True, capture_output=True
         )
+    (project_root / "README.md").write_text("seed\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "add", "README.md"], cwd=project_root, check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "seed"],
+        cwd=project_root,
+        check=True,
+        capture_output=True,
+    )
+    seed_commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=project_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
     spec_dir = project_root / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
     (spec_dir / "spec.md").write_text("# baseline\n", encoding="utf-8")
@@ -392,7 +407,30 @@ def test_recovery_commit_is_exact_scoped_and_reused_without_touching_other_index
         check=True,
         capture_output=True,
     )
-    _, failed = _failed_revision(project_root)
+    checkpoint_commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=project_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    (project_root / "notes.txt").write_text("unrelated commit\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "add", "notes.txt"],
+        cwd=project_root,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "unrelated after checkpoint"],
+        cwd=project_root,
+        check=True,
+        capture_output=True,
+    )
+    _, failed = _failed_revision(
+        project_root,
+        checkpoint_commit=checkpoint_commit,
+    )
     recovered = advance_retarget_revision(
         spec_dir,
         failed.revision_id,
@@ -413,20 +451,50 @@ def test_recovery_commit_is_exact_scoped_and_reused_without_touching_other_index
         capture_output=True,
     )
 
+    checkpoint = _checkpoint(
+        recovered.revision_id,
+        commit=checkpoint_commit,
+    )
     commit = create_or_recover_retarget_recovery_commit(
         project_root,
         spec_dir,
         recovered,
-        _checkpoint(recovered.revision_id),
+        checkpoint,
     )
     repeated = create_or_recover_retarget_recovery_commit(
         project_root,
         spec_dir,
         recovered,
-        _checkpoint(recovered.revision_id),
+        checkpoint,
+    )
+    raw_history = (spec_dir / "retarget-history.json").read_bytes()
+    bound = bind_recovered_revision_commit(
+        spec_dir,
+        recovered.revision_id,
+        recovery_commit=commit,
+    )
+    rebound = bind_recovered_revision_commit(
+        spec_dir,
+        recovered.revision_id,
+        recovery_commit=commit,
     )
 
     assert repeated == commit
+    assert bound.recovery_commit == commit
+    assert rebound == bound
+    assert (spec_dir / "retarget-history.json").read_bytes() == raw_history
+    assert subprocess.run(
+        ["git", "show", f"{commit}:specs/001-demo/retarget-history.json"],
+        cwd=project_root,
+        check=True,
+        capture_output=True,
+    ).stdout == raw_history
+    with pytest.raises(ValueError, match="already bound"):
+        bind_recovered_revision_commit(
+            spec_dir,
+            recovered.revision_id,
+            recovery_commit="e" * 40,
+        )
     message = subprocess.run(
         ["git", "show", "-s", "--format=%B", commit],
         cwd=project_root,
@@ -434,6 +502,86 @@ def test_recovery_commit_is_exact_scoped_and_reused_without_touching_other_index
         capture_output=True,
         text=True,
     ).stdout
+    tree = subprocess.run(
+        ["git", "rev-parse", f"{commit}^{{tree}}"],
+        cwd=project_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    if invalid_candidate == "wrong_parent":
+        candidate = subprocess.run(
+            ["git", "commit-tree", tree, "-p", seed_commit],
+            cwd=project_root,
+            check=True,
+            capture_output=True,
+            input=message,
+            text=True,
+        ).stdout.strip()
+    else:
+        candidate_index = project_root / ".git" / "retarget-candidate-index"
+        candidate_env = {**os.environ, "GIT_INDEX_FILE": str(candidate_index)}
+        subprocess.run(
+            ["git", "read-tree", commit],
+            cwd=project_root,
+            check=True,
+            capture_output=True,
+            env=candidate_env,
+        )
+        altered_blob = subprocess.run(
+            ["git", "hash-object", "-w", "--stdin"],
+            cwd=project_root,
+            check=True,
+            capture_output=True,
+            input="altered selected spec\n",
+            text=True,
+        ).stdout.strip()
+        subprocess.run(
+            [
+                "git",
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                "100644",
+                altered_blob,
+                "specs/001-demo/spec.md",
+            ],
+            cwd=project_root,
+            check=True,
+            capture_output=True,
+            env=candidate_env,
+        )
+        altered_tree = subprocess.run(
+            ["git", "write-tree"],
+            cwd=project_root,
+            check=True,
+            capture_output=True,
+            env=candidate_env,
+            text=True,
+        ).stdout.strip()
+        candidate = subprocess.run(
+            ["git", "commit-tree", altered_tree, "-p", checkpoint_commit],
+            cwd=project_root,
+            check=True,
+            capture_output=True,
+            input=message,
+            text=True,
+        ).stdout.strip()
+    candidate_branch = f"invalid-retarget-{invalid_candidate}"
+    subprocess.run(
+        ["git", "branch", candidate_branch, candidate],
+        cwd=project_root,
+        check=True,
+        capture_output=True,
+    )
+    with pytest.raises(ValueError, match="terminal commit binding is invalid"):
+        load_retarget_history(spec_dir)
+    subprocess.run(
+        ["git", "branch", "-D", candidate_branch],
+        cwd=project_root,
+        check=True,
+        capture_output=True,
+    )
     paths = subprocess.run(
         ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", commit],
         cwd=project_root,
@@ -459,7 +607,7 @@ def test_recovery_commit_is_exact_scoped_and_reused_without_touching_other_index
             project_root,
             spec_dir,
             recovered,
-            _checkpoint(recovered.revision_id),
+            checkpoint,
         )
     subprocess.run(
         [
@@ -486,7 +634,7 @@ def test_recovery_commit_is_exact_scoped_and_reused_without_touching_other_index
             project_root,
             spec_dir,
             recovered,
-            _checkpoint(recovered.revision_id),
+            checkpoint,
         )
 
 
@@ -578,11 +726,7 @@ def test_recovered_baseline_state_and_same_branch_pointer_are_exact_and_idempote
         "recovery_commit": "d" * 40,
     }
     assert not (tmp_path / ".echelon/runtime/spec-switch-intent.json").exists()
-    bound = bind_recovered_revision_commit(
-        spec_dir,
-        recovered.revision_id,
-        recovery_commit="d" * 40,
-    )
+    bound = replace(recovered, recovery_commit="d" * 40)
     monkeypatch.setattr(
         SquadStateStore,
         "initialize",

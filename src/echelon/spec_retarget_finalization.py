@@ -23,7 +23,11 @@ from echelon.spec_graph_audit import audit_spec_graph
 from echelon.spec_retarget_graph import RetargetGraphReceipt, finalize_retarget_graphs
 from echelon.workspace_graph import workspace_graph_path
 from echelon.workspace_graph_audit import audit_workspace_graph
-from echelon.spec_retarget_history import advance_retarget_revision, load_retarget_history
+from echelon.spec_retarget_history import (
+    advance_retarget_revision,
+    bind_completed_revision_commit,
+    load_retarget_history,
+)
 from harness.phase_checkpoints import _commit_spec_changes
 from harness.squad_completion import PreparedControllerCompletion
 
@@ -697,13 +701,14 @@ def verify_retarget_finalization_receipt(
     if not history.revisions or history.revisions[-1].revision_id != checked["revision_id"]:
         raise RetargetFinalizationError("retarget finalization history drifted")
     revision = history.revisions[-1]
+    commit = str(checked["replacement_commit"])
     if (
         revision.status != "complete"
+        or revision.replacement_commit != commit
         or revision.memory_finalization != checked["memory"]
         or revision.graph_finalization != checked["graph"]
     ):
         raise RetargetFinalizationError("retarget finalization history is incomplete")
-    commit = str(checked["replacement_commit"])
     resolved = subprocess.run(
         ["git", "rev-parse", "--verify", f"{commit}^{{commit}}"],
         cwd=project_root,
@@ -827,6 +832,11 @@ def apply_or_verify_retarget_finalization(
             retarget,
             prepared.intent.completion_id,
         )
+    bind_completed_revision_commit(
+        spec_dir,
+        revision_id,
+        replacement_commit=commit,
+    )
     receipt = {
         "revision_id": revision_id,
         "completion_id": prepared.intent.completion_id,

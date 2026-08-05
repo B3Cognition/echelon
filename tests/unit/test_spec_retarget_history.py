@@ -82,7 +82,7 @@ def test_retarget_revision_identity_is_append_only_and_status_advances(
         prepared.revision_id,
         expected_status="finalizing",
         status="complete",
-        updates={"replacement_commit": "c" * 40},
+        updates={},
     )
 
     history = load_retarget_history(spec_dir)
@@ -92,6 +92,77 @@ def test_retarget_revision_identity_is_append_only_and_status_advances(
     assert history.revisions[0].status == "complete"
     assert history.revisions[0].operation_id == "rt-abc"
     assert history.revisions[0].old_targets == ("services/api",)
+
+
+@pytest.mark.parametrize(
+    ("status", "field"),
+    (
+        ("complete", "replacement_commit"),
+        ("complete", "recovery_commit"),
+        ("recovered", "replacement_commit"),
+        ("recovered", "recovery_commit"),
+    ),
+)
+def test_latest_terminal_revision_rejects_raw_commit_fields(
+    tmp_path: Path,
+    status: str,
+    field: str,
+) -> None:
+    spec_dir, revision = _prepared_revision(tmp_path)
+    if status == "complete":
+        for next_status in ("invalidating", "rebuilding", "finalizing", "complete"):
+            revision = advance_retarget_revision(
+                spec_dir,
+                revision.revision_id,
+                expected_status=revision.status,
+                status=next_status,
+                updates={},
+            )
+    else:
+        revision = advance_retarget_revision(
+            spec_dir,
+            revision.revision_id,
+            expected_status="prepared",
+            status="failed",
+            updates={},
+        )
+        advance_retarget_revision(
+            spec_dir,
+            revision.revision_id,
+            expected_status="failed",
+            status="recovered",
+            updates={"failure_code": None},
+        )
+    path = spec_dir / "retarget-history.json"
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw["revisions"][-1][field] = "d" * 40
+    path.write_text(json.dumps(raw, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="latest terminal commit fields must be null"):
+        load_retarget_history(spec_dir)
+
+
+def test_terminal_transition_cannot_write_a_self_referential_commit(
+    tmp_path: Path,
+) -> None:
+    spec_dir, revision = _prepared_revision(tmp_path)
+    for next_status in ("invalidating", "rebuilding", "finalizing"):
+        revision = advance_retarget_revision(
+            spec_dir,
+            revision.revision_id,
+            expected_status=revision.status,
+            status=next_status,
+            updates={},
+        )
+
+    with pytest.raises(ValueError, match="latest terminal commit fields must be null"):
+        advance_retarget_revision(
+            spec_dir,
+            revision.revision_id,
+            expected_status="finalizing",
+            status="complete",
+            updates={"replacement_commit": "d" * 40},
+        )
 
 
 @pytest.mark.parametrize(
@@ -131,7 +202,7 @@ def test_retarget_history_rejects_skipped_or_terminal_transition(
             revision.revision_id,
             expected_status="finalizing",
             status="complete",
-            updates={"replacement_commit": "c" * 40},
+            updates={},
         )
 
     with pytest.raises(ValueError, match="invalid retarget transition"):
@@ -161,7 +232,7 @@ def test_retarget_history_compare_and_swap_rejects_stale_status_and_old_revision
         first.revision_id,
         expected_status="finalizing",
         status="complete",
-        updates={"replacement_commit": "c" * 40},
+        updates={},
     )
     second = append_prepared_revision(
         spec_dir,
@@ -173,6 +244,14 @@ def test_retarget_history_compare_and_swap_rejects_stale_status_and_old_revision
         original_prompt_digest="sha256:" + "d" * 64,
         recovery=_projection(),
     )
+    history_path = spec_dir / "retarget-history.json"
+    raw = json.loads(history_path.read_text(encoding="utf-8"))
+    raw["revisions"][0]["replacement_commit"] = "c" * 40
+    history_path.write_text(
+        json.dumps(raw, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    assert load_retarget_history(spec_dir).revisions[0].replacement_commit == "c" * 40
 
     with pytest.raises(ValueError, match="precondition changed"):
         advance_retarget_revision(

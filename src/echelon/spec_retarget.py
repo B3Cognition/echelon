@@ -339,7 +339,10 @@ def _preview_result(preview: RetargetPreview) -> RetargetCommandResult:
         ignore_re=preview.ignore_re,
         explicit_re_sources=preview.explicit_re_sources,
         old_targets=preview.old_targets,
-        baseline_ready_to_build=baseline_state.get("status") == "done",
+        baseline_ready_to_build=_baseline_ready_to_build(
+            baseline_state,
+            preview.spec_dir,
+        ),
     )
 
 
@@ -1101,6 +1104,20 @@ def _baseline_state(preview: RetargetPreview) -> dict[str, Any]:
     return _read_json_object(preview.baseline.run_dir / "state.json")
 
 
+def _baseline_ready_to_build(
+    state: Mapping[str, object],
+    spec_dir: Path,
+) -> bool:
+    if state.get("status") != "done":
+        return False
+    from harness.phase_a_readiness import validate_phase_a_readiness
+
+    try:
+        return validate_phase_a_readiness(dict(state), [Path(spec_dir)]).ready
+    except (OSError, TypeError, ValueError):
+        return False
+
+
 def _replacement_run_id(preview: RetargetPreview) -> str:
     return f"squad-retarget-{preview.operation_id.removeprefix('retarget-')[:24]}"
 
@@ -1117,7 +1134,7 @@ def append_prepared_revision_from_preview(preview: RetargetPreview) -> RetargetR
         spec_status=str(read_frontmatter(preview.spec_dir).get("status") or "planned"),
         completed_phases=tuple(completed),
         implementation_targets=preview.old_targets,
-        ready_to_build=state.get("status") == "done",
+        ready_to_build=_baseline_ready_to_build(state, preview.spec_dir),
     )
     return append_prepared_revision(
         preview.spec_dir,
@@ -2181,8 +2198,12 @@ def _delivery_state_paths(project_root: Path, spec_id: str) -> tuple[str, ...]:
             try:
                 payload = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
+                paths.append(f"{path.relative_to(project_root).as_posix()}:unreadable")
                 continue
-            if isinstance(payload, dict) and str(payload.get("spec_id") or "").strip() == spec_id:
+            if not isinstance(payload, dict):
+                paths.append(f"{path.relative_to(project_root).as_posix()}:unreadable")
+                continue
+            if str(payload.get("spec_id") or "").strip() == spec_id:
                 paths.append(path.relative_to(project_root).as_posix())
     return tuple(sorted(set(paths)))
 

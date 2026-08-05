@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import secrets
 import stat
+import subprocess
 from typing import Mapping
 
 from echelon.strict_json import loads_strict_json
@@ -34,6 +35,12 @@ _MAX_RECEIPT_STRING = 16 * 1024
 _IDENTITY_PATTERN = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}\Z")
 _SHA256_PATTERN = re.compile(r"\Asha256:[0-9a-f]{64}\Z")
 _GIT_OBJECT_ID_PATTERN = re.compile(r"\A(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
+_TRAILER_PATTERN = re.compile(r"^([A-Za-z0-9-]+):[ \t]*(.*?)\s*$")
+_COMPLETION_ID_PATTERN = re.compile(r"\A[0-9a-f]{32}\Z")
+_TERMINAL_COMMIT_FIELDS = {
+    "complete": ("replacement_commit", "retarget-complete"),
+    "recovered": ("recovery_commit", "retarget-recovered"),
+}
 
 _TRANSITIONS = {
     "prepared": frozenset({"invalidating", "failed"}),
@@ -520,7 +527,225 @@ def load_retarget_history(spec_dir: Path) -> RetargetHistory:
         raw = loads_strict_json(content.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError("invalid retarget history JSON") from exc
-    return _history_from_raw(raw, spec_id=spec_id)
+    history = _history_from_raw(raw, spec_id=spec_id)
+    return _overlay_terminal_commit_binding(directory, history)
+
+
+def _retarget_git_root(directory: Path) -> Path | None:
+    result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=directory,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    root = Path(result.stdout.strip()).resolve()
+    if directory.resolve().parent != root / "specs":
+        raise ValueError("retarget history is outside the repository spec root")
+    return root
+
+
+def _terminal_commit_trailers_match(
+    message: str,
+    revision: RetargetRevision,
+    action: str,
+    spec_id: str,
+) -> bool:
+    values: dict[str, list[str]] = {}
+    for line in message.splitlines():
+        match = _TRAILER_PATTERN.fullmatch(line)
+        if match is not None and match.group(1).startswith("Echelon-"):
+            values.setdefault(match.group(1), []).append(match.group(2))
+    expected = {
+        "Echelon-Origin": "phase-a",
+        "Echelon-Action": action,
+        "Echelon-Spec": spec_id,
+        "Echelon-Run": (
+            revision.replacement_run_id
+            if revision.status == "complete"
+            else revision.baseline_run_id
+        ),
+        "Echelon-Checkpoint": str(revision.checkpoint_id),
+        "Echelon-Retarget-Revision": revision.revision_id,
+        "Echelon-Baseline-Run": revision.baseline_run_id,
+        "Echelon-Replacement-Run": revision.replacement_run_id,
+    }
+    if revision.status == "complete":
+        completion = values.get("Echelon-Completion")
+        if (
+            completion is None
+            or len(completion) != 1
+            or _COMPLETION_ID_PATTERN.fullmatch(completion[0]) is None
+        ):
+            return False
+        expected["Echelon-Completion"] = completion[0]
+    return frozenset(values) == frozenset(expected) and all(
+        values.get(key) == [value] for key, value in expected.items()
+    )
+
+
+def _verify_terminal_commit(
+    directory: Path,
+    history: RetargetHistory,
+    commit: str,
+) -> bool:
+    if not history.revisions or _GIT_OBJECT_ID_PATTERN.fullmatch(commit) is None:
+        return False
+    revision = history.revisions[-1]
+    terminal = _TERMINAL_COMMIT_FIELDS.get(revision.status)
+    if terminal is None:
+        return False
+    field, action = terminal
+    if getattr(revision, field) not in {None, commit}:
+        return False
+    root = _retarget_git_root(directory)
+    if root is None:
+        return False
+    resolved = subprocess.run(
+        ["git", "rev-parse", "--verify", f"{commit}^{{commit}}"],
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    parents = subprocess.run(
+        ["git", "rev-list", "--parents", "-n", "1", commit],
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    checkpoint_ancestor = subprocess.run(
+        [
+            "git",
+            "merge-base",
+            "--is-ancestor",
+            str(revision.checkpoint_commit),
+            f"{commit}^",
+        ],
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    message = subprocess.run(
+        ["git", "show", "-s", "--format=%B", commit],
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    paths = subprocess.run(
+        ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", commit],
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    committed_history = subprocess.run(
+        ["git", "show", f"{commit}:specs/{directory.name}/{RETARGET_HISTORY_FILENAME}"],
+        cwd=root,
+        check=False,
+        capture_output=True,
+    )
+    live_tree = subprocess.run(
+        ["git", "diff", "--quiet", commit, "--", f"specs/{directory.name}"],
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    changed = tuple(line for line in paths.stdout.splitlines() if line)
+    prefix = f"specs/{directory.name}/"
+    parent_line = parents.stdout.split()
+    try:
+        live_history = _read_regular_file(directory / RETARGET_HISTORY_FILENAME)
+    except (OSError, ValueError):
+        return False
+    return (
+        resolved.returncode == 0
+        and resolved.stdout.strip() == commit
+        and parents.returncode == 0
+        and len(parent_line) == 2
+        and checkpoint_ancestor.returncode == 0
+        and message.returncode == 0
+        and paths.returncode == 0
+        and committed_history.returncode == 0
+        and live_tree.returncode == 0
+        and committed_history.stdout == live_history
+        and bool(changed)
+        and all(path.startswith(prefix) for path in changed)
+        and _terminal_commit_trailers_match(
+            message.stdout,
+            revision,
+            action,
+            directory.name,
+        )
+    )
+
+
+def _overlay_terminal_commit_binding(
+    directory: Path,
+    history: RetargetHistory,
+) -> RetargetHistory:
+    if not history.revisions:
+        return history
+    revision = history.revisions[-1]
+    terminal = _TERMINAL_COMMIT_FIELDS.get(revision.status)
+    if terminal is None:
+        return history
+    _require_latest_terminal_commit_fields_null(history)
+    field, action = terminal
+    root = _retarget_git_root(directory)
+    if root is None:
+        return history
+    discovered = subprocess.run(
+        [
+            "git",
+            "log",
+            "--all",
+            "--fixed-strings",
+            "--all-match",
+            f"--grep=Echelon-Action: {action}",
+            f"--grep=Echelon-Retarget-Revision: {revision.revision_id}",
+            "--format=%H",
+        ],
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if discovered.returncode != 0:
+        raise ValueError("retarget terminal commit history is unavailable")
+    candidates = tuple(
+        line for line in discovered.stdout.splitlines() if line
+    )
+    if not candidates:
+        return history
+    for commit in candidates:
+        if not _verify_terminal_commit(directory, history, commit):
+            raise ValueError("retarget terminal commit binding is invalid")
+    if len(candidates) != 1:
+        raise ValueError("duplicate retarget terminal commit bindings")
+    commit = candidates[0]
+    bound = replace(revision, **{field: commit})
+    return replace(history, revisions=(*history.revisions[:-1], bound))
+
+
+def _require_latest_terminal_commit_fields_null(history: RetargetHistory) -> None:
+    if not history.revisions:
+        return
+    latest = history.revisions[-1]
+    if (
+        latest.status in _TERMINAL_COMMIT_FIELDS
+        and (
+            latest.replacement_commit is not None
+            or latest.recovery_commit is not None
+        )
+    ):
+        raise ValueError("latest terminal commit fields must be null")
 
 
 def _fsync_directory(path: Path) -> None:
@@ -539,6 +764,7 @@ def _write_history_atomic(spec_dir: Path, history: RetargetHistory) -> None:
     if not directory.is_dir() or directory.is_symlink():
         raise ValueError("retarget spec directory must be a real directory")
     validated = _validate_history(history, spec_id=directory.name)
+    _require_latest_terminal_commit_fields_null(validated)
     path = directory / RETARGET_HISTORY_FILENAME
     try:
         existing = path.lstat()
@@ -767,32 +993,59 @@ def bind_recovered_revision_commit(
     *,
     recovery_commit: str,
 ) -> RetargetRevision:
-    """Bind the proven recovery commit once without another status transition."""
+    """Bind the proven recovery commit once without dirtying committed history."""
+
+    return _bind_terminal_revision_commit(
+        spec_dir,
+        revision_id,
+        expected_status="recovered",
+        field="recovery_commit",
+        commit=recovery_commit,
+    )
+
+
+def bind_completed_revision_commit(
+    spec_dir: Path,
+    revision_id: str,
+    *,
+    replacement_commit: str,
+) -> RetargetRevision:
+    """Bind the proven replacement commit once without dirtying committed history."""
+
+    return _bind_terminal_revision_commit(
+        spec_dir,
+        revision_id,
+        expected_status="complete",
+        field="replacement_commit",
+        commit=replacement_commit,
+    )
+
+
+def _bind_terminal_revision_commit(
+    spec_dir: Path,
+    revision_id: str,
+    *,
+    expected_status: str,
+    field: str,
+    commit: str,
+) -> RetargetRevision:
+    if _TERMINAL_COMMIT_FIELDS.get(expected_status, (None, None))[0] != field:
+        raise ValueError("invalid terminal retarget binding")
 
     directory = Path(spec_dir)
-    commit = _require_git_oid(recovery_commit, field="recovery_commit")
-    if commit is None:
-        raise ValueError("invalid retarget recovery_commit")
+    checked_commit = _require_git_oid(commit, field=field)
+    if checked_commit is None:
+        raise ValueError(f"invalid retarget {field}")
     with _checkpoint_ledger_lock(directory):
         history = load_retarget_history(directory)
         if not history.revisions:
             raise ValueError("retarget revision precondition changed")
         latest = history.revisions[-1]
-        if latest.revision_id != revision_id or latest.status != "recovered":
+        if latest.revision_id != revision_id or latest.status != expected_status:
             raise ValueError("retarget revision precondition changed")
-        if latest.recovery_commit is not None:
-            if latest.recovery_commit == commit:
-                return latest
-            raise ValueError("retarget recovery_commit is already bound")
-        replacement_revision = replace(
-            latest,
-            recovery_commit=commit,
-            updated_at=_now(),
-        )
-        updated = replace(
-            history,
-            revisions=(*history.revisions[:-1], replacement_revision),
-        )
-        validated = _validate_history(updated, spec_id=directory.name)
-        _write_history_atomic(directory, validated)
-        return validated.revisions[-1]
+        bound_commit = getattr(latest, field)
+        if bound_commit is None:
+            raise ValueError(f"retarget {field} cannot be verified")
+        if bound_commit != checked_commit:
+            raise ValueError(f"retarget {field} is already bound")
+        return latest

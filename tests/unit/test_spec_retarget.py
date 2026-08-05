@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 
 import pytest
+import echelon.spec_retarget as spec_retarget
 
 from echelon.spec_retarget import (
     RetargetEligibilityError,
@@ -39,6 +40,46 @@ def test_delivery_evidence_includes_target_scoped_harness_builds(
     assert _delivery_state_paths(tmp_path, "001-demo") == (
         "runs/targets/api/runs/build-001/state.json",
     )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("scoped", "payload"),
+    (
+        (False, "{not-json\n"),
+        (False, "[]\n"),
+        (True, "{not-json\n"),
+        (True, "[]\n"),
+    ),
+)
+def test_delivery_evidence_fails_closed_on_ambiguous_build_state(
+    tmp_path: Path,
+    scoped: bool,
+    payload: str,
+) -> None:
+    base = (
+        tmp_path / "runs/targets/api/runs/build-001"
+        if scoped
+        else tmp_path / "runs/build-001"
+    )
+    state_path = base / "state.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(payload, encoding="utf-8")
+
+    evidence = _delivery_state_paths(tmp_path, "001-demo")
+
+    assert evidence == (f"{state_path.relative_to(tmp_path).as_posix()}:unreadable",)
+
+
+@pytest.mark.unit
+def test_done_status_without_canonical_readiness_is_not_projected_ready(
+    tmp_path: Path,
+) -> None:
+    spec_dir = tmp_path / "specs/001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# incomplete\n", encoding="utf-8")
+
+    assert spec_retarget._baseline_ready_to_build({"status": "done"}, spec_dir) is False
 
 
 def eligible_evidence(tmp_path: Path) -> RetargetEvidence:

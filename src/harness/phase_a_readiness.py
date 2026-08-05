@@ -151,7 +151,14 @@ def _retarget_contract_blockers(state: Mapping[str, object], spec_dir: Path) -> 
         "recovered",
     }:
         return []
-    replacement = retarget.get("replacement_targets")
+    retarget_status = retarget.get("status")
+    target_field = (
+        "old_targets" if retarget_status == "recovered" else "replacement_targets"
+    )
+    target_label = (
+        "old targets" if retarget_status == "recovered" else "replacement targets"
+    )
+    replacement = retarget.get(target_field)
     implementation = state.get("implementation_targets")
     if (
         type(replacement) is not list
@@ -159,7 +166,7 @@ def _retarget_contract_blockers(state: Mapping[str, object], spec_dir: Path) -> 
         or any(type(item) is not str or not item for item in replacement)
         or any(type(item) is not str or not item for item in implementation)
     ):
-        return ["retarget replacement target contract is invalid"]
+        return [f"retarget {target_label} contract is invalid"]
     authoritative = [
         str(entry["path"])
         for entry in read_canonical_target_entries(spec_dir)
@@ -168,7 +175,7 @@ def _retarget_contract_blockers(state: Mapping[str, object], spec_dir: Path) -> 
     blockers: list[str] = []
     if authoritative != implementation or authoritative != replacement:
         blockers.append(
-            "retarget replacement targets do not match authoritative targets.yml"
+            f"retarget {target_label} do not match authoritative targets.yml"
         )
     try:
         analysis = analyze_task_targets(
@@ -191,7 +198,8 @@ def _retarget_contract_blockers(state: Mapping[str, object], spec_dir: Path) -> 
         != set(analysis.all_task_ids)
     ):
         blockers.append(
-            "retarget tasks must declare exactly one target from the replacement target set per canonical task"
+            "retarget tasks must declare exactly one target from the "
+            f"{target_label} set per canonical task"
         )
     return blockers
 

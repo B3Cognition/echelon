@@ -1084,6 +1084,11 @@ def test_retarget_finalization_replays_private_effect_progress_after_a_crash(
         "_commit_retarget_completion",
         lambda *_args: "e" * 40,
     )
+    monkeypatch.setattr(
+        finalization,
+        "bind_completed_revision_commit",
+        lambda *_args, **_kwargs: None,
+    )
 
     first = finalization.apply_or_verify_retarget_finalization(
         prepared,

@@ -124,6 +124,19 @@ Successful completion prints the authoritative old-to-new artifact comparison:
 git diff <checkpoint-commit>..<replacement-commit> -- specs/001-demo
 ```
 
+A terminal Git commit cannot contain its own object ID. The committed terminal
+row in `retarget-history.json` therefore keeps both commit-link fields null.
+History readers derive the unique replacement or recovery commit
+from reachable Git history and expose the field only after verifying its exact
+trailers, single parent descended from the checkpoint, selected-spec path
+scope, complete live tracked spec tree, and committed history bytes. Invalid or
+duplicate matching commits fail closed, and the binding survives an ordinary
+clone without auxiliary refs.
+
+When a later retarget revision is appended, the earlier terminal row may retain
+its already-verified materialized commit ID. A latest terminal row with either
+raw commit-link field populated is invalid and fails closed.
+
 `echelon spec drop-target` remains the narrow path for an unused target with no
 task ownership. Use `echelon spec retarget` to add targets, replace targets, or
 change the complete multi-target set.

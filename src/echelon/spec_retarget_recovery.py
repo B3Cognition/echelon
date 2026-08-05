@@ -761,7 +761,10 @@ def _verify_live_recovery_postimage(
         and untracked.returncode == 0
         and not untracked.stdout.strip()
         and bool(history.revisions)
-        and history.revisions[-1] == revision
+        and history.revisions[-1] == replace(
+            revision,
+            recovery_commit=commit,
+        )
     )
 
 

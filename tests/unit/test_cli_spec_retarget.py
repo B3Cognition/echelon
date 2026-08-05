@@ -664,7 +664,7 @@ def test_preview_rendering_and_recovery_identity_are_deterministic(
     assert "DESTRUCTIVE" in first_output
     assert "non-buildable" in first_output
     assert "old targets: services/api" in first_output
-    assert "baseline result: ready to build" in first_output
+    assert "baseline result: Phase A incomplete" in first_output
     assert first.recovery_command in first_output
 
 

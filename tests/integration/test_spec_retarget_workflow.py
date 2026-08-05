@@ -598,6 +598,42 @@ def test_ready_spec_retargets_in_place_and_records_old_to_new_diff(
         replacement_commit,
         f"specs/{baseline_spec_id}",
     ) >= {"spec.md", "plan.md", "tasks.md", "targets.yml", "retarget-history.json"}
+    assert history.revisions[-1].replacement_commit == replacement_commit
+    raw_history = json.loads(
+        (retarget_workspace.spec_dir / "retarget-history.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    # A commit cannot contain its own OID. The raw terminal row stays committed
+    # with a null field; readers derive the unique verified reachable commit.
+    assert raw_history["revisions"][-1]["replacement_commit"] is None
+    clone = retarget_workspace.root.parent / "completion-clone"
+    _git(retarget_workspace.root.parent, "clone", str(retarget_workspace.root), str(clone))
+    assert (
+        load_retarget_history(clone / "specs" / baseline_spec_id)
+        .revisions[-1]
+        .replacement_commit
+        == replacement_commit
+    )
+    selected_status = _git(
+        retarget_workspace.root,
+        "status",
+        "--porcelain",
+        "--",
+        f"specs/{baseline_spec_id}",
+    ).stdout.splitlines()
+    assert [
+        line
+        for line in selected_status
+        if f"specs/{baseline_spec_id}/.echelon/" not in line
+    ] == []
+    assert _git(
+        retarget_workspace.root,
+        "show",
+        f"HEAD:specs/{baseline_spec_id}/retarget-history.json",
+    ).stdout == (retarget_workspace.spec_dir / "retarget-history.json").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_failed_retarget_recovers_only_through_checkpoint(
@@ -619,6 +655,41 @@ def test_failed_retarget_recovers_only_through_checkpoint(
     history = load_retarget_history(retarget_workspace.spec_dir)
     assert history.revisions[-1].status == "recovered"
     assert history.revisions[-1].recovery_commit == retarget_workspace.git_head()
+    raw_history = json.loads(
+        (retarget_workspace.spec_dir / "retarget-history.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    # Recovery uses the same reachable-history derivation, so replay readers see
+    # the OID without creating a post-commit tracked modification.
+    assert raw_history["revisions"][-1]["recovery_commit"] is None
+    clone = retarget_workspace.root.parent / "recovery-clone"
+    _git(retarget_workspace.root.parent, "clone", str(retarget_workspace.root), str(clone))
+    assert (
+        load_retarget_history(clone / "specs" / retarget_workspace.spec_id)
+        .revisions[-1]
+        .recovery_commit
+        == retarget_workspace.git_head()
+    )
+    selected_status = _git(
+        retarget_workspace.root,
+        "status",
+        "--porcelain",
+        "--",
+        f"specs/{retarget_workspace.spec_id}",
+    ).stdout.splitlines()
+    assert [
+        line
+        for line in selected_status
+        if f"specs/{retarget_workspace.spec_id}/.echelon/" not in line
+    ] == []
+    assert _git(
+        retarget_workspace.root,
+        "show",
+        f"HEAD:specs/{retarget_workspace.spec_id}/retarget-history.json",
+    ).stdout == (
+        retarget_workspace.spec_dir / "retarget-history.json"
+    ).read_text(encoding="utf-8")
 
 
 def test_recovery_commit_crash_retries_without_replaying_effects_and_state_validates(
