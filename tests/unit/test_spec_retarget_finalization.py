@@ -74,6 +74,29 @@ def test_retarget_completion_trailers_reject_unknown_or_duplicate_identity() -> 
 
 
 @pytest.mark.unit
+def test_terminal_graph_verifier_rejects_nonterminal_receipt_before_reading_files(
+    tmp_path: Path,
+) -> None:
+    from echelon.spec_retarget_finalization import (
+        RetargetFinalizationError,
+        verify_retarget_graph_postimage,
+    )
+    from echelon.spec_retarget_graph import RetargetGraphReceipt
+
+    receipt = RetargetGraphReceipt(
+        spec_id="001-demo",
+        spec_status="invalidated",
+        spec_graph_hash=None,
+        workspace_status="not_applicable_empty_workspace",
+        workspace_graph_hash=None,
+        workspace_finding_codes=(),
+    )
+
+    with pytest.raises(RetargetFinalizationError, match="terminal"):
+        verify_retarget_graph_postimage(tmp_path, tmp_path / "specs" / "001-demo", receipt)
+
+
+@pytest.mark.unit
 def test_state_schema_retarget_contract_is_closed_and_requires_identity() -> None:
     schema = __import__("json").loads(
         (Path(__file__).parents[2] / "templates/state-schema.json").read_text()

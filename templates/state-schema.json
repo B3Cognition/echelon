@@ -236,6 +236,8 @@
         },
         "comparison_pending_completion_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
         "comparison_emitted_completion_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+        "comparison_event_id": {"type": "string", "pattern": "^retarget-comparison-[0-9a-f]{32}$"},
+        "comparison_command": {"type": "string", "minLength": 1, "maxLength": 4096},
         "failure_code": {"type": ["string", "null"], "maxLength": 1024}
       },
       "allOf": [

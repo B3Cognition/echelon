@@ -1643,9 +1643,11 @@ class TestSquadStateStore:
             from_phase="DONE",
         )
         state = store.load()
+        state["spec_id"] = "001-demo"
         state["retarget"] = {
             "status": "finalizing",
             "revision_id": "retarget-1",
+            "checkpoint_commit": "b" * 40,
             "memory_excluded": True,
         }
         state[PENDING_CONTROLLER_COMPLETION_KEY] = prepared.marker.to_dict()

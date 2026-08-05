@@ -45,6 +45,11 @@ _PROGRESS_CAP = 1_048_576
 _GIT_OID = re.compile(r"\A(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 _COMPLETION_ID = re.compile(r"\A[0-9a-f]{32}\Z")
 _TRAILER = re.compile(r"\A([A-Za-z0-9-]+): ([^\n]+)\Z")
+_MEMORY_REPORTS = (
+    "mempalace-audit.json",
+    "mempalace-audit.md",
+    "mempalace-mine.json",
+)
 
 
 class RetargetFinalizationError(RuntimeError):
@@ -75,6 +80,26 @@ def _validated_memory_receipt(value: object) -> RetargetMemoryReceipt:
 
 def _sha256_file(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _current_memory_report_set_digest(spec_dir: Path) -> str:
+    files = []
+    for name in _MEMORY_REPORTS:
+        content = (spec_dir / name).read_bytes()
+        files.append(
+            {
+                "path": name,
+                "sha256": "sha256:" + hashlib.sha256(content).hexdigest(),
+                "size": len(content),
+            }
+        )
+    encoded = json.dumps(
+        files,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
 
 
 def verify_retarget_memory_postimage(
@@ -110,6 +135,7 @@ def verify_retarget_memory_postimage(
         or audit.missing
         or audit.stale
         or audit.errors
+        or _current_memory_report_set_digest(spec_dir) != receipt.report_set_digest
         or manifest.get("report_set_digest") != receipt.report_set_digest
     ):
         raise RetargetFinalizationError("retarget finalization memory postimage drifted")
@@ -121,6 +147,15 @@ def verify_retarget_graph_postimage(
     receipt: RetargetGraphReceipt,
 ) -> None:
     """Read graph bytes and current audits without publishing graph output."""
+    if (
+        receipt.spec_status not in {"pass", "warn"}
+        or receipt.workspace_status not in {"pass", "warn"}
+        or receipt.spec_graph_hash is None
+        or receipt.workspace_graph_hash is None
+    ):
+        raise RetargetFinalizationError(
+            "retarget finalization graph receipt is not terminal"
+        )
     try:
         if receipt.spec_graph_hash is not None:
             graph_path = spec_dir / GRAPH_FILENAME
@@ -138,6 +173,14 @@ def verify_retarget_graph_postimage(
             if _sha256_file(workspace) != receipt.workspace_graph_hash:
                 raise ValueError
             workspace_audit = audit_workspace_graph(project_root)
+            selected = next(
+                (
+                    member
+                    for member in workspace_audit.members
+                    if member.spec_id == receipt.spec_id
+                ),
+                None,
+            )
             findings = tuple(
                 sorted(
                     f"{finding.code}:{finding.subject_id or 'workspace'}"
@@ -149,6 +192,10 @@ def verify_retarget_graph_postimage(
                 or workspace_audit.status != receipt.workspace_status
                 or workspace_audit.status not in {"pass", "warn"}
                 or findings != receipt.workspace_finding_codes
+                or selected is None
+                or not selected.included
+                or selected.graph_hash != receipt.spec_graph_hash
+                or selected.audit_status not in {"pass", "warn"}
             ):
                 raise ValueError
     except (OSError, ValueError) as exc:

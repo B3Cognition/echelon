@@ -4140,6 +4140,14 @@ class SquadStateStore:
                 updated_retarget["comparison_pending_completion_id"] = (
                     expected_marker["completion_id"]
                 )
+                updated_retarget["comparison_event_id"] = (
+                    "retarget-comparison-" + expected_marker["completion_id"]
+                )
+                updated_retarget["comparison_command"] = (
+                    "Compare old and replacement artifacts:\n"
+                    f"  git diff {retarget['checkpoint_commit']}.."
+                    f"{checked['replacement_commit']} -- specs/{desired['spec_id']}"
+                )
                 updated_retarget.pop("memory_excluded", None)
                 desired["retarget"] = updated_retarget
             desired.pop(PENDING_CONTROLLER_COMPLETION_KEY, None)

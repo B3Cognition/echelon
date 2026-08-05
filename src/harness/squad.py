@@ -1343,12 +1343,15 @@ class SquadController:
             return False
         completion_id = retarget.get("comparison_pending_completion_id")
         receipt = retarget.get("finalization_receipt")
-        command = self._retarget_comparison_command(state)
+        command = retarget.get("comparison_command")
+        event_id = retarget.get("comparison_event_id")
+        expected_command = self._retarget_comparison_command(state)
         if (
             type(completion_id) is not str
             or not isinstance(receipt, Mapping)
             or receipt.get("completion_id") != completion_id
-            or command is None
+            or event_id != f"retarget-comparison-{completion_id}"
+            or command != expected_command
         ):
             return False
         if not self._state_store.mark_retarget_comparison_emitted(completion_id):
