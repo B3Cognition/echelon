@@ -104,6 +104,7 @@ _RETARGET_CONTRACT_KEYS = frozenset(
         "replacement_run_id",
         "old_targets",
         "replacement_targets",
+        "artifact_invalidation",
         "checkpoint_id",
         "checkpoint_commit",
         "failure_code",
@@ -263,12 +264,37 @@ def _validate_retarget_contract(
         retarget_state["replacement_targets"], field="replacement_targets"
     ) != replacement_targets:
         raise PhaseAStartError("retarget contract has mismatched replacement_targets")
+    raw_invalidation = retarget_state["artifact_invalidation"]
+    if (
+        type(raw_invalidation) is not list
+        or not raw_invalidation
+        or len(raw_invalidation) > 512
+    ):
+        raise PhaseAStartError("retarget contract has invalid artifact_invalidation")
+    invalidation: list[str] = []
+    for value in raw_invalidation:
+        candidate = Path(value) if type(value) is str else Path("/")
+        if (
+            type(value) is not str
+            or not value
+            or candidate.is_absolute()
+            or len(candidate.parts) != 1
+            or candidate.as_posix() != value
+            or value in {".", "..", ".echelon", "retarget-history.json"}
+        ):
+            raise PhaseAStartError(
+                "retarget contract has invalid artifact_invalidation"
+            )
+        invalidation.append(value)
+    if invalidation != sorted(set(invalidation)):
+        raise PhaseAStartError("retarget contract has invalid artifact_invalidation")
     if retarget_state["checkpoint_commit"] != checkpoint_commit:
         raise PhaseAStartError("retarget contract has mismatched checkpoint_commit")
     if old_targets == replacement_targets:
         raise PhaseAStartError("retarget contract replacement targets are unchanged")
     checked = dict(retarget_state)
     checked["operation_id"] = operation_id
+    checked["artifact_invalidation"] = invalidation
     return checked
 
 

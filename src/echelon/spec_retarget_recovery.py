@@ -5,25 +5,34 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 import os
 from pathlib import Path
+from pathlib import PurePosixPath
 import re
 import stat
 from typing import Mapping
 
 from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_message
-from echelon.git_helpers import GitHelperError, current_branch, run_git
+from echelon.git_helpers import (
+    GitHelperError,
+    current_branch,
+    run_git,
+    worktree_dirty_paths,
+)
 from echelon.mempalace_retarget import (
     RetargetMemoryReceipt,
     purge_retarget_spec_memory,
     refresh_retarget_spec_memory,
 )
 from echelon.spec_retarget_graph import (
+    RetargetGraphError,
     RetargetGraphReceipt,
     finalize_retarget_graphs,
+    invalidate_retarget_graphs_from_recovered_baseline,
 )
 from echelon.spec_retarget_history import (
     RetargetRevision,
     _history_from_raw,
     advance_retarget_revision,
+    bind_failed_recovery_effects,
     bind_recovered_revision_commit as _bind_recovered_revision_commit,
     load_retarget_history,
 )
@@ -35,6 +44,8 @@ from echelon.spec_lifecycle import (
     resolve_spec_run,
 )
 from harness.phase_checkpoints import (
+    CHECKPOINT_LEDGER_REL,
+    CHECKPOINT_LOCK_REL,
     PhaseCheckpoint,
     PhaseCheckpointError,
     _commit_spec_changes,
@@ -55,8 +66,96 @@ RETARGET_RECOVERY_DIRTY_PATHS = frozenset(
         "mempalace-refresh-manifest.json",
         "spec-artifact-graph.json",
         "spec-artifact-graph-audit.json",
+        ".spec.md.retarget-recovery",
     }
 )
+
+
+def retarget_recovery_dirty_paths(
+    project_root: Path,
+    spec_dir: Path,
+    replacement_state: Mapping[str, object],
+) -> frozenset[str]:
+    """Return only authenticated controller-owned dirt eligible for reset."""
+
+    root = Path(project_root).resolve()
+    directory = Path(spec_dir).resolve()
+    retarget = replacement_state.get("retarget")
+    raw_invalidation = (
+        retarget.get("artifact_invalidation") if type(retarget) is dict else None
+    )
+    raw_targets = retarget.get("replacement_targets") if type(retarget) is dict else None
+    if (
+        type(replacement_state) is not dict
+        or type(retarget) is not dict
+        or type(raw_invalidation) is not list
+        or not raw_invalidation
+        or type(raw_targets) is not list
+        or not raw_targets
+        or directory.parent != root / "specs"
+        or not directory.is_dir()
+        or Path(spec_dir).is_symlink()
+    ):
+        raise RetargetRecoveryError("retarget recovery artifact plan is invalid")
+    invalidation: set[str] = set()
+    for value in raw_invalidation:
+        candidate = PurePosixPath(value) if type(value) is str else PurePosixPath("/")
+        if (
+            type(value) is not str
+            or not value
+            or candidate.is_absolute()
+            or len(candidate.parts) != 1
+            or candidate.as_posix() != value
+            or value in {".", "..", ".echelon", "retarget-history.json"}
+        ):
+            raise RetargetRecoveryError("retarget recovery artifact plan is invalid")
+        invalidation.add(value)
+    if len(invalidation) != len(raw_invalidation):
+        raise RetargetRecoveryError("retarget recovery artifact plan is invalid")
+    targets: list[str] = []
+    for value in raw_targets:
+        if type(value) is not str or not value or "\n" in value or "\r" in value:
+            raise RetargetRecoveryError("retarget recovery target plan is invalid")
+        targets.append(value)
+    try:
+        history = load_retarget_history(directory)
+    except (OSError, TypeError, ValueError) as exc:
+        raise RetargetRecoveryError(
+            "retarget recovery target plan is unavailable"
+        ) from exc
+    if (
+        not history.revisions
+        or history.revisions[-1].revision_id != retarget.get("revision_id")
+        or history.revisions[-1].replacement_run_id
+        != replacement_state.get("run_id")
+        or tuple(targets) != history.revisions[-1].replacement_targets
+    ):
+        raise RetargetRecoveryError("retarget recovery target plan drifted")
+    expected_targets = (
+        "targets:\n" + "".join(f"- {target}\n" for target in targets)
+    ).encode("utf-8")
+    relative_spec = directory.relative_to(root).as_posix()
+    prefix = f"{relative_spec}/"
+    allowed = set(RETARGET_RECOVERY_DIRTY_PATHS)
+    for repo_path in worktree_dirty_paths(root):
+        if not repo_path.startswith(prefix):
+            continue
+        relative = repo_path.removeprefix(prefix)
+        candidate = PurePosixPath(relative)
+        if not candidate.parts or candidate.parts[0] not in invalidation:
+            continue
+        invalidated_root = directory / candidate.parts[0]
+        if candidate.parts[0] == "targets.yml":
+            if relative != "targets.yml":
+                continue
+            try:
+                if invalidated_root.read_bytes() == expected_targets:
+                    allowed.add(relative)
+            except OSError:
+                continue
+        elif not invalidated_root.exists() and not invalidated_root.is_symlink():
+            allowed.add(relative)
+    return frozenset(allowed)
 
 
 class RetargetRecoveryError(RuntimeError):
@@ -131,7 +230,9 @@ def restore_or_recreate_baseline_state(
             if stat.S_ISLNK(state_stat.st_mode) or not stat.S_ISREG(state_stat.st_mode):
                 raise RetargetRecoveryError("retarget baseline state is invalid")
             existing = SquadStateStore(run_dir).load()
-            existing_spec_ref = Path(str(existing.get("spec_dir") or ""))
+            existing_spec_ref = Path(
+                str(existing.get("published_spec_dir") or existing.get("spec_dir") or "")
+            )
             if not existing_spec_ref.is_absolute():
                 existing_spec_ref = root / existing_spec_ref
             if (
@@ -436,6 +537,9 @@ def _verify_live_recovery_postimage(
         "--exclude-standard",
         "--",
         spec_path,
+        f":(exclude){spec_path}/{CHECKPOINT_LEDGER_REL.as_posix()}",
+        f":(exclude){spec_path}/{CHECKPOINT_LOCK_REL.as_posix()}",
+        f":(exclude){spec_path}/.echelon/.checkpoints.json.*.tmp",
         check=False,
     )
     try:
@@ -606,36 +710,41 @@ def _require_recovery_revision(
             revision.status not in {"prepared", "invalidating", "rebuilding", "finalizing"}
             or retarget.get("checkpoint_id") != checkpoint.id
             or retarget.get("checkpoint_commit") != checkpoint.commit
-            or type(raw_graph) is not dict
         ):
             raise RetargetRecoveryError("retarget recovery graph baseline is unavailable")
-        try:
-            graph = RetargetGraphReceipt.from_dict(raw_graph)
-            raw_memory = retarget.get("memory_purge")
-            memory = _memory_receipt_from_history(raw_memory)
-        except (TypeError, ValueError, RetargetRecoveryError) as exc:
-            raise RetargetRecoveryError(
-                "retarget recovery captured projection is invalid"
-            ) from exc
-        if graph.spec_id != checkpoint.spec_id or memory.spec_id != checkpoint.spec_id:
-            raise RetargetRecoveryError("retarget recovery captured projection drifted")
-        revision = advance_retarget_revision(
-            spec_dir,
-            revision.revision_id,
-            expected_status=revision.status,
-            status="failed",
-            updates={
-                "checkpoint_id": checkpoint.id,
-                "checkpoint_commit": checkpoint.commit,
-                "memory_purge": memory.to_dict(),
-                "graph_invalidation": graph.to_dict(),
-                "failure_code": "retarget_recovery_requested",
-            },
-        )
+        if raw_graph is not None:
+            try:
+                graph = RetargetGraphReceipt.from_dict(raw_graph)
+                raw_memory = retarget.get("memory_purge")
+                memory = _memory_receipt_from_history(raw_memory)
+            except (
+                RetargetGraphError,
+                TypeError,
+                ValueError,
+                RetargetRecoveryError,
+            ) as exc:
+                raise RetargetRecoveryError(
+                    "retarget recovery captured projection is invalid"
+                ) from exc
+            if graph.spec_id != checkpoint.spec_id or memory.spec_id != checkpoint.spec_id:
+                raise RetargetRecoveryError("retarget recovery captured projection drifted")
+            revision = advance_retarget_revision(
+                spec_dir,
+                revision.revision_id,
+                expected_status=revision.status,
+                status="failed",
+                updates={
+                    "checkpoint_id": checkpoint.id,
+                    "checkpoint_commit": checkpoint.commit,
+                    "memory_purge": memory.to_dict(),
+                    "graph_invalidation": graph.to_dict(),
+                    "failure_code": "retarget_recovery_requested",
+                },
+            )
     elif type(raw_graph) is dict:
         try:
             captured_graph = RetargetGraphReceipt.from_dict(raw_graph)
-        except (TypeError, ValueError) as exc:
+        except (RetargetGraphError, TypeError, ValueError) as exc:
             raise RetargetRecoveryError(
                 "retarget recovery captured graph is invalid"
             ) from exc
@@ -708,7 +817,11 @@ def recover_retarget_checkpoint(
                 revision.revision_id,
                 expected_status=revision.status,
                 status="failed",
-                updates={"failure_code": "retarget_recovery_requested"},
+                updates={
+                    "checkpoint_id": checkpoint.id,
+                    "checkpoint_commit": checkpoint.commit,
+                    "failure_code": "retarget_recovery_requested",
+                },
             )
         if revision.status == "recovered":
             memory = _memory_receipt_from_history(revision.memory_finalization)
@@ -720,6 +833,27 @@ def recover_retarget_checkpoint(
             memory = refresh_retarget_spec_memory(project_root, spec_dir)
             if type(memory) is not RetargetMemoryReceipt or memory.spec_id != checkpoint.spec_id:
                 raise RetargetRecoveryError("retarget recovery memory receipt is invalid")
+            if revision.graph_invalidation is None:
+                invalidated = invalidate_retarget_graphs_from_recovered_baseline(
+                    project_root,
+                    spec_dir,
+                )
+                if (
+                    type(invalidated) is not RetargetGraphReceipt
+                    or invalidated.spec_id != checkpoint.spec_id
+                    or invalidated.spec_status != "invalidated"
+                ):
+                    raise RetargetRecoveryError(
+                        "retarget recovery graph invalidation receipt is invalid"
+                    )
+                revision = bind_failed_recovery_effects(
+                    spec_dir,
+                    revision.revision_id,
+                    checkpoint_id=checkpoint.id,
+                    checkpoint_commit=checkpoint.commit,
+                    memory_purge=purged.to_dict(),
+                    graph_invalidation=invalidated.to_dict(),
+                )
             graph = finalize_retarget_graphs(
                 project_root,
                 spec_dir,

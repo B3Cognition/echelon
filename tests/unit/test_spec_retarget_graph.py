@@ -19,6 +19,7 @@ from echelon.spec_retarget_graph import (
     _unlink_outputs,
     finalize_retarget_graphs,
     invalidate_retarget_graphs,
+    invalidate_retarget_graphs_from_recovered_baseline,
 )
 from echelon.workspace_graph import (
     build_workspace_graph,
@@ -183,6 +184,50 @@ def test_invalidation_refuses_until_selected_spec_is_absent(
         selected_graph_before
     )
     assert workspace_graph_path(workspace.root).read_bytes() == workspace_graph_before
+
+
+@pytest.mark.unit
+def test_recovery_invalidation_temporarily_hides_and_restores_canonical_spec(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _workspace(tmp_path, monkeypatch, two_specs=False)
+    before = workspace.selected_spec.joinpath("spec.md").read_bytes()
+
+    receipt = invalidate_retarget_graphs_from_recovered_baseline(
+        workspace.root,
+        workspace.selected_spec,
+    )
+
+    assert receipt.spec_status == "invalidated"
+    assert workspace.selected_spec.joinpath("spec.md").read_bytes() == before
+    assert not workspace.selected_spec.joinpath(
+        ".spec.md.retarget-recovery"
+    ).exists()
+
+
+@pytest.mark.unit
+def test_recovery_invalidation_restores_canonical_spec_after_graph_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _workspace(tmp_path, monkeypatch, two_specs=False)
+    before = workspace.selected_spec.joinpath("spec.md").read_bytes()
+    monkeypatch.setattr(
+        "echelon.spec_retarget_graph.invalidate_retarget_graphs",
+        lambda *_args: (_ for _ in ()).throw(RetargetGraphError("injected")),
+    )
+
+    with pytest.raises(RetargetGraphError, match="injected"):
+        invalidate_retarget_graphs_from_recovered_baseline(
+            workspace.root,
+            workspace.selected_spec,
+        )
+
+    assert workspace.selected_spec.joinpath("spec.md").read_bytes() == before
+    assert not workspace.selected_spec.joinpath(
+        ".spec.md.retarget-recovery"
+    ).exists()
 
 
 @pytest.mark.unit

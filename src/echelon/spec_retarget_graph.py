@@ -170,6 +170,53 @@ def invalidate_retarget_graphs(
         ) from exc
 
 
+def invalidate_retarget_graphs_from_recovered_baseline(
+    project_root: Path,
+    spec_dir: Path,
+) -> RetargetGraphReceipt:
+    """Replay graph invalidation while preserving the restored canonical spec."""
+
+    try:
+        root, selected = _validate_scope(project_root, spec_dir)
+        spec_path = selected / "spec.md"
+        staging = selected / ".spec.md.retarget-recovery"
+        try:
+            metadata = spec_path.lstat()
+        except FileNotFoundError as exc:
+            raise RetargetGraphError(
+                "recovered canonical spec.md must exist before graph invalidation"
+            ) from exc
+        if not stat.S_ISREG(metadata.st_mode):
+            raise RetargetGraphError(
+                "recovered canonical spec.md must be a regular file"
+            )
+        if os.path.lexists(staging):
+            raise RetargetGraphError("retarget recovery graph staging path is occupied")
+
+        os.replace(spec_path, staging)
+        _fsync_directory(selected)
+        try:
+            return invalidate_retarget_graphs(root, selected)
+        finally:
+            if os.path.lexists(staging):
+                if os.path.lexists(spec_path):
+                    raise RetargetGraphError(
+                        "retarget recovery graph invalidation recreated canonical spec.md"
+                    )
+                os.replace(staging, spec_path)
+                _fsync_directory(selected)
+            elif not os.path.lexists(spec_path):
+                raise RetargetGraphError(
+                    "retarget recovery graph invalidation lost canonical spec.md"
+                )
+    except RetargetGraphError:
+        raise
+    except Exception as exc:
+        raise RetargetGraphError(
+            f"retarget recovery graph invalidation failed: {type(exc).__name__}: {exc}"
+        ) from exc
+
+
 def finalize_retarget_graphs(
     project_root: Path,
     spec_dir: Path,

@@ -876,6 +876,13 @@ def test_retarget_checkpoint_routes_before_generic_cleanup_with_prereset_state(
                 "revision_id": "retarget-1",
                 "baseline_run_id": "squad-base",
                 "replacement_run_id": "squad-replacement",
+                "replacement_targets": ["apps/web"],
+                "artifact_invalidation": [
+                    "spec.md",
+                    "plan.md",
+                    "tasks.md",
+                    "targets.yml",
+                ],
             },
         },
     )
@@ -925,6 +932,10 @@ def test_retarget_checkpoint_routes_before_generic_cleanup_with_prereset_state(
     monkeypatch.setattr(
         "echelon.spec_retarget_recovery.recover_retarget_checkpoint",
         fake_recover,
+    )
+    monkeypatch.setattr(
+        "echelon.spec_retarget_recovery.retarget_recovery_dirty_paths",
+        lambda *_args: frozenset(),
     )
     monkeypatch.setattr(
         "echelon.cli._cleanup_rewind_outputs",

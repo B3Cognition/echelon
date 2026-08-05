@@ -1159,6 +1159,7 @@ def start_retarget_phase_a_spec_from_preview(
         "replacement_run_id": revision.replacement_run_id,
         "old_targets": list(preview.old_targets),
         "replacement_targets": list(preview.replacement_targets),
+        "artifact_invalidation": list(preview.artifact_plan.invalidate),
         "checkpoint_id": checkpoint.id,
         "checkpoint_commit": checkpoint.commit,
     }

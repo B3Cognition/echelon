@@ -136,6 +136,7 @@ def _retarget_state(status: str) -> dict[str, object]:
         "replacement_run_id": "replacement",
         "old_targets": ["services/api"],
         "replacement_targets": ["apps/web"],
+        "artifact_invalidation": ["plan.md", "spec.md", "targets.yml", "tasks.md"],
         "checkpoint_id": "checkpoint-1",
         "checkpoint_commit": "a" * 40,
         "failure_code": "interrupted" if status == "failed" else None,

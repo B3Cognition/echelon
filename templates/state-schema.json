@@ -318,6 +318,7 @@
         "replacement_run_id",
         "old_targets",
         "replacement_targets",
+        "artifact_invalidation",
         "checkpoint_id",
         "checkpoint_commit",
         "failure_code"
@@ -332,6 +333,7 @@
         "replacement_commit": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
         "old_targets": {"type": "array", "minItems": 1, "maxItems": 128, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 1024}},
         "replacement_targets": {"type": "array", "minItems": 1, "maxItems": 128, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 1024}},
+        "artifact_invalidation": {"type": "array", "minItems": 1, "maxItems": 512, "uniqueItems": true, "items": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+$", "minLength": 1, "maxLength": 1024}},
         "status": {"enum": ["checkpointed", "invalidating", "rebuilding", "finalizing", "complete", "failed", "recovered"]},
         "memory_excluded": {"type": "boolean"},
         "memory_purge": {"$ref": "#/properties/retarget/definitions/memory_receipt"},

@@ -4564,6 +4564,26 @@ def _print_squad_summary(
 
 
 def _normalize_rewind_spec_dir(project_root: Path, state: dict) -> tuple[Path | None, str | None]:
+    retarget = state.get("retarget")
+    published_ref = str(state.get("published_spec_dir") or "").strip()
+    if isinstance(retarget, dict) and published_ref:
+        published = Path(published_ref)
+        if published.is_absolute():
+            try:
+                relative_published = published.relative_to(project_root)
+            except ValueError:
+                relative_published = None
+        else:
+            relative_published = published
+            published = project_root / published
+        if (
+            relative_published is not None
+            and relative_published.parts[:1] == ("specs",)
+            and published.is_dir()
+            and not published.is_symlink()
+            and published.name == state.get("spec_id")
+        ):
+            return published, str(relative_published)
     ref = str(state.get("spec_dir") or "").strip()
     if ref:
         candidate = Path(ref)
@@ -7982,10 +8002,14 @@ def _cmd_rewind(
                     recovery_dirty_paths = frozenset()
                     if checkpoint.source == "retarget-preflight":
                         from echelon.spec_retarget_recovery import (
-                            RETARGET_RECOVERY_DIRTY_PATHS,
+                            retarget_recovery_dirty_paths,
                         )
 
-                        recovery_dirty_paths = RETARGET_RECOVERY_DIRTY_PATHS
+                        recovery_dirty_paths = retarget_recovery_dirty_paths(
+                            project_root,
+                            spec_dir,
+                            replacement_state,
+                        )
                     result = prepare_rewind(
                         project_root=project_root,
                         spec=spec_dir.name,

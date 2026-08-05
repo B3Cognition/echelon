@@ -709,6 +709,56 @@ def advance_retarget_revision(
         return validated.revisions[-1]
 
 
+def bind_failed_recovery_effects(
+    spec_dir: Path,
+    revision_id: str,
+    *,
+    checkpoint_id: str,
+    checkpoint_commit: str,
+    memory_purge: Mapping[str, object],
+    graph_invalidation: Mapping[str, object],
+) -> RetargetRevision:
+    """Bind replayed destructive receipts once to the failed revision."""
+
+    directory = Path(spec_dir)
+    memory = dict(memory_purge)
+    graph = dict(graph_invalidation)
+    with _checkpoint_ledger_lock(directory):
+        history = load_retarget_history(directory)
+        if not history.revisions:
+            raise ValueError("retarget revision precondition changed")
+        latest = history.revisions[-1]
+        if latest.revision_id != revision_id or latest.status != "failed":
+            raise ValueError("retarget revision precondition changed")
+        if latest.checkpoint_id not in {None, checkpoint_id}:
+            raise ValueError("retarget checkpoint_id is already bound")
+        if latest.checkpoint_commit not in {None, checkpoint_commit}:
+            raise ValueError("retarget checkpoint_commit is already bound")
+        if latest.memory_purge is not None and latest.memory_purge != memory:
+            raise ValueError("retarget memory_purge is already bound")
+        if latest.graph_invalidation is not None and latest.graph_invalidation != graph:
+            raise ValueError("retarget graph_invalidation is already bound")
+        if (
+            latest.checkpoint_id == checkpoint_id
+            and latest.checkpoint_commit == checkpoint_commit
+            and latest.memory_purge == memory
+            and latest.graph_invalidation == graph
+        ):
+            return latest
+        bound = replace(
+            latest,
+            checkpoint_id=checkpoint_id,
+            checkpoint_commit=checkpoint_commit,
+            memory_purge=memory,
+            graph_invalidation=graph,
+            updated_at=_now(),
+        )
+        updated = replace(history, revisions=(*history.revisions[:-1], bound))
+        validated = _validate_history(updated, spec_id=directory.name)
+        _write_history_atomic(directory, validated)
+        return validated.revisions[-1]
+
+
 def bind_recovered_revision_commit(
     spec_dir: Path,
     revision_id: str,
