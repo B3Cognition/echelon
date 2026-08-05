@@ -6,6 +6,7 @@ from collections import deque
 from dataclasses import dataclass
 import hashlib
 import json
+import math
 from pathlib import Path
 from types import MappingProxyType
 from typing import Iterable, Mapping
@@ -740,7 +741,7 @@ def _validate_counts(
             raise TopologyProviderError("CodeGraph symbol counts do not reconcile")
         if values["discovered_relationships"] != values["emitted_relationships"] + values["excluded_relationships"]:
             raise TopologyProviderError("CodeGraph relationship counts do not reconcile")
-        failed_extractions = _codegraph_failed_extractions(document)
+        failed_extractions = _codegraph_has_failed_extractions(document)
         if failed_extractions and (native_status != "partial" or complete):
             raise TopologyProviderError(
                 "CodeGraph failed extraction requires partial status and complete=false"
@@ -805,7 +806,7 @@ def _validate_counts(
     return len(unresolved)
 
 
-def _codegraph_failed_extractions(document: Mapping[str, object]) -> int:
+def _codegraph_has_failed_extractions(document: Mapping[str, object]) -> bool:
     counts: list[int] = []
     for section, field in (
         ("index_stats", "failed_files"),
@@ -821,7 +822,28 @@ def _codegraph_failed_extractions(document: Mapping[str, object]) -> int:
         raise TopologyProviderError(
             "CodeGraph failed extraction counts do not reconcile"
         )
-    return counts[0] if counts else 0
+    failed = bool(counts and counts[0])
+    if "index_stats" not in document:
+        return failed
+    index_stats = _require_object(document, "index_stats")
+    index_state = index_stats.get("index_state")
+    if index_state is not None:
+        if index_state not in {"ready", "degraded"}:
+            raise TopologyProviderError("CodeGraph index_state is unsupported")
+        failed = failed or index_state == "degraded"
+    success_rate = index_stats.get("extraction_success_rate")
+    if success_rate is not None:
+        if (
+            isinstance(success_rate, bool)
+            or not isinstance(success_rate, (int, float))
+            or not math.isfinite(success_rate)
+            or not 0 <= success_rate <= 100
+        ):
+            raise TopologyProviderError(
+                "CodeGraph extraction_success_rate must be between 0 and 100"
+            )
+        failed = failed or success_rate < 100
+    return failed
 
 
 def _load_symbols(

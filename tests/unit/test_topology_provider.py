@@ -284,6 +284,26 @@ def test_codegraph_rejects_complete_artifact_with_failed_extraction() -> None:
 
 @pytest.mark.unit
 @pytest.mark.parametrize(
+    "index_stats",
+    (
+        {"index_state": "degraded"},
+        {"index_state": "ready", "extraction_success_rate": 33.33},
+    ),
+)
+def test_codegraph_rejects_complete_artifact_with_legacy_failure_telemetry(
+    index_stats: dict[str, object],
+) -> None:
+    from echelon.topology_provider import TopologyProviderError, load_provider_document
+
+    document = _codegraph(status="complete", complete=True)
+    document["index_stats"] = index_stats
+
+    with pytest.raises(TopologyProviderError, match="failed extraction"):
+        load_provider_document(document, provider="codegraph", source_id="api")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
     "mutate",
     [
         lambda document: document.update(provider_status="ready"),
