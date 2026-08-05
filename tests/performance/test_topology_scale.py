@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import resource
 from pathlib import Path
+import subprocess
 import sys
 import time
 
@@ -248,17 +250,14 @@ def _production_artifact_graphs(
     return member.to_dict(), build_workspace_graph(root).graph.to_dict()
 
 
-@pytest.mark.performance
-def test_published_topology_scales_without_projecting_provider_graphs(
-    tmp_path: Path,
-) -> None:
+def _run_scale_workflow(root: Path) -> dict[str, float | int]:
     from echelon.topology_audit import audit_topology
     from echelon.topology_provider import TopologyNodeResolutionError
     from echelon.topology_registry import load_published_topology, load_topology_index
 
     started = time.perf_counter()
-    source = _workspace(tmp_path)
-    fingerprint = fingerprint_source(source, resolve_re_fingerprint_profile(tmp_path))
+    source = _workspace(root)
+    fingerprint = fingerprint_source(source, resolve_re_fingerprint_profile(root))
     analysis, summary, keys = _analysis()
     candidate = TopologySnapshotCandidate(
         source_id="scale",
@@ -270,12 +269,12 @@ def test_published_topology_scales_without_projecting_provider_graphs(
     )
 
     publication = publish_topology_snapshots(
-        tmp_path, (candidate,), owner_id="re-scale", owner_run_dir=None
+        root, (candidate,), owner_id="re-scale", owner_run_dir=None
     )
-    audit = audit_topology(tmp_path)
-    topology = load_published_topology(tmp_path)
+    audit = audit_topology(root)
+    topology = load_published_topology(root)
     published_analysis = json.loads(
-        (tmp_path / "re/topology/sources/scale/codegraph-analysis.json").read_bytes()
+        (root / "re/topology/sources/scale/codegraph-analysis.json").read_bytes()
     )
 
     assert publication.generation == 1
@@ -326,9 +325,9 @@ def test_published_topology_scales_without_projecting_provider_graphs(
         "scale", exact_ids[3], 3, frozenset({"CALLS"})
     )
 
-    index = load_topology_index(tmp_path)
+    index = load_topology_index(root)
     assert index is not None
-    spec_graph, workspace_graph = _production_artifact_graphs(tmp_path, fingerprint)
+    spec_graph, workspace_graph = _production_artifact_graphs(root, fingerprint)
     for graph in (spec_graph, workspace_graph):
         node_ids = [node["id"] for node in graph["nodes"]]
         assert len(node_ids) < 20
@@ -339,11 +338,11 @@ def test_published_topology_scales_without_projecting_provider_graphs(
 
     payloads = (
         search_command(
-            tmp_path, "scale.symbol", source="scale", limit=20, as_json=True
+            root, "scale.symbol", source="scale", limit=20, as_json=True
         ).stdout,
-        explain_command(tmp_path, exact_ids[0], source="scale", as_json=True).stdout,
+        explain_command(root, exact_ids[0], source="scale", as_json=True).stdout,
         neighbors_command(
-            tmp_path,
+            root,
             exact_ids[4],
             source="scale",
             direction="in",
@@ -352,7 +351,7 @@ def test_published_topology_scales_without_projecting_provider_graphs(
             as_json=True,
         ).stdout,
         impact_command(
-            tmp_path,
+            root,
             exact_ids[3],
             source="scale",
             max_depth=3,
@@ -361,14 +360,56 @@ def test_published_topology_scales_without_projecting_provider_graphs(
         ).stdout,
     )
     repeated = search_command(
-        tmp_path, "scale.symbol", source="scale", limit=20, as_json=True
+        root, "scale.symbol", source="scale", limit=20, as_json=True
     ).stdout
     assert payloads[0] == repeated
     assert all(len(payload.encode("utf-8")) < 128 * 1024 for payload in payloads)
-    assert sum(len(payload.encode("utf-8")) for payload in payloads) < 256 * 1024
+    payload_bytes = [len(payload.encode("utf-8")) for payload in payloads]
+    assert sum(payload_bytes) < 256 * 1024
 
     elapsed = time.perf_counter() - started
     peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     peak_bytes = peak if sys.platform == "darwin" else peak * 1024
-    assert elapsed < 120.0, f"topology scale workflow took {elapsed:.2f}s"
-    assert peak_bytes < 1536 * 1024 * 1024
+    return {
+        "elapsed": elapsed,
+        "peak_rss_bytes": peak_bytes,
+        "max_payload_bytes": max(payload_bytes),
+        "total_payload_bytes": sum(payload_bytes),
+    }
+
+
+@pytest.mark.performance
+def test_published_topology_scales_without_projecting_provider_graphs(
+    tmp_path: Path,
+) -> None:
+    repository = Path(__file__).resolve().parents[2]
+    script = """
+import json
+import sys
+from pathlib import Path
+from tests.performance.test_topology_scale import _run_scale_workflow
+print(json.dumps(_run_scale_workflow(Path(sys.argv[1]))))
+"""
+    env = dict(os.environ)
+    pythonpath = [str(repository / "src"), str(repository)]
+    if env.get("PYTHONPATH"):
+        pythonpath.append(env["PYTHONPATH"])
+    env["PYTHONPATH"] = os.pathsep.join(pythonpath)
+
+    completed = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path)],
+        cwd=repository,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=150,
+    )
+    measurement = json.loads(completed.stdout)
+
+    assert measurement["elapsed"] < 120.0, (
+        f"topology scale workflow took {measurement['elapsed']:.2f}s"
+    )
+    assert measurement["peak_rss_bytes"] < 1536 * 1024 * 1024
+    assert measurement["max_payload_bytes"] < 128 * 1024
+    assert measurement["total_payload_bytes"] < 256 * 1024
