@@ -4863,7 +4863,7 @@ class SquadController:
                     )
                 except HumanInputPolicyError:
                     reason_code = (
-                        "phase_dispatch_limit_evidence_malformed"
+                        "phase_dispatch_limit_option_contract_failed"
                     )
                     self._record_blocker_event(phase, reason_code)
                     self._block_unresolvable_dispatch_cap(

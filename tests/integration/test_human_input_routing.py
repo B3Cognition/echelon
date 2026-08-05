@@ -2452,6 +2452,74 @@ def test_controller_rejects_prepared_answer_shape_that_conflicts_with_policy(
     provider.exec_agent.assert_not_called()
 
 
+def test_dispatch_cap_option_contract_failure_is_not_malformed_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    policy = replace(
+        _safeguard_policy(
+            "phase_dispatch_limit",
+            phase_id="phase1-what",
+        ),
+        allow_free_text=False,
+        allowed_target_phases=frozenset({"phase1-what"}),
+    )
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="guided",
+        policy=policy,
+    )
+    for guard_name in (
+        "_guard_constitution_provenance",
+        "_guard_spec_lexicon_evidence",
+        "_guard_phase1_quality_evidence",
+        "_guard_understanding_evidence",
+    ):
+        setattr(
+            controller,
+            guard_name,
+            MagicMock(side_effect=lambda phase: phase),
+        )
+    state = store.load()
+    state["phase_dispatch_counts"] = {
+        "phase1-what": controller._max_iterations + 1,
+    }
+    store.save(state)
+    spec_dir = Path(store.load()["spec_dir"])
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "issues.md").write_text(
+        """### ISS-001: Valid issue
+
+### Resolution Guidance
+- **Decision required:** Repair the issue.
+- **Suggested option:** Apply the evidence-backed repair.
+- **Evidence basis:** The active artifact contains the exact correction.
+- **Banzai eligible:** yes
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        controller,
+        "_dispatch_cap_options",
+        MagicMock(
+            side_effect=HumanInputPolicyError(
+                "controller-generated option is invalid"
+            )
+        ),
+    )
+
+    result = controller.run("message", "guided")
+
+    failed = store.load()
+    assert result.status == "blocked"
+    assert failed["blocked_reason"] == (
+        "phase_dispatch_limit_option_contract_failed"
+    )
+    assert failed["recovery_instruction"]["kind"] == "manual_diagnosis"
+    assert "blocked_decision" not in failed
+    provider.exec_agent.assert_not_called()
+
+
 @pytest.mark.parametrize("mode", ("guided", "semi", "banzai"))
 @pytest.mark.parametrize(
     ("evidence", "expected_reason"),
