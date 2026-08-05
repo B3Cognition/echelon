@@ -1,6 +1,6 @@
 # Source Topology Foundation
 
-**Status:** Approved for implementation
+**Status:** Implemented
 
 **Date:** 2026-08-04
 
