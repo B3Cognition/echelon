@@ -297,6 +297,11 @@ def test_pending_retarget_comparison_is_durably_consumed_once(
                 "replacement_commit": "b" * 40,
                 "comparison_pending_completion_id": "c" * 32,
                 "finalization_receipt": {"completion_id": "c" * 32},
+                "comparison_event_id": "retarget-comparison-" + "c" * 32,
+                "comparison_command": (
+                    "Compare old and replacement artifacts:\n"
+                    "  git diff " + "a" * 40 + ".." + "b" * 40 + " -- specs/001-demo"
+                ),
             },
         }
     )
