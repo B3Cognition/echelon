@@ -704,6 +704,15 @@ def _publish_target_contract_transaction(
     try:
         for root, preimage in preimages:
             _write_target_contract_at(root, content, preimage)
+        # Each individual publish authenticates its own root, but that alone
+        # cannot prove the first root remained named while the second one was
+        # being committed. Treat the two names as one commit set before the
+        # transaction is allowed to succeed.
+        for root, _preimage in preimages:
+            _authenticate_pinned_retarget_root(
+                root,
+                stage="target publication final commit",
+            )
     except BaseException as publication_error:
         rollback_errors: list[str] = []
         for root, preimage in reversed(preimages):
@@ -1441,11 +1450,11 @@ def _finish_retarget_invalidation(
             graph,
         )
         return invalidated
-    except Exception as exc:
+    except BaseException as exc:
         code = bounded_failure_code(exc)
         try:
             mark_retarget_failed(run_dir, preview.spec_dir, code)
-        except Exception as state_exc:
+        except BaseException as state_exc:
             raise RetargetDestructiveError(checkpoint, state_exc) from exc
         raise RetargetDestructiveError(checkpoint, exc) from exc
 

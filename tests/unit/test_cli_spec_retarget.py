@@ -1437,6 +1437,208 @@ def test_target_publication_replace_interval_root_swap_rolls_back_both_contracts
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("race_owner", ("canonical", "shadow"))
+def test_target_publication_final_commit_check_rolls_back_both_contracts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    race_owner: str,
+) -> None:
+    """A root changed after its local write check must fail the whole commit."""
+    from echelon.artifact_index import plan_retarget_artifacts
+    import echelon.spec_retarget as subject
+
+    spec_dir = tmp_path / "specs/001-demo"
+    shadow = tmp_path / "runs/squad-replacement/specs/001-demo"
+    old_content = b"targets:\n- services/api\n"
+    old_modes = {spec_dir: 0o640, shadow: 0o600}
+    for root, mode in old_modes.items():
+        (root / "contracts").mkdir(parents=True)
+        (root / "contracts/owned.txt").write_text("owned\n", encoding="utf-8")
+        target = root / "targets.yml"
+        target.write_bytes(old_content)
+        target.chmod(mode)
+    race_root = spec_dir if race_owner == "canonical" else shadow
+    other_root = shadow if race_root == spec_dir else spec_dir
+    displaced = race_root.with_name(f"{race_root.name}-commit-displaced")
+    external = tmp_path / f"external-commit-{race_owner}"
+    external.mkdir()
+    external_target = external / "targets.yml"
+    external_target.write_bytes(b"external\n")
+    external_target.chmod(0o604)
+    external_preimage = (
+        external_target.read_bytes(),
+        stat.S_IMODE(external_target.stat().st_mode),
+    )
+    real_authenticate = subject._authenticate_pinned_retarget_root
+    authentication_count = 0
+    swapped = False
+
+    def swap_after_local_publication_check(root: object, *, stage: str) -> None:
+        nonlocal authentication_count, swapped
+        real_authenticate(root, stage=stage)
+        if getattr(root, "path") != race_root or stage != "target publication":
+            return
+        authentication_count += 1
+        if authentication_count != 4:
+            return
+        swapped = True
+        os.rename(race_root, displaced)
+        os.rename(external, race_root)
+
+    monkeypatch.setattr(
+        subject,
+        "_authenticate_pinned_retarget_root",
+        swap_after_local_publication_check,
+    )
+
+    with pytest.raises(subject.RetargetArtifactError, match="target publication"):
+        subject.invalidate_retarget_artifacts(
+            spec_dir,
+            shadow,
+            plan_retarget_artifacts(spec_dir),
+            ("apps/web",),
+        )
+
+    assert swapped is True
+    assert (race_root / "targets.yml").read_bytes() == external_preimage[0]
+    assert stat.S_IMODE((race_root / "targets.yml").stat().st_mode) == external_preimage[1]
+    assert (displaced / "targets.yml").read_bytes() == old_content
+    assert stat.S_IMODE((displaced / "targets.yml").stat().st_mode) == old_modes[race_root]
+    assert (other_root / "targets.yml").read_bytes() == old_content
+    assert stat.S_IMODE((other_root / "targets.yml").stat().st_mode) == old_modes[other_root]
+    assert not list(tmp_path.rglob(".targets.yml.*.tmp"))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("interrupt_after", ("first-publication", "rollback"))
+@pytest.mark.parametrize("interrupt", (KeyboardInterrupt, SystemExit))
+def test_target_publication_interrupt_marks_replacement_failed_with_recovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    interrupt_after: str,
+    interrupt: type[BaseException],
+) -> None:
+    """Interrupts after publication begins are rolled back and durably reported."""
+    from echelon.artifact_index import RetargetArtifactPlan, plan_retarget_artifacts
+    from echelon.spec_lifecycle import SpecRun
+    import echelon.spec_retarget as subject
+    from harness.phase_checkpoints import PhaseCheckpoint
+
+    spec_dir = tmp_path / "specs/001-demo"
+    run_dir = tmp_path / "runs/squad-replacement"
+    shadow = run_dir / "specs/001-demo"
+    old_content = b"targets:\n- services/api\n"
+    old_modes = {spec_dir: 0o640, shadow: 0o600}
+    for root, mode in old_modes.items():
+        (root / "contracts").mkdir(parents=True)
+        (root / "contracts/owned.txt").write_text("owned\n", encoding="utf-8")
+        target = root / "targets.yml"
+        target.write_bytes(old_content)
+        target.chmod(mode)
+    replacement = SimpleNamespace(run=SimpleNamespace(run_dir=run_dir))
+    baseline = SpecRun(
+        tmp_path / "runs/squad-base",
+        "squad-base",
+        "squad-base",
+        "001-demo",
+        "001-demo",
+        spec_dir,
+        spec_dir,
+    )
+    preview = subject.RetargetPreview(
+        tmp_path,
+        "001-demo",
+        baseline,
+        spec_dir,
+        ("services/api",),
+        ("apps/web",),
+        plan_retarget_artifacts(spec_dir),
+        "retarget-op",
+        "Build account search",
+        "semi",
+        False,
+        (),
+    )
+    checkpoint = PhaseCheckpoint(
+        "retarget-preflight-rev-1",
+        "001-demo",
+        "retarget",
+        "phase0-constitution",
+        "a" * 40,
+        "a" * 40,
+        "retarget-preflight",
+        "squad-base",
+        "2026-08-05T00:00:00+00:00",
+    )
+    monkeypatch.setattr(
+        subject,
+        "_persisted_memory_receipt",
+        lambda _run: SimpleNamespace(to_dict=lambda: {"status": "pass"}),
+    )
+    monkeypatch.setattr(subject, "invalidate_retarget_graphs", lambda *_args: object())
+    monkeypatch.setattr(subject, "write_checkpoint_coverage_context", lambda *_args: None)
+    monkeypatch.setattr(subject, "mark_retarget_rebuilding", lambda *_args: None)
+    failed: list[str] = []
+
+    def record_failure(_run: Path, _spec: Path, code: str) -> None:
+        failed.append(code)
+        (run_dir / "interrupt-state.txt").write_text(
+            f"failed\n{checkpoint.id}\n", encoding="utf-8"
+        )
+
+    monkeypatch.setattr(subject, "mark_retarget_failed", record_failure)
+    real_replace = subject._atomic_target_contract_replace
+    real_restore = subject._restore_target_contract_preimage
+    publication_count = 0
+    restoration_count = 0
+
+    def interrupting_replace(*args: object, **kwargs: object) -> None:
+        nonlocal publication_count
+        real_replace(*args, **kwargs)
+        if kwargs.get("label") == "publish":
+            publication_count += 1
+            if interrupt_after == "first-publication" and publication_count == 1:
+                raise interrupt()
+            if interrupt_after == "rollback" and publication_count == 1:
+                raise subject.RetargetArtifactError("trigger rollback")
+
+    def interrupting_restore(*args: object, **kwargs: object) -> None:
+        nonlocal restoration_count
+        real_restore(*args, **kwargs)
+        restoration_count += 1
+        if interrupt_after == "rollback" and restoration_count == 2:
+            raise interrupt()
+
+    monkeypatch.setattr(subject, "_atomic_target_contract_replace", interrupting_replace)
+    monkeypatch.setattr(subject, "_restore_target_contract_preimage", interrupting_restore)
+
+    with pytest.raises(subject.RetargetDestructiveError) as raised:
+        subject._finish_retarget_invalidation(
+            preview,
+            SimpleNamespace(revision_id="rev-1"),
+            checkpoint,
+            replacement,
+            starting_status="invalidating",
+            reuse_persisted_memory=True,
+        )
+
+    expected_failure = (
+        "retarget_artifact_invalidation_failed"
+        if interrupt_after == "rollback"
+        else "retarget_rebuild_blocked"
+    )
+    assert failed == [expected_failure]
+    assert (run_dir / "interrupt-state.txt").read_text(encoding="utf-8") == (
+        f"failed\n{checkpoint.id}\n"
+    )
+    assert f"echelon spec rewind checkpoint:{checkpoint.id} --confirm" in str(raised.value)
+    for root, mode in old_modes.items():
+        assert (root / "targets.yml").read_bytes() == old_content
+        assert stat.S_IMODE((root / "targets.yml").stat().st_mode) == mode
+    assert not list(tmp_path.rglob(".targets.yml.*.tmp"))
+
+
+@pytest.mark.unit
 def test_memory_exclusion_persists_the_squad_reader_gate(tmp_path: Path) -> None:
     from echelon.spec_retarget import persist_retarget_memory_exclusion
 
