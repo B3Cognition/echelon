@@ -91,6 +91,32 @@ _RELATIONSHIP_MAP: Mapping[str, Mapping[str, str]] = MappingProxyType(
         ),
     }
 )
+RelationshipIdentity = tuple[
+    str,
+    str,
+    str,
+    str,
+    str,
+    str,
+    int | None,
+    str | None,
+    tuple[str, ...],
+    str | None,
+]
+RelationshipSortKey = tuple[
+    str,
+    str,
+    str,
+    str,
+    str,
+    str,
+    int,
+    bool,
+    str,
+    tuple[str, ...],
+    bool,
+    str,
+]
 
 
 class TopologyProviderError(RuntimeError):
@@ -594,7 +620,7 @@ class PublishedTopology:
     ) -> tuple[TopologyTraversalStep, ...]:
         """Normalize deterministic adjacent observations without self-loop doubles."""
         steps_by_identity: dict[
-            tuple[str, str, str, str, str, str, int | None], TopologyTraversalStep
+            RelationshipIdentity, TopologyTraversalStep
         ] = {}
         for step_direction, relation in pairs:
             if relations and relation.type not in relations:
@@ -824,7 +850,7 @@ def _load_relationships(
     symbols_by_key: Mapping[str, TopologySymbol],
 ) -> tuple[TopologyRelationship, ...]:
     relationships: list[TopologyRelationship] = []
-    identities: set[tuple[str, str, str, str, str, str, int | None]] = set()
+    identities: set[RelationshipIdentity] = set()
     for raw_relationship in raw_relationships:
         relation = _require_object_value(raw_relationship, "provider relationship")
         source_key = validate_symbol_key(_require_string(relation, "source_key"))
@@ -844,6 +870,9 @@ def _load_relationships(
             provider_kind=provider_kind,
             path=normalize_source_path(path) if path is not None else None,
             line_start=_optional_positive_int(relation, "line_start"),
+            confidence=_optional_confidence(relation, label="relationship"),
+            provenance=_optional_provenance(relation, label="relationship"),
+            notes=_optional_notes(relation, label="relationship"),
         )
         identity = _relationship_identity(normalized)
         if identity in identities:
@@ -921,32 +950,45 @@ def _diagnostic_name(diagnostic: Mapping[str, object], stem: str) -> str:
     return value
 
 
-def _optional_confidence(diagnostic: Mapping[str, object]) -> str | None:
-    value = diagnostic.get("confidence")
+def _optional_confidence(
+    observation: Mapping[str, object], *, label: str = "diagnostic"
+) -> str | None:
+    value = observation.get("confidence")
     if value is None:
         return None
-    if value not in {"high", "medium", "low", "dynamic"}:
-        raise TopologyProviderError("diagnostic confidence is unsupported")
+    if not isinstance(value, str) or value not in {
+        "high",
+        "medium",
+        "low",
+        "dynamic",
+    }:
+        raise TopologyProviderError(f"{label} confidence is unsupported")
     return value
 
 
-def _optional_provenance(diagnostic: Mapping[str, object]) -> tuple[str, ...]:
-    value = diagnostic.get("provenance")
+def _optional_provenance(
+    observation: Mapping[str, object], *, label: str = "diagnostic"
+) -> tuple[str, ...]:
+    value = observation.get("provenance")
     if value is None:
         return ()
     if not isinstance(value, list) or any(
         not isinstance(item, str) or not item for item in value
     ):
-        raise TopologyProviderError("diagnostic provenance must be a list of non-empty strings")
+        raise TopologyProviderError(
+            f"{label} provenance must be a list of non-empty strings"
+        )
     return tuple(value)
 
 
-def _optional_notes(diagnostic: Mapping[str, object]) -> str | None:
-    value = diagnostic.get("notes")
+def _optional_notes(
+    observation: Mapping[str, object], *, label: str = "diagnostic"
+) -> str | None:
+    value = observation.get("notes")
     if value is None:
         return None
     if not isinstance(value, str):
-        raise TopologyProviderError("diagnostic notes must be a string")
+        raise TopologyProviderError(f"{label} notes must be a string")
     return value
 
 
@@ -1069,7 +1111,7 @@ def _relationship_tuple(
     relationships: Iterable[TopologyRelationship],
     nodes: Mapping[str, object],
 ) -> tuple[TopologyRelationship, ...]:
-    indexed: dict[tuple[str, str, str, str, str, str, int | None], TopologyRelationship] = {}
+    indexed: dict[RelationshipIdentity, TopologyRelationship] = {}
     for relationship in relationships:
         if relationship.source_id not in nodes or relationship.target_id not in nodes:
             raise TopologyProviderError(
@@ -1261,7 +1303,7 @@ def _search_text(node: TopologySource | TopologyFile | TopologySymbol) -> str:
 
 def _relationship_identity(
     relationship: TopologyRelationship,
-) -> tuple[str, str, str, str, str, str, int | None]:
+) -> RelationshipIdentity:
     return (
         relationship.source_id,
         relationship.target_id,
@@ -1270,12 +1312,15 @@ def _relationship_identity(
         relationship.provider,
         relationship.path or "",
         relationship.line_start,
+        relationship.confidence,
+        relationship.provenance,
+        relationship.notes,
     )
 
 
 def _relationship_sort_key(
     relationship: TopologyRelationship,
-) -> tuple[str, str, str, str, str, str, int]:
+) -> RelationshipSortKey:
     return (
         relationship.type,
         relationship.source_id,
@@ -1284,6 +1329,11 @@ def _relationship_sort_key(
         relationship.provider_kind,
         relationship.path or "",
         relationship.line_start or 0,
+        relationship.confidence is not None,
+        relationship.confidence or "",
+        relationship.provenance,
+        relationship.notes is not None,
+        relationship.notes or "",
     )
 
 

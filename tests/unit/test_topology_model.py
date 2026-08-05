@@ -105,6 +105,59 @@ def test_diagnostic_retains_immutable_epistemic_detail() -> None:
 
 
 @pytest.mark.unit
+def test_relationship_retains_immutable_epistemic_detail() -> None:
+    from echelon.topology_model import TopologyRelationship
+
+    relationship = TopologyRelationship(
+        source_id="symbol:api:perlgraph:source",
+        target_id="symbol:api:perlgraph:target",
+        type="CALLS",
+        provider="perlgraph",
+        provider_kind="calls",
+        path="lib/API.pm",
+        line_start=42,
+        confidence="medium",
+        provenance=("tree-sitter", "constructor-assignment"),
+        notes="Receiver inferred from constructor assignment.",
+    )
+
+    assert relationship.confidence == "medium"
+    assert relationship.provenance == ("tree-sitter", "constructor-assignment")
+    assert relationship.notes == "Receiver inferred from constructor assignment."
+    with pytest.raises(FrozenInstanceError):
+        relationship.notes = "changed"  # type: ignore[misc]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("confidence", "certain"),
+        ("confidence", ["high"]),
+        ("provenance", ["tree-sitter"]),
+        ("provenance", ("",)),
+        ("notes", 7),
+        ("notes", "/Users/example/private-note"),
+    ],
+)
+def test_relationship_rejects_invalid_epistemic_detail(
+    field: str, value: object
+) -> None:
+    from echelon.topology_model import TopologyRelationship, TopologyValidationError
+
+    values = {
+        "source_id": "symbol:api:perlgraph:source",
+        "target_id": "symbol:api:perlgraph:target",
+        "type": "CALLS",
+        "provider": "perlgraph",
+        "provider_kind": "calls",
+        field: value,
+    }
+    with pytest.raises(TopologyValidationError):
+        TopologyRelationship(**values)  # type: ignore[arg-type]
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize("generation", ("1", True, 0, -1))
 def test_receipt_rejects_noncanonical_generation(generation: object) -> None:
     from echelon.topology_model import TopologyReceipt, TopologyValidationError

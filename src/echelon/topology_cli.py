@@ -627,6 +627,9 @@ def _relationship_payload(
         "path": source_relative_path,
         "source_relative_path": source_relative_path,
         "line_start": relationship.line_start,
+        "confidence": relationship.confidence,
+        "provenance": list(relationship.provenance),
+        "notes": relationship.notes,
         "topology_generation": receipt.generation,
         "topology_status": statuses.get(source_node.source_id, "current"),
         "provider_status": receipt.provider_statuses.get(provider_key),
@@ -667,6 +670,9 @@ def _step_payload(
             "target_node_id": relationship.target_id,
             "relationship_path": relationship.path,
             "relationship_line_start": relationship.line_start,
+            "confidence": relationship.confidence,
+            "provenance": list(relationship.provenance),
+            "notes": relationship.notes,
             "traversal_path": list(traversal_path),
         }
     )

@@ -811,6 +811,87 @@ def test_explain_exact_node_and_ambiguous_selector_candidates(
 
 
 @pytest.mark.unit
+def test_perlgraph_relationship_evidence_is_exposed_in_bounded_json_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.topology_provider import PublishedTopology, load_provider_document
+    from tests.unit.test_topology_provider import _perlgraph, _symbol
+    import echelon.topology_cli as topology_cli
+
+    caller = _symbol("lib/API.pm", "API::caller")
+    callee = _symbol("lib/API.pm", "API::callee")
+    loaded = load_provider_document(
+        _perlgraph(
+            status="ready",
+            symbols=[caller, callee],
+            relationships=[
+                {
+                    "kind": "calls",
+                    "source_key": caller["symbol_key"],
+                    "target_key": callee["symbol_key"],
+                    "file_path": "lib/API.pm",
+                    "line_start": 42,
+                    "confidence": "medium",
+                    "provenance": [
+                        "tree-sitter",
+                        "constructor-assignment",
+                    ],
+                    "notes": "Receiver inferred from constructor assignment.",
+                }
+            ],
+        ),
+        provider="perlgraph",
+        source_id="api",
+    )
+    topology = PublishedTopology.from_loaded_providers(
+        [loaded],
+        generation=7,
+        source_fingerprints={"api": "a" * 64},
+        provider_receipt_hashes={
+            "api": {"perlgraph": "sha256:" + "c" * 64}
+        },
+        provider_artifact_paths={
+            "api": {
+                "perlgraph": "re/topology/sources/api/perlgraph-analysis.json"
+            }
+        },
+        provider_statuses={"api": {"perlgraph": "ready"}},
+    )
+    _patch_reads(monkeypatch, topology=topology)
+    caller_id = next(
+        symbol.id
+        for symbol in loaded.symbols
+        if symbol.qualified_name == "API::caller"
+    )
+
+    explained = topology_cli.explain_command(
+        Path("/workspace"), caller_id, source="api", as_json=True
+    )
+    neighbors = topology_cli.neighbors_command(
+        Path("/workspace"),
+        caller_id,
+        source="api",
+        direction="out",
+        relations=("calls",),
+        as_json=True,
+    )
+    relationship = next(
+        row
+        for row in json.loads(explained.stdout)["relationships"]
+        if row["relation"] == "CALLS"
+    )
+    step = json.loads(neighbors.stdout)["steps"][0]
+
+    for row in (relationship, step):
+        assert row["confidence"] == "medium"
+        assert row["provenance"] == [
+            "tree-sitter",
+            "constructor-assignment",
+        ]
+        assert row["notes"] == "Receiver inferred from constructor assignment."
+
+
+@pytest.mark.unit
 def test_ambiguous_candidate_output_bounds_one_million_byte_value(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -227,6 +227,9 @@ class TopologyRelationship:
     provider_kind: str
     path: str | None = None
     line_start: int | None = None
+    confidence: str | None = None
+    provenance: tuple[str, ...] = ()
+    notes: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.source_id, str) or not self.source_id:
@@ -244,6 +247,21 @@ class TopologyRelationship:
             not isinstance(self.line_start, int) or self.line_start <= 0
         ):
             raise TopologyValidationError("relationship line_start must be a positive integer")
+        if self.confidence is not None and (
+            not isinstance(self.confidence, str)
+            or self.confidence not in {"high", "medium", "low", "dynamic"}
+        ):
+            raise TopologyValidationError("relationship confidence is unsupported")
+        if not isinstance(self.provenance, tuple) or any(
+            not isinstance(value, str) or not value for value in self.provenance
+        ):
+            raise TopologyValidationError(
+                "relationship provenance must be a tuple of non-empty strings"
+            )
+        if self.notes is not None:
+            if not isinstance(self.notes, str):
+                raise TopologyValidationError("relationship notes must be a string or null")
+            _reject_absolute_host_path(self.notes, "relationship notes")
 
 
 @dataclass(frozen=True, slots=True)
@@ -278,12 +296,10 @@ class TopologyDiagnostic:
             not isinstance(self.line_start, int) or self.line_start <= 0
         ):
             raise TopologyValidationError("diagnostic line_start must be a positive integer")
-        if self.confidence is not None and self.confidence not in {
-            "high",
-            "medium",
-            "low",
-            "dynamic",
-        }:
+        if self.confidence is not None and (
+            not isinstance(self.confidence, str)
+            or self.confidence not in {"high", "medium", "low", "dynamic"}
+        ):
             raise TopologyValidationError("diagnostic confidence is unsupported")
         if not isinstance(self.provenance, tuple) or any(
             not isinstance(value, str) or not value for value in self.provenance

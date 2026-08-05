@@ -162,6 +162,9 @@ def test_load_provider_normalizes_exact_keys_and_hides_native_host_paths(tmp_pat
     assert loaded.native_status == "complete"
     assert loaded.symbols[0].id == f"symbol:api:codegraph:{_symbol()['symbol_key'][7:]}"
     assert loaded.relationships[0].type == "CALLS"
+    assert loaded.relationships[0].confidence is None
+    assert loaded.relationships[0].provenance == ()
+    assert loaded.relationships[0].notes is None
     assert "/absolute/" not in repr(loaded)
 
 
@@ -553,22 +556,114 @@ def test_neighbors_both_deduplicates_a_self_loop_with_a_stable_direction() -> No
 
 
 @pytest.mark.unit
-def test_perlgraph_preserves_distinct_relationship_observations_but_rejects_exact_duplicates() -> None:
+def test_perlgraph_resolved_relationship_retains_immutable_evidence() -> None:
+    from dataclasses import FrozenInstanceError
+
+    from echelon.topology_provider import load_provider_document
+
+    caller = _symbol("lib/API.pm", "API::caller")
+    callee = _symbol("lib/API.pm", "API::callee")
+    loaded = load_provider_document(
+        _perlgraph(
+            status="ready",
+            symbols=[caller, callee],
+            relationships=[
+                {
+                    "kind": "calls",
+                    "source_key": caller["symbol_key"],
+                    "target_key": callee["symbol_key"],
+                    "file_path": "lib/API.pm",
+                    "line_start": 10,
+                    "confidence": "medium",
+                    "provenance": [
+                        "tree-sitter",
+                        "constructor-assignment",
+                    ],
+                    "notes": "Receiver inferred from constructor assignment.",
+                }
+            ],
+        ),
+        provider="perlgraph",
+        source_id="api",
+    )
+
+    relationship = loaded.relationships[0]
+    assert relationship.provider == "perlgraph"
+    assert relationship.provider_kind == "calls"
+    assert relationship.path == "lib/API.pm"
+    assert relationship.line_start == 10
+    assert relationship.confidence == "medium"
+    assert relationship.provenance == (
+        "tree-sitter",
+        "constructor-assignment",
+    )
+    assert relationship.notes == "Receiver inferred from constructor assignment."
+    with pytest.raises(FrozenInstanceError):
+        relationship.notes = "changed"  # type: ignore[misc]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("confidence", ["high"]),
+        ("provenance", ("tree-sitter",)),
+        ("provenance", [""]),
+        ("notes", 7),
+    ],
+)
+def test_perlgraph_rejects_invalid_resolved_relationship_evidence(
+    field: str, value: object
+) -> None:
+    from echelon.topology_provider import TopologyProviderError, load_provider_document
+
+    caller = _symbol("lib/API.pm", "API::caller")
+    callee = _symbol("lib/API.pm", "API::callee")
+    relationship = {
+        "kind": "calls",
+        "source_key": caller["symbol_key"],
+        "target_key": callee["symbol_key"],
+        field: value,
+    }
+
+    with pytest.raises(TopologyProviderError):
+        load_provider_document(
+            _perlgraph(
+                status="ready",
+                symbols=[caller, callee],
+                relationships=[relationship],
+            ),
+            provider="perlgraph",
+            source_id="api",
+        )
+
+
+@pytest.mark.unit
+def test_perlgraph_preserves_evidence_distinct_relationship_observations_but_rejects_exact_duplicates() -> None:
     from echelon.topology_provider import TopologyProviderError, load_provider_document
 
     first = _symbol("lib/API.pm", "API::first")
     second = _symbol("lib/API.pm", "API::second")
     first_call = {
         "kind": "calls", "source_key": first["symbol_key"], "target_key": second["symbol_key"],
-        "file_path": "lib/API.pm", "line_start": 10,
+        "file_path": "lib/API.pm", "line_start": 10, "confidence": "high",
+        "provenance": ["tree-sitter"],
     }
-    second_call = {**first_call, "line_start": 20}
+    second_call = {
+        **first_call,
+        "confidence": "medium",
+        "provenance": ["tree-sitter", "constructor-assignment"],
+        "notes": "Receiver inferred from constructor assignment.",
+    }
     document = _perlgraph(
         status="ready", symbols=[first, second], relationships=[first_call, second_call]
     )
 
     loaded = load_provider_document(document, provider="perlgraph", source_id="api")
-    assert [relationship.line_start for relationship in loaded.relationships] == [10, 20]
+    assert [relationship.confidence for relationship in loaded.relationships] == [
+        "high",
+        "medium",
+    ]
 
     with pytest.raises(TopologyProviderError, match="duplicate"):
         load_provider_document(
