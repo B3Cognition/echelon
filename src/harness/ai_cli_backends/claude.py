@@ -50,6 +50,16 @@ class ClaudeCliBackend:
         if scope_args:
             cmd.extend(scope_args)
         raw_prompt_metadata = request.metadata.get("prompt_metadata")
+        read_roots = (
+            _prompt_scope_paths(request, raw_prompt_metadata, "tool_read_roots")
+            if isinstance(raw_prompt_metadata, Mapping)
+            else ()
+        )
+        write_paths = (
+            _prompt_scope_paths(request, raw_prompt_metadata, "tool_write_paths")
+            if isinstance(raw_prompt_metadata, Mapping)
+            else ()
+        )
         forbidden_roots = (
             _prompt_scope_paths(
                 request,
@@ -71,7 +81,11 @@ class ClaudeCliBackend:
             cmd = [
                 sandbox_exec,
                 "-p",
-                _workspace_sandbox_profile(forbidden_roots),
+                _workspace_sandbox_profile(
+                    forbidden_roots,
+                    read_roots=read_roots,
+                    write_paths=write_paths,
+                ),
                 *cmd,
             ]
         return self._run_stream_json(cmd, request)
@@ -271,7 +285,12 @@ def _sandbox_exec_path() -> str | None:
     return shutil.which("sandbox-exec")
 
 
-def _workspace_sandbox_profile(forbidden_roots: tuple[str, ...]) -> str:
+def _workspace_sandbox_profile(
+    forbidden_roots: tuple[str, ...],
+    *,
+    read_roots: tuple[str, ...] = (),
+    write_paths: tuple[str, ...] = (),
+) -> str:
     exclusions: list[str] = []
     for root in forbidden_roots:
         quoted = json.dumps(root)
@@ -288,6 +307,18 @@ def _workspace_sandbox_profile(forbidden_roots: tuple[str, ...]) -> str:
         "(allow process*)",
         f"(allow file-read* {allowed_files})",
         f"(allow file-write* {allowed_files})",
+        *(
+            f"(allow file-read* (subpath {json.dumps(root)}))"
+            for root in read_roots
+        ),
+        *(
+            rule
+            for path in write_paths
+            for rule in (
+                f"(allow file-write* (literal {json.dumps(str(Path(path).parent))}))",
+                f"(allow file-write* (literal {json.dumps(path)}))",
+            )
+        ),
         "(allow network*)",
         "(allow sysctl-read)",
         "(allow mach-lookup)",

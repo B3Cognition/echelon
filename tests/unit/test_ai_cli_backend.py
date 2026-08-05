@@ -15,6 +15,7 @@ import pytest
 
 from harness.ai_cli_backend import CliRunRequest, CliRunResult, create_ai_cli_backend
 from harness.ai_cli_backends.claude import ClaudeCliBackend
+from harness.ai_cli_backends.claude import _workspace_sandbox_profile
 from harness.ai_cli_backends.codex import CodexCliBackend
 from harness.ai_cli_backends.copilot import CopilotCliBackend
 from harness.ai_cli_backends.opencode import OpenCodeCliBackend
@@ -3116,6 +3117,148 @@ def test_claude_backend_enforces_prompt_file_scopes(tmp_path) -> None:
         f"Write(/{write_path})",
         f"Edit(/{write_path})",
     }
+
+
+def test_claude_workspace_sandbox_allows_scoped_paths_inside_forbidden_root(
+    tmp_path: Path,
+) -> None:
+    backend = ClaudeCliBackend(_config("claude"))
+    captured = {}
+
+    class FakeProcess:
+        stdout = io.BytesIO(b"")
+        returncode = 0
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self) -> int:
+            return self.returncode
+
+    def fake_popen(command, **_kwargs):
+        captured["command"] = command
+        return FakeProcess()
+
+    run_root = (tmp_path / "runs" / "run-1" / "re").resolve()
+    canonical_root = (tmp_path / "re").resolve()
+    write_path = (run_root / "workspace" / "overview.md").resolve()
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Synthesize a root-source workspace.",
+        env={},
+        timeout_s=10,
+        metadata={
+            "prompt_metadata": {
+                "tool_read_roots": [str(run_root), str(canonical_root)],
+                "tool_write_paths": [str(write_path)],
+                "tool_forbidden_roots": [str(tmp_path.resolve())],
+            }
+        },
+    )
+
+    with (
+        patch("harness.ai_cli_backends.claude.subprocess.Popen", fake_popen),
+        patch(
+            "harness.ai_cli_backends.claude._sandbox_exec_path",
+            return_value="/usr/bin/sandbox-exec",
+        ),
+    ):
+        backend.run_prompt(request)
+
+    profile = captured["command"][2]
+    assert f'(allow file-read* (subpath "{run_root}"))' in profile
+    assert f'(allow file-read* (subpath "{canonical_root}"))' in profile
+    assert f'(allow file-write* (literal "{write_path}"))' in profile
+    assert f'(allow file-write* (literal "{write_path.parent}"))' in profile
+
+
+@pytest.mark.skipif(
+    sys.platform != "darwin" or not Path("/usr/bin/sandbox-exec").is_file(),
+    reason="requires macOS sandbox-exec",
+)
+def test_claude_workspace_sandbox_enforces_overlapping_root_exceptions(
+    tmp_path: Path,
+) -> None:
+    run_root = tmp_path / "runs/run-1/re"
+    output = run_root / "workspace/overview.md"
+    allowed_input = run_root / "state.json"
+    forbidden_input = tmp_path / "source.py"
+    output.parent.mkdir(parents=True)
+    allowed_input.write_text("allowed\n", encoding="utf-8")
+    forbidden_input.write_text("forbidden\n", encoding="utf-8")
+    profile = _workspace_sandbox_profile(
+        (str(tmp_path.resolve()),),
+        read_roots=(str(run_root.resolve()),),
+        write_paths=(str(output.resolve()),),
+    )
+
+    allowed_read = subprocess.run(
+        ["/usr/bin/sandbox-exec", "-p", profile, "/bin/cat", str(allowed_input)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    allowed_write = subprocess.run(
+        [
+            "/usr/bin/sandbox-exec",
+            "-p",
+            profile,
+            "/bin/sh",
+            "-c",
+            'printf "written\\n" > "$1"',
+            "sh",
+            str(output),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    forbidden_read = subprocess.run(
+        ["/usr/bin/sandbox-exec", "-p", profile, "/bin/cat", str(forbidden_input)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    forbidden_source_write = subprocess.run(
+        [
+            "/usr/bin/sandbox-exec",
+            "-p",
+            profile,
+            "/bin/sh",
+            "-c",
+            'printf "changed\\n" > "$1"',
+            "sh",
+            str(forbidden_input),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    unlisted_output = output.with_name("relationships.md")
+    forbidden_output_write = subprocess.run(
+        [
+            "/usr/bin/sandbox-exec",
+            "-p",
+            profile,
+            "/bin/sh",
+            "-c",
+            'printf "unexpected\\n" > "$1"',
+            "sh",
+            str(unlisted_output),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert allowed_read.returncode == 0
+    assert allowed_write.returncode == 0
+    assert output.read_text(encoding="utf-8") == "written\n"
+    assert forbidden_read.returncode != 0
+    assert forbidden_source_write.returncode != 0
+    assert forbidden_input.read_text(encoding="utf-8") == "forbidden\n"
+    assert forbidden_output_write.returncode != 0
+    assert not unlisted_output.exists()
 
 
 def test_claude_backend_allows_task_tools_without_canonical_task_metadata(
