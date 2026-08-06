@@ -43,22 +43,80 @@ They must not be represented by one overloaded `base_dir` value.
 - Changing fulfillment, convergence, branch-selection, or merge semantics.
 - Making `find_spec_dir()` cross Git boundaries.
 - Changing PR-tool discovery or degraded no-PR behavior.
+- Implementing aggregate auto-land for specs with multiple implementation
+  targets. Normal `land()` currently requires exactly one declared target;
+  multi-target landing needs orchestration after every target converges and is
+  a separate design.
 
 ## Root Ownership Contract
 
-`run_skill.run()` will distinguish two inputs:
+`run_skill.run()` will distinguish two inputs through this backwards-compatible
+signature addition:
 
-- `base_dir`: the existing harness state and target GitOps root. In a target
-  run this remains `runs/targets/<target>`.
+```python
+def run(
+    user_message: str,
+    provider: Any,
+    gitops: Any,
+    base_dir: str = ".",
+    config: Any = None,
+    resume_build_id: str | None = None,
+    orchestration_root: str | Path | None = None,
+) -> None:
+```
+
+- `base_dir`: the existing harness state root associated with the
+  target-scoped GitOps instance. In a target run this remains
+  `runs/targets/<target>`.
 - `orchestration_root`: the workspace that owns `specs/`, orchestration run
   artifacts, and lifecycle status. It defaults to `base_dir` for backwards
   compatibility and single-repository runs.
 
-Polyrepo CLI dispatch already resolves both paths. Every CLI path that calls
-`run_skill.run()` for run, resume, or continue will pass the resolved workspace
-root explicitly as `orchestration_root`. The delivery coordinator and harness
-state continue using `base_dir`; spec history discovery and auto-land use
-`orchestration_root`.
+At entry, a private pure-path helper resolves both values once without changing
+their ownership:
+
+```python
+def _resolve_run_roots(
+    base_dir: str,
+    orchestration_root: str | Path | None,
+) -> tuple[Path, Path]:
+    """Return (harness_root, workspace_root)."""
+```
+
+Its result is equivalent to:
+
+```text
+harness_root = Path(base_dir).resolve()
+workspace_root = (
+    Path(orchestration_root).resolve()
+    if orchestration_root is not None
+    else harness_root
+)
+```
+
+When `orchestration_root` is explicitly supplied and is not a directory,
+`run()` raises `ValueError("orchestration root is not a directory: <path>")`
+before coordinator construction. It never falls back to `base_dir`. After
+intent parsing, an explicit valid root without the selected spec raises
+`FileNotFoundError("spec directory for <spec-id> was not found from
+orchestration root <path>")`, also before coordinator construction. Spec
+lookup, run-history reads/writes, and auto-land use the same resolved
+`workspace_root` for the lifetime of the call.
+
+Polyrepo CLI dispatch already resolves both paths. The caller contract is:
+
+| Caller | `base_dir` | `orchestration_root` |
+| --- | --- | --- |
+| `_cmd_harness_run` | target harness root | existing `spec_search_root` |
+| `_cmd_harness_resume` retry/recovery/normal paths | target harness root | existing `spec_search_root` |
+| legacy `resume_skill.resume` | supplied base directory | optional new argument, defaulting through `run()` |
+| `harness.__main__` standalone entry | current/default base directory | omitted; single-repo default applies |
+| direct Python/test callers | existing value | omitted unless modeling a polyrepo |
+
+The delivery coordinator and harness state continue using `base_dir`; spec
+history discovery and auto-land use `orchestration_root`. The CLI adapters,
+not `land()`, remain responsible for interpreting `ECHELON_POLYREPO_ROOT` and
+passing the resolved value.
 
 Auto-land will call:
 
@@ -74,6 +132,16 @@ No environment-variable inference will be added inside `land()`. Callers own
 root resolution and pass the result explicitly, keeping the lander usable and
 deterministic in tests and non-CLI integrations.
 
+### Single-Target Boundary
+
+This auto-land path is supported only when the canonical spec declares exactly
+one implementation target, matching `resolve_land_repo()`'s existing contract.
+Once correct spec discovery exposes a multi-target spec to `run_skill`, it must
+not let independent target workers race to mark the shared spec `landed`.
+Instead, auto-land is skipped with an explicit warning that aggregate
+multi-target landing is unsupported. Delivery convergence remains recorded;
+no target branch or lifecycle status is mutated by that skipped auto-land.
+
 ## Spec Discovery And Diagnostics
 
 `land()` continues to call `find_spec_dir(spec_id, wrapper_project_dir)` and
@@ -82,13 +150,23 @@ continues to respect its repository-boundary rule.
 When branchless landing is evaluated, diagnostics will separate these cases:
 
 1. `spec_dir is None`: report that the spec directory was not found from the
-   supplied orchestration root and include that root in the message.
+   supplied orchestration root and include that root in the message. The
+   problem text is:
+
+   ```text
+   spec directory for <spec-id> was not found from orchestration root <path>
+   ```
 2. The spec directory exists but frontmatter has no `status`: retain the
    explicit `spec status is (missing), not ready_to_land or landed` message.
 3. The status exists but is not landable: report the actual status as today.
 
 This preserves existing lifecycle validation while preventing a path lookup
 failure from masquerading as malformed spec metadata.
+
+The new diagnostic is intentionally limited to the branchless completion path
+that produced the Prosaic failure. This change does not tighten legacy
+branchful landing when no spec directory exists; changing that compatibility
+behavior requires separate lifecycle analysis.
 
 ## Data Flow
 
@@ -105,16 +183,25 @@ For a target-side polyrepo continuation:
 6. `land()` finds the workspace spec, reads `ready_to_land`, resolves its
    declared target, and performs the existing readiness and landing flow.
 
+For a multi-target spec, step 5 is replaced by the explicit unsupported
+warning described above. No target worker calls `land()`.
+
 ## Error Handling
 
 - A nonexistent explicit orchestration root is not silently replaced by
-  `base_dir`; spec discovery fails with the new root-specific diagnostic.
+  `base_dir`; `run()` fails before coordinator construction.
+- A valid explicit orchestration root with no matching spec fails before build
+  work with the same spec-directory/search-root facts used by the branchless
+  diagnostic.
 - A found spec without status remains a lifecycle-data error.
 - A non-landable status remains a normal blocked landing.
 - Target mirror or branch failures remain GitOps errors and are not converted
   into spec-discovery errors.
 - Auto-land continues returning `False` on controlled landing failure so the
   delivery summary remains truthful.
+- Multi-target auto-land is skipped explicitly rather than raising
+  `land requires exactly one target repo for normal specs` inside each target
+  worker.
 
 ## Tests
 
@@ -124,7 +211,15 @@ For a target-side polyrepo continuation:
   to `land()`.
 - A polyrepo-style run with distinct roots passes `orchestration_root` to
   `land()` while constructing coordinator state under `base_dir`.
-- Resume and continue CLI paths forward the resolved orchestration root.
+- The initial run and every resume/continue re-entry path forward the resolved
+  orchestration root.
+- `resume_skill.resume` forwards an explicit orchestration root when supplied
+  and preserves its legacy default when omitted.
+- An explicit nonexistent orchestration root fails before coordinator start.
+- An explicit valid root without the selected spec fails before coordinator
+  start and reports both selector and searched root.
+- `_resolve_run_roots()` returns identical roots for a single-repository call
+  and distinct normalized roots for a polyrepo call.
 
 ### Landing Diagnostics
 
@@ -134,6 +229,8 @@ For a target-side polyrepo continuation:
   existing missing-status lifecycle error.
 - Branchless landing with `ready_to_land` continues into normal provenance and
   ancestry checks.
+- A legacy branchful landing without a discoverable spec retains its existing
+  behavior.
 
 ### Polyrepo Regression
 
@@ -143,21 +240,57 @@ For a target-side polyrepo continuation:
 - Converge a mocked target delivery with auto-merge enabled.
 - Assert auto-land receives the workspace root, resolves the spec as
   `ready_to_land`, and never emits the `(missing)` status diagnostic.
+- Assert coordinator and state paths remain rooted under
+  `workspace/runs/targets/prosaic`, proving the fix does not redirect target
+  harness state into the orchestration root.
+- Assert a two-target canonical spec does not call `land()` from either target
+  worker and emits the aggregate-landing unsupported warning.
 
 ## Live Validation
 
-After automated tests pass, use the existing Prosaic spec 911 state as a live
-validation case. Before running it, record the target default branch, verified
-branch, mirror main, spec status, registered worktrees, and dirty local
-checkout. The live action is expected to mutate lifecycle state by completing
-landing. Success requires:
+Automated tests are the acceptance gate for auto-land propagation. The
+existing Prosaic workspace cannot safely serve as the first full landing test:
+`resolve_land_repo()` selects `sources/prosaic`, whose `package.json` and
+`package-lock.json` are dirty. Normal landing operates on that checkout and
+must block rather than overwrite or silently stash those changes.
 
-- the lander reads `ready_to_land` from the orchestration spec;
-- the verified commit is present in the landed default-branch history;
-- the spec advances to `landed`;
-- the dirty local checkout is not overwritten;
-- no `(missing)` status diagnostic appears.
+After automated tests pass and the installed CLI is refreshed, perform a
+non-mutating Prosaic smoke check that exercises the new root-resolution helper
+with these exact inputs:
 
-The stale legacy worktree and skipped dirty-checkout synchronization are
-reported separately and are not success criteria for this focused fix.
+```text
+base_dir = <workspace>/runs/targets/prosaic
+orchestration_root = <workspace>
+spec selector = 911
+```
 
+The smoke check succeeds only when it resolves
+`specs/911-new-prosaic-distribution-feature`, reads `ready_to_land`, leaves the
+target checkout HEAD and diff byte-for-byte unchanged, and does not emit the
+`(missing)` diagnostic.
+
+Full live landing is a separate, explicitly authorized validation step after
+the dirty checkout is resolved without losing its changes. Before that step,
+record:
+
+- the configured target default branch and its remote-tracking commit;
+- the verified delivery branch and commit;
+- harness mirror default-branch commit;
+- orchestration spec status and orchestration repository commit;
+- registered harness worktrees;
+- target checkout HEAD plus hashes of its staged, unstaged, and untracked
+  state.
+
+Full landing succeeds only when the configured remote default branch contains
+the verified commit, the canonical orchestration spec advances to `landed`,
+and the preserved target checkout changes remain intact. A fetch failure caused
+by the stale legacy `iter-4` worktree is reported as an independent live-test
+blocker, not as a regression in root propagation or diagnostics. Neither stale
+worktree cleanup nor dirty-checkout resolution is performed by this fix.
+
+## Documentation
+
+Add a concise changelog entry stating that target-side polyrepo auto-land now
+uses the orchestration spec root and that missing-spec discovery is reported
+separately from missing lifecycle status. README changes are unnecessary
+because command syntax and supported user workflow do not change.
