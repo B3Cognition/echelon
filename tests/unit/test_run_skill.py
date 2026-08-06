@@ -181,19 +181,30 @@ class TestRunSkillAutoLand:
     @patch("harness.skills.run_skill.run_gc")
     @patch("harness.skills.run_skill.StrategyCoordinator")
     @patch("harness.land.land")
-    def test_land_called_when_auto_merge_true(
+    def test_polyrepo_auto_land_uses_workspace_root_and_keeps_target_harness_root(
         self,
         mock_land: MagicMock,
         mock_coordinator_cls: MagicMock,
         mock_gc: MagicMock,
         mock_config: MagicMock,
         mock_parse: MagicMock,
+        tmp_path: Path,
     ) -> None:
-        """land() is called with correct args when auto_merge is True."""
+        """Auto-land resolves specs from the workspace while state stays target-local."""
         from harness.run_intent import RunIntent
         from harness.skills.run_skill import run
 
-        intent = RunIntent(spec_id="012", mode="banzai", auto_merge=True)
+        workspace = tmp_path / "workspace"
+        harness_root = workspace / "sources" / "api"
+        harness_root.mkdir(parents=True)
+        spec_dir = workspace / "specs" / "042-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text(
+            "---\ntargets:\n- sources/api\n---\n# Demo\n",
+            encoding="utf-8",
+        )
+
+        intent = RunIntent(spec_id="042", mode="banzai", auto_merge=True)
         mock_parse.return_value = intent
 
         coordinator_instance = MagicMock()
@@ -202,6 +213,7 @@ class TestRunSkillAutoLand:
             "strategies": {},
             "summary": {"converged": 1, "failed": 0, "total_tokens": 10000},
         }
+        coordinator_instance.status.return_value = {"strategies": {"default": {}}}
         mock_coordinator_cls.return_value = coordinator_instance
 
         mock_land.return_value = True
@@ -209,12 +221,72 @@ class TestRunSkillAutoLand:
         gitops = MagicMock()
         provider = MagicMock()
 
-        run("spec 012 banzai auto_merge", provider=provider, gitops=gitops, base_dir="/tmp/test")
-
-        from pathlib import Path
-        mock_land.assert_called_once_with(
-            "012", project_dir=Path("/tmp/test"), gitops=gitops,
+        run(
+            "run 042 mode=banzai",
+            provider=provider,
+            gitops=gitops,
+            base_dir=str(harness_root),
+            orchestration_root=workspace,
         )
+
+        mock_land.assert_called_once_with(
+            "042",
+            project_dir=workspace.resolve(),
+            gitops=gitops,
+        )
+        assert mock_coordinator_cls.call_args.kwargs["base_dir"] == harness_root.resolve()
+
+    @patch("harness.skills.run_skill.parse_intent")
+    @patch("harness.skills.run_skill.load_config")
+    @patch("harness.skills.run_skill.run_gc")
+    @patch("harness.skills.run_skill.StrategyCoordinator")
+    @patch("harness.land.land")
+    def test_multi_target_auto_land_is_skipped(
+        self,
+        mock_land: MagicMock,
+        mock_coordinator_cls: MagicMock,
+        mock_gc: MagicMock,
+        mock_config: MagicMock,
+        mock_parse: MagicMock,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from harness.skills.run_skill import run
+
+        workspace = tmp_path / "workspace"
+        harness_root = workspace / "sources" / "api"
+        harness_root.mkdir(parents=True)
+        spec_dir = workspace / "specs" / "042-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text(
+            "---\ntargets:\n- sources/api\n- sources/web\n---\n# Demo\n",
+            encoding="utf-8",
+        )
+        mock_parse.return_value = RunIntent(spec_id="042", mode="banzai", auto_merge=True)
+
+        coordinator_instance = MagicMock()
+        coordinator_instance.start.return_value = [_make_converged_result()]
+        coordinator_instance.compare_results.return_value = {
+            "strategies": {},
+            "summary": {"converged": 1, "failed": 0, "total_tokens": 10000},
+        }
+        coordinator_instance.status.return_value = {"strategies": {"default": {}}}
+        mock_coordinator_cls.return_value = coordinator_instance
+
+        run(
+            "run 042 mode=banzai",
+            provider=MagicMock(),
+            gitops=MagicMock(),
+            base_dir=str(harness_root),
+            orchestration_root=workspace,
+        )
+
+        mock_land.assert_not_called()
+        warning = (
+            "auto-land skipped for spec 042: aggregate multi-target landing is "
+            "unsupported (2 targets)"
+        )
+        assert [record.message for record in caplog.records].count(warning) == 1
 
     @patch("harness.skills.run_skill.parse_intent")
     @patch("harness.skills.run_skill.load_config")

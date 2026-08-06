@@ -1522,6 +1522,73 @@ def test_branchless_idempotent_land_runs_same_post_land_topology_hook(
 
 
 @pytest.mark.unit
+def test_branchless_spec_not_found_reports_orchestration_root(tmp_path: Path) -> None:
+    from harness.land import _finish_branchless_landing
+
+    wrapper_project_dir = tmp_path / "workspace"
+    wrapper_project_dir.mkdir()
+    gitops = _make_gitops(feature_branch=None)
+
+    with (
+        patch("harness.land._banner") as banner,
+        patch("harness.land.write_status") as write_status,
+    ):
+        result = _finish_branchless_landing(
+            "042",
+            wrapper_project_dir=wrapper_project_dir,
+            project_dir=wrapper_project_dir,
+            spec_dir=None,
+            gitops=gitops,
+            options=LandOptions(),
+        )
+
+    assert result is False
+    write_status.assert_not_called()
+    fields = dict(banner.call_args.args[1])
+    assert fields["problem"] == (
+        "spec directory for 042 was not found from orchestration root "
+        f"{wrapper_project_dir.resolve()}"
+    )
+    assert "spec status is (missing), not ready_to_land or landed" not in str(
+        banner.call_args
+    )
+
+
+@pytest.mark.unit
+def test_branchless_missing_status_retains_status_diagnostic(tmp_path: Path) -> None:
+    from harness.land import _finish_branchless_landing
+
+    wrapper_project_dir = tmp_path / "workspace"
+    spec_dir = wrapper_project_dir / "specs" / "042-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text(
+        "---\ntitle: Demo\n---\n# Demo\n",
+        encoding="utf-8",
+    )
+    gitops = _make_gitops(feature_branch=None)
+
+    with (
+        patch("harness.land._banner") as banner,
+        patch("harness.land.write_status") as write_status,
+    ):
+        result = _finish_branchless_landing(
+            "042",
+            wrapper_project_dir=wrapper_project_dir,
+            project_dir=wrapper_project_dir,
+            spec_dir=spec_dir,
+            gitops=gitops,
+            options=LandOptions(),
+        )
+
+    assert result is False
+    write_status.assert_not_called()
+    fields = dict(banner.call_args.args[1])
+    assert fields["problem"] == (
+        "spec status is (missing), not ready_to_land or landed"
+    )
+
+
+@pytest.mark.unit
 def test_post_land_topology_failure_is_nonfatal_with_source_refresh_guidance(
     tmp_path: Path,
     caplog,

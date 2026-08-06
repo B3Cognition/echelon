@@ -528,7 +528,12 @@ def _finish_branchless_landing(
         return True
 
     problem: str
-    if status not in {"ready_to_land", "landed"}:
+    if spec_dir is None:
+        problem = (
+            f"spec directory for {spec_id} was not found from orchestration root "
+            f"{wrapper_project_dir.resolve()}"
+        )
+    elif status not in {"ready_to_land", "landed"}:
         problem = f"spec status is {status or '(missing)'}, not ready_to_land or landed"
     elif not isinstance(verified_commit, str) or not verified_commit:
         problem = "no verified commit is recorded in the fulfillment report"

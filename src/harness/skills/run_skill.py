@@ -19,7 +19,7 @@ from harness.gc import run_gc
 from harness.harness_run_history import append_run, summarize_history
 from harness.paths import make_build_id, current_build_marker, runs_dir
 from harness.run_intent import parse_intent
-from harness.spec_frontmatter import find_spec_dir
+from harness.spec_frontmatter import find_spec_dir, read_targets
 
 logger = logging.getLogger(__name__)
 
@@ -457,7 +457,7 @@ def run(
         provider=provider,
         gitops=gitops,
         config=config,
-        base_dir=str(harness_root),
+        base_dir=harness_root,
         build_id=build_id,
     )
 
@@ -498,12 +498,25 @@ def run(
     # 9. Auto-land if applicable
     converged = comparison.get("summary", {}).get("converged", 0) > 0
     if intent.auto_merge and converged:
-        from harness.land import land
-        try:
-            landed = land(intent.spec_id, project_dir=Path(base_dir), gitops=gitops)
-            if landed:
-                print("  Auto-landed successfully!", file=sys.stderr)
-            else:
-                logger.warning("auto-land: land() returned False for spec %s", intent.spec_id)
-        except Exception as e:
-            logger.warning("auto-land: land() raised for spec %s: %s", intent.spec_id, e)
+        targets = read_targets(spec_dir) if spec_dir is not None else []
+        if len(targets) > 1:
+            logger.warning(
+                "auto-land skipped for spec %s: aggregate multi-target landing is "
+                "unsupported (%d targets)",
+                intent.spec_id,
+                len(targets),
+            )
+        else:
+            from harness.land import land
+            try:
+                landed = land(
+                    intent.spec_id,
+                    project_dir=workspace_root,
+                    gitops=gitops,
+                )
+                if landed:
+                    print("  Auto-landed successfully!", file=sys.stderr)
+                else:
+                    logger.warning("auto-land: land() returned False for spec %s", intent.spec_id)
+            except Exception as e:
+                logger.warning("auto-land: land() raised for spec %s: %s", intent.spec_id, e)
