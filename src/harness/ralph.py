@@ -874,7 +874,10 @@ class RalphController:
                                 branch=e.branch,
                             )
                         pr_url = self._manage_pr(pr_url, branch, converged=True)
-
+                        # Phase 2/3 and landing consume the converged delivery
+                        # worktree after Ralph returns, even on an early outer
+                        # iteration.
+                        preserve_worktree = True
                         return self._finalize(
                             status="converged",
                             reason="converged",
@@ -992,6 +995,10 @@ class RalphController:
                                 branch=e.branch,
                             )
                         pr_url = self._manage_pr(pr_url, branch, converged=True)
+                        # Phase 2/3 and landing consume the converged delivery
+                        # worktree after Ralph returns, even on an early outer
+                        # iteration.
+                        preserve_worktree = True
                         return self._finalize(
                             status="converged",
                             reason="converged",

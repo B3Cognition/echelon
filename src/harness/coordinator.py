@@ -95,11 +95,17 @@ class StrategyCoordinator:
         config: HarnessConfig,
         base_dir: str = ".",
         build_id: str = "",
+        orchestration_root: str | Path | None = None,
     ) -> None:
         self._provider = provider
         self._gitops = gitops
         self._config = config
         self._base_dir = base_dir
+        self._orchestration_root = (
+            Path(orchestration_root).resolve()
+            if orchestration_root is not None
+            else None
+        )
         self._build_id = build_id
         self._build_dir = build_dir(Path(base_dir), build_id)
         self._state_dir = self._build_dir / "state"
@@ -310,7 +316,7 @@ class StrategyCoordinator:
         run_id = str(uuid.uuid4())
         target_repo_name = os.environ.get("ECHELON_TARGET_REPO_NAME")
         target_repo_path = os.environ.get("ECHELON_TARGET_REPO_PATH")
-        workspace_root = os.environ.get("ECHELON_WORKSPACE_ROOT")
+        environment_workspace_root = os.environ.get("ECHELON_WORKSPACE_ROOT")
         workspace_git_role = os.environ.get("ECHELON_WORKSPACE_GIT_ROLE")
         source_root = os.environ.get("ECHELON_SOURCE_ROOT")
         source_id = os.environ.get("ECHELON_SOURCE_ID")
@@ -318,8 +324,14 @@ class StrategyCoordinator:
         implementation_target = os.environ.get("ECHELON_IMPLEMENTATION_TARGET")
         declared_targets = _split_env_list(os.environ.get("ECHELON_DECLARED_TARGETS"))
         target_task_ids = _split_env_list(os.environ.get("ECHELON_TARGET_TASK_IDS"))
-        spec_search_root = Path(os.environ.get("ECHELON_POLYREPO_ROOT") or self._base_dir).resolve()
-        workspace_root = workspace_root or str(spec_search_root)
+        if self._orchestration_root is not None:
+            spec_search_root = self._orchestration_root
+            workspace_root = str(self._orchestration_root)
+        else:
+            spec_search_root = Path(
+                os.environ.get("ECHELON_POLYREPO_ROOT") or self._base_dir
+            ).resolve()
+            workspace_root = environment_workspace_root or str(spec_search_root)
         source_root = source_root or target_repo_path or str(Path(self._base_dir).resolve())
         source_id = source_id or target_repo_name or Path(source_root).name
         if workspace_git_role is None:
@@ -329,12 +341,6 @@ class StrategyCoordinator:
         spec_dir = find_spec_dir(intent.spec_id, spec_search_root)
         spec_file = spec_dir / "spec.md" if spec_dir is not None else None
         tasks_file = spec_dir / "tasks.md" if spec_dir is not None else None
-        if not target_task_ids:
-            target_task_ids = _derive_target_task_ids(
-                tasks_file=tasks_file,
-                declared_targets=declared_targets,
-                implementation_target=implementation_target,
-            )
         state_store.acquire_lock(run_id)
 
         try:
@@ -349,6 +355,46 @@ class StrategyCoordinator:
                 and intent.resume
                 and existing_status == "blocked"
             )
+            if should_resume_running or should_resume_blocked:
+                persisted_target = existing.get("implementation_target")
+                if not implementation_target and isinstance(persisted_target, str):
+                    implementation_target = persisted_target.strip() or None
+                persisted_declared = existing.get("declared_targets")
+                if not declared_targets and isinstance(persisted_declared, list):
+                    declared_targets = [
+                        str(item).strip()
+                        for item in persisted_declared
+                        if str(item).strip()
+                    ]
+
+            if not target_task_ids:
+                target_task_ids = _derive_target_task_ids(
+                    tasks_file=tasks_file,
+                    declared_targets=declared_targets,
+                    implementation_target=implementation_target,
+                )
+
+            if (
+                self._orchestration_root is not None
+                and (should_resume_running or should_resume_blocked)
+            ):
+                # Resume progress belongs to the target harness, but canonical
+                # spec identity belongs to the explicitly supplied workspace.
+                # Refresh only that context before Ralph reads persisted state.
+                existing["workspace_root"] = workspace_root
+                existing["spec_dir"] = (
+                    str(spec_dir) if spec_dir is not None else None
+                )
+                existing["spec_file"] = (
+                    str(spec_file) if spec_file is not None else None
+                )
+                existing["tasks_file"] = (
+                    str(tasks_file) if tasks_file is not None else None
+                )
+                existing["implementation_target"] = implementation_target
+                existing["declared_targets"] = declared_targets
+                existing["target_task_ids"] = target_task_ids
+                state_store.write(existing)
 
             if should_resume_running:
                 logger.info(
@@ -495,6 +541,7 @@ class StrategyCoordinator:
                         strategy_id=strategy_id,
                         base_dir=str(self._base_dir),
                         build_id=self._build_id,
+                        spec_dir=spec_dir,
                     )
                     def critique(_check: RepairCheck, iteration: int) -> RepairCritique:
                         return RepairCritique(
@@ -510,7 +557,7 @@ class StrategyCoordinator:
                         )
                         review_result = review_controller.run_loop(
                             pr_url=pr_url,
-                            worktree_path=worktree_path or str(self._base_dir),
+                            worktree_path=worktree_path or "",
                             token_budget=budget,
                         )
                         result = LoopResult(
@@ -533,7 +580,9 @@ class StrategyCoordinator:
                         # echelon.review queued new fix tasks — re-run Phase 1
                         # Inject all review-fix content so Claude knows what to address.
                         reentry_prompt = self._build_reentry_prompt(
-                            build_prompt, intent.spec_id,
+                            build_prompt,
+                            intent.spec_id,
+                            spec_dir=spec_dir,
                         )
                         result = controller.run_loop(
                             max_outer=intent.max_outer,
@@ -662,56 +711,45 @@ class StrategyCoordinator:
             return stack_context
         return f"{strategy_context.rstrip()}\n\n{stack_context}"
 
-    def _build_reentry_prompt(self, base_prompt: str, spec_id: str) -> str:
-        """Augment build prompt with review-fix content from the feature branch.
-
-        Reads all review-fix-*.md files from the feature branch (named
-        {spec_id}-{spec_name}) via git-show so the worktree stays on main.
-        Returns the original prompt unchanged if no review-fix files exist.
-        """
-        import subprocess as _sp
-
-        spec_dirs = sorted(Path(self._base_dir).glob(f"specs/{spec_id}-*"))
-        if not spec_dirs:
+    def _build_reentry_prompt(
+        self,
+        base_prompt: str,
+        spec_id: str,
+        *,
+        spec_dir: Path | None = None,
+    ) -> str:
+        """Augment a build prompt from canonical review-fix artifacts."""
+        canonical_spec_dir = (
+            Path(spec_dir).resolve()
+            if spec_dir is not None
+            else find_spec_dir(
+                spec_id,
+                self._orchestration_root or Path(self._base_dir).resolve(),
+            )
+        )
+        if canonical_spec_dir is None:
             return base_prompt
-        spec_name = spec_dirs[0].name          # e.g. "005-fix-photo-text-overlay"
-        feature_branch = spec_name             # branch name matches spec dir name
 
         try:
-            ls = _sp.run(
-                ["git", "ls-tree", "--name-only", "-r", feature_branch,
-                 f"specs/{spec_name}/"],
-                capture_output=True, text=True,
-                cwd=str(self._base_dir), timeout=10,
-            )
-            review_fix_paths = sorted(
-                p for p in ls.stdout.splitlines() if "review-fix-" in p
-            )
-            if not review_fix_paths:
-                return base_prompt
-
-            parts = []
-            for path in review_fix_paths:
-                show = _sp.run(
-                    ["git", "show", f"{feature_branch}:{path}"],
-                    capture_output=True, text=True,
-                    cwd=str(self._base_dir), timeout=10,
-                )
-                if show.returncode == 0 and show.stdout.strip():
-                    parts.append(show.stdout.strip())
-
-            if not parts:
-                return base_prompt
-
-            review_content = "\n\n---\n\n".join(parts)
-            return (
-                f"{base_prompt}\n\n"
-                f"## Review Feedback (address these before completing the build)\n"
-                f"{review_content}"
-            )
-        except Exception as e:
-            logger.warning("Could not read review-fix content: %s", e)
+            parts = [
+                path.read_text(encoding="utf-8").strip()
+                for path in sorted(canonical_spec_dir.glob("review-fix-*.md"))
+                if path.is_file()
+            ]
+            parts = [part for part in parts if part]
+        except OSError as exc:
+            logger.warning("Could not read review-fix content: %s", exc)
             return base_prompt
+
+        if not parts:
+            return base_prompt
+
+        review_content = "\n\n---\n\n".join(parts)
+        return (
+            f"{base_prompt}\n\n"
+            f"## Review Feedback (address these before completing the build)\n"
+            f"{review_content}"
+        )
 
     def _cancel_peers(self, converged_sid: str, all_strategies: List[str]) -> None:
         """Set cancel_requested on all peer strategies (kill_losers)."""

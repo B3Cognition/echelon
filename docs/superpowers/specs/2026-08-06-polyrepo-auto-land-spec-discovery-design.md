@@ -28,8 +28,9 @@ They must not be represented by one overloaded `base_dir` value.
 
 - Make target-side auto-land discover lifecycle state from the orchestration
   workspace that owns `specs/`.
-- Keep target mirror, worktree, branch, and implementation operations owned by
-  the target-specific `GitOpsManager` and the target declared by the spec.
+- Keep target mirror and delivery-worktree paths under the target harness root,
+  while branch, merge, remote, and implementation operations remain owned by
+  the target-specific `GitOpsManager` and target declared by the spec.
 - Preserve the Git-boundary safety behavior of `find_spec_dir()`.
 - Distinguish "spec directory not found" from "spec found without a status"
   in branchless landing diagnostics.
@@ -49,6 +50,15 @@ They must not be represented by one overloaded `base_dir` value.
   a separate design.
 
 ## Root Ownership Contract
+
+The production contract has three distinct roots:
+
+- the orchestration workspace owns canonical specs, tasks, run history, and
+  lifecycle state;
+- the target harness root owns delivery build state, PR URLs, mirrors, and
+  delivery worktrees;
+- the resolved target checkout and target-scoped `GitOpsManager` own Git
+  readiness, merge, branch, and remote operations.
 
 `run_skill.run()` will distinguish two inputs through this backwards-compatible
 signature addition:
@@ -118,10 +128,35 @@ Polyrepo CLI dispatch already resolves both paths. The caller contract is:
 | `harness.__main__` standalone entry | current/default base directory | omitted; single-repo default applies |
 | direct Python/test callers | existing value | omitted unless modeling a polyrepo |
 
-The delivery coordinator and harness state continue using `base_dir`; spec
-history discovery and auto-land use `orchestration_root`. The CLI adapters,
-not `land()`, remain responsible for interpreting `ECHELON_POLYREPO_ROOT` and
-passing the resolved value.
+The delivery coordinator receives both roots through this backwards-compatible
+final parameter:
+
+```python
+class StrategyCoordinator:
+    def __init__(
+        self,
+        provider: SandboxProvider,
+        gitops: Any,
+        config: HarnessConfig,
+        base_dir: str = ".",
+        build_id: str = "",
+        orchestration_root: str | Path | None = None,
+    ) -> None: ...
+```
+
+`base_dir` remains the coordinator state and worktree root. When
+`orchestration_root` is supplied, it is authoritative for canonical spec and
+task discovery and for the persisted workspace context, even if environment
+roots conflict. When omitted, direct legacy coordinator callers retain the
+existing `ECHELON_POLYREPO_ROOT`/`ECHELON_WORKSPACE_ROOT` fallback. `run()`
+always passes its resolved `workspace_root` explicitly.
+
+That authority also applies when resuming an existing interrupted, running, or
+explicitly resumed blocked state. Before Ralph reads the state, the coordinator
+refreshes `workspace_root`, `spec_dir`, `spec_file`, `tasks_file`, and the
+canonical target-task slice from the current explicit orchestration context.
+Iteration counters, token usage, logs, and all other delivery progress remain
+owned by and preserved in the target harness state.
 
 The legacy resume adapter receives the matching backwards-compatible signature
 addition:
@@ -152,11 +187,29 @@ next step     run delivery from the workspace that owns specs/, or repair the su
 
 Library callers continue receiving the typed exception.
 
-Auto-land will call:
+Landing exposes the matching backwards-compatible final parameter:
 
-```text
-land(spec_id, project_dir=orchestration_root, gitops=target_gitops)
+```python
+def land(
+    spec_id: str,
+    *,
+    project_dir: Path,
+    gitops: Any,
+    state_dir: Optional[Path] = None,
+    options: Optional[LandOptions] = None,
+    harness_root: Path | None = None,
+) -> bool: ...
 ```
+
+Auto-land calls `land(spec_id, project_dir=workspace_root,
+gitops=target_gitops, harness_root=target_harness_root)`. `project_dir` remains
+the orchestration workspace used for canonical spec and lifecycle operations;
+`harness_root` is used only for PR-state discovery and branchful or branchless
+delivery-worktree cleanup. It defaults to `project_dir`, preserving existing
+single-repository and direct callers. An explicit `state_dir` continues to
+override the PR-state scan only. The target resolved from the spec and the
+supplied target GitOps instance continue to own all Git operations. The
+target-child `echelon delivery land` adapter passes its resolved harness root.
 
 This matches the existing explicit `echelon delivery land` contract: the
 wrapper project locates the spec and declared target, while the supplied
@@ -165,6 +218,48 @@ target GitOps instance owns mirror and branch operations.
 No environment-variable inference will be added inside `land()`. Callers own
 root resolution and pass the result explicitly, keeping the lander usable and
 deterministic in tests and non-CLI integrations.
+
+### Review And Re-entry Ownership
+
+Phase 3 keeps the same three owners. `ReviewLoopController.base_dir` is the
+target harness root for build-specific review state; the coordinator passes the
+already-resolved canonical spec directory through this backwards-compatible
+final parameter:
+
+```python
+class ReviewLoopController:
+    def __init__(
+        self,
+        gitops: Any,
+        config: HarnessConfig,
+        spec_id: str,
+        strategy_id: str,
+        base_dir: str = ".",
+        build_id: str = "",
+        spec_dir: str | Path | None = None,
+    ) -> None: ...
+```
+
+The review provider runs from the live target delivery worktree and receives
+both its absolute `worktree` and the canonical absolute `spec_dir`. Review seen
+state and the skill status file remain under
+`<target-harness>/runs/<build-id>/state/`; they are not written to the
+orchestration workspace or a shared harness-root file. A missing delivery
+worktree is a controlled review failure, never a reason to run an implementation
+agent from the harness root. Worktree validation is deferred until blocking
+comments require source analysis, so an approved PR with no comments can still
+merge after its delivery worktree has already been removed. A timeout, nonzero
+skill exit, malformed/missing status, or status other than
+`review_fix_queued` fails the review cycle without marking comments seen,
+resolving threads, or requesting another review.
+
+Ralph preserves a converged delivery worktree even when convergence happens
+before the final outer iteration so Phase 2, Phase 3, and landing can consume
+it. The review skill treats that worktree as source context only and never
+checks out, switches, or stashes its branch. It writes review artifacts to the
+explicit canonical `spec_dir`. Phase 1 re-entry reads sorted
+`review-fix-*.md` files directly from that directory; it does not run Git
+commands against the target harness root.
 
 ### Single-Target Boundary
 
@@ -232,8 +327,8 @@ For a target-side polyrepo continuation:
    orchestration_root=workspace_root)`.
 4. Build and verification continue to use target harness state and target
    worktrees.
-5. After convergence, auto-land calls `land()` with the workspace root and the
-   target-scoped GitOps instance.
+5. After convergence, auto-land calls `land()` with the workspace root, target
+   harness root, and target-scoped GitOps instance.
 6. `land()` finds the workspace spec, reads `ready_to_land`, resolves its
    declared target, and performs the existing readiness and landing flow.
 
@@ -263,10 +358,15 @@ warning described above. No target worker calls `land()`.
 
 ### Run Skill
 
-- A single-repository run without `orchestration_root` still passes `base_dir`
-  to `land()`.
+- A single-repository run without `orchestration_root` passes the resolved
+  `base_dir` as both `land(project_dir=...)` and `land(harness_root=...)`.
 - A polyrepo-style run with distinct roots passes `orchestration_root` to
-  `land()` while constructing coordinator state under `base_dir`.
+  both `StrategyCoordinator` and `land()` while constructing coordinator state
+  under `base_dir`.
+- Explicit coordinator orchestration context controls canonical spec/tasks and
+  persisted workspace state with both absent and conflicting environment roots.
+- Interrupted and blocked resumes refresh canonical orchestration paths and
+  target-task IDs without resetting iteration or token progress.
 - The initial run and every resume/continue re-entry path forward the resolved
   orchestration root.
 - `resume_skill.resume` forwards an explicit orchestration root when supplied
@@ -299,11 +399,21 @@ warning described above. No target worker calls `land()`.
 - Assert coordinator and state paths remain rooted under
   `workspace/runs/targets/prosaic`, proving the fix does not redirect target
   harness state into the orchestration root.
+- Put an existing PR and registered worktree under
+  `workspace/runs/targets/prosaic/runs/build-*`; assert real `land()` uses
+  `merge_pr`, never direct merge, and destroys that worktree after both
+  branchful and branchless success.
 - Assert a two-target canonical spec does not call `land()` from either target
   worker and that each modeled worker emits the exact aggregate-landing
   unsupported warning once.
 - CLI context failures exit 1 without a traceback; direct library calls raise
   `RunContextError`.
+- A three-root Phase 3 run passes the target harness and canonical spec roots
+  separately, executes the review provider in the target worktree, stores
+  review status under the build-specific harness state, and injects canonical
+  review-fix content into Phase 1 without Git reads from the harness root.
+- Missing review worktrees fail without invoking the provider, and an early
+  converged Ralph iteration preserves its registered delivery worktree.
 
 ## Live Validation
 
@@ -376,6 +486,7 @@ publication of that lifecycle mutation requires a separate design.
 ## Documentation
 
 Add a concise changelog entry stating that target-side polyrepo auto-land now
-uses the orchestration spec root and that missing-spec discovery is reported
+discovers canonical specs from the orchestration workspace rather than the
+target harness directory, and that missing-spec discovery is reported
 separately from missing lifecycle status. README changes are unnecessary
 because command syntax and supported user workflow do not change.

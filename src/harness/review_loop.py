@@ -68,6 +68,14 @@ class ReviewComment:
     in_reply_to_id: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class _ReviewSkillResult:
+    """Outcome of one review-planning skill invocation."""
+
+    tokens_used: int
+    queued: bool
+
+
 def _parse_dt(s: str) -> datetime:
     """Parse ISO-8601 timestamp from GitHub/GitLab API to aware datetime."""
     # Python 3.10 fromisoformat handles 'Z'; earlier versions don't.
@@ -149,13 +157,17 @@ class ReviewLoopController:
         strategy_id: str,
         base_dir: str = ".",
         build_id: str = "",
+        spec_dir: str | Path | None = None,
     ) -> None:
         self._gitops = gitops
         self._config = config
         self._rl = config.review_loop
         self._spec_id = spec_id
         self._strategy_id = strategy_id
-        self._base_dir = Path(base_dir)
+        self._base_dir = Path(base_dir).resolve()
+        self._spec_dir = (
+            Path(spec_dir).resolve() if spec_dir is not None else None
+        )
         self._pr_host = config.pr_host
 
         # Resolve LLM CLI binary — ECHELON_LLM env var takes precedence over config
@@ -167,6 +179,9 @@ class ReviewLoopController:
         self._state_file = (
             _build_dir_fn(self._base_dir, build_id) / "state"
             / f"{strategy_id}-review.json"
+        )
+        self._status_file = self._state_file.with_name(
+            f"{strategy_id}-review-status.json"
         )
         self._seen_ids: Set[str] = self._load_seen_ids()
 
@@ -224,12 +239,22 @@ class ReviewLoopController:
                 last_comment_time = newest
 
             # Invoke echelon.review to produce review-fix-N.md + tasks
-            fix_tokens = self._invoke_review_skill(
+            invocation = self._invoke_review_skill(
                 pr_url,
                 comments,
                 worktree_path=worktree_path,
             )
-            tokens_used += fix_tokens
+            tokens_used += invocation.tokens_used
+            if not invocation.queued:
+                return LoopResult(
+                    status="failed",
+                    termination_reason="blocker_escalation",
+                    outer_iterations=iteration + 1,
+                    inner_iterations=0,
+                    pr_url=pr_url,
+                    tokens_used=tokens_used,
+                    final_verify=None,
+                )
 
             # Mark all processed comments as seen so we don't re-process them
             for c in comments:
@@ -689,60 +714,79 @@ class ReviewLoopController:
         comments: List[ReviewComment],
         *,
         worktree_path: str = "",
-    ) -> int:
+    ) -> _ReviewSkillResult:
         """Invoke echelon.review via the configured AI coding CLI.
 
         Writes HARNESS_BUILD_STATUS_FILE, waits for skill completion,
         reads the status file to confirm review-fix tasks were queued.
 
-        Returns a rough token estimate (stdout byte count / 4).
+        Returns the token estimate and whether canonical fix tasks were queued.
         """
-        status_file = self._base_dir / ".harness-review-status.json"
+        delivery_worktree = Path(worktree_path).resolve() if worktree_path else None
+        if delivery_worktree is None or not delivery_worktree.is_dir():
+            logger.error(
+                "Cannot invoke echelon.review without a live delivery worktree"
+            )
+            return _ReviewSkillResult(tokens_used=0, queued=False)
+
+        status_file = self._status_file
+        status_file.parent.mkdir(parents=True, exist_ok=True)
         # Remove stale status file from a previous invocation
         status_file.unlink(missing_ok=True)
 
-        from harness.skill_loader import resolve_llm_prompt
+        from harness.skill_loader import find_skill, resolve_llm_prompt
         args = f"{self._spec_id} pr_url={pr_url}"
-        spec_dir = _find_review_spec_dir(self._base_dir, self._spec_id)
+        spec_dir = self._spec_dir or _find_review_spec_dir(
+            self._base_dir,
+            self._spec_id,
+        )
         if spec_dir is not None:
             args += f" spec_dir={spec_dir}"
-        if worktree_path:
-            args += f" worktree={worktree_path}"
+        args += f" worktree={delivery_worktree}"
+        prompt_root = delivery_worktree
+        if find_skill("echelon.review", delivery_worktree, self._llm_cli) is None:
+            prompt_root = self._base_dir
         prompt = resolve_llm_prompt(
             build_command="echelon review",
             arguments=args,
-            project_dir=self._base_dir,
+            project_dir=prompt_root,
             cli=self._llm_cli,
         )
         logger.info("Invoking echelon.review: spec=%s pr=%s", self._spec_id, pr_url)
 
         result = AICodingCliProvider(self._config).run_prompt_result(
-            str(self._base_dir),
+            str(delivery_worktree),
             prompt,
             extra_env={"HARNESS_BUILD_STATUS_FILE": str(status_file)},
             timeout_ms=int(self._review_timeout_s * 1000),
         )
         if result.timed_out:
             logger.warning("echelon.review timed out after %ss", self._review_timeout_s)
-            return 0
+            return _ReviewSkillResult(tokens_used=0, queued=False)
 
+        tokens_used = max(1, len(result.stdout.encode("utf-8")) // 4)
         if result.exit_code != 0:
             logger.warning("echelon.review exited %d", result.exit_code)
+            return _ReviewSkillResult(tokens_used=tokens_used, queued=False)
 
         # Read status file if present
+        queued = False
         if status_file.exists():
             try:
                 data = json.loads(status_file.read_text(encoding="utf-8"))
                 status = data.get("status", "unknown")
                 logger.info("echelon.review status: %s", status)
-                if status != "review_fix_queued":
+                queued = status == "review_fix_queued"
+                if not queued:
                     logger.warning(
                         "echelon.review returned unexpected status: %s", status
                     )
             except Exception as e:
                 logger.warning("Could not read review status file: %s", e)
+        else:
+            logger.warning("echelon.review did not write its status file")
 
-        return max(1, len(result.stdout.encode("utf-8")) // 4)
+        return _ReviewSkillResult(tokens_used=tokens_used, queued=queued)
 
     # === Private: state persistence ===
 

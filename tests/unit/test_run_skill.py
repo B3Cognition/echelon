@@ -195,8 +195,10 @@ class TestRunSkillAutoLand:
         from harness.skills.run_skill import run
 
         workspace = tmp_path / "workspace"
-        harness_root = workspace / "sources" / "api"
+        harness_root = workspace / "runs" / "targets" / "api"
         harness_root.mkdir(parents=True)
+        target_root = workspace / "sources" / "api"
+        target_root.mkdir(parents=True)
         spec_dir = workspace / "specs" / "042-demo"
         spec_dir.mkdir(parents=True)
         (spec_dir / "spec.md").write_text(
@@ -233,8 +235,13 @@ class TestRunSkillAutoLand:
             "042",
             project_dir=workspace.resolve(),
             gitops=gitops,
+            harness_root=harness_root.resolve(),
         )
         assert mock_coordinator_cls.call_args.kwargs["base_dir"] == harness_root.resolve()
+        assert (
+            mock_coordinator_cls.call_args.kwargs["orchestration_root"]
+            == workspace.resolve()
+        )
 
     @patch("harness.skills.run_skill.parse_intent")
     @patch("harness.skills.run_skill.load_config")

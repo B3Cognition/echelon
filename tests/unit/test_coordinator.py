@@ -805,6 +805,212 @@ class TestSmartResumeDetection:
         assert final_state["spec_file"] == str(spec_file)
         assert final_state["tasks_file"] == str(tasks_file)
 
+    @pytest.mark.parametrize(
+        "conflicting_environment",
+        [False, True],
+        ids=["absent-environment", "conflicting-environment"],
+    )
+    def test_explicit_orchestration_root_is_authoritative_for_coordinator_context(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        conflicting_environment: bool,
+    ) -> None:
+        workspace = tmp_path / "workspace"
+        harness_root = workspace / "runs" / "targets" / "api"
+        target_root = workspace / "sources" / "api"
+        target_root.mkdir(parents=True)
+        spec_dir = workspace / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        spec_file = spec_dir / "spec.md"
+        tasks_file = spec_dir / "tasks.md"
+        spec_file.write_text("# Explicit spec\n", encoding="utf-8")
+        tasks_file.write_text(
+            "- [ ] T-001 complexity=standard phase=build req=FR-001 "
+            "depends=none target=sources/api\n",
+            encoding="utf-8",
+        )
+
+        if conflicting_environment:
+            conflicting_root = tmp_path / "conflicting-workspace"
+            conflicting_spec = conflicting_root / "specs" / "spec-001-demo"
+            conflicting_spec.mkdir(parents=True)
+            (conflicting_spec / "spec.md").write_text(
+                "# Conflicting spec\n",
+                encoding="utf-8",
+            )
+            (conflicting_spec / "tasks.md").write_text(
+                "- [ ] T-999 complexity=standard phase=build req=FR-999 "
+                "depends=none target=sources/api\n",
+                encoding="utf-8",
+            )
+            monkeypatch.setenv("ECHELON_POLYREPO_ROOT", str(conflicting_root))
+            monkeypatch.setenv("ECHELON_WORKSPACE_ROOT", str(conflicting_root))
+        else:
+            monkeypatch.delenv("ECHELON_POLYREPO_ROOT", raising=False)
+            monkeypatch.delenv("ECHELON_WORKSPACE_ROOT", raising=False)
+
+        monkeypatch.setenv("ECHELON_TARGET_REPO_NAME", "api")
+        monkeypatch.setenv("ECHELON_TARGET_REPO_PATH", str(target_root))
+        monkeypatch.setenv("ECHELON_IMPLEMENTATION_TARGET", "sources/api")
+        monkeypatch.setenv("ECHELON_DECLARED_TARGETS", "sources/api")
+        monkeypatch.delenv("ECHELON_TARGET_TASK_IDS", raising=False)
+
+        config = HarnessConfig(
+            target_repo="git@example.com:example/api.git",
+            target_default_branch="main",
+            provider="docker",
+        )
+        coordinator = StrategyCoordinator(
+            provider=MockProvider(should_pass=True),
+            gitops=MagicMock(),
+            config=config,
+            base_dir=harness_root,
+            orchestration_root=workspace,
+        )
+        intent = RunIntent(spec_id="spec-001", max_outer=1, max_inner=1, reset=True)
+
+        with patch("harness.coordinator.RalphController") as mock_ralph_cls:
+            mock_ralph_cls.return_value.run_loop.return_value = LoopResult(
+                status="converged",
+                termination_reason="converged",
+                outer_iterations=1,
+                inner_iterations=1,
+                pr_url=None,
+                tokens_used=0,
+                final_verify=None,
+            )
+            coordinator.start(intent)
+
+        state = StateStore(
+            harness_root / "runs" / "state",
+            "spec-001",
+            "default",
+        ).read()
+        assert state["workspace_root"] == str(workspace.resolve())
+        assert state["spec_dir"] == str(spec_dir.resolve())
+        assert state["spec_file"] == str(spec_file.resolve())
+        assert state["tasks_file"] == str(tasks_file.resolve())
+        assert state["target_task_ids"] == ["T-001"]
+
+    @pytest.mark.parametrize(
+        ("existing_status", "resume"),
+        [("interrupted", False), ("blocked", True)],
+    )
+    @pytest.mark.parametrize(
+        "target_environment",
+        [True, False],
+        ids=["target-environment", "persisted-target-context"],
+    )
+    def test_explicit_orchestration_root_refreshes_resumed_state_context(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        existing_status: str,
+        resume: bool,
+        target_environment: bool,
+    ) -> None:
+        workspace = tmp_path / "workspace"
+        harness_root = workspace / "runs" / "targets" / "api"
+        target_root = workspace / "sources" / "api"
+        target_root.mkdir(parents=True)
+        spec_dir = workspace / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        spec_file = spec_dir / "spec.md"
+        tasks_file = spec_dir / "tasks.md"
+        spec_file.write_text("# Explicit spec\n", encoding="utf-8")
+        tasks_file.write_text(
+            "- [ ] T-001 complexity=standard phase=build req=FR-001 "
+            "depends=none target=sources/api\n",
+            encoding="utf-8",
+        )
+
+        if target_environment:
+            monkeypatch.setenv("ECHELON_TARGET_REPO_NAME", "api")
+            monkeypatch.setenv("ECHELON_TARGET_REPO_PATH", str(target_root))
+            monkeypatch.setenv("ECHELON_IMPLEMENTATION_TARGET", "sources/api")
+            monkeypatch.setenv("ECHELON_DECLARED_TARGETS", "sources/api")
+        else:
+            monkeypatch.delenv("ECHELON_TARGET_REPO_NAME", raising=False)
+            monkeypatch.delenv("ECHELON_TARGET_REPO_PATH", raising=False)
+            monkeypatch.delenv("ECHELON_IMPLEMENTATION_TARGET", raising=False)
+            monkeypatch.delenv("ECHELON_DECLARED_TARGETS", raising=False)
+        monkeypatch.delenv("ECHELON_TARGET_TASK_IDS", raising=False)
+
+        store = StateStore(
+            harness_root / "runs" / "state",
+            "spec-001",
+            "default",
+        )
+        store.initialize(
+            run_id="stale-run",
+            mode="semi",
+            max_outer=5,
+            max_inner=1,
+            token_budget=1000,
+            workspace_root=str(tmp_path / "stale-workspace"),
+            implementation_target="sources/api",
+            declared_targets=["sources/api"],
+            target_task_ids=["T-999"],
+            spec_dir=str(tmp_path / "stale-spec"),
+            spec_file=str(tmp_path / "stale-spec" / "spec.md"),
+            tasks_file=str(tmp_path / "stale-spec" / "tasks.md"),
+        )
+        store.transition("running")
+        data = store.read()
+        data["outer_iter"] = 2
+        data["tokens_used"] = 123
+        store.write(data)
+        store.transition(existing_status)
+
+        config = HarnessConfig(
+            target_repo="git@example.com:example/api.git",
+            target_default_branch="main",
+            provider="docker",
+        )
+        coordinator = StrategyCoordinator(
+            provider=MockProvider(should_pass=True),
+            gitops=MagicMock(),
+            config=config,
+            base_dir=harness_root,
+            orchestration_root=workspace,
+        )
+        intent = RunIntent(
+            spec_id="spec-001",
+            mode="semi",
+            max_outer=5,
+            max_inner=1,
+            reset=False,
+            resume=resume,
+        )
+        ralph_visible_state: dict[str, Any] = {}
+
+        with patch("harness.coordinator.RalphController") as mock_ralph_cls:
+            def run_loop(**_kwargs: Any) -> LoopResult:
+                ralph_visible_state.update(store.read())
+                return LoopResult(
+                    status="converged",
+                    termination_reason="converged",
+                    outer_iterations=2,
+                    inner_iterations=1,
+                    pr_url=None,
+                    tokens_used=123,
+                    final_verify=None,
+                )
+
+            mock_ralph_cls.return_value.run_loop.side_effect = run_loop
+            coordinator.start(intent)
+
+        final_state = store.read()
+        for state in (ralph_visible_state, final_state):
+            assert state["workspace_root"] == str(workspace.resolve())
+            assert state["spec_dir"] == str(spec_dir.resolve())
+            assert state["spec_file"] == str(spec_file.resolve())
+            assert state["tasks_file"] == str(tasks_file.resolve())
+            assert state["target_task_ids"] == ["T-001"]
+            assert state["outer_iter"] == 2
+            assert state["tokens_used"] == 123
+
     def test_blocked_state_preserved_for_explicit_resume(self, tmp_path: Path) -> None:
         """Explicit resume leaves blocked state intact for Ralph's blocked-resume handler."""
         self._make_state_file(tmp_path, status="blocked", outer_iter=1)

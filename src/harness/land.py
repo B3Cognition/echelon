@@ -430,9 +430,9 @@ def find_pr_url(spec_id: str, state_dir: Path) -> Optional[str]:
     return None
 
 
-def _find_pr_url_all_builds(spec_id: str, project_dir: Path) -> Optional[str]:
+def _find_pr_url_all_builds(spec_id: str, harness_root: Path) -> Optional[str]:
     """Scan all runs/build-*/state/ directories for a PR URL matching spec_id."""
-    rd = runs_dir(project_dir)
+    rd = runs_dir(harness_root)
     if not rd.exists():
         return None
     for build in sorted(rd.glob("build-*/"), reverse=True):
@@ -510,6 +510,7 @@ def _finish_branchless_landing(
     spec_dir: Path | None,
     gitops: Any,
     options: LandOptions,
+    harness_root: Path | None = None,
 ) -> bool:
     """Finish an already-merged landing only when positive evidence proves it."""
     status = read_frontmatter(spec_dir).get("status") if spec_dir is not None else None
@@ -605,7 +606,11 @@ def _finish_branchless_landing(
             check=False,
         )
         if ancestor.returncode == 0:
-            _cleanup_worktrees(spec_id, wrapper_project_dir, gitops)
+            _cleanup_worktrees(
+                spec_id,
+                harness_root if harness_root is not None else wrapper_project_dir,
+                gitops,
+            )
             for alias in spec_identity_aliases(spec_id):
                 _delete_harness_branches(alias, project_dir)
             if spec_dir is not None and status != "landed":
@@ -709,14 +714,25 @@ def land(
     gitops: Any,
     state_dir: Optional[Path] = None,
     options: Optional[LandOptions] = None,
+    harness_root: Path | None = None,
 ) -> bool:
     """Idempotent: merge PR, delete remote branch, clean worktrees, mark spec landed.
+
+    ``project_dir`` owns canonical specs and lifecycle state. ``harness_root``
+    owns delivery run state and worktrees, and defaults to ``project_dir`` for
+    backwards-compatible single-repository callers. Target Git operations use
+    the resolved spec target and the supplied ``gitops`` instance.
 
     Returns True if spec is now in landed state.
     Returns False only when PR merge is blocked — caller must retry or merge manually.
     """
     options = options or LandOptions()
     wrapper_project_dir = project_dir
+    runtime_root = (
+        Path(harness_root).resolve()
+        if harness_root is not None
+        else wrapper_project_dir
+    )
     spec_dir = find_spec_dir(spec_id, wrapper_project_dir)
     if spec_dir is not None:
         spec_id = spec_dir.name
@@ -764,6 +780,7 @@ def land(
             spec_dir=spec_dir,
             gitops=gitops,
             options=options,
+            harness_root=runtime_root,
         )
 
     if _block_different_active_authoring_spec(
@@ -776,7 +793,7 @@ def land(
     if state_dir is not None:
         pr_url = find_pr_url(spec_id, state_dir)
     else:
-        pr_url = _find_pr_url_all_builds(spec_id, wrapper_project_dir)
+        pr_url = _find_pr_url_all_builds(spec_id, runtime_root)
 
     readiness_ref = feature_branch if project_dir == wrapper_project_dir else None
     fulfillment_project_dir = None if project_dir == wrapper_project_dir else project_dir
@@ -823,6 +840,7 @@ def land(
                 project_dir,
                 gitops,
                 spec_project_dir=wrapper_project_dir,
+                harness_root=runtime_root,
             )
         prepare_result = _prepare_for_land(
             spec_id=spec_id,
@@ -856,6 +874,7 @@ def land(
             project_dir,
             gitops,
             spec_project_dir=wrapper_project_dir,
+            harness_root=runtime_root,
         )
 
     prepare_result = _prepare_for_land(
@@ -907,6 +926,7 @@ def land(
         project_dir,
         gitops,
         spec_project_dir=wrapper_project_dir,
+        harness_root=runtime_root,
     )
 
 
@@ -1522,6 +1542,7 @@ def _finish_landing(
     gitops: Any,
     *,
     spec_project_dir: Path | None = None,
+    harness_root: Path | None = None,
 ) -> bool:
     """Clean up after a feature branch has merged."""
     spec_project_dir = spec_project_dir or project_dir
@@ -1564,7 +1585,11 @@ def _finish_landing(
     if not remote_cleanup_required:
         logger.info("Skipping remote feature branch cleanup: no non-local origin remote")
     _delete_local_branch(feature_branch, str(project_dir))
-    _cleanup_worktrees(spec_id, project_dir, gitops)
+    _cleanup_worktrees(
+        spec_id,
+        harness_root if harness_root is not None else project_dir,
+        gitops,
+    )
     _delete_harness_branches(spec_id, project_dir)
     gitops.ensure_on_default_branch(str(project_dir))
 
@@ -1811,9 +1836,9 @@ def _remote_head_branch(project_dir: Path, remote: str = "origin") -> str | None
     return None
 
 
-def _cleanup_worktrees(spec_id: str, project_dir: Path, gitops: Any) -> None:
+def _cleanup_worktrees(spec_id: str, harness_root: Path, gitops: Any) -> None:
     """Remove all worktrees for this spec across all build dirs."""
-    rd = runs_dir(project_dir)
+    rd = runs_dir(harness_root)
     if not rd.exists():
         return
     for build in sorted(rd.glob("build-*/")):

@@ -98,6 +98,9 @@ class TestManualCommandContracts:
         assert 'ls "{spec_dir}"/review-fix-*.md' in text
         assert "`specs/{spec_id}-{spec_name}/spec.md`" not in text
         assert "`specs/{spec_id}-{spec_name}/tasks.md`" not in text
+        assert "Never checkout, switch, or stash branches" in text
+        assert "git checkout" not in text
+        assert "git stash" not in text
 
     def test_harness_run_command_accepts_authoritative_spec_dir(self) -> None:
         text = (COMMAND_DIR / "echelon.harness-run.md").read_text(encoding="utf-8")

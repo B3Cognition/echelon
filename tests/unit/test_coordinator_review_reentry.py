@@ -1,9 +1,8 @@
 """Tests that the coordinator injects review-fix content into Phase 1 re-entry prompt."""
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -43,7 +42,7 @@ def _loop_result(status: str, pr_url: str = "https://github.com/org/repo/pull/1"
 class TestCoordinatorReviewReentry:
 
     def test_build_reentry_prompt_injects_review_fix_content(self, tmp_path):
-        """_build_reentry_prompt reads review-fix-*.md from the feature branch."""
+        """_build_reentry_prompt reads canonical review-fix artifacts directly."""
         config = _config(tmp_path)
         coord = StrategyCoordinator(
             provider=MagicMock(),
@@ -52,23 +51,21 @@ class TestCoordinatorReviewReentry:
             base_dir=str(tmp_path),
         )
 
-        # Simulate git ls-tree listing one review-fix file
-        ls_result = MagicMock()
-        ls_result.returncode = 0
-        ls_result.stdout = "specs/005-my-spec/review-fix-1.md\n"
-
-        # Simulate git show returning the file content
-        show_result = MagicMock()
-        show_result.returncode = 0
-        show_result.stdout = "# Review Fix 1\nFix the z-index issue.\n"
-
-        # Ensure the spec dir exists so glob finds it
         spec_dir = tmp_path / "specs" / "005-my-spec"
         spec_dir.mkdir(parents=True)
+        (spec_dir / "review-fix-1.md").write_text(
+            "# Review Fix 1\nFix the z-index issue.\n",
+            encoding="utf-8",
+        )
 
-        with patch("subprocess.run", side_effect=[ls_result, show_result]):
-            result = coord._build_reentry_prompt("spec 005 semi mode", "005")
+        with patch("subprocess.run") as run_git:
+            result = coord._build_reentry_prompt(
+                "spec 005 semi mode",
+                "005",
+                spec_dir=spec_dir,
+            )
 
+        run_git.assert_not_called()
         assert "## Review Feedback" in result
         assert "Review Fix 1" in result
         assert "Fix the z-index issue." in result
@@ -101,31 +98,35 @@ class TestCoordinatorReviewReentry:
         spec_dir = tmp_path / "specs" / "005-my-spec"
         spec_dir.mkdir(parents=True)
 
-        ls_result = MagicMock()
-        ls_result.returncode = 0
-        ls_result.stdout = "specs/005-my-spec/spec.md\nspecs/005-my-spec/tasks.md\n"
-
-        with patch("subprocess.run", return_value=ls_result):
-            result = coord._build_reentry_prompt("spec 005 semi mode", "005")
+        result = coord._build_reentry_prompt("spec 005 semi mode", "005")
 
         assert result == "spec 005 semi mode"
 
     def test_reentry_run_loop_receives_review_content(self, tmp_path):
         """Coordinator passes injected prompt to RalphController on Phase 1 re-entry."""
-        config = _config(tmp_path)
+        workspace = tmp_path / "workspace"
+        harness_root = workspace / "runs" / "targets" / "api"
+        worktree = harness_root / "runs" / "build-1" / "worktrees" / "default" / "iter-0"
+        worktree.mkdir(parents=True)
+        config = _config(workspace)
 
-        # Create spec dir so _build_reentry_prompt can find it
-        spec_dir = tmp_path / "specs" / "005-my-spec"
+        spec_dir = workspace / "specs" / "005-my-spec"
         spec_dir.mkdir(parents=True)
+        (spec_dir / "review-fix-1.md").write_text(
+            "# Review Fix 1\nFix the z-index.\n",
+            encoding="utf-8",
+        )
 
         gitops = MagicMock()
-        gitops.get_latest_worktree.return_value = str(tmp_path)
+        gitops.get_latest_worktree.return_value = str(worktree)
 
         coord = StrategyCoordinator(
             provider=MagicMock(),
             gitops=gitops,
             config=config,
-            base_dir=str(tmp_path),
+            base_dir=str(harness_root),
+            build_id="build-1",
+            orchestration_root=workspace,
         )
 
         captured_prompts: list[str] = []
@@ -133,12 +134,6 @@ class TestCoordinatorReviewReentry:
         def phase1_run_loop(**kwargs):
             captured_prompts.append(kwargs.get("build_prompt", ""))
             return _loop_result("converged")
-
-        # git ls-tree returns one review-fix file; git show returns its content
-        ls_result = MagicMock(returncode=0,
-                              stdout="specs/005-my-spec/review-fix-1.md\n")
-        show_result = MagicMock(returncode=0,
-                                stdout="# Review Fix 1\nFix the z-index.\n")
 
         intent = RunIntent(
             spec_id="005",
@@ -158,8 +153,7 @@ class TestCoordinatorReviewReentry:
              patch("harness.coordinator.ReviewLoopController") as MockReview, \
              patch("harness.coordinator.RepairLoop", SpyRepairLoop, create=True), \
              patch("harness.coordinator.StateStore") as MockState, \
-             patch("harness.coordinator.load_strategies") as mock_strat, \
-             patch("subprocess.run", side_effect=[ls_result, show_result]):
+             patch("harness.coordinator.load_strategies") as mock_strat:
 
             # Phase 1: first call converges, second call (re-entry) converges too
             ralph_instance = MagicMock()
@@ -202,3 +196,5 @@ class TestCoordinatorReviewReentry:
             f"Expected '## Review Feedback' in re-entry build_prompt, got:\n{reentry_prompt!r}"
         )
         assert "Review Fix 1" in reentry_prompt
+        assert MockReview.call_args.kwargs["base_dir"] == str(harness_root)
+        assert MockReview.call_args.kwargs["spec_dir"] == spec_dir.resolve()

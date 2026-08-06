@@ -4,7 +4,7 @@
 
 **Goal:** Make converged target-side polyrepo deliveries auto-land through the orchestration workspace that owns the canonical spec, and report spec lookup failure separately from missing lifecycle status.
 
-**Architecture:** Introduce an explicit orchestration-root input alongside the existing target harness root. Resolve and validate both roots once in `run_skill.run()`, propagate the workspace root through every CLI/resume adapter, and use it only for canonical spec/history/landing operations while the target-scoped `GitOpsManager` and harness state remain rooted at `base_dir`. Guard multi-target specs before auto-land because aggregate landing is not part of this change.
+**Architecture:** Preserve three independent owners: the orchestration workspace for canonical specs/tasks/history/lifecycle, the target harness root for delivery state/PR discovery/worktree cleanup, and the resolved target checkout plus target-scoped `GitOpsManager` for Git operations. Resolve the first two once in `run_skill.run()`, pass both explicitly to their consumers, and guard multi-target specs before auto-land because aggregate landing is not part of this change.
 
 **Tech Stack:** Python 3.11+, pathlib, pytest, unittest.mock, existing Echelon CLI/UI and harness modules.
 
@@ -12,13 +12,67 @@
 
 - Preserve `find_spec_dir()`'s Git-boundary rule; do not make discovery walk across repository boundaries.
 - Preserve single-repository behavior by defaulting `orchestration_root` to `base_dir`.
-- Keep coordinator state, build markers, garbage collection, mirrors, worktrees, and target Git operations rooted at `base_dir` and the supplied target `gitops`.
-- Use the resolved orchestration workspace for canonical spec discovery, run history, and `land(project_dir=...)`.
+- Keep coordinator state, build markers, garbage collection, mirrors, and delivery worktrees rooted at `base_dir`; keep target Git operations on the resolved target checkout and supplied target `gitops`.
+- Use the resolved orchestration workspace for canonical spec/tasks/history/lifecycle and `land(project_dir=...)`; pass the target harness root separately as `land(harness_root=...)` for PR-state discovery and worktree cleanup.
 - Do not infer `ECHELON_POLYREPO_ROOT` inside `land()`; CLI adapters own environment/config interpretation.
 - Do not let per-target workers auto-land a multi-target spec.
 - Do not clean, reset, land, or otherwise mutate the dirty Prosaic source checkout during verification.
 - Add no dependencies. Follow test-driven development: add a failing regression, run it, implement the smallest change, and rerun it.
 - Make one focused commit after each task; do not amend unrelated existing commits.
+
+## Corrected Three-Root Interfaces
+
+Both additions are final optional parameters, so existing positional and
+single-repository callers remain valid:
+
+```python
+class StrategyCoordinator:
+    def __init__(
+        self,
+        provider: SandboxProvider,
+        gitops: Any,
+        config: HarnessConfig,
+        base_dir: str = ".",
+        build_id: str = "",
+        orchestration_root: str | Path | None = None,
+    ) -> None: ...
+
+def land(
+    spec_id: str,
+    *,
+    project_dir: Path,
+    gitops: Any,
+    state_dir: Optional[Path] = None,
+    options: Optional[LandOptions] = None,
+    harness_root: Path | None = None,
+) -> bool: ...
+```
+
+`StrategyCoordinator` uses explicit `orchestration_root` for spec/tasks and
+persisted workspace context while retaining environment fallback when omitted.
+`land()` defaults `harness_root` to `project_dir` and uses it only for PR-state
+discovery and branchful/branchless worktree cleanup. `run()` and the target-child
+delivery-land CLI pass the resolved harness root explicitly.
+
+Phase 3 carries the same ownership split through a final optional parameter:
+
+```python
+class ReviewLoopController:
+    def __init__(
+        self,
+        gitops: Any,
+        config: HarnessConfig,
+        spec_id: str,
+        strategy_id: str,
+        base_dir: str = ".",
+        build_id: str = "",
+        spec_dir: str | Path | None = None,
+    ) -> None: ...
+```
+
+Here `base_dir` remains target harness state, `spec_dir` is canonical
+orchestration state, and the `run_loop(worktree_path=...)` argument is the only
+valid review execution root.
 
 ---
 
@@ -26,7 +80,9 @@
 
 **Files:**
 
+- Modify: `src/harness/coordinator.py`
 - Modify: `src/harness/skills/run_skill.py`
+- Modify: `tests/unit/test_coordinator.py`
 - Modify: `tests/unit/test_run_skill.py`
 
 ### Step 1: Add failing root-resolution tests
@@ -119,13 +175,14 @@ raise RunContextError(
 )
 ```
 
-Perform both validations before constructing `StrategyCoordinator`, writing a build marker, or starting garbage collection. Pass the resolved `spec_dir` into `_print_delivery_summary()` instead of letting that helper call `_resolve_spec_dir(base_dir, ...)` again. Use the same `spec_dir` for both history calls and `_append_harness_history()`. Retain `harness_root` for coordinator/state/GC paths, and delete `_resolve_spec_dir()` after its final caller is removed.
+Perform both validations before constructing `StrategyCoordinator`, writing a build marker, or starting garbage collection. Pass the resolved `spec_dir` into `_print_delivery_summary()` instead of letting that helper call `_resolve_spec_dir(base_dir, ...)` again. Use the same `spec_dir` for both history calls and `_append_harness_history()`. Retain `harness_root` for coordinator/state/GC paths, pass `orchestration_root=workspace_root` to `StrategyCoordinator`, and delete `_resolve_spec_dir()` after its final caller is removed. The coordinator must use that explicit root for canonical spec/tasks and persisted workspace context; when omitted, preserve its existing environment fallback.
 
 ### Step 3: Verify Task 1
 
 ```bash
 pytest -q tests/unit/test_run_skill.py -k 'resolve_run_roots or explicit_orchestration'
 pytest -q tests/unit/test_run_skill.py
+pytest -q tests/unit/test_coordinator.py -k explicit_orchestration_root
 ```
 
 Expected: all `test_run_skill.py` tests pass.
@@ -133,7 +190,7 @@ Expected: all `test_run_skill.py` tests pass.
 ### Step 4: Commit Task 1
 
 ```bash
-git add src/harness/skills/run_skill.py tests/unit/test_run_skill.py
+git add src/harness/coordinator.py src/harness/skills/run_skill.py tests/unit/test_coordinator.py tests/unit/test_run_skill.py
 git commit -m "fix: separate delivery harness and orchestration roots"
 ```
 
@@ -274,8 +331,10 @@ git commit -m "fix: propagate orchestration context through delivery adapters"
 
 **Files:**
 
+- Modify: `src/echelon/cli.py`
 - Modify: `src/harness/skills/run_skill.py`
 - Modify: `src/harness/land.py`
+- Modify: `tests/unit/test_land_cli.py`
 - Modify: `tests/unit/test_run_skill.py`
 - Modify: `tests/unit/test_land.py`
 
@@ -300,8 +359,10 @@ mock_land.assert_called_once_with(
     "042",
     project_dir=workspace.resolve(),
     gitops=gitops,
+    harness_root=harness_root.resolve(),
 )
 assert mock_coordinator.call_args.kwargs["base_dir"] == harness_root.resolve()
+assert mock_coordinator.call_args.kwargs["orchestration_root"] == workspace.resolve()
 ```
 
 Because `StrategyCoordinator` is constructed with keywords, assert `mock_coordinator.call_args.kwargs["base_dir"] == harness_root.resolve()` after implementation normalizes that argument to the resolved `Path`.
@@ -338,10 +399,18 @@ else:
         intent.spec_id,
         project_dir=workspace_root,
         gitops=gitops,
+        harness_root=harness_root,
     )
 ```
 
 Keep the existing controlled `False` and exception warnings around `land()`. Each target worker logs its own warning once; do not add parent-process deduplication.
+
+Add a real three-root regression with `workspace`,
+`workspace/runs/targets/api`, and `workspace/sources/api`. Store an existing PR
+and registered delivery worktree under the target harness root. Assert landing
+uses `merge_pr`, never direct merge, and destroys the target-harness worktree.
+Add the equivalent successful branchless-cleanup assertion. Update the
+target-child delivery-land CLI test to require `harness_root` forwarding.
 
 ### Step 3: Add failing branchless diagnostic tests
 
@@ -390,7 +459,7 @@ Let both branches fall through to the function's existing `LAND - BRANCH NOT LAN
 
 ```bash
 pytest -q tests/unit/test_run_skill.py tests/unit/test_land.py
-git add src/harness/skills/run_skill.py src/harness/land.py tests/unit/test_run_skill.py tests/unit/test_land.py
+git add src/echelon/cli.py src/harness/skills/run_skill.py src/harness/land.py tests/unit/test_land_cli.py tests/unit/test_run_skill.py tests/unit/test_land.py
 git commit -m "fix: resolve polyrepo auto-land specs from workspace"
 ```
 
@@ -407,7 +476,7 @@ git commit -m "fix: resolve polyrepo auto-land specs from workspace"
 Under the current unreleased `Fixed` section, add one concise entry covering both user-visible defects:
 
 ```markdown
-- Fixed target-side polyrepo auto-land using the target harness directory for canonical spec discovery, and distinguished an unfound spec directory from a spec whose lifecycle status is missing.
+- Fixed target-side polyrepo auto-land to discover canonical specs from the orchestration workspace rather than the target harness directory, and distinguished an unfound spec directory from a spec whose lifecycle status is missing.
 ```
 
 Do not update README: the command surface and normal user workflow do not change.
@@ -501,3 +570,60 @@ git status --short
 ```
 
 Expected: no whitespace errors and no uncommitted files from this implementation. Do not claim the Prosaic spec was landed; report only that installed, non-mutating discovery found the canonical spec with `status: ready_to_land` and left its dirty checkout unchanged.
+
+---
+
+## Task 5: Apply final three-root review corrections
+
+**Files:**
+
+- Modify: `src/harness/coordinator.py`
+- Modify: `src/harness/review_loop.py`
+- Modify: `src/harness/ralph.py`
+- Modify: `extension/commands/echelon.review.md`
+- Modify: `tests/unit/test_coordinator.py`
+- Modify: `tests/unit/test_coordinator_review_reentry.py`
+- Modify: `tests/unit/test_review_loop.py`
+- Modify: `tests/unit/test_ralph_outer.py`
+- Modify: `tests/unit/test_manual_command_contracts.py`
+
+### Step 1: Prove resumed canonical context is refreshed
+
+Seed interrupted and blocked target-harness states with stale workspace/spec
+paths and preserved progress. Start a coordinator with an explicit orchestration
+root and assert Ralph sees current canonical paths and target task IDs while the
+existing iteration and token counts remain unchanged.
+
+### Step 2: Prove Phase 3 keeps all three roots distinct
+
+Model `workspace/specs/005-*`, `workspace/runs/targets/api`, and a registered
+target worktree. Assert `ReviewLoopController(base_dir=target_harness,
+spec_dir=canonical_spec_dir)`, provider execution from the target worktree,
+build-specific review status under the target harness, and direct canonical
+review-fix reads during re-entry with no subprocess Git calls.
+
+Add a missing-worktree case that returns a controlled failed `LoopResult`
+without invoking the review provider when blocking comments need source
+analysis. Preserve merge-only review cycles by proving an approved PR with no
+comments can merge without a worktree. Prove a failed review-skill invocation
+does not mark comments seen, resolve threads, request review, or report queued
+work. Extend the early-convergence Ralph test to require that its worktree
+remains registered.
+
+### Step 3: Implement the ownership boundaries
+
+Refresh only canonical context fields on an explicit-root resume. Add the final
+optional `spec_dir` constructor parameter above, reject absent delivery
+worktrees, keep review state under the build-specific target harness state, and
+execute the review provider from the resolved worktree. Read re-entry artifacts
+directly from the exact canonical directory. Preserve converged Ralph
+worktrees, and remove review-skill branch checkout/stash instructions. Treat
+only an exact `review_fix_queued` skill status as success before mutating comment
+or review state.
+
+### Step 4: Verify
+
+Run the focused RED/GREEN cases, all affected unit files, the original focused
+delivery suite, adjacent coordinator/review tests, `git diff --check`, relevant
+module compilation, and the full suite. Record exact results in the final-fix
+report before committing.

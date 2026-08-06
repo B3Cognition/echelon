@@ -1349,6 +1349,107 @@ def test_workspace_target_land_uses_workspace_spec_readiness_not_target_branch_r
 
 
 @pytest.mark.unit
+def test_polyrepo_land_uses_target_harness_pr_state_and_cleans_its_worktree(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    harness_root = workspace / "runs" / "targets" / "api"
+    target_root = workspace / "sources" / "api"
+    target_root.mkdir(parents=True)
+
+    spec_dir = workspace / "specs" / "042-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text(
+        "---\n"
+        "status: ready_to_land\n"
+        "targets:\n"
+        "- sources/api\n"
+        "---\n"
+        "# Demo\n",
+        encoding="utf-8",
+    )
+
+    state_dir = harness_root / "runs" / "build-target" / "state"
+    pr_url = "https://github.com/example/api/pull/42"
+    _write_state(state_dir, "042-demo", "default", pr_url)
+    worktree = harness_root / "runs" / "build-target" / "worktrees" / "default" / "iter-0"
+    worktree.mkdir(parents=True)
+
+    gitops = _make_gitops(feature_branch="042-demo")
+    gitops.destroy_worktree.side_effect = (
+        lambda path, *, keep_branch: path.rmdir()
+    )
+
+    result = land(
+        "042",
+        project_dir=workspace,
+        harness_root=harness_root,
+        gitops=gitops,
+        options=LandOptions(allow_fulfillment_gaps=True),
+    )
+
+    assert result is True
+    gitops.merge_pr.assert_called_once_with(pr_url)
+    gitops.merge_branch_into_default.assert_not_called()
+    gitops.destroy_worktree.assert_called_once_with(worktree, keep_branch=True)
+    assert not worktree.exists()
+
+
+@pytest.mark.unit
+def test_polyrepo_branchless_cleanup_uses_target_harness_root(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    harness_root = workspace / "runs" / "targets" / "api"
+    target_root = workspace / "sources" / "api"
+    _init_repo(target_root)
+    verified_commit = _commit(target_root, "README.md", "# API\n", "initial")
+
+    spec_dir = workspace / "specs" / "043-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text(
+        "---\n"
+        "status: landed\n"
+        "targets:\n"
+        "- sources/api\n"
+        "---\n"
+        "# Demo\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "fulfillment-report.md").write_text(
+        "---\n"
+        f"verified_commit: {verified_commit}\n"
+        "verify_scope: full\n"
+        "---\n"
+        "| ID | Status | Evidence | Confidence | Notes |\n"
+        "|---|---|---|---|---|\n"
+        "| FR-001 | IMPLEMENTED | README.md | high | ok |\n",
+        encoding="utf-8",
+    )
+
+    state_dir = harness_root / "runs" / "build-target" / "state"
+    _write_state(state_dir, "043-demo", "default", None)
+    worktree = harness_root / "runs" / "build-target" / "worktrees" / "default" / "iter-0"
+    worktree.mkdir(parents=True)
+
+    gitops = _make_gitops(feature_branch=None)
+    gitops.destroy_worktree.side_effect = (
+        lambda path, *, keep_branch: path.rmdir()
+    )
+
+    result = land(
+        "043",
+        project_dir=workspace,
+        harness_root=harness_root,
+        gitops=gitops,
+    )
+
+    assert result is True
+    gitops.merge_pr.assert_not_called()
+    gitops.merge_branch_into_default.assert_not_called()
+    gitops.destroy_worktree.assert_called_once_with(worktree, keep_branch=True)
+    assert not worktree.exists()
+
+
+@pytest.mark.unit
 def test_workspace_target_fulfillment_freshness_uses_target_repo_ref(
     tmp_path: Path,
 ) -> None:

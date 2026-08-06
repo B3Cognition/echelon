@@ -924,7 +924,18 @@ def _cmd_land(args: list[str]) -> None:
     if target_env and not _mirror_path_fn(harness_base_dir).exists():
         gitops.clone_mirror(config.target_repo)
 
-    success = land(spec_id, project_dir=project_dir, gitops=gitops, options=options)
+    land_kwargs = (
+        {"harness_root": harness_base_dir}
+        if target_env and polyrepo_env
+        else {}
+    )
+    success = land(
+        spec_id,
+        project_dir=project_dir,
+        gitops=gitops,
+        options=options,
+        **land_kwargs,
+    )
     if success:
         if options.prepare_only:
             _banner("LAND", [("spec", spec_id), ("status", "prepared")])

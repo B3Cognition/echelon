@@ -185,7 +185,7 @@ class TestCmdLand:
             _cmd_land(["001"])
 
         assert exc_info.value.code == 0
-        mock_load_config.assert_called_once_with(project_root=workspace, squad_only=True)
+        mock_load_config.assert_any_call(project_root=workspace, squad_only=True)
         sync_ext.assert_called_once_with(workspace, harness_base)
         mock_gitops_cls.assert_called_once_with(mock_config, base_dir=str(harness_base))
         assert mock_config.target_repo == str(target.resolve())
@@ -195,6 +195,7 @@ class TestCmdLand:
             project_dir=workspace,
             gitops=mock_gitops,
             options=mock_land.call_args.kwargs["options"],
+            harness_root=harness_base,
         )
 
     @patch("harness.land.land")

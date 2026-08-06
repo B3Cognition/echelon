@@ -52,29 +52,12 @@ After any agent returns, immediately execute the next step. The run ends only at
 
 ---
 
-## Step 0: Ensure on Default Branch
+## Step 0: Honor the Supplied Delivery Context
 
-Before reading any spec files, verify the working directory is on the default branch.
-
-```bash
-DEFAULT_BRANCH=""
-for branch in main master; do
-  if git show-ref --quiet "refs/heads/$branch"; then
-    DEFAULT_BRANCH="$branch"
-    break
-  fi
-done
-DEFAULT_BRANCH="${DEFAULT_BRANCH:-main}"
-CURRENT=$(git branch --show-current)
-
-if [ "$CURRENT" != "$DEFAULT_BRANCH" ]; then
-  if [ -n "$(git status --porcelain)" ]; then
-    STASH_MSG="echelon-review-auto-stash-$(date +%Y%m%d-%H%M%S)"
-    git stash push -u -m "$STASH_MSG"
-  fi
-  git checkout "$DEFAULT_BRANCH"
-fi
-```
+When `worktree` is supplied, it is the authoritative target source context.
+Read source from that exact worktree and leave its Git state unchanged.
+Never checkout, switch, or stash branches: the target-scoped harness owns that
+worktree and its branch lifecycle. This command diagnoses and plans only.
 
 ---
 
@@ -221,16 +204,11 @@ Store as `{spec_guard_report_i}`.
 
 ---
 
-## Step 5: Write Artifacts
+## Step 5: Write Artifacts to the Canonical Spec Directory
 
-Switch to the feature branch so artifacts are committed there:
-
-```bash
-FEATURE_BRANCH="{spec_id}-{spec_name}"
-git checkout "$FEATURE_BRANCH"
-```
-
-If the feature branch does not exist: write `{"status": "blocked", "reason": "feature branch {spec_id}-{spec_name} not found"}` to `$HARNESS_BUILD_STATUS_FILE` and stop.
+Write review artifacts directly to the authoritative `spec_dir`. Do not change
+the delivery worktree's branch; the harness will persist canonical spec changes
+through its orchestration-artifact lifecycle.
 
 Determine the next review-fix index:
 
@@ -288,12 +266,6 @@ Then append tasks to `{spec_dir}/tasks.md` using `extension/templates/review-fix
 - [ ] T-{next+2} complexity=standard phase=review-fix req={FR-id} depends=T-{next+1}
 
   **Title:** RF{n}-T3 - Verify regression and prior tests
-```
-
-After writing all artifacts, return to the default branch:
-
-```bash
-git checkout "$DEFAULT_BRANCH"
 ```
 
 ---

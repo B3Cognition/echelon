@@ -459,6 +459,7 @@ def run(
         config=config,
         base_dir=harness_root,
         build_id=build_id,
+        orchestration_root=workspace_root,
     )
 
     # 6. Run GC before starting
@@ -513,6 +514,7 @@ def run(
                     intent.spec_id,
                     project_dir=workspace_root,
                     gitops=gitops,
+                    harness_root=harness_root,
                 )
                 if landed:
                     print("  Auto-landed successfully!", file=sys.stderr)

@@ -2147,6 +2147,7 @@ class TestOuterLoopConvergence:
             "harness/spec-001-default-iter-0",
             "spec-001",
         )
+        gitops.destroy_worktree.assert_not_called()
 
     def test_merge_failure_blocks_convergence(self, tmp_path: Path) -> None:
         """Verified branch cannot be reported converged until it lands on default."""
