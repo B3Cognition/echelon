@@ -72,8 +72,8 @@ def run(
   artifacts, and lifecycle status. It defaults to `base_dir` for backwards
   compatibility and single-repository runs.
 
-At entry, a private pure-path helper resolves both values once without changing
-their ownership:
+At entry, a private root-resolution helper resolves both values once without
+changing their ownership and validates an explicitly supplied workspace root:
 
 ```python
 def _resolve_run_roots(
@@ -123,10 +123,25 @@ history discovery and auto-land use `orchestration_root`. The CLI adapters,
 not `land()`, remain responsible for interpreting `ECHELON_POLYREPO_ROOT` and
 passing the resolved value.
 
-All CLI boundaries catch `RunContextError`, print a controlled message without
-a traceback, and exit 1. The existing delivery run/resume commands route it
-through their harness-error output and blocked-state handling. The standalone
-`harness.__main__` and legacy `resume_skill` adapters print:
+The legacy resume adapter receives the matching backwards-compatible signature
+addition:
+
+```python
+def resume(
+    user_message: str,
+    provider: Any,
+    gitops: Any,
+    base_dir: str = ".",
+    orchestration_root: str | Path | None = None,
+) -> None:
+```
+
+It forwards `orchestration_root` unchanged to `run()`. Existing delivery
+run/resume CLI paths keep their generic exception boundary and route
+`RunContextError` through the current harness-error output and blocked-state
+handling. Only the standalone `harness.__main__` and legacy `resume_skill`
+adapters add explicit `RunContextError` catches; they print the following
+controlled message without a traceback and exit 1:
 
 ```text
 HARNESS — INVALID ORCHESTRATION CONTEXT
@@ -299,8 +314,10 @@ existing Prosaic workspace cannot safely serve as the first full landing test:
 must block rather than overwrite or silently stash those changes.
 
 After automated tests pass and the installed CLI is refreshed, perform a
-non-mutating Prosaic smoke check that exercises the new root-resolution helper
-with these exact inputs:
+non-mutating Python smoke check using the installed Echelon virtual
+environment—not a delivery or land command. The snippet imports and calls
+`_resolve_run_roots()`, then passes the returned workspace root to
+`find_spec_dir()` and `read_frontmatter()` with these exact inputs:
 
 ```text
 base_dir = <workspace>/runs/targets/prosaic
@@ -325,8 +342,11 @@ empty and record:
 - the verified delivery branch and commit;
 - harness mirror default-branch commit;
 - orchestration spec status and orchestration repository commit;
+- orchestration repository `git status --porcelain` output and binary staged
+  and unstaged diffs;
 - registered harness worktrees;
 - target checkout HEAD;
+- target repository `git status --porcelain` output, which must be empty;
 - either the preservation commit hash or the named stash reference used for
   the prior dirty changes.
 
@@ -338,6 +358,13 @@ same object. A fetch failure caused by the stale legacy `iter-4` worktree is
 reported as an independent live-test blocker, not as a regression in root
 propagation or diagnostics. Neither stale worktree cleanup nor dirty-checkout
 resolution is performed by this fix.
+
+After landing, the target repository must still have empty
+`git status --porcelain` output. The orchestration repository may be dirty
+because lifecycle persistence is intentionally uncommitted; its post-land
+binary diff must equal its captured pre-land diff plus only the expected
+`specs/911-new-prosaic-distribution-feature/spec.md` status transition. No
+other orchestration path may change during live validation.
 
 `_finish_landing()` retains its current lifecycle persistence semantics:
 `write_status()` updates the canonical orchestration `spec.md` frontmatter and
