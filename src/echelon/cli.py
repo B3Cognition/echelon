@@ -2265,6 +2265,7 @@ def _cmd_harness_run(
             base_dir=str(harness_base_dir),
             config=config,
             resume_build_id=delivery_build_id,
+            orchestration_root=spec_search_root,
         )
     except Exception as exc:
         if _is_docker_unavailable_error(exc):
@@ -2878,6 +2879,7 @@ def _cmd_harness_resume(
                 base_dir=str(harness_base_dir),
                 config=config,
                 resume_build_id=build_id or None,
+                orchestration_root=spec_search_root,
             )
         except Exception as exc:
             if _is_docker_unavailable_error(exc):
@@ -2946,6 +2948,7 @@ def _cmd_harness_resume(
                 base_dir=str(harness_base_dir),
                 config=config,
                 resume_build_id=build_id or None,
+                orchestration_root=spec_search_root,
             )
         except Exception as exc:
             if _is_docker_unavailable_error(exc):
@@ -3033,6 +3036,7 @@ def _cmd_harness_resume(
                 base_dir=str(harness_base_dir),
                 config=config,
                 resume_build_id=build_id or None,
+                orchestration_root=spec_search_root,
             )
         except Exception as exc:
             if _is_docker_unavailable_error(exc):
@@ -3087,6 +3091,7 @@ def _cmd_harness_resume(
             base_dir=str(harness_base_dir),
             config=config,
             resume_build_id=build_id or None,
+            orchestration_root=spec_search_root,
         )
     except Exception as exc:
         if _is_docker_unavailable_error(exc):

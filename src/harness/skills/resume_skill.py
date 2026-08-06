@@ -26,6 +26,7 @@ def resume(
     provider: Any,
     gitops: Any,
     base_dir: str = ".",
+    orchestration_root: str | Path | None = None,
 ) -> None:
     """Execute /speckit-harness-resume skill.
 
@@ -34,6 +35,7 @@ def resume(
         provider: SandboxProvider instance.
         gitops: GitOpsManager instance.
         base_dir: Base directory for harness state.
+        orchestration_root: Workspace that owns canonical specs and history.
     """
     # 1. Parse spec_id and answer
     spec_id, strategy_id, answer = _parse_resume_input(user_message)
@@ -87,21 +89,26 @@ def resume(
     # 5. Re-enter the normal run/coordinator path so resume uses the same
     # provider, LLM prompt, build id, and strategy wiring as delivery resume.
     from harness.config import load_config
-    from harness.skills.run_skill import run
+    from harness.skills.run_skill import RunContextError, print_run_context_error, run
 
     mode = state.get("mode", "semi")
     run_message = (
         f"spec {spec_id} strategy={strategy_id} mode={mode} resume\n\n"
         f"task: {answer}"
     )
-    run(
-        run_message,
-        provider=provider,
-        gitops=gitops,
-        base_dir=base_dir,
-        config=load_config(),
-        resume_build_id=_bid or None,
-    )
+    try:
+        run(
+            run_message,
+            provider=provider,
+            gitops=gitops,
+            base_dir=base_dir,
+            config=load_config(),
+            resume_build_id=_bid or None,
+            orchestration_root=orchestration_root,
+        )
+    except RunContextError as error:
+        print_run_context_error(spec_id, error)
+        raise SystemExit(1) from error
 
 
 def _parse_resume_input(text: str) -> tuple:

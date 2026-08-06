@@ -855,7 +855,7 @@ class TestHarnessTargetPreflight:
              patch("harness.paths.mirror_path", return_value=mirror), \
              patch("harness.gitops.GitOpsManager"), \
              patch("harness.docker_provider.DockerWorktreeProvider"), \
-             patch("harness.skills.run_skill.run", side_effect=observe_run):
+             patch("harness.skills.run_skill.run", side_effect=observe_run) as mock_run:
             mock_cfg.return_value = MagicMock(
                 buffer_limit_bytes=1024 * 1024,
                 target_repo=str(target),
@@ -865,6 +865,9 @@ class TestHarnessTargetPreflight:
             _cmd_harness_run(["001"])
 
         assert len(observed) == 1
+        kwargs = mock_run.call_args.kwargs
+        assert kwargs["base_dir"] == str(harness_base)
+        assert kwargs["orchestration_root"] == root.resolve()
         assert not list((root / "runs").glob("build-*"))
 
     @pytest.mark.parametrize(

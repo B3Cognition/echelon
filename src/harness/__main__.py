@@ -89,7 +89,7 @@ def _run() -> None:
     from harness.config import load_config
     from harness.docker_provider import DockerWorktreeProvider
     from harness.gitops import GitOpsManager
-    from harness.skills.run_skill import run
+    from harness.skills.run_skill import RunContextError, print_run_context_error, run
 
     config = load_config()
     gitops = GitOpsManager(config)
@@ -98,7 +98,11 @@ def _run() -> None:
         container_cli=config.container_cli,
     )
 
-    run(user_message, provider, gitops)
+    try:
+        run(user_message, provider, gitops)
+    except RunContextError as error:
+        print_run_context_error(spec_id, error)
+        raise SystemExit(1) from error
 
 
 def _resume() -> None:

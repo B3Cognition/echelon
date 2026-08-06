@@ -30,6 +30,25 @@ class RunContextError(ValueError):
     """The delivery caller supplied an invalid orchestration context."""
 
 
+def print_run_context_error(spec_id: str, error: RunContextError) -> None:
+    """Render an invalid explicit orchestration context at adapter boundaries."""
+    from echelon.ui import banner
+
+    banner(
+        "HARNESS — INVALID ORCHESTRATION CONTEXT",
+        [
+            ("spec", spec_id),
+            ("problem", str(error)),
+            (
+                "next step",
+                "run delivery from the workspace that owns specs/, or repair "
+                "the supplied orchestration root",
+            ),
+        ],
+        file=sys.stderr,
+    )
+
+
 def _resolve_run_roots(
     base_dir: str | Path,
     orchestration_root: str | Path | None,

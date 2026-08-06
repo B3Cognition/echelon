@@ -303,6 +303,7 @@ class TestCmdHarnessResume:
 
         mock_run.assert_called_once()
         assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
+        assert mock_run.call_args.kwargs["orchestration_root"] == tmp_path.resolve()
 
     def test_blocker_escalation_resume_calls_run_without_redirecting_to_run(
         self,
@@ -329,6 +330,7 @@ class TestCmdHarnessResume:
 
         mock_run.assert_called_once()
         assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
+        assert mock_run.call_args.kwargs["orchestration_root"] == tmp_path.resolve()
         user_message = mock_run.call_args.args[0]
         assert "spec 001" in user_message
         assert "mode=banzai" in user_message
@@ -400,6 +402,7 @@ class TestCmdHarnessResume:
         mock_recover.assert_not_called()
         mock_run.assert_called_once()
         assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
+        assert mock_run.call_args.kwargs["orchestration_root"] == tmp_path.resolve()
         user_message = mock_run.call_args.args[0]
         assert "mode=banzai" in user_message
 
@@ -422,6 +425,7 @@ class TestCmdHarnessResume:
         mock_recover.assert_not_called()
         mock_run.assert_called_once()
         assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
+        assert mock_run.call_args.kwargs["orchestration_root"] == tmp_path.resolve()
         user_message = mock_run.call_args.args[0]
         assert "mode=banzai" in user_message
 
@@ -491,6 +495,7 @@ class TestCmdHarnessResume:
             _cmd_harness_resume(["001", "Use the current implementation and continue", "mode=banzai"])
 
         mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["orchestration_root"] == tmp_path.resolve()
         content = escalation_file.read_text(encoding="utf-8")
         assert "## Answer" in content
         assert "Use the current implementation and continue" in content
@@ -550,6 +555,7 @@ class TestCmdHarnessResume:
 
         mock_run.assert_called_once()
         assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
+        assert mock_run.call_args.kwargs["orchestration_root"] == tmp_path.resolve()
         user_message = mock_run.call_args.args[0]
         assert "mode=banzai" in user_message
         state = json.loads((sd / "default.json").read_text(encoding="utf-8"))
@@ -673,6 +679,7 @@ class TestCmdHarnessResume:
         mock_recover.assert_called_once()
         mock_run.assert_called_once()
         assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
+        assert mock_run.call_args.kwargs["orchestration_root"] == tmp_path.resolve()
 
     def test_provider_limit_resume_skips_recovery_for_legacy_blocked_state(
         self, tmp_path: Path

@@ -18,6 +18,8 @@ def test_resume_skill_delegates_to_run_skill_with_existing_build_id(tmp_path: Pa
     spec_id = "001"
     build_id = "build-existing"
     strategy_id = "default"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
     marker = current_build_marker(tmp_path, spec_id)
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text(build_id, encoding="utf-8")
@@ -48,10 +50,12 @@ def test_resume_skill_delegates_to_run_skill_with_existing_build_id(tmp_path: Pa
             provider=MagicMock(),
             gitops=MagicMock(),
             base_dir=str(tmp_path),
+            orchestration_root=workspace,
         )
 
     mock_run.assert_called_once()
     assert mock_run.call_args.kwargs["resume_build_id"] == build_id
     assert mock_run.call_args.kwargs["base_dir"] == str(tmp_path)
+    assert mock_run.call_args.kwargs["orchestration_root"] == workspace
     assert "spec 001" in mock_run.call_args.args[0]
     assert "resume" in mock_run.call_args.args[0]
