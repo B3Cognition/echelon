@@ -34,6 +34,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Fixed target-side polyrepo auto-land using the target harness directory for canonical spec discovery, and distinguished an unfound spec directory from a spec whose lifecycle status is missing.
+
 - **Spec lifecycle identity and verification** — Numeric selectors and
   canonical spec slugs now resolve the same conventional branches, legacy
   harness branches, and verification-evidence runs. Normal `echelon spec
