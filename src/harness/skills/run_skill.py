@@ -26,6 +26,27 @@ logger = logging.getLogger(__name__)
 _CHECKPOINT_REASONS = {"build_incomplete", "publish_failed", "checkpoint_outer_cap"}
 
 
+class RunContextError(ValueError):
+    """The delivery caller supplied an invalid orchestration context."""
+
+
+def _resolve_run_roots(
+    base_dir: str | Path,
+    orchestration_root: str | Path | None,
+) -> tuple[Path, Path]:
+    harness_root = Path(base_dir).resolve()
+    workspace_root = (
+        Path(orchestration_root).resolve()
+        if orchestration_root is not None
+        else harness_root
+    )
+    if orchestration_root is not None and not workspace_root.is_dir():
+        raise RunContextError(
+            f"orchestration root is not a directory: {workspace_root}"
+        )
+    return harness_root, workspace_root
+
+
 def _count_tasks(spec_id: str, base_dir: str) -> int:
     """Return count of canonical task rows in tasks.md, or 0 if absent."""
     try:
@@ -150,18 +171,17 @@ def _print_delivery_summary(
     intent: Any,
     result_map: Dict[str, Any],
     comparison: Dict[str, Any],
-    base_dir: str,
+    workspace_root: Path,
+    spec_dir: Path | None,
     config: Any = None,
 ) -> None:
     """Print a structured delivery summary to stderr."""
     from echelon.ui import banner as _banner
 
-    task_count = _count_tasks(intent.spec_id, base_dir)
+    task_count = _count_tasks(intent.spec_id, str(workspace_root))
     task_note = f"  ({task_count} tasks)" if task_count else ""
     target_repo = getattr(config, "target_repo", None) if config is not None else None
-    fulfillment_recommendation = _fulfillment_gap_recommendation(
-        _resolve_spec_dir(base_dir, intent.spec_id)
-    )
+    fulfillment_recommendation = _fulfillment_gap_recommendation(spec_dir)
 
     fields: list[tuple[str, str]] = [("spec", f"{intent.spec_id}{task_note}")]
     if target_repo:
@@ -303,10 +323,6 @@ def _print_delivery_summary(
     _banner("DELIVERY SUMMARY", fields, file=sys.stderr)
 
 
-def _resolve_spec_dir(base_dir: str, spec_id: str) -> Path | None:
-    return find_spec_dir(spec_id, Path(base_dir).resolve())
-
-
 def _print_harness_history_summary(
     *,
     spec_dir: Path | None,
@@ -377,6 +393,7 @@ def run(
     base_dir: str = ".",
     config: Any = None,
     resume_build_id: str | None = None,
+    orchestration_root: str | Path | None = None,
 ) -> None:
     """Execute /speckit-harness-run skill.
 
@@ -386,11 +403,21 @@ def run(
         gitops: GitOpsManager instance.
         base_dir: Base directory for harness state.
         resume_build_id: Existing build id to continue, when resuming.
+        orchestration_root: Workspace that owns canonical specs and history.
     """
+    harness_root, workspace_root = _resolve_run_roots(base_dir, orchestration_root)
+
     # 1. Parse intent
     intent = parse_intent(user_message)
     logger.info("Parsed run intent: spec=%s, mode=%s, strategies=%s",
                 intent.spec_id, intent.mode, intent.strategies)
+
+    spec_dir = find_spec_dir(intent.spec_id, workspace_root)
+    if orchestration_root is not None and spec_dir is None:
+        raise RunContextError(
+            f"spec directory for {intent.spec_id} was not found from "
+            f"orchestration root {workspace_root}"
+        )
 
     # 2. Load config unless caller supplied a pre-resolved/overridden config.
     config = config or load_config()
@@ -400,26 +427,24 @@ def run(
     # may be delivered while another spec remains active there.
 
     # 4. Generate or reuse build ID and write .current-build marker
-    base_path = Path(base_dir).resolve()
     build_id = resume_build_id or make_build_id()
-    rd = runs_dir(base_path)
+    rd = runs_dir(harness_root)
     rd.mkdir(parents=True, exist_ok=True)
-    current_build_marker(base_path, intent.spec_id).write_text(build_id)
+    current_build_marker(harness_root, intent.spec_id).write_text(build_id)
     logger.info("Build ID: %s", build_id)
-    spec_dir = _resolve_spec_dir(base_dir, intent.spec_id)
 
     # 5. Create coordinator
     coordinator = StrategyCoordinator(
         provider=provider,
         gitops=gitops,
         config=config,
-        base_dir=base_dir,
+        base_dir=str(harness_root),
         build_id=build_id,
     )
 
     # 6. Run GC before starting
     try:
-        run_gc(config, base_dir=base_dir)
+        run_gc(config, base_dir=str(harness_root))
     except Exception as e:
         logger.warning("GC failed (continuing): %s", e)
 
@@ -442,7 +467,14 @@ def run(
     )
     _print_harness_history_summary(spec_dir=spec_dir, title="HARNESS HISTORY")
 
-    _print_delivery_summary(intent, result_map, comparison, base_dir, config)
+    _print_delivery_summary(
+        intent,
+        result_map,
+        comparison,
+        workspace_root,
+        spec_dir,
+        config,
+    )
 
     # 9. Auto-land if applicable
     converged = comparison.get("summary", {}).get("converged", 0) > 0

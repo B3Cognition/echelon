@@ -13,6 +13,8 @@ import pytest
 
 from harness.harness_run_history import history_path
 from harness.loop_result import LoopResult
+from harness.run_intent import RunIntent
+from harness.skills.run_skill import RunContextError, _resolve_run_roots
 from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
 
 
@@ -73,6 +75,101 @@ def _make_checkpoint_outer_cap_result() -> LoopResult:
         ),
         branch="001-demo",
     )
+
+
+def test_resolve_run_roots_defaults_workspace_to_harness_root(tmp_path: Path) -> None:
+    harness_root, workspace_root = _resolve_run_roots(str(tmp_path), None)
+
+    assert harness_root == tmp_path.resolve()
+    assert workspace_root == tmp_path.resolve()
+
+
+def test_resolve_run_roots_keeps_polyrepo_roots_distinct(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    harness = workspace / "runs" / "targets" / "api"
+    harness.mkdir(parents=True)
+
+    harness_root, workspace_root = _resolve_run_roots(harness, workspace)
+
+    assert harness_root == harness.resolve()
+    assert workspace_root == workspace.resolve()
+
+
+def test_resolve_run_roots_rejects_missing_explicit_workspace(tmp_path: Path) -> None:
+    missing = tmp_path / "missing"
+
+    with pytest.raises(
+        RunContextError,
+        match=f"orchestration root is not a directory: {missing.resolve()}",
+    ):
+        _resolve_run_roots(tmp_path, missing)
+
+
+@pytest.mark.unit
+class TestRunContextValidation:
+    @patch("harness.skills.run_skill.StrategyCoordinator")
+    @patch("harness.skills.run_skill.find_spec_dir")
+    @patch("harness.skills.run_skill.parse_intent")
+    def test_run_rejects_missing_explicit_orchestration_root_before_coordinator(
+        self,
+        mock_parse: MagicMock,
+        mock_find_spec_dir: MagicMock,
+        mock_coordinator_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from harness.skills.run_skill import run
+
+        missing = tmp_path / "missing"
+        mock_parse.return_value = RunIntent(spec_id="012", mode="semi")
+
+        with pytest.raises(
+            RunContextError,
+            match=f"orchestration root is not a directory: {missing.resolve()}",
+        ):
+            run(
+                "spec 012 semi",
+                provider=MagicMock(),
+                gitops=MagicMock(),
+                base_dir=tmp_path,
+                orchestration_root=missing,
+            )
+
+        mock_find_spec_dir.assert_not_called()
+        mock_coordinator_cls.assert_not_called()
+
+    @patch("harness.skills.run_skill.StrategyCoordinator")
+    @patch("harness.skills.run_skill.find_spec_dir", return_value=None)
+    @patch("harness.skills.run_skill.parse_intent")
+    def test_run_rejects_missing_spec_from_explicit_orchestration_root_before_coordinator(
+        self,
+        mock_parse: MagicMock,
+        mock_find_spec_dir: MagicMock,
+        mock_coordinator_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from harness.skills.run_skill import run
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        mock_parse.return_value = RunIntent(spec_id="012", mode="semi")
+
+        with pytest.raises(
+            RunContextError,
+            match=(
+                f"spec directory for 012 was not found from orchestration root "
+                f"{workspace.resolve()}"
+            ),
+        ):
+            run(
+                "spec 012 semi",
+                provider=MagicMock(),
+                gitops=MagicMock(),
+                base_dir=tmp_path,
+                orchestration_root=workspace,
+            )
+
+        mock_find_spec_dir.assert_called_once_with("012", workspace.resolve())
+        mock_coordinator_cls.assert_not_called()
 
 
 @pytest.mark.unit
@@ -419,7 +516,8 @@ class TestRunSkillAutoLand:
             intent,
             {"default": result},
             comparison,
-            base_dir="/tmp/nonexistent",
+            workspace_root=Path("/tmp/nonexistent"),
+            spec_dir=None,
         )
 
         captured = capsys.readouterr()
@@ -464,7 +562,8 @@ class TestRunSkillAutoLand:
             intent,
             {"default": result},
             comparison,
-            base_dir="/tmp/nonexistent",
+            workspace_root=Path("/tmp/nonexistent"),
+            spec_dir=None,
         )
 
         captured = capsys.readouterr()
@@ -526,7 +625,8 @@ class TestRunSkillAutoLand:
             intent,
             {"default": result},
             comparison,
-            base_dir="/tmp/nonexistent",
+            workspace_root=Path("/tmp/nonexistent"),
+            spec_dir=None,
         )
 
         captured = capsys.readouterr()
@@ -565,7 +665,8 @@ class TestRunSkillAutoLand:
             intent,
             {"default": result},
             comparison,
-            base_dir="/tmp/nonexistent",
+            workspace_root=Path("/tmp/nonexistent"),
+            spec_dir=None,
         )
 
         captured = capsys.readouterr()
@@ -615,7 +716,8 @@ class TestRunSkillAutoLand:
             intent,
             {"default": result},
             comparison,
-            base_dir="/tmp/nonexistent",
+            workspace_root=Path("/tmp/nonexistent"),
+            spec_dir=None,
         )
 
         captured = capsys.readouterr()
@@ -660,7 +762,8 @@ class TestRunSkillAutoLand:
             intent,
             {"default": result},
             comparison,
-            base_dir="/tmp/nonexistent",
+            workspace_root=Path("/tmp/nonexistent"),
+            spec_dir=None,
         )
 
         captured = capsys.readouterr()
@@ -719,7 +822,7 @@ class TestRunSkillAutoLand:
             "summary": {"converged": 0, "failed": 1, "total_tokens": 100},
         }
 
-        _print_delivery_summary(intent, {"default": result}, comparison, str(tmp_path))
+        _print_delivery_summary(intent, {"default": result}, comparison, tmp_path, spec_dir)
 
         captured = capsys.readouterr()
         assert "recommended action:" in captured.err
@@ -793,7 +896,7 @@ class TestRunSkillAutoLand:
             "summary": {"converged": 0, "failed": 1, "total_tokens": 100},
         }
 
-        _print_delivery_summary(intent, {"default": result}, comparison, str(tmp_path))
+        _print_delivery_summary(intent, {"default": result}, comparison, tmp_path, None)
 
         captured = capsys.readouterr()
         assert "suggested answers:" in captured.err
@@ -864,7 +967,7 @@ class TestRunSkillAutoLand:
             "summary": {"converged": 0, "failed": 1, "total_tokens": 100},
         }
 
-        _print_delivery_summary(intent, {"default": result}, comparison, str(tmp_path))
+        _print_delivery_summary(intent, {"default": result}, comparison, tmp_path, None)
 
         captured = capsys.readouterr()
         assert "stopped: external_spec_artifact_missing" in captured.err
