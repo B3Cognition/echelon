@@ -83,6 +83,10 @@ def _resolve_run_roots(
     """Return (harness_root, workspace_root)."""
 ```
 
+Invalid explicit context raises a dedicated `RunContextError(ValueError)` so
+CLI boundaries can distinguish configuration/root failures from coordinator,
+provider, and GitOps failures.
+
 Its result is equivalent to:
 
 ```text
@@ -95,10 +99,11 @@ workspace_root = (
 ```
 
 When `orchestration_root` is explicitly supplied and is not a directory,
-`run()` raises `ValueError("orchestration root is not a directory: <path>")`
+`run()` raises `RunContextError("orchestration root is not a directory:
+<path>")`
 before coordinator construction. It never falls back to `base_dir`. After
 intent parsing, an explicit valid root without the selected spec raises
-`FileNotFoundError("spec directory for <spec-id> was not found from
+`RunContextError("spec directory for <spec-id> was not found from
 orchestration root <path>")`, also before coordinator construction. Spec
 lookup, run-history reads/writes, and auto-land use the same resolved
 `workspace_root` for the lifetime of the call.
@@ -117,6 +122,20 @@ The delivery coordinator and harness state continue using `base_dir`; spec
 history discovery and auto-land use `orchestration_root`. The CLI adapters,
 not `land()`, remain responsible for interpreting `ECHELON_POLYREPO_ROOT` and
 passing the resolved value.
+
+All CLI boundaries catch `RunContextError`, print a controlled message without
+a traceback, and exit 1. The existing delivery run/resume commands route it
+through their harness-error output and blocked-state handling. The standalone
+`harness.__main__` and legacy `resume_skill` adapters print:
+
+```text
+HARNESS — INVALID ORCHESTRATION CONTEXT
+spec          <spec-id>
+problem       <RunContextError message>
+next step     run delivery from the workspace that owns specs/, or repair the supplied orchestration root
+```
+
+Library callers continue receiving the typed exception.
 
 Auto-land will call:
 
@@ -141,6 +160,26 @@ not let independent target workers race to mark the shared spec `landed`.
 Instead, auto-land is skipped with an explicit warning that aggregate
 multi-target landing is unsupported. Delivery convergence remains recorded;
 no target branch or lifecycle status is mutated by that skipped auto-land.
+
+Detection happens after canonical spec resolution and only after convergence
+when auto-merge would otherwise run:
+
+```text
+targets = read_targets(spec_dir)
+if len(targets) > 1:
+    skip land()
+```
+
+Each independently dispatched target worker emits exactly one warning (the
+orchestrator's existing `[target]` prefix identifies its source):
+
+```text
+auto-land skipped for spec <spec-id>: aggregate multi-target landing is unsupported (<count> targets)
+```
+
+The worker still returns its converged delivery result. Suppressing duplicate
+warnings at the parent orchestrator would require a new aggregate result
+protocol and is outside this fix.
 
 ## Spec Discovery And Diagnostics
 
@@ -202,6 +241,8 @@ warning described above. No target worker calls `land()`.
 - Multi-target auto-land is skipped explicitly rather than raising
   `land requires exactly one target repo for normal specs` inside each target
   worker.
+- CLI entry points render `RunContextError` without a Python traceback and exit
+  1; library entry points receive the exception unchanged.
 
 ## Tests
 
@@ -244,7 +285,10 @@ warning described above. No target worker calls `land()`.
   `workspace/runs/targets/prosaic`, proving the fix does not redirect target
   harness state into the orchestration root.
 - Assert a two-target canonical spec does not call `land()` from either target
-  worker and emits the aggregate-landing unsupported warning.
+  worker and that each modeled worker emits the exact aggregate-landing
+  unsupported warning once.
+- CLI context failures exit 1 without a traceback; direct library calls raise
+  `RunContextError`.
 
 ## Live Validation
 
@@ -266,27 +310,41 @@ spec selector = 911
 
 The smoke check succeeds only when it resolves
 `specs/911-new-prosaic-distribution-feature`, reads `ready_to_land`, leaves the
-target checkout HEAD and diff byte-for-byte unchanged, and does not emit the
-`(missing)` diagnostic.
+target checkout HEAD and diff byte-for-byte unchanged. It does not claim to
+exercise landing diagnostics; the automated branchless-landing tests own the
+`(missing)` versus spec-directory-not-found assertions.
 
 Full live landing is a separate, explicitly authorized validation step after
-the dirty checkout is resolved without losing its changes. Before that step,
-record:
+the target checkout is clean. Resolving the existing changes is a user-owned
+prerequisite, not part of this fix. The user may preserve them by committing
+them or by creating a named stash; Echelon will not choose or perform either
+operation implicitly. Before landing, require `git status --porcelain` to be
+empty and record:
 
 - the configured target default branch and its remote-tracking commit;
 - the verified delivery branch and commit;
 - harness mirror default-branch commit;
 - orchestration spec status and orchestration repository commit;
 - registered harness worktrees;
-- target checkout HEAD plus hashes of its staged, unstaged, and untracked
-  state.
+- target checkout HEAD;
+- either the preservation commit hash or the named stash reference used for
+  the prior dirty changes.
 
 Full landing succeeds only when the configured remote default branch contains
 the verified commit, the canonical orchestration spec advances to `landed`,
-and the preserved target checkout changes remain intact. A fetch failure caused
-by the stale legacy `iter-4` worktree is reported as an independent live-test
-blocker, not as a regression in root propagation or diagnostics. Neither stale
-worktree cleanup nor dirty-checkout resolution is performed by this fix.
+and the preservation evidence remains valid: a preservation commit is an
+ancestor of the landed default branch, or a named stash still resolves to the
+same object. A fetch failure caused by the stale legacy `iter-4` worktree is
+reported as an independent live-test blocker, not as a regression in root
+propagation or diagnostics. Neither stale worktree cleanup nor dirty-checkout
+resolution is performed by this fix.
+
+`_finish_landing()` retains its current lifecycle persistence semantics:
+`write_status()` updates the canonical orchestration `spec.md` frontmatter and
+human-readable status to `landed`, but does not commit or push the orchestration
+repository. For this fix, “advances to landed” means that the canonical file is
+updated on disk and `read_frontmatter()` returns `landed`. Automatic commit or
+publication of that lifecycle mutation requires a separate design.
 
 ## Documentation
 
