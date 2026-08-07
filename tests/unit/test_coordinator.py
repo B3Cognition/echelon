@@ -195,6 +195,58 @@ class TestDeliveryStateMigration:
         visual.assert_called_once()
         assert result.status == "converged"
 
+    @pytest.mark.parametrize(
+        ("terminal_status", "delivery_status"),
+        [
+            ("converged", "converged"),
+            ("failed", "failed"),
+            ("cancelled_by_coordinator", "cancelled"),
+        ],
+    )
+    def test_terminal_state_is_returned_without_restarting_delivery(
+        self,
+        tmp_path: Path,
+        terminal_status: str,
+        delivery_status: str,
+    ) -> None:
+        coordinator = _make_coordinator(tmp_path)
+        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store.initialize("terminal-run", "semi")
+        store.transition("running")
+        if terminal_status == "converged":
+            store.transition("verified")
+            store.transition("finalizing")
+        store.transition(terminal_status)
+        state = store.read()
+        state.update(
+            {
+                "termination_reason": "persisted-terminal-reason",
+                "outer_iter": 7,
+                "inner_iter": 3,
+                "tokens_used": 123,
+                "pr_url": "https://example.test/pr/42",
+                "branch": "harness/spec-001",
+            }
+        )
+        store.write(state)
+        persisted = store.read()
+
+        with patch("harness.coordinator.RalphController") as implementation:
+            result = coordinator.start(
+                RunIntent(spec_id="spec-001", max_outer=1, max_inner=1)
+            )[0]
+
+        implementation.assert_not_called()
+        assert store.read() == persisted
+        assert result.status == delivery_status
+        assert result.termination_reason == "persisted-terminal-reason"
+        assert result.outer_iterations == 7
+        assert result.inner_iterations == 3
+        assert result.tokens_used == 123
+        assert result.pr_url == "https://example.test/pr/42"
+        assert result.branch == "harness/spec-001"
+        assert result.blocked_phase is None
+
 
 @pytest.mark.unit
 class TestCompareResults:

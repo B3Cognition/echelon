@@ -90,3 +90,53 @@ Result: `12 passed, 178 deselected in 1.50s`.
 `tests/e2e/test_constitution_blocking.py::TestConstitutionBlocking::test_banzai_mode_continues_past_spec_guard`
 (the controller returns `blocked/outer_cap`; this task does not touch that
 spec-guard path).
+
+## Fix round 1
+
+### Findings addressed
+
+- Non-reset delivery invocations now return an existing terminal state
+  (`converged`, `failed`, or `cancelled_by_coordinator`) as a terminal
+  `DeliveryResult` before migration, initialization, or any phase-controller
+  construction. The stored record is left byte-for-byte unchanged.
+- `StateStore.transition()` now rejects `updates` containing `status`, so the
+  explicit target status cannot be silently overridden before validation/write.
+
+### TDD evidence
+
+#### RED
+
+```bash
+.venv/bin/pytest -q tests/unit/test_state_store_logic.py -k 'override_target_status'
+```
+
+Result: 1 failure. `updates={"status": "converged"}` overrode the requested
+`running` target and attempted the malformed `initialized -> converged` write.
+
+#### GREEN
+
+```bash
+.venv/bin/pytest -q tests/unit/test_state_store_logic.py -k 'override_target_status'
+.venv/bin/pytest -q tests/unit/test_coordinator.py -k 'terminal_state_is_returned'
+```
+
+Result: `1 passed` and `3 passed`, respectively. The terminal-state test uses
+the public coordinator `start()` entry path, covers all three terminal states,
+asserts persisted outcome fields, no phase-controller call, unchanged state,
+and `blocked_phase is None`.
+
+### Verification
+
+```bash
+.venv/bin/pytest -q tests/unit/test_state_machine.py tests/unit/test_state_store_logic.py tests/integration/test_state_store_atomicity.py tests/integration/test_state_store_lockfile.py tests/unit/test_coordinator.py
+```
+
+Result: `78 passed in 0.87s`.
+
+```bash
+.venv/bin/pytest -q tests/unit/test_run_skill.py
+```
+
+Result: `24 passed in 0.38s`.
+
+`git diff --check` returned no whitespace errors.

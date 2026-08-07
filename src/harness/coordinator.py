@@ -360,6 +360,27 @@ class StrategyCoordinator:
             return "finalization"
         return "implementation"
 
+    @staticmethod
+    def _terminal_delivery_result(state: Dict[str, Any]) -> DeliveryResult:
+        """Return an existing terminal delivery outcome without mutating state."""
+        persisted_status = str(state.get("status"))
+        status = {
+            "converged": "converged",
+            "failed": "failed",
+            "cancelled_by_coordinator": "cancelled",
+        }[persisted_status]
+        return DeliveryResult(
+            status=status,
+            termination_reason=str(state.get("termination_reason") or status),
+            outer_iterations=int(state.get("outer_iter") or 0),
+            inner_iterations=int(state.get("inner_iter") or 0),
+            pr_url=state.get("pr_url"),
+            tokens_used=int(state.get("tokens_used") or 0),
+            final_verify=None,
+            blocked_phase=None,
+            branch=state.get("branch") or state.get("branch_name"),
+        )
+
     def _run_strategy(
         self,
         intent: RunIntent,
@@ -410,6 +431,12 @@ class StrategyCoordinator:
 
         try:
             existing = state_store.read()
+            if (
+                not intent.reset
+                and existing.get("status")
+                in {"converged", "failed", "cancelled_by_coordinator"}
+            ):
+                return self._terminal_delivery_result(existing)
             llm_provider = (
                 AICodingCliProvider(self._config)
                 if self._config.llm.enabled

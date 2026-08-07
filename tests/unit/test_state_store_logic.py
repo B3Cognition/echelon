@@ -113,6 +113,14 @@ class TestStateStoreInvariants:
         with pytest.raises(InvalidTransitionError, match="blocked_phase"):
             store.transition("blocked")
 
+    def test_transition_updates_cannot_override_target_status(self, tmp_path: Path) -> None:
+        store = self._make_store(tmp_path)
+
+        with pytest.raises(ValueError, match="status"):
+            store.transition("running", updates={"status": "converged"})
+
+        assert store.read()["status"] == "initialized"
+
     def test_initializes_delivery_state_v2_checkpoint_fields(self, tmp_path: Path) -> None:
         state = self._make_store(tmp_path).read()
 

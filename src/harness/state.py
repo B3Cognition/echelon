@@ -402,6 +402,8 @@ class StateStore:
         self, new_status: str, *, updates: Dict[str, Any] | None = None
     ) -> Dict[str, Any]:
         """Atomically transition status and merge any checkpoint updates."""
+        if updates and "status" in updates:
+            raise ValueError("transition updates cannot contain status")
         data = self.read()
         data["status"] = new_status
         if updates:
