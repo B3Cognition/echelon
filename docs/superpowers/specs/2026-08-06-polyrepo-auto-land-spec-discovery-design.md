@@ -34,6 +34,11 @@ They must not be represented by one overloaded `base_dir` value.
 - Preserve the Git-boundary safety behavior of `find_spec_dir()`.
 - Distinguish "spec directory not found" from "spec found without a status"
   in branchless landing diagnostics.
+- Give Phase 1 verification and end-to-end delivery convergence distinct,
+  durable meanings so Phase 3 cannot leave a failed delivery recorded as
+  converged.
+- Give safe review providers explicit access to the canonical spec outputs and
+  target-harness status file they are required to write.
 - Preserve current behavior for single-repository delivery runs.
 - Add regression coverage for the observed Prosaic failure path.
 
@@ -41,7 +46,8 @@ They must not be represented by one overloaded `base_dir` value.
 
 - Cleaning the stale `harness/911/default/iter-4` worktree.
 - Resolving or discarding the dirty Prosaic authoring checkout.
-- Changing fulfillment, convergence, branch-selection, or merge semantics.
+- Changing fulfillment, branch-selection, or merge semantics outside the
+  delivery-state clarification defined below.
 - Making `find_spec_dir()` cross Git boundaries.
 - Changing PR-tool discovery or degraded no-PR behavior.
 - Implementing aggregate auto-land for specs with multiple implementation
@@ -253,13 +259,118 @@ skill exit, malformed/missing status, or status other than
 `review_fix_queued` fails the review cycle without marking comments seen,
 resolving threads, or requesting another review.
 
-Ralph preserves a converged delivery worktree even when convergence happens
+Ralph preserves a verified delivery worktree even when verification happens
 before the final outer iteration so Phase 2, Phase 3, and landing can consume
 it. The review skill treats that worktree as source context only and never
 checks out, switches, or stashes its branch. It writes review artifacts to the
 explicit canonical `spec_dir`. Phase 1 re-entry reads sorted
 `review-fix-*.md` files directly from that directory; it does not run Git
 commands against the target harness root.
+
+### Delivery State Semantics
+
+`converged` is an end-to-end delivery status. Phase 1 must not use the same
+status for its narrower implementation result. New runs use these meanings:
+
+| Status | Owner | Meaning |
+| --- | --- | --- |
+| `running` | Phase 1 | Implementation or review-fix work is executing. |
+| `verified` | Phase 1 | The current implementation passed required verification; downstream enabled phases are not yet complete. |
+| `reviewing` | coordinator / Phase 3 | Verified implementation is undergoing automated PR review or merge. |
+| `blocked` | current phase | Recovery or user action is required; `blocked_phase` identifies `implementation` or `review`. |
+| `converged` | coordinator | Every enabled delivery phase completed successfully. |
+
+The normal paths are:
+
+```text
+review disabled: running -> verified -> converged
+review enabled:  running -> verified -> reviewing -> converged
+review failure:  reviewing -> blocked -> reviewing
+review fixes:    reviewing -> running -> verified -> reviewing
+```
+
+The state machine admits only these new transitions:
+
+```text
+running   -> verified
+verified  -> reviewing | converged
+reviewing -> running | blocked | converged
+blocked   -> reviewing  when blocked_phase == review
+blocked   -> running    when blocked_phase == implementation
+```
+
+`LoopResult` accepts `verified` as a Phase 1 result. `reviewing` is durable
+coordinator state, not a terminal result returned to the run caller.
+
+`RalphController` returns and persists `verified` after final implementation
+verification. It no longer writes the durable delivery status `converged` or
+advances the canonical spec to `ready_to_land`. `StrategyCoordinator` owns
+those end-to-end actions after all configured downstream phases succeed. This
+keeps auto-land and lifecycle advancement tied to overall convergence.
+
+A Phase 3 timeout, missing worktree, provider failure, malformed/missing
+status, rejected status, exhausted review loop, or failed merge persists:
+
+```json
+{
+  "status": "blocked",
+  "blocked_phase": "review",
+  "termination_reason": "blocker_escalation"
+}
+```
+
+`echelon delivery continue` recognizes this as recoverable. It transitions
+directly back to `reviewing` and retries Phase 3 without rerunning Phase 1 when
+no review-fix tasks were queued. When Phase 3 returns `review_fix_queued`, the
+coordinator transitions to `running`, executes the queued Phase 1 work, and
+requires a new `verified` result before returning to `reviewing`.
+
+The coordinator persists the active `pr_url`, strategy, build id, and
+`blocked_phase` before returning. Review-only continuation uses those durable
+values plus the registered target worktree; it does not infer a different
+workspace or silently restart implementation.
+
+Implementation blockers keep `blocked_phase: implementation` and retain the
+existing Phase 1 resume path. State transitions are validated explicitly;
+there is no general `converged -> blocked` transition. Existing persisted
+`converged` states are treated as completed legacy deliveries and are never
+retroactively reopened.
+
+### Safe Review Provider Scope
+
+The review provider continues to execute with the delivery worktree as its
+working directory. Before invocation, `ReviewLoopController` resolves the
+canonical `spec_dir`, the build-specific review status file, and the bounded
+set of possible review artifact names for the current comment batch. It passes
+request metadata with:
+
+```text
+tool_read_roots:
+  - <delivery-worktree>
+  - <canonical-spec-dir>
+tool_write_paths:
+  - <canonical-spec-dir>/tasks.md
+  - <canonical-spec-dir>/review-fix-<next>...<next+comment-count-1>.md
+  - <target-harness>/runs/<build-id>/state/<strategy>-review-status.json
+```
+
+The possible review-fix range is bounded by the number of input comments;
+there cannot be more diagnosed groups than comments. No orchestration
+workspace root or harness root is granted wholesale when the backend supports
+exact paths.
+
+Claude consumes the exact read/write rules through its existing safe-mode
+metadata path. Codex maps external write files to the narrowest supported
+`--add-dir` parents because its CLI grants directories rather than individual
+files; the worktree remains its primary workspace. Other backends keep their
+existing enforcement, and the metadata remains available to backends that
+already implement scoped paths. The unsafe-host-execution bypass remains
+disabled.
+
+Tests use providers that inspect the metadata and create only an allowed
+status/artifact path. A fake provider that returns success without writing a
+valid status must still produce a blocked review result; it cannot satisfy the
+contract by exit code alone.
 
 ### Single-Target Boundary
 
@@ -351,6 +462,11 @@ warning described above. No target worker calls `land()`.
 - Multi-target auto-land is skipped explicitly rather than raising
   `land requires exactly one target repo for normal specs` inside each target
   worker.
+- Phase 3 failures persist `blocked` with `blocked_phase: review`; they never
+  leave the durable overall status at `converged` or require a fresh delivery
+  run for recovery.
+- A successful provider exit without an allowed, valid
+  `review_fix_queued` status file is a blocked Phase 3 result.
 - CLI entry points render `RunContextError` without a Python traceback and exit
   1; library entry points receive the exception unchanged.
 
@@ -376,6 +492,20 @@ warning described above. No target worker calls `land()`.
   start and reports both selector and searched root.
 - `_resolve_run_roots()` returns identical roots for a single-repository call
   and distinct normalized roots for a polyrepo call.
+
+### Delivery State
+
+- Phase 1 success returns and persists `verified`, not `converged`.
+- With review disabled, the coordinator advances `verified` to `converged` and
+  only then advances lifecycle readiness.
+- With review enabled, the coordinator persists `reviewing` before invoking
+  Phase 3 and persists `converged` only after review/merge succeeds.
+- Every Phase 3 failure path persists `blocked`, `blocked_phase: review`, and a
+  recoverable reason; `delivery continue` retries Phase 3 without Phase 1 when
+  no review-fix tasks exist.
+- `review_fix_queued` re-enters Phase 1, which must return a new `verified`
+  result before another review cycle.
+- Legacy persisted `converged` states remain terminal and readable.
 
 ### Landing Diagnostics
 
@@ -412,8 +542,13 @@ warning described above. No target worker calls `land()`.
   separately, executes the review provider in the target worktree, stores
   review status under the build-specific harness state, and injects canonical
   review-fix content into Phase 1 without Git reads from the harness root.
-- Missing review worktrees fail without invoking the provider, and an early
-  converged Ralph iteration preserves its registered delivery worktree.
+- The provider request grants the delivery worktree and canonical spec as read
+  roots, plus only `tasks.md`, the bounded review-fix candidates, and the
+  build-specific status file as write outputs. Claude exact-file rules and
+  Codex additional-directory arguments are asserted separately.
+- Missing review worktrees fail without invoking the provider, persist a
+  recoverable review block, and an early verified Ralph iteration preserves
+  its registered delivery worktree.
 
 ## Live Validation
 
