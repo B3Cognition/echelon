@@ -39,15 +39,16 @@ falling back to numeric branch discovery:
 2. Read strategy state files from that build and require exactly one successful
    terminal delivery candidate. Zero or multiple candidates fail closed.
 3. Derive that candidate's recorded strategy and outer iteration.
-4. Construct `harness/<spec-alias>/<strategy>/iter-<outer_iter>`.
+4. Construct the branch from the `harness/` prefix, spec alias, strategy, and
+   recorded outer iteration.
 5. Require that branch to exist in the target repository.
 6. Read the canonical fulfillment report's `verified_commit` and require it to
    be an ancestor of the candidate branch.
 
-If current-build evidence is absent or is a genuinely older state shape that
-cannot identify a candidate, landing may use the existing legacy fallback. If
-current-build evidence exists but conflicts with the branch or verified commit,
-landing fails closed instead of choosing a different iteration.
+If current-build evidence is absent, landing may use the existing legacy
+fallback. If a current-build marker exists but its state cannot identify
+exactly one converged candidate, or conflicts with the branch or verified
+commit, landing fails closed instead of choosing a different iteration.
 
 ### Landing execution safety
 
