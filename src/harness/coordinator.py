@@ -82,6 +82,25 @@ def _path_tuple(value: object) -> tuple[Path, ...]:
     return tuple(Path(item) for item in value if isinstance(item, Path))
 
 
+def _pending_review_reentry(value: object) -> dict[str, object] | None:
+    """Validate the persisted review handoff before resuming an exact re-entry."""
+    if not isinstance(value, dict):
+        return None
+    attempt_id = value.get("attempt_id")
+    task_ids = value.get("task_ids")
+    artifact_paths = value.get("artifact_paths")
+    if (
+        not isinstance(attempt_id, str)
+        or not attempt_id
+        or not isinstance(task_ids, list)
+        or not all(isinstance(task_id, str) for task_id in task_ids)
+        or not isinstance(artifact_paths, list)
+        or not all(isinstance(path, str) for path in artifact_paths)
+    ):
+        return None
+    return value
+
+
 def _derive_target_task_ids(
     *,
     tasks_file: Path | None,
@@ -699,8 +718,28 @@ class StrategyCoordinator:
             )
             existing = self._migrate_delivery_state(state_store, llm_provider)
             existing_status = existing.get("status")
+            raw_pending_reentry = existing.get("pending_review_reentry")
+            if (
+                raw_pending_reentry is not None
+                and _pending_review_reentry(raw_pending_reentry) is None
+            ):
+                implementation = self._implementation_from_state(existing)
+                return self._persist_phase_block(
+                    state_store,
+                    phase="review",
+                    reason="invalid_pending_review_reentry",
+                    implementation=implementation,
+                    outer_iterations=implementation.outer_iterations,
+                    tokens_used=implementation.tokens_used,
+                )
+            pending_completed_before_resume = (
+                existing_status == "verified"
+                and _pending_review_reentry(existing.get("pending_review_reentry"))
+                is not None
+            )
             should_resume_running = (
                 not intent.reset
+                and not pending_completed_before_resume
                 and existing_status in {
                     "running", "interrupted", "verified", "validating",
                     "reviewing", "finalizing",
@@ -749,6 +788,11 @@ class StrategyCoordinator:
                 )
                 existing["implementation_target"] = implementation_target
                 existing["declared_targets"] = declared_targets
+                pending = _pending_review_reentry(existing.get("pending_review_reentry"))
+                if pending is not None:
+                    for task_id in pending["task_ids"]:
+                        if task_id not in target_task_ids:
+                            target_task_ids.append(task_id)
                 existing["target_task_ids"] = target_task_ids
                 state_store.write(existing)
 
@@ -825,7 +869,7 @@ class StrategyCoordinator:
                     "review": "reviewing",
                     "finalization": "finalizing",
                 }[resume_phase])
-            else:
+            elif not pending_completed_before_resume:
                 state_store.initialize(
                     run_id=run_id,
                     mode=intent.mode,
@@ -884,15 +928,64 @@ class StrategyCoordinator:
                 build_id=self._build_id,
             )
 
+            pending_reentry = _pending_review_reentry(
+                state_store.read().get("pending_review_reentry")
+            )
+            if pending_reentry is not None and state_store.read().get("status") == "verified":
+                completion_controller = ReviewLoopController(
+                    gitops=self._gitops,
+                    config=self._config,
+                    spec_id=intent.spec_id,
+                    strategy_id=strategy_id,
+                    base_dir=str(self._base_dir),
+                    build_id=self._build_id,
+                    spec_dir=spec_dir,
+                )
+                if not completion_controller.complete_published_batch(
+                    str(state_store.read().get("pr_url") or ""),
+                    str(pending_reentry["attempt_id"]),
+                ):
+                    implementation = self._implementation_from_state(state_store.read())
+                    return self._persist_phase_block(
+                        state_store,
+                        phase="review",
+                        reason="review_side_effects_pending",
+                        implementation=implementation,
+                        outer_iterations=implementation.outer_iterations,
+                        tokens_used=implementation.tokens_used,
+                    )
+                state_store.transition(
+                    "verified", updates={"pending_review_reentry": None}
+                )
+                pending_reentry = None
+
             resumed_phase = (
                 self._resume_phase(existing)
                 if should_resume_running or should_resume_blocked
                 else "implementation"
             )
+            if pending_completed_before_resume:
+                resumed_phase = self._resume_phase(state_store.read())
+            if pending_reentry is not None:
+                resumed_phase = "implementation"
+                current_status = state_store.read().get("status")
+                if current_status != "running":
+                    state_store.transition(
+                        "running", updates={"pending_review_reentry": pending_reentry}
+                    )
             current_phase = self._run_enabled_phases(
                 list(state_store.read().get("enabled_phases") or ["implementation"]),
                 resumed_phase,
             )[0]
+            if pending_reentry is not None:
+                build_prompt = self._build_reentry_prompt(
+                    build_prompt,
+                    intent.spec_id,
+                    spec_dir=spec_dir,
+                    published_artifacts=tuple(
+                        Path(path) for path in pending_reentry["artifact_paths"]
+                    ),
+                )
             if current_phase == "implementation":
                 implementation_result = controller.run_loop(
                     max_outer=intent.max_outer,
@@ -929,6 +1022,32 @@ class StrategyCoordinator:
                 )
                 if checkpoint_block is not None:
                     return checkpoint_block
+                if pending_reentry is not None:
+                    completion_controller = ReviewLoopController(
+                        gitops=self._gitops,
+                        config=self._config,
+                        spec_id=intent.spec_id,
+                        strategy_id=strategy_id,
+                        base_dir=str(self._base_dir),
+                        build_id=self._build_id,
+                        spec_dir=spec_dir,
+                    )
+                    if not completion_controller.complete_published_batch(
+                        implementation_result.pr_url or "",
+                        str(pending_reentry["attempt_id"]),
+                    ):
+                        return self._persist_phase_block(
+                            state_store,
+                            phase="review",
+                            reason="review_side_effects_pending",
+                            implementation=implementation_result,
+                            outer_iterations=implementation_outer_iterations,
+                            tokens_used=implementation_tokens,
+                        )
+                    state_store.transition(
+                        "verified", updates={"pending_review_reentry": None}
+                    )
+                    pending_reentry = None
 
             visual_result: VisualResult | None = None
             visual_reentry_block: DeliveryResult | None = None
@@ -1121,11 +1240,21 @@ class StrategyCoordinator:
                                     "review_result": review_result,
                                 }
                             )
-                        review_result = review_controller.run_loop(
-                            pr_url=pr_url,
-                            worktree_path=worktree_path,
-                            token_budget=budget,
-                        )
+                        try:
+                            review_result = review_controller.run_loop(
+                                pr_url=pr_url,
+                                worktree_path=worktree_path,
+                                token_budget=budget,
+                            )
+                        except Exception as exc:
+                            logger.warning("Review boundary failed: %s", exc)
+                            review_result = ReviewResult(
+                                status="blocked",
+                                termination_reason="review_boundary_failed",
+                                iterations=0,
+                                pr_url=pr_url,
+                                tokens_used=0,
+                            )
                         review_iterations += review_result.iterations
                         review_tokens += review_result.tokens_used
                         if review_result.status != "review_fix_queued":
@@ -1145,7 +1274,45 @@ class StrategyCoordinator:
                         published_artifacts = _path_tuple(
                             getattr(review_controller, "published_artifacts", ())
                         )
-                        self._extend_target_task_ids(state_store, published_task_ids)
+                        attempt_id = getattr(
+                            review_controller, "pending_batch_attempt_id", None
+                        )
+                        if not isinstance(attempt_id, str) or not attempt_id:
+                            review_result = ReviewResult(
+                                status="blocked",
+                                termination_reason="review_reentry_checkpoint_failed",
+                                iterations=review_result.iterations,
+                                pr_url=pr_url,
+                                tokens_used=review_result.tokens_used,
+                            )
+                            return RepairAttempt(
+                                output={
+                                    "result": implementation_result,
+                                    "review_result": review_result,
+                                }
+                            )
+                        try:
+                            self._checkpoint_review_reentry(
+                                state_store,
+                                attempt_id=attempt_id,
+                                task_ids=published_task_ids,
+                                artifacts=published_artifacts,
+                            )
+                        except (OSError, ValueError) as exc:
+                            logger.warning("Could not checkpoint review re-entry: %s", exc)
+                            review_result = ReviewResult(
+                                status="blocked",
+                                termination_reason="review_reentry_checkpoint_failed",
+                                iterations=review_result.iterations,
+                                pr_url=pr_url,
+                                tokens_used=review_result.tokens_used,
+                            )
+                            return RepairAttempt(
+                                output={
+                                    "result": implementation_result,
+                                    "review_result": review_result,
+                                }
+                            )
                         reentry_prompt = self._build_reentry_prompt(
                             build_prompt,
                             intent.spec_id,
@@ -1188,6 +1355,26 @@ class StrategyCoordinator:
                             state_store.transition(
                                 "verified",
                                 updates=checkpoint_updates,
+                            )
+                            if not review_controller.complete_published_batch(
+                                pr_url, attempt_id
+                            ):
+                                review_result = ReviewResult(
+                                    status="blocked",
+                                    termination_reason="review_side_effects_pending",
+                                    iterations=review_result.iterations,
+                                    pr_url=pr_url,
+                                    tokens_used=review_result.tokens_used,
+                                )
+                                return RepairAttempt(
+                                    output={
+                                        "result": implementation_result,
+                                        "review_result": review_result,
+                                    }
+                                )
+                            state_store.transition(
+                                "verified",
+                                updates={"pending_review_reentry": None},
                             )
                         visual_result = run_visual_phase()
                         return RepairAttempt(
@@ -1469,6 +1656,36 @@ class StrategyCoordinator:
         status = current.get("status")
         if isinstance(status, str):
             state_store.transition(status, updates={"target_task_ids": ordered})
+
+    @staticmethod
+    def _checkpoint_review_reentry(
+        state_store: StateStore,
+        *,
+        attempt_id: str,
+        task_ids: tuple[str, ...],
+        artifacts: tuple[Path, ...],
+    ) -> None:
+        """Persist the complete published batch before Phase 1 can restart."""
+        current = state_store.read()
+        existing = current.get("target_task_ids", [])
+        ordered = [value for value in existing if isinstance(value, str)]
+        for task_id in task_ids:
+            if task_id not in ordered:
+                ordered.append(task_id)
+        status = current.get("status")
+        if not isinstance(status, str):
+            raise OSError("review re-entry state has no status")
+        state_store.transition(
+            status,
+            updates={
+                "target_task_ids": ordered,
+                "pending_review_reentry": {
+                    "attempt_id": attempt_id,
+                    "task_ids": list(task_ids),
+                    "artifact_paths": [str(path) for path in artifacts],
+                },
+            },
+        )
 
     def _cancel_peers(self, converged_sid: str, all_strategies: List[str]) -> None:
         """Set cancel_requested on all peer strategies (kill_losers)."""

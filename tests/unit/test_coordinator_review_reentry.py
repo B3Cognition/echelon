@@ -136,6 +136,37 @@ class TestCoordinatorReviewReentry:
             updates={"target_task_ids": ["T-001", "T-003", "T-002", "T-004"]},
         )
 
+    def test_review_reentry_checkpoint_preserves_exact_published_batch(self, tmp_path):
+        """A crash after review returns must leave the exact re-entry recoverable."""
+        coord = StrategyCoordinator(
+            provider=MagicMock(), gitops=MagicMock(), config=_config(tmp_path),
+            base_dir=str(tmp_path),
+        )
+        state_store = MagicMock()
+        artifact = tmp_path / "specs" / "005-my-spec" / "review-fix-2.md"
+        state_store.read.return_value = {
+            "status": "reviewing", "target_task_ids": ["T-001"],
+        }
+
+        coord._checkpoint_review_reentry(
+            state_store,
+            attempt_id="attempt-1",
+            task_ids=("T-002", "T-003", "T-004"),
+            artifacts=(artifact,),
+        )
+
+        state_store.transition.assert_called_once_with(
+            "reviewing",
+            updates={
+                "target_task_ids": ["T-001", "T-002", "T-003", "T-004"],
+                "pending_review_reentry": {
+                    "attempt_id": "attempt-1",
+                    "task_ids": ["T-002", "T-003", "T-004"],
+                    "artifact_paths": [str(artifact)],
+                },
+            },
+        )
+
     def test_reentry_run_loop_receives_review_content(self, tmp_path):
         """Coordinator passes injected prompt to RalphController on Phase 1 re-entry."""
         workspace = tmp_path / "workspace"
@@ -224,6 +255,8 @@ class TestCoordinatorReviewReentry:
             MockReview.return_value = review_instance
             review_instance.queued_task_ids = ("T-001", "T-002", "T-003")
             review_instance.published_artifacts = (spec_dir / "review-fix-1.md",)
+            review_instance.pending_batch_attempt_id = "attempt-1"
+            review_instance.complete_published_batch.return_value = True
 
             MockVisual.return_value.run_loop.side_effect = [
                 VisualResult("passed", "converged", 1, 3, VerifyResult(True, [])),

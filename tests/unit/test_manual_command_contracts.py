@@ -99,6 +99,10 @@ class TestManualCommandContracts:
         assert "review_staging_dir" in text
         assert "review_status_file" in text
         assert "tasks-append.md" in text
+        assert text.count('"review_task_id"') >= 3
+        assert "**Title:** RF7-T1" in text
+        assert "**Title:** RF7-T2" in text
+        assert "**Title:** RF7-T3" in text
         assert "gh api" not in text
         assert "glab api" not in text
         assert "```bash" not in text

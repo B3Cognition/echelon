@@ -16,7 +16,9 @@ import json
 import logging
 import os
 import re
+import stat
 import subprocess
+import tempfile
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -87,6 +89,8 @@ class _ReviewSkillResult:
     queued: bool
     queued_task_ids: tuple[str, ...] = ()
     published_artifacts: tuple[Path, ...] = ()
+    attempt_id: str | None = None
+    reason: str = "review_staging_failed"
 
 
 def _normalized_review_input(
@@ -113,21 +117,53 @@ def _normalized_review_input(
 
 def _load_review_agents(worktree: Path) -> dict[str, dict[str, object]]:
     """Load exactly the fixed read-only diagnostic agents from a worktree."""
-    agents_dir = worktree / ".claude" / "agents"
     agents: dict[str, dict[str, object]] = {}
     for name in _REVIEW_AGENT_NAMES:
-        path = agents_dir / f"{name}.md"
-        if path.is_symlink() or not path.is_file():
-            raise ReviewArtifactError(f"required review agent is missing or unsafe: {path}")
-        prompt = path.read_text(encoding="utf-8").strip()
+        prompt = _read_review_agent(worktree, name).strip()
         if not prompt:
-            raise ReviewArtifactError(f"required review agent is empty: {path}")
+            raise ReviewArtifactError(f"required review agent is empty: {name}")
         agents[name] = {
             "description": f"Read-only review triage: {name}",
             "prompt": prompt,
             "tools": ["Read"],
         }
     return agents
+
+
+def _read_review_agent(worktree: Path, name: str) -> str:
+    """Read one agent without allowing a symlink race to escape the worktree."""
+    flags = os.O_RDONLY
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    directory = getattr(os, "O_DIRECTORY", 0)
+    fds: list[int] = []
+    try:
+        root_fd = os.open(worktree, flags | directory)
+        fds.append(root_fd)
+        claude_fd = os.open(".claude", flags | directory | nofollow, dir_fd=root_fd)
+        fds.append(claude_fd)
+        agents_fd = os.open("agents", flags | directory | nofollow, dir_fd=claude_fd)
+        fds.append(agents_fd)
+        agent_fd = os.open(f"{name}.md", flags | nofollow, dir_fd=agents_fd)
+        fds.append(agent_fd)
+        if not stat.S_ISREG(os.fstat(agent_fd).st_mode):
+            raise ReviewArtifactError(f"required review agent is missing or unsafe: {name}")
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(agent_fd, 64 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        return b"".join(chunks).decode("utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ReviewArtifactError(
+            f"required review agent is missing or unsafe: {name}"
+        ) from exc
+    finally:
+        for fd in reversed(fds):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
 
 
 def _parse_dt(s: str) -> datetime:
@@ -237,10 +273,16 @@ class ReviewLoopController:
         self._status_file = self._state_file.with_name(
             f"{strategy_id}-review-status.json"
         )
-        self._seen_ids: Set[str] = self._load_seen_ids()
+        self._seen_state_error = False
+        try:
+            self._seen_ids = self._load_seen_ids()
+        except (OSError, ValueError):
+            self._seen_ids = set()
+            self._seen_state_error = True
         self.queued_task_ids: tuple[str, ...] = ()
         self.published_artifacts: tuple[Path, ...] = ()
         self._published_batch: PublishedReviewBatch | None = None
+        self.pending_batch_attempt_id: str | None = None
 
     # === Public entry point ===
 
@@ -307,7 +349,7 @@ class ReviewLoopController:
                     continue
                 return ReviewResult(
                     status="blocked",
-                    termination_reason="blocker_escalation",
+                    termination_reason=invocation.reason,
                     iterations=iteration + 1,
                     pr_url=pr_url,
                     tokens_used=tokens_used,
@@ -353,6 +395,10 @@ class ReviewLoopController:
             return _ReviewSkillResult(tokens_used=0, queued=False)
 
         state_dir = self._state_file.parent
+        if self._seen_state_error:
+            return _ReviewSkillResult(
+                tokens_used=0, queued=False, reason="review_staging_failed"
+            )
         try:
             with ReviewArtifactPublisher(spec_dir, state_dir, self._strategy_id) as publisher:
                 batch = publisher.recover_publication(self._seen_ids)
@@ -381,17 +427,8 @@ class ReviewLoopController:
                     publisher.mark_consumed(batch.attempt_id)
                     return _ReviewSkillResult(tokens_used=tokens_used, queued=False)
 
-                for comment_id in batch.comment_ids:
-                    self._seen_ids.add(comment_id)
-                self._save_seen_ids()
-                if self._rl.resolve_threads:
-                    comments_by_id = {comment.comment_id: comment for comment in comments}
-                    for comment_id in batch.comment_ids:
-                        comment = comments_by_id.get(comment_id)
-                        if comment is not None:
-                            self._resolve_thread(pr_url, comment.comment_id)
-                self._request_review(pr_url)
-                publisher.mark_consumed(batch.attempt_id)
+                self._record_pending_batch(batch)
+                self.pending_batch_attempt_id = batch.attempt_id
                 self.queued_task_ids = batch.task_ids
                 self.published_artifacts = batch.artifact_paths
                 return _ReviewSkillResult(
@@ -399,10 +436,60 @@ class ReviewLoopController:
                     queued=True,
                     queued_task_ids=batch.task_ids,
                     published_artifacts=batch.artifact_paths,
+                    attempt_id=batch.attempt_id,
+                    reason="review_fix_queued",
                 )
-        except ReviewArtifactError as exc:
+        except (ReviewArtifactError, OSError, ValueError) as exc:
             logger.warning("Review artifact publication blocked: %s", exc)
-            return _ReviewSkillResult(tokens_used=0, queued=False)
+            return _ReviewSkillResult(
+                tokens_used=0,
+                queued=False,
+                reason="review_staging_failed",
+            )
+
+    def complete_published_batch(self, pr_url: str, attempt_id: str) -> bool:
+        """Finish durable PR side effects, then consume an already-published batch."""
+        spec_dir = self._spec_dir or _find_review_spec_dir(self._base_dir, self._spec_id)
+        if spec_dir is None:
+            return False
+        try:
+            with ReviewArtifactPublisher(
+                spec_dir, self._state_file.parent, self._strategy_id
+            ) as publisher:
+                batch = publisher.recover_publication(set())
+                pending = self._pending_batch_state(attempt_id)
+                if batch is None:
+                    return self._pending_effects_complete(pending)
+                if batch.attempt_id != attempt_id:
+                    return False
+                if pending is None:
+                    self._record_pending_batch(batch)
+                    pending = self._pending_batch_state(attempt_id)
+                if pending is None:
+                    return False
+                resolved = set(pending.get("resolved_comment_ids", []))
+                if self._rl.resolve_threads:
+                    for comment_id in batch.comment_ids:
+                        if comment_id in resolved:
+                            continue
+                        if not self._resolve_thread(pr_url, comment_id):
+                            return False
+                        resolved.add(comment_id)
+                        pending["resolved_comment_ids"] = sorted(resolved)
+                        self._save_pending_batch(attempt_id, pending)
+                if not pending.get("review_requested", False):
+                    if not self._request_review(pr_url):
+                        return False
+                    pending["review_requested"] = True
+                    self._save_pending_batch(attempt_id, pending)
+                for comment_id in batch.comment_ids:
+                    self._seen_ids.add(comment_id)
+                self._save_seen_ids()
+                publisher.mark_consumed(batch.attempt_id)
+                return True
+        except (ReviewArtifactError, OSError, ValueError) as exc:
+            logger.warning("Review side effects remain pending: %s", exc)
+            return False
 
     # === Private: comment fetching ===
 
@@ -620,13 +707,13 @@ class ReviewLoopController:
 
     # === Private: PR operations ===
 
-    def _request_review(self, pr_url: str) -> None:
+    def _request_review(self, pr_url: str) -> bool:
         """Re-request review from config.review_loop.reviewers."""
         if not self._rl.reviewers:
-            return
+            return True
         ref = _parse_pr_url(pr_url, self._pr_host)
         if ref is None:
-            return
+            return False
         reviewers = ",".join(self._rl.reviewers)
         try:
             if ref.host == "github":
@@ -649,10 +736,12 @@ class ReviewLoopController:
                     capture_output=True, text=True, timeout=30, check=True,
                 )
                 logger.info("Re-requested review from %s on %s", reviewers, pr_url)
+            return True
         except Exception as e:
             logger.warning("Failed to request review on %s: %s", pr_url, e)
+            return False
 
-    def _resolve_thread(self, pr_url: str, comment_id: str) -> None:
+    def _resolve_thread(self, pr_url: str, comment_id: str) -> bool:
         """Mark a review thread as resolved after its fix is committed.
 
         Posts a "Resolved" reply to the comment thread (REST API).
@@ -661,32 +750,14 @@ class ReviewLoopController:
         """
         ref = _parse_pr_url(pr_url, self._pr_host)
         if ref is None:
-            return
+            return False
 
         if ref.host == "github":
-            self._resolve_github_thread(ref, comment_id)
-        else:
-            self._resolve_gitlab_thread(ref, comment_id)
+            return self._resolve_github_thread(ref, comment_id)
+        return self._resolve_gitlab_thread(ref, comment_id)
 
-    def _resolve_github_thread(self, ref: _PrRef, comment_id: str) -> None:
+    def _resolve_github_thread(self, ref: _PrRef, comment_id: str) -> bool:
         repo = f"{ref.owner}/{ref.repo}"
-
-        # Post a visible "Resolved" reply so reviewer sees it immediately
-        try:
-            subprocess.run(
-                [
-                    "gh", "api",
-                    f"repos/{repo}/pulls/{ref.number}/comments/{comment_id}/replies",
-                    "--method", "POST",
-                    "--field", "body=Resolved — fix committed.",
-                ],
-                capture_output=True, text=True, timeout=30, check=True,
-            )
-        except Exception as e:
-            logger.warning(
-                "Could not post reply to comment %s on %s: %s",
-                comment_id, ref.url, e,
-            )
 
         # Attempt GraphQL resolution to check the "Resolved" checkbox.
         # Requires fetching the thread node ID first via GraphQL.
@@ -742,14 +813,16 @@ class ReviewLoopController:
                     capture_output=True, text=True, timeout=30, check=True,
                 )
                 logger.info("Resolved GitHub review thread for comment %s", comment_id)
+            return True
         except Exception as e:
             logger.warning(
                 "GraphQL thread resolution failed for comment %s: %s — "
                 "reply was posted but checkbox not checked",
                 comment_id, e,
             )
+            return False
 
-    def _resolve_gitlab_thread(self, ref: _PrRef, comment_id: str) -> None:
+    def _resolve_gitlab_thread(self, ref: _PrRef, comment_id: str) -> bool:
         project = f"{ref.owner}%2F{ref.repo}"
         try:
             # Find the discussion containing this note, then resolve it
@@ -785,11 +858,13 @@ class ReviewLoopController:
                     "Resolved GitLab discussion %s for note %s",
                     discussion_id, comment_id,
                 )
+            return True
         except Exception as e:
             logger.warning(
                 "Failed to resolve GitLab discussion for note %s: %s",
                 comment_id, e,
             )
+            return False
 
     # === Private: merge decision ===
 
@@ -894,32 +969,42 @@ class ReviewLoopController:
         )
         logger.info("Invoking echelon.review: spec=%s pr=%s", self._spec_id, pr_url)
 
-        result = AICodingCliProvider(self._config).run_prompt_result(
-            str(delivery_worktree),
-            prompt,
-            extra_env={"HARNESS_BUILD_STATUS_FILE": str(allocation.status_file)},
-            timeout_ms=int(self._review_timeout_s * 1000),
-            request_metadata={
-                "execution_profile": "review_triage_v1",
-                "prompt_metadata": {
-                    "tool_read_roots": [str(delivery_worktree), str(canonical_spec_dir)],
-                    "tool_write_paths": [
-                        *(str(allocation.attempt_dir / name) for name in allocation.artifact_names),
-                        str(allocation.attempt_dir / "tasks-append.md"),
-                        str(allocation.status_file),
-                    ],
-                    "review_agents": review_agents,
+        try:
+            result = AICodingCliProvider(self._config).run_prompt_result(
+                str(delivery_worktree),
+                prompt,
+                extra_env={"HARNESS_BUILD_STATUS_FILE": str(allocation.status_file)},
+                timeout_ms=int(self._review_timeout_s * 1000),
+                request_metadata={
+                    "execution_profile": "review_triage_v1",
+                    "prompt_metadata": {
+                        "tool_read_roots": [str(delivery_worktree), str(canonical_spec_dir)],
+                        "tool_write_paths": [
+                            *(str(allocation.attempt_dir / name) for name in allocation.artifact_names),
+                            str(allocation.attempt_dir / "tasks-append.md"),
+                            str(allocation.status_file),
+                        ],
+                        "review_agents": review_agents,
+                    },
                 },
-            },
-        )
+            )
+        except Exception as exc:
+            logger.warning("echelon.review provider failed: %s", exc)
+            return _ReviewSkillResult(
+                tokens_used=0, queued=False, reason="review_provider_failed"
+            )
         if result.timed_out:
             logger.warning("echelon.review timed out after %ss", self._review_timeout_s)
-            return _ReviewSkillResult(tokens_used=0, queued=False)
+            return _ReviewSkillResult(
+                tokens_used=0, queued=False, reason="review_provider_failed"
+            )
 
         tokens_used = max(1, len(result.stdout.encode("utf-8")) // 4)
         if result.exit_code != 0:
             logger.warning("echelon.review exited %d", result.exit_code)
-            return _ReviewSkillResult(tokens_used=tokens_used, queued=False)
+            return _ReviewSkillResult(
+                tokens_used=tokens_used, queued=False, reason="review_provider_failed"
+            )
 
         try:
             batch = publisher.accept_manifest(allocation.status_file)
@@ -933,22 +1018,93 @@ class ReviewLoopController:
             queued=queued,
             queued_task_ids=batch.task_ids,
             published_artifacts=batch.artifact_paths,
+            attempt_id=batch.attempt_id,
+            reason="review_fix_queued" if queued else "review_no_blocking_comments",
         )
 
     # === Private: state persistence ===
 
     def _load_seen_ids(self) -> Set[str]:
         if self._state_file.exists():
-            try:
-                data = json.loads(self._state_file.read_text(encoding="utf-8"))
-                return set(data.get("seen_comment_ids", []))
-            except Exception:
-                pass
+            data = json.loads(self._state_file.read_text(encoding="utf-8"))
+            seen_ids = data.get("seen_comment_ids", [])
+            if not isinstance(seen_ids, list) or not all(
+                isinstance(comment_id, str) for comment_id in seen_ids
+            ):
+                raise OSError("review seen-ID state is invalid")
+            return set(seen_ids)
         return set()
 
     def _save_seen_ids(self) -> None:
-        self._state_file.parent.mkdir(parents=True, exist_ok=True)
-        self._state_file.write_text(
-            json.dumps({"seen_comment_ids": sorted(self._seen_ids)}, indent=2),
-            encoding="utf-8",
+        state = self._load_review_state()
+        state["seen_comment_ids"] = sorted(self._seen_ids)
+        self._write_review_state(state)
+
+    def _record_pending_batch(self, batch: PublishedReviewBatch) -> None:
+        state = self._load_review_state()
+        pending = state.setdefault("pending_batches", {})
+        if not isinstance(pending, dict):
+            raise OSError("review pending-batch state is invalid")
+        pending.setdefault(
+            batch.attempt_id,
+            {
+                "comment_ids": list(batch.comment_ids),
+                "resolved_comment_ids": [],
+                "review_requested": False,
+            },
         )
+        self._write_review_state(state)
+
+    def _pending_batch_state(self, attempt_id: str) -> dict[str, object] | None:
+        state = self._load_review_state()
+        pending = state.get("pending_batches")
+        if not isinstance(pending, dict):
+            return None
+        item = pending.get(attempt_id)
+        return item if isinstance(item, dict) else None
+
+    def _save_pending_batch(self, attempt_id: str, item: dict[str, object]) -> None:
+        state = self._load_review_state()
+        pending = state.setdefault("pending_batches", {})
+        if not isinstance(pending, dict):
+            raise OSError("review pending-batch state is invalid")
+        pending[attempt_id] = item
+        self._write_review_state(state)
+
+    def _pending_effects_complete(self, item: dict[str, object] | None) -> bool:
+        if item is None or item.get("review_requested") is not True:
+            return False
+        comment_ids = item.get("comment_ids")
+        resolved = item.get("resolved_comment_ids")
+        if not isinstance(comment_ids, list) or not isinstance(resolved, list):
+            return False
+        return (not self._rl.resolve_threads) or set(comment_ids).issubset(resolved)
+
+    def _load_review_state(self) -> dict[str, object]:
+        if not self._state_file.exists():
+            return {}
+        data = json.loads(self._state_file.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise OSError("review state is not an object")
+        return data
+
+    def _write_review_state(self, state: dict[str, object]) -> None:
+        self._state_file.parent.mkdir(parents=True, exist_ok=True)
+        fd, raw_path = tempfile.mkstemp(
+            dir=self._state_file.parent, prefix=".review-state-", suffix=".tmp"
+        )
+        temp_path = Path(raw_path)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(state, handle, indent=2, sort_keys=True)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp_path, self._state_file)
+            directory_fd = os.open(self._state_file.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except Exception:
+            temp_path.unlink(missing_ok=True)
+            raise

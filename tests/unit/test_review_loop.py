@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -16,7 +17,9 @@ from harness.review_loop import (
     ReviewComment,
     ReviewLoopController,
     _ReviewSkillResult,
+    _load_review_agents,
 )
+from harness.review_artifacts import PublishedReviewBatch, ReviewArtifactError
 
 
 _REVIEW_AGENT_NAMES = (
@@ -291,6 +294,75 @@ class TestReviewLoopInvocation:
         assert result.queued is False
         assert provider_calls == []
 
+    def test_review_agents_reject_symlinked_parent_directories(self, tmp_path: Path) -> None:
+        """A symlinked .claude directory must not escape the delivery worktree."""
+        worktree = tmp_path / "worktree"
+        outside = tmp_path / "outside"
+        worktree.mkdir()
+        _scaffold_review_agents(outside)
+        os.symlink(outside / ".claude", worktree / ".claude")
+
+        with pytest.raises(ReviewArtifactError, match="unsafe"):
+            _load_review_agents(worktree)
+
+    def test_review_agents_reject_symlinked_agents_directory(self, tmp_path: Path) -> None:
+        """Every containment component is opened no-follow, not only the file."""
+        worktree = tmp_path / "worktree"
+        outside = tmp_path / "outside"
+        worktree.mkdir()
+        _scaffold_review_agents(outside)
+        (worktree / ".claude").mkdir()
+        os.symlink(outside / ".claude" / "agents", worktree / ".claude" / "agents")
+
+        with pytest.raises(ReviewArtifactError, match="unsafe"):
+            _load_review_agents(worktree)
+
+    def test_remote_side_effect_failure_keeps_published_batch_retryable(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        """A failed remote effect may not consume the publication journal."""
+        spec_dir = tmp_path / "specs" / "005-my-spec"
+        spec_dir.mkdir(parents=True)
+        batch = PublishedReviewBatch(
+            attempt_id="attempt-1", status="review_fix_queued", artifact_paths=(),
+            task_ids=("T-002", "T-003", "T-004"), comment_ids=("c1",),
+        )
+        consumed: list[str] = []
+
+        class FakePublisher:
+            def __init__(self, *args):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return None
+
+            def recover_publication(self, seen_ids):
+                return batch
+
+            def mark_consumed(self, attempt_id):
+                consumed.append(attempt_id)
+
+        monkeypatch.setattr("harness.review_loop.ReviewArtifactPublisher", FakePublisher)
+        controller = ReviewLoopController(
+            gitops=MagicMock(), config=_config(), spec_id="005", strategy_id="default",
+            base_dir=str(tmp_path), build_id="build-1", spec_dir=spec_dir,
+        )
+        controller._record_pending_batch(batch)
+        resolve = MagicMock(return_value=False)
+        monkeypatch.setattr(controller, "_resolve_thread", resolve)
+
+        assert controller.complete_published_batch("https://github.com/o/r/pull/1", "attempt-1") is False
+        assert consumed == []
+        assert controller._seen_ids == set()
+
+        resolve.return_value = True
+        assert controller.complete_published_batch("https://github.com/o/r/pull/1", "attempt-1") is True
+        assert consumed == ["attempt-1"]
+        assert controller._seen_ids == {"c1"}
+
     def test_review_loop_blocks_without_a_delivery_worktree(
         self, monkeypatch, tmp_path: Path
     ) -> None:
@@ -330,7 +402,7 @@ class TestReviewLoopInvocation:
         )
 
         assert result.status == "blocked"
-        assert result.termination_reason == "blocker_escalation"
+        assert result.termination_reason == "review_staging_failed"
         assert provider_calls == []
 
     def test_review_loop_can_merge_approved_pr_without_a_delivery_worktree(

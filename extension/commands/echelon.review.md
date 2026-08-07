@@ -94,16 +94,33 @@ complete JSON shape:
 {
   "status": "review_fix_queued",
   "groups": 1,
-  "artifacts": ["review-fix-<allocated>.md"],
+  "artifacts": ["review-fix-7.md"],
   "tasks": [
-    {"task_id": "T-<allocated>", "review_task_id": "RF<n>-T1", "artifact": "review-fix-<allocated>.md"}
+    {"task_id": "T-041", "review_task_id": "RF7-T1", "artifact": "review-fix-7.md"},
+    {"task_id": "T-042", "review_task_id": "RF7-T2", "artifact": "review-fix-7.md"},
+    {"task_id": "T-043", "review_task_id": "RF7-T3", "artifact": "review-fix-7.md"}
   ],
   "tasks_append": "tasks-append.md"
 }
 ```
 
 The `tasks` array must contain all three rows for every artifact, in allocation
-order. The manifest must name only files written to `review_staging_dir`.
+order. The manifest must name only files written to `review_staging_dir`. The
+task append must use each allocated canonical row and title detail exactly:
+
+```markdown
+- [ ] T-041 complexity=standard phase=review-fix req=FR-001 depends=none
+
+  **Title:** RF7-T1 - Write failing test for review finding
+
+- [ ] T-042 complexity=standard phase=review-fix req=FR-001 depends=T-041
+
+  **Title:** RF7-T2 - Fix src/example.py
+
+- [ ] T-043 complexity=standard phase=review-fix req=FR-001 depends=T-042
+
+  **Title:** RF7-T3 - Verify regression and prior tests
+```
 
 For zero diagnosed groups, leave `review_staging_dir` empty and write exactly:
 
