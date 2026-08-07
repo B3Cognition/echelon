@@ -137,7 +137,7 @@ def _read_review_agent(worktree: Path, name: str) -> str:
     directory = getattr(os, "O_DIRECTORY", 0)
     fds: list[int] = []
     try:
-        root_fd = os.open(worktree, flags | directory)
+        root_fd = _open_directory_chain(worktree, flags | directory | nofollow)
         fds.append(root_fd)
         claude_fd = os.open(".claude", flags | directory | nofollow, dir_fd=root_fd)
         fds.append(claude_fd)
@@ -164,6 +164,34 @@ def _read_review_agent(worktree: Path, name: str) -> str:
                 os.close(fd)
             except OSError:
                 pass
+
+
+def _open_directory_chain(path: Path, flags: int) -> int:
+    """Open every directory component by descriptor, anchored at a trusted root."""
+    raw = os.fspath(path)
+    if os.path.isabs(raw):
+        current_fd = os.open(os.path.sep, flags)
+        components = Path(raw).parts[1:]
+    else:
+        current_fd = os.open(".", flags)
+        components = Path(raw).parts
+    try:
+        for component in components:
+            if component in {"", ".", ".."}:
+                raise OSError("unsafe review-agent directory component")
+            next_fd = os.open(component, flags, dir_fd=current_fd)
+            try:
+                if not stat.S_ISDIR(os.fstat(next_fd).st_mode):
+                    raise OSError("review-agent component is not a directory")
+            except Exception:
+                os.close(next_fd)
+                raise
+            os.close(current_fd)
+            current_fd = next_fd
+        return current_fd
+    except Exception:
+        os.close(current_fd)
+        raise
 
 
 def _parse_dt(s: str) -> datetime:

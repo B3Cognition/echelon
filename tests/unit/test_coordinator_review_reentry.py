@@ -163,9 +163,72 @@ class TestCoordinatorReviewReentry:
                     "attempt_id": "attempt-1",
                     "task_ids": ["T-002", "T-003", "T-004"],
                     "artifact_paths": [str(artifact)],
+                    "phase1_verified": False,
                 },
             },
         )
+
+    def test_verified_reentry_retries_only_side_effects_after_resume(self, tmp_path):
+        """A side-effect retry preserves Phase 1 counters and skips Ralph work."""
+        coord = StrategyCoordinator(
+            provider=MagicMock(), gitops=MagicMock(), config=_config(tmp_path),
+            base_dir=str(tmp_path),
+        )
+
+        class MemoryState:
+            def __init__(self):
+                self.data = {
+                    "status": "blocked",
+                    "blocked_phase": "review",
+                    "outer_iter": 9,
+                    "tokens_used": 44,
+                    "pending_review_reentry": {
+                        "attempt_id": "attempt-1",
+                        "task_ids": ["T-002"],
+                        "artifact_paths": ["review-fix-1.md"],
+                        "phase1_verified": True,
+                    },
+                }
+                self.transitions: list[tuple[str, dict | None]] = []
+
+            def read(self):
+                return dict(self.data)
+
+            def transition(self, status, *, updates=None):
+                self.data["status"] = status
+                if updates:
+                    self.data.update(updates)
+                self.transitions.append((status, updates))
+
+        state_store = MemoryState()
+        review_controller = MagicMock()
+        pending = state_store.data["pending_review_reentry"]
+        review_controller.complete_published_batch.side_effect = [False, True]
+
+        assert not coord._complete_verified_review_reentry(
+            state_store,
+            review_controller,
+            pr_url="https://github.com/org/repo/pull/1",
+            pending_reentry=pending,
+        )
+        assert state_store.data["status"] == "blocked"
+        assert state_store.data["outer_iter"] == 9
+        assert state_store.data["tokens_used"] == 44
+        assert state_store.transitions == []
+
+        assert coord._complete_verified_review_reentry(
+            state_store,
+            review_controller,
+            pr_url="https://github.com/org/repo/pull/1",
+            pending_reentry=pending,
+        )
+        assert state_store.transitions == [
+            ("running", None),
+            ("verified", {"pending_review_reentry": None}),
+        ]
+        assert state_store.data["pending_review_reentry"] is None
+        assert state_store.data["outer_iter"] == 9
+        assert state_store.data["tokens_used"] == 44
 
     def test_reentry_run_loop_receives_review_content(self, tmp_path):
         """Coordinator passes injected prompt to RalphController on Phase 1 re-entry."""
@@ -263,9 +326,27 @@ class TestCoordinatorReviewReentry:
                 VisualResult("passed", "converged", 1, 5, VerifyResult(True, [])),
             ]
 
-            # State store: no-op
+            # State store: preserve each transition so the durable handoff can
+            # move from queued -> Phase 1 verified -> side-effect completion.
             state_instance = MagicMock()
-            state_instance.read.return_value = {"status": "initialized"}
+            state_data = {"status": "initialized"}
+
+            def read_state():
+                return dict(state_data)
+
+            def initialize_state(**kwargs):
+                state_data.update(kwargs)
+                state_data["status"] = "initialized"
+
+            def transition_state(status, *, updates=None):
+                state_data["status"] = status
+                if updates:
+                    state_data.update(updates)
+                return dict(state_data)
+
+            state_instance.read.side_effect = read_state
+            state_instance.initialize.side_effect = initialize_state
+            state_instance.transition.side_effect = transition_state
             MockState.return_value = state_instance
 
             # Strategy loader

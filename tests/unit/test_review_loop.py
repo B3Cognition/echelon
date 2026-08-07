@@ -18,6 +18,7 @@ from harness.review_loop import (
     ReviewLoopController,
     _ReviewSkillResult,
     _load_review_agents,
+    _read_review_agent,
 )
 from harness.review_artifacts import PublishedReviewBatch, ReviewArtifactError
 
@@ -316,6 +317,37 @@ class TestReviewLoopInvocation:
 
         with pytest.raises(ReviewArtifactError, match="unsafe"):
             _load_review_agents(worktree)
+
+    def test_agent_read_stays_on_opened_worktree_after_path_is_replaced(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        """Replacing the worktree pathname cannot redirect descriptor-relative reads."""
+        worktree = tmp_path / "worktree"
+        outside = tmp_path / "outside"
+        _scaffold_review_agents(worktree)
+        _scaffold_review_agents(outside)
+        (outside / ".claude" / "agents" / f"{_REVIEW_AGENT_NAMES[0]}.md").write_text(
+            "outside content", encoding="utf-8"
+        )
+        original_open = os.open
+        replaced = False
+
+        def racing_open(path, flags, mode=0o777, *, dir_fd=None):
+            nonlocal replaced
+            fd = original_open(path, flags, mode, dir_fd=dir_fd)
+            if path == worktree.name and not replaced:
+                replaced = True
+                worktree.rename(tmp_path / "worktree-original")
+                os.symlink(outside, worktree)
+            return fd
+
+        monkeypatch.setattr("harness.review_loop.os.open", racing_open)
+
+        prompt = _read_review_agent(worktree, _REVIEW_AGENT_NAMES[0])
+
+        assert replaced
+        assert "Read-only diagnostic instructions." in prompt
+        assert "outside" not in prompt
 
     def test_remote_side_effect_failure_keeps_published_batch_retryable(
         self, monkeypatch, tmp_path: Path
