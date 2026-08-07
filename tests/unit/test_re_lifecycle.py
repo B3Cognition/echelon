@@ -438,6 +438,79 @@ def test_continue_completed_run_does_not_publish_or_repeat_extraction(
 
 
 @pytest.mark.unit
+def test_continue_can_raise_token_ceiling_without_resetting_usage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_dir = tmp_path / "runs/re-1"
+    re_dir = run_dir / "re"
+    re_dir.mkdir(parents=True)
+    (tmp_path / "runs/.current-re").write_text("re-1\n", encoding="utf-8")
+    profile = {
+        "name": "balanced",
+        "hard_token_limit": 5_000_000,
+        "hard_active_minutes": 180,
+    }
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "run_id": "re-1",
+                "run_kind": "re",
+                "status": "blocked",
+                "re_execution_profile": profile,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (re_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "re_execution_profile": profile,
+                "re_token_usage": 5_000_000,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeExtractionController:
+        def __init__(self, **kwargs: object) -> None:
+            state = json.loads((re_dir / "state.json").read_text(encoding="utf-8"))
+            assert state["re_execution_profile"]["hard_token_limit"] == 6_000_000
+            assert state["re_token_usage"] == 5_000_000
+
+        def run(self):
+            from harness.re_controller import ReControllerResult
+
+            return ReControllerResult(completed=True)
+
+    monkeypatch.setattr(
+        "harness.re_lifecycle.ReExtractionController", FakeExtractionController
+    )
+    controller = ReLifecycleController(
+        project_root=tmp_path,
+        extension_root=tmp_path / "extension",
+        provider_factory=object,
+    )
+
+    result = controller.continue_run(hard_token_limit=6_000_000)
+
+    assert result.status == "done"
+    outer = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    inner = json.loads((re_dir / "state.json").read_text(encoding="utf-8"))
+    assert outer["re_execution_profile"]["hard_token_limit"] == 6_000_000
+    assert inner["re_execution_profile"]["hard_token_limit"] == 6_000_000
+    assert inner["re_token_usage"] == 5_000_000
+    assert outer["re_execution_budget_overrides"] == [
+        {
+            "hard_token_limit": {
+                "previous": 5_000_000,
+                "updated": 6_000_000,
+            }
+        }
+    ]
+
+
+@pytest.mark.unit
 def test_resume_rejects_run_without_typed_question(tmp_path: Path) -> None:
     run_dir = tmp_path / "runs/re-1"
     run_dir.mkdir(parents=True)

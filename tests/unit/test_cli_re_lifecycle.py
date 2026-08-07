@@ -78,8 +78,16 @@ def test_re_continue_prints_controller_summary_before_provider_dispatch(
     )
 
     class FakeController:
-        def continue_run(self, re_max_inner: int | None = None) -> SimpleNamespace:
+        def continue_run(
+            self,
+            re_max_inner: int | None = None,
+            *,
+            hard_token_limit: int | None = None,
+            hard_active_minutes: int | None = None,
+        ) -> SimpleNamespace:
             assert re_max_inner == 8
+            assert hard_token_limit == 6_000_000
+            assert hard_active_minutes == 240
             print("PROVIDER STARTED")
             return SimpleNamespace(
                 status="done",
@@ -94,7 +102,16 @@ def test_re_continue_prints_controller_summary_before_provider_dispatch(
         lambda _root: FakeController(),
     )
 
-    _cmd_re_continue(["--re-max-inner", "8"])
+    _cmd_re_continue(
+        [
+            "--re-max-inner",
+            "8",
+            "--re-token-limit",
+            "6000000",
+            "--re-time-limit-minutes",
+            "240",
+        ]
+    )
 
     output = capsys.readouterr().out
     assert "RE CONTINUE" in output
@@ -152,16 +169,49 @@ def test_re_lifecycle_typed_commands_route_options(monkeypatch: pytest.MonkeyPat
         app,
         ["re", "run", "--re-policy", "refresh-all", "--re-max-inner", "9", "--reset"],
     ).exit_code == 0
-    assert runner.invoke(app, ["re", "continue", "--re-max-inner", "10"]).exit_code == 0
     assert runner.invoke(
         app,
-        ["re", "resume", "Use v2", "--re-max-inner", "11"],
+        [
+            "re",
+            "continue",
+            "--re-max-inner",
+            "10",
+            "--re-token-limit",
+            "6000000",
+            "--re-time-limit-minutes",
+            "240",
+        ],
+    ).exit_code == 0
+    assert runner.invoke(
+        app,
+        [
+            "re",
+            "resume",
+            "Use v2",
+            "--re-max-inner",
+            "11",
+            "--re-token-limit",
+            "7000000",
+        ],
     ).exit_code == 0
 
     assert calls == [
         ("run", ["--re-policy", "refresh-all", "--re-max-inner", "9", "--reset"]),
-        ("continue", ["--re-max-inner", "10"]),
-        ("resume", ["Use v2", "--re-max-inner", "11"]),
+        (
+            "continue",
+            [
+                "--re-max-inner",
+                "10",
+                "--re-token-limit",
+                "6000000",
+                "--re-time-limit-minutes",
+                "240",
+            ],
+        ),
+        (
+            "resume",
+            ["Use v2", "--re-max-inner", "11", "--re-token-limit", "7000000"],
+        ),
     ]
 
 

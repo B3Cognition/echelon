@@ -121,8 +121,10 @@ Commands:
   re run [--re-policy none|cached-only|changed|refresh-all]
                     [--re-max-inner <n>] [--reset]
                                             Run or reuse workspace reverse engineering.
-  re continue [--re-max-inner <n>]           Continue the active RE run.
-  re resume <answer> [--re-max-inner <n>]    Resume blocked RE with a human answer.
+  re continue [--re-max-inner <n>] [--re-token-limit <n>] [--re-time-limit-minutes <n>]
+                                            Continue the active RE run.
+  re resume <answer> [--re-max-inner <n>] [--re-token-limit <n>] [--re-time-limit-minutes <n>]
+                                            Resume blocked RE with a human answer.
   re publish <run-id> [--allow-partial] [--commit]
                                             Publish validated workspace RE output.
 
@@ -9407,6 +9409,7 @@ def _parse_re_lifecycle_options(
     *,
     allow_policy: bool,
     allow_reset: bool,
+    allow_budget_overrides: bool = False,
 ) -> tuple[str, int | None, bool, bool, str | None, int | None, int | None, list[str]]:
     policy = "changed"
     re_max_inner: int | None = None
@@ -9435,7 +9438,9 @@ def _parse_re_lifecycle_options(
         elif arg.startswith("--profile=") and allow_policy:
             profile = arg.split("=", 1)[1].strip()
             index += 1
-        elif arg in {"--re-token-limit", "--re-time-limit-minutes"} and allow_policy:
+        elif arg in {"--re-token-limit", "--re-time-limit-minutes"} and (
+            allow_policy or allow_budget_overrides
+        ):
             if index + 1 >= len(args):
                 raise ValueError(f"{arg} requires a positive integer")
             try:
@@ -9447,10 +9452,14 @@ def _parse_re_lifecycle_options(
             else:
                 time_limit_minutes = value
             index += 2
-        elif arg.startswith("--re-token-limit=") and allow_policy:
+        elif arg.startswith("--re-token-limit=") and (
+            allow_policy or allow_budget_overrides
+        ):
             token_limit = int(arg.split("=", 1)[1])
             index += 1
-        elif arg.startswith("--re-time-limit-minutes=") and allow_policy:
+        elif arg.startswith("--re-time-limit-minutes=") and (
+            allow_policy or allow_budget_overrides
+        ):
             time_limit_minutes = int(arg.split("=", 1)[1])
             index += 1
         elif arg == "--re-max-inner":
@@ -9571,16 +9580,25 @@ def _cmd_re_continue(args: list[str]) -> None:
     from harness.re_lifecycle import ReLifecycleError
 
     try:
-        _policy, re_max_inner, _reset, _no_reuse, _profile, _tokens, _time, positional = _parse_re_lifecycle_options(
+        _policy, re_max_inner, _reset, _no_reuse, _profile, token_limit, time_limit_minutes, positional = _parse_re_lifecycle_options(
             args,
             allow_policy=False,
             allow_reset=False,
+            allow_budget_overrides=True,
         )
         if positional:
             raise ValueError("echelon re continue does not accept positional arguments")
         project_root = Path.cwd()
         _print_re_continue_summary(project_root, re_max_inner=re_max_inner)
-        result = _re_lifecycle_controller(project_root).continue_run(re_max_inner)
+        overrides: dict[str, int] = {}
+        if token_limit is not None:
+            overrides["hard_token_limit"] = token_limit
+        if time_limit_minutes is not None:
+            overrides["hard_active_minutes"] = time_limit_minutes
+        result = _re_lifecycle_controller(project_root).continue_run(
+            re_max_inner,
+            **overrides,
+        )
     except (ReLifecycleError, ValueError) as exc:
         print(f"echelon re continue: {exc}", file=sys.stderr)
         raise SystemExit(2) from exc
@@ -9591,16 +9609,23 @@ def _cmd_re_resume(args: list[str]) -> None:
     from harness.re_lifecycle import ReLifecycleError
 
     try:
-        _policy, re_max_inner, _reset, _no_reuse, _profile, _tokens, _time, positional = _parse_re_lifecycle_options(
+        _policy, re_max_inner, _reset, _no_reuse, _profile, token_limit, time_limit_minutes, positional = _parse_re_lifecycle_options(
             args,
             allow_policy=False,
             allow_reset=False,
+            allow_budget_overrides=True,
         )
         if len(positional) != 1:
             raise ValueError('usage: echelon re resume "<answer>"')
+        overrides: dict[str, int] = {}
+        if token_limit is not None:
+            overrides["hard_token_limit"] = token_limit
+        if time_limit_minutes is not None:
+            overrides["hard_active_minutes"] = time_limit_minutes
         result = _re_lifecycle_controller(Path.cwd()).resume(
             positional[0],
             re_max_inner,
+            **overrides,
         )
     except (ReLifecycleError, ValueError) as exc:
         print(f"echelon re resume: {exc}", file=sys.stderr)

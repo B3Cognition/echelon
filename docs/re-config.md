@@ -8,6 +8,18 @@ source-local repair budget for `run`, `continue`, or `resume`. These options are
 not accepted by `echelon spec run`. Spec authoring consumes the latest published
 snapshot by default and supports only `--ignore-re`.
 
+Execution ceilings are frozen when a run starts so ordinary configuration
+changes cannot alter an in-progress run. To explicitly continue after a budget
+ceiling, raise it without resetting the run:
+
+```bash
+echelon re continue --re-token-limit 25000000
+echelon re resume "Use the v2 contract" --re-time-limit-minutes 1440
+```
+
+These options only accept a value greater than the active ceiling. They preserve
+the selected profile and all already-consumed token and active-time accounting.
+
 ## Key settings
 
 ### Analysis scope

@@ -754,10 +754,24 @@ def re_continue(
         min=1,
         help="Raise source-local RE repair budgets before continuing.",
     ),
+    re_token_limit: Optional[int] = typer.Option(
+        None,
+        "--re-token-limit",
+        min=1,
+        help="Raise the active run's token ceiling without resetting it.",
+    ),
+    re_time_limit_minutes: Optional[int] = typer.Option(
+        None,
+        "--re-time-limit-minutes",
+        min=1,
+        help="Raise the active run's active-time ceiling without resetting it.",
+    ),
 ) -> None:
     """Continue the active RE run without a human answer."""
     args: list[str] = []
     _extend_option(args, "--re-max-inner", re_max_inner)
+    _extend_option(args, "--re-token-limit", re_token_limit)
+    _extend_option(args, "--re-time-limit-minutes", re_time_limit_minutes)
     _legacy_cli()._cmd_re_continue(args)
 
 
@@ -770,10 +784,24 @@ def re_resume(
         min=1,
         help="Raise source-local RE repair budgets before resuming.",
     ),
+    re_token_limit: Optional[int] = typer.Option(
+        None,
+        "--re-token-limit",
+        min=1,
+        help="Raise the active run's token ceiling without resetting it.",
+    ),
+    re_time_limit_minutes: Optional[int] = typer.Option(
+        None,
+        "--re-time-limit-minutes",
+        min=1,
+        help="Raise the active run's active-time ceiling without resetting it.",
+    ),
 ) -> None:
     """Answer a typed human blocker and continue the active RE run."""
     args = [answer]
     _extend_option(args, "--re-max-inner", re_max_inner)
+    _extend_option(args, "--re-token-limit", re_token_limit)
+    _extend_option(args, "--re-time-limit-minutes", re_time_limit_minutes)
     _legacy_cli()._cmd_re_resume(args)
 
 

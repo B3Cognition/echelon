@@ -215,7 +215,13 @@ class ReLifecycleController:
         )
         return self._execute_run(run_dir, state, re_max_inner=re_max_inner)
 
-    def continue_run(self, re_max_inner: int | None = None) -> ReLifecycleResult:
+    def continue_run(
+        self,
+        re_max_inner: int | None = None,
+        *,
+        hard_token_limit: int | None = None,
+        hard_active_minutes: int | None = None,
+    ) -> ReLifecycleResult:
         if re_max_inner is not None and re_max_inner < 1:
             raise ReLifecycleError("--re-max-inner requires a positive integer")
         run_dir = resolve_current_re_run(self._project_root)
@@ -242,12 +248,21 @@ class ReLifecycleController:
                 blocked_reason=str(state.get("blocked_reason") or "human input required"),
                 blocked_detail=str(state.get("blocked_detail") or ""),
             )
-        return self._execute_run(run_dir, state, re_max_inner=re_max_inner)
+        return self._execute_run(
+            run_dir,
+            state,
+            re_max_inner=re_max_inner,
+            hard_token_limit=hard_token_limit,
+            hard_active_minutes=hard_active_minutes,
+        )
 
     def resume(
         self,
         answer: str,
         re_max_inner: int | None = None,
+        *,
+        hard_token_limit: int | None = None,
+        hard_active_minutes: int | None = None,
     ) -> ReLifecycleResult:
         answer = answer.strip()
         if not answer:
@@ -277,7 +292,13 @@ class ReLifecycleController:
         re_state = self._load_json(run_dir / "re" / "state.json")
         re_state["resume_answer"] = answer
         self._save_json(run_dir / "re" / "state.json", re_state)
-        return self._execute_run(run_dir, state, re_max_inner=re_max_inner)
+        return self._execute_run(
+            run_dir,
+            state,
+            re_max_inner=re_max_inner,
+            hard_token_limit=hard_token_limit,
+            hard_active_minutes=hard_active_minutes,
+        )
 
     def _create_run_dir(self) -> Path:
         runs = self._project_root / "runs"
@@ -313,6 +334,8 @@ class ReLifecycleController:
         state: dict,
         *,
         re_max_inner: int | None,
+        hard_token_limit: int | None = None,
+        hard_active_minutes: int | None = None,
     ) -> ReLifecycleResult:
         if not isinstance(state.get("re_execution_profile"), dict):
             re_state = self._load_json(run_dir / "re" / "state.json")
@@ -321,6 +344,13 @@ class ReLifecycleController:
             re_state["re_execution_profile"] = execution_profile
             self._save_json(run_dir / "re" / "state.json", re_state)
             self._save_state(run_dir, state)
+        if hard_token_limit is not None or hard_active_minutes is not None:
+            self._raise_execution_budget(
+                run_dir,
+                state,
+                hard_token_limit=hard_token_limit,
+                hard_active_minutes=hard_active_minutes,
+            )
         if re_max_inner is not None:
             state["re_max_inner"] = re_max_inner
             re_state = self._load_json(run_dir / "re" / "state.json")
@@ -382,6 +412,55 @@ class ReLifecycleController:
             phase=str(state.get("phase") or ""),
             generation=int(state["generation"]),
         )
+
+    def _raise_execution_budget(
+        self,
+        run_dir: Path,
+        state: dict,
+        *,
+        hard_token_limit: int | None,
+        hard_active_minutes: int | None,
+    ) -> None:
+        profile = state.get("re_execution_profile")
+        if not isinstance(profile, dict):
+            raise ReLifecycleError("active RE run has no execution profile")
+        updated = dict(profile)
+        changes: dict[str, dict[str, int | None]] = {}
+        for field, value, option in (
+            ("hard_token_limit", hard_token_limit, "--re-token-limit"),
+            ("hard_active_minutes", hard_active_minutes, "--re-time-limit-minutes"),
+        ):
+            if value is None:
+                continue
+            if value < 1:
+                raise ReLifecycleError(f"{option} requires a positive integer")
+            previous = updated.get(field)
+            if isinstance(previous, bool) or (
+                isinstance(previous, (int, float)) and int(previous) >= value
+            ):
+                raise ReLifecycleError(
+                    f"{option} must be greater than the active run's current {field}"
+                )
+            changes[field] = {
+                "previous": int(previous)
+                if isinstance(previous, (int, float)) and not isinstance(previous, bool)
+                else None,
+                "updated": value,
+            }
+            updated[field] = value
+        if not changes:
+            return
+
+        re_state = self._load_json(run_dir / "re" / "state.json")
+        state["re_execution_profile"] = updated
+        re_state["re_execution_profile"] = updated
+        overrides = state.setdefault("re_execution_budget_overrides", [])
+        if not isinstance(overrides, list):
+            raise ReLifecycleError("invalid RE execution budget override history")
+        overrides.append(changes)
+        re_state["re_execution_budget_overrides"] = list(overrides)
+        self._save_json(run_dir / "re" / "state.json", re_state)
+        self._save_state(run_dir, state)
 
     def _load_state(self, run_dir: Path) -> dict:
         state = self._load_json(run_dir / "state.json")

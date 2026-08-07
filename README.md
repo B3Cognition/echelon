@@ -181,8 +181,10 @@ and 5,000,000 provider-reported tokens. `fast` uses 30/60 minutes and 1,000,000
 tokens; `high` uses 180/720 minutes and 15,000,000 tokens. Select one with
 `echelon re run --profile fast|balanced|high`. Active time excludes periods when
 the command is stopped. `continue` preserves the original profile and consumed
-budget instead of resetting either. Providers that do not report usage remain
-explicitly unknown rather than being estimated.
+budget instead of resetting either. An explicit `--re-token-limit` or
+`--re-time-limit-minutes` on `continue` or `resume` may raise its respective
+hard ceiling; it cannot lower a ceiling or reset consumed usage. Providers that
+do not report usage remain explicitly unknown rather than being estimated.
 
 Every new RE provider dispatch writes content-free, OpenTelemetry-aligned local
 telemetry below `runs/<run-id>/telemetry/`. Raw prompts, responses, source code,
@@ -228,6 +230,7 @@ explicit `--allow-partial` publication.
 ```bash
 echelon re run                               # changed policy; no-op when current
 echelon re continue --re-max-inner 10       # continue without a new answer
+echelon re continue --re-token-limit 25000000  # raise the active token ceiling
 echelon re resume "Use the v2 contract"     # answer a structured RE block
 echelon re publish <run-id>                   # publish a validated complete run
 echelon re publish <run-id> --allow-partial   # explicit structural override
