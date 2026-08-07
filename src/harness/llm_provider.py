@@ -22,6 +22,9 @@ from harness.provider_capability import (
 )
 
 
+SUPPORTED_EXECUTION_PROFILES = {"claude": frozenset({"review_triage_v1"})}
+
+
 class AICodingCliProvider:
     """Runs prompts through the configured AI coding CLI backend.
 
@@ -117,6 +120,10 @@ class AICodingCliProvider:
         self.last_token_usage = 0
         timeout_s = (timeout_ms / 1000.0) if timeout_ms else self._timeout_s
         metadata = _request_metadata(extra_env, request_metadata)
+        profile_violation = _execution_profile_violation(self._cli, metadata)
+        if profile_violation is not None:
+            self._record_result(profile_violation)
+            return profile_violation
         containment_violation = _containment_cwd_violation(worktree_path, metadata)
         if containment_violation is not None:
             self._record_result(containment_violation)
@@ -147,6 +154,10 @@ class AICodingCliProvider:
         self.last_token_usage = 0
         timeout_s = (timeout_ms / 1000.0) if timeout_ms else self._timeout_s
         metadata = _request_metadata(extra_env, request_metadata)
+        profile_violation = _execution_profile_violation(self._cli, metadata)
+        if profile_violation is not None:
+            self._record_result(profile_violation)
+            return profile_violation
         containment_violation = _containment_cwd_violation(project_root, metadata)
         if containment_violation is not None:
             self._record_result(containment_violation)
@@ -220,6 +231,34 @@ def _containment_metadata(extra_env: Mapping[str, str] | None) -> dict[str, obje
     if errors:
         cleaned["parse_errors"] = errors
     return cleaned
+
+
+def _execution_profile_violation(
+    provider: str,
+    metadata: Mapping[str, object],
+) -> CliRunResult | None:
+    raw_profile = metadata.get("execution_profile")
+    if not raw_profile:
+        return None
+    profile = raw_profile if isinstance(raw_profile, str) else str(raw_profile)
+    if profile in SUPPORTED_EXECUTION_PROFILES.get(provider, frozenset()):
+        return None
+    if profile == "review_triage_v1":
+        message = (
+            "execution profile review_triage_v1 requires claude; "
+            f"configured provider is {provider}"
+        )
+    else:
+        message = (
+            f"execution profile {profile} is unsupported; "
+            f"configured provider is {provider}"
+        )
+    return CliRunResult(
+        exit_code=125,
+        stdout="",
+        stderr=message,
+        metadata={"unsupported_execution_profile": profile},
+    )
 
 
 def _json_string_list(

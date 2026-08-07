@@ -61,6 +61,53 @@ def _patch_claude_popen(lines: list[dict] | None = None, returncode: int = 0):
 class TestAICodingCliProvider:
 
     @pytest.mark.parametrize(
+        "cli",
+        ("codex", "copilot", "opencode", "openai-compatible", "plain-cli"),
+    )
+    @pytest.mark.parametrize("method", ("run_prompt_result", "run_agent_result"))
+    def test_review_triage_execution_profile_rejects_non_claude_backends(
+        self, tmp_path, cli, method
+    ):
+        provider = AICodingCliProvider(_config(cli=cli))
+        backend_method = "run_agent" if method == "run_agent_result" else "run_prompt"
+
+        with patch.object(provider._backend, backend_method) as run_backend:
+            result = getattr(provider, method)(
+                str(tmp_path),
+                "triage review comments",
+                request_metadata={"execution_profile": "review_triage_v1"},
+            )
+
+        assert result.exit_code == 125
+        assert result.stdout == ""
+        assert result.stderr == (
+            "execution profile review_triage_v1 requires claude; "
+            f"configured provider is {cli}"
+        )
+        assert result.metadata == {"unsupported_execution_profile": "review_triage_v1"}
+        run_backend.assert_not_called()
+
+    @pytest.mark.parametrize("method", ("run_prompt_result", "run_agent_result"))
+    def test_execution_profile_rejects_unknown_profiles_before_backend_launch(
+        self, tmp_path, method
+    ):
+        provider = AICodingCliProvider(_config(cli="claude"))
+        backend_method = "run_agent" if method == "run_agent_result" else "run_prompt"
+
+        with patch.object(provider._backend, backend_method) as run_backend:
+            result = getattr(provider, method)(
+                str(tmp_path),
+                "do not launch",
+                request_metadata={"execution_profile": "unrecognized_profile"},
+            )
+
+        assert result.exit_code == 125
+        assert result.metadata == {
+            "unsupported_execution_profile": "unrecognized_profile"
+        }
+        run_backend.assert_not_called()
+
+    @pytest.mark.parametrize(
         ("cli", "expected"),
         [
             ("claude", True),

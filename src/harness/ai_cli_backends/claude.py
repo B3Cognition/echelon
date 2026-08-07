@@ -6,6 +6,7 @@ import subprocess
 import sys
 import threading
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 
 from harness.ai_cli_backend import CliRunRequest, CliRunResult
@@ -21,6 +22,13 @@ _MODEL_TIER_TO_CLAUDE_MODEL = {
     "ultra": "fable",
 }
 
+_REVIEW_TRIAGE_PROFILE = "review_triage_v1"
+_REVIEW_TRIAGE_AGENT_NAMES = (
+    "speckit-echelon-debugger",
+    "speckit-echelon-sentinel",
+    "speckit-echelon-spec-guard",
+)
+
 
 class ClaudeCliBackend:
     name = "claude"
@@ -30,6 +38,7 @@ class ClaudeCliBackend:
         self._bin = shutil.which("claude") or "claude"
 
     def run_prompt(self, request: CliRunRequest) -> CliRunResult:
+        review_triage = _execution_profile(request) == _REVIEW_TRIAGE_PROFILE
         canonical_task_execution = (
             request.metadata.get("canonical_task_execution") is True
         )
@@ -37,15 +46,29 @@ class ClaudeCliBackend:
             "claude",
             self._bin,
             request.prompt,
-            self._config.llm.tool_policy,
+            (
+                replace(
+                    self._config.llm.tool_policy,
+                    allow_unsafe_host_execution=False,
+                    approval_reason=None,
+                )
+                if review_triage
+                else self._config.llm.tool_policy
+            ),
             stream_json=True,
-            disallow_claude_task_tools=canonical_task_execution,
+            disallow_claude_task_tools=canonical_task_execution and not review_triage,
         )
         model = _prompt_metadata_str(request, "model") or _claude_model_for_request(
             request
         )
         if model:
             cmd.extend(["--model", model])
+        if review_triage:
+            profile_args = _review_triage_profile_args(request)
+            if profile_args is None:
+                return _invalid_review_triage_profile_result()
+            cmd.extend(profile_args)
+            return self._run_stream_json(cmd, request)
         scope_args = _prompt_file_scope_args(request)
         if scope_args:
             cmd.extend(scope_args)
@@ -223,6 +246,83 @@ def _prompt_metadata_str(request: CliRunRequest, key: str) -> str:
         return ""
     value = metadata.get(key)
     return value.strip() if isinstance(value, str) else ""
+
+
+def _execution_profile(request: CliRunRequest) -> str:
+    profile = request.metadata.get("execution_profile")
+    return profile.strip() if isinstance(profile, str) else ""
+
+
+def _review_triage_profile_args(request: CliRunRequest) -> list[str] | None:
+    raw_metadata = request.metadata.get("prompt_metadata")
+    if not isinstance(raw_metadata, Mapping):
+        return None
+    review_agents = _validated_review_agents(raw_metadata.get("review_agents"))
+    if review_agents is None:
+        return None
+    read_roots = _prompt_scope_paths(request, raw_metadata, "tool_read_roots")
+    write_paths = _prompt_scope_paths(request, raw_metadata, "tool_write_paths")
+    file_rules: list[str] = []
+    for root in read_roots:
+        file_rules.append(f"Read({_claude_absolute_rule_path(root)}/**)")
+    for path in write_paths:
+        rule_path = _claude_absolute_rule_path(path)
+        file_rules.extend(f"{tool}({rule_path})" for tool in ("Write", "Edit"))
+    agent_rules = [f"Agent({name})" for name in _REVIEW_TRIAGE_AGENT_NAMES]
+    return [
+        "--bare",
+        "--setting-sources",
+        "",
+        "--strict-mcp-config",
+        "--disable-slash-commands",
+        "--tools",
+        "Read,Write,Edit,Agent",
+        "--allowedTools",
+        ",".join(file_rules + agent_rules),
+        "--agents",
+        json.dumps(review_agents, sort_keys=True),
+    ]
+
+
+def _validated_review_agents(
+    raw_agents: object,
+) -> dict[str, dict[str, object]] | None:
+    if not isinstance(raw_agents, Mapping):
+        return None
+    if set(raw_agents) != set(_REVIEW_TRIAGE_AGENT_NAMES):
+        return None
+    agents: dict[str, dict[str, object]] = {}
+    for name in _REVIEW_TRIAGE_AGENT_NAMES:
+        definition = raw_agents.get(name)
+        if not isinstance(definition, Mapping):
+            return None
+        if set(definition) != {"description", "prompt", "tools"}:
+            return None
+        description = definition.get("description")
+        prompt = definition.get("prompt")
+        if (
+            not isinstance(description, str)
+            or not description.strip()
+            or not isinstance(prompt, str)
+            or not prompt.strip()
+            or definition.get("tools") != ["Read"]
+        ):
+            return None
+        agents[name] = {
+            "description": description,
+            "prompt": prompt,
+            "tools": ["Read"],
+        }
+    return agents
+
+
+def _invalid_review_triage_profile_result() -> CliRunResult:
+    return CliRunResult(
+        exit_code=125,
+        stdout="",
+        stderr="invalid review_triage_v1 agent configuration",
+        metadata={"invalid_execution_profile": _REVIEW_TRIAGE_PROFILE},
+    )
 
 
 def _prompt_file_scope_args(request: CliRunRequest) -> list[str]:

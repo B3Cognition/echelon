@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -21,6 +22,7 @@ from harness.ai_cli_backends.copilot import CopilotCliBackend
 from harness.ai_cli_backends.opencode import OpenCodeCliBackend
 from harness.ai_cli_backends.plain import PlainCliBackend
 from harness.config import HarnessConfig, LlmConfig
+from harness.llm_tool_policy import LlmToolPolicy
 
 
 def _config(cli: str) -> HarnessConfig:
@@ -3117,6 +3119,134 @@ def test_claude_backend_enforces_prompt_file_scopes(tmp_path) -> None:
         f"Write(/{write_path})",
         f"Edit(/{write_path})",
     }
+
+
+def test_claude_backend_compiles_review_triage_profile(tmp_path) -> None:
+    config = _config("claude")
+    backend = ClaudeCliBackend(
+        replace(
+            config,
+            llm=replace(
+                config.llm,
+                tool_policy=LlmToolPolicy(
+                    allow_unsafe_host_execution=True,
+                    approval_reason="Outside this profile only.",
+                ),
+            ),
+        )
+    )
+    captured = {}
+
+    class FakeProcess:
+        stdout = io.BytesIO(b"")
+        returncode = 0
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self) -> int:
+            return self.returncode
+
+    def fake_popen(command, **_kwargs):
+        captured["command"] = command
+        return FakeProcess()
+
+    worktree = (tmp_path / "delivery-worktree").resolve()
+    spec_dir = (tmp_path / "canonical-spec").resolve()
+    staged_files = [
+        (tmp_path / "state" / "attempt-1" / "tasks-append.md").resolve(),
+        (tmp_path / "state" / "attempt-1" / "review-fix-3.md").resolve(),
+        (tmp_path / "state" / "strategy-review-status.json").resolve(),
+    ]
+    review_agents = {
+        "speckit-echelon-debugger": {
+            "description": "Diagnose each review concern.",
+            "prompt": "Read the supplied evidence and diagnose the issue.",
+            "tools": ["Read"],
+        },
+        "speckit-echelon-sentinel": {
+            "description": "Check proposed fixes for regressions.",
+            "prompt": "Read the evidence and identify delivery risks.",
+            "tools": ["Read"],
+        },
+        "speckit-echelon-spec-guard": {
+            "description": "Check the canonical specification.",
+            "prompt": "Read the specification and report contract conflicts.",
+            "tools": ["Read"],
+        },
+    }
+    request = CliRunRequest(
+        cwd=str(worktree),
+        prompt="Triage the supplied review comments.",
+        env={},
+        timeout_s=10,
+        metadata={
+            "execution_profile": "review_triage_v1",
+            "prompt_metadata": {
+                "tool_read_roots": [str(worktree), str(spec_dir)],
+                "tool_write_paths": [str(path) for path in staged_files],
+                "review_agents": review_agents,
+            },
+        },
+    )
+
+    with patch("harness.ai_cli_backends.claude.subprocess.Popen", fake_popen):
+        result = backend.run_prompt(request)
+
+    assert result.exit_code == 0
+    command = captured["command"]
+    assert "--bare" in command
+    assert command[command.index("--setting-sources") + 1] == ""
+    assert "--strict-mcp-config" in command
+    assert "--disable-slash-commands" in command
+    assert command[command.index("--tools") + 1] == "Read,Write,Edit,Agent"
+    assert "--safe-mode" not in command
+    allowed = set(command[command.index("--allowedTools") + 1].split(","))
+    assert allowed == {
+        f"Read(/{worktree}/**)",
+        f"Read(/{spec_dir}/**)",
+        *(f"{tool}(/{path})" for path in staged_files for tool in ("Write", "Edit")),
+        "Agent(speckit-echelon-debugger)",
+        "Agent(speckit-echelon-sentinel)",
+        "Agent(speckit-echelon-spec-guard)",
+    }
+    assert json.loads(command[command.index("--agents") + 1]) == review_agents
+    flattened = " ".join(command)
+    for forbidden in (
+        "Bash",
+        "WebFetch",
+        "WebSearch",
+        "--dangerously-skip-permissions",
+        "--allow-dangerously-skip-permissions",
+        "background-agent",
+    ):
+        assert forbidden not in flattened
+
+
+def test_claude_backend_rejects_review_triage_agents_outside_fixed_allowlist(
+    tmp_path,
+) -> None:
+    backend = ClaudeCliBackend(_config("claude"))
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Triage the supplied review comments.",
+        env={},
+        timeout_s=10,
+        metadata={
+            "execution_profile": "review_triage_v1",
+            "prompt_metadata": {
+                "tool_read_roots": [str(tmp_path / "worktree")],
+                "tool_write_paths": [str(tmp_path / "state" / "tasks-append.md")],
+                "review_agents": {"untrusted-agent": {}},
+            },
+        },
+    )
+
+    with patch("harness.ai_cli_backends.claude.subprocess.Popen") as popen:
+        result = backend.run_prompt(request)
+
+    assert result.exit_code == 125
+    popen.assert_not_called()
 
 
 def test_claude_workspace_sandbox_allows_scoped_paths_inside_forbidden_root(
