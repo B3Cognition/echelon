@@ -47,9 +47,9 @@ class TestSpecCompletion:
         assert re.search(r"Status.*Planned", content)
 
     def test_cli_writes_in_progress_at_harness_run_start(self) -> None:
-        # Python-owned: cli.py calls write_status("In Progress") before run()
+        # Python-owned: cli.py writes the canonical lifecycle value before run().
         content = (SRC / "echelon" / "cli.py").read_text()
-        assert re.search(r'write_spec_status\(spec_dir,\s*"In Progress"\)', content)
+        assert re.search(r'write_spec_status\(spec_dir,\s*"in_progress"\)', content)
 
     def test_coordinator_does_not_overwrite_ready_to_land_on_convergence(self) -> None:
         # Ralph owns the verified-but-not-landed status transition.

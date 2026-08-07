@@ -15,6 +15,7 @@ import pytest
 from echelon.workspace_model import WorkspaceInfo, WorkspaceManifest
 from harness.phase_a_readiness import REQUIRED_PHASE_A_BUILD_INPUTS
 from harness.run_intent import parse_intent
+from harness.state import StateStore
 
 
 VALID_PLAN = """# Implementation Plan: Demo
@@ -84,6 +85,54 @@ def _write_phase_a_build_inputs(spec_dir: Path) -> None:
 @pytest.fixture(autouse=True)
 def _git_backed_workspace(tmp_path: Path) -> None:
     (tmp_path / ".git").mkdir()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("status", "expected_phase"),
+    [("running", "implementation"), ("validating", "visual"), ("reviewing", "review"), ("finalizing", "finalization")],
+)
+def test_mark_current_harness_state_blocked_uses_v2_checkpoint_phase(
+    tmp_path: Path, status: str, expected_phase: str
+) -> None:
+    from echelon.cli import _mark_current_harness_state_blocked
+
+    store = StateStore(tmp_path / "runs" / "state", "003", "default")
+    store.initialize("run-1", "semi", enabled_phases=["implementation", "visual", "review", "finalization"])
+    store.transition("running")
+    if status == "validating":
+        store.transition("verified", updates={"last_completed_phase": "implementation"})
+        store.transition("validating")
+    elif status == "reviewing":
+        store.transition("verified", updates={"last_completed_phase": "visual"})
+        store.transition("reviewing")
+    elif status == "finalizing":
+        store.transition("verified", updates={"last_completed_phase": "review"})
+        store.transition("finalizing")
+
+    _mark_current_harness_state_blocked(tmp_path, "003", "default", "harness_error", "boom")
+
+    state = store.read()
+    assert state["status"] == "blocked"
+    assert state["blocked_phase"] == expected_phase
+    assert state["termination_reason"] == "harness_error"
+    assert state["harness_error"] == "boom"
+
+
+@pytest.mark.unit
+def test_mark_current_harness_state_blocked_preserves_converged_state(tmp_path: Path) -> None:
+    from echelon.cli import _mark_current_harness_state_blocked
+
+    store = StateStore(tmp_path / "runs" / "state", "003", "default")
+    store.initialize("run-1", "semi")
+    store.transition("running")
+    store.transition("verified", updates={"last_completed_phase": "implementation"})
+    store.transition("finalizing")
+    store.transition("converged", updates={"termination_reason": "converged"})
+
+    _mark_current_harness_state_blocked(tmp_path, "003", "default", "harness_error", "post-run")
+
+    assert store.read()["status"] == "converged"
 
 
 @pytest.mark.unit

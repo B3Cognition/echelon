@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from harness.spec_frontmatter import write_text_atomic
+
 
 def append_implementation_run(
     spec_dir: Path,
@@ -43,9 +45,8 @@ def append_implementation_run(
     if verification_result == "PASS":
         history["authoritative_run"] = run_id
 
-    history_path.write_text(
-        json.dumps(history, indent=2, ensure_ascii=False, sort_keys=True),
-        encoding="utf-8",
+    write_text_atomic(
+        history_path, json.dumps(history, indent=2, ensure_ascii=False, sort_keys=True)
     )
 
 
@@ -102,9 +103,8 @@ def append_phase_a_run(
     ]
     runs.append(entry)
 
-    history_path.write_text(
-        json.dumps(history, indent=2, ensure_ascii=False, sort_keys=True),
-        encoding="utf-8",
+    write_text_atomic(
+        history_path, json.dumps(history, indent=2, ensure_ascii=False, sort_keys=True)
     )
 
 

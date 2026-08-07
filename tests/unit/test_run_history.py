@@ -13,6 +13,23 @@ from harness.run_history import append_implementation_run, append_phase_a_run
 
 @pytest.mark.unit
 class TestRunHistory:
+    def test_pre_replace_failure_keeps_history_intact_for_retry(self, tmp_path, monkeypatch):
+        spec_dir = tmp_path / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        history_path = spec_dir / "run-history.json"
+        original = '{"runs": []}'
+        history_path.write_text(original, encoding="utf-8")
+
+        monkeypatch.setattr(
+            "harness.spec_frontmatter.os.replace",
+            lambda *_: (_ for _ in ()).throw(OSError("injected replace failure")),
+        )
+        with pytest.raises(OSError, match="injected"):
+            append_implementation_run(
+                spec_dir, run_id="run-1", spec_status="ready_to_land", verification_result="PASS"
+            )
+
+        assert history_path.read_text(encoding="utf-8") == original
     def test_append_implementation_run_creates_authoritative_history(self, tmp_path):
         spec_dir = tmp_path / "specs" / "001-demo"
         spec_dir.mkdir(parents=True)

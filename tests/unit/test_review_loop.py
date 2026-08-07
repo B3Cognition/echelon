@@ -53,6 +53,39 @@ def _config(cli: str = "claude", tool_policy: LlmToolPolicy | None = None) -> Ha
 
 @pytest.mark.unit
 class TestReviewLoopInvocation:
+    def test_restart_preserves_last_blocking_comment_time_for_silence_merge(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        config = _config()
+        config.review_loop.merge_timeout_hours = 0
+        gitops = MagicMock()
+        gitops.merge_pr.return_value = True
+        comment = ReviewComment(
+            comment_id="c1", path="src/app.py", line=1, body="must fix",
+            reviewer="reviewer", created_at=datetime.now(tz=timezone.utc), is_inline=True,
+        )
+        first = ReviewLoopController(
+            gitops=gitops, config=config, spec_id="005", strategy_id="default",
+            base_dir=str(tmp_path), build_id="build-1",
+        )
+        monkeypatch.setattr(first, "_fetch_unresolved_comments", MagicMock(return_value=[comment]))
+        monkeypatch.setattr(first, "_fetch_approval_state", MagicMock(return_value=ApprovalState.PENDING))
+        monkeypatch.setattr(first, "_invoke_review_skill", MagicMock(return_value=_ReviewSkillResult(tokens_used=1, queued=True)))
+        assert first.run_loop("https://github.com/org/repo/pull/1", str(tmp_path)).status == "review_fix_queued"
+
+        restarted = ReviewLoopController(
+            gitops=gitops, config=config, spec_id="005", strategy_id="default",
+            base_dir=str(tmp_path), build_id="build-1",
+        )
+        monkeypatch.setattr(restarted, "_fetch_unresolved_comments", MagicMock(return_value=[]))
+        monkeypatch.setattr(restarted, "_fetch_approval_state", MagicMock(return_value=ApprovalState.PENDING))
+
+        result = restarted.run_loop("https://github.com/org/repo/pull/1", str(tmp_path))
+
+        assert result.status == "completed"
+        assert json.loads(restarted._state_file.read_text())["last_blocking_comment_at"]
+        gitops.merge_pr.assert_called_once()
+
     def test_review_loop_returns_queued_when_review_fix_is_created(
         self, monkeypatch, tmp_path: Path
     ) -> None:

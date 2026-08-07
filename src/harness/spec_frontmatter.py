@@ -3,7 +3,9 @@ and walk-up spec directory discovery."""
 from __future__ import annotations
 
 import logging
+import os
 import re
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -13,6 +15,26 @@ logger = logging.getLogger(__name__)
 
 _FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---(?:\n|$)", re.DOTALL)
 TARGETS_FILENAME = "targets.yml"
+
+
+def write_text_atomic(path: Path, content: str) -> None:
+    """Durably replace one canonical text file without exposing partial data."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except Exception:
+        Path(temporary).unlink(missing_ok=True)
+        raise
 
 
 def _target_id_from_path(path: str) -> str:
@@ -265,7 +287,7 @@ def write_status(spec_dir: Path, status: str) -> Path:
     # Keep the human-readable **Status**: line in the body in sync when present.
     body = re.sub(r'(\*\*Status\*\*:\s*).*', rf'\g<1>{status}', body, count=1)
 
-    md.write_text(f"---\n{front}\n---\n{body}", encoding="utf-8")
+    write_text_atomic(md, f"---\n{front}\n---\n{body}")
     return md
 
 

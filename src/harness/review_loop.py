@@ -329,7 +329,7 @@ class ReviewLoopController:
           "blocked"           — max iterations reached or unrecoverable error.
         """
         tokens_used = 0
-        last_comment_time: Optional[datetime] = None
+        last_comment_time = self._load_last_comment_time()
 
         for iteration in range(self._rl.max_fix_iterations):
             logger.info(
@@ -362,6 +362,7 @@ class ReviewLoopController:
             newest = max(c.created_at for c in comments)
             if last_comment_time is None or newest > last_comment_time:
                 last_comment_time = newest
+                self._save_last_comment_time(last_comment_time)
 
             invocation = self._invoke_review_skill(
                 pr_url,
@@ -452,7 +453,6 @@ class ReviewLoopController:
                     for comment_id in batch.comment_ids:
                         self._seen_ids.add(comment_id)
                     self._save_seen_ids()
-                    publisher.mark_consumed(batch.attempt_id)
                     return _ReviewSkillResult(tokens_used=tokens_used, queued=False)
 
                 self._record_pending_batch(batch)
@@ -1066,6 +1066,21 @@ class ReviewLoopController:
     def _save_seen_ids(self) -> None:
         state = self._load_review_state()
         state["seen_comment_ids"] = sorted(self._seen_ids)
+        self._write_review_state(state)
+
+    def _load_last_comment_time(self) -> Optional[datetime]:
+        value = self._load_review_state().get("last_blocking_comment_at")
+        if not isinstance(value, str):
+            return None
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+
+    def _save_last_comment_time(self, value: datetime) -> None:
+        state = self._load_review_state()
+        state["last_blocking_comment_at"] = value.astimezone(timezone.utc).isoformat()
         self._write_review_state(state)
 
     def _record_pending_batch(self, batch: PublishedReviewBatch) -> None:

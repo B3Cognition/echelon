@@ -152,6 +152,19 @@ class TestWriteTargets:
 
 @pytest.mark.unit
 class TestWriteStatus:
+    def test_pre_replace_failure_keeps_original_spec_intact(self, tmp_path: Path, monkeypatch) -> None:
+        spec_dir = _make_spec_dir(tmp_path, "---\nstatus: planned\n---\n# Body\n")
+        original = (spec_dir / "spec.md").read_text(encoding="utf-8")
+
+        monkeypatch.setattr(
+            "harness.spec_frontmatter.os.replace",
+            lambda *_: (_ for _ in ()).throw(OSError("injected replace failure")),
+        )
+        with pytest.raises(OSError, match="injected"):
+            write_status(spec_dir, "in_progress")
+
+        assert (spec_dir / "spec.md").read_text(encoding="utf-8") == original
+
     def test_adds_status_field(self, tmp_path: Path) -> None:
         spec_dir = _make_spec_dir(tmp_path, "---\ntargets: []\n---\n# Body\n")
         write_status(spec_dir, "landed")
@@ -190,11 +203,11 @@ class TestWriteStatus:
             tmp_path,
             "---\nstatus: Planned\n---\n\n**Status**: Planned\n\n# Body\n",
         )
-        write_status(spec_dir, "In Progress")
+        write_status(spec_dir, "in_progress")
         content = (spec_dir / "spec.md").read_text(encoding="utf-8")
-        assert "**Status**: In Progress" in content
+        assert "**Status**: in_progress" in content
         assert "**Status**: Planned" not in content
-        assert read_frontmatter(spec_dir)["status"] == "In Progress"
+        assert read_frontmatter(spec_dir)["status"] == "in_progress"
 
     def test_body_status_line_absent_does_not_error(self, tmp_path: Path) -> None:
         spec_dir = _make_spec_dir(tmp_path, "---\nstatus: Draft\n---\n# No status line\n")
@@ -204,7 +217,7 @@ class TestWriteStatus:
     def test_body_status_line_update_is_idempotent(self, tmp_path: Path) -> None:
         spec_dir = _make_spec_dir(
             tmp_path,
-            "---\nstatus: In Progress\n---\n\n**Status**: In Progress\n",
+            "---\nstatus: in_progress\n---\n\n**Status**: in_progress\n",
         )
         write_status(spec_dir, "Implemented")
         write_status(spec_dir, "Implemented")

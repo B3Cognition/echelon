@@ -30,6 +30,7 @@ from harness.delivery_results import (
     ReviewResult,
     VisualResult,
 )
+from harness.verify_result import VerifyResult
 from harness.mode import ModeController
 from harness.provider import SandboxProvider
 from harness.ralph import RalphController
@@ -43,7 +44,7 @@ from harness.repair_loop import (
 from harness.review_loop import ReviewLoopController
 from harness.run_intent import RunIntent
 from harness.skill_loader import resolve_llm_prompt
-from harness.spec_frontmatter import find_spec_dir, read_frontmatter
+from harness.spec_frontmatter import find_spec_dir, read_frontmatter, read_targets
 from harness.stacks import (
     load_stack_definitions,
     render_preflight_markdown,
@@ -84,6 +85,28 @@ def _path_tuple(value: object) -> tuple[Path, ...]:
     if not isinstance(value, (tuple, list)):
         return ()
     return tuple(Path(item) for item in value if isinstance(item, Path))
+
+
+def _serialize_verify_result(result: Any) -> dict[str, Any] | None:
+    """Persist the portable verification evidence used by terminal resumes."""
+    if result is None:
+        return None
+    failures = []
+    for failure in getattr(result, "failures", ()):
+        category = getattr(failure, "category", "")
+        failures.append(
+            {
+                "category": getattr(category, "value", str(category)),
+                "id": str(getattr(failure, "id", "")),
+                "error": str(getattr(failure, "error", "")),
+            }
+        )
+    return {
+        "passed": bool(getattr(result, "passed", False)),
+        "failures": failures,
+        "duration_s": float(getattr(result, "duration_s", 0.0)),
+        "token_usage": int(getattr(result, "token_usage", 0)),
+    }
 
 
 def _pending_review_reentry(value: object) -> dict[str, object] | None:
@@ -411,6 +434,13 @@ class StrategyCoordinator:
             "failed": "failed",
             "cancelled_by_coordinator": "cancelled",
         }[persisted_status]
+        final_verify = None
+        persisted_verify = state.get("last_verify_result")
+        if isinstance(persisted_verify, dict):
+            try:
+                final_verify = VerifyResult.from_dict(persisted_verify)
+            except Exception:
+                final_verify = None
         return DeliveryResult(
             status=status,
             termination_reason=str(state.get("termination_reason") or status),
@@ -418,7 +448,7 @@ class StrategyCoordinator:
             inner_iterations=int(state.get("inner_iter") or 0),
             pr_url=state.get("pr_url"),
             tokens_used=int(state.get("tokens_used") or 0),
-            final_verify=None,
+            final_verify=final_verify,
             blocked_phase=None,
             branch=state.get("branch") or state.get("branch_name"),
         )
@@ -638,7 +668,21 @@ class StrategyCoordinator:
                     tokens_used=tokens_used,
                     final_verify=final_verify,
                 )
-        state_store.transition("converged", updates={"termination_reason": "converged"})
+        state = state_store.read()
+        state_store.transition(
+            "converged",
+            updates={
+                "termination_reason": "converged",
+                "outer_iter": max(int(state.get("outer_iter") or 0), outer_iterations),
+                "inner_iter": max(
+                    int(state.get("inner_iter") or 0), implementation.inner_iterations
+                ),
+                "tokens_used": max(int(state.get("tokens_used") or 0), tokens_used),
+                "pr_url": implementation.pr_url,
+                "branch_name": implementation.branch,
+                "last_verify_result": _serialize_verify_result(final_verify),
+            },
+        )
         return DeliveryResult(
             status="converged",
             termination_reason="converged",
@@ -697,6 +741,8 @@ class StrategyCoordinator:
         spec_dir = find_spec_dir(intent.spec_id, spec_search_root)
         spec_file = spec_dir / "spec.md" if spec_dir is not None else None
         tasks_file = spec_dir / "tasks.md" if spec_dir is not None else None
+        if not declared_targets and spec_dir is not None:
+            declared_targets = read_targets(spec_dir)
         state_store.acquire_lock(run_id)
 
         try:
@@ -755,7 +801,7 @@ class StrategyCoordinator:
                 if not implementation_target and isinstance(persisted_target, str):
                     implementation_target = persisted_target.strip() or None
                 persisted_declared = existing.get("declared_targets")
-                if not declared_targets and isinstance(persisted_declared, list):
+                if isinstance(persisted_declared, list):
                     declared_targets = [
                         str(item).strip()
                         for item in persisted_declared

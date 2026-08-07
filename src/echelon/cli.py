@@ -2266,7 +2266,7 @@ def _cmd_harness_run(
     ])
 
     if spec_dir is not None:
-        _write_spec_status(spec_dir, "In Progress")
+        _write_spec_status(spec_dir, "in_progress")
 
     try:
         run(
@@ -2364,25 +2364,57 @@ def _mark_current_harness_state_blocked(
     error: str = "",
 ) -> None:
     try:
-        import json as _json
         from harness.paths import build_dir, current_build_marker, runs_dir
+        from harness.state import DELIVERY_STATE_VERSION, StateStore
 
         marker = current_build_marker(project_root, spec_id)
         if marker.exists():
             state_dir = build_dir(project_root, marker.read_text().strip()) / "state"
         else:
             state_dir = runs_dir(project_root) / "state"
-        state_file = state_dir / f"{strategy}.json"
-        if not state_file.exists():
+        state_store = StateStore(state_dir, spec_id, strategy)
+        data = state_store.read()
+        if not data:
             return
-        data = _json.loads(state_file.read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
+        status = data.get("status")
+        if status in {"converged", "failed", "cancelled_by_coordinator"}:
             return
+        if data.get("delivery_state_version") == DELIVERY_STATE_VERSION:
+            if status == "blocked":
+                phase = data.get("blocked_phase")
+            elif status == "running":
+                phase = "implementation"
+            elif status == "validating":
+                phase = "visual"
+            elif status == "reviewing":
+                phase = "review"
+            elif status == "finalizing":
+                phase = "finalization"
+            elif status == "verified":
+                phases = data.get("enabled_phases")
+                completed = data.get("last_completed_phase")
+                phase = "finalization"
+                if isinstance(phases, list) and completed in phases:
+                    index = phases.index(completed)
+                    if index + 1 < len(phases):
+                        phase = phases[index + 1]
+            else:
+                phase = "implementation"
+            if phase not in {"implementation", "visual", "review", "finalization"}:
+                phase = "implementation"
+            updates = {"blocked_phase": phase, "termination_reason": reason}
+            if error:
+                updates["harness_error"] = error
+            state_store.transition("blocked", updates=updates)
+            return
+
+        # Legacy state remains V1. The coordinator is the only component that
+        # can select and snapshot its V2 phase plan from the active config.
         data["status"] = "blocked"
         data["termination_reason"] = reason
         if error:
             data["harness_error"] = error
-        state_file.write_text(_json.dumps(data, indent=4) + "\n", encoding="utf-8")
+        state_store.write(data)
     except Exception:
         pass
 

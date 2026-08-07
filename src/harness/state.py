@@ -197,7 +197,6 @@ class StateStore:
         Validates invariants before writing.
         """
         self._ensure_dir()
-        data = migrate_legacy_delivery_state(data)
         self._validate_invariants(data)
 
         # Keep previous as .bak
@@ -308,14 +307,15 @@ class StateStore:
     ) -> None:
         """Validate phase-qualified pause checkpoints and their exact resumes."""
         status = new_data.get("status")
-        if status == "blocked":
+        is_v2 = new_data.get("delivery_state_version") == DELIVERY_STATE_VERSION
+        if is_v2 and status == "blocked":
             phase = new_data.get("blocked_phase")
             if phase not in DELIVERY_PHASES:
                 raise InvalidTransitionError(
                     "blocked_phase must be implementation, visual, review, or "
                     "finalization when status is blocked"
                 )
-        elif status == "interrupted":
+        elif is_v2 and status == "interrupted":
             phase = new_data.get("interrupted_phase")
             if phase not in DELIVERY_PHASES:
                 raise InvalidTransitionError(

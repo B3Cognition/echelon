@@ -24,6 +24,8 @@ from harness.delivery_results import DeliveryResult, ImplementationResult, Visua
 from harness.provider import SandboxHandle, SandboxProvider, SandboxSpec
 from harness.run_intent import RunIntent
 from harness.state import StateStore
+from harness.verify_result import VerifyResult
+from harness.spec_frontmatter import read_frontmatter
 
 
 class MockProvider(SandboxProvider):
@@ -85,6 +87,53 @@ def _make_coordinator(tmp_path: Path, should_pass: bool = True) -> StrategyCoord
 @pytest.mark.unit
 class TestSingleStrategy:
     """Test N=1 passthrough."""
+
+    def test_direct_single_target_derives_canonical_targets_and_finalizes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A direct run uses spec targets when no orchestration env is present."""
+        for name in (
+            "ECHELON_DECLARED_TARGETS", "ECHELON_IMPLEMENTATION_TARGET",
+            "ECHELON_TARGET_REPO_PATH", "ECHELON_TARGET_REPO_NAME",
+        ):
+            monkeypatch.delenv(name, raising=False)
+        coord = _make_coordinator(tmp_path)
+        spec_dir = tmp_path / "specs" / "spec-001-direct"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text(
+            "---\nstatus: in_progress\ntargets:\n  - .\n---\n# Direct\n",
+            encoding="utf-8",
+        )
+        verified_commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=tmp_path, check=True,
+            capture_output=True, text=True,
+        ).stdout.strip()
+        (spec_dir / "fulfillment-report.md").write_text(
+            f"---\nverified_commit: {verified_commit}\n---\n# Fulfillment\n",
+            encoding="utf-8",
+        )
+        verified = ImplementationResult(
+            "verified", "verified", 1, 1, None, 7,
+            VerifyResult(passed=True, duration_s=0.5, token_usage=2), branch="direct"
+        )
+
+        with patch("harness.coordinator.RalphController") as ralph:
+            ralph.return_value.run_loop.return_value = verified
+            result = coord.start(RunIntent(spec_id="spec-001", max_outer=1, max_inner=1))[0]
+
+        assert result.status == "converged"
+        assert read_frontmatter(spec_dir)["status"] == "ready_to_land"
+        state = StateStore(tmp_path / "runs" / "state", "spec-001", "default").read()
+        assert state["declared_targets"] == ["."]
+        assert state["status"] == "converged"
+        assert (state["outer_iter"], state["inner_iter"], state["tokens_used"]) == (1, 1, 7)
+        assert state["branch_name"] == "direct"
+        assert state["last_verify_result"] == {
+            "passed": True, "failures": [], "duration_s": 0.5, "token_usage": 2,
+        }
+        resumed = coord.start(RunIntent(spec_id="spec-001", max_outer=1, max_inner=1))[0]
+        assert (resumed.outer_iterations, resumed.inner_iterations, resumed.tokens_used) == (1, 1, 7)
+        assert resumed.final_verify is not None and resumed.final_verify.passed
 
     def test_single_strategy_converges(self, tmp_path: Path) -> None:
         coord = _make_coordinator(tmp_path, should_pass=True)
@@ -340,9 +389,6 @@ class TestDeliveryStateMigration:
         store.transition("blocked", updates={"blocked_phase": "implementation"})
         state = store.read()
         state.pop("blocked_phase")
-        # Persist an actual V1 record; a malformed V2 blocked record must not
-        # be silently defaulted during coordinator migration.
-        state.pop("delivery_state_version")
         store.state_file.write_text(json.dumps(state), encoding="utf-8")
 
         migrated = coordinator._migrate_delivery_state(store, llm_provider=None)
@@ -364,6 +410,29 @@ class TestDeliveryStateMigration:
         store.state_file.write_text(json.dumps(state), encoding="utf-8")
 
         assert coordinator._migrate_delivery_state(store, llm_provider=None) == state
+
+    def test_legacy_resume_snapshots_visual_and_review_phase_plan(
+        self, tmp_path: Path
+    ) -> None:
+        """Only the configured coordinator chooses a legacy run's V2 phases."""
+        from harness.config import ReviewLoopConfig, VisualTestsConfig
+
+        coordinator = _make_coordinator(tmp_path)
+        coordinator._config.visual_tests = VisualTestsConfig(enabled=True)
+        coordinator._config.review_loop = ReviewLoopConfig(enabled=True)
+        coordinator._config.pr_host = "github"
+        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store.state_file.parent.mkdir(parents=True, exist_ok=True)
+        store.state_file.write_text(
+            json.dumps({"status": "blocked", "outer_iter": 1}), encoding="utf-8"
+        )
+
+        migrated = coordinator._migrate_delivery_state(store, llm_provider=None)
+
+        assert migrated["enabled_phases"] == [
+            "implementation", "visual", "review", "finalization"
+        ]
+        assert migrated["blocked_phase"] == "implementation"
 
     def test_phase_snapshot_does_not_follow_later_config_changes(
         self, tmp_path: Path
@@ -1255,13 +1324,14 @@ class TestSmartResumeDetection:
             results = coord.start(intent)
 
         assert results[0].status == "converged"
-        # State was re-initialized — outer_iter reset to 0
+        # State was re-initialized, then terminal convergence persisted the
+        # successful run's own counter rather than stale prior progress.
         from harness.state import StateStore
         state_dir = tmp_path / "runs" / "state"
         store = StateStore(state_dir, "spec-001", "default")
         final_state = store.read()
-        assert final_state.get("outer_iter") == 0, (
-            f"outer_iter should be 0 after forced reset, got {final_state.get('outer_iter')}"
+        assert final_state.get("outer_iter") == 1, (
+            f"outer_iter should reflect the fresh run, got {final_state.get('outer_iter')}"
         )
 
     def test_target_env_metadata_is_recorded_in_state(
