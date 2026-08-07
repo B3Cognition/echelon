@@ -37,8 +37,10 @@ They must not be represented by one overloaded `base_dir` value.
 - Give Phase 1 verification and end-to-end delivery convergence distinct,
   durable meanings so Phase 3 cannot leave a failed delivery recorded as
   converged.
-- Give safe review providers explicit access to the canonical spec outputs and
-  target-harness status file they are required to write.
+- Represent Phase 2 visual validation and crash recovery explicitly rather
+  than treating them as implicit extensions of Phase 1.
+- Let a safely scoped review provider produce canonical review outputs through
+  validated build-scoped staging without granting it direct canonical writes.
 - Preserve current behavior for single-repository delivery runs.
 - Add regression coverage for the observed Prosaic failure path.
 
@@ -54,6 +56,9 @@ They must not be represented by one overloaded `base_dir` value.
   targets. Normal `land()` currently requires exactly one declared target;
   multi-target landing needs orchestration after every target converges and is
   a separate design.
+- Designing a provider-neutral capability compiler for review triage. This
+  change supports the review-triage profile on Claude only; Prosaic/provider
+  capability negotiation is a follow-up design.
 
 ## Root Ownership Contract
 
@@ -255,122 +260,344 @@ worktree is a controlled review failure, never a reason to run an implementation
 agent from the harness root. Worktree validation is deferred until blocking
 comments require source analysis, so an approved PR with no comments can still
 merge after its delivery worktree has already been removed. A timeout, nonzero
-skill exit, malformed/missing status, or status other than
-`review_fix_queued` fails the review cycle without marking comments seen,
-resolving threads, or requesting another review.
+skill exit, malformed/missing output manifest, or manifest status other than
+`review_fix_queued` or `no_blocking_comments` fails the review cycle without
+marking comments seen, resolving threads, or requesting another review.
 
 Ralph preserves a verified delivery worktree even when verification happens
 before the final outer iteration so Phase 2, Phase 3, and landing can consume
 it. The review skill treats that worktree as source context only and never
-checks out, switches, or stashes its branch. It writes review artifacts to the
-explicit canonical `spec_dir`. Phase 1 re-entry reads sorted
-`review-fix-*.md` files directly from that directory; it does not run Git
-commands against the target harness root.
+checks out, switches, or stashes its branch. It writes proposed review outputs
+to build-scoped staging; the controller validates and publishes them to the
+explicit canonical `spec_dir`. Phase 1 re-entry reads only the published,
+sorted `review-fix-*.md` files from that directory; it does not run Git commands
+against the target harness root.
 
 ### Delivery State Semantics
 
-`converged` is an end-to-end delivery status. Phase 1 must not use the same
-status for its narrower implementation result. New runs use these meanings:
+`converged` is the terminal end-to-end delivery status. Phase controllers do
+not return it. New durable delivery states have these meanings:
 
 | Status | Owner | Meaning |
 | --- | --- | --- |
-| `running` | Phase 1 | Implementation or review-fix work is executing. |
-| `verified` | Phase 1 | The current implementation passed required verification; downstream enabled phases are not yet complete. |
-| `reviewing` | coordinator / Phase 3 | Verified implementation is undergoing automated PR review or merge. |
-| `blocked` | current phase | Recovery or user action is required; `blocked_phase` identifies `implementation` or `review`. |
-| `converged` | coordinator | Every enabled delivery phase completed successfully. |
+| `running` | coordinator / Phase 1 | Implementation or review-fix work is executing. |
+| `verified` | coordinator boundary | Phase 1 passed required non-visual verification; enabled downstream phases may remain. |
+| `validating` | coordinator / Phase 2 | Visual validation is executing against the verified worktree. |
+| `reviewing` | coordinator / Phase 3 | The verified and, when enabled, visually validated implementation is undergoing PR review or merge. |
+| `finalizing` | coordinator | All enabled execution phases passed; single-target provenance/lifecycle writes or target-local multi-target completion are being persisted. |
+| `blocked` | coordinator | A recoverable phase failure occurred; `blocked_phase` is exactly `implementation`, `visual`, `review`, or `finalization`. |
+| `converged` | coordinator | Every enabled delivery phase completed successfully. This state is terminal. |
+| `interrupted` | coordinator | Execution stopped externally and may resume through the phase recorded in `interrupted_phase`. |
+| `failed` | coordinator | An irrecoverable invariant or persisted-state corruption was detected. This state is terminal. |
+| `cancelled_by_coordinator` | coordinator | The parent coordinator intentionally cancelled this strategy. This state is terminal. |
 
-The normal paths are:
-
-```text
-review disabled: running -> verified -> converged
-review enabled:  running -> verified -> reviewing -> converged
-review failure:  reviewing -> blocked -> reviewing
-review fixes:    reviewing -> running -> verified -> reviewing
-```
-
-The state machine admits only these new transitions:
+The enabled-phase graph determines the next state. Skipped phases do not get a
+synthetic state:
 
 ```text
-running   -> verified
-verified  -> reviewing | converged
-reviewing -> running | blocked | converged
-blocked   -> reviewing  when blocked_phase == review
-blocked   -> running    when blocked_phase == implementation
+Phase 2 off, Phase 3 off: running -> verified -> finalizing -> converged
+Phase 2 on,  Phase 3 off: running -> verified -> validating -> finalizing -> converged
+Phase 2 off, Phase 3 on:  running -> verified -> reviewing -> finalizing -> converged
+Phase 2 on,  Phase 3 on:  running -> verified -> validating -> reviewing -> finalizing -> converged
 ```
 
-`LoopResult` accepts `verified` as a Phase 1 result. `reviewing` is durable
-coordinator state, not a terminal result returned to the run caller.
+At run creation the coordinator persists an immutable `enabled_phases` list.
+Phase 1 is always present. Phase 2 is included only when visual tests are
+configured and Phase 1 uses the sandbox path that exposes its worktree to
+`VisualRalphController`; the existing LLM-managed Phase 1 path records Phase 2
+as skipped. Phase 3 is included only when review-loop configuration is enabled
+and a PR host is configured. Continuation uses this persisted list even if the
+ambient config later changes. Starting a new delivery is required to adopt a
+different phase plan. If Phase 3 is enabled but Phase 1 produces no PR URL, the
+coordinator blocks Phase 3 with `termination_reason: missing_pr_url`; it does
+not silently treat review as complete.
 
-`RalphController` returns and persists `verified` after final implementation
-verification. It no longer writes the durable delivery status `converged` or
-advances the canonical spec to `ready_to_land`. `StrategyCoordinator` owns
-those end-to-end actions after all configured downstream phases succeed. This
-keeps auto-land and lifecycle advancement tied to overall convergence.
+The state machine admits these transitions:
 
-A Phase 3 timeout, missing worktree, provider failure, malformed/missing
-status, rejected status, exhausted review loop, or failed merge persists:
-
-```json
-{
-  "status": "blocked",
-  "blocked_phase": "review",
-  "termination_reason": "blocker_escalation"
-}
+```text
+running    -> verified | blocked | interrupted | failed | cancelled_by_coordinator
+verified   -> validating | reviewing | finalizing | blocked
+validating -> running | reviewing | finalizing | blocked | interrupted | failed | cancelled_by_coordinator
+reviewing  -> running | finalizing | blocked | interrupted | failed | cancelled_by_coordinator
+finalizing -> converged | blocked
+blocked    -> running     when blocked_phase == implementation
+blocked    -> validating  when blocked_phase == visual
+blocked    -> reviewing   when blocked_phase == review
+blocked    -> finalizing  when blocked_phase == finalization
+interrupted -> running | validating | reviewing | finalizing
+               according to interrupted_phase
 ```
 
-`echelon delivery continue` recognizes this as recoverable. It transitions
-directly back to `reviewing` and retries Phase 3 without rerunning Phase 1 when
-no review-fix tasks were queued. When Phase 3 returns `review_fix_queued`, the
-coordinator transitions to `running`, executes the queued Phase 1 work, and
-requires a new `verified` result before returning to `reviewing`.
+`validating -> running` occurs only when Phase 2 applied a source fix. Every
+such fix invalidates the earlier Phase 1 evidence, so Phase 1 must verify the
+new commit before visual validation resumes. A visual pass that made no
+unverified source change proceeds directly to Phase 3 or convergence.
 
-The coordinator persists the active `pr_url`, strategy, build id, and
-`blocked_phase` before returning. Review-only continuation uses those durable
-values plus the registered target worktree; it does not infer a different
-workspace or silently restart implementation.
+Phase and delivery results use separate types and vocabularies:
 
-Implementation blockers keep `blocked_phase: implementation` and retain the
-existing Phase 1 resume path. State transitions are validated explicitly;
-there is no general `converged -> blocked` transition. Existing persisted
-`converged` states are treated as completed legacy deliveries and are never
-retroactively reopened.
+```text
+ImplementationResult: verified | blocked | interrupted | failed | cancelled
+VisualResult:          passed | fix_applied | blocked
+ReviewResult:          completed | review_fix_queued | blocked
+DeliveryResult:        converged | blocked | interrupted | failed | cancelled
+```
+
+`ReviewResult(completed)` means the configured Phase 3 approval, merge, and
+thread-resolution criteria all succeeded. `no_blocking_comments` is only a
+triage-manifest status inside Phase 3 and is not itself proof that Phase 3
+completed.
+
+The existing `LoopResult` is replaced at its boundaries rather than extended
+with both phase-local and delivery-wide statuses. `RalphController`,
+`VisualRalphController`, and `ReviewLoopController` return their phase-specific
+types. `StrategyCoordinator` is the only component that constructs a
+`DeliveryResult` and persists delivery status. This prevents a value such as
+`verified` or `passed` from being mistaken for overall completion.
+
+`RalphController` returns `ImplementationResult(verified)` after final
+implementation verification. It does not persist `converged` or advance the
+canonical spec to `ready_to_land`. The coordinator records `verified`, chooses
+the next enabled phase, and records `converged` only after the last enabled
+phase succeeds.
+
+Phase 2 runtime/setup failure, exhausted visual attempts, or missing verified
+worktree persists `blocked_phase: visual`. Phase 3 timeout, missing worktree,
+provider failure, invalid output manifest, exhausted review loop, or failed
+merge persists `blocked_phase: review`. Phase 1 retains
+`blocked_phase: implementation`. Provenance or lifecycle persistence failure
+uses `blocked_phase: finalization`. Each block also persists a stable
+`termination_reason`, the last completed phase, active commit, strategy, build
+id, and any active PR URL before returning. `failed` is reserved for an
+irrecoverable invariant or state-corruption error; ordinary phase exhaustion,
+missing prerequisites, provider failures, and Git/remote failures are
+recoverable `blocked` outcomes.
+
+### Restart And Continue Rules
+
+Every nonterminal state is a durable checkpoint. `echelon delivery continue`
+uses the persisted state and never guesses a phase from files alone:
+
+- `running`: use the existing Phase 1 resume path.
+- `verified`: verify that the recorded commit and registered worktree still
+  exist, then enter the first enabled incomplete downstream phase. Do not rerun
+  Phase 1 merely because the process stopped at this boundary.
+- `validating`: discard incomplete Phase 2 runtime/container state and retry
+  visual validation from its first check against the recorded verified commit.
+- `reviewing`: reuse the persisted PR URL, seen-comment IDs, canonical spec
+  directory, and registered worktree, then retry the current review/merge
+  cycle. Remote polling and merge checks must remain idempotent.
+- `finalizing`: verify any already-written provenance and lifecycle values,
+  reject conflicting values, and perform only the incomplete finalization
+  write before recording convergence.
+- `blocked`: transition only to the state selected by `blocked_phase` in the
+  transition table above.
+- `interrupted`: transition to the state selected by `interrupted_phase` and
+  apply that state's restart rule.
+- `converged`: report the completed delivery and perform no phase work.
+
+If a checkpoint prerequisite is missing or differs from the recorded commit,
+continuation persists `blocked` for that same phase with a precise reason. It
+does not fall back to another root, silently create a worktree, or restart
+Phase 1. When Phase 3 returns `review_fix_queued`, the coordinator transitions
+to `running`, executes only the newly verified task IDs, and requires a fresh
+Phase 1 `verified` result. When Phase 2 returns `fix_applied`, the same
+re-verification rule applies.
+
+There is no `converged -> blocked` transition. Existing persisted `converged`
+states are completed legacy deliveries and are never retroactively reopened.
+
+The delivery state schema version increments once for these fields and states.
+On the first continuation of a legacy nonterminal record without
+`enabled_phases`, the coordinator snapshots the current configuration into the
+new immutable phase list and persists it before executing work. A legacy
+`blocked` record without `blocked_phase` maps to `implementation`; the harness
+cannot safely infer that it had entered a newer review phase. Legacy
+`interrupted` records map to their recorded implementation resume path. Legacy
+`failed`, `cancelled_by_coordinator`, and `converged` records remain terminal.
+There is no compatibility alias for the internal `LoopResult`: all in-repo
+callers move to the phase-specific or delivery result type in the same change.
+
+### Convergence, Lifecycle, And Landing Boundary
+
+Delivery convergence and landing are separate outcomes:
+
+1. The last enabled delivery phase succeeds.
+2. The coordinator persists `finalizing`. For a single-target spec, it
+   idempotently records the verified
+   commit, then advances the canonical lifecycle to `ready_to_land`.
+3. Only after both writes succeed does it persist delivery `converged`. A crash
+   between these writes leaves a nonterminal checkpoint; continuation verifies
+   matching existing data and repeats only the incomplete write.
+4. If auto-land is enabled, it runs as a post-convergence action. Successful
+   landing advances lifecycle state to `landed`; failed landing leaves delivery
+   state `converged` and lifecycle state `ready_to_land`.
+
+The command result reports delivery and landing independently. A failed
+auto-land is therefore not represented by reopening delivery state. It returns
+a non-successful landing outcome with the next step `echelon delivery land
+<spec-id>`, while `echelon delivery continue` remains a no-op for the already
+converged delivery.
+
+For a spec with multiple implementation targets, no target worker may mutate
+the shared lifecycle state. Each worker may persist its target-local
+`converged` result, but the canonical spec remains unchanged and auto-land is
+skipped with the aggregate-landing warning. A future parent-level aggregate
+coordinator must prove that every declared target converged before advancing
+`ready_to_land`; that protocol is outside this change. This explicit exception
+removes the race between independent target workers and the single-target
+lifecycle rule above.
 
 ### Safe Review Provider Scope
 
-The review provider continues to execute with the delivery worktree as its
-working directory. Before invocation, `ReviewLoopController` resolves the
-canonical `spec_dir`, the build-specific review status file, and the bounded
-set of possible review artifact names for the current comment batch. It passes
-request metadata with:
+This change deliberately implements review-triage permissions for Claude only.
+The provider request carries the named intent:
 
 ```text
+execution_profile: review_triage_v1
+```
+
+This name is a dispatch seam, not a claim that permissions are already
+provider-neutral. `AICodingCliProvider` rejects the profile before subprocess
+launch unless the selected backend is Claude. The controlled error identifies
+the configured provider and says that `review_triage_v1` currently requires
+Claude. There is no fallback to an unscoped invocation, Codex `--add-dir`, or
+unsafe host execution. A generic Prosaic capability model is deferred.
+
+`ReviewLoopController` already fetched and filtered the blocking comments. It
+serializes that normalized list into the resolved review prompt, including
+comment IDs, reviewer, body, path, line, and timestamp. The review skill uses
+only this supplied list; it no longer runs `gh`, `glab`, or any other network
+command. The provider therefore needs neither Bash nor network access.
+
+The provider executes with the delivery worktree as its working directory.
+Before invocation, the controller resolves the canonical `spec_dir` and the
+build-specific review status file. It creates a unique attempt directory under
+`<target-harness>/runs/<build-id>/state/review-staging/`, then, while holding
+the canonical review-artifact lock described below, computes the first unused
+numeric suffix and a bounded set of possible artifact names for the current
+comment batch. It passes request metadata with:
+
+```text
+execution_profile: review_triage_v1
 tool_read_roots:
   - <delivery-worktree>
   - <canonical-spec-dir>
 tool_write_paths:
-  - <canonical-spec-dir>/tasks.md
-  - <canonical-spec-dir>/review-fix-<next>...<next+comment-count-1>.md
+  - <attempt-dir>/tasks-append.md
+  - <attempt-dir>/review-fix-<next>...<next+comment-count-1>.md
   - <target-harness>/runs/<build-id>/state/<strategy>-review-status.json
 ```
 
 The possible review-fix range is bounded by the number of input comments;
-there cannot be more diagnosed groups than comments. No orchestration
-workspace root or harness root is granted wholesale when the backend supports
-exact paths.
+there cannot be more diagnosed groups than comments. The provider can read the
+canonical spec but cannot write it. No orchestration workspace root, canonical
+spec directory, target harness root, or staging directory is granted wholesale.
 
-Claude consumes the exact read/write rules through its existing safe-mode
-metadata path. Codex maps external write files to the narrowest supported
-`--add-dir` parents because its CLI grants directories rather than individual
-files; the worktree remains its primary workspace. Other backends keep their
-existing enforcement, and the metadata remains available to backends that
-already implement scoped paths. The unsafe-host-execution bypass remains
-disabled.
+The Claude backend compiles `review_triage_v1` into a dedicated hard-coded
+profile:
 
-Tests use providers that inspect the metadata and create only an allowed
-status/artifact path. A fake provider that returns success without writing a
-valid status must still produce a blocked review result; it cannot satisfy the
-contract by exit code alone.
+- use Claude `--bare`, load no user, project, or local settings, and load no
+  MCP servers;
+- disable slash commands and ambient plugins/hooks;
+- expose only `Read`, `Write`, `Edit`, and `Agent`;
+- apply exact absolute `Read(...)`, `Write(...)`, and `Edit(...)` allow rules
+  from the metadata above;
+- explicitly load the debugger, sentinel, and spec-guard agent definitions
+  supplied by the harness through Claude's `--agents` input;
+- restrict each supplied diagnostic agent to `Read` and restrict commander
+  `Agent(...)` calls to those three exact agent names;
+- deny Bash, web/network tools, background agents, and every permission-bypass
+  flag.
+
+The existing generic file-scope path cannot be reused unchanged because its
+`--safe-mode` setting disables custom agents and its `--tools Read,Write,Edit`
+list omits `Agent`. The new profile owns its complete Claude argument list so
+later changes to generic prompt scoping cannot accidentally broaden or disable
+review triage. The implementation must include a CLI-level test proving the
+constructed command contains the three explicit agents and no Bash or unsafe
+permission flag.
+
+### Review Artifact Allocation And Proof
+
+The status file is a proposal manifest, not proof by itself. The controller acquires an
+exclusive lock at `<canonical-spec-dir>/.echelon-review.lock` before choosing
+artifact numbers and holds it through provider completion and output
+validation and canonical publication. Lock contention produces a recoverable
+review block; it never chooses another suffix concurrently. Stale-lock handling
+uses the same PID and process-liveness rules as `StateStore`.
+
+Under the lock, the controller scans only names matching
+`review-fix-<positive-integer>.md`, chooses `next = max(existing, default=0) +
+1`, records the pre-invocation existence and digest of canonical `tasks.md`,
+and confirms that every candidate from `next` through `next + comment_count -
+1` is absent. It also parses the canonical `T-<n>` task rows, allocates the
+next `comment_count * 3` task numbers, and supplies both bounded ranges in the
+prompt. Each diagnosed group consumes the next artifact number and exactly
+three task numbers; skipped groups leave only an unused tail, never an internal
+gap. It creates a fresh attempt directory and never reuses one from a prior
+call. Any collision found before launch is recalculated under the same lock;
+any unexpected canonical change at validation or publication time blocks the
+cycle rather than overwriting it.
+
+When tasks are produced, the provider must write this schema to the exact
+build-specific status path:
+
+```json
+{
+  "status": "review_fix_queued",
+  "groups": 2,
+  "artifacts": ["review-fix-7.md", "review-fix-8.md"],
+  "tasks": [
+    {"task_id": "T-143", "review_task_id": "RF7-T1", "artifact": "review-fix-7.md"},
+    {"task_id": "T-144", "review_task_id": "RF7-T2", "artifact": "review-fix-7.md"},
+    {"task_id": "T-145", "review_task_id": "RF7-T3", "artifact": "review-fix-7.md"},
+    {"task_id": "T-146", "review_task_id": "RF8-T1", "artifact": "review-fix-8.md"},
+    {"task_id": "T-147", "review_task_id": "RF8-T2", "artifact": "review-fix-8.md"},
+    {"task_id": "T-148", "review_task_id": "RF8-T3", "artifact": "review-fix-8.md"}
+  ],
+  "tasks_append": "tasks-append.md"
+}
+```
+
+`status` is `review_fix_queued` exactly when `groups > 0`. Success then requires
+all of the following:
+
+- `groups`, artifact count, and the distinct numeric suffixes agree;
+- every artifact is a nonempty regular file in the fresh attempt directory and
+  allocated candidate set;
+- each artifact maps to exactly three task entries; canonical `task_id` values
+  and `review_task_id` labels are unique, consume contiguous prefixes of their
+  allocated ranges, and agree with the artifact suffix;
+- every task entry appears as one canonical task row in `tasks-append.md`, and
+  every row in that file corresponds to exactly one manifest entry;
+- `tasks-append.md` is a nonempty regular file containing only those new task
+  rows and their required detail lines, not a replacement copy of canonical
+  `tasks.md`; and
+- the status file is a regular file with the expected schema and no unknown
+  output paths.
+
+For `groups == 0`, `status` is `no_blocking_comments`, `artifacts` and
+`tasks` must be empty, `tasks_append` must be absent, and the attempt
+directory must contain no review output. The review loop may then continue
+polling or merge; it does not re-enter Phase 1.
+
+After staged validation succeeds for `groups > 0`, the controller writes a
+build-scoped publication journal containing the canonical pre-state digests,
+allocated names, staged digests, and both task identifier forms. While still holding the lock, it
+publishes each artifact with a temp-file-and-rename in the canonical spec
+directory, then atomically replaces `tasks.md` with its exact prior bytes plus
+the validated append payload. It validates the canonical digests and task IDs
+before marking the journal complete and returning `review_fix_queued`. Phase 1
+cannot observe queued work until the journal is complete.
+
+If the process stops during publication, continuation acquires the same lock,
+loads the journal, accepts already-published files only when their digests
+match, and completes the remaining writes. A conflicting canonical digest
+blocks review without overwriting user data. Invalid staged output changes no
+canonical file and is retained in its attempt directory for diagnosis; a retry
+uses a new attempt ID. The lock is always released. Provider exit code zero
+without a valid manifest, valid staged evidence, and a completed publication
+journal is failure.
 
 ### Single-Target Boundary
 
@@ -382,8 +609,8 @@ Instead, auto-land is skipped with an explicit warning that aggregate
 multi-target landing is unsupported. Delivery convergence remains recorded;
 no target branch or lifecycle status is mutated by that skipped auto-land.
 
-Detection happens after canonical spec resolution and only after convergence
-when auto-merge would otherwise run:
+Detection happens after canonical spec resolution during finalization, and is
+checked again before post-convergence auto-land would otherwise run:
 
 ```text
 targets = read_targets(spec_dir)
@@ -436,15 +663,19 @@ For a target-side polyrepo continuation:
 2. The CLI constructs target-scoped GitOps from the target harness root.
 3. The CLI calls `run_skill.run(base_dir=target_harness_root,
    orchestration_root=workspace_root)`.
-4. Build and verification continue to use target harness state and target
-   worktrees.
-5. After convergence, auto-land calls `land()` with the workspace root, target
-   harness root, and target-scoped GitOps instance.
-6. `land()` finds the workspace spec, reads `ready_to_land`, resolves its
+4. Phase 1, enabled visual validation, and enabled review use target harness
+   state and the registered target worktree. The coordinator checkpoints each
+   phase using the delivery state machine above.
+5. For a single target, the coordinator records verified provenance, advances
+   the canonical spec to `ready_to_land`, and then records `converged`.
+6. As a separate post-convergence action, auto-land calls `land()` with the
+   workspace root, target harness root, and target-scoped GitOps instance.
+7. `land()` finds the workspace spec, reads `ready_to_land`, resolves its
    declared target, and performs the existing readiness and landing flow.
 
-For a multi-target spec, step 5 is replaced by the explicit unsupported
-warning described above. No target worker calls `land()`.
+For a multi-target spec, step 5 records only target-local convergence without
+changing canonical lifecycle state, and step 6 is replaced by the explicit
+unsupported warning described above. No target worker calls `land()`.
 
 ## Error Handling
 
@@ -465,8 +696,14 @@ warning described above. No target worker calls `land()`.
 - Phase 3 failures persist `blocked` with `blocked_phase: review`; they never
   leave the durable overall status at `converged` or require a fresh delivery
   run for recovery.
-- A successful provider exit without an allowed, valid
-  `review_fix_queued` status file is a blocked Phase 3 result.
+- Phase 2 failures persist `blocked` with `blocked_phase: visual`; visual fixes
+  re-enter Phase 1 before their evidence can be accepted.
+- A successful provider exit without a valid output manifest and matching
+  artifact/task evidence is a blocked Phase 3 result.
+- Selecting `review_triage_v1` with any backend other than Claude fails closed
+  before provider launch and persists a recoverable review block.
+- Auto-land failure after convergence does not reopen the delivery. It leaves
+  the canonical spec `ready_to_land` and reports landing failure separately.
 - CLI entry points render `RunContextError` without a Python traceback and exit
   1; library entry points receive the exception unchanged.
 
@@ -495,17 +732,40 @@ warning described above. No target worker calls `land()`.
 
 ### Delivery State
 
-- Phase 1 success returns and persists `verified`, not `converged`.
-- With review disabled, the coordinator advances `verified` to `converged` and
-  only then advances lifecycle readiness.
-- With review enabled, the coordinator persists `reviewing` before invoking
-  Phase 3 and persists `converged` only after review/merge succeeds.
+- Phase 1 returns `ImplementationResult(verified)`; only the coordinator
+  persists the `verified` delivery checkpoint.
+- Each combination of enabled/disabled visual and review phases follows the
+  four explicit normal paths in the state graph.
+- `enabled_phases` is snapshotted once; changing ambient visual/review config
+  before continuation does not alter the persisted phase plan.
+- The coordinator persists `validating` before Phase 2, `reviewing` before
+  Phase 3, and `finalizing` before provenance/lifecycle writes; it persists
+  `converged` only after the last enabled phase and both single-target writes
+  succeed.
+- `VisualResult(fix_applied)` and `ReviewResult(review_fix_queued)` both
+  transition to `running` and require a new Phase 1 verification before their
+  respective phase is retried.
+- Every Phase 2 failure persists `blocked_phase: visual`; `delivery continue`
+  retries Phase 2 from the recorded verified commit when prerequisites match.
 - Every Phase 3 failure path persists `blocked`, `blocked_phase: review`, and a
   recoverable reason; `delivery continue` retries Phase 3 without Phase 1 when
   no review-fix tasks exist.
-- `review_fix_queued` re-enters Phase 1, which must return a new `verified`
-  result before another review cycle.
+- An enabled review phase without a Phase 1 PR URL blocks with
+  `missing_pr_url`; it is never treated as a skipped or successful review.
+- Restart tests cover `verified`, `validating`, `reviewing`, and `finalizing`,
+  including a missing or mismatched recorded worktree/commit that blocks the
+  same phase without falling back to Phase 1.
+- Single-target convergence writes `ready_to_land` before `converged`; a crash
+  between the idempotent writes resumes only the incomplete write.
+- Auto-land failure leaves delivery `converged` and lifecycle
+  `ready_to_land`, reports a separate landing failure, and makes `delivery
+  continue` a no-op.
+- Multi-target workers never write canonical lifecycle state even when their
+  target-local delivery converges.
 - Legacy persisted `converged` states remain terminal and readable.
+- Legacy nonterminal state migration snapshots `enabled_phases` once, maps an
+  unqualified block to `implementation`, and never reinterprets a terminal
+  legacy state.
 
 ### Landing Diagnostics
 
@@ -542,10 +802,30 @@ warning described above. No target worker calls `land()`.
   separately, executes the review provider in the target worktree, stores
   review status under the build-specific harness state, and injects canonical
   review-fix content into Phase 1 without Git reads from the harness root.
-- The provider request grants the delivery worktree and canonical spec as read
-  roots, plus only `tasks.md`, the bounded review-fix candidates, and the
-  build-specific status file as write outputs. Claude exact-file rules and
-  Codex additional-directory arguments are asserted separately.
+- The controller embeds its already-fetched normalized comments in the review
+  prompt; the skill never invokes `gh`, `glab`, Bash, or a network tool.
+- The provider request selects `review_triage_v1`, grants the delivery worktree
+  and canonical spec as read roots, plus only staged `tasks-append.md`, the
+  bounded staged review-fix candidates, and the build-specific status file as
+  write outputs. It grants no canonical write path.
+- Claude command construction uses `--bare`, explicit exact-file rules, and
+  exactly the debugger, sentinel, and spec-guard agent definitions. It contains
+  no Bash, ambient MCP, background-agent, or permission-bypass capability.
+- Codex and every non-Claude backend reject `review_triage_v1` before launching
+  a subprocess; no provider silently drops or broadens the profile.
+- Concurrent artifact-allocation tests prove the canonical lock prevents two
+  review cycles from choosing the same suffix and that stale locks follow
+  `StateStore` PID-liveness behavior.
+- A zero-group `no_blocking_comments` manifest changes no canonical artifact.
+  A queued manifest is accepted only when every staged artifact, append payload,
+  and task ID matches the manifest and allocated range.
+- Publication-journal crash tests stop after each canonical write, then prove
+  continuation completes matching partial publication without duplicating
+  tasks or overwriting conflicting files.
+- Provider success with a missing artifact, unexpected path, colliding suffix,
+  duplicate/missing task ID, replacement-style task content, or malformed
+  manifest changes no canonical file, produces a recoverable review block, and
+  leaves comments unseen.
 - Missing review worktrees fail without invoking the provider, persist a
   recoverable review block, and an early verified Ralph iteration preserves
   its registered delivery worktree.
