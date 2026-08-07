@@ -17,7 +17,7 @@ from echelon.ui import banner as _banner
 
 from harness.errors import GitOpsError
 from harness.gitops import _run_git
-from harness.paths import runs_dir
+from harness.paths import build_dir, current_build_marker, runs_dir
 from harness.spec_frontmatter import find_spec_dir, read_frontmatter, read_targets, write_status
 from kernel.fulfillment import (
     blocking_statuses,
@@ -502,6 +502,97 @@ def _find_latest_harness_branch(spec_id: str, project_dir: Path) -> str | None:
     return latest[0]
 
 
+def _find_current_build_harness_branch(
+    spec_id: str,
+    project_dir: Path,
+    harness_root: Path,
+    spec_dir: Path | None,
+) -> str | None:
+    """Return the current build's verified legacy harness branch, if present.
+
+    A current-build marker is positive provenance for one converged strategy.
+    Once present, incomplete or ambiguous provenance must block landing instead
+    of falling back to the numerically latest legacy branch.
+    """
+    markers = [
+        current_build_marker(harness_root, alias)
+        for alias in spec_identity_aliases(spec_id)
+        if current_build_marker(harness_root, alias).exists()
+    ]
+    if not markers:
+        return None
+    if len(markers) != 1:
+        raise RuntimeError("multiple current-build markers match the spec")
+
+    try:
+        build_id = markers[0].read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise RuntimeError("could not read current-build marker") from exc
+    if not build_id:
+        raise RuntimeError("current-build marker lacks a build identity")
+
+    candidates: list[dict[str, Any]] = []
+    state_root = build_dir(harness_root, build_id) / "state"
+    try:
+        state_files = sorted(state_root.glob("*.json"))
+    except OSError as exc:
+        raise RuntimeError("could not read current-build state") from exc
+    for state_file in state_files:
+        try:
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError("current-build state is unreadable or invalid") from exc
+        if not isinstance(state, dict):
+            raise RuntimeError("current-build state is unreadable or invalid")
+        if state.get("status") == "converged" and _spec_id_matches(
+            str(state.get("spec_id") or ""), spec_id
+        ):
+            candidates.append(state)
+    if len(candidates) != 1:
+        raise RuntimeError("current build must contain exactly one converged strategy")
+
+    state = candidates[0]
+    strategy = str(state.get("strategy_id") or "")
+    iteration = state.get("outer_iter")
+    if not strategy or not isinstance(iteration, int) or iteration < 0:
+        raise RuntimeError("converged current build lacks branch identity")
+    if spec_dir is None:
+        raise RuntimeError("current build has no canonical spec directory")
+
+    try:
+        report = latest_fulfillment_report(spec_dir)
+        metadata = read_fulfillment_metadata(report) if report is not None else {}
+    except OSError as exc:
+        raise RuntimeError("could not read fulfillment report metadata") from exc
+    verified_commit = metadata.get("verified_commit")
+    if not isinstance(verified_commit, str) or not verified_commit:
+        raise RuntimeError("current build lacks a verified fulfillment commit")
+
+    branches: list[str] = []
+    for alias in spec_identity_aliases(spec_id):
+        branch = f"harness/{alias}/{strategy}/iter-{iteration}"
+        branch_ref = f"refs/heads/{branch}"
+        exists = _run_git(
+            ["rev-parse", "--verify", "--quiet", branch_ref],
+            cwd=str(project_dir),
+            check=False,
+        )
+        if exists.returncode == 0:
+            branches.append(branch)
+    if len(branches) != 1:
+        raise RuntimeError("current build must resolve exactly one local harness branch")
+
+    branch = branches[0]
+    ancestry = _run_git(
+        ["merge-base", "--is-ancestor", verified_commit, f"refs/heads/{branch}"],
+        cwd=str(project_dir),
+        check=False,
+    )
+    if ancestry.returncode != 0:
+        raise RuntimeError("verified fulfillment commit is not on the current-build branch")
+    return branch
+
+
 def _finish_branchless_landing(
     spec_id: str,
     *,
@@ -758,7 +849,14 @@ def land(
 
     if feature_branch is None:
         try:
-            feature_branch = _find_latest_harness_branch(spec_id, project_dir)
+            feature_branch = _find_current_build_harness_branch(
+                spec_id,
+                project_dir,
+                runtime_root,
+                spec_dir,
+            )
+            if feature_branch is None:
+                feature_branch = _find_latest_harness_branch(spec_id, project_dir)
         except RuntimeError as exc:
             logger.error("land: could not resolve legacy harness branch for %s: %s", spec_id, exc)
             _banner(
@@ -783,10 +881,8 @@ def land(
             harness_root=runtime_root,
         )
 
-    if _block_different_active_authoring_spec(
-        wrapper_project_dir,
-        feature_branch,
-        spec_id,
+    if project_dir == wrapper_project_dir and _block_different_active_authoring_spec(
+        wrapper_project_dir, feature_branch, spec_id
     ):
         return False
 

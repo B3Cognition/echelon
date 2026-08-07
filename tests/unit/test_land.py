@@ -1842,6 +1842,211 @@ def test_land_refuses_different_active_authoring_branch_without_git_mutation(
 
 
 @pytest.mark.unit
+def test_land_prefers_converged_current_build_iter_over_higher_failed_iter(
+    tmp_path: Path,
+) -> None:
+    wrapper = tmp_path / "wrapper"
+    target = wrapper / "sources" / "prosaic"
+    _init_repo(wrapper)
+    _init_repo(target)
+    _commit(target, "README.md", "base\n", "base")
+    _git(target, "checkout", "-b", "harness/911/default/iter-1")
+    verified_commit = _commit(target, "feature.txt", "verified\n", "verified work")
+    _git(target, "checkout", "main")
+    _git(target, "branch", "harness/911/default/iter-4")
+
+    spec_dir = wrapper / "specs" / "911-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text(
+        "---\nstatus: ready_to_land\ntargets:\n- sources/prosaic\n---\n# Demo\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "fulfillment-report.md").write_text(
+        f"---\nverified_commit: {verified_commit}\n---\n",
+        encoding="utf-8",
+    )
+    marker = wrapper / "runs" / ".current-build-911"
+    marker.parent.mkdir(parents=True)
+    marker.write_text("build-911", encoding="utf-8")
+    state_dir = wrapper / "runs" / "build-911" / "state"
+    state_dir.mkdir(parents=True)
+    (state_dir / "default.json").write_text(
+        json.dumps(
+            {
+                "spec_id": "911-demo",
+                "strategy_id": "default",
+                "outer_iter": 1,
+                "status": "converged",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    gitops = _make_gitops(feature_branch=None)
+    with (
+        patch("harness.land._check_ready_before_land", return_value=True),
+        patch(
+            "harness.land._prepare_for_land",
+            return_value=LandPrepareResult(status="prepared", branch="harness/911/default/iter-1"),
+        ),
+        patch("harness.land._verify_before_land", return_value=True),
+        patch("harness.land._clean_generated_drift_before_direct_merge", return_value=True),
+        patch("harness.land._finish_landing", return_value=True),
+    ):
+        assert land("911", project_dir=wrapper, gitops=gitops, harness_root=wrapper)
+
+    gitops.merge_branch_into_default.assert_called_once_with(
+        "harness/911/default/iter-1", str(target.resolve())
+    )
+
+
+@pytest.mark.unit
+def test_land_blocks_when_current_build_branch_misses_verified_commit(
+    tmp_path: Path,
+) -> None:
+    wrapper = tmp_path / "wrapper"
+    target = wrapper / "sources" / "prosaic"
+    _init_repo(wrapper)
+    _init_repo(target)
+    _commit(target, "README.md", "base\n", "base")
+    _git(target, "branch", "harness/911/default/iter-1")
+    _git(target, "branch", "harness/911/default/iter-4")
+    _git(target, "checkout", "-b", "unrelated")
+    verified_commit = _commit(target, "other.txt", "unrelated\n", "unrelated work")
+    _git(target, "checkout", "main")
+
+    spec_dir = wrapper / "specs" / "911-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text(
+        "---\nstatus: ready_to_land\ntargets:\n- sources/prosaic\n---\n# Demo\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "fulfillment-report.md").write_text(
+        f"---\nverified_commit: {verified_commit}\n---\n",
+        encoding="utf-8",
+    )
+    marker = wrapper / "runs" / ".current-build-911"
+    marker.parent.mkdir(parents=True)
+    marker.write_text("build-911", encoding="utf-8")
+    state_dir = wrapper / "runs" / "build-911" / "state"
+    state_dir.mkdir(parents=True)
+    (state_dir / "default.json").write_text(
+        json.dumps(
+            {
+                "spec_id": "911-demo",
+                "strategy_id": "default",
+                "outer_iter": 1,
+                "status": "converged",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    gitops = _make_gitops(feature_branch=None)
+    with patch("harness.land._banner") as banner:
+        result = land("911", project_dir=wrapper, gitops=gitops, harness_root=wrapper)
+
+    assert result is False
+    assert banner.call_args.args[0] == "LAND — BRANCH RESOLUTION BLOCKED"
+    assert not any(
+        call.args[0] in {"harness/911/default/iter-1", "harness/911/default/iter-4"}
+        for call in gitops.merge_branch_into_default.call_args_list
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("converged_states", ([], ["default", "conservative"]))
+def test_current_build_harness_branch_requires_exactly_one_converged_strategy(
+    tmp_path: Path,
+    converged_states: list[str],
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    spec_dir = repo / "specs" / "911-demo"
+    spec_dir.mkdir(parents=True)
+    (repo / "runs").mkdir(exist_ok=True)
+    (repo / "runs" / ".current-build-911").write_text("build-911", encoding="utf-8")
+    state_dir = repo / "runs" / "build-911" / "state"
+    state_dir.mkdir(parents=True)
+    for strategy in converged_states:
+        (state_dir / f"{strategy}.json").write_text(
+            json.dumps(
+                {
+                    "spec_id": "911-demo",
+                    "strategy_id": strategy,
+                    "outer_iter": 1,
+                    "status": "converged",
+                }
+            ),
+            encoding="utf-8",
+        )
+    if not converged_states:
+        (state_dir / "default.json").write_text(
+            json.dumps({"spec_id": "911-demo", "status": "failed"}),
+            encoding="utf-8",
+        )
+
+    gitops = _make_gitops(feature_branch=None)
+    with patch("harness.land._banner") as banner:
+        result = land("911", project_dir=repo, gitops=gitops, harness_root=repo)
+
+    assert result is False
+    assert banner.call_args.args[0] == "LAND — BRANCH RESOLUTION BLOCKED"
+
+
+@pytest.mark.unit
+def test_polyrepo_land_does_not_compare_wrapper_and_target_branch_names(
+    tmp_path: Path,
+) -> None:
+    wrapper = tmp_path / "wrapper"
+    target = wrapper / "sources" / "prosaic"
+    _init_repo(wrapper)
+    _init_repo(target)
+    _commit(target, "README.md", "base\n", "base")
+
+    spec_dir = wrapper / "specs" / "911-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text(
+        "---\nstatus: ready_to_land\ntargets:\n- sources/prosaic\n---\n# Demo\n",
+        encoding="utf-8",
+    )
+    current = wrapper / "runs" / ".current"
+    current.parent.mkdir(parents=True)
+    current.write_text("run-a", encoding="utf-8")
+    run_dir = wrapper / "runs" / "run-a"
+    run_dir.mkdir()
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run-a",
+                "spec_id": "911-demo",
+                "feature_branch": "911-demo",
+                "spec_dir": "runs/run-a/specs/911-demo",
+                "published_spec_dir": "specs/911-demo",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    gitops = _make_gitops(feature_branch="harness/911/default/iter-1")
+    with (
+        patch("harness.land._check_ready_before_land", return_value=True),
+        patch(
+            "harness.land._prepare_for_land",
+            return_value=LandPrepareResult(status="prepared", branch="harness/911/default/iter-1"),
+        ) as prepare,
+        patch("harness.land._verify_before_land", return_value=True),
+        patch("harness.land._clean_generated_drift_before_direct_merge", return_value=True),
+        patch("harness.land._finish_landing", return_value=True),
+        patch("harness.land._banner") as banner,
+    ):
+        assert land("911", project_dir=wrapper, gitops=gitops, harness_root=wrapper)
+
+    prepare.assert_called_once()
+    assert all(call.args[0] != "LAND — ACTIVE AUTHORING SPEC" for call in banner.call_args_list)
+
+
+@pytest.mark.unit
 def test_land_discards_generated_verify_drift_before_direct_merge(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo)
