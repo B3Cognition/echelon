@@ -109,6 +109,100 @@ class TestSingleStrategy:
             ["implementation", "visual", "review", "finalization"], "review"
         ) == ["review", "finalization"]
 
+    def test_run_enabled_phases_rejects_absent_resume_phase(self, tmp_path: Path) -> None:
+        """Corrupt phase checkpoints may not silently restart implementation."""
+        coord = _make_coordinator(tmp_path)
+
+        assert coord._run_enabled_phases(
+            ["implementation", "finalization"], "review"
+        ) == []
+
+    def test_persist_phase_block_refreshes_an_existing_block(self, tmp_path: Path) -> None:
+        """An invalid resume records its exact replacement reason atomically."""
+        coord = _make_coordinator(tmp_path)
+        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store.initialize("run-1", "semi")
+        store.transition("running")
+        store.transition("blocked", updates={"blocked_phase": "visual"})
+        implementation = ImplementationResult("verified", "verified", 1, 0, None, 0, None)
+
+        result = coord._persist_phase_block(
+            store,
+            phase="visual",
+            reason="registered_worktree_missing",
+            implementation=implementation,
+            outer_iterations=1,
+            tokens_used=0,
+        )
+
+        assert result.blocked_phase == "visual"
+        assert store.read()["termination_reason"] == "registered_worktree_missing"
+
+    def test_finalization_blocks_conflicting_persisted_verification_commit(
+        self, tmp_path: Path
+    ) -> None:
+        """A stale checkpoint commit cannot be replaced by later report provenance."""
+        coord = _make_coordinator(tmp_path)
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("---\nstatus: planned\n---\n# Spec\n")
+        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store.initialize("run-1", "semi", declared_targets=["sources/api"])
+        store.transition("running")
+        store.transition("verified")
+        store.transition(
+            "finalizing",
+            updates={
+                "registered_worktree": str(tmp_path / "worktree"),
+                "verified_commit": "checkpoint-commit",
+            },
+        )
+        implementation = ImplementationResult("verified", "verified", 1, 0, None, 0, None)
+
+        with patch.object(coord, "_worktree_head", return_value="report-commit"), \
+             patch("harness.coordinator.latest_fulfillment_report", return_value=spec_dir / "fulfillment-report.md"), \
+             patch("harness.coordinator.read_fulfillment_metadata", return_value={"verified_commit": "report-commit"}):
+            result = coord._finalize_delivery(
+                store,
+                spec_dir=spec_dir,
+                declared_targets=["sources/api"],
+                implementation=implementation,
+                outer_iterations=1,
+                tokens_used=0,
+                final_verify=None,
+            )
+
+        assert result.status == "blocked"
+        assert result.blocked_phase == "finalization"
+        assert result.termination_reason == "verified_provenance_mismatch"
+
+    def test_finalization_blocks_when_fulfillment_discovery_raises(self, tmp_path: Path) -> None:
+        """Fulfillment I/O failures are recoverable finalization blocks."""
+        coord = _make_coordinator(tmp_path)
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store.initialize("run-1", "semi", declared_targets=["sources/api"])
+        store.transition("running")
+        store.transition("verified")
+        store.transition("finalizing")
+        implementation = ImplementationResult("verified", "verified", 1, 0, None, 0, None)
+
+        with patch("harness.coordinator.latest_fulfillment_report", side_effect=OSError("disk offline")):
+            result = coord._finalize_delivery(
+                store,
+                spec_dir=spec_dir,
+                declared_targets=["sources/api"],
+                implementation=implementation,
+                outer_iterations=1,
+                tokens_used=0,
+                final_verify=None,
+            )
+
+        assert result.status == "blocked"
+        assert result.blocked_phase == "finalization"
+        assert result.termination_reason == "finalization_write_failed"
+
 
 @pytest.mark.unit
 class TestStatusAggregation:
@@ -191,7 +285,6 @@ class TestDeliveryStateMigration:
 
         coordinator = _make_coordinator(tmp_path)
         coordinator._config.visual_tests = VisualTestsConfig(enabled=True)
-        coordinator._gitops.get_latest_worktree.return_value = str(tmp_path)
         store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
         store.initialize(
             "run-1",
@@ -199,10 +292,18 @@ class TestDeliveryStateMigration:
             enabled_phases=["implementation", "visual", "finalization"],
         )
         store.transition("running")
-        store.transition("verified", updates={"last_completed_phase": "implementation"})
+        store.transition(
+            "verified",
+            updates={
+                "last_completed_phase": "implementation",
+                "registered_worktree": str(tmp_path),
+                "verified_commit": "verified-head",
+            },
+        )
         store.transition("validating")
 
-        with patch.object(RalphController, "run_loop") as implementation, patch.object(
+        with patch.object(coordinator, "_worktree_head", return_value="verified-head"), \
+             patch.object(RalphController, "run_loop") as implementation, patch.object(
             VisualRalphController,
             "run_loop",
             return_value=VisualResult("passed", "converged", 1, 0, None),
@@ -214,6 +315,134 @@ class TestDeliveryStateMigration:
         implementation.assert_not_called()
         visual.assert_called_once()
         assert result.status == "converged"
+
+    @pytest.mark.parametrize(
+        ("registered", "head", "reason"),
+        [
+            (None, "", "missing_registered_worktree"),
+            ("missing-worktree", "", "missing_registered_worktree"),
+            ("worktree", "moved-head", "verified_provenance_mismatch"),
+        ],
+    )
+    def test_bad_visual_resume_blocks_without_controller_or_worktree_rediscovery(
+        self,
+        tmp_path: Path,
+        registered: str | None,
+        head: str,
+        reason: str,
+    ) -> None:
+        """A downstream restart never substitutes a newer worktree for its checkpoint."""
+        from harness.config import VisualTestsConfig
+        from harness.ralph import RalphController
+        from harness.visual_ralph import VisualRalphController
+
+        coordinator = _make_coordinator(tmp_path)
+        coordinator._config.visual_tests = VisualTestsConfig(enabled=True)
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store.initialize(
+            "run-1", "semi", enabled_phases=["implementation", "visual", "finalization"]
+        )
+        store.transition("running")
+        updates = {"last_completed_phase": "implementation", "verified_commit": "verified-head"}
+        if registered is not None:
+            updates["registered_worktree"] = str(worktree if registered == "worktree" else tmp_path / registered)
+        store.transition("verified", updates=updates)
+        store.transition("validating")
+
+        with patch.object(coordinator, "_worktree_head", return_value=head), \
+             patch.object(RalphController, "run_loop") as implementation, \
+             patch.object(VisualRalphController, "run_loop") as visual:
+            result = coordinator.start(
+                RunIntent(spec_id="spec-001", max_outer=1, max_inner=1)
+            )[0]
+
+        assert result.status == "blocked"
+        assert result.blocked_phase == "visual"
+        assert result.termination_reason == reason
+        assert store.read()["blocked_phase"] == "visual"
+        implementation.assert_not_called()
+        visual.assert_not_called()
+        coordinator._gitops.get_latest_worktree.assert_not_called()
+
+    def test_fresh_verification_persists_registered_worktree_and_head(
+        self, tmp_path: Path
+    ) -> None:
+        """Phase 1's verified checkpoint records both immutable provenance fields."""
+        from harness.ralph import RalphController
+
+        coordinator = _make_coordinator(tmp_path)
+        coordinator._gitops.get_latest_worktree.return_value = str(tmp_path)
+        verified = ImplementationResult("verified", "verified", 1, 0, None, 1, None)
+        with patch.object(coordinator, "_worktree_head", return_value="verified-head"), \
+             patch.object(RalphController, "run_loop", return_value=verified):
+            coordinator.start(RunIntent(spec_id="spec-001", max_outer=1, max_inner=1))
+
+        state = StateStore(tmp_path / "runs" / "state", "spec-001", "default").read()
+        assert state["registered_worktree"] == str(tmp_path)
+        assert state["verified_commit"] == "verified-head"
+
+    def test_bad_review_resume_does_not_recreate_phase_one_or_rediscover_worktree(
+        self, tmp_path: Path
+    ) -> None:
+        """Review resumes are held to the same immutable worktree checkpoint."""
+        from harness.config import ReviewLoopConfig
+        from harness.ralph import RalphController
+        from harness.review_loop import ReviewLoopController
+
+        coordinator = _make_coordinator(tmp_path)
+        coordinator._config.pr_host = "github"
+        coordinator._config.review_loop = ReviewLoopConfig(enabled=True)
+        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store.initialize(
+            "run-1", "semi", enabled_phases=["implementation", "review", "finalization"]
+        )
+        store.transition("running")
+        store.transition(
+            "verified",
+            updates={"last_completed_phase": "implementation", "verified_commit": "verified-head"},
+        )
+        store.transition("reviewing")
+
+        with patch.object(RalphController, "run_loop") as implementation, \
+             patch.object(ReviewLoopController, "run_loop") as review:
+            result = coordinator.start(
+                RunIntent(spec_id="spec-001", max_outer=1, max_inner=1)
+            )[0]
+
+        assert result.status == "blocked"
+        assert result.blocked_phase == "review"
+        assert result.termination_reason == "missing_registered_worktree"
+        implementation.assert_not_called()
+        review.assert_not_called()
+        coordinator._gitops.get_latest_worktree.assert_not_called()
+
+    def test_resume_phase_absent_from_plan_blocks_without_phase_one_restart(
+        self, tmp_path: Path
+    ) -> None:
+        """A corrupted review checkpoint is never routed through implementation."""
+        from harness.ralph import RalphController
+
+        coordinator = _make_coordinator(tmp_path)
+        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store.initialize(
+            "run-1", "semi", enabled_phases=["implementation", "finalization"]
+        )
+        store.transition("running")
+        store.transition("verified", updates={"last_completed_phase": "implementation"})
+        store.transition("reviewing")
+
+        with patch.object(RalphController, "run_loop") as implementation:
+            result = coordinator.start(
+                RunIntent(spec_id="spec-001", max_outer=1, max_inner=1)
+            )[0]
+
+        assert result.status == "blocked"
+        assert result.blocked_phase == "review"
+        assert result.termination_reason == "invalid_resume_phase"
+        assert store.read()["blocked_phase"] == "review"
+        implementation.assert_not_called()
 
     @pytest.mark.parametrize(
         ("terminal_status", "delivery_status"),
