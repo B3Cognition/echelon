@@ -868,6 +868,77 @@ class TestLand:
             "harness/042/default/iter-3", str(tmp_path)
         )
 
+    @pytest.mark.parametrize(
+        "options",
+        (
+            LandOptions(prepare_only=True),
+            LandOptions(allow_fulfillment_gaps=True),
+        ),
+        ids=("prepare-only", "allow-fulfillment-gaps"),
+    )
+    def test_marker_absent_latest_harness_branch_must_contain_verified_commit(
+        self,
+        tmp_path: Path,
+        options: LandOptions,
+    ) -> None:
+        _init_repo(tmp_path)
+        _commit(tmp_path, "README.md", "base\n", "base")
+        _git(tmp_path, "checkout", "-b", "harness/911/default/iter-1")
+        verified_commit = _commit(
+            tmp_path,
+            "feature.txt",
+            "verified work\n",
+            "verified implementation",
+        )
+        _git(tmp_path, "checkout", "main")
+        _git(tmp_path, "checkout", "-b", "harness/911/default/iter-4")
+        _commit(tmp_path, "stale.txt", "stale work\n", "stale implementation")
+        _git(tmp_path, "checkout", "main")
+
+        spec_dir = tmp_path / "specs" / "911-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text(
+            "---\nstatus: ready_to_land\n---\n# Demo\n",
+            encoding="utf-8",
+        )
+        (spec_dir / "fulfillment-report.md").write_text(
+            f"---\nverified_commit: {verified_commit}\n---\n",
+            encoding="utf-8",
+        )
+        branch_before = _git(tmp_path, "branch", "--show-current").stdout.strip()
+        head_before = _git(tmp_path, "rev-parse", "HEAD").stdout.strip()
+        status_before = _git(tmp_path, "status", "--porcelain").stdout
+
+        gitops = _make_gitops(feature_branch=None)
+        with (
+            patch(
+                "harness.land._prepare_for_land",
+                return_value=LandPrepareResult(
+                    status="prepared",
+                    branch="harness/911/default/iter-4",
+                ),
+            ) as prepare,
+            patch("harness.land._verify_before_land", return_value=True),
+            patch(
+                "harness.land._clean_generated_drift_before_direct_merge",
+                return_value=True,
+            ),
+            patch("harness.land._finish_landing", return_value=True),
+            patch("harness.land._banner") as banner,
+        ):
+            result = land("911", project_dir=tmp_path, gitops=gitops, options=options)
+
+        assert result is False
+        prepare.assert_not_called()
+        gitops.merge_pr.assert_not_called()
+        gitops.merge_branch_into_default.assert_not_called()
+        gitops.push_prepared_branch.assert_not_called()
+        gitops.push_landed_default_branch.assert_not_called()
+        assert _git(tmp_path, "branch", "--show-current").stdout.strip() == branch_before
+        assert _git(tmp_path, "rev-parse", "HEAD").stdout.strip() == head_before
+        assert _git(tmp_path, "status", "--porcelain").stdout == status_before
+        assert banner.call_args.args[0] == "LAND — BRANCH RESOLUTION BLOCKED"
+
     def test_slug_lands_numeric_legacy_harness_branch(self, tmp_path: Path) -> None:
         _init_repo(tmp_path)
         _commit(tmp_path, "README.md", "base\n", "base")

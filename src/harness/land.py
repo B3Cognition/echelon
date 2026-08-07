@@ -502,6 +502,39 @@ def _find_latest_harness_branch(spec_id: str, project_dir: Path) -> str | None:
     return latest[0]
 
 
+def _validate_harness_branch_provenance(
+    project_dir: Path,
+    spec_dir: Path | None,
+    branch: str,
+    *,
+    required: bool,
+) -> None:
+    """Require recorded fulfillment provenance to belong to a harness branch."""
+    if spec_dir is None:
+        if required:
+            raise RuntimeError("current build has no canonical spec directory")
+        return
+
+    try:
+        report = latest_fulfillment_report(spec_dir)
+        metadata = read_fulfillment_metadata(report) if report is not None else {}
+    except OSError as exc:
+        raise RuntimeError("could not read fulfillment report metadata") from exc
+    verified_commit = metadata.get("verified_commit")
+    if not isinstance(verified_commit, str) or not verified_commit:
+        if required:
+            raise RuntimeError("current build lacks a verified fulfillment commit")
+        return
+
+    ancestry = _run_git(
+        ["merge-base", "--is-ancestor", verified_commit, f"refs/heads/{branch}"],
+        cwd=str(project_dir),
+        check=False,
+    )
+    if ancestry.returncode != 0:
+        raise RuntimeError("verified fulfillment commit is not on the selected harness branch")
+
+
 def _find_current_build_harness_branch(
     spec_id: str,
     project_dir: Path,
@@ -556,17 +589,6 @@ def _find_current_build_harness_branch(
     iteration = state.get("outer_iter")
     if not strategy or not isinstance(iteration, int) or iteration < 0:
         raise RuntimeError("converged current build lacks branch identity")
-    if spec_dir is None:
-        raise RuntimeError("current build has no canonical spec directory")
-
-    try:
-        report = latest_fulfillment_report(spec_dir)
-        metadata = read_fulfillment_metadata(report) if report is not None else {}
-    except OSError as exc:
-        raise RuntimeError("could not read fulfillment report metadata") from exc
-    verified_commit = metadata.get("verified_commit")
-    if not isinstance(verified_commit, str) or not verified_commit:
-        raise RuntimeError("current build lacks a verified fulfillment commit")
 
     branches: list[str] = []
     for alias in spec_identity_aliases(spec_id):
@@ -583,13 +605,12 @@ def _find_current_build_harness_branch(
         raise RuntimeError("current build must resolve exactly one local harness branch")
 
     branch = branches[0]
-    ancestry = _run_git(
-        ["merge-base", "--is-ancestor", verified_commit, f"refs/heads/{branch}"],
-        cwd=str(project_dir),
-        check=False,
+    _validate_harness_branch_provenance(
+        project_dir,
+        spec_dir,
+        branch,
+        required=True,
     )
-    if ancestry.returncode != 0:
-        raise RuntimeError("verified fulfillment commit is not on the current-build branch")
     return branch
 
 
@@ -858,6 +879,13 @@ def land(
             )
             if feature_branch is None:
                 feature_branch = _find_latest_harness_branch(spec_id, project_dir)
+                if feature_branch is not None:
+                    _validate_harness_branch_provenance(
+                        project_dir,
+                        spec_dir,
+                        feature_branch,
+                        required=False,
+                    )
         except RuntimeError as exc:
             logger.error("land: could not resolve legacy harness branch for %s: %s", spec_id, exc)
             _banner(
