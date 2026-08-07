@@ -279,11 +279,10 @@ class ReviewArtifactPublisher:
                         _write_fd_bytes(fd, _render_lock_metadata(metadata))
                     except OSError as exc:
                         release_error = exc
-                        if _path_has_identity(self.lock_file, identity):
-                            try:
-                                self.lock_file.unlink()
-                            except OSError:
-                                keep_locked = True
+                        # There is no portable conditional-unlink-by-inode API.
+                        # Do not turn this into a check/unlink race: retaining the
+                        # flock is safer than risking deletion of a replacement.
+                        keep_locked = True
         finally:
             if not keep_locked:
                 try:

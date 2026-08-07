@@ -519,10 +519,10 @@ def test_repeated_lock_contention_resets_contender_ownership_state(tmp_path: Pat
 
 
 @pytest.mark.parametrize("failure", ["write", "fsync"])
-def test_release_metadata_failure_removes_only_owned_lock_and_allows_reacquire(
+def test_release_metadata_failure_fails_closed_without_unlocking_live_metadata(
     tmp_path: Path, failure: str
 ) -> None:
-    """A failed release marker cannot become a false live owner after unlock."""
+    """A failed release marker cannot be unlocked while it still claims ownership."""
     spec_dir = tmp_path / "spec"
     state_dir = tmp_path / "state"
     spec_dir.mkdir()
@@ -545,8 +545,63 @@ def test_release_metadata_failure_removes_only_owned_lock_and_allows_reacquire(
         with pytest.raises(ReviewArtifactError, match="release"):
             publisher.__exit__(None, None, None)
 
-    assert publisher._lock_fd is None
-    assert publisher._locked is False
-    assert not (spec_dir / ".echelon-review.lock").exists()
+    assert publisher._lock_fd is not None
+    assert publisher._locked is True
+    contender = ReviewArtifactPublisher(spec_dir, state_dir, "default")
+    with pytest.raises(ReviewArtifactError, match="lock"):
+        contender.__enter__()
+
+    # Simulate process termination after the deliberately fail-closed release.
+    import fcntl
+
+    fcntl.flock(publisher._lock_fd, fcntl.LOCK_UN)
+    os.close(publisher._lock_fd)
+    publisher._clear_lock_state()
+
+
+def test_release_failure_never_deletes_replacement_installed_during_failure(tmp_path: Path) -> None:
+    """No release fallback may turn an inode check into deletion of a new owner."""
+    spec_dir = tmp_path / "spec"
+    state_dir = tmp_path / "state"
+    spec_dir.mkdir()
+    publisher = ReviewArtifactPublisher(spec_dir, state_dir, "default")
+    publisher.__enter__()
+    replacement = spec_dir / "replacement"
+    replacement_payload = "pid=999999999\ncreated_at=replacement\nstrategy=other\n"
+    replacement.write_text(replacement_payload, encoding="utf-8")
+    original_write = os.write
+
+    def replace_then_fail(fd: int, data: bytes) -> int:
+        if fd == publisher._lock_fd and b"released=true" in bytes(data):
+            os.replace(replacement, spec_dir / ".echelon-review.lock")
+            raise OSError("release write failed")
+        return original_write(fd, data)
+
+    with patch("harness.review_artifacts.os.write", side_effect=replace_then_fail):
+        with pytest.raises(ReviewArtifactError, match="release"):
+            publisher.__exit__(None, None, None)
+
+    assert (spec_dir / ".echelon-review.lock").read_text(encoding="utf-8") == replacement_payload
+    assert publisher._locked is True
+    import fcntl
+
+    fcntl.flock(publisher._lock_fd, fcntl.LOCK_UN)
+    os.close(publisher._lock_fd)
+    publisher._clear_lock_state()
+
+
+def test_normal_release_does_not_depend_on_directory_fsync_for_path_removal(tmp_path: Path) -> None:
+    """Release persists `released=true` in-place, so no unlink durability window exists."""
+    spec_dir = tmp_path / "spec"
+    state_dir = tmp_path / "state"
+    spec_dir.mkdir()
+    publisher = ReviewArtifactPublisher(spec_dir, state_dir, "default")
+    publisher.__enter__()
+
+    with patch("harness.review_artifacts._fsync_directory", side_effect=OSError("directory fsync failed")) as sync:
+        publisher.__exit__(None, None, None)
+
+    sync.assert_not_called()
+    assert "released=true" in (spec_dir / ".echelon-review.lock").read_text(encoding="utf-8")
     with ReviewArtifactPublisher(spec_dir, state_dir, "default"):
         pass
