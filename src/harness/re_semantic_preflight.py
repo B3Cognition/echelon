@@ -21,6 +21,11 @@ BEHAVIOR_COVERAGE_CATEGORIES = (
 )
 
 _UNIVERSAL = re.compile(r"\b(all|always|every|never)\b", re.I)
+_BOUNDED_EXCLUSION = re.compile(
+    r"\b(?:not exhaustive|does not cover|doesn't cover|excludes|outside (?:the )?scope)\b",
+    re.I,
+)
+_SENTENCE_BOUNDARY = re.compile(r"[.!?][\"')\]]*\s+(?=[A-Z`*])")
 _REQUIREMENT = re.compile(
     r"^###\s+(?P<title>(?:FR|NFR)-\d+[^\n]*)\n(?P<body>.*?)(?=^###\s+|^##\s+|\Z)",
     re.MULTILINE | re.DOTALL | re.IGNORECASE,
@@ -109,7 +114,7 @@ def check_semantic_preflight(
             body,
             re.IGNORECASE,
         )
-        if _UNIVERSAL.search(body) and not (
+        if _has_unscoped_universal_claim(body) and not (
             exhaustive_scope and contains_source_reference(body)
         ):
             findings.append(
@@ -130,6 +135,17 @@ def check_semantic_preflight(
             )
         )
     return tuple(findings)
+
+
+def _has_unscoped_universal_claim(body: str) -> bool:
+    """Return whether a requirement makes a universal claim outside an exclusion."""
+    for match in _UNIVERSAL.finditer(body):
+        sentence_start = 0
+        for boundary in _SENTENCE_BOUNDARY.finditer(body, 0, match.start()):
+            sentence_start = boundary.end()
+        if not _BOUNDED_EXCLUSION.search(body[sentence_start:match.start()]):
+            return True
+    return False
 
 
 def _behavior_coverage_rows(

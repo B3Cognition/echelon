@@ -55,6 +55,26 @@ def test_preflight_accepts_exhaustively_scoped_claim(tmp_path: Path) -> None:
     assert check_semantic_preflight(spec, None) == ()
 
 
+def test_preflight_accepts_universal_words_in_bounded_exclusion_clause(
+    tmp_path: Path,
+) -> None:
+    spec = tmp_path / "spec.md"
+    spec.write_text(
+        "## Requirements (Non-Functional)\n\n"
+        "### NFR-001: Cleanup\n"
+        "Within one `start()` invocation, `_run_async()` registers cleanup on an "
+        "`AsyncExitStack` (`src/jobs.py:10-12`). This observation is limited to "
+        "the `start()` → `_run_async()` path; it does not cover abrupt process "
+        "termination (e.g., `SIGKILL`) or any invocation that is never reached. Evidence Scope: "
+        "bounded — not exhaustive for all process termination scenarios. "
+        "`src/jobs.py:10-12`\n\n"
+        + _coverage(),
+        encoding="utf-8",
+    )
+
+    assert check_semantic_preflight(spec, None) == ()
+
+
 def test_preflight_accepts_case_insensitive_exhaustive_scope(tmp_path: Path) -> None:
     spec = tmp_path / "spec.md"
     spec.write_text(
