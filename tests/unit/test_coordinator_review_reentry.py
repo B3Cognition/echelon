@@ -8,10 +8,11 @@ import pytest
 
 from harness.config import HarnessConfig, ReviewLoopConfig, VisualTestsConfig
 from harness.coordinator import StrategyCoordinator
-from harness.delivery_results import ImplementationResult, ReviewResult, VisualResult
+from harness.delivery_results import DeliveryResult, ImplementationResult, ReviewResult, VisualResult
 from harness.verify_result import VerifyResult
 from harness.repair_loop import RepairLoop
 from harness.run_intent import RunIntent
+from harness.state import StateStore
 
 
 def _config(tmp_path: Path) -> HarnessConfig:
@@ -48,6 +49,60 @@ def _implementation_result(
 
 @pytest.mark.unit
 class TestCoordinatorReviewReentry:
+
+    def test_effects_only_resume_restores_persisted_ownership(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Ambient targets cannot replace an already verified review handoff."""
+        config = _config(tmp_path)
+        spec_dir = tmp_path / "specs" / "005-owned"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text(
+            "---\ntargets:\n  - ambient-target\n---\n# Owned\n", encoding="utf-8"
+        )
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        store = StateStore(tmp_path / "runs" / "state", "005", "default")
+        store.initialize(
+            "run-1", "semi", implementation_target="persisted-target",
+            declared_targets=["persisted-target"],
+            enabled_phases=["implementation", "review", "finalization"],
+        )
+        store.transition("running")
+        store.transition("verified", updates={"last_completed_phase": "implementation", "pr_url": "https://github.com/org/repo/pull/1", "registered_worktree": str(worktree)})
+        state = store.read()
+        state["pending_review_reentry"] = {
+            "attempt_id": "attempt-1", "task_ids": [], "artifact_paths": [],
+            "phase1_verified": True,
+        }
+        store.write(state)
+        monkeypatch.setenv("ECHELON_DECLARED_TARGETS", "ambient-target")
+        monkeypatch.setenv("ECHELON_IMPLEMENTATION_TARGET", "ambient-target")
+        coord = StrategyCoordinator(
+            provider=MagicMock(), gitops=MagicMock(), config=config, base_dir=str(tmp_path)
+        )
+        captured: dict[str, object] = {}
+        terminal = DeliveryResult(
+            "converged", "converged", 1, 0,
+            "https://github.com/org/repo/pull/1", 0, None, None,
+        )
+
+        with patch("harness.coordinator.ReviewLoopController") as review, \
+             patch("harness.coordinator.RalphController") as ralph, \
+             patch.object(coord, "_downstream_resume_error", return_value=None), \
+             patch.object(coord, "_finalize_delivery", return_value=terminal) as finalize:
+            review.return_value.complete_published_batch.return_value = True
+            review.return_value.run_loop.return_value = ReviewResult(
+                "completed", "converged", 1, "https://github.com/org/repo/pull/1", 0
+            )
+            result = coord._run_strategy(
+                RunIntent(spec_id="005", max_outer=1, max_inner=1), "default", None, MagicMock()
+            )
+            assert result.status == "converged", result
+            captured["declared_targets"] = finalize.call_args.kwargs["declared_targets"]
+
+        assert captured["declared_targets"] == ["persisted-target"]
+        ralph.return_value.run_loop.assert_not_called()
 
     def test_build_reentry_prompt_injects_only_published_review_fix_content(self, tmp_path):
         """A re-entry may only use artifacts from its just-published batch."""
