@@ -10,6 +10,7 @@ Per T040 task specification:
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock, patch
@@ -48,6 +49,15 @@ class MockProvider(SandboxProvider):
     def destroy(self, handle): pass
 
 
+def _initialize_git_worktree(path: Path) -> Path:
+    path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init"], cwd=path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=path, check=True)
+    subprocess.run(["git", "commit", "--allow-empty", "-m", "test"], cwd=path, check=True, capture_output=True)
+    return path
+
+
 def _make_coordinator(tmp_path: Path, should_pass: bool = True) -> StrategyCoordinator:
     config = HarnessConfig(
         target_repo="git@example.com:t/r.git",
@@ -57,6 +67,8 @@ def _make_coordinator(tmp_path: Path, should_pass: bool = True) -> StrategyCoord
     gitops = MagicMock()
     gitops.create_worktree.return_value = str(tmp_path / "worktree")
     gitops.create_draft_pr.return_value = "https://github.com/t/r/pull/1"
+    _initialize_git_worktree(tmp_path)
+    gitops.get_latest_worktree.return_value = str(tmp_path)
 
     # Create strategy dir for default
     strat_dir = tmp_path / "runs" / "strategies" / "spec-001"
@@ -184,11 +196,18 @@ class TestSingleStrategy:
         store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
         store.initialize("run-1", "semi", declared_targets=["sources/api"])
         store.transition("running")
-        store.transition("verified")
+        store.transition(
+            "verified",
+            updates={
+                "registered_worktree": str(tmp_path),
+                "verified_commit": "verified-head",
+            },
+        )
         store.transition("finalizing")
         implementation = ImplementationResult("verified", "verified", 1, 0, None, 0, None)
 
-        with patch("harness.coordinator.latest_fulfillment_report", side_effect=OSError("disk offline")):
+        with patch.object(coord, "_worktree_head", return_value="verified-head"), \
+             patch("harness.coordinator.latest_fulfillment_report", side_effect=OSError("disk offline")):
             result = coord._finalize_delivery(
                 store,
                 spec_dir=spec_dir,
@@ -202,6 +221,88 @@ class TestSingleStrategy:
         assert result.status == "blocked"
         assert result.blocked_phase == "finalization"
         assert result.termination_reason == "finalization_write_failed"
+
+    @pytest.mark.parametrize(
+        ("registered", "head"),
+        [(None, "verified-head"), ("missing-worktree", "verified-head"), ("worktree", "")],
+    )
+    def test_fresh_verified_phase_blocks_implementation_without_complete_provenance(
+        self, tmp_path: Path, registered: str | None, head: str
+    ) -> None:
+        """Verified implementation cannot enter a downstream phase without a durable HEAD."""
+        from harness.config import VisualTestsConfig
+        from harness.ralph import RalphController
+        from harness.visual_ralph import VisualRalphController
+
+        coordinator = _make_coordinator(tmp_path)
+        coordinator._config.visual_tests = VisualTestsConfig(enabled=True)
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        coordinator._gitops.get_latest_worktree.return_value = (
+            str(worktree if registered == "worktree" else tmp_path / registered)
+            if registered is not None
+            else None
+        )
+        verified = ImplementationResult("verified", "verified", 1, 0, None, 1, None)
+
+        with patch.object(coordinator, "_worktree_head", return_value=head), \
+             patch.object(RalphController, "run_loop", return_value=verified), \
+             patch.object(VisualRalphController, "run_loop") as visual:
+            result = coordinator.start(RunIntent(spec_id="spec-001", max_outer=1, max_inner=1))[0]
+
+        assert result.status == "blocked"
+        assert result.blocked_phase == "implementation"
+        assert result.termination_reason == "verified_provenance_unavailable"
+        assert StateStore(tmp_path / "runs" / "state", "spec-001", "default").read()["status"] == "blocked"
+        visual.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("registered_worktree", "verified_commit"),
+        [(None, "verified-head"), ("worktree", None), ("worktree", "")],
+    )
+    def test_finalization_requires_persisted_canonical_provenance(
+        self,
+        tmp_path: Path,
+        registered_worktree: str | None,
+        verified_commit: str | None,
+    ) -> None:
+        """Finalization rejects legacy path and report-only provenance."""
+        coord = _make_coordinator(tmp_path)
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("---\nstatus: planned\n---\n# Spec\n")
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store.initialize("run-1", "semi", declared_targets=["sources/api"])
+        store.transition("running")
+        store.transition("verified")
+        store.transition(
+            "finalizing",
+            updates={
+                "worktree_path": str(worktree),
+                "registered_worktree": str(worktree) if registered_worktree else None,
+                "verified_commit": verified_commit,
+            },
+        )
+        implementation = ImplementationResult("verified", "verified", 1, 0, None, 0, None)
+
+        with patch.object(coord, "_worktree_head", return_value="verified-head"), \
+             patch("harness.coordinator.latest_fulfillment_report", return_value=spec_dir / "fulfillment-report.md"), \
+             patch("harness.coordinator.read_fulfillment_metadata", return_value={"verified_commit": "verified-head"}):
+            result = coord._finalize_delivery(
+                store,
+                spec_dir=spec_dir,
+                declared_targets=["sources/api"],
+                implementation=implementation,
+                outer_iterations=1,
+                tokens_used=0,
+                final_verify=None,
+            )
+
+        assert result.status == "blocked"
+        assert result.blocked_phase == "finalization"
+        assert result.termination_reason == "verified_provenance_mismatch"
 
 
 @pytest.mark.unit
@@ -648,7 +749,7 @@ def test_coordinator_runs_visual_loop_after_convergence(tmp_path):
     gitops = MagicMock()
     gitops.create_worktree.return_value = str(tmp_path / "worktree")
     gitops.create_draft_pr.return_value = "https://github.com/t/r/pull/1"
-    gitops.get_latest_worktree.return_value = str(tmp_path / "worktree")
+    gitops.get_latest_worktree.return_value = str(_initialize_git_worktree(tmp_path / "worktree"))
 
     with patch.object(RalphController, "run_loop", return_value=phase1_result), \
          patch.object(VisualRalphController, "run_loop", return_value=phase2_result) as mock_visual:
@@ -682,7 +783,7 @@ def test_visual_fix_reenters_phase1_before_accepting_new_visual_evidence(tmp_pat
         visual_tests=VisualTestsConfig(enabled=True, max_iterations=2),
     )
     gitops = MagicMock()
-    gitops.get_latest_worktree.return_value = str(tmp_path / "worktree")
+    gitops.get_latest_worktree.return_value = str(_initialize_git_worktree(tmp_path / "worktree"))
     initial = ImplementationResult("verified", "converged", 1, 0, None, 10, None)
     reverified = ImplementationResult("verified", "converged", 1, 0, None, 11, None)
     applied = VisualResult("fix_applied", "fix_applied", 1, 2, None)
@@ -712,7 +813,7 @@ def test_visual_fix_reentry_stops_at_configured_visual_cap(tmp_path):
         visual_tests=VisualTestsConfig(enabled=True, max_iterations=2),
     )
     gitops = MagicMock()
-    gitops.get_latest_worktree.return_value = str(tmp_path / "worktree")
+    gitops.get_latest_worktree.return_value = str(_initialize_git_worktree(tmp_path / "worktree"))
     verified = ImplementationResult("verified", "converged", 1, 0, None, 1, None)
     applied = VisualResult("fix_applied", "fix_applied", 1, 1, None)
 

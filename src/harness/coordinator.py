@@ -441,8 +441,8 @@ class StrategyCoordinator:
         spec_id: str,
         strategy_id: str,
         implementation: ImplementationResult,
-    ) -> Dict[str, Any]:
-        """Capture immutable worktree provenance with Phase 1 verification."""
+    ) -> Dict[str, Any] | None:
+        """Capture mandatory immutable worktree provenance with Phase 1 verification."""
         registered_worktree = self._gitops.get_latest_worktree(
             spec_id, strategy_id, build_id=self._build_id
         )
@@ -451,16 +451,16 @@ class StrategyCoordinator:
             if isinstance(registered_worktree, str) and registered_worktree
             else None
         )
-        verified_commit = (
-            self._worktree_head(worktree_path)
-            if worktree_path is not None and worktree_path.is_dir()
-            else None
-        )
+        if worktree_path is None or not worktree_path.is_dir():
+            return None
+        verified_commit = self._worktree_head(worktree_path)
+        if not verified_commit:
+            return None
         return {
             "last_completed_phase": "implementation",
             "pr_url": implementation.pr_url,
             "registered_worktree": str(worktree_path) if worktree_path else None,
-            "verified_commit": verified_commit or None,
+            "verified_commit": verified_commit,
         }
 
     def _persist_phase_block(
@@ -516,23 +516,27 @@ class StrategyCoordinator:
         if len(declared_targets) == 1:
             try:
                 state = state_store.read()
-                worktree_text = str(
-                    state.get("registered_worktree") or state.get("worktree_path") or ""
-                )
-                recorded_commit = (
-                    self._worktree_head(Path(worktree_text)) if worktree_text else ""
-                )
+                worktree_text = state.get("registered_worktree")
+                persisted_verified_commit = str(state.get("verified_commit") or "")
+                if not isinstance(worktree_text, str) or not worktree_text or not persisted_verified_commit:
+                    return self._persist_phase_block(
+                        state_store,
+                        phase="finalization",
+                        reason="verified_provenance_mismatch",
+                        implementation=implementation,
+                        outer_iterations=outer_iterations,
+                        tokens_used=tokens_used,
+                        final_verify=final_verify,
+                    )
+                recorded_commit = self._worktree_head(Path(worktree_text))
                 report = latest_fulfillment_report(spec_dir) if spec_dir is not None else None
                 metadata = read_fulfillment_metadata(report) if report is not None else {}
                 verified_commit = str(metadata.get("verified_commit") or "")
-                persisted_verified_commit = str(state.get("verified_commit") or "")
                 if (
                     not verified_commit
                     or verified_commit != recorded_commit
-                    or (
-                        persisted_verified_commit
-                        and persisted_verified_commit != verified_commit
-                    )
+                    or persisted_verified_commit != recorded_commit
+                    or persisted_verified_commit != verified_commit
                 ):
                     return self._persist_phase_block(
                         state_store,
@@ -873,13 +877,23 @@ class StrategyCoordinator:
             implementation_outer_iterations = implementation_result.outer_iterations
             implementation_tokens = implementation_result.tokens_used
             if implementation_result.status == "verified" and current_phase == "implementation":
+                checkpoint_updates = self._verified_checkpoint_updates(
+                    spec_id=intent.spec_id,
+                    strategy_id=strategy_id,
+                    implementation=implementation_result,
+                )
+                if checkpoint_updates is None:
+                    return self._persist_phase_block(
+                        state_store,
+                        phase="implementation",
+                        reason="verified_provenance_unavailable",
+                        implementation=implementation_result,
+                        outer_iterations=implementation_outer_iterations,
+                        tokens_used=implementation_tokens,
+                    )
                 state_store.transition(
                     "verified",
-                    updates=self._verified_checkpoint_updates(
-                        spec_id=intent.spec_id,
-                        strategy_id=strategy_id,
-                        implementation=implementation_result,
-                    ),
+                    updates=checkpoint_updates,
                 )
 
             visual_result: VisualResult | None = None
@@ -963,13 +977,26 @@ class StrategyCoordinator:
                     implementation_outer_iterations += implementation_result.outer_iterations
                     implementation_tokens += implementation_result.tokens_used
                     if implementation_result.status == "verified":
+                        checkpoint_updates = self._verified_checkpoint_updates(
+                            spec_id=intent.spec_id,
+                            strategy_id=strategy_id,
+                            implementation=implementation_result,
+                        )
+                        if checkpoint_updates is None:
+                            implementation_result = ImplementationResult(
+                                status="blocked",
+                                termination_reason="verified_provenance_unavailable",
+                                outer_iterations=implementation_result.outer_iterations,
+                                inner_iterations=implementation_result.inner_iterations,
+                                pr_url=implementation_result.pr_url,
+                                tokens_used=implementation_result.tokens_used,
+                                final_verify=implementation_result.final_verify,
+                                branch=implementation_result.branch,
+                            )
+                            return None
                         state_store.transition(
                             "verified",
-                            updates=self._verified_checkpoint_updates(
-                                spec_id=intent.spec_id,
-                                strategy_id=strategy_id,
-                                implementation=implementation_result,
-                            ),
+                            updates=checkpoint_updates,
                         )
                 return None
 
@@ -1101,13 +1128,28 @@ class StrategyCoordinator:
                         )
                         implementation_tokens += implementation_result.tokens_used
                         if implementation_result.status == "verified":
+                            checkpoint_updates = self._verified_checkpoint_updates(
+                                spec_id=intent.spec_id,
+                                strategy_id=strategy_id,
+                                implementation=implementation_result,
+                            )
+                            if checkpoint_updates is None:
+                                implementation_result = ImplementationResult(
+                                    status="blocked",
+                                    termination_reason="verified_provenance_unavailable",
+                                    outer_iterations=implementation_result.outer_iterations,
+                                    inner_iterations=implementation_result.inner_iterations,
+                                    pr_url=implementation_result.pr_url,
+                                    tokens_used=implementation_result.tokens_used,
+                                    final_verify=implementation_result.final_verify,
+                                    branch=implementation_result.branch,
+                                )
+                                return RepairAttempt(
+                                    output={"result": implementation_result}
+                                )
                             state_store.transition(
                                 "verified",
-                                updates=self._verified_checkpoint_updates(
-                                    spec_id=intent.spec_id,
-                                    strategy_id=strategy_id,
-                                    implementation=implementation_result,
-                                ),
+                                updates=checkpoint_updates,
                             )
                         visual_result = run_visual_phase()
                         return RepairAttempt(

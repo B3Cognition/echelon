@@ -157,7 +157,8 @@ class TestCoordinatorReviewReentry:
                 repair_loop_runs.append(draft)
                 return super().run(draft)
 
-        with patch("harness.coordinator.RalphController") as MockRalph, \
+        with patch.object(coord, "_worktree_head", return_value="verified-head"), \
+             patch("harness.coordinator.RalphController") as MockRalph, \
              patch("harness.coordinator.ReviewLoopController") as MockReview, \
              patch("harness.coordinator.VisualRalphController") as MockVisual, \
              patch("harness.coordinator.RepairLoop", SpyRepairLoop, create=True), \
