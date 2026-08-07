@@ -198,9 +198,6 @@ class TestRalphEscalation:
             token_budget=500_000,
         )
 
-        # Banzai mode should not block on same_failure, it should hit outer cap
-        assert result.status != "blocked", (
-            "Banzai mode should not block on same_failure_repeat"
-        )
-        assert result.status == "failed"
+        # Banzai mode reaches the ordinary outer cap, not same-failure escalation.
+        assert result.status == "blocked"
         assert result.termination_reason == "outer_cap"

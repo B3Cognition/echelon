@@ -130,3 +130,25 @@ class TestStateStoreInvariants:
         assert state["blocked_phase"] is None
         assert state["interrupted_phase"] is None
         assert state["verified_commit"] is None
+
+    def test_legacy_blocked_state_migrates_but_v2_missing_phase_is_rejected(
+        self, tmp_path: Path
+    ) -> None:
+        """Only pre-v2 records may receive the implementation resume default."""
+        store = StateStore(tmp_path, "spec-001", "default")
+        store.state_file.write_text('{"status": "blocked"}', encoding="utf-8")
+        store.write(store.read())
+        legacy = store.read()
+
+        assert legacy["delivery_state_version"] == DELIVERY_STATE_VERSION
+        assert legacy["enabled_phases"] == ["implementation", "finalization"]
+        assert legacy["blocked_phase"] == "implementation"
+
+        store.state_file.write_text(
+            '{"delivery_state_version": 2, "status": "blocked"}',
+            encoding="utf-8",
+        )
+        invalid_v2 = store.read()
+        invalid_v2["spec_dir"] = "/current/spec"
+        with pytest.raises(InvalidTransitionError, match="blocked_phase"):
+            store.write(invalid_v2)

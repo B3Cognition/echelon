@@ -2425,6 +2425,7 @@ def _refresh_harness_state_spec_paths(
     those paths when the project has a resolvable current spec directory.
     """
     from harness.spec_frontmatter import find_spec_dir
+    from harness.state import migrate_legacy_delivery_state
 
     spec_dir = find_spec_dir(spec_id, project_root)
     if spec_dir is None:
@@ -2435,11 +2436,14 @@ def _refresh_harness_state_spec_paths(
         "spec_file": str(spec_dir / "spec.md"),
         "tasks_file": str(spec_dir / "tasks.md"),
     }
-    changed = any(str(state.get(key) or "") != value for key, value in updates.items())
+    refreshed = migrate_legacy_delivery_state(state)
+    changed = (
+        refreshed != state
+        or any(str(refreshed.get(key) or "") != value for key, value in updates.items())
+    )
     if not changed:
         return state, spec_dir, False
 
-    refreshed = dict(state)
     refreshed.update(updates)
     state_store.write(refreshed)  # type: ignore[attr-defined]
     return refreshed, spec_dir, True

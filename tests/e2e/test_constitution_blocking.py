@@ -162,8 +162,6 @@ class TestConstitutionBlocking:
             token_budget=500_000,
         )
 
-        # Banzai should not block on same_failure_repeat
-        assert result.status != "blocked", (
-            "Banzai mode should not block on spec guard violations"
-        )
+        # Banzai reaches the ordinary outer cap, not spec-guard escalation.
+        assert result.status == "blocked"
         assert result.termination_reason == "outer_cap"

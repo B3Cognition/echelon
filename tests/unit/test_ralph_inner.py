@@ -143,8 +143,8 @@ class TestSameFailureEscalation:
             {"passed": False, "failures": [{"category": "test", "id": "t2", "error": "different error"}]},
         ])
         result = ctrl.run_loop(max_outer=1, max_inner=2)
-        # Should NOT be blocked (inner exhausted, outer cap)
-        assert result.status == "failed"
+        # The ordinary outer cap is a typed blocked outcome.
+        assert result.status == "blocked"
         assert result.termination_reason == "outer_cap"
 
 
@@ -183,8 +183,9 @@ class TestBanzaiModeSuppression:
             {"passed": False, "failures": [{"category": "test", "id": "t2", "error": "different"}]},
         ], mode="banzai")
         result = ctrl.run_loop(max_outer=1, max_inner=4)
-        # Banzai should NOT block on same_failure_repeat
-        assert result.status != "blocked"
+        # Banzai reaches the ordinary outer cap, not same-failure escalation.
+        assert result.status == "blocked"
+        assert result.termination_reason == "outer_cap"
 
 
 @pytest.mark.unit

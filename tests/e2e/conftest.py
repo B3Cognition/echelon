@@ -67,7 +67,8 @@ def stub_provider(stub_llm: StubLLM) -> StubSandboxProvider:
 class MockGitOps:
     """Mock GitOpsManager for E2E tests.
 
-    Tracks all calls for assertion without touching real git.
+    Tracks calls for assertion while using temporary git repositories where
+    delivery provenance needs a real committed HEAD.
     """
 
     def __init__(self, tmp_dir: Path) -> None:
@@ -83,6 +84,7 @@ class MockGitOps:
         self.pr_merged = False
         self.pr_url: Optional[str] = None
         self._default_branch = "main"
+        self._latest_worktrees: dict[tuple[str, str, str], str] = {}
 
     def create_worktree(
         self, spec_id: str, strategy_id: str, outer_iter: int,
@@ -95,17 +97,25 @@ class MockGitOps:
         import subprocess as _sp
         wt_path = self._tmp_dir / "runs" / "worktrees" / f"{spec_id}-{strategy_id}-{outer_iter}"
         wt_path.mkdir(parents=True, exist_ok=True)
-        # Initialize as a git repo and stage a dummy change so that
-        # _has_file_changes() returns True and the no-progress guard doesn't fire.
+        # Initialize a real committed checkout so coordinator provenance reads
+        # a valid HEAD exactly as it would from a delivery worktree.
         try:
             _sp.run(["git", "init"], cwd=str(wt_path), capture_output=True, check=False)
             _sp.run(["git", "config", "user.email", "test@test.com"], cwd=str(wt_path), capture_output=True, check=False)
             _sp.run(["git", "config", "user.name", "Test"], cwd=str(wt_path), capture_output=True, check=False)
+            (wt_path / "README.md").write_text("initial test worktree\n")
+            _sp.run(["git", "add", "README.md"], cwd=str(wt_path), capture_output=True, check=False)
+            _sp.run(
+                ["git", "commit", "--allow-empty", "-m", "initial test worktree"],
+                cwd=str(wt_path), capture_output=True, check=False,
+            )
+            # Keep a change until Ralph commits it, exercising the real
+            # commit/provenance path without triggering no-progress first.
             (wt_path / "stub_change.txt").write_text(f"iter-{outer_iter}")
-            _sp.run(["git", "add", "stub_change.txt"], cwd=str(wt_path), capture_output=True, check=False)
         except Exception:
             pass
         self.worktrees_created.append(str(wt_path))
+        self._latest_worktrees[(spec_id, strategy_id, build_id)] = str(wt_path)
         return str(wt_path)
 
     def destroy_worktree(self, worktree_path: str, keep_branch: bool = False) -> None:
@@ -113,8 +123,26 @@ class MockGitOps:
         self.worktrees_destroyed.append(worktree_path)
 
     def commit(self, worktree_path: str, message: str) -> None:
-        """Record commit."""
+        """Record and create a real worktree commit for provenance checks."""
         self.commits.append({"path": worktree_path, "message": message})
+        subprocess.run(["git", "add", "-A"], cwd=worktree_path, capture_output=True, check=False)
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", message],
+            cwd=worktree_path, capture_output=True, check=False,
+        )
+
+    def get_latest_worktree(
+        self, spec_id: str, strategy_id: str, *, build_id: str = ""
+    ) -> str | None:
+        """Return the exact latest worktree registered for delivery provenance."""
+        exact = self._latest_worktrees.get((spec_id, strategy_id, build_id))
+        if exact is not None:
+            return exact
+        matches = [
+            path for (known_spec, known_strategy, _), path in self._latest_worktrees.items()
+            if known_spec == spec_id and known_strategy == strategy_id
+        ]
+        return matches[-1] if matches else None
 
     def push(self, worktree_path: str, branch: str) -> None:
         """Record push."""

@@ -53,7 +53,11 @@ from harness.stacks import (
 )
 from harness.stacks.paths import find_stack_extension_root
 from harness.visual_ralph import VisualRalphController
-from harness.state import DELIVERY_STATE_VERSION, StateStore
+from harness.state import (
+    DELIVERY_STATE_VERSION,
+    StateStore,
+    migrate_legacy_delivery_state,
+)
 from harness.strategy_loader import StrategySpec, load_strategies
 from echelon.artifact_index import write_artifact_index
 from harness.run_history import append_implementation_run
@@ -369,20 +373,10 @@ class StrategyCoordinator:
         if state.get("status") in {"converged", "failed", "cancelled_by_coordinator"}:
             return state
 
-        state["delivery_state_version"] = DELIVERY_STATE_VERSION
-        state.setdefault("enabled_phases", self._enabled_phases(llm_provider))
-        state.setdefault("last_completed_phase", None)
-        state.setdefault("verified_commit", None)
-        if state.get("status") == "blocked":
-            state["blocked_phase"] = state.get("blocked_phase") or "implementation"
-        else:
-            state.setdefault("blocked_phase", None)
-        if state.get("status") == "interrupted":
-            state["interrupted_phase"] = (
-                state.get("interrupted_phase") or "implementation"
-            )
-        else:
-            state.setdefault("interrupted_phase", None)
+        state = migrate_legacy_delivery_state(
+            state,
+            enabled_phases=self._enabled_phases(llm_provider),
+        )
         state_store.write(state)
         return state
 

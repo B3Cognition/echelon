@@ -45,8 +45,8 @@ _harness_installed() {
 
 _sandbox_available() {
     # Check Docker is running + sandbox container exists
-    docker info >/dev/null 2>&1 && \
     [ -n "${HARNESS_SANDBOX_ID:-}" ] && \
+    docker info >/dev/null 2>&1 && \
     docker inspect "${HARNESS_SANDBOX_ID}" >/dev/null 2>&1
 }
 

@@ -50,6 +50,39 @@ VALID_TRANSITIONS = {
 VALID_STATUSES = set(VALID_TRANSITIONS.keys())
 
 
+def migrate_legacy_delivery_state(
+    state: Dict[str, Any], *, enabled_phases: list[str] | None = None
+) -> Dict[str, Any]:
+    """Upgrade a pre-v2 nonterminal delivery record before strict mutation.
+
+    V2 pause records must always name their exact resume phase.  Older records
+    predate that field, so their safe compatibility default is implementation.
+    """
+    migrated = dict(state)
+    if migrated.get("delivery_state_version") == DELIVERY_STATE_VERSION:
+        return migrated
+    if migrated.get("status") in {"converged", "failed", "cancelled_by_coordinator"}:
+        return migrated
+    phases = migrated.get("enabled_phases")
+    if not isinstance(phases, list) or not all(isinstance(phase, str) for phase in phases):
+        phases = enabled_phases or ["implementation", "finalization"]
+    migrated["delivery_state_version"] = DELIVERY_STATE_VERSION
+    migrated["enabled_phases"] = list(phases)
+    migrated.setdefault("last_completed_phase", None)
+    migrated.setdefault("verified_commit", None)
+    status = migrated.get("status")
+    if status == "blocked":
+        migrated["blocked_phase"] = migrated.get("blocked_phase") or "implementation"
+        migrated.setdefault("interrupted_phase", None)
+    elif status == "interrupted":
+        migrated["interrupted_phase"] = migrated.get("interrupted_phase") or "implementation"
+        migrated.setdefault("blocked_phase", None)
+    else:
+        migrated.setdefault("blocked_phase", None)
+        migrated.setdefault("interrupted_phase", None)
+    return migrated
+
+
 class InvalidTransitionError(Exception):
     """Raised when an invalid state transition is attempted."""
 
@@ -164,6 +197,7 @@ class StateStore:
         Validates invariants before writing.
         """
         self._ensure_dir()
+        data = migrate_legacy_delivery_state(data)
         self._validate_invariants(data)
 
         # Keep previous as .bak

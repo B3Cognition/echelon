@@ -340,6 +340,9 @@ class TestDeliveryStateMigration:
         store.transition("blocked", updates={"blocked_phase": "implementation"})
         state = store.read()
         state.pop("blocked_phase")
+        # Persist an actual V1 record; a malformed V2 blocked record must not
+        # be silently defaulted during coordinator migration.
+        state.pop("delivery_state_version")
         store.state_file.write_text(json.dumps(state), encoding="utf-8")
 
         migrated = coordinator._migrate_delivery_state(store, llm_provider=None)
