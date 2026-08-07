@@ -838,10 +838,11 @@ def test_visual_fix_reentry_persists_implementation_provenance_block(tmp_path):
     coordinator = _make_coordinator(tmp_path)
     coordinator._config.visual_tests = VisualTestsConfig(enabled=True, max_iterations=2)
     coordinator._gitops.get_latest_worktree.side_effect = [str(tmp_path), None]
-    verified = ImplementationResult("verified", "verified", 1, 0, None, 1, None)
-    fix_applied = VisualResult("fix_applied", "fix_applied", 1, 1, None)
+    initial_verified = ImplementationResult("verified", "verified", 2, 0, None, 11, None)
+    reentry_verified = ImplementationResult("verified", "verified", 7, 0, None, 13, None)
+    fix_applied = VisualResult("fix_applied", "fix_applied", 3, 5, None)
 
-    with patch.object(RalphController, "run_loop", side_effect=[verified, verified]) as implementation, \
+    with patch.object(RalphController, "run_loop", side_effect=[initial_verified, reentry_verified]) as implementation, \
          patch.object(VisualRalphController, "run_loop", return_value=fix_applied) as visual, \
          patch.object(coordinator, "_finalize_delivery") as finalization:
         result = coordinator.start(RunIntent(spec_id="spec-001", max_outer=1, max_inner=1))[0]
@@ -853,6 +854,10 @@ def test_visual_fix_reentry_persists_implementation_provenance_block(tmp_path):
     assert state["status"] == "blocked"
     assert state["blocked_phase"] == "implementation"
     assert state["termination_reason"] == "verified_provenance_unavailable"
+    assert result.outer_iterations == 12
+    assert result.tokens_used == 29
+    assert state["outer_iter"] == 12
+    assert state["tokens_used"] == 29
     assert implementation.call_count == 2
     assert visual.call_count == 1
     finalization.assert_not_called()

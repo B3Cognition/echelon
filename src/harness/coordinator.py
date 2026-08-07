@@ -1004,8 +1004,10 @@ class StrategyCoordinator:
                             spec_id=intent.spec_id,
                             strategy_id=strategy_id,
                             implementation=implementation_result,
-                            outer_iterations=implementation_outer_iterations,
-                            tokens_used=implementation_tokens,
+                            outer_iterations=(
+                                implementation_outer_iterations + visual_iterations
+                            ),
+                            tokens_used=implementation_tokens + visual_tokens,
                         )
                         if visual_reentry_block is not None:
                             return None
