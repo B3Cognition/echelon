@@ -1486,6 +1486,15 @@ class StrategyCoordinator:
                         repair_loop_result.final_check.output, ImplementationResult
                     ):
                         implementation_result = repair_loop_result.final_check.output
+                    if (
+                        review_result is not None
+                        and review_result.status == "completed"
+                        and state_store.read().get("status") == "reviewing"
+                    ):
+                        state_store.transition(
+                            "reviewing",
+                            updates={"last_completed_phase": "review"},
+                        )
 
             total_outer_iterations = (
                 implementation_outer_iterations + visual_iterations + review_iterations
