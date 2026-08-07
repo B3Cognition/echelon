@@ -3249,6 +3249,64 @@ def test_claude_backend_rejects_review_triage_agents_outside_fixed_allowlist(
     popen.assert_not_called()
 
 
+@pytest.mark.parametrize("scope_key", ("tool_read_roots", "tool_write_paths"))
+@pytest.mark.parametrize(
+    "unsafe_component",
+    (
+        "comma,Write(/broad)",
+        "parentheses(Write)",
+        "glob-star*",
+        "glob-question?",
+        "glob-open[",
+        "glob-close]",
+        "line\nbreak",
+    ),
+)
+def test_claude_backend_rejects_review_triage_paths_not_representable_in_rules(
+    tmp_path, scope_key, unsafe_component
+) -> None:
+    backend = ClaudeCliBackend(_config("claude"))
+    review_agents = {
+        name: {
+            "description": f"{name} description",
+            "prompt": f"{name} full prompt",
+            "tools": ["Read"],
+        }
+        for name in (
+            "speckit-echelon-debugger",
+            "speckit-echelon-sentinel",
+            "speckit-echelon-spec-guard",
+        )
+    }
+    read_root = tmp_path / "safe-read-root"
+    write_path = tmp_path / "safe-state" / "tasks-append.md"
+    if scope_key == "tool_read_roots":
+        read_root = tmp_path / unsafe_component
+    else:
+        write_path = tmp_path / unsafe_component
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Triage the supplied review comments.",
+        env={},
+        timeout_s=10,
+        metadata={
+            "execution_profile": "review_triage_v1",
+            "prompt_metadata": {
+                "tool_read_roots": [str(read_root)],
+                "tool_write_paths": [str(write_path)],
+                "review_agents": review_agents,
+            },
+        },
+    )
+
+    with patch("harness.ai_cli_backends.claude.subprocess.Popen") as popen:
+        result = backend.run_prompt(request)
+
+    assert result.exit_code == 125
+    assert result.metadata == {"invalid_execution_profile": "review_triage_v1"}
+    popen.assert_not_called()
+
+
 def test_claude_workspace_sandbox_allows_scoped_paths_inside_forbidden_root(
     tmp_path: Path,
 ) -> None:

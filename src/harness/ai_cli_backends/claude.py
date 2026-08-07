@@ -28,6 +28,7 @@ _REVIEW_TRIAGE_AGENT_NAMES = (
     "speckit-echelon-sentinel",
     "speckit-echelon-spec-guard",
 )
+_CLAUDE_RULE_PATH_SAFE_CHARACTERS = frozenset("/._- ")
 
 
 class ClaudeCliBackend:
@@ -262,6 +263,8 @@ def _review_triage_profile_args(request: CliRunRequest) -> list[str] | None:
         return None
     read_roots = _prompt_scope_paths(request, raw_metadata, "tool_read_roots")
     write_paths = _prompt_scope_paths(request, raw_metadata, "tool_write_paths")
+    if not _review_triage_paths_are_representable(read_roots + write_paths):
+        return None
     file_rules: list[str] = []
     for root in read_roots:
         file_rules.append(f"Read({_claude_absolute_rule_path(root)}/**)")
@@ -316,11 +319,22 @@ def _validated_review_agents(
     return agents
 
 
+def _review_triage_paths_are_representable(paths: tuple[str, ...]) -> bool:
+    return all(
+        all(
+            character.isalnum()
+            or character in _CLAUDE_RULE_PATH_SAFE_CHARACTERS
+            for character in path
+        )
+        for path in paths
+    )
+
+
 def _invalid_review_triage_profile_result() -> CliRunResult:
     return CliRunResult(
         exit_code=125,
         stdout="",
-        stderr="invalid review_triage_v1 agent configuration",
+        stderr="invalid review_triage_v1 profile configuration",
         metadata={"invalid_execution_profile": _REVIEW_TRIAGE_PROFILE},
     )
 

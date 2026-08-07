@@ -107,6 +107,25 @@ class TestAICodingCliProvider:
         }
         run_backend.assert_not_called()
 
+    @pytest.mark.parametrize("method", ("run_prompt_result", "run_agent_result"))
+    @pytest.mark.parametrize("profile", (False, 0, [], {}))
+    def test_execution_profile_rejects_non_string_values_before_backend_launch(
+        self, tmp_path, method, profile
+    ):
+        provider = AICodingCliProvider(_config(cli="claude"))
+        backend_method = "run_agent" if method == "run_agent_result" else "run_prompt"
+
+        with patch.object(provider._backend, backend_method) as run_backend:
+            result = getattr(provider, method)(
+                str(tmp_path),
+                "do not launch",
+                request_metadata={"execution_profile": profile},
+            )
+
+        assert result.exit_code == 125
+        assert "execution profile must be a string" in result.stderr
+        run_backend.assert_not_called()
+
     @pytest.mark.parametrize(
         ("cli", "expected"),
         [

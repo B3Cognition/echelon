@@ -237,10 +237,21 @@ def _execution_profile_violation(
     provider: str,
     metadata: Mapping[str, object],
 ) -> CliRunResult | None:
-    raw_profile = metadata.get("execution_profile")
-    if not raw_profile:
+    if "execution_profile" not in metadata:
         return None
-    profile = raw_profile if isinstance(raw_profile, str) else str(raw_profile)
+    raw_profile = metadata["execution_profile"]
+    if raw_profile is None:
+        return None
+    if not isinstance(raw_profile, str):
+        return CliRunResult(
+            exit_code=125,
+            stdout="",
+            stderr="execution profile must be a string",
+            metadata={"unsupported_execution_profile": "invalid"},
+        )
+    profile = raw_profile.strip()
+    if not profile:
+        return None
     if profile in SUPPORTED_EXECUTION_PROFILES.get(provider, frozenset()):
         return None
     if profile == "review_triage_v1":
