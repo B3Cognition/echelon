@@ -101,7 +101,7 @@ class TestSingleStrategy:
         spec_dir = tmp_path / "specs" / "spec-001-direct"
         spec_dir.mkdir(parents=True)
         (spec_dir / "spec.md").write_text(
-            "---\nstatus: in_progress\ntargets:\n  - .\n---\n# Direct\n",
+            "---\nstatus: In Progress\ntargets:\n  - .\n---\n# Direct\n",
             encoding="utf-8",
         )
         verified_commit = subprocess.run(

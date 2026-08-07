@@ -2281,7 +2281,7 @@ def _cmd_harness_run(
     except Exception as exc:
         if _is_docker_unavailable_error(exc):
             _mark_current_harness_state_blocked(
-                Path.cwd(),
+                harness_base_dir,
                 spec_id,
                 strategy,
                 "docker_unavailable",
@@ -2295,7 +2295,7 @@ def _cmd_harness_run(
             )
             sys.exit(1)
         _print_harness_error_and_exit(
-            project_root=Path.cwd(),
+            project_root=harness_base_dir,
             spec_id=spec_id,
             strategy=strategy,
             command=rerun_command,
@@ -2457,7 +2457,6 @@ def _refresh_harness_state_spec_paths(
     those paths when the project has a resolvable current spec directory.
     """
     from harness.spec_frontmatter import find_spec_dir
-    from harness.state import migrate_legacy_delivery_state
 
     spec_dir = find_spec_dir(spec_id, project_root)
     if spec_dir is None:
@@ -2468,11 +2467,8 @@ def _refresh_harness_state_spec_paths(
         "spec_file": str(spec_dir / "spec.md"),
         "tasks_file": str(spec_dir / "tasks.md"),
     }
-    refreshed = migrate_legacy_delivery_state(state)
-    changed = (
-        refreshed != state
-        or any(str(refreshed.get(key) or "") != value for key, value in updates.items())
-    )
+    refreshed = dict(state)
+    changed = any(str(refreshed.get(key) or "") != value for key, value in updates.items())
     if not changed:
         return state, spec_dir, False
 

@@ -136,6 +136,27 @@ def test_mark_current_harness_state_blocked_preserves_converged_state(tmp_path: 
 
 
 @pytest.mark.unit
+def test_target_dispatch_exception_blocks_target_harness_not_source_checkout(tmp_path: Path) -> None:
+    """Target child failures must not overwrite a same-ID source state file."""
+    from echelon.cli import _mark_current_harness_state_blocked
+
+    target_root = tmp_path / "runs" / "targets" / "api"
+    target = StateStore(target_root / "runs" / "state", "003", "default")
+    source = StateStore(tmp_path / "runs" / "state", "003", "default")
+    for store in (target, source):
+        store.initialize("run-1", "semi", enabled_phases=["implementation", "finalization"])
+        store.transition("running")
+
+    _mark_current_harness_state_blocked(
+        target_root, "003", "default", "harness_error", "target crash"
+    )
+
+    assert target.read()["status"] == "blocked"
+    assert target.read()["blocked_phase"] == "implementation"
+    assert source.read()["status"] == "running"
+
+
+@pytest.mark.unit
 class TestHarnessRunArgParsing:
     """Verify the user_message built by _cmd_harness_run reaches parse_intent correctly."""
 

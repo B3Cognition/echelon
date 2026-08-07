@@ -116,6 +116,35 @@ def _make_phase_a_spec(base: Path, spec_dir_name: str = "001-demo", *, canonical
 
 
 @pytest.mark.unit
+def test_refreshing_v1_spec_paths_keeps_delivery_state_v1(tmp_path: Path) -> None:
+    """CLI metadata repair may not choose a V2 delivery phase plan."""
+    from echelon.cli import _refresh_harness_state_spec_paths
+    from harness.state import StateStore
+
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+    state_store = StateStore(tmp_path / "runs" / "state", "001", "default")
+    state_store.state_file.parent.mkdir(parents=True, exist_ok=True)
+    state_store.state_file.write_text(
+        json.dumps({"status": "blocked", "legacy": True}), encoding="utf-8"
+    )
+
+    refreshed, _, changed = _refresh_harness_state_spec_paths(
+        project_root=tmp_path,
+        spec_id="001",
+        state=state_store.read(),
+        state_store=state_store,
+    )
+
+    assert changed is True
+    assert refreshed["status"] == "blocked"
+    assert "delivery_state_version" not in refreshed
+    assert "enabled_phases" not in refreshed
+    assert state_store.read()["legacy"] is True
+
+
+@pytest.mark.unit
 class TestCmdHarnessResume:
     """_cmd_harness_resume guards and banner."""
 

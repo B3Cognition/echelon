@@ -638,6 +638,9 @@ class StrategyCoordinator:
                     "finalizing", updates={"verified_commit": verified_commit}
                 )
                 current_status = read_frontmatter(spec_dir).get("status")
+                if current_status == "In Progress":
+                    write_status(spec_dir, "in_progress")
+                    current_status = "in_progress"
                 if current_status not in {None, "planned", "in_progress", "ready_to_land"}:
                     return self._persist_phase_block(
                         state_store,
@@ -796,7 +799,7 @@ class StrategyCoordinator:
                 and existing_status == "blocked"
                 and not pending_effects_only_resume
             )
-            if should_resume_running or should_resume_blocked:
+            if should_resume_running or should_resume_blocked or pending_effects_only_resume:
                 persisted_target = existing.get("implementation_target")
                 if not implementation_target and isinstance(persisted_target, str):
                     implementation_target = persisted_target.strip() or None
