@@ -19,7 +19,7 @@ import pytest
 from harness.config import HarnessConfig
 from harness.coordinator import StrategyCoordinator
 from harness.exec_result import ExecResult
-from harness.loop_result import LoopResult
+from harness.delivery_results import DeliveryResult, ImplementationResult, VisualResult
 from harness.provider import SandboxHandle, SandboxProvider, SandboxSpec
 from harness.run_intent import RunIntent
 from harness.state import StateStore
@@ -113,13 +113,13 @@ class TestCompareResults:
     def test_compare_mixed_results(self, tmp_path: Path) -> None:
         coord = _make_coordinator(tmp_path)
         results = {
-            "fast": LoopResult(
+            "fast": DeliveryResult(
                 status="converged", termination_reason="converged",
                 outer_iterations=2, inner_iterations=3,
                 pr_url="https://github.com/t/r/pull/1", tokens_used=50000,
                 final_verify=None,
             ),
-            "safe": LoopResult(
+            "safe": DeliveryResult(
                 status="failed", termination_reason="outer_cap",
                 outer_iterations=5, inner_iterations=15,
                 pr_url=None, tokens_used=80000,
@@ -143,7 +143,7 @@ class TestCompareResults:
         state["escalation_file"] = "/tmp/escalations/001-default.md"
         state_store.write(state)
         results = {
-            "default": LoopResult(
+            "default": DeliveryResult(
                 status="blocked",
                 termination_reason="blocker_escalation",
                 outer_iterations=1,
@@ -180,7 +180,7 @@ class TestCompareResults:
         }
         state_store.write(state)
         results = {
-            "default": LoopResult(
+            "default": DeliveryResult(
                 status="failed",
                 termination_reason="outer_cap",
                 outer_iterations=1,
@@ -227,8 +227,8 @@ def test_coordinator_runs_visual_loop_after_convergence(tmp_path):
     )
 
     # Phase 1 converges immediately
-    phase1_result = LoopResult(
-        status="converged",
+    phase1_result = ImplementationResult(
+        status="verified",
         termination_reason="converged",
         outer_iterations=1,
         inner_iterations=0,
@@ -238,12 +238,10 @@ def test_coordinator_runs_visual_loop_after_convergence(tmp_path):
     )
 
     # Phase 2 also converges
-    phase2_result = LoopResult(
-        status="converged",
+    phase2_result = VisualResult(
+        status="passed",
         termination_reason="converged",
-        outer_iterations=1,
-        inner_iterations=0,
-        pr_url=None,
+        iterations=1,
         tokens_used=30,
         final_verify=None,
     )
@@ -296,7 +294,7 @@ def test_coordinator_skips_visual_loop_when_phase1_fails(tmp_path):
         screenshot_dir="playwright-report",
     )
 
-    phase1_fail = LoopResult(
+    phase1_fail = ImplementationResult(
         status="failed",
         termination_reason="outer_cap",
         outer_iterations=3,
@@ -340,8 +338,8 @@ class TestTaskDescriptionInBuildPrompt:
 
         with patch("harness.coordinator.RalphController") as MockRalph:
             mock_controller = MagicMock()
-            mock_controller.run_loop.return_value = LoopResult(
-                status="converged", termination_reason="converged",
+            mock_controller.run_loop.return_value = ImplementationResult(
+                status="verified", termination_reason="converged",
                 outer_iterations=1, inner_iterations=1,
                 pr_url=None, tokens_used=0, final_verify=None,
             )
@@ -370,8 +368,8 @@ class TestTaskDescriptionInBuildPrompt:
 
         with patch("harness.coordinator.RalphController") as MockRalph:
             mock_controller = MagicMock()
-            mock_controller.run_loop.return_value = LoopResult(
-                status="converged", termination_reason="converged",
+            mock_controller.run_loop.return_value = ImplementationResult(
+                status="verified", termination_reason="converged",
                 outer_iterations=1, inner_iterations=1,
                 pr_url=None, tokens_used=0, final_verify=None,
             )
@@ -600,8 +598,8 @@ class TestSmartResumeDetection:
 
         with patch("harness.coordinator.RalphController") as MockRalph:
             mock_controller = MagicMock()
-            mock_controller.run_loop.return_value = LoopResult(
-                status="converged", termination_reason="converged",
+            mock_controller.run_loop.return_value = ImplementationResult(
+                status="verified", termination_reason="converged",
                 outer_iterations=1, inner_iterations=1,
                 pr_url=None, tokens_used=0, final_verify=None,
             )
@@ -631,8 +629,8 @@ class TestSmartResumeDetection:
 
         with patch("harness.coordinator.RalphController") as MockRalph:
             mock_controller = MagicMock()
-            mock_controller.run_loop.return_value = LoopResult(
-                status="converged", termination_reason="converged",
+            mock_controller.run_loop.return_value = ImplementationResult(
+                status="verified", termination_reason="converged",
                 outer_iterations=1, inner_iterations=1,
                 pr_url=None, tokens_used=0, final_verify=None,
             )
@@ -667,8 +665,8 @@ class TestSmartResumeDetection:
 
         with patch("harness.coordinator.RalphController") as MockRalph:
             mock_controller = MagicMock()
-            mock_controller.run_loop.return_value = LoopResult(
-                status="converged", termination_reason="converged",
+            mock_controller.run_loop.return_value = ImplementationResult(
+                status="verified", termination_reason="converged",
                 outer_iterations=1, inner_iterations=1,
                 pr_url=None, tokens_used=0, final_verify=None,
             )
@@ -714,8 +712,8 @@ class TestSmartResumeDetection:
 
         with patch("harness.coordinator.RalphController") as MockRalph:
             mock_controller = MagicMock()
-            mock_controller.run_loop.return_value = LoopResult(
-                status="converged", termination_reason="converged",
+            mock_controller.run_loop.return_value = ImplementationResult(
+                status="verified", termination_reason="converged",
                 outer_iterations=1, inner_iterations=1,
                 pr_url=None, tokens_used=0, final_verify=None,
             )
@@ -740,8 +738,8 @@ class TestSmartResumeDetection:
 
         with patch("harness.coordinator.RalphController") as MockRalph:
             mock_controller = MagicMock()
-            mock_controller.run_loop.return_value = LoopResult(
-                status="converged", termination_reason="converged",
+            mock_controller.run_loop.return_value = ImplementationResult(
+                status="verified", termination_reason="converged",
                 outer_iterations=1, inner_iterations=1,
                 pr_url=None, tokens_used=0, final_verify=None,
             )
@@ -785,8 +783,8 @@ class TestSmartResumeDetection:
 
         with patch("harness.coordinator.RalphController") as MockRalph:
             mock_controller = MagicMock()
-            mock_controller.run_loop.return_value = LoopResult(
-                status="converged", termination_reason="converged",
+            mock_controller.run_loop.return_value = ImplementationResult(
+                status="verified", termination_reason="converged",
                 outer_iterations=1, inner_iterations=1,
                 pr_url=None, tokens_used=0, final_verify=None,
             )
@@ -871,8 +869,8 @@ class TestSmartResumeDetection:
         intent = RunIntent(spec_id="spec-001", max_outer=1, max_inner=1, reset=True)
 
         with patch("harness.coordinator.RalphController") as mock_ralph_cls:
-            mock_ralph_cls.return_value.run_loop.return_value = LoopResult(
-                status="converged",
+            mock_ralph_cls.return_value.run_loop.return_value = ImplementationResult(
+                status="verified",
                 termination_reason="converged",
                 outer_iterations=1,
                 inner_iterations=1,
@@ -986,10 +984,10 @@ class TestSmartResumeDetection:
         ralph_visible_state: dict[str, Any] = {}
 
         with patch("harness.coordinator.RalphController") as mock_ralph_cls:
-            def run_loop(**_kwargs: Any) -> LoopResult:
+            def run_loop(**_kwargs: Any) -> ImplementationResult:
                 ralph_visible_state.update(store.read())
-                return LoopResult(
-                    status="converged",
+                return ImplementationResult(
+                    status="verified",
                     termination_reason="converged",
                     outer_iterations=2,
                     inner_iterations=1,
@@ -1022,8 +1020,8 @@ class TestSmartResumeDetection:
 
         with patch("harness.coordinator.RalphController") as MockRalph:
             mock_controller = MagicMock()
-            mock_controller.run_loop.return_value = LoopResult(
-                status="converged", termination_reason="converged",
+            mock_controller.run_loop.return_value = ImplementationResult(
+                status="verified", termination_reason="converged",
                 outer_iterations=1, inner_iterations=1,
                 pr_url=None, tokens_used=0, final_verify=None,
             )

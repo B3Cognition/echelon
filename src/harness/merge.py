@@ -11,14 +11,14 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from harness.loop_result import LoopResult
+from harness.delivery_results import DeliveryResult
 from harness.run_intent import RunIntent
 
 logger = logging.getLogger(__name__)
 
 
 def attempt_auto_merge(
-    loop_result: LoopResult,
+    loop_result: DeliveryResult,
     intent: RunIntent,
     gitops: Any,
 ) -> bool:

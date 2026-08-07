@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from harness.config import HarnessConfig
-from harness.loop_result import LoopResult
+from harness.delivery_results import ImplementationResult
 
 from tests.e2e.conftest import MockGitOps, make_ralph_controller
 from tests.e2e.stub_llm import StubLLM
@@ -64,10 +64,10 @@ class TestRalphEscalation:
         )
         assert result.termination_reason == "blocker_escalation"
 
-    def test_state_is_blocked_after_escalation(
+    def test_state_keeps_delivery_status_after_phase_escalation(
         self, tmp_harness_dir: Path, harness_config: HarnessConfig,
     ) -> None:
-        """State file shows blocked status after escalation."""
+        """Phase escalation records evidence without delivery-state transition."""
         stub = StubLLM(mode="same_failure_3x", tokens_per_call=500)
 
         controller, state_store, gitops, provider, escalation = make_ralph_controller(
@@ -93,7 +93,7 @@ class TestRalphEscalation:
         )
 
         final_state = state_store.read()
-        assert final_state["status"] == "blocked"
+        assert final_state["status"] == "running"
 
     def test_escalation_file_created(
         self, tmp_harness_dir: Path, harness_config: HarnessConfig,

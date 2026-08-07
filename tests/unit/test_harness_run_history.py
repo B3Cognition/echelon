@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from harness.harness_run_history import append_run, history_path, summarize_history
-from harness.loop_result import LoopResult
+from harness.delivery_results import DeliveryResult
 
 
 def _result(
@@ -12,8 +12,8 @@ def _result(
     status: str = "failed",
     reason: str = "outer_cap",
     tokens: int = 1234,
-) -> LoopResult:
-    return LoopResult(
+) -> DeliveryResult:
+    return DeliveryResult(
         status=status,
         termination_reason=reason,
         outer_iterations=2,

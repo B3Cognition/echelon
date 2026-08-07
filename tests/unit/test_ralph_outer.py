@@ -27,7 +27,7 @@ from harness.documentation_gate import DocumentationGateResult
 from harness.escalation import EscalationHandler
 from harness.exec_result import ExecResult
 from harness.fulfillment_runner import FulfillmentRefreshResult
-from harness.loop_result import LoopResult
+from harness.delivery_results import ImplementationResult
 from harness.mode import ModeController
 from harness.provider import (
     Capability,
@@ -2135,7 +2135,7 @@ class TestOuterLoopConvergence:
 
         result = controller.run_loop(max_outer=5, max_inner=3)
 
-        assert result.status == "converged"
+        assert result.status == "verified"
         assert result.termination_reason == "converged"
         assert result.outer_iterations == 1
         assert result.pr_url is not None
@@ -2169,7 +2169,7 @@ class TestOuterLoopConvergence:
         assert provider.destroyed is True
         gitops.destroy_worktree.assert_not_called()
         final_state = state_store.read()
-        assert final_state["status"] == "blocked"
+        assert final_state["status"] == "running"
         assert final_state["target_merge"]["error"] == "merge conflict"
 
     @pytest.mark.integration
@@ -2237,7 +2237,7 @@ class TestOuterLoopConvergence:
             build_command="synthetic build",
         )
 
-        assert result.status == "converged"
+        assert result.status == "verified"
         assert provider.created is True
         assert provider.destroyed is True
         assert (target / "built.txt").read_text(encoding="utf-8") == (
@@ -2252,7 +2252,7 @@ class TestOuterLoopConvergence:
         )
         assert contains.returncode == 0
         final_state = state_store.read()
-        assert final_state["status"] == "converged"
+        assert final_state["status"] == "running"
         assert final_state["target_merge"] == {
             "branch": branch,
             "default_branch": "main",
@@ -2327,7 +2327,7 @@ class TestOuterLoopConvergence:
             build_command="synthetic build",
         )
 
-        assert result.status == "converged"
+        assert result.status == "verified"
         assert (target / "built.txt").read_text(encoding="utf-8") == (
             "synthetic delivery\n"
         )
@@ -2348,8 +2348,8 @@ class TestOuterLoopConvergence:
         assert telemetry_rows[-1]["type"] == "dirty_adjudication.completed"
         assert telemetry_rows[-1]["ignored"] == 1
 
-    def test_convergence_writes_ready_to_land_status(self, tmp_path: Path) -> None:
-        """Ralph owns the implemented-but-not-landed status transition."""
+    def test_convergence_does_not_write_delivery_status(self, tmp_path: Path) -> None:
+        """Ralph keeps phase evidence separate from delivery state transitions."""
         worktree = tmp_path / "worktree"
         spec_dir = worktree / "specs" / "spec-001-demo"
         spec_dir.mkdir(parents=True)
@@ -2366,27 +2366,19 @@ class TestOuterLoopConvergence:
 
         result = controller.run_loop(max_outer=1, max_inner=0)
 
-        assert result.status == "converged"
+        assert result.status == "verified"
         from harness.spec_frontmatter import read_frontmatter
-        assert read_frontmatter(spec_dir)["status"] == "ready_to_land"
-        assert "**Status**: ready_to_land" in (spec_dir / "spec.md").read_text(
+        assert read_frontmatter(spec_dir)["status"] == "In Progress"
+        assert "**Status**: In Progress" in (spec_dir / "spec.md").read_text(
             encoding="utf-8"
         )
-        history = json.loads((spec_dir / "run-history.json").read_text(encoding="utf-8"))
-        assert history["authoritative_run"] == "run-1"
-        assert history["runs"][-1]["phase"] == "B"
-        assert history["runs"][-1]["status"] == "ready_to_land"
-        assert history["runs"][-1]["verification_result"] == "PASS"
-        artifacts = spec_dir / "ARTIFACTS.md"
-        assert artifacts.exists()
-        text = artifacts.read_text(encoding="utf-8")
-        assert "Lifecycle stage: verified" in text
-        assert "`run-history.json`" in text
+        assert not (spec_dir / "run-history.json").exists()
+        assert not (spec_dir / "ARTIFACTS.md").exists()
 
-    def test_ready_to_land_status_is_committed_before_publish(
+    def test_publish_does_not_require_a_ready_to_land_marker(
         self, tmp_path: Path
     ) -> None:
-        """The pushed convergence commit must include the ready_to_land marker."""
+        """Publishing Phase 1 evidence does not write delivery state."""
         worktree = tmp_path / "worktree"
         spec_dir = worktree / "specs" / "spec-001-demo"
         spec_dir.mkdir(parents=True)
@@ -2401,29 +2393,29 @@ class TestOuterLoopConvergence:
         )
         gitops.create_worktree.return_value = str(worktree)
 
-        def assert_ready_marker_committed(path: str, message: str) -> str:
+        def assert_phase_evidence_committed(path: str, message: str) -> str:
             del message
             from harness.spec_frontmatter import read_frontmatter
 
             committed_spec_dir = Path(path) / "specs" / "spec-001-demo"
-            assert read_frontmatter(committed_spec_dir)["status"] == "ready_to_land"
-            assert "**Status**: ready_to_land" in (
+            assert read_frontmatter(committed_spec_dir)["status"] == "In Progress"
+            assert "**Status**: In Progress" in (
                 committed_spec_dir / "spec.md"
             ).read_text(encoding="utf-8")
             return "abc123"
 
-        gitops.commit.side_effect = assert_ready_marker_committed
+        gitops.commit.side_effect = assert_phase_evidence_committed
 
         result = controller.run_loop(max_outer=1, max_inner=0)
 
-        assert result.status == "converged"
+        assert result.status == "verified"
         gitops.push.assert_called_once()
         gitops.promote_pr_ready.assert_called_once()
 
-    def test_convergence_writes_ready_status_to_orchestration_spec_dir(
+    def test_convergence_leaves_orchestration_delivery_status_unchanged(
         self, tmp_path: Path
     ) -> None:
-        """Polyrepo harness convergence updates the orchestration spec, not target worktree."""
+        """Polyrepo Phase 1 does not update orchestration delivery status."""
         worktree = tmp_path / "target" / "runs" / "build-1" / "worktrees" / "default" / "iter-0"
         worktree.mkdir(parents=True)
         orchestration_root = tmp_path / "polyrepo"
@@ -2452,17 +2444,17 @@ class TestOuterLoopConvergence:
 
         result = controller.run_loop(max_outer=1, max_inner=0)
 
-        assert result.status == "converged"
+        assert result.status == "verified"
         from harness.spec_frontmatter import read_frontmatter
 
-        assert read_frontmatter(spec_dir)["status"] == "ready_to_land"
-        assert (spec_dir / "run-history.json").exists()
-        assert (spec_dir / "ARTIFACTS.md").exists()
+        assert read_frontmatter(spec_dir)["status"] == "In Progress"
+        assert not (spec_dir / "run-history.json").exists()
+        assert not (spec_dir / "ARTIFACTS.md").exists()
 
-    def test_convergence_commits_orchestration_spec_artifacts_for_polyrepo(
+    def test_convergence_commits_orchestration_artifacts_without_delivery_status(
         self, tmp_path: Path
     ) -> None:
-        """Polyrepo convergence commits workspace spec state separately from target output."""
+        """Polyrepo Phase 1 commits artifacts without moving delivery state."""
         worktree = tmp_path / "target" / "runs" / "build-1" / "worktrees" / "default" / "iter-0"
         worktree.mkdir(parents=True)
         orchestration_root = tmp_path / "polyrepo"
@@ -2490,7 +2482,7 @@ class TestOuterLoopConvergence:
 
         result = controller.run_loop(max_outer=1, max_inner=0)
 
-        assert result.status == "converged"
+        assert result.status == "verified"
         committed_spec = subprocess.run(
             ["git", "show", f"HEAD:{spec_dir.relative_to(orchestration_root) / 'spec.md'}"],
             cwd=orchestration_root,
@@ -2498,9 +2490,9 @@ class TestOuterLoopConvergence:
             text=True,
             check=True,
         ).stdout
-        assert "status: ready_to_land" in committed_spec
-        assert "**Status**: ready_to_land" in committed_spec
-        assert "run-history.json" in subprocess.run(
+        assert "status: In Progress" in committed_spec
+        assert "**Status**: In Progress" in committed_spec
+        assert "run-history.json" not in subprocess.run(
             ["git", "show", "--name-only", "--format=", "HEAD"],
             cwd=orchestration_root,
             capture_output=True,
@@ -2696,7 +2688,7 @@ class TestOuterLoopConvergence:
             build_prompt="implement something",
         )
 
-        assert result.status == "converged"
+        assert result.status == "verified"
         assert result.final_verify is not None
         assert result.final_verify.passed is True
         fulfillment_runner.refresh.assert_called_once()
@@ -3210,7 +3202,7 @@ class TestOuterLoopConvergence:
         gitops.destroy_worktree.assert_not_called()
 
         state = state_store.read()
-        assert state["status"] == "blocked"
+        assert state["status"] == "running"
         assert state["termination_reason"] == "publish_failed"
         assert state["branch"] == "harness/spec-001-default-iter-0"
 
@@ -3306,7 +3298,7 @@ class TestOuterLoopConvergence:
             build_prompt="continue",
         )
 
-        assert result.status == "converged"
+        assert result.status == "verified"
         captured = capsys.readouterr()
         assert "missing build status marker" not in captured.err
         recoveries = state_store.read()["missing_marker_recoveries"]
@@ -3454,7 +3446,7 @@ class TestOuterLoopConvergence:
             build_prompt="implement T-001",
         )
 
-        assert result.status == "converged"
+        assert result.status == "verified"
         assert "- [x] T-001" in tasks_path.read_text(encoding="utf-8")
         captured = capsys.readouterr()
         assert "missing build status marker" not in captured.err
@@ -4689,7 +4681,7 @@ class TestOuterLoopConvergence:
             build_prompt="implement something",
         )
 
-        assert result.status == "converged"
+        assert result.status == "verified"
         state = state_store.read()
         assert "source_root_containment_violation" not in state
 
@@ -6105,7 +6097,7 @@ class TestOuterLoopConvergence:
             build_prompt="implement something",
         )
 
-        assert result.status == "converged"
+        assert result.status == "verified"
         state = state_store.read()
         assert "harness_source_containment_violation" not in state
 
@@ -6206,7 +6198,7 @@ class TestOuterLoopConvergence:
             build_prompt="implement something",
         )
 
-        assert result.status == "converged"
+        assert result.status == "verified"
         state = state_store.read()
         assert "harness_source_containment_violation" not in state
 
@@ -6305,7 +6297,7 @@ class TestOuterLoopConvergence:
             build_prompt="implement something",
         )
 
-        assert result.status == "converged"
+        assert result.status == "verified"
         state = state_store.read()
         assert "harness_source_containment_violation" not in state
 
@@ -6352,7 +6344,7 @@ class TestOuterLoopConvergence:
             build_prompt="implement something",
         )
 
-        assert result.status == "converged"
+        assert result.status == "verified"
         state = state_store.read()
         assert "harness_source_containment_violation" not in state
 
@@ -6397,7 +6389,7 @@ class TestOuterLoopConvergence:
             build_prompt="implement something",
         )
 
-        assert result.status == "converged"
+        assert result.status == "verified"
 
     def test_build_incomplete_salvages_dirty_worktree_to_commit(
         self, tmp_path: Path
@@ -6551,7 +6543,7 @@ class TestOuterLoopConvergence:
             build_prompt="implement something",
         )
 
-        assert result.status == "converged"
+        assert result.status == "verified"
         assert result.termination_reason == "converged"
         captured = capsys.readouterr()
         assert "BUILD DID NOT COMPLETE" not in captured.err
@@ -6607,7 +6599,7 @@ class TestOuterLoopConvergence:
             build_prompt="implement something",
         )
 
-        assert result.status == "converged"
+        assert result.status == "verified"
         assert result.termination_reason == "converged"
         captured = capsys.readouterr()
         assert "BUILD DID NOT COMPLETE" not in captured.err
@@ -6817,7 +6809,7 @@ class TestOuterLoopConvergence:
                 build_prompt="implement one task",
             )
 
-        assert result.status == "converged"
+        assert result.status == "verified"
         state = state_store.read()
         assert state["checkpoint_commits"][0]["task_ids"] == ["T-001"]
 
@@ -7008,7 +7000,7 @@ class TestOuterLoopConvergence:
             build_prompt="implement one task",
         )
 
-        assert result.status == "converged"
+        assert result.status == "verified"
         assert result.termination_reason == "converged"
         state = state_store.read()
         checkpoint = state["checkpoint_commits"][0]
@@ -7157,7 +7149,7 @@ class TestOuterLoopConvergence:
 
         result = controller.run_loop(max_outer=5, max_inner=1)
 
-        assert result.status == "converged"
+        assert result.status == "verified"
         assert result.termination_reason == "converged"
         assert result.outer_iterations == 2
 
@@ -7714,8 +7706,8 @@ class TestVerifyCommandNeeded:
         assert "verify_command" in err
         assert "echelon delivery continue" in err
 
-    def test_state_written_as_blocked(self, tmp_path: Path) -> None:
-        """Unknown project type → StateStore reflects blocked + verify_command_needed."""
+    def test_finalization_preserves_delivery_state(self, tmp_path: Path) -> None:
+        """Unknown project type records phase evidence without delivery transition."""
         from harness.llm_build_runner import LlmBuildRunner
         from harness.build_result import BuildResult
 
@@ -7735,7 +7727,7 @@ class TestVerifyCommandNeeded:
         controller.run_loop(max_outer=1, max_inner=0,
                             build_command="echelon codegen", build_prompt="x")
         state = state_store.read()
-        assert state["status"] == "blocked"
+        assert state["status"] == "running"
         assert state["termination_reason"] == "verify_command_needed"
 
     def test_does_not_iterate_build_loop(self, tmp_path: Path) -> None:

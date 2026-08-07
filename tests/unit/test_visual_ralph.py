@@ -15,7 +15,7 @@ from harness.config import (
     VisualTestsConfig,
 )
 from harness.exec_result import ExecResult, ResourceStats
-from harness.loop_result import LoopResult
+from harness.delivery_results import VisualResult
 from harness.provider import SandboxHandle
 from harness.verify_result import FailureCategory, VerifyResult
 
@@ -173,9 +173,9 @@ def test_run_loop_converges_on_first_pass():
     with patch.object(ctrl, "_retrieve_screenshots", return_value=[]):
         result = ctrl.run_loop(worktree_path="/tmp/wt")
 
-    assert result.status == "converged"
+    assert result.status == "passed"
     assert result.termination_reason == "converged"
-    assert result.outer_iterations == 1
+    assert result.iterations == 1
     provider.destroy.assert_called_once()
 
 
@@ -204,7 +204,7 @@ def test_run_loop_starts_waits_and_stops_command_app_runtime():
 
     result = ctrl.run_loop(worktree_path="/tmp/wt")
 
-    assert result.status == "converged"
+    assert result.status == "passed"
     executed = [call.args[1] for call in provider.exec.call_args_list]
     assert executed[0] == "docker compose -f compose.db.yml up -d postgres"
     assert "npx nx dev frontend" in executed[1]
@@ -213,8 +213,8 @@ def test_run_loop_starts_waits_and_stops_command_app_runtime():
     assert executed[4] == "npx nx reset"
 
 
-def test_run_loop_stops_command_app_runtime_when_visual_verify_fails():
-    """command app profile stops even when Playwright fails."""
+def test_run_loop_reports_fix_applied_after_visual_feedback():
+    """A visual fix is handed back to Phase 1 for re-verification."""
     from harness.visual_ralph import VisualRalphController
 
     provider = MagicMock()
@@ -240,7 +240,7 @@ def test_run_loop_stops_command_app_runtime_when_visual_verify_fails():
     with patch.object(ctrl, "_retrieve_screenshots", return_value=[]):
         result = ctrl.run_loop(worktree_path="/tmp/wt")
 
-    assert result.status == "failed"
+    assert result.status == "fix_applied"
     executed = [call.args[1] for call in provider.exec.call_args_list]
     assert "npx nx reset" in executed
 
@@ -269,7 +269,7 @@ def test_run_loop_reports_failure_when_command_app_never_ready():
 
     result = ctrl.run_loop(worktree_path="/tmp/wt")
 
-    assert result.status == "failed"
+    assert result.status == "blocked"
     assert result.termination_reason == "app_runtime_failed"
     assert result.final_verify is not None
     assert result.final_verify.failures[0].id == "app-runtime"
@@ -298,15 +298,15 @@ def test_run_loop_reports_failure_when_setup_command_fails():
 
     result = ctrl.run_loop(worktree_path="/tmp/wt")
 
-    assert result.status == "failed"
+    assert result.status == "blocked"
     assert result.termination_reason == "app_runtime_failed"
     assert result.final_verify is not None
     assert "setup command failed" in result.final_verify.failures[0].error
     provider.destroy.assert_called_once()
 
 
-def test_run_loop_exhausts_max_iterations():
-    """run_loop returns failed/visual_failed when max_iterations exceeded."""
+def test_run_loop_reports_fix_applied_without_retrying_visual_evidence():
+    """run_loop returns the first applied fix instead of accepting a later pass."""
     from harness.visual_ralph import VisualRalphController
 
     provider = MagicMock()
@@ -324,7 +324,7 @@ def test_run_loop_exhausts_max_iterations():
     with patch.object(ctrl, "_retrieve_screenshots", return_value=[]):
         result = ctrl.run_loop(worktree_path="/tmp/wt")
 
-    assert result.status == "failed"
-    assert result.termination_reason == "visual_failed"
-    assert result.outer_iterations == 2
-    assert provider.destroy.call_count == 2
+    assert result.status == "fix_applied"
+    assert result.termination_reason == "fix_applied"
+    assert result.iterations == 1
+    assert provider.destroy.call_count == 1

@@ -8,7 +8,7 @@ import pytest
 
 from harness.config import HarnessConfig, ReviewLoopConfig
 from harness.coordinator import StrategyCoordinator
-from harness.loop_result import LoopResult
+from harness.delivery_results import ImplementationResult, ReviewResult
 from harness.repair_loop import RepairLoop
 from harness.run_intent import RunIntent
 
@@ -26,14 +26,20 @@ def _config(tmp_path: Path) -> HarnessConfig:
     )
 
 
-def _loop_result(status: str, pr_url: str = "https://github.com/org/repo/pull/1") -> LoopResult:
-    return LoopResult(
-        status=status,
-        termination_reason=status,
-        outer_iterations=1,
+def _implementation_result(
+    status: str,
+    pr_url: str = "https://github.com/org/repo/pull/1",
+    *,
+    outer_iterations: int = 1,
+    tokens_used: int = 0,
+) -> ImplementationResult:
+    return ImplementationResult(
+        status="verified" if status == "converged" else status,
+        termination_reason="converged" if status == "converged" else status,
+        outer_iterations=outer_iterations,
         inner_iterations=0,
         pr_url=pr_url,
-        tokens_used=0,
+        tokens_used=tokens_used,
         final_verify=None,
     )
 
@@ -133,7 +139,7 @@ class TestCoordinatorReviewReentry:
 
         def phase1_run_loop(**kwargs):
             captured_prompts.append(kwargs.get("build_prompt", ""))
-            return _loop_result("converged")
+            return _implementation_result("converged")
 
         intent = RunIntent(
             spec_id="005",
@@ -158,16 +164,32 @@ class TestCoordinatorReviewReentry:
             # Phase 1: first call converges, second call (re-entry) converges too
             ralph_instance = MagicMock()
             ralph_instance.run_loop.side_effect = [
-                _loop_result("converged"),   # initial Phase 1
-                _loop_result("converged"),   # Phase 1 re-entry after review_fix_queued
+                _implementation_result(
+                    "converged", outer_iterations=2, tokens_used=11
+                ),  # initial Phase 1
+                _implementation_result(
+                    "converged", outer_iterations=3, tokens_used=13
+                ),  # Phase 1 re-entry after review_fix_queued
             ]
             MockRalph.return_value = ralph_instance
 
             # Phase 3: first call returns review_fix_queued, second converged
             review_instance = MagicMock()
             review_instance.run_loop.side_effect = [
-                _loop_result("review_fix_queued"),
-                _loop_result("converged"),
+                ReviewResult(
+                    status="review_fix_queued",
+                    termination_reason="review_fix_queued",
+                    iterations=1,
+                    pr_url="https://github.com/org/repo/pull/1",
+                    tokens_used=5,
+                ),
+                ReviewResult(
+                    status="completed",
+                    termination_reason="converged",
+                    iterations=1,
+                    pr_url="https://github.com/org/repo/pull/1",
+                    tokens_used=7,
+                ),
             ]
             MockReview.return_value = review_instance
 
@@ -180,7 +202,9 @@ class TestCoordinatorReviewReentry:
             from harness.strategy_loader import StrategySpec
             mock_strat.return_value = {"default": StrategySpec()}
 
-            coord._run_strategy(intent, "default", budget=None, spec=StrategySpec())
+            result = coord._run_strategy(
+                intent, "default", budget=None, spec=StrategySpec()
+            )
 
         assert len(repair_loop_runs) == 1
 
@@ -198,3 +222,5 @@ class TestCoordinatorReviewReentry:
         assert "Review Fix 1" in reentry_prompt
         assert MockReview.call_args.kwargs["base_dir"] == str(harness_root)
         assert MockReview.call_args.kwargs["spec_dir"] == spec_dir.resolve()
+        assert result.outer_iterations == 7
+        assert result.tokens_used == 36

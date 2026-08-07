@@ -23,7 +23,12 @@ from harness.paths import build_dir, strategies_dir as _strategies_dir_fn
 from harness.config import HarnessConfig
 from harness.llm_provider import AICodingCliProvider
 from harness.escalation import EscalationHandler, print_escalation_sticky_banner
-from harness.loop_result import LoopResult
+from harness.delivery_results import (
+    DeliveryResult,
+    ImplementationResult,
+    ReviewResult,
+    VisualResult,
+)
 from harness.mode import ModeController
 from harness.provider import SandboxProvider
 from harness.ralph import RalphController
@@ -120,14 +125,14 @@ class StrategyCoordinator:
         # Active state stores (for cancel propagation)
         self._state_stores: Dict[str, StateStore] = {}
 
-    def start(self, intent: RunIntent) -> List[LoopResult]:
+    def start(self, intent: RunIntent) -> List[DeliveryResult]:
         """Launch N RalphControllers (one per strategy).
 
         Args:
             intent: Parsed RunIntent with strategies, budget, etc.
 
         Returns:
-            List of LoopResults from all strategies.
+            Delivery results from all strategies.
         """
         n = len(intent.strategies)
 
@@ -175,7 +180,7 @@ class StrategyCoordinator:
             )]
 
         # N>1: concurrent execution
-        results: Dict[str, LoopResult] = {}
+        results: Dict[str, DeliveryResult] = {}
 
         with ThreadPoolExecutor(max_workers=min(n, 3)) as executor:
             futures = {}
@@ -200,7 +205,7 @@ class StrategyCoordinator:
                         self._cancel_peers(sid, intent.strategies)
                 except Exception as e:
                     logger.error("Strategy %s failed: %s", sid, e)
-                    results[sid] = LoopResult(
+                    results[sid] = DeliveryResult(
                         status="failed",
                         termination_reason="outer_cap",
                         outer_iterations=0,
@@ -244,7 +249,7 @@ class StrategyCoordinator:
             "strategies": statuses,
         }
 
-    def compare_results(self, results: Dict[str, LoopResult]) -> Dict[str, Any]:
+    def compare_results(self, results: Dict[str, DeliveryResult]) -> Dict[str, Any]:
         """Compare results across strategies.
 
         Returns structured dict suitable for display.
@@ -301,7 +306,7 @@ class StrategyCoordinator:
         strategy_id: str,
         budget: Optional[int],
         spec: StrategySpec,
-    ) -> LoopResult:
+    ) -> DeliveryResult:
         """Run a single strategy's ralph-loop."""
         state_store = StateStore(self._state_dir, intent.spec_id, strategy_id)
 
@@ -474,7 +479,7 @@ class StrategyCoordinator:
                 build_id=self._build_id,
             )
 
-            result = controller.run_loop(
+            implementation_result = controller.run_loop(
                 max_outer=intent.max_outer,
                 max_inner=intent.max_inner,
                 token_budget=budget,
@@ -482,13 +487,16 @@ class StrategyCoordinator:
                 strategy_context=strategy_context,
                 build_prompt=build_prompt,
             )
+            implementation_outer_iterations = implementation_result.outer_iterations
+            implementation_tokens = implementation_result.tokens_used
 
-            # Phase 2: visual loop — only when Phase 1 converged via Docker sandbox.
+            visual_result: VisualResult | None = None
+            # Phase 2: visual loop — only when Phase 1 verified via Docker sandbox.
             # Skipped when LLM provider ran Phase 1: the LLM already verified tests
             # locally (including Playwright if present), and the Docker visual loop
             # has no access to the LLM-managed worktree after it is committed.
             if (
-                result.status == "converged"
+                implementation_result.status == "verified"
                 and self._config.visual_tests.enabled
                 and llm_provider is None
             ):
@@ -507,26 +515,36 @@ class StrategyCoordinator:
                     worktree_path=worktree_path or str(self._base_dir),
                     token_budget=budget,
                 )
-                # Visual result supersedes Phase 1 result as the final verdict
-                result = LoopResult(
-                    status=visual_result.status,
-                    termination_reason=visual_result.termination_reason,
-                    outer_iterations=result.outer_iterations + visual_result.outer_iterations,
-                    inner_iterations=result.inner_iterations,
-                    pr_url=result.pr_url,
-                    tokens_used=result.tokens_used + visual_result.tokens_used,
-                    final_verify=visual_result.final_verify,
-                )
+                if visual_result.status != "passed":
+                    return DeliveryResult(
+                        status="blocked",
+                        termination_reason=visual_result.termination_reason,
+                        outer_iterations=(
+                            implementation_result.outer_iterations
+                            + visual_result.iterations
+                        ),
+                        inner_iterations=implementation_result.inner_iterations,
+                        pr_url=implementation_result.pr_url,
+                        tokens_used=(
+                            implementation_result.tokens_used
+                            + visual_result.tokens_used
+                        ),
+                        final_verify=visual_result.final_verify,
+                        branch=implementation_result.branch,
+                    )
 
-            # Phase 3: review loop — only when converged, review_loop enabled,
+            review_result: ReviewResult | None = None
+            review_iterations = 0
+            review_tokens = 0
+            # Phase 3: review loop — only when Phase 1 is verified, review_loop enabled,
             # and a PR host is configured. Option A: coordinator owns the
             # Phase 1 → Phase 3 → Phase 1 re-entry loop.
             if (
-                result.status == "converged"
+                implementation_result.status == "verified"
                 and self._config.review_loop.enabled
                 and self._config.pr_host != "none"
             ):
-                pr_url = result.pr_url
+                pr_url = implementation_result.pr_url
                 if not pr_url:
                     logger.warning(
                         "review_loop enabled but Phase 1 produced no pr_url "
@@ -550,7 +568,9 @@ class StrategyCoordinator:
                         )
 
                     def repair(_critique: RepairCritique, _iteration: int) -> RepairAttempt:
-                        nonlocal result
+                        nonlocal implementation_result, review_result
+                        nonlocal implementation_outer_iterations, implementation_tokens
+                        nonlocal review_iterations, review_tokens
 
                         worktree_path = self._gitops.get_latest_worktree(
                             intent.spec_id, strategy_id, build_id=self._build_id,
@@ -560,20 +580,13 @@ class StrategyCoordinator:
                             worktree_path=worktree_path or "",
                             token_budget=budget,
                         )
-                        result = LoopResult(
-                            status=review_result.status,
-                            termination_reason=review_result.termination_reason,
-                            outer_iterations=result.outer_iterations + review_result.outer_iterations,
-                            inner_iterations=result.inner_iterations,
-                            pr_url=review_result.pr_url or result.pr_url,
-                            tokens_used=result.tokens_used + review_result.tokens_used,
-                            final_verify=result.final_verify,
-                        )
+                        review_iterations += review_result.iterations
+                        review_tokens += review_result.tokens_used
                         if review_result.status != "review_fix_queued":
                             return RepairAttempt(
                                 output={
-                                    "result": result,
-                                    "review_status": review_result.status,
+                                    "result": implementation_result,
+                                    "review_result": review_result,
                                 }
                             )
 
@@ -584,7 +597,7 @@ class StrategyCoordinator:
                             intent.spec_id,
                             spec_dir=spec_dir,
                         )
-                        result = controller.run_loop(
+                        implementation_result = controller.run_loop(
                             max_outer=intent.max_outer,
                             max_inner=intent.max_inner,
                             token_budget=budget,
@@ -592,10 +605,14 @@ class StrategyCoordinator:
                             strategy_context=strategy_context,
                             build_prompt=reentry_prompt,
                         )
+                        implementation_outer_iterations += (
+                            implementation_result.outer_iterations
+                        )
+                        implementation_tokens += implementation_result.tokens_used
                         return RepairAttempt(
                             output={
-                                "result": result,
-                                "review_status": review_result.status,
+                                "result": implementation_result,
+                                "review_result": review_result,
                             }
                         )
 
@@ -604,16 +621,27 @@ class StrategyCoordinator:
                         payload_result = payload.get("result")
                         current = (
                             payload_result
-                            if isinstance(payload_result, LoopResult)
-                            else result
+                            if isinstance(payload_result, ImplementationResult)
+                            else implementation_result
                         )
-                        review_status = str(payload.get("review_status") or "")
+                        current_review = payload.get("review_result")
 
-                        if review_status != "review_fix_queued":
+                        if not isinstance(current_review, ReviewResult):
+                            return RepairCheck(
+                                verdict=RepairVerdict.BLOCK,
+                                output=current,
+                                reason=current.termination_reason,
+                                tokens=0,
+                            )
+
+                        if current_review.status != "review_fix_queued":
                             return RepairCheck(
                                 verdict=(
                                     RepairVerdict.ACCEPT
-                                    if current.status == "converged"
+                                    if (
+                                        current.status == "verified"
+                                        and current_review.status == "completed"
+                                    )
                                     else RepairVerdict.BLOCK
                                 ),
                                 output=current,
@@ -621,7 +649,7 @@ class StrategyCoordinator:
                                 tokens=0,
                             )
 
-                        if current.status == "converged":
+                        if current.status == "verified":
                             return RepairCheck(
                                 verdict=RepairVerdict.CONTINUE,
                                 output=current,
@@ -644,15 +672,46 @@ class StrategyCoordinator:
                     ).run(
                         RepairCheck(
                             verdict=RepairVerdict.CONTINUE,
-                            output=result,
-                            reason=result.termination_reason,
-                            tokens=result.tokens_used,
+                            output=implementation_result,
+                            reason=implementation_result.termination_reason,
+                            tokens=implementation_result.tokens_used,
                         )
                     )
-                    if isinstance(repair_loop_result.final_check.output, LoopResult):
-                        result = repair_loop_result.final_check.output
+                    if isinstance(
+                        repair_loop_result.final_check.output, ImplementationResult
+                    ):
+                        implementation_result = repair_loop_result.final_check.output
 
-            return result
+            total_outer_iterations = implementation_outer_iterations + (
+                visual_result.iterations if visual_result is not None else 0
+            ) + review_iterations
+            total_tokens = implementation_tokens + (
+                visual_result.tokens_used if visual_result is not None else 0
+            ) + review_tokens
+            final_verify = (
+                visual_result.final_verify
+                if visual_result is not None
+                else implementation_result.final_verify
+            )
+            if implementation_result.status != "verified":
+                delivery_status = implementation_result.status
+                termination_reason = implementation_result.termination_reason
+            elif review_result is not None and review_result.status != "completed":
+                delivery_status = "blocked"
+                termination_reason = review_result.termination_reason
+            else:
+                delivery_status = "converged"
+                termination_reason = "converged"
+            return DeliveryResult(
+                status=delivery_status,
+                termination_reason=termination_reason,
+                outer_iterations=total_outer_iterations,
+                inner_iterations=implementation_result.inner_iterations,
+                pr_url=implementation_result.pr_url,
+                tokens_used=total_tokens,
+                final_verify=final_verify,
+                branch=implementation_result.branch,
+            )
 
         finally:
             state_store.release_lock()

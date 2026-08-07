@@ -81,7 +81,7 @@ def test_command_app_visual_runtime_smoke_order(tmp_path: Path) -> None:
 
     result = controller.run_loop(str(tmp_path))
 
-    assert result.status == "converged"
+    assert result.status == "passed"
     assert provider.destroyed is True
     assert provider.commands[0] == "./scripts/setup.sh"
     assert "./scripts/start.sh" in provider.commands[1]

@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 from harness.config import HarnessConfig, NetworkConfig, ResourceLimits
-from harness.loop_result import LoopResult
+from harness.delivery_results import ImplementationResult
 from harness.state import StateStore
 
 from tests.e2e.conftest import MockGitOps, make_ralph_controller
@@ -62,7 +62,7 @@ class TestRalphConvergence:
         )
 
         # Verify convergence
-        assert result.status == "converged"
+        assert result.status == "verified"
         assert result.termination_reason == "converged"
         assert result.outer_iterations <= 3, (
             f"Expected convergence within 3 iterations, got {result.outer_iterations}"
@@ -98,16 +98,16 @@ class TestRalphConvergence:
             token_budget=100_000,
         )
 
-        assert result.status == "converged"
+        assert result.status == "verified"
         assert gitops.pr_created, "Draft PR should have been created"
         assert gitops.pr_promoted, "PR should have been promoted after convergence"
         assert gitops.local_merges, "Default branch merge must happen before convergence"
         assert result.pr_url is not None
 
-    def test_state_file_shows_converged(
+    def test_state_file_keeps_delivery_state_running_after_verification(
         self, tmp_harness_dir: Path, harness_config: HarnessConfig,
     ) -> None:
-        """State file has converged status after loop completion."""
+        """Phase 1 writes evidence without transitioning delivery state."""
         stub = StubLLM(mode="converge_on_first", tokens_per_call=500)
 
         controller, state_store, gitops, provider, _ = make_ralph_controller(
@@ -134,7 +134,7 @@ class TestRalphConvergence:
 
         # Read state file directly
         final_state = state_store.read()
-        assert final_state["status"] == "converged"
+        assert final_state["status"] == "running"
         assert final_state.get("termination_reason") == "converged"
 
     def test_iteration_log_has_correct_entries(
@@ -218,7 +218,7 @@ class TestRalphConvergence:
         # consistent with state.
         final_state = state_store.read()
         assert final_state.get("tokens_used", 0) == result.tokens_used, (
-            "LoopResult tokens should match state file tokens"
+            "ImplementationResult tokens should match state file tokens"
         )
 
     def test_zero_host_pollution(
@@ -295,5 +295,5 @@ class TestRalphConvergence:
             token_budget=100_000,
         )
 
-        assert result.status == "converged"
+        assert result.status == "verified"
         assert result.inner_iterations > 0, "Should have used inner loop"

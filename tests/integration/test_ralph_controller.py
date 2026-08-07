@@ -142,7 +142,7 @@ class TestStaleCancelRequestedClearedOnResume:
         # immediately exiting with status=cancelled.
         result = controller.run_loop(max_outer=3, max_inner=1)
 
-        assert result.status in ("converged", "failed", "interrupted"), (
+        assert result.status in ("verified", "failed", "interrupted"), (
             f"Expected run to proceed past stale cancel_requested. "
             f"Got status={result.status!r}, reason={result.termination_reason!r}"
         )
@@ -157,7 +157,7 @@ class TestStaleCancelRequestedClearedOnResume:
         assert on_disk["cancel_requested"] is False
 
         result = controller.run_loop(max_outer=3, max_inner=1)
-        assert result.status in ("converged", "failed", "interrupted")
+        assert result.status in ("verified", "failed", "interrupted")
 
 
 class TestBudgetBumpAutoResume:

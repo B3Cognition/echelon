@@ -28,7 +28,7 @@ from urllib.parse import urlparse
 from harness.config import HarnessConfig
 from harness.llm_provider import AICodingCliProvider
 from harness.paths import build_dir as _build_dir_fn
-from harness.loop_result import LoopResult
+from harness.delivery_results import ReviewResult
 
 logger = logging.getLogger(__name__)
 
@@ -192,14 +192,14 @@ class ReviewLoopController:
         pr_url: str,
         worktree_path: str,
         token_budget: Optional[int] = None,
-    ) -> LoopResult:
+    ) -> ReviewResult:
         """Poll for review comments, fix, push, re-request, repeat until merged.
 
         Each call performs one poll cycle. Returns:
           "review_fix_queued" — new echelon.review tasks written; coordinator
                                 should re-run Phase 1 then call run_loop again.
-          "converged"         — PR merged.
-          "failed"            — max iterations reached or unrecoverable error.
+          "completed"         — PR merged.
+          "blocked"           — max iterations reached or unrecoverable error.
         """
         tokens_used = 0
         last_comment_time: Optional[datetime] = None
@@ -218,14 +218,12 @@ class ReviewLoopController:
                     # Promote PR to ready if still draft before merging
                     self._gitops.promote_pr_ready(pr_url)
                     merged = self._gitops.merge_pr(pr_url)
-                    return LoopResult(
-                        status="converged" if merged else "failed",
+                    return ReviewResult(
+                        status="completed" if merged else "blocked",
                         termination_reason="converged" if merged else "blocker_escalation",
-                        outer_iterations=iteration + 1,
-                        inner_iterations=0,
+                        iterations=iteration + 1,
                         pr_url=pr_url,
                         tokens_used=tokens_used,
-                        final_verify=None,
                     )
                 logger.info(
                     "No unresolved comments on %s — waiting %d min",
@@ -246,14 +244,12 @@ class ReviewLoopController:
             )
             tokens_used += invocation.tokens_used
             if not invocation.queued:
-                return LoopResult(
-                    status="failed",
+                return ReviewResult(
+                    status="blocked",
                     termination_reason="blocker_escalation",
-                    outer_iterations=iteration + 1,
-                    inner_iterations=0,
+                    iterations=iteration + 1,
                     pr_url=pr_url,
                     tokens_used=tokens_used,
-                    final_verify=None,
                 )
 
             # Mark all processed comments as seen so we don't re-process them
@@ -268,28 +264,24 @@ class ReviewLoopController:
             self._request_review(pr_url)
 
             # Signal coordinator to re-run Phase 1 with the new tasks
-            return LoopResult(
+            return ReviewResult(
                 status="review_fix_queued",
                 termination_reason="review_fix_queued",
-                outer_iterations=iteration + 1,
-                inner_iterations=0,
+                iterations=iteration + 1,
                 pr_url=pr_url,
                 tokens_used=tokens_used,
-                final_verify=None,
             )
 
         logger.warning(
             "Review loop hit max_fix_iterations=%d for %s — escalating",
             self._rl.max_fix_iterations, pr_url,
         )
-        return LoopResult(
-            status="failed",
+        return ReviewResult(
+            status="blocked",
             termination_reason="blocker_escalation",
-            outer_iterations=self._rl.max_fix_iterations,
-            inner_iterations=0,
+            iterations=self._rl.max_fix_iterations,
             pr_url=pr_url,
             tokens_used=tokens_used,
-            final_verify=None,
         )
 
     # === Private: comment fetching ===

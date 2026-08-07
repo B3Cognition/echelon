@@ -18,7 +18,7 @@ import pytest
 
 from harness.config import HarnessConfig
 from harness.escalation import EscalationHandler
-from harness.loop_result import LoopResult
+from harness.delivery_results import ImplementationResult
 from harness.mode import ModeController
 from harness.ralph import RalphController
 from harness.state import StateStore
@@ -103,7 +103,7 @@ class TestRalphResume:
             token_budget=500_000,
         )
 
-        assert result2.status == "converged", (
+        assert result2.status == "verified", (
             f"Expected converged after resume, got {result2.status} "
             f"(reason: {result2.termination_reason})"
         )
@@ -165,7 +165,7 @@ class TestRalphResume:
             token_budget=500_000,
         )
 
-        # Now should return LoopResult with status="blocked" instead of raising
+        # Now should return ImplementationResult with status="blocked" instead of raising
         assert result2.status == "blocked"
         assert result2.termination_reason == "blocker_escalation"
 
@@ -224,6 +224,6 @@ class TestRalphResume:
         )
 
         # It may pause again or converge - either is valid for guided mode
-        assert result2.status in ("converged", "blocked"), (
-            f"Expected converged or blocked after guided resume, got {result2.status}"
+        assert result2.status in ("verified", "blocked"), (
+            f"Expected verified or blocked after guided resume, got {result2.status}"
         )

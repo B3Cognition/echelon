@@ -89,7 +89,7 @@ class TestInnerLoopConvergence:
             {"passed": True, "failures": []},
         ])
         result = ctrl.run_loop(max_outer=5, max_inner=3)
-        assert result.status == "converged"
+        assert result.status == "verified"
         assert result.inner_iterations > 0
 
 
@@ -163,7 +163,7 @@ class TestInnerLoopExhaustion:
             {"passed": True, "failures": []},
         ])
         result = ctrl.run_loop(max_outer=5, max_inner=1)
-        assert result.status == "converged"
+        assert result.status == "verified"
         assert result.outer_iterations == 2
 
 

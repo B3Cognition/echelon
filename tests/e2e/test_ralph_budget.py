@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from harness.config import HarnessConfig
-from harness.loop_result import LoopResult
+from harness.delivery_results import ImplementationResult
 
 from tests.e2e.conftest import MockGitOps, make_ralph_controller
 from tests.e2e.stub_llm import StubLLM

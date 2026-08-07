@@ -14,14 +14,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from harness.loop_result import LoopResult
+from harness.delivery_results import DeliveryResult
 from harness.merge import attempt_auto_merge
 from harness.run_intent import RunIntent
 from harness.verify_result import VerifyResult
 
 
-def _make_converged_result() -> LoopResult:
-    return LoopResult(
+def _make_converged_result() -> DeliveryResult:
+    return DeliveryResult(
         status="converged",
         termination_reason="converged",
         outer_iterations=1,
@@ -32,8 +32,8 @@ def _make_converged_result() -> LoopResult:
     )
 
 
-def _make_failed_result() -> LoopResult:
-    return LoopResult(
+def _make_failed_result() -> DeliveryResult:
+    return DeliveryResult(
         status="failed",
         termination_reason="outer_cap",
         outer_iterations=5,

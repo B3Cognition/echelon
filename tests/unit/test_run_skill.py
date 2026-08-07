@@ -6,20 +6,21 @@ when auto_merge is True on the intent.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from harness.harness_run_history import history_path
-from harness.loop_result import LoopResult
+from harness.delivery_results import DeliveryResult
 from harness.run_intent import RunIntent
 from harness.skills.run_skill import RunContextError, _resolve_run_roots
 from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
 
 
-def _make_converged_result() -> LoopResult:
-    return LoopResult(
+def _make_converged_result() -> DeliveryResult:
+    return DeliveryResult(
         status="converged",
         termination_reason="converged",
         outer_iterations=1,
@@ -30,8 +31,8 @@ def _make_converged_result() -> LoopResult:
     )
 
 
-def _make_failed_result() -> LoopResult:
-    return LoopResult(
+def _make_failed_result() -> DeliveryResult:
+    return DeliveryResult(
         status="failed",
         termination_reason="outer_cap",
         outer_iterations=5,
@@ -42,8 +43,8 @@ def _make_failed_result() -> LoopResult:
     )
 
 
-def _make_checkpoint_result() -> LoopResult:
-    return LoopResult(
+def _make_checkpoint_result() -> DeliveryResult:
+    return DeliveryResult(
         status="blocked",
         termination_reason="build_incomplete",
         outer_iterations=2,
@@ -55,8 +56,8 @@ def _make_checkpoint_result() -> LoopResult:
     )
 
 
-def _make_checkpoint_outer_cap_result() -> LoopResult:
-    return LoopResult(
+def _make_checkpoint_outer_cap_result() -> DeliveryResult:
+    return DeliveryResult(
         status="blocked",
         termination_reason="checkpoint_outer_cap",
         outer_iterations=5,
@@ -614,7 +615,7 @@ class TestRunSkillAutoLand:
 
         intent = RunIntent(spec_id="001-demo", mode="semi")
         result = _make_checkpoint_result()
-        result.termination_reason = "provider_session_limit"
+        result = replace(result, termination_reason="provider_session_limit")
         comparison = {
             "strategies": {
                 "default": {
@@ -665,7 +666,7 @@ class TestRunSkillAutoLand:
         from harness.skills.run_skill import _print_delivery_summary
 
         intent = RunIntent(spec_id="906", mode="semi")
-        result = LoopResult(
+        result = DeliveryResult(
             status="blocked",
             termination_reason="blocker_escalation",
             outer_iterations=1,
@@ -811,7 +812,7 @@ class TestRunSkillAutoLand:
 
         intent = RunIntent(spec_id="001-demo", mode="banzai")
         result = _make_failed_result()
-        result.final_verify = VerifyResult(
+        result = replace(result, final_verify=VerifyResult(
             passed=False,
             failures=[
                 FailureEntry(
@@ -820,7 +821,7 @@ class TestRunSkillAutoLand:
                     error="fulfillment report is stale for current HEAD abc123",
                 )
             ],
-        )
+        ))
         comparison = {
             "strategies": {
                 "default": {
@@ -868,7 +869,7 @@ class TestRunSkillAutoLand:
             encoding="utf-8",
         )
         intent = RunIntent(spec_id="001-demo", mode="semi")
-        result = LoopResult(
+        result = DeliveryResult(
             status="blocked",
             termination_reason="blocker_escalation",
             outer_iterations=1,
@@ -941,7 +942,7 @@ class TestRunSkillAutoLand:
             encoding="utf-8",
         )
         intent = RunIntent(spec_id="906", mode="semi")
-        result = LoopResult(
+        result = DeliveryResult(
             status="failed",
             termination_reason="outer_cap",
             outer_iterations=1,
@@ -1012,7 +1013,7 @@ class TestRunSkillAutoLand:
             encoding="utf-8",
         )
         intent = RunIntent(spec_id="906", mode="semi")
-        result = LoopResult(
+        result = DeliveryResult(
             status="blocked",
             termination_reason="external_spec_artifact_missing",
             outer_iterations=1,

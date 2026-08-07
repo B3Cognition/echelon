@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 
 from harness.config import HarnessConfig
 from harness.exec_result import ExecResult
-from harness.loop_result import LoopResult
+from harness.delivery_results import VisualResult
 from harness.provider import SandboxHandle, SandboxProvider, SandboxSpec
 from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
 
@@ -51,7 +51,7 @@ class VisualRalphController:
         self,
         worktree_path: str,
         token_budget: Optional[int] = None,
-    ) -> LoopResult:
+    ) -> VisualResult:
         """Run visual verification loop until convergence or max_iterations."""
         tokens_used = 0
 
@@ -83,12 +83,10 @@ class VisualRalphController:
                         duration_s=0.0,
                         token_usage=0,
                     )
-                    return LoopResult(
-                        status="failed",
+                    return VisualResult(
+                        status="blocked",
                         termination_reason="app_runtime_failed",
-                        outer_iterations=iteration + 1,
-                        inner_iterations=0,
-                        pr_url=None,
+                        iterations=iteration + 1,
                         tokens_used=tokens_used,
                         final_verify=failure,
                     )
@@ -97,12 +95,10 @@ class VisualRalphController:
                 tokens_used += verify_result.token_usage
 
                 if verify_result.passed:
-                    return LoopResult(
-                        status="converged",
+                    return VisualResult(
+                        status="passed",
                         termination_reason="converged",
-                        outer_iterations=iteration + 1,
-                        inner_iterations=0,
-                        pr_url=None,
+                        iterations=iteration + 1,
                         tokens_used=tokens_used,
                         final_verify=verify_result,
                     )
@@ -110,17 +106,22 @@ class VisualRalphController:
                 screenshots = self._retrieve_screenshots(handle)
                 fix_result = self._exec_visual_feedback(handle, verify_result, screenshots)
                 tokens_used += fix_result.get("tokens", 0)
+                return VisualResult(
+                    status="fix_applied",
+                    termination_reason="fix_applied",
+                    iterations=iteration + 1,
+                    tokens_used=tokens_used,
+                    final_verify=verify_result,
+                )
 
             finally:
                 self._stop_app_runtime(handle)
                 self._provider.destroy(handle)
 
-        return LoopResult(
-            status="failed",
+        return VisualResult(
+            status="blocked",
             termination_reason="visual_failed",
-            outer_iterations=self._vc.max_iterations,
-            inner_iterations=0,
-            pr_url=None,
+            iterations=self._vc.max_iterations,
             tokens_used=tokens_used,
             final_verify=None,
         )

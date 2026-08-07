@@ -44,7 +44,7 @@ from harness.exec_result import ExecResult
 from harness.failure_signature import detect_same_failure, normalize
 from harness.fulfillment_runner import FulfillmentRunner
 from harness.llm_build_runner import LlmBuildRunner
-from harness.loop_result import LoopResult
+from harness.delivery_results import ImplementationResult
 from harness.mode import ModeController
 from harness.provider import SandboxHandle, SandboxProvider, SandboxSpec
 from harness.run_history import append_implementation_run
@@ -205,7 +205,7 @@ class RalphController:
         build_command: str = "echelon build",
         strategy_context: str = "",
         build_prompt: str = "",
-    ) -> LoopResult:
+    ) -> ImplementationResult:
         """Execute the ralph-loop until a termination condition.
 
         Args:
@@ -218,7 +218,7 @@ class RalphController:
             strategy_context: Additional context from strategy file body.
 
         Returns:
-            LoopResult with termination details.
+            ImplementationResult with termination details.
         """
         self._install_signal_handlers()
 
@@ -242,7 +242,7 @@ class RalphController:
         build_command: str,
         strategy_context: str,
         build_prompt: str = "",
-    ) -> LoopResult:
+    ) -> ImplementationResult:
         """Inner implementation of run_loop (signal handlers installed)."""
         state = self._state_store.read()
         if not state:
@@ -820,17 +820,6 @@ class RalphController:
                         )
 
                     if verify_result.passed:
-                        if not self._mark_spec_ready_to_land(worktree_path):
-                            preserve_worktree = True
-                            return self._finalize(
-                                status="blocked",
-                                reason="ready_status_failed",
-                                outer_iterations=outer_iter + 1,
-                                inner_iterations=total_inner_iterations,
-                                pr_url=pr_url,
-                                tokens_used=tokens_used,
-                                final_verify=verify_result,
-                            )
                         try:
                             branch = self._commit_and_push(worktree_path, outer_iter)
                         except CommitPushError as e:
@@ -879,7 +868,7 @@ class RalphController:
                         # iteration.
                         preserve_worktree = True
                         return self._finalize(
-                            status="converged",
+                            status="verified",
                             reason="converged",
                             outer_iterations=outer_iter + 1,
                             inner_iterations=total_inner_iterations,
@@ -939,17 +928,6 @@ class RalphController:
                         )
 
                     if inner_result["converged"]:
-                        if not self._mark_spec_ready_to_land(worktree_path):
-                            preserve_worktree = True
-                            return self._finalize(
-                                status="blocked",
-                                reason="ready_status_failed",
-                                outer_iterations=outer_iter + 1,
-                                inner_iterations=total_inner_iterations,
-                                pr_url=pr_url,
-                                tokens_used=tokens_used,
-                                final_verify=inner_result.get("final_verify"),
-                            )
                         try:
                             branch = self._commit_and_push(worktree_path, outer_iter)
                         except CommitPushError as e:
@@ -1000,7 +978,7 @@ class RalphController:
                         # iteration.
                         preserve_worktree = True
                         return self._finalize(
-                            status="converged",
+                            status="verified",
                             reason="converged",
                             outer_iterations=outer_iter + 1,
                             inner_iterations=total_inner_iterations,
@@ -4637,26 +4615,10 @@ class RalphController:
         final_verify: Optional[VerifyResult],
         branch: Optional[str] = None,
         extra_state: Optional[Dict[str, Any]] = None,
-    ) -> LoopResult:
-        """Write final state and return LoopResult."""
-        # Map to state status
-        state_status_map = {
-            "converged": "converged",
-            "failed": "failed",
-            "blocked": "blocked",
-            "interrupted": "interrupted",
-            "cancelled": "cancelled_by_coordinator",
-        }
-        state_status = state_status_map.get(status, "failed")
+    ) -> ImplementationResult:
+        """Write phase evidence and return an implementation result."""
 
         try:
-            state = self._state_store.read()
-            current = state.get("status", "running")
-            # Only transition if valid
-            if current == "running" or (current == "blocked" and state_status == "running"):
-                self._state_store.transition(state_status)
-
-            # Update additional fields
             state = self._state_store.read()
             state["tokens_used"] = tokens_used
             state["pr_url"] = pr_url
@@ -4671,7 +4633,7 @@ class RalphController:
         except Exception as e:
             logger.warning("Failed to update final state: %s", e)
 
-        return LoopResult(
+        return ImplementationResult(
             status=status,
             termination_reason=reason,
             outer_iterations=outer_iterations,
@@ -4690,7 +4652,7 @@ class RalphController:
         pr_url: Optional[str],
         tokens_used: int,
         verify_result: Optional[VerifyResult] = None,
-    ) -> LoopResult:
+    ) -> ImplementationResult:
         """Pause at a phase boundary (guided mode)."""
         logger.info("Paused at %s boundary (guided mode)", boundary)
 
@@ -4705,7 +4667,7 @@ class RalphController:
             file=sys.stderr,
         )
 
-        return LoopResult(
+        return ImplementationResult(
             status="blocked",
             termination_reason="blocker_escalation",
             outer_iterations=outer_iter + 1,
@@ -4724,7 +4686,7 @@ class RalphController:
         build_command: str,
         strategy_context: str,
         build_prompt: str = "",
-    ) -> LoopResult:
+    ) -> ImplementationResult:
         """Handle resume from blocked state."""
         # verify_command_needed: check if the user has now configured verify_command
         # or if the project type is now auto-detectable, then re-run from scratch.
@@ -4746,7 +4708,7 @@ class RalphController:
                 )
             else:
                 _print_verify_command_needed_banner(self._spec_id, self._strategy_id)
-                return LoopResult(
+                return ImplementationResult(
                     status="blocked",
                     termination_reason="verify_command_needed",
                     outer_iterations=state.get("outer_iter", 0),
@@ -4788,7 +4750,7 @@ class RalphController:
                 # _finalize() is intentionally skipped here: the state already
                 # reflects the blocked/exhausted status from the prior run and
                 # calling it would not change anything meaningful.
-                return LoopResult(
+                return ImplementationResult(
                     status="blocked",
                     termination_reason="budget_exhausted",
                     outer_iterations=state.get("outer_iter", 0),

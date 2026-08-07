@@ -22,7 +22,7 @@ import pytest
 
 from harness.config import HarnessConfig, NetworkConfig, ResourceLimits
 from harness.coordinator import StrategyCoordinator
-from harness.loop_result import LoopResult
+from harness.delivery_results import DeliveryResult
 from harness.run_intent import RunIntent
 
 from tests.e2e.conftest import MockGitOps

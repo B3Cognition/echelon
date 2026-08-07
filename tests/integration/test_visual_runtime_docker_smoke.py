@@ -67,5 +67,5 @@ server.listen(4173, '127.0.0.1');
 
     result = controller.run_loop(str(tmp_path))
 
-    assert result.status == "converged"
+    assert result.status == "passed"
     assert result.termination_reason == "converged"

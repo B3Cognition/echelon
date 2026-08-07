@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from harness.loop_result import LoopResult
+from harness.delivery_results import DeliveryResult
 
 HISTORY_FILENAME = "harness-run-history.json"
 
@@ -39,7 +39,7 @@ def append_run(
     build_id: str,
     mode: str,
     strategy_id: str,
-    result: LoopResult,
+    result: DeliveryResult,
     pr_url: str | None,
     started_at: str | None = None,
 ) -> None:

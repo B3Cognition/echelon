@@ -8,7 +8,7 @@ import pytest
 from harness.build_prompt import BuildPromptBuilder
 from harness.config import HarnessConfig, StacksConfig
 from harness.coordinator import StrategyCoordinator
-from harness.loop_result import LoopResult
+from harness.delivery_results import ImplementationResult
 from harness.run_intent import RunIntent
 from harness.stacks.errors import StackResolutionError
 
@@ -176,8 +176,8 @@ def test_coordinator_passes_combined_stack_context_to_ralph_and_build_prompt(
     with pytest.MonkeyPatch.context() as monkeypatch:
         mock_ralph = MagicMock()
         mock_controller = MagicMock()
-        mock_controller.run_loop.return_value = LoopResult(
-            status="converged",
+        mock_controller.run_loop.return_value = ImplementationResult(
+            status="verified",
             termination_reason="converged",
             outer_iterations=1,
             inner_iterations=1,

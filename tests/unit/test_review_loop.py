@@ -10,7 +10,12 @@ import pytest
 from harness.ai_cli_backend import CliRunResult
 from harness.config import HarnessConfig, LlmConfig, ReviewLoopConfig
 from harness.llm_tool_policy import LlmToolPolicy
-from harness.review_loop import ApprovalState, ReviewComment, ReviewLoopController
+from harness.review_loop import (
+    ApprovalState,
+    ReviewComment,
+    ReviewLoopController,
+    _ReviewSkillResult,
+)
 
 
 def _config(cli: str = "claude", tool_policy: LlmToolPolicy | None = None) -> HarnessConfig:
@@ -26,6 +31,43 @@ def _config(cli: str = "claude", tool_policy: LlmToolPolicy | None = None) -> Ha
 
 @pytest.mark.unit
 class TestReviewLoopInvocation:
+    def test_review_loop_returns_queued_when_review_fix_is_created(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        controller = ReviewLoopController(
+            gitops=MagicMock(),
+            config=_config(),
+            spec_id="005",
+            strategy_id="default",
+            base_dir=str(tmp_path),
+            build_id="build-1",
+        )
+        comment = ReviewComment(
+            comment_id="c1",
+            path="src/app.py",
+            line=10,
+            body="must fix",
+            reviewer="reviewer",
+            created_at=datetime.now(tz=timezone.utc),
+            is_inline=True,
+        )
+        monkeypatch.setattr(
+            controller, "_fetch_unresolved_comments", MagicMock(return_value=[comment])
+        )
+        monkeypatch.setattr(
+            controller,
+            "_invoke_review_skill",
+            MagicMock(return_value=_ReviewSkillResult(tokens_used=7, queued=True)),
+        )
+
+        result = controller.run_loop(
+            "https://github.com/org/repo/pull/1", worktree_path=str(tmp_path)
+        )
+
+        assert result.status == "review_fix_queued"
+        assert result.iterations == 1
+        assert result.tokens_used == 7
+
     def test_review_loop_invokes_ai_cli_provider_facade(
         self,
         monkeypatch,
@@ -164,7 +206,7 @@ class TestReviewLoopInvocation:
             worktree_path="",
         )
 
-        assert result.status == "failed"
+        assert result.status == "blocked"
         assert result.termination_reason == "blocker_escalation"
         assert provider_calls == []
 
@@ -197,7 +239,7 @@ class TestReviewLoopInvocation:
             worktree_path="",
         )
 
-        assert result.status == "converged"
+        assert result.status == "completed"
         gitops.merge_pr.assert_called_once_with("https://github.com/org/repo/pull/1")
 
     def test_review_skill_failure_does_not_handle_comments(
@@ -243,7 +285,7 @@ class TestReviewLoopInvocation:
             worktree_path=str(tmp_path),
         )
 
-        assert result.status == "failed"
+        assert result.status == "blocked"
         assert controller._seen_ids == set()
         resolve_thread.assert_not_called()
         request_review.assert_not_called()
