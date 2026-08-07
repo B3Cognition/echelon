@@ -10,6 +10,7 @@ import base64
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import fcntl
 import hashlib
 import json
 import os
@@ -18,13 +19,23 @@ import re
 import stat
 import tempfile
 from typing import AbstractSet, Any, Literal, Sequence
+from uuid import uuid4
 
 from harness.state import is_process_alive
+from kernel.task_contract import parse_task_rows
 
 
 _ARTIFACT_RE = re.compile(r"review-fix-([1-9][0-9]*)\.md\Z")
-_TASK_ID_RE = re.compile(r"T-([1-9][0-9]*)\Z")
-_TASK_ROW_RE = re.compile(r"^- \[[ xX]\]\s+(T-[1-9][0-9]*)\b")
+_NUMERIC_TASK_ID_RE = re.compile(r"T-([0-9]{3,4})\Z")
+_TITLE_RE = re.compile(r"^  \*\*Title:\*\* (RF[1-9][0-9]*-T[123]) - \S.*\Z")
+_SECTION_RE = re.compile(r"^(?:---|## Review Fix [1-9][0-9]*: \S.*|> Source: review-fix-[1-9][0-9]*\.md|> PR: \S.*|> Status: pending)\Z")
+_LOCK_FIELDS = {"pid", "created_at", "strategy", "token", "released"}
+_JOURNAL_FIELDS = {
+    "version", "attempt_id", "status", "comment_ids", "attempt_dir",
+    "artifact_names", "task_ids", "review_task_ids", "artifacts",
+    "tasks_before", "tasks_append", "published_artifacts", "tasks_published",
+    "complete", "consumed",
+}
 
 
 class ReviewArtifactError(RuntimeError):
@@ -64,6 +75,9 @@ class ReviewArtifactPublisher:
         self._allocation: ReviewAllocation | None = None
         self._allocated_tasks_before: tuple[bool, bytes] | None = None
         self._locked = False
+        self._lock_fd: int | None = None
+        self._lock_token: str | None = None
+        self._lock_identity: tuple[int, int] | None = None
 
     def __enter__(self) -> "ReviewArtifactPublisher":
         self.spec_dir.mkdir(parents=True, exist_ok=True)
@@ -72,12 +86,7 @@ class ReviewArtifactPublisher:
         return self
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
-        if self._locked:
-            try:
-                self.lock_file.unlink(missing_ok=True)
-                _fsync_directory(self.spec_dir)
-            finally:
-                self._locked = False
+        self._release_lock()
 
     def allocate(self, comment_ids: Sequence[str]) -> ReviewAllocation:
         """Reserve deterministic candidate names in a fresh staging attempt."""
@@ -106,9 +115,7 @@ class ReviewArtifactPublisher:
             raise ReviewArtifactError("canonical tasks.md is not a regular file")
         tasks_before = tasks_path.read_bytes() if tasks_path.exists() else b""
 
-        task_numbers = _canonical_task_numbers(self.spec_dir / "tasks.md")
-        first_task = max(task_numbers, default=0) + 1
-        task_ids = tuple(f"T-{number}" for number in range(first_task, first_task + len(ids) * 3))
+        task_ids = _allocate_canonical_task_ids(tasks_path, len(ids) * 3)
         staging_root = self.state_dir / "review-staging"
         staging_root.mkdir(parents=True, exist_ok=True)
         attempt_dir = Path(tempfile.mkdtemp(prefix=f"{self.strategy}-", dir=staging_root))
@@ -148,7 +155,7 @@ class ReviewArtifactPublisher:
         prepared = self._validate_queued_manifest(manifest, allocation)
         journal = self._create_journal(allocation, prepared)
         self._write_journal(journal)
-        self._after_publication_boundary("journal")
+        self._after_publication_boundary("journal-created")
         return self._complete_journal(journal)
 
     def recover_publication(self, seen_ids: AbstractSet[str]) -> PublishedReviewBatch | None:
@@ -182,35 +189,97 @@ class ReviewArtifactPublisher:
         self._write_journal(journal)
 
     def _acquire_lock(self) -> None:
-        payload = (
-            f"pid={os.getpid()}\n"
-            f"created_at={datetime.now(timezone.utc).isoformat()}\n"
-            f"strategy={self.strategy}\n"
-        ).encode("utf-8")
-        for _ in range(2):
+        """Take an advisory OS lock and install owner metadata while it is held.
+
+        The lock file is intentionally retained after release.  Reusing its inode
+        makes ``flock`` contention unambiguous and avoids check/unlink takeover
+        races during stale-lock recovery.
+        """
+        for _ in range(3):
+            fd: int | None = None
+            created = False
+            old_bytes = b""
             try:
-                fd = os.open(self.lock_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            except FileExistsError:
-                pid = _lock_pid(self.lock_file)
-                if pid is not None and is_process_alive(pid):
-                    raise ReviewArtifactError(f"review lock is held by PID {pid}: {self.lock_file}")
+                fd, created = _open_review_lock(self.lock_file)
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                identity = _fd_identity(fd)
+                if not _path_has_identity(self.lock_file, identity):
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+                    os.close(fd)
+                    continue
+                old_bytes = _read_fd_bytes(fd)
+                previous = _parse_lock_metadata(old_bytes)
+                if previous is not None and previous["released"] != "true":
+                    pid = int(previous["pid"])
+                    if is_process_alive(pid):
+                        raise ReviewArtifactError(f"review lock is held by PID {pid}: {self.lock_file}")
+                elif previous is None:
+                    legacy_pid = _lock_pid_from_bytes(old_bytes)
+                    if legacy_pid is not None and is_process_alive(legacy_pid):
+                        raise ReviewArtifactError(f"review lock is held by PID {legacy_pid}: {self.lock_file}")
+                token = uuid4().hex
+                payload = _lock_payload(self.strategy, token)
+                _write_fd_bytes(fd, payload)
+                self._lock_fd = fd
+                self._lock_identity = identity
+                self._lock_token = token
+                self._locked = True
+                return
+            except BlockingIOError as exc:
+                raise ReviewArtifactError(f"review lock is held: {self.lock_file}") from exc
+            except ReviewArtifactError:
+                self._cleanup_failed_lock_acquire(fd, created, old_bytes)
+                raise
+            except OSError as exc:
+                self._cleanup_failed_lock_acquire(fd, created, old_bytes)
+                raise ReviewArtifactError(f"could not acquire review lock: {self.lock_file}") from exc
+        raise ReviewArtifactError("review lock changed while acquiring it")
+
+    def _cleanup_failed_lock_acquire(self, fd: int | None, created: bool, old_bytes: bytes) -> None:
+        if fd is None:
+            return
+        try:
+            if created and _path_has_identity(self.lock_file, _fd_identity(fd)):
                 try:
                     self.lock_file.unlink()
-                    _fsync_directory(self.spec_dir)
-                except OSError as exc:
-                    raise ReviewArtifactError(f"could not reclaim stale review lock: {self.lock_file}") from exc
-                continue
-            except OSError as exc:
-                raise ReviewArtifactError(f"could not acquire review lock: {self.lock_file}") from exc
+                except OSError:
+                    pass
+            elif old_bytes:
+                try:
+                    _write_fd_bytes(fd, old_bytes)
+                except OSError:
+                    pass
+        finally:
             try:
-                os.write(fd, payload)
-                os.fsync(fd)
+                fcntl.flock(fd, fcntl.LOCK_UN)
             finally:
                 os.close(fd)
-            _fsync_directory(self.spec_dir)
-            self._locked = True
+
+    def _release_lock(self) -> None:
+        fd = self._lock_fd
+        if fd is None:
+            self._locked = False
             return
-        raise ReviewArtifactError("review lock contention")
+        try:
+            identity = self._lock_identity
+            token = self._lock_token
+            if identity is not None and token is not None and _path_has_identity(self.lock_file, identity):
+                metadata = _parse_lock_metadata(_read_fd_bytes(fd))
+                if metadata is not None and metadata.get("token") == token:
+                    metadata["released"] = "true"
+                    try:
+                        _write_fd_bytes(fd, _render_lock_metadata(metadata))
+                    except OSError:
+                        pass
+        finally:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            finally:
+                os.close(fd)
+                self._lock_fd = None
+                self._lock_identity = None
+                self._lock_token = None
+                self._locked = False
 
     def _require_lock(self) -> None:
         if not self._locked:
@@ -235,6 +304,7 @@ class ReviewArtifactPublisher:
             raise ReviewArtifactError("a completed review publication must be recovered before another allocation")
         self.journal_file.unlink()
         _fsync_directory(self.state_dir)
+        self._after_publication_boundary("journal-removed")
 
     def _validate_empty_manifest(self, manifest: dict[str, Any], allocation: ReviewAllocation) -> None:
         allowed = {"status", "groups", "artifacts", "tasks"}
@@ -303,9 +373,7 @@ class ReviewArtifactPublisher:
                 raise ReviewArtifactError("task IDs must be contiguous per artifact")
 
         append_bytes = append_path.read_bytes()
-        parsed_ids = _task_row_ids(append_bytes.decode("utf-8", errors="strict"))
-        if len(parsed_ids) != len(task_ids) or Counter(parsed_ids) != Counter(task_ids):
-            raise ReviewArtifactError("tasks append must contain exactly the manifest task rows")
+        _validate_append_payload(append_bytes, task_ids, review_ids)
         allowed_names = set(artifacts) | {append_name}
         staged_names = {path.name for path in allocation.attempt_dir.iterdir()}
         if staged_names != allowed_names:
@@ -363,10 +431,11 @@ class ReviewArtifactPublisher:
                     raise ReviewArtifactError(f"canonical artifact conflicts with publication journal: {name}")
             else:
                 _atomic_create(target, content)
+                self._after_publication_boundary(f"artifact-write:{name}")
             if name not in journal["published_artifacts"]:
                 journal["published_artifacts"].append(name)
                 self._write_journal(journal)
-            self._after_publication_boundary(f"artifact:{name}")
+                self._after_publication_boundary(f"artifact-flag:{name}")
 
         tasks_path = self.spec_dir / "tasks.md"
         before = journal["tasks_before"]
@@ -380,14 +449,15 @@ class ReviewArtifactPublisher:
             if current_exists != before["exists"] or _digest(current) != before["digest"]:
                 raise ReviewArtifactError("canonical tasks.md conflicts with publication journal")
             _atomic_replace(tasks_path, desired)
+            self._after_publication_boundary("tasks-write")
         if not journal["tasks_published"]:
             journal["tasks_published"] = True
             self._write_journal(journal)
-        self._after_publication_boundary("tasks")
+            self._after_publication_boundary("tasks-flag")
         self._validate_completed_journal(journal)
         journal["complete"] = True
         self._write_journal(journal)
-        self._after_publication_boundary("complete")
+        self._after_publication_boundary("complete-write")
         return _batch_from_journal(journal, self.spec_dir)
 
     def _validate_completed_journal(self, journal: dict[str, Any]) -> None:
@@ -400,9 +470,7 @@ class ReviewArtifactPublisher:
         expected = _append_bytes(_decode(journal["tasks_before"]["content"]), _decode(journal["tasks_append"]["content"]))
         if not _is_regular_file(tasks_path) or tasks_path.read_bytes() != expected:
             raise ReviewArtifactError("published tasks.md does not match the journal")
-        ids = _task_row_ids(expected.decode("utf-8", errors="strict"))
-        if any(ids.count(task_id) != 1 for task_id in journal["task_ids"]):
-            raise ReviewArtifactError("published tasks.md task rows do not match the journal")
+        _validate_append_payload(_decode(journal["tasks_append"]["content"]), journal["task_ids"], journal["review_task_ids"])
 
     def _write_journal(self, journal: dict[str, Any]) -> None:
         _atomic_replace(self.journal_file, (json.dumps(journal, sort_keys=True, indent=2) + "\n").encode("utf-8"))
@@ -437,27 +505,85 @@ def _read_journal(path: Path) -> dict[str, Any]:
 
 
 def _validate_journal_shape(journal: dict[str, Any]) -> None:
-    required = {"attempt_id", "status", "comment_ids", "task_ids", "review_task_ids", "artifacts", "tasks_before", "tasks_append", "published_artifacts", "tasks_published", "complete", "consumed"}
-    if not required.issubset(journal) or journal.get("status") != "review_fix_queued":
+    if set(journal) != _JOURNAL_FIELDS or journal.get("version") != 1 or journal.get("status") != "review_fix_queued":
         raise ReviewArtifactError("review publication journal has an invalid schema")
-    if not all(isinstance(journal[key], list) for key in ("comment_ids", "task_ids", "review_task_ids", "artifacts", "published_artifacts")):
+    list_fields = ("comment_ids", "artifact_names", "task_ids", "review_task_ids", "artifacts", "published_artifacts")
+    if not all(isinstance(journal[key], list) for key in list_fields):
         raise ReviewArtifactError("review publication journal has an invalid schema")
     if not all(isinstance(journal[key], bool) for key in ("tasks_published", "complete", "consumed")):
         raise ReviewArtifactError("review publication journal has an invalid schema")
-    if not isinstance(journal["attempt_id"], str) or not all(isinstance(value, str) for value in journal["comment_ids"] + journal["task_ids"] + journal["review_task_ids"] + journal["published_artifacts"]):
+    string_lists = ("comment_ids", "artifact_names", "task_ids", "review_task_ids", "published_artifacts")
+    if not all(isinstance(journal[key], str) and journal[key] for key in ("attempt_id", "attempt_dir")) or not all(
+        isinstance(value, str) and value for field in string_lists for value in journal[field]
+    ):
         raise ReviewArtifactError("review publication journal has an invalid schema")
+    if not journal["comment_ids"] or len(set(journal["comment_ids"])) != len(journal["comment_ids"]) or len(set(journal["artifact_names"])) != len(journal["artifact_names"]):
+        raise ReviewArtifactError("review publication journal has duplicate ownership IDs")
+    if len(journal["artifact_names"]) != len(journal["comment_ids"]):
+        raise ReviewArtifactError("review publication journal allocation cardinality is invalid")
+    allocated_suffixes: list[int] = []
+    for name in journal["artifact_names"]:
+        match = _ARTIFACT_RE.fullmatch(name)
+        if match is None:
+            raise ReviewArtifactError("review publication journal artifact allocation is invalid")
+        allocated_suffixes.append(int(match.group(1)))
+    if allocated_suffixes != list(range(allocated_suffixes[0], allocated_suffixes[0] + len(allocated_suffixes))):
+        raise ReviewArtifactError("review publication journal artifact allocation is not contiguous")
     if not isinstance(journal["tasks_before"], dict) or not isinstance(journal["tasks_append"], dict):
         raise ReviewArtifactError("review publication journal has an invalid schema")
+    if set(journal["tasks_before"]) != {"exists", "digest", "content"} or set(journal["tasks_append"]) != {"digest", "content"}:
+        raise ReviewArtifactError("review publication journal has an invalid schema")
     for state in (journal["tasks_before"], journal["tasks_append"]):
-        if not isinstance(state.get("digest"), str) or not isinstance(state.get("content"), str):
+        if not isinstance(state.get("digest"), str) or not re.fullmatch(r"[0-9a-f]{64}", state["digest"]) or not isinstance(state.get("content"), str):
             raise ReviewArtifactError("review publication journal has an invalid schema")
     if not isinstance(journal["tasks_before"].get("exists"), bool):
         raise ReviewArtifactError("review publication journal has an invalid schema")
+    if _digest(_decode(journal["tasks_before"]["content"])) != journal["tasks_before"]["digest"] or _digest(_decode(journal["tasks_append"]["content"])) != journal["tasks_append"]["digest"]:
+        raise ReviewArtifactError("review publication journal digest does not match its content")
+    artifacts = journal["artifacts"]
     for artifact in journal["artifacts"]:
         if not isinstance(artifact, dict) or not all(isinstance(artifact.get(key), str) for key in ("name", "digest", "content")):
             raise ReviewArtifactError("review publication journal has an invalid schema")
-        if _ARTIFACT_RE.fullmatch(artifact["name"]) is None:
+        if _ARTIFACT_RE.fullmatch(artifact["name"]) is None or not re.fullmatch(r"[0-9a-f]{64}", artifact["digest"]):
             raise ReviewArtifactError("review publication journal has an invalid artifact name")
+        if _digest(_decode(artifact["content"])) != artifact["digest"]:
+            raise ReviewArtifactError("review publication journal artifact digest does not match its content")
+    artifact_names = [artifact["name"] for artifact in artifacts]
+    if not artifacts or len(set(artifact_names)) != len(artifact_names) or artifact_names != journal["artifact_names"][: len(artifacts)]:
+        raise ReviewArtifactError("review publication journal artifact allocation is invalid")
+    if len(journal["task_ids"]) != len(artifacts) * 3 or len(journal["review_task_ids"]) != len(artifacts) * 3:
+        raise ReviewArtifactError("review publication journal task cardinality is invalid")
+    if len(set(journal["task_ids"])) != len(journal["task_ids"]) or len(set(journal["review_task_ids"])) != len(journal["review_task_ids"]):
+        raise ReviewArtifactError("review publication journal task IDs are not unique")
+    all_task_numbers: list[int] = []
+    for task_id in journal["task_ids"]:
+        match = _NUMERIC_TASK_ID_RE.fullmatch(task_id)
+        if match is None:
+            raise ReviewArtifactError("review publication journal task ID is not canonical")
+        all_task_numbers.append(int(match.group(1)))
+    if all_task_numbers != list(range(all_task_numbers[0], all_task_numbers[0] + len(all_task_numbers))):
+        raise ReviewArtifactError("review publication journal task IDs are not contiguous")
+    for index, artifact in enumerate(artifacts):
+        suffix = _ARTIFACT_RE.fullmatch(artifact["name"])
+        if suffix is None:
+            raise ReviewArtifactError("review publication journal artifact name is invalid")
+        start = index * 3
+        group_ids = journal["task_ids"][start : start + 3]
+        group_labels = journal["review_task_ids"][start : start + 3]
+        numbers = []
+        for task_id in group_ids:
+            match = _NUMERIC_TASK_ID_RE.fullmatch(task_id)
+            if match is None:
+                raise ReviewArtifactError("review publication journal task ID is not canonical")
+            numbers.append(int(match.group(1)))
+        if numbers != list(range(numbers[0], numbers[0] + 3)) or group_labels != [f"RF{suffix.group(1)}-T{ordinal}" for ordinal in (1, 2, 3)]:
+            raise ReviewArtifactError("review publication journal task/artifact relationship is invalid")
+    if journal["published_artifacts"] != artifact_names[: len(journal["published_artifacts"])]:
+        raise ReviewArtifactError("review publication journal publication flags are invalid")
+    all_artifacts_published = len(journal["published_artifacts"]) == len(artifact_names)
+    if (journal["tasks_published"] and not all_artifacts_published) or (journal["complete"] and not (journal["tasks_published"] and all_artifacts_published)) or (journal["consumed"] and not journal["complete"]):
+        raise ReviewArtifactError("review publication journal completion flags are invalid")
+    _validate_append_payload(_decode(journal["tasks_append"]["content"]), journal["task_ids"], journal["review_task_ids"])
 
 
 def _batch_from_journal(journal: dict[str, Any], spec_dir: Path) -> PublishedReviewBatch:
@@ -470,17 +596,23 @@ def _batch_from_journal(journal: dict[str, Any], spec_dir: Path) -> PublishedRev
     )
 
 
-def _canonical_task_numbers(path: Path) -> list[int]:
+def _allocate_canonical_task_ids(path: Path, count: int) -> tuple[str, ...]:
     if not path.exists():
-        return []
+        return tuple(f"T-{number:03d}" for number in range(1, count + 1))
     if not _is_regular_file(path):
         raise ReviewArtifactError("canonical tasks.md is not a regular file")
     numbers: list[int] = []
-    for task_id in _task_row_ids(path.read_text(encoding="utf-8", errors="strict")):
-        match = _TASK_ID_RE.fullmatch(task_id)
+    widths: list[int] = []
+    for task in parse_task_rows(path.read_text(encoding="utf-8", errors="strict")):
+        match = _NUMERIC_TASK_ID_RE.fullmatch(task.task_id)
         if match is not None:
             numbers.append(int(match.group(1)))
-    return numbers
+            widths.append(len(match.group(1)))
+    first = max(numbers, default=0) + 1
+    width = max([3, *widths, len(str(first + max(0, count - 1)))])
+    if width > 4:
+        raise ReviewArtifactError("cannot allocate canonical task IDs beyond T-9999")
+    return tuple(f"T-{number:0{width}d}" for number in range(first, first + count))
 
 
 def _staged_regular_file(root: Path, name: str) -> Path:
@@ -490,17 +622,35 @@ def _staged_regular_file(root: Path, name: str) -> Path:
     return path
 
 
-def _task_row_ids(markdown: str) -> list[str]:
-    """Read numeric top-level task rows, including legacy short numeric IDs."""
-    task_ids: list[str] = []
-    in_fence = False
-    for line in markdown.splitlines():
-        if line.startswith("```"):
-            in_fence = not in_fence
+def _validate_append_payload(payload: bytes, task_ids: Sequence[str], review_ids: Sequence[str]) -> None:
+    """Require the canonical rows and title detail blocks consumed by Phase 1."""
+    try:
+        markdown = payload.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as exc:
+        raise ReviewArtifactError("tasks append is not valid UTF-8") from exc
+    rows = parse_task_rows(markdown)
+    parsed_ids = [row.task_id for row in rows]
+    if parsed_ids != list(task_ids) or len(set(parsed_ids)) != len(parsed_ids):
+        raise ReviewArtifactError("tasks append must contain exactly the canonical manifest task rows")
+
+    lines = markdown.splitlines()
+    titles: list[str] = []
+    row_positions = [index for index, line in enumerate(lines) if line.startswith("- [")]
+    if len(row_positions) != len(rows):
+        raise ReviewArtifactError("tasks append contains malformed task text")
+    allowed = set(row_positions)
+    for row_index, start in enumerate(row_positions):
+        stop = row_positions[row_index + 1] if row_index + 1 < len(row_positions) else len(lines)
+        details = [line for line in lines[start + 1 : stop] if line]
+        if len(details) != 1 or (match := _TITLE_RE.fullmatch(details[0])) is None:
+            raise ReviewArtifactError("tasks append requires exactly one review title detail per task")
+        titles.append(match.group(1))
+    if titles != list(review_ids):
+        raise ReviewArtifactError("tasks append review labels do not match the manifest")
+    for index, line in enumerate(lines):
+        if not line or index in allowed or _TITLE_RE.fullmatch(line) or _SECTION_RE.fullmatch(line):
             continue
-        if not in_fence and (match := _TASK_ROW_RE.match(line.rstrip())) is not None:
-            task_ids.append(match.group(1))
-    return task_ids
+        raise ReviewArtifactError("tasks append contains output outside canonical review task blocks")
 
 
 def _is_safe_relative_name(name: str) -> bool:
@@ -515,12 +665,87 @@ def _is_regular_file(path: Path) -> bool:
         return False
 
 
-def _lock_pid(path: Path) -> int | None:
+def _open_review_lock(path: Path) -> tuple[int, bool]:
+    flags = os.O_RDWR | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
     try:
-        for line in path.read_text(encoding="utf-8").splitlines():
+        return os.open(path, flags, 0o600), True
+    except FileExistsError:
+        flags = os.O_RDWR
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        return os.open(path, flags), False
+
+
+def _fd_identity(fd: int) -> tuple[int, int]:
+    metadata = os.fstat(fd)
+    return metadata.st_dev, metadata.st_ino
+
+
+def _path_has_identity(path: Path, identity: tuple[int, int]) -> bool:
+    try:
+        metadata = path.stat()
+    except OSError:
+        return False
+    return (metadata.st_dev, metadata.st_ino) == identity
+
+
+def _read_fd_bytes(fd: int) -> bytes:
+    os.lseek(fd, 0, os.SEEK_SET)
+    chunks: list[bytes] = []
+    while True:
+        chunk = os.read(fd, 65536)
+        if not chunk:
+            return b"".join(chunks)
+        chunks.append(chunk)
+
+
+def _write_fd_bytes(fd: int, content: bytes) -> None:
+    os.lseek(fd, 0, os.SEEK_SET)
+    os.ftruncate(fd, 0)
+    view = memoryview(content)
+    while view:
+        written = os.write(fd, view)
+        view = view[written:]
+    os.fsync(fd)
+
+
+def _lock_payload(strategy: str, token: str) -> bytes:
+    return _render_lock_metadata(
+        {
+            "pid": str(os.getpid()),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "strategy": strategy,
+            "token": token,
+            "released": "false",
+        }
+    )
+
+
+def _render_lock_metadata(metadata: dict[str, str]) -> bytes:
+    return "".join(f"{name}={metadata[name]}\n" for name in ("pid", "created_at", "strategy", "token", "released")).encode("utf-8")
+
+
+def _parse_lock_metadata(content: bytes) -> dict[str, str] | None:
+    try:
+        values = dict(line.split("=", 1) for line in content.decode("utf-8").splitlines() if "=" in line)
+        if set(values) != _LOCK_FIELDS or values["released"] not in {"true", "false"}:
+            return None
+        int(values["pid"])
+        if not values["strategy"] or not values["token"]:
+            return None
+        return values
+    except (UnicodeDecodeError, ValueError):
+        return None
+
+
+def _lock_pid_from_bytes(content: bytes) -> int | None:
+    try:
+        for line in content.decode("utf-8").splitlines():
             if line.startswith("pid="):
                 return int(line.removeprefix("pid="))
-    except (OSError, ValueError, UnicodeDecodeError):
+    except (ValueError, UnicodeDecodeError):
         return None
     return None
 
