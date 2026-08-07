@@ -14,6 +14,29 @@ import pytest
 from harness.state import InvalidTransitionError, StateStore
 
 
+@pytest.mark.parametrize("path", [
+    ["running", "verified", "finalizing", "converged"],
+    ["running", "verified", "validating", "finalizing", "converged"],
+    ["running", "verified", "reviewing", "finalizing", "converged"],
+    ["running", "verified", "validating", "reviewing", "finalizing", "converged"],
+])
+def test_delivery_state_paths(tmp_path: Path, path: list[str]) -> None:
+    store = StateStore(tmp_path, "042", "default")
+    store.initialize("run-1", "semi")
+    for status in path:
+        store.transition(status)
+    assert store.read()["status"] == "converged"
+
+
+def test_converged_cannot_reopen(tmp_path: Path) -> None:
+    store = StateStore(tmp_path, "042", "default")
+    store.initialize("run-1", "semi")
+    for status in ("running", "verified", "finalizing", "converged"):
+        store.transition(status)
+    with pytest.raises(InvalidTransitionError):
+        store.transition("blocked", updates={"blocked_phase": "review"})
+
+
 @pytest.mark.unit
 class TestValidTransitions:
     """Test all valid state transitions per data-model."""
@@ -32,6 +55,8 @@ class TestValidTransitions:
         store = self._make_store(tmp_path)
         store.initialize("run-1", "semi")
         store.transition("running")
+        store.transition("verified")
+        store.transition("finalizing")
         data = store.transition("converged")
         assert data["status"] == "converged"
 
@@ -39,7 +64,7 @@ class TestValidTransitions:
         store = self._make_store(tmp_path)
         store.initialize("run-1", "semi")
         store.transition("running")
-        data = store.transition("blocked")
+        data = store.transition("blocked", updates={"blocked_phase": "implementation"})
         assert data["status"] == "blocked"
 
     def test_running_to_failed(self, tmp_path: Path) -> None:
@@ -53,7 +78,9 @@ class TestValidTransitions:
         store = self._make_store(tmp_path)
         store.initialize("run-1", "semi")
         store.transition("running")
-        data = store.transition("interrupted")
+        data = store.transition(
+            "interrupted", updates={"interrupted_phase": "implementation"}
+        )
         assert data["status"] == "interrupted"
 
     def test_running_to_cancelled(self, tmp_path: Path) -> None:
@@ -67,7 +94,7 @@ class TestValidTransitions:
         store = self._make_store(tmp_path)
         store.initialize("run-1", "semi")
         store.transition("running")
-        store.transition("blocked")
+        store.transition("blocked", updates={"blocked_phase": "implementation"})
         data = store.transition("running")
         assert data["status"] == "running"
 
@@ -75,7 +102,9 @@ class TestValidTransitions:
         store = self._make_store(tmp_path)
         store.initialize("run-1", "semi")
         store.transition("running")
-        store.transition("interrupted")
+        store.transition(
+            "interrupted", updates={"interrupted_phase": "implementation"}
+        )
         data = store.transition("running")
         assert data["status"] == "running"
 
@@ -104,6 +133,8 @@ class TestInvalidTransitions:
         store = self._make_store(tmp_path)
         store.initialize("run-1", "semi")
         store.transition("running")
+        store.transition("verified")
+        store.transition("finalizing")
         store.transition("converged")
         with pytest.raises(InvalidTransitionError):
             store.transition("running")

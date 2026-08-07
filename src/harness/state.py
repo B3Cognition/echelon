@@ -24,13 +24,26 @@ logger = logging.getLogger(__name__)
 
 # --- Valid state transitions per data-model ---
 
+DELIVERY_STATE_VERSION = 2
+
+DELIVERY_PHASES = {
+    "implementation",
+    "visual",
+    "review",
+    "finalization",
+}
+
 VALID_TRANSITIONS = {
     "initialized": {"running"},
-    "running": {"converged", "blocked", "failed", "interrupted", "cancelled_by_coordinator"},
-    "blocked": {"running"},
+    "running": {"verified", "blocked", "interrupted", "failed", "cancelled_by_coordinator"},
+    "verified": {"validating", "reviewing", "finalizing", "blocked"},
+    "validating": {"running", "reviewing", "finalizing", "blocked", "interrupted", "failed", "cancelled_by_coordinator"},
+    "reviewing": {"running", "finalizing", "blocked", "interrupted", "failed", "cancelled_by_coordinator"},
+    "finalizing": {"converged", "blocked"},
+    "blocked": {"running", "validating", "reviewing", "finalizing"},
+    "interrupted": {"running", "validating", "reviewing", "finalizing"},
     "converged": set(),
     "failed": set(),
-    "interrupted": {"running"},
     "cancelled_by_coordinator": set(),
 }
 
@@ -51,6 +64,15 @@ class MonotonicViolationError(Exception):
 
 class LockContentionError(Exception):
     """Raised when another process holds the lock."""
+
+
+def is_process_alive(pid: int) -> bool:
+    """Return whether *pid* currently identifies a live local process."""
+    try:
+        os.kill(pid, 0)
+        return True
+    except (OSError, ProcessLookupError):
+        return False
 
 
 class StateStore:
@@ -95,7 +117,7 @@ class StateStore:
                 parts = lock_data.strip().split("\n")
                 if len(parts) >= 1:
                     pid = int(parts[0].split("=")[1])
-                    if self._is_pid_alive(pid):
+                    if is_process_alive(pid):
                         raise LockContentionError(
                             f"Lock held by PID {pid}. "
                             f"Lock file: {self.lock_file}"
@@ -123,12 +145,8 @@ class StateStore:
 
     @staticmethod
     def _is_pid_alive(pid: int) -> bool:
-        """Check if a process with the given PID is alive."""
-        try:
-            os.kill(pid, 0)
-            return True
-        except (OSError, ProcessLookupError):
-            return False
+        """Backward-compatible alias for the shared liveness helper."""
+        return is_process_alive(pid)
 
     # --- Atomic I/O ---
 
@@ -204,6 +222,8 @@ class StateStore:
                     f"Valid transitions from {old_status}: {valid_next}"
                 )
 
+        self._validate_phase_checkpoint(old_data, new_data)
+
         # Mode immutability (FR-MODE-002)
         old_mode = old_data.get("mode")
         new_mode = new_data.get("mode")
@@ -248,6 +268,45 @@ class StateStore:
                     f"{old_val} -> {new_val}"
                 )
 
+    @staticmethod
+    def _validate_phase_checkpoint(
+        old_data: Dict[str, Any], new_data: Dict[str, Any]
+    ) -> None:
+        """Validate phase-qualified pause checkpoints and their exact resumes."""
+        status = new_data.get("status")
+        if status == "blocked":
+            phase = new_data.get("blocked_phase")
+            if phase not in DELIVERY_PHASES:
+                raise InvalidTransitionError(
+                    "blocked_phase must be implementation, visual, review, or "
+                    "finalization when status is blocked"
+                )
+        elif status == "interrupted":
+            phase = new_data.get("interrupted_phase")
+            if phase not in DELIVERY_PHASES:
+                raise InvalidTransitionError(
+                    "interrupted_phase must be implementation, visual, review, "
+                    "or finalization when status is interrupted"
+                )
+
+        old_status = old_data.get("status")
+        if old_status not in {"blocked", "interrupted"} or status == old_status:
+            return
+
+        checkpoint_field = f"{old_status}_phase"
+        phase = old_data.get(checkpoint_field)
+        expected_status = {
+            "implementation": "running",
+            "visual": "validating",
+            "review": "reviewing",
+            "finalization": "finalizing",
+        }.get(phase)
+        if expected_status is None or status != expected_status:
+            raise InvalidTransitionError(
+                f"{old_status} phase {phase!r} must resume to {expected_status!r}, "
+                f"not {status!r}"
+            )
+
     # --- Convenience methods ---
 
     def initialize(
@@ -270,6 +329,7 @@ class StateStore:
         implementation_target: str | None = None,
         declared_targets: list[str] | None = None,
         target_task_ids: list[str] | None = None,
+        enabled_phases: list[str] | None = None,
     ) -> Dict[str, Any]:
         """Create initial state.
 
@@ -299,6 +359,12 @@ class StateStore:
             "strategy_id": self.strategy_id,
             "run_id": run_id,
             "status": "initialized",
+            "delivery_state_version": DELIVERY_STATE_VERSION,
+            "enabled_phases": list(enabled_phases or ["implementation", "finalization"]),
+            "last_completed_phase": None,
+            "blocked_phase": None,
+            "interrupted_phase": None,
+            "verified_commit": None,
             "mode": mode,
             "outer_iter": 0,
             "max_outer": max_outer,
@@ -332,9 +398,17 @@ class StateStore:
         self.write(data)
         return data
 
-    def transition(self, new_status: str) -> Dict[str, Any]:
-        """Transition to a new status."""
+    def transition(
+        self, new_status: str, *, updates: Dict[str, Any] | None = None
+    ) -> Dict[str, Any]:
+        """Atomically transition status and merge any checkpoint updates."""
         data = self.read()
         data["status"] = new_status
+        if updates:
+            data.update(updates)
+
+        previous_status = self._data.get("status") if self._data else None
+        if previous_status in {"blocked", "interrupted"} and new_status != previous_status:
+            data[f"{previous_status}_phase"] = None
         self.write(data)
         return data

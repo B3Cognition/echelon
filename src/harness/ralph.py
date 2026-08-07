@@ -4660,7 +4660,9 @@ class RalphController:
         state["tokens_used"] = tokens_used
         state["pr_url"] = pr_url
         self._state_store.write(state)
-        self._state_store.transition("blocked")
+        self._state_store.transition(
+            "blocked", updates={"blocked_phase": "implementation"}
+        )
 
         print(
             f"Paused at {boundary} boundary -- resume to continue",

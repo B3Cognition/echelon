@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from harness.state import StateStore, LockContentionError
+from harness.state import StateStore, LockContentionError, is_process_alive
 
 
 class TestLockAcquireRelease:
@@ -67,3 +67,6 @@ class TestLockAcquireRelease:
             store2.acquire_lock("run-002")
 
         store1.release_lock()
+
+    def test_process_liveness_is_shared_helper(self) -> None:
+        assert is_process_alive(os.getpid()) is True

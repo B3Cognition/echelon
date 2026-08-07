@@ -180,7 +180,9 @@ class TestBudgetBumpAutoResume:
         state["outer_iter"] = 1
         state["inner_iter"] = 0
         state_store.write(state)
-        state_store.transition("blocked")
+        state_store.transition(
+            "blocked", updates={"blocked_phase": "implementation"}
+        )
 
         # Confirm setup
         on_disk = state_store.read()
@@ -210,7 +212,9 @@ class TestBudgetBumpAutoResume:
         state["outer_iter"] = 1
         state["inner_iter"] = 0
         state_store.write(state)
-        state_store.transition("blocked")
+        state_store.transition(
+            "blocked", updates={"blocked_phase": "implementation"}
+        )
 
         # Re-invoke with a budget still less than usage — should stay blocked
         result = controller.run_loop(max_outer=3, max_inner=1, token_budget=4000)
@@ -238,7 +242,9 @@ class TestBudgetBumpAutoResume:
         state["outer_iter"] = 1
         state["inner_iter"] = 0
         state_store.write(state)
-        state_store.transition("blocked")
+        state_store.transition(
+            "blocked", updates={"blocked_phase": "implementation"}
+        )
 
         # Confirm setup
         on_disk = state_store.read()

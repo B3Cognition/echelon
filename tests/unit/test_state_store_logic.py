@@ -11,6 +11,8 @@ from pathlib import Path
 import pytest
 
 from harness.state import (
+    DELIVERY_STATE_VERSION,
+    InvalidTransitionError,
     ModeImmutableError,
     MonotonicViolationError,
     StateStore,
@@ -92,3 +94,31 @@ class TestStateStoreInvariants:
 
         assert state["target_repo"] == "rbf-opta-points"
         assert state["target_path"] == "rbf-opta-points"
+
+    def test_transition_writes_status_and_blocked_phase_together(self, tmp_path: Path) -> None:
+        store = self._make_store(tmp_path)
+        store.transition("running")
+
+        state = store.transition(
+            "blocked", updates={"blocked_phase": "review"}
+        )
+
+        assert state["status"] == "blocked"
+        assert state["blocked_phase"] == "review"
+
+    def test_blocked_transition_requires_exact_phase(self, tmp_path: Path) -> None:
+        store = self._make_store(tmp_path)
+        store.transition("running")
+
+        with pytest.raises(InvalidTransitionError, match="blocked_phase"):
+            store.transition("blocked")
+
+    def test_initializes_delivery_state_v2_checkpoint_fields(self, tmp_path: Path) -> None:
+        state = self._make_store(tmp_path).read()
+
+        assert state["delivery_state_version"] == DELIVERY_STATE_VERSION
+        assert state["enabled_phases"] == ["implementation", "finalization"]
+        assert state["last_completed_phase"] is None
+        assert state["blocked_phase"] is None
+        assert state["interrupted_phase"] is None
+        assert state["verified_commit"] is None

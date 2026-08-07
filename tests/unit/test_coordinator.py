@@ -107,6 +107,95 @@ class TestStatusAggregation:
         assert "strategies" in status
 
 
+class TestDeliveryStateMigration:
+    def test_legacy_block_without_phase_migrates_to_implementation(
+        self, tmp_path: Path
+    ) -> None:
+        coordinator = _make_coordinator(tmp_path)
+        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        legacy = store.initialize("run-1", "semi")
+        legacy.pop("delivery_state_version")
+        legacy.pop("enabled_phases")
+        legacy.pop("last_completed_phase")
+        legacy.pop("blocked_phase")
+        legacy.pop("interrupted_phase")
+        legacy.pop("verified_commit")
+        store.write(legacy)
+        store.transition("running")
+        store.transition("blocked", updates={"blocked_phase": "implementation"})
+        state = store.read()
+        state.pop("blocked_phase")
+        store.state_file.write_text(json.dumps(state), encoding="utf-8")
+
+        migrated = coordinator._migrate_delivery_state(store, llm_provider=None)
+
+        assert migrated["delivery_state_version"] == 2
+        assert migrated["blocked_phase"] == "implementation"
+        assert migrated["enabled_phases"] == ["implementation", "finalization"]
+
+    def test_terminal_legacy_convergence_is_not_migrated(self, tmp_path: Path) -> None:
+        coordinator = _make_coordinator(tmp_path)
+        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store.initialize("run-1", "semi")
+        store.transition("running")
+        store.transition("verified")
+        store.transition("finalizing")
+        store.transition("converged")
+        state = store.read()
+        state.pop("delivery_state_version")
+        store.state_file.write_text(json.dumps(state), encoding="utf-8")
+
+        assert coordinator._migrate_delivery_state(store, llm_provider=None) == state
+
+    def test_phase_snapshot_does_not_follow_later_config_changes(
+        self, tmp_path: Path
+    ) -> None:
+        coordinator = _make_coordinator(tmp_path)
+        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store.initialize(
+            "run-1", "semi", enabled_phases=coordinator._enabled_phases(None)
+        )
+        coordinator._config.visual_tests.enabled = True
+        coordinator._config.pr_host = "github"
+        coordinator._config.review_loop.enabled = True
+
+        assert coordinator._resume_phase(store.read()) == "implementation"
+        assert store.read()["enabled_phases"] == ["implementation", "finalization"]
+
+    def test_resume_visual_checkpoint_skips_implementation_phase(
+        self, tmp_path: Path
+    ) -> None:
+        from harness.config import VisualTestsConfig
+        from harness.ralph import RalphController
+        from harness.visual_ralph import VisualRalphController
+
+        coordinator = _make_coordinator(tmp_path)
+        coordinator._config.visual_tests = VisualTestsConfig(enabled=True)
+        coordinator._gitops.get_latest_worktree.return_value = str(tmp_path)
+        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store.initialize(
+            "run-1",
+            "semi",
+            enabled_phases=["implementation", "visual", "finalization"],
+        )
+        store.transition("running")
+        store.transition("verified", updates={"last_completed_phase": "implementation"})
+        store.transition("validating")
+
+        with patch.object(RalphController, "run_loop") as implementation, patch.object(
+            VisualRalphController,
+            "run_loop",
+            return_value=VisualResult("passed", "converged", 1, 0, None),
+        ) as visual:
+            result = coordinator.start(
+                RunIntent(spec_id="spec-001", max_outer=1, max_inner=1)
+            )[0]
+
+        implementation.assert_not_called()
+        visual.assert_called_once()
+        assert result.status == "converged"
+
+
 @pytest.mark.unit
 class TestCompareResults:
     """Test results comparison."""
@@ -1024,7 +1113,12 @@ class TestSmartResumeDetection:
         data["outer_iter"] = 2
         data["tokens_used"] = 123
         store.write(data)
-        store.transition(existing_status)
+        checkpoint_updates = (
+            {"interrupted_phase": "implementation"}
+            if existing_status == "interrupted"
+            else {"blocked_phase": "implementation"}
+        )
+        store.transition(existing_status, updates=checkpoint_updates)
 
         config = HarnessConfig(
             target_repo="git@example.com:example/api.git",
@@ -1101,5 +1195,5 @@ class TestSmartResumeDetection:
             results = coord.start(intent)
 
         assert results[0].status == "converged"
-        assert seen["status_at_controller"] == "blocked"
+        assert seen["status_at_controller"] == "running"
         assert seen["outer_iter_at_controller"] == 1

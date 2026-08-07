@@ -52,7 +52,7 @@ from harness.stacks import (
 )
 from harness.stacks.paths import find_stack_extension_root
 from harness.visual_ralph import VisualRalphController
-from harness.state import StateStore
+from harness.state import DELIVERY_STATE_VERSION, StateStore
 from harness.strategy_loader import StrategySpec, load_strategies
 
 logger = logging.getLogger(__name__)
@@ -301,6 +301,65 @@ class StrategyCoordinator:
 
     # === Private methods ===
 
+    def _enabled_phases(self, llm_provider: AICodingCliProvider | None) -> list[str]:
+        """Snapshot the delivery phases selected for a new run."""
+        phases = ["implementation"]
+        if self._config.visual_tests.enabled and llm_provider is None:
+            phases.append("visual")
+        if self._config.review_loop.enabled and self._config.pr_host != "none":
+            phases.append("review")
+        phases.append("finalization")
+        return phases
+
+    def _migrate_delivery_state(
+        self, state_store: StateStore, llm_provider: AICodingCliProvider | None
+    ) -> Dict[str, Any]:
+        """Upgrade a nonterminal v1 state once without reopening terminal work."""
+        state = state_store.read()
+        if not state or state.get("delivery_state_version") == DELIVERY_STATE_VERSION:
+            return state
+        if state.get("status") in {"converged", "failed", "cancelled_by_coordinator"}:
+            return state
+
+        state["delivery_state_version"] = DELIVERY_STATE_VERSION
+        state.setdefault("enabled_phases", self._enabled_phases(llm_provider))
+        state.setdefault("last_completed_phase", None)
+        state.setdefault("verified_commit", None)
+        if state.get("status") == "blocked":
+            state["blocked_phase"] = state.get("blocked_phase") or "implementation"
+        else:
+            state.setdefault("blocked_phase", None)
+        if state.get("status") == "interrupted":
+            state["interrupted_phase"] = (
+                state.get("interrupted_phase") or "implementation"
+            )
+        else:
+            state.setdefault("interrupted_phase", None)
+        state_store.write(state)
+        return state
+
+    @staticmethod
+    def _resume_phase(state: Dict[str, Any]) -> str:
+        """Return the persisted checkpoint phase, never the live configuration."""
+        status = state.get("status")
+        if status in {"blocked", "interrupted"}:
+            return str(state.get(f"{status}_phase") or "implementation")
+        if status == "validating":
+            return "visual"
+        if status == "reviewing":
+            return "review"
+        if status == "finalizing":
+            return "finalization"
+        if status == "verified":
+            completed = state.get("last_completed_phase")
+            phases = state.get("enabled_phases") or ["implementation", "finalization"]
+            if completed in phases:
+                completed_index = phases.index(completed)
+                if completed_index + 1 < len(phases):
+                    return str(phases[completed_index + 1])
+            return "finalization"
+        return "implementation"
+
     def _run_strategy(
         self,
         intent: RunIntent,
@@ -351,10 +410,19 @@ class StrategyCoordinator:
 
         try:
             existing = state_store.read()
+            llm_provider = (
+                AICodingCliProvider(self._config)
+                if self._config.llm.enabled
+                else None
+            )
+            existing = self._migrate_delivery_state(state_store, llm_provider)
             existing_status = existing.get("status")
             should_resume_running = (
                 not intent.reset
-                and existing_status in ("running", "interrupted")
+                and existing_status in {
+                    "running", "interrupted", "verified", "validating",
+                    "reviewing", "finalizing",
+                }
             )
             should_resume_blocked = (
                 not intent.reset
@@ -409,13 +477,28 @@ class StrategyCoordinator:
                     existing_status,
                     existing.get("outer_iter", 0),
                 )
-                state_store.transition("running")
+                resume_phase = self._resume_phase(existing)
+                resume_status = {
+                    "implementation": "running",
+                    "visual": "validating",
+                    "review": "reviewing",
+                    "finalization": "finalizing",
+                }[resume_phase]
+                if existing_status != resume_status:
+                    state_store.transition(resume_status)
             elif should_resume_blocked:
                 logger.info(
                     "[%s/%s] Resuming from blocked state (outer=%s)",
                     intent.spec_id, strategy_id,
                     existing.get("outer_iter", 0),
                 )
+                resume_phase = self._resume_phase(existing)
+                state_store.transition({
+                    "implementation": "running",
+                    "visual": "validating",
+                    "review": "reviewing",
+                    "finalization": "finalizing",
+                }[resume_phase])
             else:
                 state_store.initialize(
                     run_id=run_id,
@@ -436,6 +519,7 @@ class StrategyCoordinator:
                     spec_dir=str(spec_dir) if spec_dir is not None else None,
                     spec_file=str(spec_file) if spec_file is not None else None,
                     tasks_file=str(tasks_file) if tasks_file is not None else None,
+                    enabled_phases=self._enabled_phases(llm_provider),
                 )
                 state_store.transition("running")
 
@@ -450,12 +534,6 @@ class StrategyCoordinator:
                 arguments += f"\n\n{intent.task_description}"
             if strategy_context:
                 arguments += f"\n\n{strategy_context}"
-
-            llm_provider = (
-                AICodingCliProvider(self._config)
-                if self._config.llm.enabled
-                else None
-            )
 
             if llm_provider is not None:
                 build_prompt = resolve_llm_prompt(
@@ -480,16 +558,40 @@ class StrategyCoordinator:
                 build_id=self._build_id,
             )
 
-            implementation_result = controller.run_loop(
-                max_outer=intent.max_outer,
-                max_inner=intent.max_inner,
-                token_budget=budget,
-                build_command=spec.build_command,
-                strategy_context=strategy_context,
-                build_prompt=build_prompt,
+            current_phase = (
+                self._resume_phase(existing)
+                if should_resume_running or should_resume_blocked
+                else "implementation"
             )
+            if current_phase == "implementation":
+                implementation_result = controller.run_loop(
+                    max_outer=intent.max_outer,
+                    max_inner=intent.max_inner,
+                    token_budget=budget,
+                    build_command=spec.build_command,
+                    strategy_context=strategy_context,
+                    build_prompt=build_prompt,
+                )
+            else:
+                resumed = state_store.read()
+                implementation_result = ImplementationResult(
+                    status="verified",
+                    termination_reason=str(
+                        resumed.get("termination_reason") or "converged"
+                    ),
+                    outer_iterations=int(resumed.get("outer_iter") or 0),
+                    inner_iterations=int(resumed.get("inner_iter") or 0),
+                    pr_url=resumed.get("pr_url"),
+                    tokens_used=int(resumed.get("tokens_used") or 0),
+                    final_verify=None,
+                    branch=resumed.get("branch") or resumed.get("branch_name"),
+                )
             implementation_outer_iterations = implementation_result.outer_iterations
             implementation_tokens = implementation_result.tokens_used
+            if implementation_result.status == "verified" and current_phase == "implementation":
+                state_store.transition(
+                    "verified", updates={"last_completed_phase": "implementation"}
+                )
 
             visual_result: VisualResult | None = None
             visual_iterations = 0
@@ -506,7 +608,7 @@ class StrategyCoordinator:
                     strategy_id=strategy_id,
                     base_dir=self._base_dir,
                 )
-                if self._config.visual_tests.enabled and llm_provider is None
+                if "visual" in state_store.read().get("enabled_phases", [])
                 else None
             )
 
@@ -519,6 +621,8 @@ class StrategyCoordinator:
                 visual_attempts = 0
                 last_visual_verify = None
                 while implementation_result.status == "verified":
+                    if state_store.read().get("status") == "verified":
+                        state_store.transition("validating")
                     if visual_attempts >= self._config.visual_tests.max_iterations:
                         return VisualResult(
                             status="blocked",
@@ -540,6 +644,7 @@ class StrategyCoordinator:
                     visual_tokens += current_visual_result.tokens_used
                     if current_visual_result.status != "fix_applied":
                         return current_visual_result
+                    state_store.transition("running")
                     implementation_result = controller.run_loop(
                         max_outer=intent.max_outer,
                         max_inner=intent.max_inner,
@@ -550,10 +655,22 @@ class StrategyCoordinator:
                     )
                     implementation_outer_iterations += implementation_result.outer_iterations
                     implementation_tokens += implementation_result.tokens_used
+                    if implementation_result.status == "verified":
+                        state_store.transition(
+                            "verified",
+                            updates={"last_completed_phase": "implementation"},
+                        )
                 return None
 
-            visual_result = run_visual_phase()
+            visual_result = (
+                run_visual_phase()
+                if current_phase in {"implementation", "visual"}
+                else None
+            )
             if visual_result is not None and visual_result.status == "blocked":
+                state_store.transition(
+                    "blocked", updates={"blocked_phase": "visual"}
+                )
                 return DeliveryResult(
                     status="blocked",
                     termination_reason=visual_result.termination_reason,
@@ -574,9 +691,22 @@ class StrategyCoordinator:
             # Phase 1 → Phase 3 → Phase 1 re-entry loop.
             if (
                 implementation_result.status == "verified"
-                and self._config.review_loop.enabled
-                and self._config.pr_host != "none"
+                and "review" in state_store.read().get("enabled_phases", [])
+                and current_phase != "finalization"
             ):
+                current_state = state_store.read()
+                if current_state.get("status") in {"verified", "validating"}:
+                    state_store.transition(
+                        "reviewing",
+                        updates={
+                            "last_completed_phase": (
+                                "visual"
+                                if visual_result is not None
+                                and visual_result.status == "passed"
+                                else "implementation"
+                            )
+                        },
+                    )
                 pr_url = implementation_result.pr_url
                 if not pr_url:
                     logger.warning(
@@ -605,6 +735,8 @@ class StrategyCoordinator:
                         nonlocal implementation_outer_iterations, implementation_tokens
                         nonlocal review_iterations, review_tokens
 
+                        if state_store.read().get("status") != "reviewing":
+                            state_store.transition("reviewing")
                         worktree_path = self._gitops.get_latest_worktree(
                             intent.spec_id, strategy_id, build_id=self._build_id,
                         )
@@ -630,6 +762,7 @@ class StrategyCoordinator:
                             intent.spec_id,
                             spec_dir=spec_dir,
                         )
+                        state_store.transition("running")
                         implementation_result = controller.run_loop(
                             max_outer=intent.max_outer,
                             max_inner=intent.max_inner,
@@ -642,6 +775,11 @@ class StrategyCoordinator:
                             implementation_result.outer_iterations
                         )
                         implementation_tokens += implementation_result.tokens_used
+                        if implementation_result.status == "verified":
+                            state_store.transition(
+                                "verified",
+                                updates={"last_completed_phase": "implementation"},
+                            )
                         visual_result = run_visual_phase()
                         return RepairAttempt(
                             output={
@@ -743,11 +881,14 @@ class StrategyCoordinator:
                 termination_reason = visual_result.termination_reason
                 blocked_phase = "visual"
             elif implementation_result.status != "verified":
-                delivery_status = (
-                    "failed"
-                    if implementation_result.termination_reason == "state_corruption"
-                    else "blocked"
-                )
+                if implementation_result.status == "interrupted":
+                    delivery_status = "interrupted"
+                elif implementation_result.status == "cancelled":
+                    delivery_status = "cancelled"
+                elif implementation_result.termination_reason == "state_corruption":
+                    delivery_status = "failed"
+                else:
+                    delivery_status = "blocked"
                 termination_reason = implementation_result.termination_reason
                 blocked_phase = (
                     "implementation" if delivery_status == "blocked" else None
@@ -760,6 +901,29 @@ class StrategyCoordinator:
                 delivery_status = "converged"
                 termination_reason = "converged"
                 blocked_phase = None
+            if delivery_status == "converged":
+                current_state = state_store.read()
+                if current_state.get("status") != "finalizing":
+                    state_store.transition(
+                        "finalizing",
+                        updates={"last_completed_phase": "review"
+                                 if review_result is not None else (
+                                     "visual" if visual_result is not None else "implementation"
+                                 )},
+                    )
+                state_store.transition("converged")
+            elif delivery_status == "blocked":
+                state_store.transition(
+                    "blocked", updates={"blocked_phase": blocked_phase}
+                )
+            elif delivery_status == "failed":
+                state_store.transition("failed")
+            elif delivery_status == "interrupted":
+                state_store.transition(
+                    "interrupted", updates={"interrupted_phase": "implementation"}
+                )
+            elif delivery_status == "cancelled":
+                state_store.transition("cancelled_by_coordinator")
             return DeliveryResult(
                 status=delivery_status,
                 termination_reason=termination_reason,
