@@ -830,6 +830,58 @@ def test_visual_fix_reentry_stops_at_configured_visual_cap(tmp_path):
     assert phase1.call_count == 3  # initial verification plus one per applied fix
 
 
+def test_visual_fix_reentry_persists_implementation_provenance_block(tmp_path):
+    """A repaired visual failure cannot continue without a fresh verified checkpoint."""
+    from harness.config import VisualTestsConfig
+    from harness.visual_ralph import VisualRalphController
+
+    coordinator = _make_coordinator(tmp_path)
+    coordinator._config.visual_tests = VisualTestsConfig(enabled=True, max_iterations=2)
+    coordinator._gitops.get_latest_worktree.side_effect = [str(tmp_path), None]
+    verified = ImplementationResult("verified", "verified", 1, 0, None, 1, None)
+    fix_applied = VisualResult("fix_applied", "fix_applied", 1, 1, None)
+
+    with patch.object(RalphController, "run_loop", side_effect=[verified, verified]) as implementation, \
+         patch.object(VisualRalphController, "run_loop", return_value=fix_applied) as visual, \
+         patch.object(coordinator, "_finalize_delivery") as finalization:
+        result = coordinator.start(RunIntent(spec_id="spec-001", max_outer=1, max_inner=1))[0]
+
+    state = StateStore(tmp_path / "runs" / "state", "spec-001", "default").read()
+    assert result.status == "blocked"
+    assert result.blocked_phase == "implementation"
+    assert result.termination_reason == "verified_provenance_unavailable"
+    assert state["status"] == "blocked"
+    assert state["blocked_phase"] == "implementation"
+    assert state["termination_reason"] == "verified_provenance_unavailable"
+    assert implementation.call_count == 2
+    assert visual.call_count == 1
+    finalization.assert_not_called()
+
+
+def test_checkpoint_verified_result_returns_durable_implementation_block(tmp_path):
+    """The shared verified-checkpoint gate is usable by every Phase 1 entry path."""
+    coordinator = _make_coordinator(tmp_path)
+    coordinator._gitops.get_latest_worktree.return_value = None
+    store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+    store.initialize("run-1", "semi")
+    store.transition("running")
+    verified = ImplementationResult("verified", "verified", 2, 1, None, 7, None)
+
+    result = coordinator._checkpoint_verified_result(
+        store,
+        spec_id="spec-001",
+        strategy_id="default",
+        implementation=verified,
+        outer_iterations=2,
+        tokens_used=7,
+    )
+
+    assert result is not None
+    assert result.status == "blocked"
+    assert result.blocked_phase == "implementation"
+    assert store.read()["status"] == "blocked"
+
+
 def test_coordinator_skips_visual_loop_when_phase1_fails(tmp_path):
     """Visual loop must NOT be triggered when Phase 1 fails, even if visual_tests.enabled."""
     from harness.config import VisualTestsConfig

@@ -463,6 +463,34 @@ class StrategyCoordinator:
             "verified_commit": verified_commit,
         }
 
+    def _checkpoint_verified_result(
+        self,
+        state_store: StateStore,
+        *,
+        spec_id: str,
+        strategy_id: str,
+        implementation: ImplementationResult,
+        outer_iterations: int,
+        tokens_used: int,
+    ) -> DeliveryResult | None:
+        """Persist a verified checkpoint or return its durable implementation block."""
+        checkpoint_updates = self._verified_checkpoint_updates(
+            spec_id=spec_id,
+            strategy_id=strategy_id,
+            implementation=implementation,
+        )
+        if checkpoint_updates is None:
+            return self._persist_phase_block(
+                state_store,
+                phase="implementation",
+                reason="verified_provenance_unavailable",
+                implementation=implementation,
+                outer_iterations=outer_iterations,
+                tokens_used=tokens_used,
+            )
+        state_store.transition("verified", updates=checkpoint_updates)
+        return None
+
     def _persist_phase_block(
         self,
         state_store: StateStore,
@@ -877,26 +905,19 @@ class StrategyCoordinator:
             implementation_outer_iterations = implementation_result.outer_iterations
             implementation_tokens = implementation_result.tokens_used
             if implementation_result.status == "verified" and current_phase == "implementation":
-                checkpoint_updates = self._verified_checkpoint_updates(
+                checkpoint_block = self._checkpoint_verified_result(
+                    state_store,
                     spec_id=intent.spec_id,
                     strategy_id=strategy_id,
                     implementation=implementation_result,
+                    outer_iterations=implementation_outer_iterations,
+                    tokens_used=implementation_tokens,
                 )
-                if checkpoint_updates is None:
-                    return self._persist_phase_block(
-                        state_store,
-                        phase="implementation",
-                        reason="verified_provenance_unavailable",
-                        implementation=implementation_result,
-                        outer_iterations=implementation_outer_iterations,
-                        tokens_used=implementation_tokens,
-                    )
-                state_store.transition(
-                    "verified",
-                    updates=checkpoint_updates,
-                )
+                if checkpoint_block is not None:
+                    return checkpoint_block
 
             visual_result: VisualResult | None = None
+            visual_reentry_block: DeliveryResult | None = None
             visual_iterations = 0
             visual_tokens = 0
             # Phase 2: visual loop — only when Phase 1 verified via Docker sandbox.
@@ -931,6 +952,7 @@ class StrategyCoordinator:
                 nonlocal implementation_result
                 nonlocal implementation_outer_iterations, implementation_tokens
                 nonlocal visual_iterations, visual_tokens
+                nonlocal visual_reentry_block
                 if visual_controller is None:
                     return None
                 visual_attempts = 0
@@ -977,27 +999,16 @@ class StrategyCoordinator:
                     implementation_outer_iterations += implementation_result.outer_iterations
                     implementation_tokens += implementation_result.tokens_used
                     if implementation_result.status == "verified":
-                        checkpoint_updates = self._verified_checkpoint_updates(
+                        visual_reentry_block = self._checkpoint_verified_result(
+                            state_store,
                             spec_id=intent.spec_id,
                             strategy_id=strategy_id,
                             implementation=implementation_result,
+                            outer_iterations=implementation_outer_iterations,
+                            tokens_used=implementation_tokens,
                         )
-                        if checkpoint_updates is None:
-                            implementation_result = ImplementationResult(
-                                status="blocked",
-                                termination_reason="verified_provenance_unavailable",
-                                outer_iterations=implementation_result.outer_iterations,
-                                inner_iterations=implementation_result.inner_iterations,
-                                pr_url=implementation_result.pr_url,
-                                tokens_used=implementation_result.tokens_used,
-                                final_verify=implementation_result.final_verify,
-                                branch=implementation_result.branch,
-                            )
+                        if visual_reentry_block is not None:
                             return None
-                        state_store.transition(
-                            "verified",
-                            updates=checkpoint_updates,
-                        )
                 return None
 
             visual_result = (
@@ -1005,6 +1016,8 @@ class StrategyCoordinator:
                 if current_phase in {"implementation", "visual"}
                 else None
             )
+            if visual_reentry_block is not None:
+                return visual_reentry_block
             if visual_result is not None and visual_result.status == "blocked":
                 return self._persist_phase_block(
                     state_store,
