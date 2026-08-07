@@ -79,7 +79,8 @@ class TestCoordinatorReviewReentry:
         monkeypatch.setenv("ECHELON_DECLARED_TARGETS", "ambient-target")
         monkeypatch.setenv("ECHELON_IMPLEMENTATION_TARGET", "ambient-target")
         coord = StrategyCoordinator(
-            provider=MagicMock(), gitops=MagicMock(), config=config, base_dir=str(tmp_path)
+            provider=MagicMock(), gitops=MagicMock(), config=config,
+            base_dir=str(tmp_path), orchestration_root=tmp_path,
         )
         captured: dict[str, object] = {}
         terminal = DeliveryResult(
@@ -102,6 +103,8 @@ class TestCoordinatorReviewReentry:
             captured["declared_targets"] = finalize.call_args.kwargs["declared_targets"]
 
         assert captured["declared_targets"] == ["persisted-target"]
+        assert store.read()["implementation_target"] == "persisted-target"
+        assert store.read()["declared_targets"] == ["persisted-target"]
         ralph.return_value.run_loop.assert_not_called()
 
     def test_build_reentry_prompt_injects_only_published_review_fix_content(self, tmp_path):

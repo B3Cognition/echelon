@@ -801,7 +801,10 @@ class StrategyCoordinator:
             )
             if should_resume_running or should_resume_blocked or pending_effects_only_resume:
                 persisted_target = existing.get("implementation_target")
-                if not implementation_target and isinstance(persisted_target, str):
+                if (
+                    (not implementation_target or pending_effects_only_resume)
+                    and isinstance(persisted_target, str)
+                ):
                     implementation_target = persisted_target.strip() or None
                 persisted_declared = existing.get("declared_targets")
                 if isinstance(persisted_declared, list):
