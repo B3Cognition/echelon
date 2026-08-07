@@ -28,7 +28,6 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Iterable, List, Optional
 
-from echelon.artifact_index import write_artifact_index
 from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_message
 from harness.build_result import BUILD_STATUS_FILENAME, ECHELON_RESULT_FILENAME
 from harness.config import HarnessConfig
@@ -47,10 +46,9 @@ from harness.llm_build_runner import LlmBuildRunner
 from harness.delivery_results import ImplementationResult
 from harness.mode import ModeController
 from harness.provider import SandboxHandle, SandboxProvider, SandboxSpec
-from harness.run_history import append_implementation_run
 from harness.phase_a_readiness import validate_phase_a_readiness
 from harness.secret_scan import scan_git_staged
-from harness.spec_frontmatter import find_spec_dir, write_status
+from harness.spec_frontmatter import find_spec_dir
 from harness.state import StateStore
 from harness.task_progress import (
     TaskProgressError,
@@ -4533,40 +4531,6 @@ class RalphController:
                 "run_id": str(outer_iter),
             },
         )
-
-    # === State helpers ===
-
-    def _mark_spec_ready_to_land(self, worktree_path: str) -> bool:
-        """Write Python-owned implemented-but-not-landed spec status."""
-        spec_dir = self._find_spec_dir(worktree_path)
-        if spec_dir is None:
-            state = self._state_store.read()
-            expected_spec = bool(state.get("spec_dir") or state.get("spec_file"))
-            if not expected_spec:
-                logger.info(
-                    "No spec directory found for %s; skipping ready_to_land marker",
-                    self._spec_id,
-                )
-                return True
-            logger.warning(
-                "Could not mark %s ready_to_land: spec directory not found",
-                self._spec_id,
-            )
-            return False
-        try:
-            write_status(spec_dir, "ready_to_land")
-            state = self._state_store.read()
-            append_implementation_run(
-                spec_dir,
-                run_id=str(state.get("run_id") or ""),
-                spec_status="ready_to_land",
-                verification_result="PASS",
-            )
-            write_artifact_index(spec_dir)
-            return True
-        except Exception as exc:
-            logger.warning("Could not mark %s ready_to_land: %s", self._spec_id, exc)
-            return False
 
     def _append_iteration_log(
         self,

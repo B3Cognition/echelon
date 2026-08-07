@@ -182,6 +182,38 @@ class TestRunSkillAutoLand:
     """Test that run() calls land() when auto_merge is True."""
 
     @patch("harness.skills.run_skill.parse_intent")
+    @patch("harness.skills.run_skill.run_gc")
+    @patch("harness.skills.run_skill.StrategyCoordinator")
+    @patch("harness.land.land", return_value=False)
+    def test_landing_block_does_not_change_converged_delivery(
+        self,
+        mock_land: MagicMock,
+        mock_coordinator_cls: MagicMock,
+        _mock_gc: MagicMock,
+        mock_parse: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """A failed post-convergence land is reported independently."""
+        from harness.skills.run_skill import run
+
+        spec_dir = tmp_path / "specs" / "042-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
+        mock_parse.return_value = RunIntent(spec_id="042", mode="semi", auto_merge=True)
+        coordinator = mock_coordinator_cls.return_value
+        coordinator.start.return_value = [_make_converged_result()]
+        coordinator.compare_results.return_value = {
+            "strategies": {}, "summary": {"converged": 1, "failed": 0, "total_tokens": 0}
+        }
+        coordinator.status.return_value = {"strategies": {"default": {}}}
+
+        outcome = run("spec 042 auto_merge", MagicMock(), MagicMock(), base_dir=tmp_path)
+
+        assert outcome.results[0].status == "converged"
+        assert outcome.landing.status == "blocked"
+        mock_land.assert_called_once()
+
+    @patch("harness.skills.run_skill.parse_intent")
     @patch("harness.skills.run_skill.load_config")
     @patch("harness.skills.run_skill.run_gc")
     @patch("harness.skills.run_skill.StrategyCoordinator")

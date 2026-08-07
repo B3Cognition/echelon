@@ -31,6 +31,14 @@ def append_implementation_run(
         "spec_status": spec_status,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+    runs[:] = [
+        run for run in runs
+        if not (
+            isinstance(run, dict)
+            and run.get("run_id") == run_id
+            and run.get("phase") == "B"
+        )
+    ]
     runs.append(entry)
     if verification_result == "PASS":
         history["authoritative_run"] = run_id

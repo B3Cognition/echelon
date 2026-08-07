@@ -17,6 +17,7 @@ from harness.config import load_config
 from harness.coordinator import StrategyCoordinator
 from harness.gc import run_gc
 from harness.harness_run_history import append_run, summarize_history
+from harness.delivery_results import DeliveryRunOutcome, LandingOutcome
 from harness.paths import make_build_id, current_build_marker, runs_dir
 from harness.run_intent import parse_intent
 from harness.spec_frontmatter import find_spec_dir, read_targets
@@ -193,6 +194,7 @@ def _print_delivery_summary(
     workspace_root: Path,
     spec_dir: Path | None,
     config: Any = None,
+    landing: LandingOutcome | None = None,
 ) -> None:
     """Print a structured delivery summary to stderr."""
     from echelon.ui import banner as _banner
@@ -337,7 +339,14 @@ def _print_delivery_summary(
         result_str += f", {n_provider_limited} provider-limited"
     if total_tokens:
         result_str += f"  ·  {total_tokens:,} tokens"
-    fields.append(("result", result_str))
+    fields.append(("delivery", result_str))
+    if landing is not None:
+        landing_text = landing.status
+        if landing.status == "blocked":
+            landing_text += f"\nnext step: echelon delivery land {intent.spec_id}"
+        elif landing.reason:
+            landing_text += f" ({landing.reason})"
+        fields.append(("landing", landing_text))
 
     _banner("DELIVERY SUMMARY", fields, file=sys.stderr)
 
@@ -413,7 +422,7 @@ def run(
     config: Any = None,
     resume_build_id: str | None = None,
     orchestration_root: str | Path | None = None,
-) -> None:
+) -> DeliveryRunOutcome:
     """Execute /speckit-harness-run skill.
 
     Args:
@@ -487,16 +496,8 @@ def run(
     )
     _print_harness_history_summary(spec_dir=spec_dir, title="HARNESS HISTORY")
 
-    _print_delivery_summary(
-        intent,
-        result_map,
-        comparison,
-        workspace_root,
-        spec_dir,
-        config,
-    )
-
     # 9. Auto-land if applicable
+    landing = LandingOutcome("not_requested")
     converged = comparison.get("summary", {}).get("converged", 0) > 0
     if intent.auto_merge and converged:
         targets = read_targets(spec_dir) if spec_dir is not None else []
@@ -507,6 +508,7 @@ def run(
                 intent.spec_id,
                 len(targets),
             )
+            landing = LandingOutcome("skipped", "multi_target")
         else:
             from harness.land import land
             try:
@@ -518,7 +520,21 @@ def run(
                 )
                 if landed:
                     print("  Auto-landed successfully!", file=sys.stderr)
+                    landing = LandingOutcome("landed")
                 else:
                     logger.warning("auto-land: land() returned False for spec %s", intent.spec_id)
+                    landing = LandingOutcome("blocked", "land_returned_false")
             except Exception as e:
                 logger.warning("auto-land: land() raised for spec %s: %s", intent.spec_id, e)
+                landing = LandingOutcome("blocked", "land_exception")
+
+    _print_delivery_summary(
+        intent,
+        result_map,
+        comparison,
+        workspace_root,
+        spec_dir,
+        config,
+        landing,
+    )
+    return DeliveryRunOutcome(results=tuple(results), landing=landing)

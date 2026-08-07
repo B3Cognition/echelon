@@ -89,6 +89,26 @@ class TestSingleStrategy:
         assert results[0].status == "blocked"
         assert results[0].blocked_phase == "implementation"
 
+    def test_worktree_head_reads_the_registered_worktree(self, tmp_path: Path) -> None:
+        """Finalization provenance is read from the delivery worktree, not harness cwd."""
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        coord = _make_coordinator(tmp_path)
+
+        with patch("harness.coordinator.subprocess.run") as run:
+            run.return_value = MagicMock(returncode=0, stdout="abc123\n", stderr="")
+            assert coord._worktree_head(worktree) == "abc123"
+
+        assert run.call_args.args[0] == ["git", "-C", str(worktree), "rev-parse", "HEAD"]
+
+    def test_run_enabled_phases_uses_persisted_plan_order(self, tmp_path: Path) -> None:
+        """The explicit phase runner starts at the supplied persisted checkpoint."""
+        coord = _make_coordinator(tmp_path)
+
+        assert coord._run_enabled_phases(
+            ["implementation", "visual", "review", "finalization"], "review"
+        ) == ["review", "finalization"]
+
 
 @pytest.mark.unit
 class TestStatusAggregation:

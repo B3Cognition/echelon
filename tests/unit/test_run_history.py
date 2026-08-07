@@ -52,6 +52,29 @@ class TestRunHistory:
         assert [run["run_id"] for run in data["runs"]] == ["phase-a", "run-2"]
         assert data["authoritative_run"] == "run-2"
 
+    def test_append_implementation_run_replaces_same_phase_b_run(self, tmp_path):
+        """A finalization retry refreshes its Phase B row instead of duplicating it."""
+        spec_dir = tmp_path / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+
+        append_implementation_run(
+            spec_dir,
+            run_id="run-2",
+            spec_status="ready_to_land",
+            verification_result="PASS",
+        )
+        append_implementation_run(
+            spec_dir,
+            run_id="run-2",
+            spec_status="ready_to_land",
+            verification_result="PASS",
+        )
+
+        data = json.loads((spec_dir / "run-history.json").read_text(encoding="utf-8"))
+        phase_b_runs = [run for run in data["runs"] if run.get("phase") == "B"]
+        assert len(phase_b_runs) == 1
+        assert phase_b_runs[0]["run_id"] == "run-2"
+
     def test_append_phase_a_run_records_done_once_per_run(self, tmp_path):
         spec_dir = tmp_path / "specs" / "001-demo"
         spec_dir.mkdir(parents=True)

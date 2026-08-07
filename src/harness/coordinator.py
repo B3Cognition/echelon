@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -54,6 +55,10 @@ from harness.stacks.paths import find_stack_extension_root
 from harness.visual_ralph import VisualRalphController
 from harness.state import DELIVERY_STATE_VERSION, StateStore
 from harness.strategy_loader import StrategySpec, load_strategies
+from echelon.artifact_index import write_artifact_index
+from harness.run_history import append_implementation_run
+from harness.spec_frontmatter import write_status
+from kernel.fulfillment import latest_fulfillment_report, read_fulfillment_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -311,6 +316,14 @@ class StrategyCoordinator:
         phases.append("finalization")
         return phases
 
+    @staticmethod
+    def _run_enabled_phases(enabled_phases: list[str], start_phase: str) -> list[str]:
+        """Return the persisted phase suffix beginning at a durable checkpoint."""
+        try:
+            return enabled_phases[enabled_phases.index(start_phase):]
+        except ValueError:
+            return ["implementation"]
+
     def _migrate_delivery_state(
         self, state_store: StateStore, llm_provider: AICodingCliProvider | None
     ) -> Dict[str, Any]:
@@ -379,6 +392,138 @@ class StrategyCoordinator:
             final_verify=None,
             blocked_phase=None,
             branch=state.get("branch") or state.get("branch_name"),
+        )
+
+    @staticmethod
+    def _worktree_head(worktree_path: Path) -> str:
+        """Return HEAD from the registered delivery worktree only."""
+        try:
+            result = subprocess.run(
+                ["git", "-C", str(worktree_path), "rev-parse", "HEAD"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError:
+            return ""
+        return result.stdout.strip() if result.returncode == 0 else ""
+
+    def _persist_phase_block(
+        self,
+        state_store: StateStore,
+        *,
+        phase: str,
+        reason: str,
+        implementation: ImplementationResult,
+        outer_iterations: int,
+        tokens_used: int,
+        final_verify: Any = None,
+    ) -> DeliveryResult:
+        """Persist a recoverable phase failure with its exact restart point."""
+        state = state_store.read()
+        if state.get("status") != "blocked":
+            state_store.transition(
+                "blocked",
+                updates={
+                    "blocked_phase": phase,
+                    "termination_reason": reason,
+                    "pr_url": implementation.pr_url,
+                    "outer_iter": max(int(state.get("outer_iter") or 0), outer_iterations),
+                    "tokens_used": max(int(state.get("tokens_used") or 0), tokens_used),
+                },
+            )
+        return DeliveryResult(
+            status="blocked",
+            termination_reason=reason,
+            outer_iterations=outer_iterations,
+            inner_iterations=implementation.inner_iterations,
+            pr_url=implementation.pr_url,
+            tokens_used=tokens_used,
+            final_verify=final_verify if final_verify is not None else implementation.final_verify,
+            blocked_phase=phase,  # type: ignore[arg-type]
+            branch=implementation.branch,
+        )
+
+    def _finalize_delivery(
+        self,
+        state_store: StateStore,
+        *,
+        spec_dir: Path | None,
+        declared_targets: list[str],
+        implementation: ImplementationResult,
+        outer_iterations: int,
+        tokens_used: int,
+        final_verify: Any,
+    ) -> DeliveryResult:
+        """Own single-target lifecycle publication and terminal convergence."""
+        state = state_store.read()
+        if state.get("status") != "finalizing":
+            state_store.transition("finalizing", updates={"blocked_phase": None})
+        if len(declared_targets) == 1:
+            state = state_store.read()
+            worktree_text = str(
+                state.get("registered_worktree") or state.get("worktree_path") or ""
+            )
+            recorded_commit = self._worktree_head(Path(worktree_text)) if worktree_text else ""
+            report = latest_fulfillment_report(spec_dir) if spec_dir is not None else None
+            metadata = read_fulfillment_metadata(report) if report is not None else {}
+            verified_commit = str(metadata.get("verified_commit") or "")
+            if not verified_commit or verified_commit != recorded_commit:
+                return self._persist_phase_block(
+                    state_store,
+                    phase="finalization",
+                    reason="verified_provenance_mismatch",
+                    implementation=implementation,
+                    outer_iterations=outer_iterations,
+                    tokens_used=tokens_used,
+                    final_verify=final_verify,
+                )
+            state_store.transition(
+                "finalizing", updates={"verified_commit": verified_commit}
+            )
+            try:
+                current_status = read_frontmatter(spec_dir).get("status")
+                if current_status not in {None, "planned", "in_progress", "ready_to_land"}:
+                    return self._persist_phase_block(
+                        state_store,
+                        phase="finalization",
+                        reason="lifecycle_status_conflict",
+                        implementation=implementation,
+                        outer_iterations=outer_iterations,
+                        tokens_used=tokens_used,
+                        final_verify=final_verify,
+                    )
+                if current_status != "ready_to_land":
+                    write_status(spec_dir, "ready_to_land")
+                append_implementation_run(
+                    spec_dir,
+                    run_id=str(state_store.read().get("run_id") or ""),
+                    spec_status="ready_to_land",
+                    verification_result="PASS",
+                )
+                write_artifact_index(spec_dir)
+            except Exception as exc:
+                logger.warning("Could not finalize %s: %s", spec_dir, exc)
+                return self._persist_phase_block(
+                    state_store,
+                    phase="finalization",
+                    reason="finalization_write_failed",
+                    implementation=implementation,
+                    outer_iterations=outer_iterations,
+                    tokens_used=tokens_used,
+                    final_verify=final_verify,
+                )
+        state_store.transition("converged", updates={"termination_reason": "converged"})
+        return DeliveryResult(
+            status="converged",
+            termination_reason="converged",
+            outer_iterations=outer_iterations,
+            inner_iterations=implementation.inner_iterations,
+            pr_url=implementation.pr_url,
+            tokens_used=tokens_used,
+            final_verify=final_verify,
+            blocked_phase=None,
+            branch=implementation.branch,
         )
 
     def _run_strategy(
@@ -585,11 +730,15 @@ class StrategyCoordinator:
                 build_id=self._build_id,
             )
 
-            current_phase = (
+            resumed_phase = (
                 self._resume_phase(existing)
                 if should_resume_running or should_resume_blocked
                 else "implementation"
             )
+            current_phase = self._run_enabled_phases(
+                list(state_store.read().get("enabled_phases") or ["implementation"]),
+                resumed_phase,
+            )[0]
             if current_phase == "implementation":
                 implementation_result = controller.run_loop(
                     max_outer=intent.max_outer,
@@ -616,8 +765,20 @@ class StrategyCoordinator:
             implementation_outer_iterations = implementation_result.outer_iterations
             implementation_tokens = implementation_result.tokens_used
             if implementation_result.status == "verified" and current_phase == "implementation":
+                registered_worktree = self._gitops.get_latest_worktree(
+                    intent.spec_id, strategy_id, build_id=self._build_id
+                )
                 state_store.transition(
-                    "verified", updates={"last_completed_phase": "implementation"}
+                    "verified",
+                    updates={
+                        "last_completed_phase": "implementation",
+                        "pr_url": implementation_result.pr_url,
+                        "registered_worktree": (
+                            registered_worktree
+                            if isinstance(registered_worktree, str)
+                            else None
+                        ),
+                    },
                 )
 
             visual_result: VisualResult | None = None
@@ -683,9 +844,20 @@ class StrategyCoordinator:
                     implementation_outer_iterations += implementation_result.outer_iterations
                     implementation_tokens += implementation_result.tokens_used
                     if implementation_result.status == "verified":
+                        registered_worktree = self._gitops.get_latest_worktree(
+                            intent.spec_id, strategy_id, build_id=self._build_id
+                        )
                         state_store.transition(
                             "verified",
-                            updates={"last_completed_phase": "implementation"},
+                            updates={
+                                "last_completed_phase": "implementation",
+                                "pr_url": implementation_result.pr_url,
+                                "registered_worktree": (
+                                    registered_worktree
+                                    if isinstance(registered_worktree, str)
+                                    else None
+                                ),
+                            },
                         )
                 return None
 
@@ -740,6 +912,13 @@ class StrategyCoordinator:
                         "review_loop enabled but Phase 1 produced no pr_url "
                         "for %s/%s — skipping Phase 3",
                         intent.spec_id, strategy_id,
+                    )
+                    review_result = ReviewResult(
+                        status="blocked",
+                        termination_reason="missing_pr_url",
+                        iterations=0,
+                        pr_url="",
+                        tokens_used=0,
                     )
                 else:
                     review_controller = ReviewLoopController(
@@ -803,9 +982,20 @@ class StrategyCoordinator:
                         )
                         implementation_tokens += implementation_result.tokens_used
                         if implementation_result.status == "verified":
+                            registered_worktree = self._gitops.get_latest_worktree(
+                                intent.spec_id, strategy_id, build_id=self._build_id
+                            )
                             state_store.transition(
                                 "verified",
-                                updates={"last_completed_phase": "implementation"},
+                                updates={
+                                    "last_completed_phase": "implementation",
+                                    "pr_url": implementation_result.pr_url,
+                                    "registered_worktree": (
+                                        registered_worktree
+                                        if isinstance(registered_worktree, str)
+                                        else None
+                                    ),
+                                },
                             )
                         visual_result = run_visual_phase()
                         return RepairAttempt(
@@ -929,19 +1119,24 @@ class StrategyCoordinator:
                 termination_reason = "converged"
                 blocked_phase = None
             if delivery_status == "converged":
-                current_state = state_store.read()
-                if current_state.get("status") != "finalizing":
-                    state_store.transition(
-                        "finalizing",
-                        updates={"last_completed_phase": "review"
-                                 if review_result is not None else (
-                                     "visual" if visual_result is not None else "implementation"
-                                 )},
-                    )
-                state_store.transition("converged")
+                return self._finalize_delivery(
+                    state_store,
+                    spec_dir=spec_dir,
+                    declared_targets=declared_targets,
+                    implementation=implementation_result,
+                    outer_iterations=total_outer_iterations,
+                    tokens_used=total_tokens,
+                    final_verify=final_verify,
+                )
             elif delivery_status == "blocked":
-                state_store.transition(
-                    "blocked", updates={"blocked_phase": blocked_phase}
+                return self._persist_phase_block(
+                    state_store,
+                    phase=str(blocked_phase),
+                    reason=termination_reason,
+                    implementation=implementation_result,
+                    outer_iterations=total_outer_iterations,
+                    tokens_used=total_tokens,
+                    final_verify=final_verify,
                 )
             elif delivery_status == "failed":
                 state_store.transition("failed")
