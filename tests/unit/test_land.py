@@ -1897,6 +1897,54 @@ def test_land_refuses_active_authoring_branch_for_relative_single_repo_path(
 
 
 @pytest.mark.unit
+def test_land_refuses_active_authoring_branch_for_relative_no_spec_repo_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _commit(repo, "README.md", "base\n", "base")
+    _git(repo, "checkout", "-b", "001-feature")
+    _commit(repo, "feature.txt", "feature\n", "feature")
+    _git(repo, "checkout", "-b", "002-authoring", "main")
+
+    current = repo / "runs" / ".current"
+    current.parent.mkdir(parents=True)
+    current.write_text("run-b", encoding="utf-8")
+    run_dir = repo / "runs" / "run-b"
+    run_dir.mkdir()
+    (run_dir / "state.json").write_text(
+        '{"run_id":"run-b","spec_id":"002-authoring",'
+        '"feature_branch":"002-authoring",'
+        '"spec_dir":"runs/run-b/specs/002-authoring"}',
+        encoding="utf-8",
+    )
+    gitops = MagicMock()
+    gitops.find_feature_branch.return_value = "001-feature"
+    monkeypatch.chdir(tmp_path)
+
+    with (
+        patch("harness.land._check_ready_before_land", return_value=True),
+        patch(
+            "harness.land._prepare_for_land",
+            return_value=LandPrepareResult(status="prepared", branch="001-feature"),
+        ) as prepare,
+        patch("harness.land._verify_before_land", return_value=True),
+        patch("harness.land._finish_landing", return_value=True),
+        patch("harness.land._banner") as banner,
+    ):
+        result = land("001", project_dir=Path("repo"), gitops=gitops)
+
+    assert result is False
+    assert _git(repo, "branch", "--show-current").stdout.strip() == "002-authoring"
+    assert current.read_text(encoding="utf-8") == "run-b"
+    prepare.assert_not_called()
+    gitops.merge_pr.assert_not_called()
+    gitops.merge_branch_into_default.assert_not_called()
+    assert banner.call_args.args[0] == "LAND — ACTIVE AUTHORING SPEC"
+
+
+@pytest.mark.unit
 def test_land_prefers_converged_current_build_iter_over_higher_failed_iter(
     tmp_path: Path,
 ) -> None:

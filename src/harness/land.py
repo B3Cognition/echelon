@@ -819,6 +819,7 @@ def land(
     """
     options = options or LandOptions()
     wrapper_project_dir = project_dir.resolve()
+    project_dir = wrapper_project_dir
     runtime_root = (
         Path(harness_root).resolve()
         if harness_root is not None
