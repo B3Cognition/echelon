@@ -818,7 +818,7 @@ def land(
     Returns False only when PR merge is blocked — caller must retry or merge manually.
     """
     options = options or LandOptions()
-    wrapper_project_dir = project_dir
+    wrapper_project_dir = project_dir.resolve()
     runtime_root = (
         Path(harness_root).resolve()
         if harness_root is not None
