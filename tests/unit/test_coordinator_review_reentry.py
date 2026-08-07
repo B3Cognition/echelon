@@ -6,9 +6,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from harness.config import HarnessConfig, ReviewLoopConfig
+from harness.config import HarnessConfig, ReviewLoopConfig, VisualTestsConfig
 from harness.coordinator import StrategyCoordinator
-from harness.delivery_results import ImplementationResult, ReviewResult
+from harness.delivery_results import ImplementationResult, ReviewResult, VisualResult
+from harness.verify_result import VerifyResult
 from harness.repair_loop import RepairLoop
 from harness.run_intent import RunIntent
 
@@ -23,6 +24,7 @@ def _config(tmp_path: Path) -> HarnessConfig:
             enabled=True,
             max_fix_iterations=2,
         ),
+        visual_tests=VisualTestsConfig(enabled=True, max_iterations=1),
     )
 
 
@@ -157,6 +159,7 @@ class TestCoordinatorReviewReentry:
 
         with patch("harness.coordinator.RalphController") as MockRalph, \
              patch("harness.coordinator.ReviewLoopController") as MockReview, \
+             patch("harness.coordinator.VisualRalphController") as MockVisual, \
              patch("harness.coordinator.RepairLoop", SpyRepairLoop, create=True), \
              patch("harness.coordinator.StateStore") as MockState, \
              patch("harness.coordinator.load_strategies") as mock_strat:
@@ -193,6 +196,11 @@ class TestCoordinatorReviewReentry:
             ]
             MockReview.return_value = review_instance
 
+            MockVisual.return_value.run_loop.side_effect = [
+                VisualResult("passed", "converged", 1, 3, VerifyResult(True, [])),
+                VisualResult("passed", "converged", 1, 5, VerifyResult(True, [])),
+            ]
+
             # State store: no-op
             state_instance = MagicMock()
             state_instance.read.return_value = {"status": "initialized"}
@@ -222,5 +230,7 @@ class TestCoordinatorReviewReentry:
         assert "Review Fix 1" in reentry_prompt
         assert MockReview.call_args.kwargs["base_dir"] == str(harness_root)
         assert MockReview.call_args.kwargs["spec_dir"] == spec_dir.resolve()
-        assert result.outer_iterations == 7
-        assert result.tokens_used == 36
+        assert MockVisual.return_value.run_loop.call_count == 2
+        assert result.final_verify == VerifyResult(True, [])
+        assert result.outer_iterations == 9
+        assert result.tokens_used == 44

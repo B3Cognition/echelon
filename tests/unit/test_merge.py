@@ -29,18 +29,20 @@ def _make_converged_result() -> DeliveryResult:
         pr_url="https://github.com/t/r/pull/1",
         tokens_used=10000,
         final_verify=VerifyResult(passed=True, failures=[]),
+        blocked_phase=None,
     )
 
 
 def _make_failed_result() -> DeliveryResult:
     return DeliveryResult(
         status="failed",
-        termination_reason="outer_cap",
+        termination_reason="state_corruption",
         outer_iterations=5,
         inner_iterations=0,
         pr_url="https://github.com/t/r/pull/1",
         tokens_used=50000,
         final_verify=VerifyResult(passed=False, failures=[]),
+        blocked_phase=None,
     )
 
 

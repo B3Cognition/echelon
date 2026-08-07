@@ -2521,7 +2521,7 @@ class TestOuterLoopConvergence:
 
         result = controller.run_loop(max_outer=1, max_inner=0)
 
-        assert result.status == "failed"
+        assert result.status == "blocked"
         assert result.termination_reason == "outer_cap"
         assert result.final_verify is not None
         assert result.final_verify.passed is False
@@ -2588,7 +2588,7 @@ class TestOuterLoopConvergence:
             spec_dir=spec_dir,
             orchestration_root=None,
         )
-        assert result.status == "failed"
+        assert result.status == "blocked"
         assert result.final_verify is not None
         assert result.final_verify.failures[0].id == "fulfillment-gaps"
 
@@ -2927,7 +2927,7 @@ class TestOuterLoopConvergence:
 
         result = controller.run_loop(max_outer=1, max_inner=0)
 
-        assert result.status == "failed"
+        assert result.status == "blocked"
         assert result.final_verify is not None
         assert result.final_verify.failures[0].id == "fulfillment-refresh-deferred"
         controller._fulfillment_runner.refresh.assert_not_called()
@@ -3123,7 +3123,7 @@ class TestOuterLoopConvergence:
             build_prompt="implement something",
         )
 
-        assert result.status == "failed"
+        assert result.status == "blocked"
         assert result.termination_reason == "outer_cap"
         assert result.final_verify is not None
         assert result.final_verify.passed is False
@@ -7170,7 +7170,7 @@ class TestOuterLoopCap:
 
         result = controller.run_loop(max_outer=2, max_inner=1)
 
-        assert result.status == "failed"
+        assert result.status == "blocked"
         assert result.termination_reason == "outer_cap"
         assert result.outer_iterations == 2
 

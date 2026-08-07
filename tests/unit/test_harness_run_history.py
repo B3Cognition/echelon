@@ -21,6 +21,7 @@ def _result(
         pr_url="https://github.com/t/r/pull/1",
         tokens_used=tokens,
         final_verify=None,
+        blocked_phase="implementation" if status == "blocked" else None,
         branch="001-demo",
     )
 

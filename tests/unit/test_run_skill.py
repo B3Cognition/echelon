@@ -28,18 +28,20 @@ def _make_converged_result() -> DeliveryResult:
         pr_url="https://github.com/t/r/pull/1",
         tokens_used=10000,
         final_verify=VerifyResult(passed=True, failures=[]),
+        blocked_phase=None,
     )
 
 
 def _make_failed_result() -> DeliveryResult:
     return DeliveryResult(
-        status="failed",
+        status="blocked",
         termination_reason="outer_cap",
         outer_iterations=5,
         inner_iterations=0,
         pr_url="https://github.com/t/r/pull/1",
         tokens_used=50000,
         final_verify=VerifyResult(passed=False, failures=[]),
+        blocked_phase="implementation",
     )
 
 
@@ -52,6 +54,7 @@ def _make_checkpoint_result() -> DeliveryResult:
         pr_url=None,
         tokens_used=0,
         final_verify=None,
+        blocked_phase="implementation",
         branch="001-demo",
     )
 
@@ -74,6 +77,7 @@ def _make_checkpoint_outer_cap_result() -> DeliveryResult:
                 )
             ],
         ),
+        blocked_phase="implementation",
         branch="001-demo",
     )
 
@@ -683,6 +687,7 @@ class TestRunSkillAutoLand:
                     )
                 ],
             ),
+            blocked_phase="implementation",
         )
         comparison = {
             "strategies": {
@@ -886,6 +891,7 @@ class TestRunSkillAutoLand:
                     )
                 ],
             ),
+            blocked_phase="implementation",
         )
         comparison = {
             "strategies": {
@@ -943,7 +949,7 @@ class TestRunSkillAutoLand:
         )
         intent = RunIntent(spec_id="906", mode="semi")
         result = DeliveryResult(
-            status="failed",
+            status="blocked",
             termination_reason="outer_cap",
             outer_iterations=1,
             inner_iterations=3,
@@ -959,6 +965,7 @@ class TestRunSkillAutoLand:
                     )
                 ],
             ),
+            blocked_phase="implementation",
         )
         comparison = {
             "strategies": {
@@ -1030,6 +1037,7 @@ class TestRunSkillAutoLand:
                     )
                 ],
             ),
+            blocked_phase="implementation",
         )
         comparison = {
             "strategies": {

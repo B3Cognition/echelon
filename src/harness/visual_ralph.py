@@ -106,6 +106,14 @@ class VisualRalphController:
                 screenshots = self._retrieve_screenshots(handle)
                 fix_result = self._exec_visual_feedback(handle, verify_result, screenshots)
                 tokens_used += fix_result.get("tokens", 0)
+                if not fix_result["passed"]:
+                    return VisualResult(
+                        status="blocked",
+                        termination_reason="visual_feedback_failed",
+                        iterations=iteration + 1,
+                        tokens_used=tokens_used,
+                        final_verify=verify_result,
+                    )
                 return VisualResult(
                     status="fix_applied",
                     termination_reason="fix_applied",

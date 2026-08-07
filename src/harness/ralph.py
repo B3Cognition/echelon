@@ -1127,7 +1127,7 @@ class RalphController:
 
         # Outer cap reached
         return self._finalize(
-            status="failed",
+            status="blocked",
             reason="outer_cap",
             outer_iterations=max_outer,
             inner_iterations=total_inner_iterations,

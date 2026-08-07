@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from harness.verify_result import VerifyResult
 
@@ -13,6 +13,7 @@ VISUAL_STATUSES = {"passed", "fix_applied", "blocked"}
 REVIEW_STATUSES = {"completed", "review_fix_queued", "blocked"}
 DELIVERY_STATUSES = {"converged", "blocked", "interrupted", "failed", "cancelled"}
 LANDING_STATUSES = {"not_requested", "landed", "blocked", "skipped"}
+BlockedPhase = Literal["implementation", "visual", "review", "finalization"]
 
 
 def _validate_result(
@@ -94,6 +95,7 @@ class DeliveryResult:
     pr_url: str | None
     tokens_used: int
     final_verify: VerifyResult | None
+    blocked_phase: BlockedPhase | None
     branch: str | None = None
 
     def __post_init__(self) -> None:
@@ -106,6 +108,17 @@ class DeliveryResult:
                 "tokens_used": self.tokens_used,
             },
         )
+        valid_blocked_phases = {
+            "implementation", "visual", "review", "finalization"
+        }
+        if self.status == "blocked":
+            if self.blocked_phase not in valid_blocked_phases:
+                raise ValueError(
+                    "blocked_phase must be implementation, visual, review, or "
+                    "finalization when status is blocked"
+                )
+        elif self.blocked_phase is not None:
+            raise ValueError("blocked_phase must be None unless status is blocked")
 
     def to_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {
@@ -116,6 +129,7 @@ class DeliveryResult:
             "pr_url": self.pr_url,
             "tokens_used": self.tokens_used,
             "final_verify": None,
+            "blocked_phase": self.blocked_phase,
             "branch": self.branch,
         }
         if self.final_verify is not None:

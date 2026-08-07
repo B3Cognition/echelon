@@ -206,13 +206,14 @@ class StrategyCoordinator:
                 except Exception as e:
                     logger.error("Strategy %s failed: %s", sid, e)
                     results[sid] = DeliveryResult(
-                        status="failed",
+                        status="blocked",
                         termination_reason="outer_cap",
                         outer_iterations=0,
                         inner_iterations=0,
                         pr_url=None,
                         tokens_used=0,
                         final_verify=None,
+                        blocked_phase="finalization",
                     )
 
         # Return in original strategy order
@@ -491,47 +492,67 @@ class StrategyCoordinator:
             implementation_tokens = implementation_result.tokens_used
 
             visual_result: VisualResult | None = None
+            visual_iterations = 0
+            visual_tokens = 0
             # Phase 2: visual loop — only when Phase 1 verified via Docker sandbox.
             # Skipped when LLM provider ran Phase 1: the LLM already verified tests
             # locally (including Playwright if present), and the Docker visual loop
             # has no access to the LLM-managed worktree after it is committed.
-            if (
-                implementation_result.status == "verified"
-                and self._config.visual_tests.enabled
-                and llm_provider is None
-            ):
-
-                worktree_path = self._gitops.get_latest_worktree(
-                    intent.spec_id, strategy_id, build_id=self._build_id,
-                )
-                visual_controller = VisualRalphController(
+            visual_controller = (
+                VisualRalphController(
                     provider=self._provider,
                     config=self._config,
                     spec_id=intent.spec_id,
                     strategy_id=strategy_id,
                     base_dir=self._base_dir,
                 )
-                visual_result = visual_controller.run_loop(
-                    worktree_path=worktree_path or str(self._base_dir),
-                    token_budget=budget,
-                )
-                if visual_result.status != "passed":
-                    return DeliveryResult(
-                        status="blocked",
-                        termination_reason=visual_result.termination_reason,
-                        outer_iterations=(
-                            implementation_result.outer_iterations
-                            + visual_result.iterations
-                        ),
-                        inner_iterations=implementation_result.inner_iterations,
-                        pr_url=implementation_result.pr_url,
-                        tokens_used=(
-                            implementation_result.tokens_used
-                            + visual_result.tokens_used
-                        ),
-                        final_verify=visual_result.final_verify,
-                        branch=implementation_result.branch,
+                if self._config.visual_tests.enabled and llm_provider is None
+                else None
+            )
+
+            def run_visual_phase() -> VisualResult | None:
+                nonlocal implementation_result
+                nonlocal implementation_outer_iterations, implementation_tokens
+                nonlocal visual_iterations, visual_tokens
+                if visual_controller is None:
+                    return None
+                while implementation_result.status == "verified":
+                    worktree_path = self._gitops.get_latest_worktree(
+                        intent.spec_id, strategy_id, build_id=self._build_id,
                     )
+                    current_visual_result = visual_controller.run_loop(
+                        worktree_path=worktree_path or str(self._base_dir),
+                        token_budget=budget,
+                    )
+                    visual_iterations += current_visual_result.iterations
+                    visual_tokens += current_visual_result.tokens_used
+                    if current_visual_result.status != "fix_applied":
+                        return current_visual_result
+                    implementation_result = controller.run_loop(
+                        max_outer=intent.max_outer,
+                        max_inner=intent.max_inner,
+                        token_budget=budget,
+                        build_command=spec.build_command,
+                        strategy_context=strategy_context,
+                        build_prompt=build_prompt,
+                    )
+                    implementation_outer_iterations += implementation_result.outer_iterations
+                    implementation_tokens += implementation_result.tokens_used
+                return None
+
+            visual_result = run_visual_phase()
+            if visual_result is not None and visual_result.status == "blocked":
+                return DeliveryResult(
+                    status="blocked",
+                    termination_reason=visual_result.termination_reason,
+                    outer_iterations=implementation_outer_iterations + visual_iterations,
+                    inner_iterations=implementation_result.inner_iterations,
+                    pr_url=implementation_result.pr_url,
+                    tokens_used=implementation_tokens + visual_tokens,
+                    final_verify=visual_result.final_verify,
+                    blocked_phase="visual",
+                    branch=implementation_result.branch,
+                )
 
             review_result: ReviewResult | None = None
             review_iterations = 0
@@ -568,7 +589,7 @@ class StrategyCoordinator:
                         )
 
                     def repair(_critique: RepairCritique, _iteration: int) -> RepairAttempt:
-                        nonlocal implementation_result, review_result
+                        nonlocal implementation_result, review_result, visual_result
                         nonlocal implementation_outer_iterations, implementation_tokens
                         nonlocal review_iterations, review_tokens
 
@@ -609,10 +630,12 @@ class StrategyCoordinator:
                             implementation_result.outer_iterations
                         )
                         implementation_tokens += implementation_result.tokens_used
+                        visual_result = run_visual_phase()
                         return RepairAttempt(
                             output={
                                 "result": implementation_result,
                                 "review_result": review_result,
+                                "visual_result": visual_result,
                             }
                         )
 
@@ -625,6 +648,18 @@ class StrategyCoordinator:
                             else implementation_result
                         )
                         current_review = payload.get("review_result")
+                        current_visual = payload.get("visual_result")
+
+                        if (
+                            isinstance(current_visual, VisualResult)
+                            and current_visual.status == "blocked"
+                        ):
+                            return RepairCheck(
+                                verdict=RepairVerdict.BLOCK,
+                                output=current,
+                                reason=current_visual.termination_reason,
+                                tokens=0,
+                            )
 
                         if not isinstance(current_review, ReviewResult):
                             return RepairCheck(
@@ -682,26 +717,37 @@ class StrategyCoordinator:
                     ):
                         implementation_result = repair_loop_result.final_check.output
 
-            total_outer_iterations = implementation_outer_iterations + (
-                visual_result.iterations if visual_result is not None else 0
-            ) + review_iterations
-            total_tokens = implementation_tokens + (
-                visual_result.tokens_used if visual_result is not None else 0
-            ) + review_tokens
+            total_outer_iterations = (
+                implementation_outer_iterations + visual_iterations + review_iterations
+            )
+            total_tokens = implementation_tokens + visual_tokens + review_tokens
             final_verify = (
                 visual_result.final_verify
                 if visual_result is not None
                 else implementation_result.final_verify
             )
-            if implementation_result.status != "verified":
-                delivery_status = implementation_result.status
+            if visual_result is not None and visual_result.status == "blocked":
+                delivery_status = "blocked"
+                termination_reason = visual_result.termination_reason
+                blocked_phase = "visual"
+            elif implementation_result.status != "verified":
+                delivery_status = (
+                    "failed"
+                    if implementation_result.termination_reason == "state_corruption"
+                    else "blocked"
+                )
                 termination_reason = implementation_result.termination_reason
+                blocked_phase = (
+                    "implementation" if delivery_status == "blocked" else None
+                )
             elif review_result is not None and review_result.status != "completed":
                 delivery_status = "blocked"
                 termination_reason = review_result.termination_reason
+                blocked_phase = "review"
             else:
                 delivery_status = "converged"
                 termination_reason = "converged"
+                blocked_phase = None
             return DeliveryResult(
                 status=delivery_status,
                 termination_reason=termination_reason,
@@ -710,6 +756,7 @@ class StrategyCoordinator:
                 pr_url=implementation_result.pr_url,
                 tokens_used=total_tokens,
                 final_verify=final_verify,
+                blocked_phase=blocked_phase,
                 branch=implementation_result.branch,
             )
 

@@ -86,7 +86,8 @@ class TestSingleStrategy:
         intent = RunIntent(spec_id="spec-001", max_outer=1, max_inner=1)
         results = coord.start(intent)
         assert len(results) == 1
-        assert results[0].status == "failed"
+        assert results[0].status == "blocked"
+        assert results[0].blocked_phase == "implementation"
 
 
 @pytest.mark.unit
@@ -118,12 +119,14 @@ class TestCompareResults:
                 outer_iterations=2, inner_iterations=3,
                 pr_url="https://github.com/t/r/pull/1", tokens_used=50000,
                 final_verify=None,
+                blocked_phase=None,
             ),
             "safe": DeliveryResult(
-                status="failed", termination_reason="outer_cap",
+                status="blocked", termination_reason="outer_cap",
                 outer_iterations=5, inner_iterations=15,
                 pr_url=None, tokens_used=80000,
                 final_verify=None,
+                blocked_phase="implementation",
             ),
         }
         comparison = coord.compare_results(results)
@@ -151,6 +154,7 @@ class TestCompareResults:
                 pr_url=None,
                 tokens_used=100,
                 final_verify=None,
+                blocked_phase="implementation",
             )
         }
 
@@ -181,13 +185,14 @@ class TestCompareResults:
         state_store.write(state)
         results = {
             "default": DeliveryResult(
-                status="failed",
+                status="blocked",
                 termination_reason="outer_cap",
                 outer_iterations=1,
                 inner_iterations=3,
                 pr_url=None,
                 tokens_used=100,
                 final_verify=None,
+                blocked_phase="implementation",
             )
         }
 
@@ -275,6 +280,36 @@ def test_coordinator_runs_visual_loop_after_convergence(tmp_path):
     assert results[0].pr_url is None          # preserved from phase1
 
 
+def test_visual_fix_reenters_phase1_before_accepting_new_visual_evidence(tmp_path):
+    """A visual fix must receive fresh Phase 1 verification before it can pass."""
+    from harness.config import VisualTestsConfig
+    from harness.visual_ralph import VisualRalphController
+
+    config = HarnessConfig(
+        target_repo="git@example.com:t/r.git",
+        target_default_branch="main",
+        provider="docker",
+        visual_tests=VisualTestsConfig(enabled=True, max_iterations=1),
+    )
+    gitops = MagicMock()
+    gitops.get_latest_worktree.return_value = str(tmp_path / "worktree")
+    initial = ImplementationResult("verified", "converged", 1, 0, None, 10, None)
+    reverified = ImplementationResult("verified", "converged", 1, 0, None, 11, None)
+    applied = VisualResult("fix_applied", "fix_applied", 1, 2, None)
+    latest_evidence = VisualResult("passed", "converged", 1, 3, None)
+
+    with patch.object(RalphController, "run_loop", side_effect=[initial, reverified]) as phase1, \
+         patch.object(VisualRalphController, "run_loop", side_effect=[applied, latest_evidence]) as visual:
+        result = StrategyCoordinator(
+            provider=MockProvider(), gitops=gitops, config=config, base_dir=str(tmp_path)
+        ).start(RunIntent(spec_id="001", max_outer=1, max_inner=1))[0]
+
+    assert result.status == "converged"
+    assert phase1.call_count == 2
+    assert visual.call_count == 2
+    assert result.tokens_used == 26
+
+
 def test_coordinator_skips_visual_loop_when_phase1_fails(tmp_path):
     """Visual loop must NOT be triggered when Phase 1 fails, even if visual_tests.enabled."""
     from harness.config import VisualTestsConfig
@@ -325,7 +360,8 @@ def test_coordinator_skips_visual_loop_when_phase1_fails(tmp_path):
         results = coordinator.start(intent)
 
     mock_visual.assert_not_called()
-    assert results[0].status == "failed"
+    assert results[0].status == "blocked"
+    assert results[0].blocked_phase == "implementation"
 
 
 @pytest.mark.unit

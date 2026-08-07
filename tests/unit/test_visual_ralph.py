@@ -112,7 +112,10 @@ def test_exec_visual_verify_fail_parses_failures():
     from harness.visual_ralph import VisualRalphController
 
     provider = MagicMock()
-    provider.exec.return_value = _exec_result(stdout=PLAYWRIGHT_FAIL_JSON, exit_code=1)
+    provider.exec.side_effect = [
+        _exec_result(stdout=PLAYWRIGHT_FAIL_JSON, exit_code=1),
+        _exec_result(exit_code=0),
+    ]
 
     ctrl = VisualRalphController(
         provider=provider,
@@ -311,7 +314,10 @@ def test_run_loop_reports_fix_applied_without_retrying_visual_evidence():
 
     provider = MagicMock()
     provider.create.return_value = SandboxHandle(id="ctr1", session_id="s1")
-    provider.exec.return_value = _exec_result(stdout=PLAYWRIGHT_FAIL_JSON, exit_code=1)
+    provider.exec.side_effect = [
+        _exec_result(stdout=PLAYWRIGHT_FAIL_JSON, exit_code=1),
+        _exec_result(stdout="visual fix queued", exit_code=0),
+    ]
 
     ctrl = VisualRalphController(
         provider=provider,
@@ -328,3 +334,27 @@ def test_run_loop_reports_fix_applied_without_retrying_visual_evidence():
     assert result.termination_reason == "fix_applied"
     assert result.iterations == 1
     assert provider.destroy.call_count == 1
+
+
+def test_run_loop_blocks_when_visual_feedback_fails():
+    """A failed feedback command cannot be reported as an applied visual fix."""
+    from harness.visual_ralph import VisualRalphController
+
+    provider = MagicMock()
+    provider.create.return_value = SandboxHandle(id="ctr1", session_id="s1")
+    provider.exec.side_effect = [
+        _exec_result(stdout=PLAYWRIGHT_FAIL_JSON, exit_code=1),
+        _exec_result(stderr="build fix failed", exit_code=1),
+    ]
+    ctrl = VisualRalphController(
+        provider=provider,
+        config=_make_config(max_iterations=1),
+        spec_id="001",
+        strategy_id="default",
+    )
+
+    with patch.object(ctrl, "_retrieve_screenshots", return_value=[]):
+        result = ctrl.run_loop(worktree_path="/tmp/wt")
+
+    assert result.status == "blocked"
+    assert result.termination_reason == "visual_feedback_failed"
