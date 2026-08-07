@@ -34,6 +34,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Clarified delivery phase checkpoints and recovery, kept landing failures separate from convergence, and restricted automated Claude review triage to validated build-scoped staging before canonical task publication.
+
 - Fixed target-side polyrepo auto-land to discover canonical specs from the orchestration workspace rather than the target harness directory, and distinguished an unfound spec directory from a spec whose lifecycle status is missing.
 
 - **Spec lifecycle identity and verification** — Numeric selectors and
