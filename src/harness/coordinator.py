@@ -1492,7 +1492,7 @@ class StrategyCoordinator:
                         and state_store.read().get("status") == "reviewing"
                     ):
                         state_store.transition(
-                            "reviewing",
+                            "finalizing",
                             updates={"last_completed_phase": "review"},
                         )
 

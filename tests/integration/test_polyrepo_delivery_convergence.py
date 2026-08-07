@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from harness.config import HarnessConfig, ReviewLoopConfig, VisualTestsConfig
+from harness.coordinator import StrategyCoordinator
 from harness.delivery_results import ImplementationResult, ReviewResult, VisualResult
 from harness.paths import current_build_marker
 from harness.review_artifacts import ReviewArtifactPublisher
@@ -266,3 +267,81 @@ def test_three_root_delivery_converges_before_blocked_auto_land(
     ]
     assert git_commands
     assert all(command[2] != str(harness_root.resolve()) for command in git_commands)
+
+
+def test_resume_after_completed_review_checkpoint_skips_review_side_effects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A crash between completed review and finalization resumes at finalization."""
+    workspace = tmp_path / "workspace"
+    harness_root = workspace / "runs" / "targets" / "api"
+    spec_dir = workspace / "specs" / "912-review-checkpoint"
+    harness_root.mkdir(parents=True)
+    spec_dir.mkdir(parents=True)
+    target, verified_commit = _target_checkout(tmp_path)
+    (spec_dir / "spec.md").write_text(
+        "---\nstatus: planned\ntargets:\n  - sources/api\n---\n# Review checkpoint\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-001 depends=none "
+        "target=sources/api\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "fulfillment-report.md").write_text(
+        f"---\nverified_commit: {verified_commit}\n---\n# Fulfillment\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ECHELON_TARGET_REPO_NAME", "api")
+    monkeypatch.setenv("ECHELON_TARGET_REPO_PATH", str(target))
+    monkeypatch.setenv("ECHELON_IMPLEMENTATION_TARGET", "sources/api")
+    monkeypatch.setenv("ECHELON_DECLARED_TARGETS", "sources/api")
+
+    config = HarnessConfig(
+        target_repo="git@example.invalid:example/api.git",
+        target_default_branch="main",
+        provider="docker",
+        pr_host="github",
+        review_loop=ReviewLoopConfig(enabled=True, max_fix_iterations=1),
+    )
+    gitops = MagicMock()
+    gitops.get_latest_worktree.return_value = str(target)
+    intent = RunIntent(spec_id="912", mode="semi", max_outer=1, max_inner=1)
+    implementation = ImplementationResult(
+        "verified", "verified", 1, 0,
+        "https://github.com/example/api/pull/912", 5, None,
+    )
+    completed_review = ReviewResult(
+        "completed", "converged", 1,
+        "https://github.com/example/api/pull/912", 3,
+    )
+    first = StrategyCoordinator(
+        provider=MagicMock(), gitops=gitops, config=config,
+        base_dir=harness_root, build_id="build-912", orchestration_root=workspace,
+    )
+
+    with patch("harness.coordinator.RalphController") as ralph, \
+         patch("harness.coordinator.ReviewLoopController") as review, \
+         patch.object(first, "_finalize_delivery", side_effect=RuntimeError("crash")):
+        ralph.return_value.run_loop.return_value = implementation
+        review.return_value.run_loop.return_value = completed_review
+        with pytest.raises(RuntimeError, match="crash"):
+            first.start(intent)
+
+        state_store = StateStore(
+            harness_root / "runs" / "build-912" / "state", "912", "default"
+        )
+        checkpoint = state_store.read()
+        assert checkpoint["status"] == "finalizing"
+        assert checkpoint["last_completed_phase"] == "review"
+
+        resumed = StrategyCoordinator(
+            provider=MagicMock(), gitops=gitops, config=config,
+            base_dir=harness_root, build_id="build-912", orchestration_root=workspace,
+        )
+        result = resumed.start(intent)[0]
+
+    assert result.status == "converged"
+    assert review.return_value.run_loop.call_count == 1
+    assert ralph.return_value.run_loop.call_count == 1
+    assert state_store.read()["status"] == "converged"
