@@ -155,14 +155,12 @@ class ReLifecycleController:
             profile=profile,
             published_index=published,
         )
-        if published is not None and plan.policy not in {"none", "cached-only"}:
-            # A fresh RE run is an improvement pass over the one durable
-            # baseline.  It never inherits budgets or counters from its run.
+        if not reuse_published:
             plan = replace(
                 plan,
                 sources=tuple(
                     replace(source, action="refresh", classification="refresh")
-                    if source.action == "reuse" or not reuse_published
+                    if source.action == "reuse"
                     else source
                     for source in plan.sources
                 ),

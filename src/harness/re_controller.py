@@ -645,6 +645,44 @@ class ReExtractionController:
         return self._metric(state, "max_verify_expand_iterations")
 
     @staticmethod
+    def _is_unscoped_universal_claim_only(failure: ReSpecQualityFailure) -> bool:
+        return (
+            bool(failure.semantic_preflight_findings)
+            and all(
+                finding.code == "unscoped_universal_claim"
+                for finding in failure.semantic_preflight_findings
+            )
+            and not failure.missing_sections
+            and not failure.invalid_source_evidence
+            and not failure.scenarios_without_acceptance
+            and not failure.scenarios_without_evidence
+            and not failure.functional_requirements_without_evidence
+            and not failure.non_functional_requirements_without_evidence
+            and not failure.semantic_findings
+            and failure.scenario_count >= failure.expected_scenario_count
+            and (
+                failure.functional_requirement_count
+                >= failure.expected_functional_requirement_count
+            )
+            and (
+                failure.non_functional_requirement_count
+                >= failure.expected_non_functional_requirement_count
+            )
+        )
+
+    def _target_quality_repair_limit(
+        self, state: dict, report: ReQualityReport
+    ) -> int:
+        if report.failures and all(
+            self._is_unscoped_universal_claim_only(failure)
+            for failure in report.failures
+        ):
+            return self._semantic_repair_limit(state)
+        if self._source_convergence_enabled(state):
+            return self._source_budget(state, "max_domain_repairs")
+        return self._metric(state, "max_verify_expand_iterations")
+
+    @staticmethod
     def _migrate_workspace_source_convergence(state: dict) -> bool:
         """Move active workspace runs from global RE routing to source-local state."""
         if (
@@ -2026,16 +2064,13 @@ class ReExtractionController:
                 self._run_re_dir, source_id, domain_id, target_report
             )
             attempts = self._record_target_quality_failure(state, target, target_report)
+            repair_limit = self._target_quality_repair_limit(state, target_report)
             state["re_target_quality_gate_report"] = str(report_path)
             self._report_target_quality_failure(
                 source_id,
                 domain_id,
                 attempts,
-                (
-                    self._source_budget(state, "max_domain_repairs")
-                    if self._source_convergence_enabled(state)
-                    else self._metric(state, "max_verify_expand_iterations")
-                ),
+                repair_limit,
                 agent_block_detail,
             )
             if self._source_convergence_enabled(state):
@@ -2049,9 +2084,7 @@ class ReExtractionController:
                         source_state["domain_repairs"] = repairs
                     repair_count = self._metric(repairs, domain_id) + 1
                     repairs[domain_id] = repair_count
-                    if repair_count > self._source_budget(
-                        state, "max_domain_repairs"
-                    ):
+                    if repair_count > repair_limit:
                         source_report = measure_source_quality(
                             self._run_re_dir,
                             plan,
@@ -2068,7 +2101,7 @@ class ReExtractionController:
                         )
                         self._activate_next_source(state, plan)
                         return None
-            if attempts > self._metric(state, "max_verify_expand_iterations"):
+            if attempts > repair_limit:
                 return self._block(state, "re_domain_deep_spec_gate_failed")
             return None
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -35,6 +36,57 @@ def _work_plan(profile: ReFingerprintProfile) -> ReExecutionPlan:
         analysis_required=True,
         workspace_synthesis_required=True,
         publication_required=True,
+    )
+
+
+def _changed_plan_with_reuse(root: Path, profile: ReFingerprintProfile) -> ReExecutionPlan:
+    return ReExecutionPlan.from_json_dict(
+        {
+            "schema_version": 1,
+            "policy": "changed",
+            "requested_policy": "changed",
+            "target_source": "",
+            "forbidden_source_roots": [],
+            "profile": profile.to_json_dict(),
+            "sources": [
+                {
+                    "id": "api",
+                    "path": "sources/api",
+                    "absolute_path": str(root / "sources/api"),
+                    "action": "reuse",
+                    "fingerprint": {
+                        "value": "api-current",
+                        "kind": "file-tree",
+                        "dirty": False,
+                        "profile_hash": profile.profile_hash(),
+                    },
+                    "cache_path": str(root / "re/.cache/api"),
+                    "dirty": False,
+                    "selected": True,
+                    "classification": "current",
+                },
+                {
+                    "id": "worker",
+                    "path": "sources/worker",
+                    "absolute_path": str(root / "sources/worker"),
+                    "action": "refresh",
+                    "fingerprint": {
+                        "value": "worker-stale",
+                        "kind": "file-tree",
+                        "dirty": False,
+                        "profile_hash": profile.profile_hash(),
+                    },
+                    "cache_path": str(root / "re/.cache/worker"),
+                    "dirty": False,
+                    "selected": True,
+                    "classification": "refresh",
+                },
+            ],
+            "removed_sources": [],
+            "analysis_required": True,
+            "workspace_synthesis_required": True,
+            "publication_required": True,
+        }
     )
 
 
@@ -99,6 +151,122 @@ def test_changed_current_plan_exits_before_provider_creation(
     assert result.no_work is True
     assert provider_calls == []
     assert not (tmp_path / "runs" / ".current-re").exists()
+
+
+@pytest.mark.unit
+def test_changed_run_preserves_reuse_actions_from_planner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile = ReFingerprintProfile()
+    plan = _changed_plan_with_reuse(tmp_path, profile)
+    monkeypatch.setattr("harness.re_lifecycle.discover_workspace", _empty_manifest)
+    monkeypatch.setattr(
+        "harness.re_lifecycle.resolve_re_fingerprint_profile", lambda root: profile
+    )
+    monkeypatch.setattr(
+        "harness.re_lifecycle.load_published_index",
+        lambda root: SimpleNamespace(generation=1),
+    )
+    monkeypatch.setattr(
+        "harness.re_lifecycle.build_re_execution_plan", lambda **kwargs: plan
+    )
+    captured_plans: list[ReExecutionPlan] = []
+
+    def materialize(**kwargs: object) -> dict[str, object]:
+        captured = kwargs["plan"]
+        run_re_dir = kwargs["run_re_dir"]
+        assert isinstance(captured, ReExecutionPlan)
+        assert isinstance(run_re_dir, Path)
+        captured_plans.append(captured)
+        run_re_dir.mkdir(parents=True)
+        return {}
+
+    monkeypatch.setattr("harness.re_lifecycle.materialize_re_run_context", materialize)
+
+    class FakeExtractionController:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
+        def run(self):
+            from harness.re_controller import ReControllerResult
+
+            return ReControllerResult(completed=True)
+
+    monkeypatch.setattr(
+        "harness.re_lifecycle.ReExtractionController", FakeExtractionController
+    )
+    controller = ReLifecycleController(
+        project_root=tmp_path,
+        extension_root=tmp_path / "extension",
+        provider_factory=object,
+    )
+
+    result = controller.run(policy="changed", reset=False)
+
+    assert result.status == "done"
+    assert {source.id: source.action for source in captured_plans[0].sources} == {
+        "api": "reuse",
+        "worker": "refresh",
+    }
+
+
+@pytest.mark.unit
+def test_no_reuse_forces_reusable_sources_to_refresh(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile = ReFingerprintProfile()
+    plan = _changed_plan_with_reuse(tmp_path, profile)
+    monkeypatch.setattr("harness.re_lifecycle.discover_workspace", _empty_manifest)
+    monkeypatch.setattr(
+        "harness.re_lifecycle.resolve_re_fingerprint_profile", lambda root: profile
+    )
+    monkeypatch.setattr(
+        "harness.re_lifecycle.load_published_index",
+        lambda root: SimpleNamespace(generation=1),
+    )
+    monkeypatch.setattr(
+        "harness.re_lifecycle.build_re_execution_plan", lambda **kwargs: plan
+    )
+    captured_plans: list[ReExecutionPlan] = []
+
+    def materialize(**kwargs: object) -> dict[str, object]:
+        captured = kwargs["plan"]
+        run_re_dir = kwargs["run_re_dir"]
+        assert isinstance(captured, ReExecutionPlan)
+        assert isinstance(run_re_dir, Path)
+        captured_plans.append(captured)
+        run_re_dir.mkdir(parents=True)
+        return {}
+
+    monkeypatch.setattr("harness.re_lifecycle.materialize_re_run_context", materialize)
+
+    class FakeExtractionController:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
+        def run(self):
+            from harness.re_controller import ReControllerResult
+
+            return ReControllerResult(completed=True)
+
+    monkeypatch.setattr(
+        "harness.re_lifecycle.ReExtractionController", FakeExtractionController
+    )
+    controller = ReLifecycleController(
+        project_root=tmp_path,
+        extension_root=tmp_path / "extension",
+        provider_factory=object,
+    )
+
+    result = controller.run(policy="changed", reuse_published=False)
+
+    assert result.status == "done"
+    assert {source.id: source.action for source in captured_plans[0].sources} == {
+        "api": "refresh",
+        "worker": "refresh",
+    }
 
 
 @pytest.mark.unit
