@@ -226,6 +226,7 @@ class ReviewArtifactPublisher:
                 self._locked = True
                 return
             except BlockingIOError as exc:
+                self._cleanup_failed_lock_acquire(fd, created, old_bytes)
                 raise ReviewArtifactError(f"review lock is held: {self.lock_file}") from exc
             except ReviewArtifactError:
                 self._cleanup_failed_lock_acquire(fd, created, old_bytes)
@@ -237,6 +238,7 @@ class ReviewArtifactPublisher:
 
     def _cleanup_failed_lock_acquire(self, fd: int | None, created: bool, old_bytes: bytes) -> None:
         if fd is None:
+            self._clear_lock_state()
             return
         try:
             if created and _path_has_identity(self.lock_file, _fd_identity(fd)):
@@ -251,15 +253,21 @@ class ReviewArtifactPublisher:
                     pass
         finally:
             try:
-                fcntl.flock(fd, fcntl.LOCK_UN)
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+                except OSError:
+                    pass
             finally:
                 os.close(fd)
+                self._clear_lock_state()
 
     def _release_lock(self) -> None:
         fd = self._lock_fd
         if fd is None:
-            self._locked = False
+            self._clear_lock_state()
             return
+        release_error: OSError | None = None
+        keep_locked = False
         try:
             identity = self._lock_identity
             token = self._lock_token
@@ -269,17 +277,30 @@ class ReviewArtifactPublisher:
                     metadata["released"] = "true"
                     try:
                         _write_fd_bytes(fd, _render_lock_metadata(metadata))
-                    except OSError:
-                        pass
+                    except OSError as exc:
+                        release_error = exc
+                        if _path_has_identity(self.lock_file, identity):
+                            try:
+                                self.lock_file.unlink()
+                            except OSError:
+                                keep_locked = True
         finally:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_UN)
-            finally:
-                os.close(fd)
-                self._lock_fd = None
-                self._lock_identity = None
-                self._lock_token = None
-                self._locked = False
+            if not keep_locked:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(fd)
+                    self._clear_lock_state()
+        if keep_locked:
+            raise ReviewArtifactError("could not safely release the review lock after metadata failure") from release_error
+        if release_error is not None:
+            raise ReviewArtifactError("could not durably release the review lock") from release_error
+
+    def _clear_lock_state(self) -> None:
+        self._lock_fd = None
+        self._lock_identity = None
+        self._lock_token = None
+        self._locked = False
 
     def _require_lock(self) -> None:
         if not self._locked:

@@ -487,3 +487,66 @@ def test_consumed_journal_removal_boundary_never_replays_published_work(tmp_path
 
     assert not (state_dir / "default-review-publication.json").exists()
     assert [row.task_id for row in parse_task_rows((spec_dir / "tasks.md").read_text(encoding="utf-8"))] == ["T-001", "T-002", "T-003", "T-004"]
+
+
+def test_repeated_lock_contention_resets_contender_ownership_state(tmp_path: Path) -> None:
+    """Every failed flock acquisition must close its fd and leave no claimed owner state."""
+    spec_dir = tmp_path / "spec"
+    state_dir = tmp_path / "state"
+    spec_dir.mkdir()
+    owner = ReviewArtifactPublisher(spec_dir, state_dir, "default")
+    owner.__enter__()
+    try:
+        contender = ReviewArtifactPublisher(spec_dir, state_dir, "default")
+        original_close = os.close
+        closed: list[int] = []
+
+        def record_close(fd: int) -> None:
+            closed.append(fd)
+            original_close(fd)
+
+        with patch("harness.review_artifacts.os.close", side_effect=record_close):
+            for _ in range(2):
+                with pytest.raises(ReviewArtifactError, match="lock"):
+                    contender.__enter__()
+                assert contender._lock_fd is None
+                assert contender._lock_token is None
+                assert contender._lock_identity is None
+                assert contender._locked is False
+        assert len(closed) == 2
+    finally:
+        owner.__exit__(None, None, None)
+
+
+@pytest.mark.parametrize("failure", ["write", "fsync"])
+def test_release_metadata_failure_removes_only_owned_lock_and_allows_reacquire(
+    tmp_path: Path, failure: str
+) -> None:
+    """A failed release marker cannot become a false live owner after unlock."""
+    spec_dir = tmp_path / "spec"
+    state_dir = tmp_path / "state"
+    spec_dir.mkdir()
+    publisher = ReviewArtifactPublisher(spec_dir, state_dir, "default")
+    publisher.__enter__()
+
+    if failure == "write":
+        original_write = os.write
+
+        def fail_release_write(fd: int, data: bytes) -> int:
+            if fd == publisher._lock_fd and b"released=true" in bytes(data):
+                raise OSError("write failed")
+            return original_write(fd, data)
+
+        context = patch("harness.review_artifacts.os.write", side_effect=fail_release_write)
+    else:
+        context = patch("harness.review_artifacts.os.fsync", side_effect=OSError("fsync failed"))
+
+    with context:
+        with pytest.raises(ReviewArtifactError, match="release"):
+            publisher.__exit__(None, None, None)
+
+    assert publisher._lock_fd is None
+    assert publisher._locked is False
+    assert not (spec_dir / ".echelon-review.lock").exists()
+    with ReviewArtifactPublisher(spec_dir, state_dir, "default"):
+        pass
