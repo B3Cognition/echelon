@@ -95,7 +95,14 @@ class TestManualCommandContracts:
         assert "do not locate, glob, or\nsearch for `specs/{spec_id}-*/`" in text
         assert "`{spec_dir}/spec.md`" in text
         assert "`{spec_dir}/tasks.md`" in text
-        assert 'ls "{spec_dir}"/review-fix-*.md' in text
+        assert "Harness Review Input" in text
+        assert "review_staging_dir" in text
+        assert "review_status_file" in text
+        assert "tasks-append.md" in text
+        assert "gh api" not in text
+        assert "glab api" not in text
+        assert "```bash" not in text
+        assert "ls \"{spec_dir}\"/review-fix-*.md" not in text
         assert "`specs/{spec_id}-{spec_name}/spec.md`" not in text
         assert "`specs/{spec_id}-{spec_name}/tasks.md`" not in text
         assert "Never checkout, switch, or stash branches" in text

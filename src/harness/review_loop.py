@@ -29,6 +29,12 @@ from harness.config import HarnessConfig
 from harness.llm_provider import AICodingCliProvider
 from harness.paths import build_dir as _build_dir_fn
 from harness.delivery_results import ReviewResult
+from harness.review_artifacts import (
+    PublishedReviewBatch,
+    ReviewArtifactError,
+    ReviewArtifactPublisher,
+    ReviewAllocation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +48,11 @@ _BLOCKING_VERBS = re.compile(
 # Comments that match these are excluded even if blocking verbs are present.
 _EXCLUSION_PATTERNS = re.compile(
     r"^(nit:|nit\b|\[nit\]|optional:|minor:|suggestion:)", re.IGNORECASE
+)
+_REVIEW_AGENT_NAMES = (
+    "speckit-echelon-debugger",
+    "speckit-echelon-sentinel",
+    "speckit-echelon-spec-guard",
 )
 
 
@@ -74,6 +85,49 @@ class _ReviewSkillResult:
 
     tokens_used: int
     queued: bool
+    queued_task_ids: tuple[str, ...] = ()
+    published_artifacts: tuple[Path, ...] = ()
+
+
+def _normalized_review_input(
+    comments: List[ReviewComment],
+    adjacent_line_threshold: int,
+) -> str:
+    """Return the complete, host-supplied comment payload for review triage."""
+    payload = {
+        "adjacent_line_threshold": adjacent_line_threshold,
+        "comments": [
+            {
+                "comment_id": comment.comment_id,
+                "reviewer": comment.reviewer,
+                "body": comment.body,
+                "path": comment.path,
+                "line": comment.line,
+                "timestamp": comment.created_at.isoformat(),
+            }
+            for comment in comments
+        ],
+    }
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
+def _load_review_agents(worktree: Path) -> dict[str, dict[str, object]]:
+    """Load exactly the fixed read-only diagnostic agents from a worktree."""
+    agents_dir = worktree / ".claude" / "agents"
+    agents: dict[str, dict[str, object]] = {}
+    for name in _REVIEW_AGENT_NAMES:
+        path = agents_dir / f"{name}.md"
+        if path.is_symlink() or not path.is_file():
+            raise ReviewArtifactError(f"required review agent is missing or unsafe: {path}")
+        prompt = path.read_text(encoding="utf-8").strip()
+        if not prompt:
+            raise ReviewArtifactError(f"required review agent is empty: {path}")
+        agents[name] = {
+            "description": f"Read-only review triage: {name}",
+            "prompt": prompt,
+            "tools": ["Read"],
+        }
+    return agents
 
 
 def _parse_dt(s: str) -> datetime:
@@ -184,6 +238,9 @@ class ReviewLoopController:
             f"{strategy_id}-review-status.json"
         )
         self._seen_ids: Set[str] = self._load_seen_ids()
+        self.queued_task_ids: tuple[str, ...] = ()
+        self.published_artifacts: tuple[Path, ...] = ()
+        self._published_batch: PublishedReviewBatch | None = None
 
     # === Public entry point ===
 
@@ -236,7 +293,6 @@ class ReviewLoopController:
             if last_comment_time is None or newest > last_comment_time:
                 last_comment_time = newest
 
-            # Invoke echelon.review to produce review-fix-N.md + tasks
             invocation = self._invoke_review_skill(
                 pr_url,
                 comments,
@@ -244,6 +300,11 @@ class ReviewLoopController:
             )
             tokens_used += invocation.tokens_used
             if not invocation.queued:
+                if (
+                    self._published_batch is not None
+                    and self._published_batch.status == "no_blocking_comments"
+                ):
+                    continue
                 return ReviewResult(
                     status="blocked",
                     termination_reason="blocker_escalation",
@@ -251,17 +312,6 @@ class ReviewLoopController:
                     pr_url=pr_url,
                     tokens_used=tokens_used,
                 )
-
-            # Mark all processed comments as seen so we don't re-process them
-            for c in comments:
-                self._seen_ids.add(c.comment_id)
-            self._save_seen_ids()
-
-            if self._rl.resolve_threads:
-                for comment in comments:
-                    self._resolve_thread(pr_url, comment.comment_id)
-
-            self._request_review(pr_url)
 
             # Signal coordinator to re-run Phase 1 with the new tasks
             return ReviewResult(
@@ -283,6 +333,76 @@ class ReviewLoopController:
             pr_url=pr_url,
             tokens_used=tokens_used,
         )
+
+    def _plan_and_publish_review(
+        self,
+        pr_url: str,
+        comments: List[ReviewComment],
+        *,
+        worktree_path: str,
+    ) -> _ReviewSkillResult:
+        """Stage, validate, and publish review output before any PR mutation."""
+        delivery_worktree = Path(worktree_path).resolve() if worktree_path else None
+        spec_dir = self._spec_dir or _find_review_spec_dir(self._base_dir, self._spec_id)
+        if (
+            delivery_worktree is None
+            or not delivery_worktree.is_dir()
+            or spec_dir is None
+            or not spec_dir.is_dir()
+        ):
+            return _ReviewSkillResult(tokens_used=0, queued=False)
+
+        state_dir = self._state_file.parent
+        try:
+            with ReviewArtifactPublisher(spec_dir, state_dir, self._strategy_id) as publisher:
+                batch = publisher.recover_publication(self._seen_ids)
+                self._published_batch = batch
+                tokens_used = 0
+                if batch is None:
+                    self._published_batch = None
+                    allocation = publisher.allocate(tuple(c.comment_id for c in comments))
+                    invocation = self._invoke_staged_review_skill(
+                        pr_url,
+                        comments,
+                        worktree_path=str(delivery_worktree),
+                        spec_dir=spec_dir,
+                        allocation=allocation,
+                        publisher=publisher,
+                    )
+                    tokens_used = invocation.tokens_used
+                    batch = self._published_batch
+                    if batch is None:
+                        return invocation
+
+                if batch.status != "review_fix_queued":
+                    for comment_id in batch.comment_ids:
+                        self._seen_ids.add(comment_id)
+                    self._save_seen_ids()
+                    publisher.mark_consumed(batch.attempt_id)
+                    return _ReviewSkillResult(tokens_used=tokens_used, queued=False)
+
+                for comment_id in batch.comment_ids:
+                    self._seen_ids.add(comment_id)
+                self._save_seen_ids()
+                if self._rl.resolve_threads:
+                    comments_by_id = {comment.comment_id: comment for comment in comments}
+                    for comment_id in batch.comment_ids:
+                        comment = comments_by_id.get(comment_id)
+                        if comment is not None:
+                            self._resolve_thread(pr_url, comment.comment_id)
+                self._request_review(pr_url)
+                publisher.mark_consumed(batch.attempt_id)
+                self.queued_task_ids = batch.task_ids
+                self.published_artifacts = batch.artifact_paths
+                return _ReviewSkillResult(
+                    tokens_used=tokens_used,
+                    queued=True,
+                    queued_task_ids=batch.task_ids,
+                    published_artifacts=batch.artifact_paths,
+                )
+        except ReviewArtifactError as exc:
+            logger.warning("Review artifact publication blocked: %s", exc)
+            return _ReviewSkillResult(tokens_used=0, queued=False)
 
     # === Private: comment fetching ===
 
@@ -707,6 +827,23 @@ class ReviewLoopController:
         *,
         worktree_path: str = "",
     ) -> _ReviewSkillResult:
+        """Run a complete staged review attempt for the supplied host comments."""
+        return self._plan_and_publish_review(
+            pr_url,
+            comments,
+            worktree_path=worktree_path,
+        )
+
+    def _invoke_staged_review_skill(
+        self,
+        pr_url: str,
+        comments: List[ReviewComment],
+        *,
+        worktree_path: str = "",
+        spec_dir: Path | None = None,
+        allocation: ReviewAllocation | None = None,
+        publisher: ReviewArtifactPublisher | None = None,
+    ) -> _ReviewSkillResult:
         """Invoke echelon.review via the configured AI coding CLI.
 
         Writes HARNESS_BUILD_STATUS_FILE, waits for skill completion,
@@ -721,20 +858,26 @@ class ReviewLoopController:
             )
             return _ReviewSkillResult(tokens_used=0, queued=False)
 
-        status_file = self._status_file
-        status_file.parent.mkdir(parents=True, exist_ok=True)
-        # Remove stale status file from a previous invocation
-        status_file.unlink(missing_ok=True)
+        canonical_spec_dir = spec_dir or self._spec_dir or _find_review_spec_dir(
+            self._base_dir, self._spec_id
+        )
+        if canonical_spec_dir is None or allocation is None or publisher is None:
+            logger.error("Cannot invoke echelon.review without staged publication allocation")
+            return _ReviewSkillResult(tokens_used=0, queued=False)
+        try:
+            review_agents = _load_review_agents(delivery_worktree)
+        except (OSError, ReviewArtifactError) as exc:
+            logger.warning("Cannot load review agents: %s", exc)
+            return _ReviewSkillResult(tokens_used=0, queued=False)
 
         from harness.skill_loader import find_skill, resolve_llm_prompt
         args = f"{self._spec_id} pr_url={pr_url}"
-        spec_dir = self._spec_dir or _find_review_spec_dir(
-            self._base_dir,
-            self._spec_id,
-        )
-        if spec_dir is not None:
-            args += f" spec_dir={spec_dir}"
+        args += f" spec_dir={canonical_spec_dir}"
         args += f" worktree={delivery_worktree}"
+        args += f" review_staging_dir={allocation.attempt_dir}"
+        args += f" review_status_file={allocation.status_file}"
+        args += " review_artifacts=" + json.dumps(list(allocation.artifact_names))
+        args += " review_task_ids=" + json.dumps(list(allocation.task_ids))
         prompt_root = delivery_worktree
         if find_skill("echelon.review", delivery_worktree, self._llm_cli) is None:
             prompt_root = self._base_dir
@@ -744,13 +887,30 @@ class ReviewLoopController:
             project_dir=prompt_root,
             cli=self._llm_cli,
         )
+        prompt += (
+            "\n\n## Harness Review Input\n\n```json\n"
+            + _normalized_review_input(comments, self._rl.adjacent_line_threshold)
+            + "\n```\n"
+        )
         logger.info("Invoking echelon.review: spec=%s pr=%s", self._spec_id, pr_url)
 
         result = AICodingCliProvider(self._config).run_prompt_result(
             str(delivery_worktree),
             prompt,
-            extra_env={"HARNESS_BUILD_STATUS_FILE": str(status_file)},
+            extra_env={"HARNESS_BUILD_STATUS_FILE": str(allocation.status_file)},
             timeout_ms=int(self._review_timeout_s * 1000),
+            request_metadata={
+                "execution_profile": "review_triage_v1",
+                "prompt_metadata": {
+                    "tool_read_roots": [str(delivery_worktree), str(canonical_spec_dir)],
+                    "tool_write_paths": [
+                        *(str(allocation.attempt_dir / name) for name in allocation.artifact_names),
+                        str(allocation.attempt_dir / "tasks-append.md"),
+                        str(allocation.status_file),
+                    ],
+                    "review_agents": review_agents,
+                },
+            },
         )
         if result.timed_out:
             logger.warning("echelon.review timed out after %ss", self._review_timeout_s)
@@ -761,24 +921,19 @@ class ReviewLoopController:
             logger.warning("echelon.review exited %d", result.exit_code)
             return _ReviewSkillResult(tokens_used=tokens_used, queued=False)
 
-        # Read status file if present
-        queued = False
-        if status_file.exists():
-            try:
-                data = json.loads(status_file.read_text(encoding="utf-8"))
-                status = data.get("status", "unknown")
-                logger.info("echelon.review status: %s", status)
-                queued = status == "review_fix_queued"
-                if not queued:
-                    logger.warning(
-                        "echelon.review returned unexpected status: %s", status
-                    )
-            except Exception as e:
-                logger.warning("Could not read review status file: %s", e)
-        else:
-            logger.warning("echelon.review did not write its status file")
-
-        return _ReviewSkillResult(tokens_used=tokens_used, queued=queued)
+        try:
+            batch = publisher.accept_manifest(allocation.status_file)
+        except ReviewArtifactError as exc:
+            logger.warning("echelon.review staged output is invalid: %s", exc)
+            return _ReviewSkillResult(tokens_used=tokens_used, queued=False)
+        self._published_batch = batch
+        queued = batch.status == "review_fix_queued"
+        return _ReviewSkillResult(
+            tokens_used=tokens_used,
+            queued=queued,
+            queued_task_ids=batch.task_ids,
+            published_artifacts=batch.artifact_paths,
+        )
 
     # === Private: state persistence ===
 

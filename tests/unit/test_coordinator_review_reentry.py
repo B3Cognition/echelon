@@ -49,8 +49,8 @@ def _implementation_result(
 @pytest.mark.unit
 class TestCoordinatorReviewReentry:
 
-    def test_build_reentry_prompt_injects_review_fix_content(self, tmp_path):
-        """_build_reentry_prompt reads canonical review-fix artifacts directly."""
+    def test_build_reentry_prompt_injects_only_published_review_fix_content(self, tmp_path):
+        """A re-entry may only use artifacts from its just-published batch."""
         config = _config(tmp_path)
         coord = StrategyCoordinator(
             provider=MagicMock(),
@@ -65,18 +65,26 @@ class TestCoordinatorReviewReentry:
             "# Review Fix 1\nFix the z-index issue.\n",
             encoding="utf-8",
         )
+        published = spec_dir / "review-fix-2.md"
+        published.write_text(
+            "# Review Fix 2\nFix the supplied review finding.\n",
+            encoding="utf-8",
+        )
 
         with patch("subprocess.run") as run_git:
             result = coord._build_reentry_prompt(
                 "spec 005 semi mode",
                 "005",
                 spec_dir=spec_dir,
+                published_artifacts=(published,),
             )
 
         run_git.assert_not_called()
         assert "## Review Feedback" in result
-        assert "Review Fix 1" in result
-        assert "Fix the z-index issue." in result
+        assert "Review Fix 1" not in result
+        assert "Fix the z-index issue." not in result
+        assert "Review Fix 2" in result
+        assert "Fix the supplied review finding." in result
         assert result.startswith("spec 005 semi mode")
 
     def test_build_reentry_prompt_returns_base_when_no_spec_dir(self, tmp_path):
@@ -109,6 +117,24 @@ class TestCoordinatorReviewReentry:
         result = coord._build_reentry_prompt("spec 005 semi mode", "005")
 
         assert result == "spec 005 semi mode"
+
+    def test_target_task_ids_extend_once_in_published_order(self, tmp_path):
+        """Re-entry persists only canonical IDs from the completed publication."""
+        coord = StrategyCoordinator(
+            provider=MagicMock(), gitops=MagicMock(), config=_config(tmp_path),
+            base_dir=str(tmp_path),
+        )
+        state_store = MagicMock()
+        state_store.read.return_value = {
+            "status": "reviewing", "target_task_ids": ["T-001", "T-003"],
+        }
+
+        coord._extend_target_task_ids(state_store, ("T-002", "T-003", "T-004"))
+
+        state_store.transition.assert_called_once_with(
+            "reviewing",
+            updates={"target_task_ids": ["T-001", "T-003", "T-002", "T-004"]},
+        )
 
     def test_reentry_run_loop_receives_review_content(self, tmp_path):
         """Coordinator passes injected prompt to RalphController on Phase 1 re-entry."""
@@ -196,6 +222,8 @@ class TestCoordinatorReviewReentry:
                 ),
             ]
             MockReview.return_value = review_instance
+            review_instance.queued_task_ids = ("T-001", "T-002", "T-003")
+            review_instance.published_artifacts = (spec_dir / "review-fix-1.md",)
 
             MockVisual.return_value.run_loop.side_effect = [
                 VisualResult("passed", "converged", 1, 3, VerifyResult(True, [])),

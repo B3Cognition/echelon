@@ -68,6 +68,20 @@ def _split_env_list(raw: str | None) -> list[str]:
     return [item.strip() for item in (raw or "").split(",") if item.strip()]
 
 
+def _string_tuple(value: object) -> tuple[str, ...]:
+    """Accept only concrete canonical task IDs supplied by the review controller."""
+    if not isinstance(value, (tuple, list)):
+        return ()
+    return tuple(item for item in value if isinstance(item, str))
+
+
+def _path_tuple(value: object) -> tuple[Path, ...]:
+    """Accept only concrete published artifact paths from the review controller."""
+    if not isinstance(value, (tuple, list)):
+        return ()
+    return tuple(Path(item) for item in value if isinstance(item, Path))
+
+
 def _derive_target_task_ids(
     *,
     tasks_file: Path | None,
@@ -1123,11 +1137,20 @@ class StrategyCoordinator:
                             )
 
                         # echelon.review queued new fix tasks — re-run Phase 1
-                        # Inject all review-fix content so Claude knows what to address.
+                        # Use only the just-published batch; historical review
+                        # fixes may already have been completed or superseded.
+                        published_task_ids = _string_tuple(
+                            getattr(review_controller, "queued_task_ids", ())
+                        )
+                        published_artifacts = _path_tuple(
+                            getattr(review_controller, "published_artifacts", ())
+                        )
+                        self._extend_target_task_ids(state_store, published_task_ids)
                         reentry_prompt = self._build_reentry_prompt(
                             build_prompt,
                             intent.spec_id,
                             spec_dir=spec_dir,
+                            published_artifacts=published_artifacts,
                         )
                         state_store.transition("running")
                         implementation_result = controller.run_loop(
@@ -1390,8 +1413,9 @@ class StrategyCoordinator:
         spec_id: str,
         *,
         spec_dir: Path | None = None,
+        published_artifacts: tuple[Path, ...] = (),
     ) -> str:
-        """Augment a build prompt from canonical review-fix artifacts."""
+        """Augment a build prompt from this batch's canonical review artifacts."""
         canonical_spec_dir = (
             Path(spec_dir).resolve()
             if spec_dir is not None
@@ -1404,11 +1428,15 @@ class StrategyCoordinator:
             return base_prompt
 
         try:
-            parts = [
-                path.read_text(encoding="utf-8").strip()
-                for path in sorted(canonical_spec_dir.glob("review-fix-*.md"))
-                if path.is_file()
-            ]
+            parts = []
+            for path in published_artifacts:
+                resolved = Path(path).resolve()
+                if resolved.parent != canonical_spec_dir or not resolved.is_file():
+                    logger.warning("Ignoring invalid published review artifact: %s", path)
+                    continue
+                content = resolved.read_text(encoding="utf-8").strip()
+                if content:
+                    parts.append(content)
             parts = [part for part in parts if part]
         except OSError as exc:
             logger.warning("Could not read review-fix content: %s", exc)
@@ -1423,6 +1451,24 @@ class StrategyCoordinator:
             f"## Review Feedback (address these before completing the build)\n"
             f"{review_content}"
         )
+
+    @staticmethod
+    def _extend_target_task_ids(
+        state_store: StateStore,
+        task_ids: tuple[str, ...],
+    ) -> None:
+        """Atomically append a published batch's canonical tasks without duplicates."""
+        if not task_ids:
+            return
+        current = state_store.read()
+        existing = current.get("target_task_ids", [])
+        ordered = [value for value in existing if isinstance(value, str)]
+        for task_id in task_ids:
+            if task_id not in ordered:
+                ordered.append(task_id)
+        status = current.get("status")
+        if isinstance(status, str):
+            state_store.transition(status, updates={"target_task_ids": ordered})
 
     def _cancel_peers(self, converged_sid: str, all_strategies: List[str]) -> None:
         """Set cancel_requested on all peer strategies (kill_losers)."""
