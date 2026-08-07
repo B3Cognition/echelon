@@ -2297,8 +2297,13 @@ def test_openai_compatible_repeated_tool_calls_force_a_no_tools_final_turn(
     assert result.metadata["tool_no_progress_forced"] is True
     assert "tools" in captured_payloads[1]
     assert "tools" not in captured_payloads[2]
-    assert captured_payloads[2]["messages"][-1]["role"] == "system"
-    assert "Do not call more tools" in captured_payloads[2]["messages"][-1]["content"]
+    final_messages = captured_payloads[2]["messages"]
+    assert [
+        index
+        for index, message in enumerate(final_messages)
+        if message["role"] == "system"
+    ] == [0]
+    assert "Do not call more tools" in final_messages[0]["content"]
 
 
 def test_openai_compatible_backend_executes_fetch_url_tool_call(

@@ -11,7 +11,8 @@ import pytest
 from harness.re_controller import ReExtractionController
 from harness.re_domain_manifest import DOMAIN_PARTITION_VERSION
 from harness.re_planner import ReExecutionPlan
-from harness.re_quality_gate import ReQualityReport
+from harness.re_quality_gate import ReQualityReport, ReSpecQualityFailure
+from harness.re_semantic_preflight import SemanticPreflightFinding
 from harness.squad_provider import SquadAgentResult
 from tests.unit.test_re_publication import (
     _deep_spec,
@@ -95,6 +96,157 @@ def _passing_semantic_quality_review(prompt: str) -> dict[str, object]:
             if f"{domain['source_id']}/{domain['domain_id']}" == requested
         ]
     return {"schema_version": 1, "domains": domains}
+
+
+def _unscoped_universal_claim_report(
+    spec_path: Path = Path("spec.md"),
+) -> ReQualityReport:
+    return ReQualityReport(
+        passed=False,
+        failures=(
+            ReSpecQualityFailure(
+                source_id="api",
+                domain_id="001-re-domain",
+                spec_path=spec_path,
+                missing_sections=(),
+                source_evidence_count=5,
+                expected_scenario_count=5,
+                scenario_count=5,
+                expected_functional_requirement_count=5,
+                functional_requirement_count=5,
+                expected_non_functional_requirement_count=3,
+                non_functional_requirement_count=3,
+                semantic_preflight_findings=(
+                    SemanticPreflightFinding(
+                        code="unscoped_universal_claim",
+                        message=(
+                            "FR-001 uses a universal claim without exhaustive "
+                            "evidence scope"
+                        ),
+                        references=("`src/handler.ts:12`",),
+                    ),
+                ),
+            ),
+        ),
+    )
+
+
+@pytest.mark.unit
+def test_unscoped_universal_claim_uses_semantic_repair_limit() -> None:
+    controller = object.__new__(ReExtractionController)
+    state = {
+        "re_convergence_schema_version": 1,
+        "re_source_states": {},
+        "re_execution_profile": {
+            "name": "balanced",
+            "max_semantic_repair_rounds": 1,
+        },
+        "re_source_budgets": {"max_domain_repairs": 3},
+    }
+
+    assert controller._target_quality_repair_limit(
+        state, _unscoped_universal_claim_report()
+    ) == 1
+
+
+@pytest.mark.unit
+def test_structural_target_quality_failure_uses_domain_repair_limit() -> None:
+    controller = object.__new__(ReExtractionController)
+    state = {
+        "re_convergence_schema_version": 1,
+        "re_source_states": {},
+        "re_execution_profile": {
+            "name": "balanced",
+            "max_semantic_repair_rounds": 1,
+        },
+        "re_source_budgets": {"max_domain_repairs": 3},
+    }
+    report = ReQualityReport(
+        passed=False,
+        failures=(
+            ReSpecQualityFailure(
+                source_id="api",
+                domain_id="001-re-domain",
+                spec_path=Path("spec.md"),
+                missing_sections=("Edge Cases",),
+                source_evidence_count=5,
+            ),
+        ),
+    )
+
+    assert controller._target_quality_repair_limit(state, report) == 3
+
+
+@pytest.mark.unit
+def test_unscoped_universal_claim_exhaustion_advances_to_next_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api", "worker"))
+    _initialize_re_state(run_dir, max_repairs=3)
+    state_path = run_dir / "re" / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "re_convergence_schema_version": 1,
+            "re_execution_profile": {
+                "name": "balanced",
+                "semantic_audit_mode": "all",
+                "max_semantic_repair_rounds": 1,
+            },
+            "re_source_budgets": {
+                "max_source_cycles": 2,
+                "max_domain_repairs": 3,
+                "max_source_reanalysis": 2,
+            },
+            "re_source_states": {},
+        }
+    )
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    def target_quality(
+        _run_re_dir: Path,
+        _plan: ReExecutionPlan,
+        source_id: str,
+        _domain_id: str,
+    ) -> ReQualityReport:
+        if source_id == "api":
+            return _unscoped_universal_claim_report(
+                run_dir / "re/sources/api/specs/001-re-domain/spec.md"
+            )
+        return ReQualityReport(passed=True, failures=())
+
+    monkeypatch.setattr(
+        "harness.re_controller.validate_staged_re_domain_quality", target_quality
+    )
+
+    class DomainRecordingProvider(_ShallowSpecifierProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.specifier_sources: list[str] = []
+
+        def exec_agent(self, project_root: str, prompt: str) -> SquadAgentResult:
+            if (
+                "RE phase: re-extract-2-specify" in prompt
+                and "Source ID: `" in prompt
+            ):
+                self.specifier_sources.append(
+                    prompt.split("Source ID: `", 1)[1].split("`", 1)[0]
+                )
+            return super().exec_agent(project_root, prompt)
+
+    provider = DomainRecordingProvider()
+    result = ReExtractionController(
+        provider=provider,
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert result.completed
+    assert provider.specifier_sources[:3] == ["api", "api", "worker"]
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["re_source_states"]["api"]["status"] == "partial_quality_debt"
 
 
 @pytest.mark.unit

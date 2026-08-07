@@ -10,6 +10,7 @@ Reverse engineering runs independently from spec authoring:
 echelon re run                                      # changed; no-op when current
 echelon re run --re-policy refresh-all --re-max-inner 10
 echelon re continue --re-max-inner 12              # continue without an answer
+echelon re continue --re-token-limit 25000000      # raise active token ceiling
 echelon re resume "Use the v2 contract"             # answer a human-input block
 ```
 
