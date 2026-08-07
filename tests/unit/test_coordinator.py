@@ -289,7 +289,7 @@ def test_visual_fix_reenters_phase1_before_accepting_new_visual_evidence(tmp_pat
         target_repo="git@example.com:t/r.git",
         target_default_branch="main",
         provider="docker",
-        visual_tests=VisualTestsConfig(enabled=True, max_iterations=1),
+        visual_tests=VisualTestsConfig(enabled=True, max_iterations=2),
     )
     gitops = MagicMock()
     gitops.get_latest_worktree.return_value = str(tmp_path / "worktree")
@@ -308,6 +308,35 @@ def test_visual_fix_reenters_phase1_before_accepting_new_visual_evidence(tmp_pat
     assert phase1.call_count == 2
     assert visual.call_count == 2
     assert result.tokens_used == 26
+
+
+def test_visual_fix_reentry_stops_at_configured_visual_cap(tmp_path):
+    """Repeated visual fixes cannot keep the coordinator re-entering Phase 1."""
+    from harness.config import VisualTestsConfig
+    from harness.visual_ralph import VisualRalphController
+
+    config = HarnessConfig(
+        target_repo="git@example.com:t/r.git",
+        target_default_branch="main",
+        provider="docker",
+        visual_tests=VisualTestsConfig(enabled=True, max_iterations=2),
+    )
+    gitops = MagicMock()
+    gitops.get_latest_worktree.return_value = str(tmp_path / "worktree")
+    verified = ImplementationResult("verified", "converged", 1, 0, None, 1, None)
+    applied = VisualResult("fix_applied", "fix_applied", 1, 1, None)
+
+    with patch.object(RalphController, "run_loop", return_value=verified) as phase1, \
+         patch.object(VisualRalphController, "run_loop", return_value=applied) as visual:
+        result = StrategyCoordinator(
+            provider=MockProvider(), gitops=gitops, config=config, base_dir=str(tmp_path)
+        ).start(RunIntent(spec_id="001", max_outer=1, max_inner=1))[0]
+
+    assert result.status == "blocked"
+    assert result.blocked_phase == "visual"
+    assert result.termination_reason == "visual_failed"
+    assert visual.call_count == 2
+    assert phase1.call_count == 3  # initial verification plus one per applied fix
 
 
 def test_coordinator_skips_visual_loop_when_phase1_fails(tmp_path):

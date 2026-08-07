@@ -516,7 +516,17 @@ class StrategyCoordinator:
                 nonlocal visual_iterations, visual_tokens
                 if visual_controller is None:
                     return None
+                visual_attempts = 0
+                last_visual_verify = None
                 while implementation_result.status == "verified":
+                    if visual_attempts >= self._config.visual_tests.max_iterations:
+                        return VisualResult(
+                            status="blocked",
+                            termination_reason="visual_failed",
+                            iterations=0,
+                            tokens_used=0,
+                            final_verify=last_visual_verify,
+                        )
                     worktree_path = self._gitops.get_latest_worktree(
                         intent.spec_id, strategy_id, build_id=self._build_id,
                     )
@@ -524,6 +534,8 @@ class StrategyCoordinator:
                         worktree_path=worktree_path or str(self._base_dir),
                         token_budget=budget,
                     )
+                    visual_attempts += 1
+                    last_visual_verify = current_visual_result.final_verify
                     visual_iterations += current_visual_result.iterations
                     visual_tokens += current_visual_result.tokens_used
                     if current_visual_result.status != "fix_applied":
