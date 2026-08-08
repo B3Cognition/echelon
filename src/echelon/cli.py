@@ -10444,6 +10444,9 @@ def _cmd_workspace_migrate_to_prosaic(project_root: Path) -> None:
         shutil.copy2(legacy_config, config_path)
         print(f"✓ copied canonical config from {legacy_config}")
 
+    if _normalize_legacy_re_output_directory(config_path):
+        print("✓ normalized standalone RE output: .echelon/re")
+
     try:
         install_prosaic_bundle(project_root)
     except ProsaicBundleInstallError as exc:
@@ -10473,12 +10476,27 @@ def _cmd_workspace_migrate_to_prosaic(project_root: Path) -> None:
     print("  legacy .specify/extensions/echelon was left unchanged")
 
 
+def _normalize_legacy_re_output_directory(config_path: Path) -> bool:
+    """Move only the former default RE state path into Echelon ownership."""
+    text = config_path.read_text(encoding="utf-8")
+    normalized, replacements = re.subn(
+        r"(?m)^(\s*directory:\s*)(['\"]?)\.specify/echelon/re\2(\s*(?:#.*)?)$",
+        r"\1\2.echelon/re\2\3",
+        text,
+    )
+    if replacements == 0:
+        return False
+    config_path.write_text(normalized, encoding="utf-8")
+    return True
+
+
 def _ensure_prosaic_workspace_ignores(project_root: Path) -> None:
     """Ignore generated Prosaic deployment state without rewriting user rules."""
     ignore_path = project_root / ".gitignore"
     existing = ignore_path.read_text(encoding="utf-8") if ignore_path.exists() else ""
     lines = existing.splitlines()
     required = (
+        "/.echelon/re/",
         "/.echelon/runtime/",
         "/.echelon/packages/",
         "/.echelon/prosaic/",

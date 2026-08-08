@@ -1861,7 +1861,7 @@ re:
     # Directory for generated artifacts (relative to project root)
     # Specs use NNN-re-{domain} naming (e.g., 000-re-overview, 003-re-core-framework)
     # which makes them identifiable without a separate subdirectory
-    directory: ".specify/echelon/re"
+    directory: ".echelon/re"
 
     # Generate spec.md
     generate_spec: true

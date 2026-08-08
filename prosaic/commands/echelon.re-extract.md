@@ -14,7 +14,7 @@ routing contract. Do not read `agents/control/commander.md` or
 Start at phase `re-extract-0-preflight`, read each named phase contract before
 dispatching, and write all state to the resolved RE output directory:
 - active `echelon spec run`: `runs/<run-id>/re/state.json`
-- standalone `re-*`: `.specify/echelon/re/state.json`
+- standalone `re-*`: `.echelon/re/state.json`
 
 **This command always extracts and specifies. It never writes implementation code.**
 

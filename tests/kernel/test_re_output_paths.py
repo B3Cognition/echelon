@@ -20,4 +20,8 @@ def test_resolve_re_output_dir_keeps_explicit_config_override(tmp_path):
 
 
 def test_resolve_re_output_dir_falls_back_for_standalone_re(tmp_path):
-    assert resolve_re_output_dir(tmp_path) == ".specify/echelon/re"
+    assert resolve_re_output_dir(tmp_path) == ".echelon/re"
+
+
+def test_resolve_re_output_dir_normalizes_the_legacy_default(tmp_path):
+    assert resolve_re_output_dir(tmp_path, ".specify/echelon/re") == ".echelon/re"

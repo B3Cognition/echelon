@@ -13,7 +13,7 @@ routing contract. Do not read `agents/control/commander.md` or
 
 Start at phase `re-planning-0-preflight`, read each named phase contract before dispatching,
 write all state to the resolved RE output directory (`runs/<run-id>/re/state.json`
-during an active `echelon spec run`, otherwise `.specify/echelon/re/state.json`).
+during an active `echelon spec run`, otherwise `.echelon/re/state.json`).
 
 **This command always generates plans and tasks. It never writes implementation code.**
 

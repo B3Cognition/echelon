@@ -57,7 +57,7 @@ const integrationTypes = require("./integration-types");
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-exports.DEFAULT_OUTPUT_RELATIVE = '.specify/echelon/re/codegraph-analysis.json';
+exports.DEFAULT_OUTPUT_RELATIVE = '.echelon/re/codegraph-analysis.json';
 exports.DEFAULT_DEPTH = 3;
 exports.MIN_DEPTH = 1;
 exports.MAX_DEPTH = 10;

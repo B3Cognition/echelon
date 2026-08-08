@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Scan immediate children of CWD for project markers and output a JSON manifest.
 # Usage: discover-repos.sh [output_file]
-# Default output: .specify/echelon/re/repos-manifest.json
+# Default output: .echelon/re/repos-manifest.json
 set -euo pipefail
 
-OUTPUT_FILE="${1:-${ECHELON_CFG_RE_OUTPUT_DIRECTORY:-.specify/echelon/re}/repos-manifest.json}"
+OUTPUT_FILE="${1:-${ECHELON_CFG_RE_OUTPUT_DIRECTORY:-.echelon/re}/repos-manifest.json}"
 
 # ---------- prerequisites ----------
 

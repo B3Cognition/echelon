@@ -143,7 +143,7 @@ Print a summary:
 ╚══════════════════════════════════════════╝
 
   config       → {ECHELON_CONFIG}
-  deploy-state → active run deploy-state.json (`runs/.current`, `squad/.current`, legacy `.specify/squad` fallback)
+  deploy-state → active run deploy-state.json (`runs/.current`)
 
 Next step:
   echelon.run — start the cognitive squad run

@@ -152,7 +152,7 @@ state_updates:
 
 Read config values via `bash ${PROJECT_ROOT}/.echelon/runtime/scripts/bash/echelon-config-get.sh <key>`. Relevant keys: `budget.*`, `limits.wall_clock_timeout_minutes`, `specialists.guardian_mode`.
 
-The harness injects `SQUAD_DIR`, `STAGING_DIR`, and `PROJECT_ROOT` at the top of your prompt — always use these for all file paths. Never hardcode `.specify/squad/`.
+The harness injects `SQUAD_DIR`, `STAGING_DIR`, and `PROJECT_ROOT` at the top of your prompt — always use these for all file paths. Never hardcode a run-state path.
 
 ## Dispatch Mechanism
 

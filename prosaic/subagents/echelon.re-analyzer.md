@@ -41,7 +41,7 @@ Read stable defaults from Echelon config at point of use, then pass explicit run
 
 Verify the workspace looks like a project root. Check for `.git`, `package.json`, `pyproject.toml`, `go.mod`, or `Cargo.toml`. If none are present, note a warning but continue.
 
-Read `state.json` from the context pack and set `RE_OUTPUT_DIR = state.output_dir` (default `.specify/echelon/re` for standalone RE, `runs/<run-id>/re` during an active echelon spec run).
+Read `state.json` from the context pack and set `RE_OUTPUT_DIR = state.output_dir` (default `.echelon/re` for standalone RE, `runs/<run-id>/re` during an active Echelon spec run).
 
 **Manifest preference**: Prefer `$RE_OUTPUT_DIR/re-analysis-manifest.json` during an active run. It is the refresh-only source selection produced by the deterministic planner. When it is absent, prefer workspace-manifest.json for standalone extraction and use repos-manifest.json only as a compatibility fallback for older runs.
 

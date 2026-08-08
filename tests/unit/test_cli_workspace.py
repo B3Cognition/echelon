@@ -357,7 +357,42 @@ def test_workspace_migrate_to_prosaic_preserves_config_and_validates_graph(
     _cmd_workspace_migrate_to_prosaic(tmp_path)
 
     assert (tmp_path / ".echelon/config.yml").read_text(encoding="utf-8") == "verify_command: pytest\n"
+    assert "/.echelon/re/" in (tmp_path / ".gitignore").read_text(encoding="utf-8")
     assert "/.echelon/prosaic/" in (tmp_path / ".gitignore").read_text(encoding="utf-8")
     assert "/.prosaic-manifest.json" in (tmp_path / ".gitignore").read_text(encoding="utf-8")
     assert "/.prosaic-backups/" in (tmp_path / ".gitignore").read_text(encoding="utf-8")
     assert "Prosaic migration complete" in capsys.readouterr().out
+
+
+def test_workspace_migrate_to_prosaic_normalizes_legacy_re_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = tmp_path / ".echelon/config.yml"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        "re:\n  output:\n    directory: .specify/echelon/re\n",
+        encoding="utf-8",
+    )
+
+    def deploy_bundle(project_root: Path) -> object:
+        workflow = project_root / ".echelon/runtime/workflow"
+        subagents = project_root / ".echelon/prosaic/subagents"
+        workflow.mkdir(parents=True)
+        subagents.mkdir(parents=True)
+        (workflow / "definition.yaml").write_text(
+            "phases:\n  - id: discover\n    type: agent\n    agent: echelon.scout\n",
+            encoding="utf-8",
+        )
+        (subagents / "echelon.scout.md").write_text("# Scout\n", encoding="utf-8")
+        return object()
+
+    monkeypatch.setattr("echelon.prosaic_packages.install_prosaic_bundle", deploy_bundle)
+
+    from echelon.cli import _cmd_workspace_migrate_to_prosaic
+
+    _cmd_workspace_migrate_to_prosaic(tmp_path)
+
+    text = config.read_text(encoding="utf-8")
+    assert ".echelon/re" in text
+    assert ".specify/echelon/re" not in text

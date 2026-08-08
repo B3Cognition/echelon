@@ -157,7 +157,7 @@ echelon.commander (COMMANDER) writes to the reasoning journal. Include `veteran_
 Promoted entries sync to the global knowledge base at:
 
 ```
-~/.specify/squad-global/
+~/.echelon/knowledge-base/
 ├── patterns.yaml            # Patterns validated across multiple projects
 ├── pitfalls.yaml            # Pitfalls seen across multiple projects
 ├── calibration-profile.yaml # Domain accuracy across ALL projects

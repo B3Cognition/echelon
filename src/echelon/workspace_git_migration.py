@@ -146,6 +146,7 @@ def build_migration_plan(workspace_root: Path) -> WorkspaceGitMigrationPlan:
         "!/.echelon/",
         "!/.echelon/config.yml",
         "/.echelon/local.yml",
+        "/.echelon/re/",
         "/.echelon/runtime/",
         "/.echelon/packages/",
         "/.echelon/prosaic/",

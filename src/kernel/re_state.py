@@ -1,4 +1,4 @@
-"""re_state.py — Pure functions for .specify/echelon/re/state.json management.
+"""re_state.py — Pure functions for Echelon RE state management.
 
 Mirrors the squad state machine protocol (last_dispatch sentinel) for the
 re-* brownfield extraction sub-system.
@@ -9,7 +9,8 @@ import copy
 from datetime import datetime, timezone
 from pathlib import Path
 
-DEFAULT_RE_OUTPUT_DIR = ".specify/echelon/re"
+DEFAULT_RE_OUTPUT_DIR = ".echelon/re"
+LEGACY_DEFAULT_RE_OUTPUT_DIR = ".specify/echelon/re"
 
 
 def resolve_re_output_dir(
@@ -18,12 +19,12 @@ def resolve_re_output_dir(
 ) -> str:
     """Return the RE output directory for the current execution context.
 
-    Standalone re-* commands use the configured/default `.specify/echelon/re`
-    location. When that default is in effect and an active echelon spec run exists,
+    Standalone re-* commands use the Echelon-owned `.echelon/re` location. When
+    either the canonical or legacy default is configured and an active Echelon run exists,
     RE artifacts belong to the active run directory under `runs/<run-id>/re`.
     """
     configured = configured_output_dir or DEFAULT_RE_OUTPUT_DIR
-    if configured != DEFAULT_RE_OUTPUT_DIR:
+    if configured not in {DEFAULT_RE_OUTPUT_DIR, LEGACY_DEFAULT_RE_OUTPUT_DIR}:
         return configured
 
     root = Path(project_root)
