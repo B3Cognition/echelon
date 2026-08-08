@@ -1,5 +1,5 @@
 ---
-name: speckit.echelon.re-expand
+name: echelon.re-expand
 description: Expand spec coverage by filling gaps from orphan file clusters
 ---
 ## Role

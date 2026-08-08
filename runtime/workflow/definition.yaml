@@ -1,0 +1,2408 @@
+# Echelon Workflow Definition
+# =============================================================================
+# echelon.commander (COMMANDER) reads this file at step 0 before every routing decision.
+# Routing logic lives here — not in echelon.commander (COMMANDER)'s prompt.
+#
+# Structure:
+#   convergence   — all threshold values
+#   budget        — token allocation per phase group
+#   evidence      — conflict resolution rules
+#   quality_gates — minimum scores per artifact type
+#   phases        — ordered phase graph (nodes + transitions)
+#   build         — per-task inner loop state machine
+#   escalation    — pre-escalation checks and diagnostic pipeline routing
+#
+# echelon.commander (COMMANDER) contract:
+#   1. Read this file at init (before any dispatch)
+#   2. Read {squad_dir}/state.json for current phase + runtime state
+#   3. Look up current phase node in phases[]
+#   4. Execute the node (dispatch agents, run steps)
+#   5. Evaluate transitions[] — first matching condition wins
+#   6. Write new state to state.json
+#   7. Repeat from step 2
+#
+# Schema version: 1
+# =============================================================================
+
+schema_version: 1
+controller_state_contracts_file: controller-state-contracts.yaml
+
+# =============================================================================
+# GLOSSARY
+# Ambiguous terms used across agents. prompt_lint.py uses this to detect
+# overloaded terms in agent prompts. Each term lists its distinct senses,
+# how to detect which sense is intended, and an example.
+# =============================================================================
+
+glossary:
+  - term: "Phase"
+    senses:
+      - sense: "coarse phase group"
+        detect: "when the term appears inside a reasoning-journal entry's 'phase' field"
+        example: "build_init, understanding, finalize"
+      - sense: "graph node"
+        detect: "when the term appears inside definition.yaml phases[] as a node id"
+        example: "phase1-what, phase2-why1, phase3-specialists"
+
+  - term: "Assess"
+    senses:
+      - sense: "echelon.gatekeeper (GATEKEEPER) agent action"
+        detect: "when Assess appears as a phase node id or agent name in definition.yaml"
+        example: "phase4-assess node dispatches echelon.gatekeeper (GATEKEEPER)"
+      - sense: "general evaluation verb"
+        detect: "when used in prose (echelon.commander (COMMANDER) prompt, reasoning journal)"
+        example: "echelon.commander (COMMANDER) assesses whether to continue"
+
+  - term: "State"
+    senses:
+      - sense: "state.json document"
+        detect: "when referred to as a file or JSON document"
+        example: "Read state.json before every dispatch"
+      - sense: "lifecycle state value"
+        detect: "when used as a status enum value (initialized, running, done)"
+        example: "state.status = 'running'"
+
+  - term: "Verdict"
+    senses:
+      - sense: "echelon_result block verdict"
+        detect: "when it appears as a field inside an agent's echelon_result YAML block"
+        example: "verdict: PASS, FAIL, BLOCKED, DONE"
+      - sense: "transition condition value"
+        detect: "when used in a definition.yaml condition string"
+        example: "condition: verdict = PASS"
+
+  - term: "Mode"
+    senses:
+      - sense: "run mode (greenfield/brownfield/self_analysis)"
+        detect: "when it refers to state.mode or echelon-config.yml mode setting"
+        example: "mode: brownfield"
+      - sense: "agent sub-mode"
+        detect: "when it refers to a named agent operating variant"
+        example: "echelon.sage (SAGE) mode: WHY2, echelon.auditor (AUDITOR) mode: post_build_self_assessment"
+
+  - term: "Review"
+    senses:
+      - sense: "code review gate"
+        detect: "when used in the build phase for CODE_REVIEWER or quality gate"
+        example: "echelon.code-reviewer (CODE REVIEWER) APPROVED — proceed to echelon.test-guardian (TEST echelon.guardian (GUARDIAN))"
+      - sense: "echelon.commander (COMMANDER) evolution signal review"
+        detect: "when echelon.commander (COMMANDER) reviews evolution signals after FINALIZE"
+        example: "echelon.commander (COMMANDER) reviews open evolution signals post-run"
+
+  - term: "Widget"
+    senses:
+      - sense: "UI component"
+        detect: "when used in product/feature specs referring to screen elements"
+        example: "The dashboard widget shows current token usage"
+      - sense: "generic placeholder"
+        detect: "when used abstractly in template or example YAML blocks"
+        example: "widget: <replace with actual component name>"
+
+  - term: "Run"
+    senses:
+      - sense: "Echelon run (squad run)"
+        detect: "when referring to a single speckit.echelon.run invocation (run_id: squad-N)"
+        example: "This run produced 52 journal entries"
+      - sense: "shell command execution"
+        detect: "when used in bash/script context"
+        example: "Run kb-seed.sh to populate the KB"
+
+# =============================================================================
+# CONVERGENCE THRESHOLDS
+# All convergence decisions reference these values — never hardcode in prompts.
+# Runtime overrides sourced from echelon-config.yml take precedence.
+# =============================================================================
+
+# =============================================================================
+# EVIDENCE HIERARCHY
+# Conflict resolution: lower rank NEVER overrides higher rank.
+# =============================================================================
+
+evidence_hierarchy:
+  - rank: 1
+    type: investigator_experiment
+    description: "Measured results from echelon.investigator (INVESTIGATOR) prototype spikes"
+    example: "Latency measured at 340ms under load"
+  - rank: 2
+    type: understanding_metrics
+    description: "Deterministic, reproducible quality scores"
+    example: "Testability score: 0.42 (below the resolved project gate)"
+  - rank: 3
+    type: investigator_research
+    description: "echelon.investigator (INVESTIGATOR) graded sources (A through E)"
+    example: "Grade B: official Kafka docs confirm this limit"
+  - rank: 4
+    type: code_evidence
+    description: "Reverse-engineering or codebase analysis"
+    example: "Existing codebase uses event sourcing for audit"
+  - rank: 5
+    type: agent_reasoning
+    description: "Agent reasoning — lowest weight, never overrides measured evidence"
+    example: "Microservices better because of team structure"
+
+conflict_resolution:
+  tiebreakers:
+    - "Higher rank wins"
+    - "Same rank: more recent evidence wins"
+    - "Same recency: agent whose domain is most relevant wins"
+    - "Still tied: conservative option (lower risk) wins"
+  never: "Average or compromise. One position wins; the other is recorded as a rejected alternative."
+
+# =============================================================================
+# PHASE GRAPH
+#
+# Each phase has:
+#   type:          commander_internal | agent | parallel | conditional_sequential | staged_parallel | human_gate | terminal
+#                  conditional_sequential — multiple possible agents, evaluated one at a time in order;
+#                                           each dispatched only after the previous completes post-dispatch.
+#                  staged_parallel        — agents grouped into stages; all agents in a stage run in parallel;
+#                                           next stage dispatched only after all agents in current stage complete.
+#   agent(s):      which agent(s) to invoke (omitted for commander_internal)
+#   tier:          model-tier selection key from echelon-config.yml execution.models
+#   context_pack:  artifacts injected into the agent's dispatch prompt
+#   pre_dispatch:  checks/actions echelon.commander (COMMANDER) takes before invoking the agent
+#   outputs:       artifacts the agent is expected to produce
+#   transitions:   ordered list — first matching condition wins
+#
+# Condition language (evaluated against state.json + current outputs):
+#   always                               — unconditional
+#   quality_gates.pass                   — latest quality_scores entry meets all thresholds (from echelon-config.yml quality_gates)
+#   quality_gates.fail                   — latest quality_scores entry fails any threshold
+#   convergence_detected                 — delta < threshold for consecutive_passes (both from echelon-config.yml convergence)
+#   CRITICAL_issues                      — any issue in issues_log with severity=CRITICAL and resolved=false
+#   no_CRITICAL_issues                   — no unresolved CRITICAL issues
+#   iteration < max_iterations           — not yet at iteration cap
+#   iteration >= max_iterations          — at or beyond iteration cap
+#   verdict = <value>                    — named agent returned this verdict
+#   defer_count >= assess_defer_loop_limit
+#   autonomy in [guided, semi, banzai]   — matches autonomy_mode from echelon-config.yml
+#   human_approved                       — human responded to checkpoint with approval
+#
+# Condition token → echelon-config.yml key mapping:
+#   max_iterations           → convergence.max_squad_iterations
+#   convergence_delta        → convergence.quality_delta_threshold
+#   assess_defer_loop_limit  → convergence.defer_loop_limit
+#   calibrate_confidence_floor → convergence.calibrate_confidence_floor
+#   quality_gates.*          → quality_gates.* (same key names)
+# =============================================================================
+
+phases:
+
+  # --------------------------------------------------------------------------
+  - id: init
+    label: "Initialization"
+    spec_file: workflow/phases/init.md
+    type: commander_internal
+    description: >
+      echelon.commander (COMMANDER) executes directly — no agent dispatch.
+      Read knowledge base, materialize confidence thresholds, run belief freshness check.
+    steps:
+
+      - id: read_knowledge_base
+        label: "Read KB learning outputs (Step 0)"
+        files:
+          - knowledge-base/calibration-profile.yaml
+          - knowledge-base/patterns.yaml
+          - knowledge-base/pitfalls.yaml
+          - knowledge-base/agent-scores.yaml
+        missing_files: skip_gracefully
+        on_cold_start: log_cold_start_warning_to_journal
+        post: >
+          Build calibration_map in memory from agent-scores.yaml.
+          Set state.json init_reads.completed = true.
+          Log init_knowledge_read entry to reasoning-journal.jsonl.
+
+      - id: materialize_confidence_thresholds
+        label: "Write confidence-thresholds.yaml (Step 0.5)"
+        output: knowledge-base/confidence-thresholds.yaml
+        source: calibration_map (built in read_knowledge_base)
+        precondition: init_reads.completed = true
+        on_empty_calibration_map: log_warning_skip_gracefully
+
+      - id: belief_freshness_check
+        label: "Belief freshness gate"
+        script: scripts/bash/belief-freshness-check.sh
+        exit_codes:
+          0: proceed_normally
+          1:
+            action: defer_affected_dispatches
+            apply: conservative_fallback_for_affected_config_keys
+            log: belief_fallback_applied
+          2:
+            action: queue_investigator_for_critical_beliefs
+            timing: before_discover
+            log: belief_gate_triggered
+
+    transitions:
+      - to: phase1-discover
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: phase1-discover
+    label: "Discovery (SCOUT)"
+    spec_file: workflow/phases/phase1-discover.md
+    type: agent
+    agent: echelon.scout
+    tier: exploration
+    context_pack:
+      - user_request
+      - knowledge-base/patterns.yaml       # if exists
+      - knowledge-base/pitfalls.yaml       # if exists
+      - "{context_dir}/prior-spec-context.md"
+      - "{context_dir}/current-feature-context.md"
+      - "{context_dir}/stale-memory-report.md"
+      - calibration_map entry for echelon.scout (SCOUT)    # from init
+    pre_dispatch:
+      - id: guardian_init
+        label: "Dispatch GUARDIAN (always_on default)"
+        condition: "guardian_mode = always_on"
+        timing: after_assess_completes
+        # echelon.guardian (GUARDIAN) is dispatched during phase3-specialists, not here —
+        # this entry documents the trigger so echelon.commander (COMMANDER) doesn't need to remember it.
+    outputs:
+      - glossary.md
+      - mental-model.md
+      - boundaries.md
+      - assumptions.md
+      - unknowns.md
+      - reference-architectures.md   # greenfield only
+    allowed_state_updates:
+      - shadow_output_recovered
+    transitions:
+      - to: phase1-synthesizer
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: phase1-synthesizer
+    label: "Knowledge Fusion (SYNTHESIZER)"
+    spec_file: workflow/phases/phase1-synthesizer.md
+    type: agent
+    agent: echelon.synthesizer
+    tier: exploration
+    context_pack:
+      - all echelon.scout (SCOUT) outputs from {staging_dir}/
+      - "{squad_dir}/reasoning-journal.jsonl [phase=phase1-discover]"
+      - "{context_dir}/prior-spec-context.md"
+      - "{context_dir}/current-feature-context.md"
+      - "{context_dir}/stale-memory-report.md"
+    outputs:
+      - glossary.md              # unified, contradictions flagged
+      - mental-model.md          # unified, gaps flagged
+      - boundaries.md            # unified
+      - assumptions.md           # deduplicated
+      - unknowns.md              # unified, prioritized
+      - contradictions-and-gaps.md
+      - risks.md                 # synthesized risks
+    allowed_state_updates:
+      - shadow_output_recovered
+    transitions:
+      - to: phase1-modeler
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: phase1-modeler
+    label: "Codebase Map (MODELER)"
+    spec_file: workflow/phases/phase1-modeler.md
+    type: agent
+    agent: echelon.modeler
+    tier: exploration
+    condition: "mode = brownfield"
+    context_pack:
+      - all source files (brownfield path)
+      - published RE snapshot (if available from state.json.published_re_context)
+      - "{context_dir}/prior-spec-context.md"
+      - "{context_dir}/current-feature-context.md"
+      - "{context_dir}/stale-memory-report.md"
+    outputs:
+      - mental-model-code.md
+      - codebase-graph.md
+    allowed_state_updates:
+      - shadow_output_recovered
+    on_greenfield:
+      action: skip_agent_proceed_to_next
+    transitions:
+      - to: phase1-tracker
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: phase1-tracker
+    label: "Intent Capture (TRACKER)"
+    spec_file: workflow/phases/phase1-tracker.md
+    type: agent
+    agent: echelon.tracker
+    tier: control
+    context_pack:
+      - user_request
+      - glossary.md
+      - mental-model.md
+      - boundaries.md
+      - assumptions.md
+    outputs:
+      - user-intent.md
+      - stakeholder-model.md     # if multiple stakeholders are detectable
+    human_input:
+      - reason_code: human_clarification_required
+        classification: material
+        semi_policy: require_human
+        resolution_handler: clarification_resume
+        allow_free_text: true
+        allowed_target_phases: [phase1-tracker]
+        context_state_keys: [user_message, phase]
+        context_paths: ["{staging_dir}/user-intent.md"]
+    allowed_state_updates:
+      - status
+      - blocked_reason
+      - escalation_question
+      - escalation_options
+      - escalation_recommended_answer
+      - escalation_risk_level
+      - shadow_output_recovered
+    state_update_types:
+      status: string
+    state_update_enums:
+      status: [blocked]
+    allowed_verdicts: [ALIGNED, DRIFT, STOP_AND_ASK]
+    transitions:
+      - to: phase1-tracker
+        condition: "verdict = STOP_AND_ASK"
+      - to: phase1-why1
+        condition: "verdict = ALIGNED OR verdict = DRIFT"
+
+  # --------------------------------------------------------------------------
+  - id: phase1-why1
+    label: "Assumption Challenge (SAGE WHY1)"
+    spec_file: workflow/phases/phase1-why1.md
+    type: agent
+    agent: echelon.sage
+    mode: WHY1
+    tier: exploration
+    context_pack:
+      - glossary.md
+      - mental-model.md
+      - boundaries.md
+      - assumptions.md
+      - unknowns.md
+      - "{context_dir}/prior-spec-context.md"
+      - "{context_dir}/current-feature-context.md"
+      - "{context_dir}/stale-memory-report.md"
+      - "{squad_dir}/reasoning-journal.jsonl [type=routing_decision, phase=phase1-discover]"
+      - calibration_map entry for echelon.sage (SAGE)
+    outputs:
+      - updated assumptions.md
+      - quality_scores[pass=N] → state.json
+    human_input:
+      - reason_code: human_clarification_required
+        classification: material
+        semi_policy: require_human
+        resolution_handler: clarification_resume
+        allow_free_text: true
+        allowed_target_phases: [phase1-why1]
+        context_state_keys: [user_message, phase, quality_scores]
+        context_paths:
+          - "{staging_dir}/assumptions.md"
+          - "{staging_dir}/unknowns.md"
+    allowed_state_updates:
+      - quality_scores
+      - status
+      - escalation_question
+      - escalation_recommended_answer
+      - escalation_risk_level
+      - blocked_reason
+      - shadow_output_recovered
+    state_update_types:
+      status: string
+    state_update_enums:
+      status: [blocked]
+    transitions:
+      - to: phase1-constitution
+        condition: "quality_gates.pass OR convergence_detected"
+      - to: phase1-discover
+        condition: "quality_gates.fail AND iteration < max_iterations"
+        action: increment_iteration
+      - to: phase1-constitution
+        condition: "iteration >= max_iterations"
+        action: force_convergence_warning
+
+  # --------------------------------------------------------------------------
+  - id: phase1-constitution
+    label: "Constitution Creation"
+    spec_file: workflow/phases/phase1-constitution.md
+    type: agent
+    agent: echelon.chief
+    tier: control
+    context_pack:
+      - "{staging_dir}/glossary.md"
+      - "{staging_dir}/mental-model.md"
+      - "{staging_dir}/boundaries.md"
+      - "{staging_dir}/assumptions.md"
+      - "{staging_dir}/user-intent.md"
+    description: >
+      echelon.chief (CHIEF) authors the canonical Echelon constitution
+      to create constitution.md from UNDERSTAND artifacts. CHIEF extracts domain
+      context, calls the skill, verifies output, and fixes placeholders if needed.
+      See phase1-constitution.md for phase contract; chief.md for full protocol.
+    outputs:
+      - constitution.md
+    allowed_state_updates:
+      - constitution_status
+      - shadow_output_recovered
+    transitions:
+      - to: phase1-what
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: phase1-what
+    label: "Requirements (CARTOGRAPHER)"
+    spec_file: workflow/phases/phase1-what.md
+    type: agent
+    agent: echelon.cartographer
+    tier: exploration
+    context_pack:
+      - .echelon/constitution.md
+      - glossary.md
+      - mental-model.md
+      - boundaries.md
+      - assumptions.md
+      - unknowns.md
+      - reference-architectures.md    # greenfield only, if exists
+      - "{staging_dir}/user-clarifications.md" # control-plane input, if present
+      - "{spec_dir}/evidence-resolution.md" # if Phase 1 INVESTIGATOR resolved external facts
+      - "{spec_dir}/evidence-grades.md" # if Phase 1 INVESTIGATOR resolved external facts
+      - "{context_dir}/prior-spec-context.md"
+      - "{context_dir}/current-feature-context.md"
+      - "{context_dir}/stale-memory-report.md"
+      - "{squad_dir}/reasoning-journal.jsonl [type=routing_decision, phase=phase1-why1]"
+      - calibration_map entry for echelon.cartographer (CARTOGRAPHER)
+    outputs:
+      - spec.md
+      - requirements-overview.md
+    allowed_state_updates:
+      - spec_status
+      - evidence_resolution_status
+      - evidence_requests
+      - status
+      - blocked_reason
+      - shadow_output_recovered
+    required_state_updates:
+      - evidence_resolution_status
+    state_update_types:
+      spec_status: string
+      evidence_resolution_status: string
+      evidence_requests: object
+      status: string
+    state_update_enums:
+      spec_status: [planned, blocked]
+      evidence_resolution_status: [not_required, pending]
+      status: [blocked]
+    allowed_verdicts: [DONE, FAIL]
+    evidence_routing: requests
+    transitions:
+      # A declared reference that can resolve a product fact is an executable
+      # evidence route, not an agent-authored terminal block.
+      - to: phase1-investigate
+        condition: "evidence_resolution_status = pending"
+      - to: phase1-understanding
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: phase1-understanding
+    label: "Deterministic Spec Analysis (Understanding)"
+    type: deterministic_understanding
+    understanding_target: phase1-why2
+    allowed_state_updates: []
+    controller_state_contract: understanding
+    transitions:
+      - to: phase1-why2
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: phase1-why2
+    label: "Spec Validation (SAGE WHY2)"
+    spec_file: workflow/phases/phase1-why2.md
+    type: agent
+    agent: echelon.sage
+    mode: WHY2
+    tier: exploration
+    context_pack:
+      - "{spec_dir}/spec.md"
+      - .echelon/constitution.md
+      - "{spec_dir}/assumptions.md"
+      - "{context_dir}/prior-spec-context.md"
+      - "{context_dir}/current-feature-context.md"
+      - "{context_dir}/stale-memory-report.md"
+      - "{squad_dir}/reasoning-journal.jsonl [type=routing_decision, phase=phase1-what]"
+      - calibration_map entry for echelon.sage (SAGE)
+    outputs:
+      - quality-gates.md
+      - issues.md
+      - issues → state.json.issues_log (severity-tagged)
+    human_input:
+      - reason_code: human_clarification_required
+        classification: material
+        semi_policy: require_human
+        resolution_handler: clarification_resume
+        allow_free_text: true
+        allowed_target_phases: [phase1-why2]
+        context_state_keys: [user_message, phase, quality_scores]
+        context_paths:
+          - "{spec_dir}/spec.md"
+          - "{spec_dir}/issues.md"
+    allowed_state_updates:
+      - dependency_checks
+      - evidence_resolution_status
+      - evidence_requests
+      - finding_routes
+      - escalation_question
+      - escalation_recommended_answer
+      - escalation_risk_level
+      - blocked_reason
+      - status
+      - shadow_output_recovered
+    state_update_types:
+      dependency_checks: object
+      evidence_resolution_status: string
+      evidence_requests: object
+      finding_routes: object
+      status: string
+    state_update_enums:
+      evidence_resolution_status: [not_required, pending]
+      status: [blocked]
+    required_state_updates:
+      - evidence_resolution_status
+      - finding_routes
+    allowed_verdicts: [PASS, FAIL, STOP_AND_ASK]
+    evidence_routing: finding_routes
+    controller_state_contract: phase1_quality_certificate
+    transitions:
+      # Externally verifiable product facts need evidence collection, not another
+      # speculative WHAT pass. This must precede the generic FAIL repair routes.
+      - to: phase1-investigate
+        condition: "evidence_resolution_status = pending"
+      - to: phase1-what
+        condition: "verdict = FAIL AND iteration < max_iterations"
+        action: increment_iteration
+      - to: phase1-what
+        condition: "quality_gates.fail AND iteration < max_iterations"
+        action: increment_iteration
+      - to: checkpoint-assess
+        condition: "NOT lexicon_gate.spec_enabled AND verdict = PASS AND no_CRITICAL_issues AND quality_gates.pass"
+      - to: phase1-lexicon-derive
+        condition: "verdict = PASS AND no_CRITICAL_issues AND quality_gates.pass"
+      - to: terminal-blocked
+        condition: "iteration >= max_iterations"
+
+  # --------------------------------------------------------------------------
+  - id: phase1-investigate
+    label: "Evidence Resolution (INVESTIGATOR)"
+    spec_file: workflow/phases/phase1-investigate.md
+    type: agent
+    agent: echelon.investigator
+    tier: specialists
+    context_pack:
+      - "{spec_dir}/spec.md"
+      - "{spec_dir}/assumptions.md"
+      - "{spec_dir}/unknowns.md"
+      - "{spec_dir}/issues.md"
+      - "{spec_dir}/evidence-resolution.md" # prior evidence, if retrying a missing output
+      - "{spec_dir}/investigation/"          # prior reports, if retrying a missing output
+      - "{spec_dir}/evidence-inventory.json" # prior source graph, if retrying a missing output
+      - "{context_dir}/current-feature-context.md"
+      - "{squad_dir}/reasoning-journal.jsonl [phase=phase1-why2]"
+    outputs:
+      - investigation/
+      - evidence-resolution.md
+      - evidence-grades.md
+      - evidence-inventory.json
+    human_input:
+      - reason_code: human_clarification_required
+        classification: material
+        semi_policy: require_human
+        resolution_handler: clarification_resume
+        allow_free_text: true
+        allowed_target_phases: [phase1-investigate]
+        context_state_keys: [user_message, phase]
+        context_paths: ["{spec_dir}/evidence-resolution.md"]
+      - reason_code: investigation_access_required
+        classification: external_prerequisite
+        semi_policy: require_human
+        resolution_handler: clarification_resume
+        allow_free_text: true
+        allowed_target_phases: [phase1-investigate]
+        context_state_keys: [user_message, phase]
+        context_paths: ["{spec_dir}/evidence-resolution.md"]
+    allowed_state_updates:
+      - evidence_resolution_status
+      - escalation_question
+      - escalation_recommended_answer
+      - escalation_risk_level
+      - blocked_reason
+      - status
+      - shadow_output_recovered
+    required_state_updates:
+      - evidence_resolution_status
+    state_update_types:
+      evidence_resolution_status: string
+      escalation_question: string
+      blocked_reason: string
+      status: string
+    state_update_enums:
+      evidence_resolution_status: [validated, conflicting, inconclusive, access_required]
+      status: [blocked]
+    transitions:
+      - to: phase1-what
+        condition: "evidence_resolution_status in [validated, conflicting]"
+      - to: terminal-blocked
+        condition: "evidence_resolution_status in [inconclusive, access_required]"
+
+  # --------------------------------------------------------------------------
+  - id: phase1-lexicon-derive
+    label: "Derived Spec Lexicon Authoring"
+    spec_file: workflow/phases/phase1-lexicon-derive.md
+    type: agent
+    agent: echelon.lexicon-deriver
+    tier: exploration
+    context_pack:
+      - "{spec_dir}/spec.md"
+      - "{spec_dir}/glossary.md"
+      - "{spec_dir}/spec-lexicon-report.json"
+    outputs:
+      - requirements.lexicon.md
+    allowed_state_updates: []
+    allowed_verdicts: [DONE, FAIL]
+    transitions:
+      - to: phase1-lexicon
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: phase1-lexicon
+    label: "Deterministic Spec Lexicon Gate"
+    type: deterministic_lexicon
+    lexicon_artifact: spec
+    outputs:
+      - spec-lexicon-report.json      # controller-owned findings report when the gate runs
+    allowed_state_updates: []
+    controller_state_contract: spec_lexicon
+    transitions:
+      # The narrow derivation node authors or repairs the derived artifact.
+      # This provider-free node validates it, persists findings, and owns
+      # attempt accounting. It never reopens general spec authoring.
+      - to: phase1-lexicon-derive
+        condition: "lexicon_gate.spec_enabled AND lexicon_evaluation = pending AND iteration < max_iterations"
+        action: increment_iteration
+      - to: phase1-lexicon-derive
+        condition: "lexicon_gate.spec_enabled AND lexicon_evaluation = failed AND lexicon_attempts < lexicon_gate.max_repair_attempts AND iteration < max_iterations"
+        action: increment_iteration
+      - to: checkpoint-assess
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: checkpoint-assess
+    label: "Phase 1 Checkpoint"
+    type: human_gate
+    human_input:
+      - reason_code: checkpoint_assess_decision_required
+        classification: material
+        semi_policy: require_human
+        resolution_handler: gate_outcome
+        allow_free_text: false
+        allowed_target_phases: [phase2-decide, terminal-blocked]
+        context_state_keys: [user_message, phase, quality_scores]
+        context_paths:
+          - "{spec_dir}/spec.md"
+          - "{spec_dir}/quality-gates.md"
+          - "{spec_dir}/issues.md"
+        options:
+          - id: approve
+            label: Approve
+            description: Continue to feasibility assessment.
+            recommended: false
+            risk_level: medium
+            next_phase: phase2-decide
+            outcome: approved
+          - id: reject
+            label: Reject
+            description: Stop for specification revision.
+            recommended: false
+            risk_level: low
+            next_phase: terminal-blocked
+            outcome: rejected
+    transitions:
+      - to: phase2-decide
+        condition: "human_input_outcome = approved"
+        outcome: approved
+      - to: terminal-blocked
+        condition: "human_input_outcome = rejected"
+        outcome: rejected
+
+  # --------------------------------------------------------------------------
+  - id: phase2-decide
+    label: "Feasibility Gate (GATEKEEPER)"
+    spec_file: workflow/phases/phase2-decide.md
+    type: agent
+    agent: echelon.gatekeeper
+    timing_window_start: phase2-decide   # opens timing window; budget below
+    budget_seconds: 1800                 # wall-clock budget for the phase2-decide window
+                                         # (spans phase2-decide + phase2-strategic-overview + phase2-tracker-alignment)
+    tier: feasibility
+    context_pack:
+      - spec.md
+      - glossary.md
+      - requirements-overview.md
+      - assumptions.md
+      - issues.md                              # from WHY2 — per-requirement failures
+      - knowledge-base/calibration-profile.yaml
+      - knowledge-base/estimates-log.yaml      # if exists
+      - "{squad_dir}/reasoning-journal.jsonl [phase=phase1-* summary]"
+      - calibration_map entry for echelon.gatekeeper (GATEKEEPER)
+    outputs:
+      - gatekeeper_verdict: PASS | KILL | DEFER
+      - kill-report.md    # if KILL
+      - scope adjustments # if DEFER
+      - feasibility.md
+    allowed_state_updates:
+      - status
+      - shadow_output_recovered
+    controller_state_contract: feasibility_authoring_verdict
+    state_update_types:
+      status: string
+    state_update_enums:
+      status: [blocked, killed]
+    allowed_verdicts: [PASS, KILL, DEFER]
+    transitions:
+      - to: phase2-feasibility-structural
+        condition: always
+
+  - id: phase2-feasibility-structural
+    label: "Deterministic Feasibility Structural Gate"
+    type: deterministic_structural
+    structural_artifact: feasibility
+    allowed_state_updates: []
+    controller_state_contract: feasibility_structural
+    transitions:
+      - to: phase2-decide
+        condition: "structural_action = repair"
+        action: increment_iteration
+      - to: terminal-blocked
+        condition: "structural_action = block"
+      - to: phase2-strategic-overview
+        condition: "structural_action in [proceed, proceed_with_warning] AND feasibility_verdict = PASS"
+      - to: done
+        condition: "structural_action in [proceed, proceed_with_warning] AND feasibility_verdict = KILL"
+        action: write_kill_report
+      - to: phase1-what
+        condition: "structural_action in [proceed, proceed_with_warning] AND feasibility_verdict = DEFER AND defer_count < assess_defer_loop_limit"
+        action: increment_defer_count
+      - to: escalate
+        condition: "structural_action in [proceed, proceed_with_warning] AND feasibility_verdict = DEFER AND defer_count >= assess_defer_loop_limit"
+
+  # --------------------------------------------------------------------------
+  - id: phase2-strategic-overview
+    label: "Strategic Overview (STRATEGIST)"
+    spec_file: workflow/phases/phase2-strategic-overview.md
+    type: agent
+    agent: echelon.strategist
+    tier: control
+    context_pack:
+      - spec.md
+      - gatekeeper output (feasibility.md, estimates.md, mvp-scope.md)
+      - "{squad_dir}/reasoning-journal.jsonl [phase=phase1-*, phase=phase2-decide]"
+    outputs:
+      - strategic-overview.md
+    allowed_state_updates:
+      - shadow_output_recovered
+    transitions:
+      - to: phase2-tracker-alignment
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: phase2-tracker-alignment
+    label: "Intent Alignment Check (TRACKER)"
+    spec_file: workflow/phases/phase2-tracker-alignment.md
+    type: agent
+    agent: echelon.tracker
+    tier: control
+    context_pack:
+      - user-intent.md
+      - spec.md
+      - gatekeeper output (scope adjustments)
+      - strategic-overview.md
+    outputs:
+      - intent-alignment-check.md   # ALIGNED | DRIFT | STOP_AND_ASK
+    human_input:
+      - reason_code: human_clarification_required
+        classification: material
+        semi_policy: require_human
+        resolution_handler: clarification_resume
+        allow_free_text: true
+        allowed_target_phases: [phase2-tracker-alignment]
+        context_state_keys: [user_message, phase]
+        context_paths:
+          - "{spec_dir}/user-intent.md"
+          - "{spec_dir}/intent-alignment-check.md"
+    allowed_state_updates:
+      - status
+      - blocked_reason
+      - escalation_question
+      - escalation_options
+      - escalation_recommended_answer
+      - escalation_risk_level
+      - shadow_output_recovered
+    controller_state_contract: intent_alignment_authoring_verdict
+    state_update_types:
+      status: string
+    state_update_enums:
+      status: [blocked]
+    allowed_verdicts: [ALIGNED, DRIFT, STOP_AND_ASK]
+    transitions:
+      - to: phase2-intent-alignment-structural
+        condition: always
+
+  - id: phase2-intent-alignment-structural
+    label: "Deterministic Intent Alignment Structural Gate"
+    type: deterministic_structural
+    structural_artifact: intent-alignment-check
+    allowed_state_updates: []
+    controller_state_contract: intent_alignment_structural
+    transitions:
+      - to: phase2-tracker-alignment
+        condition: "structural_action = repair"
+        action: increment_iteration
+      - to: terminal-blocked
+        condition: "structural_action = block"
+      - to: phase3-specialists
+        condition: "structural_action in [proceed, proceed_with_warning] AND intent_alignment_verdict in [ALIGNED, DRIFT]"
+
+  # --------------------------------------------------------------------------
+  - id: phase3-how
+    label: "Architecture (ARCHITECT)"
+    spec_file: workflow/phases/phase3-how.md
+    type: agent
+    agent: echelon.architect
+    tier: solution
+    context_pack:
+      - spec.md
+      - constitution.md
+      - requirements-overview.md
+      - gatekeeper output (constraints, scope)
+      - security-findings.md        # from echelon.guardian (GUARDIAN) (if exists)
+      - performance-model.md        # from echelon.benchmark (BENCHMARK) (if exists)
+      - ux-report.md                # from echelon.advocate (ADVOCATE) (if exists)
+      - domain-knowledge.md         # from echelon.oracle (ORACLE) (if exists)
+      - research.md                 # from echelon.investigator (INVESTIGATOR) (if exists)
+      - alternatives.md             # from echelon.maverick (MAVERICK) (if exists)
+      - "{squad_dir}/reasoning-journal.jsonl [phase=phase2-decide, phase=phase3-specialists]"
+      - calibration_map entry for echelon.architect (ARCHITECT)
+    outputs:
+      - plan.md
+      - architecture.md
+      - adr/ADR-*.md
+      - data-model.md
+      - contracts/
+    allowed_state_updates:
+      - shadow_output_recovered
+    transitions:
+      - to: phase3-sentinel         # specialists already ran; go directly to test strategy
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: phase3-specialists
+    label: "Specialist Consultation"
+    spec_file: workflow/phases/phase3-specialists.md
+    type: conditional_sequential
+    description: >
+      echelon.guardian (GUARDIAN) always runs first (always_on default).
+      Others evaluated in order; each dispatched only after the previous completes
+      post-dispatch protocol. echelon.investigator (INVESTIGATOR) may run in parallel with one domain
+      specialist (the only permitted parallelism). All others are strictly sequential.
+    agents:
+      - id: echelon.guardian
+        tier: specialists
+        condition: "guardian_mode = always_on OR domain_security_relevant"
+        exempt_from_max_active_specialists: true
+        context_pack:
+          - spec.md            # architecture.md does not exist yet — specialists run before echelon.architect (ARCHITECT)
+          - boundaries.md
+          - constitution.md
+          - "{context_dir}/prior-spec-context.md"
+          - "{context_dir}/current-feature-context.md"
+          - "{context_dir}/stale-memory-report.md"
+        outputs:
+          - security-findings.md
+          - risk-acceptance-log.md
+
+      - id: echelon.investigator
+        tier: specialists
+        condition: "unknown_territory OR calibrate_confidence < calibrate_confidence_floor"
+        context_pack:
+          - spec.md
+          - architecture.md
+          - unknowns.md
+          - "{context_dir}/prior-spec-context.md"
+          - "{context_dir}/current-feature-context.md"
+          - "{context_dir}/stale-memory-report.md"
+          - "{squad_dir}/reasoning-journal.jsonl [type=belief_gate_triggered]"   # if any
+        outputs:
+          - research.md
+          - experiment-results.md  # if prototype spike run
+
+      - id: echelon.oracle
+        tier: specialists
+        condition: domain_specific_knowledge_needed
+        outputs:
+          - domain-knowledge.md
+
+      - id: echelon.benchmark
+        tier: specialists
+        condition: performance_requirements_present
+        outputs:
+          - performance-model.md
+
+      - id: echelon.advocate
+        tier: specialists
+        condition: user_facing_ui_present
+        outputs:
+          - ux-report.md
+
+      - id: echelon.maverick
+        tier: specialists
+        # Dispatch when ANY of the 8 INNOVATE triggers is true:
+        #   1. stagnation_detected          — EVOLVE: no quality improvement between runs
+        #   2. same_issue_count >= issue_repetition_limit — circular: same issue ≥3× unresolved
+        #   3. why_reject_count >= 2        — WHY2 rejected spec ≥2 consecutive times
+        #   4. assess_borderline_defer      — echelon.gatekeeper (GATEKEEPER) issued DEFER (not clear PASS or KILL)
+        #   5. hard_tradeoff_detected       — echelon.architect (ARCHITECT) flagged unresolved ADR with no clear winner
+        #   6. quality_plateau_detected     — max abs delta < 0.02 across last 2 WHY passes
+        #   7. agent_blocked               — any agent returned BLOCKED verdict this run
+        #   8. assess_scope_large          — echelon.gatekeeper (GATEKEEPER) estimates > 100 person-weeks
+        condition: >
+          stagnation_detected OR
+          same_issue_count >= issue_repetition_limit OR
+          why_reject_count >= 2 OR
+          assess_borderline_defer OR
+          hard_tradeoff_detected OR
+          quality_plateau_detected OR
+          agent_blocked OR
+          assess_scope_large
+        outputs:
+          - alternatives.md
+
+    limits:
+      max_active_specialists: 3   # Excludes echelon.guardian (GUARDIAN)
+
+    allowed_state_updates:
+      - active_specialists
+
+    timing_window_transition:        # closes phase2-decide, opens phase3-solution
+      close: phase2-decide
+      open: phase3-solution
+      open_budget_seconds: 2400      # phase3-solution budget (spans specialists→sentinel→plan)
+
+    transitions:
+      - to: phase3-how
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: phase3-sentinel
+    label: "Test Strategy (SENTINEL)"
+    spec_file: workflow/phases/phase3-sentinel.md
+    type: agent
+    agent: echelon.sentinel
+    tier: solution
+    context_pack:
+      - spec.md
+      - plan.md
+      - architecture.md
+      - data-model.md
+      - contracts/
+      - adr/ADR-*.md
+      - security-findings.md    # if exists
+      - research.md             # if exists
+      - quality-gates.md
+      - calibration_map entry for echelon.sentinel (SENTINEL)
+    outputs:
+      - test-strategy.md
+      - test-architecture.md
+      - coverage-map.md
+    allowed_state_updates:
+      - shadow_output_recovered
+    transitions:
+      - to: phase3-plan
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: phase3-plan
+    label: "Implementation Planning (ORCHESTRATOR)"
+    spec_file: workflow/phases/phase3-plan.md
+    type: agent
+    agent: echelon.orchestrator
+    tier: solution
+    context_pack:
+      - spec.md
+      - constitution.md
+      - architecture.md
+      - adr/ADR-*.md
+      - test-strategy.md
+      - gatekeeper constraints
+      - calibration_map entry for echelon.orchestrator (ORCHESTRATOR)
+    outputs:
+      - tasks.md
+      - critical-path.md
+      - risk-matrix.md
+      - dependencies.md
+    allowed_state_updates:
+      - plan_status
+      - blocked_reason
+      - shadow_output_recovered
+    state_update_types:
+      plan_status: string
+    state_update_enums:
+      plan_status: [blocked]
+    timing_window_transition:        # closes phase3-solution, opens phase4-build
+      close: phase3-solution
+      open: phase4-build
+      open_budget_seconds: 7200      # phase4-build budget (spans consensus + finalize)
+    transitions:
+      - to: phase3-tasks-lexicon
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: phase3-tasks-lexicon
+    label: "Deterministic Tasks Lexicon Gate"
+    type: deterministic_lexicon
+    lexicon_artifact: tasks
+    outputs:
+      - tasks-lexicon-report.json
+    allowed_state_updates: []
+    controller_state_contract: tasks_lexicon
+    transitions:
+      - to: phase3-plan
+        condition: "tasks_lexicon_action = repair"
+        action: increment_iteration
+      - to: terminal-blocked
+        condition: "tasks_lexicon_action = block"
+      - to: phase3-understanding
+        condition: "tasks_lexicon_action in [proceed, proceed_with_warning]"
+
+  # --------------------------------------------------------------------------
+  - id: phase3-understanding
+    label: "Deterministic Consensus Analysis (Understanding)"
+    type: deterministic_understanding
+    understanding_target: phase3-consensus
+    allowed_state_updates: []
+    controller_state_contract: understanding
+    transitions:
+      - to: phase3-consensus
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: phase3-consensus
+    label: "Consensus Gate (WHY3 + ASSESS2 → PLAN2)"
+    spec_file: workflow/phases/phase3-consensus.md
+    type: staged_parallel            # Stage 1: WHY3 + ASSESS2 in parallel; Stage 2: PLAN2 after both complete
+    description: >
+      Stage 1: dispatch WHY3 and ASSESS2 in parallel. Stage 2: dispatch PLAN2 only after BOTH complete
+      (PLAN2 depends on implementability-report.md from ASSESS2). echelon.commander (COMMANDER) must NOT dispatch PLAN2
+      in the same parallel batch as WHY3 and ASSESS2.
+    agents:
+      - id: echelon.sage
+        mode: WHY3
+        stage: 1
+        tier: exploration
+        allowed_state_updates: []
+        state_update_types: {}
+        state_update_enums: {}
+        allowed_verdicts: [PASS, FAIL, BLOCKED]
+        context_pack:
+          - "{spec_dir}/spec.md"
+          - .echelon/constitution.md
+          - "{spec_dir}/plan.md"
+          - "{spec_dir}/research.md"
+          - "{spec_dir}/data-model.md"
+          - "{spec_dir}/contracts/"
+          - "{spec_dir}/tasks.md"
+          - "{spec_dir}/test-strategy.md"
+          - "{spec_dir}/coverage-map.md"
+          - "{spec_dir}/critical-path.md"
+          - "{spec_dir}/risk-matrix.md"
+          - "{spec_dir}/dependencies.md"
+        outputs:
+          - why3-verdict: PASS | FAIL | BLOCKED
+          - issues (CRITICAL | HIGH | MEDIUM)
+
+      - id: echelon.gatekeeper
+        mode: ASSESS2
+        stage: 1
+        tier: feasibility
+        allowed_state_updates:
+          - gate_decision
+          - phase_recommendation
+          - implementability_metrics
+        state_update_types:
+          gate_decision: string
+          phase_recommendation: string
+          implementability_metrics: object
+        state_update_enums:
+          gate_decision: [PASS, REJECTED, accept_with_risk]
+          phase_recommendation: [proceed-to-build, phase3-how, advance_past_consensus_to_delivery]
+        allowed_verdicts: [PASS, REJECTED, BLOCKED]
+        context_pack:
+          - "{spec_dir}/spec.md"
+          - .echelon/constitution.md
+          - "{spec_dir}/plan.md"
+          - "{spec_dir}/research.md"
+          - "{spec_dir}/data-model.md"
+          - "{spec_dir}/contracts/"
+          - "{spec_dir}/tasks.md"
+          - "{spec_dir}/test-strategy.md"
+          - "{spec_dir}/coverage-map.md"
+          - "{spec_dir}/estimates.md"
+          - "{spec_dir}/mvp-scope.md"
+          - extension/templates/estimates-template.md
+        outputs:
+          - assess2-verdict: PASS | REJECTED | BLOCKED
+          - implementability-report.md     # required by PLAN2
+
+      - id: echelon.orchestrator
+        mode: PLAN2
+        stage: 2                           # dispatched AFTER stage 1 completes
+        depends_on: [echelon.gatekeeper-assess2]   # needs implementability-report.md
+        tier: solution
+        allowed_state_updates: []
+        state_update_types: {}
+        state_update_enums: {}
+        allowed_verdicts: [COMPLETE, DONE, BLOCKED]
+        context_pack:
+          - "{spec_dir}/spec.md"
+          - .echelon/constitution.md
+          - "{spec_dir}/plan.md"
+          - "{spec_dir}/research.md"
+          - "{spec_dir}/data-model.md"
+          - "{spec_dir}/contracts/"
+          - "{spec_dir}/tasks.md"
+          - "{spec_dir}/test-strategy.md"
+          - "{spec_dir}/coverage-map.md"
+          - "{spec_dir}/critical-path.md"
+          - "{spec_dir}/risk-matrix.md"
+          - "{spec_dir}/dependencies.md"
+          - "{spec_dir}/quality-gates.md"          # from echelon.sage (SAGE) WHY3 output
+          - "{spec_dir}/issues.md"                 # from echelon.sage (SAGE) WHY3 output
+          - "{spec_dir}/implementability-report.md"  # MUST exist before PLAN2 is dispatched
+        outputs:
+          - revised tasks.md  # if changes needed
+
+    allowed_state_updates: []
+    controller_state_contract: consensus_gate
+    unexpected_state_updates: quarantine
+
+    transitions:
+      - to: phase3-consensus-tasks-lexicon
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: phase3-consensus-tasks-lexicon
+    label: "Deterministic Consensus Tasks Lexicon Gate"
+    type: deterministic_lexicon
+    lexicon_artifact: tasks
+    outputs:
+      - tasks-lexicon-report.json
+    allowed_state_updates: []
+    controller_state_contract: tasks_lexicon
+    transitions:
+      - to: phase3-plan
+        condition: "tasks_lexicon_action = repair"
+        action: increment_iteration
+      - to: terminal-blocked
+        condition: "tasks_lexicon_action = block"
+      - to: phase1-what
+        condition: "tasks_lexicon_action in [proceed, proceed_with_warning] AND quality_gates.fail AND iteration < max_iterations"
+        action: increment_iteration
+      - to: phase1-what
+        condition: "tasks_lexicon_action in [proceed, proceed_with_warning] AND why3-verdict = FAIL AND iteration < max_iterations"
+        action: increment_iteration
+      - to: checkpoint-plan
+        condition: "tasks_lexicon_action in [proceed, proceed_with_warning] AND why3-verdict = PASS AND assess2-verdict = PASS"
+      - to: checkpoint-plan
+        condition: "tasks_lexicon_action in [proceed, proceed_with_warning] AND gate_decision = accept_with_risk"
+      - to: checkpoint-plan
+        condition: "tasks_lexicon_action in [proceed, proceed_with_warning] AND phase_recommendation = advance_past_consensus_to_delivery"
+      # Ownership-based re-dispatch (phase3-consensus.md §Consensus Gate Check).
+      # A WHY3 FAIL is a SPEC-quality failure (Structure gate / glossary /
+      # atomicity / ambiguity) owned by CARTOGRAPHER — route to WHAT, not HOW.
+      # ARCHITECT cannot amend spec.md, so routing a WHY3 FAIL to phase3-how
+      # reproduces the identical FAIL every cycle until force-kill (the
+      # 002-echelon-control-fe non-convergence loop). Mirrors the proven
+      # phase1-why2 → phase1-what spec-quality re-dispatch (same agent, SAGE).
+      # Evaluated before the ASSESS2 branch so a combined failure repairs the
+      # upstream (spec) constraint first, then re-flows.
+      # An ASSESS2 REJECTED is a FEASIBILITY failure owned by ARCHITECT → HOW.
+      - to: phase3-how
+        condition: "tasks_lexicon_action in [proceed, proceed_with_warning] AND assess2-verdict = REJECTED AND iteration < max_iterations"
+        action: increment_iteration
+      - to: checkpoint-plan
+        condition: "tasks_lexicon_action in [proceed, proceed_with_warning] AND iteration >= max_iterations"
+        action: force_convergence_warning
+
+  # --------------------------------------------------------------------------
+  - id: checkpoint-plan
+    label: "Phase 3 Checkpoint"
+    type: human_gate
+    human_input:
+      - reason_code: checkpoint_plan_decision_required
+        classification: operational
+        semi_policy: auto_if_recommended_low_risk
+        resolution_handler: gate_outcome
+        allow_free_text: false
+        allowed_target_phases: [phase4-document, terminal-blocked]
+        context_state_keys: [user_message, phase, quality_scores]
+        context_paths:
+          - "{spec_dir}/plan.md"
+          - "{spec_dir}/tasks.md"
+        options:
+          - id: approve
+            label: Approve
+            description: Continue to finalization.
+            recommended: true
+            risk_level: low
+            next_phase: phase4-document
+            outcome: approved
+          - id: reject
+            label: Reject
+            description: Stop for plan revision.
+            recommended: false
+            risk_level: low
+            next_phase: terminal-blocked
+            outcome: rejected
+    transitions:
+      - to: phase4-document
+        condition: "human_input_outcome = approved"
+        outcome: approved
+      - to: terminal-blocked
+        condition: "human_input_outcome = rejected"
+        outcome: rejected
+
+  # --------------------------------------------------------------------------
+  - id: phase4-document
+    label: "Finalization"
+    spec_file: workflow/phases/phase4-document.md
+    type: commander_internal
+    description: >
+      Collate all artifacts. Produce squad report.
+      Run evolution signal review protocol.
+      User must explicitly invoke speckit.echelon.build to start build phase.
+    steps:
+      - collate_artifacts
+      - write_squad_report
+      - review_evolution_signals
+      - update_state_done
+    outputs:
+      - 00-overview.md
+      - plan-conformance.md
+      - plan-conformance.json
+      - squad-report.md
+    allowed_state_updates:
+      - kb_usage_status
+      - kb_validation_status
+      - kb_apply_status
+      - kb_contract_violations
+      - kb_apply_report
+    timing_window_transition:
+      close: phase4-build
+    transitions:
+      - to: done
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: phase-exp-constitution-quality
+    label: "Experimental Constitution Quality"
+    spec_file: workflow/phases/phase-exp-constitution-quality.md
+    type: agent
+    agent: echelon.chief
+    tier: experimental
+    context_pack:
+      - .echelon/constitution.md
+      - constitution.md
+      - spec.md
+      - plan.md
+      - "{squad_dir}/reasoning-journal.jsonl"
+    outputs:
+      - constitution-quality-report.md
+      - constitution_quality_pass -> state.json
+    allowed_state_updates:
+      - constitution_quality_pass
+      - constitution_quality_attempts
+      - constitution_quality_findings
+      - blocked_reason
+      - status
+    state_update_types:
+      constitution_quality_pass: boolean
+      constitution_quality_attempts: integer
+      status: string
+    state_update_enums:
+      status: [blocked]
+    transitions:
+      - to: done
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: phase-exp-tasks-quality
+    label: "Experimental Tasks Quality"
+    spec_file: workflow/phases/phase-exp-tasks-quality.md
+    type: agent
+    agent: echelon.orchestrator
+    tier: experimental
+    context_pack:
+      - spec.md
+      - plan.md
+      - tasks.md
+      - requirements.lexicon.md
+      - test-strategy.md
+      - "{squad_dir}/reasoning-journal.jsonl"
+    outputs:
+      - tasks.md
+      - tasks-quality-report.md
+      - tasks_quality_pass -> state.json
+    allowed_state_updates:
+      - tasks_quality_pass
+      - tasks_quality_attempts
+      - tasks_quality_findings
+      - blocked_reason
+      - status
+    state_update_types:
+      tasks_quality_pass: boolean
+      tasks_quality_attempts: integer
+      status: string
+    state_update_enums:
+      status: [blocked]
+    transitions:
+      - to: done
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: phase-exp-adr-quality
+    label: "Experimental ADR Quality"
+    spec_file: workflow/phases/phase-exp-adr-quality.md
+    type: agent
+    agent: echelon.architect
+    tier: experimental
+    context_pack:
+      - plan.md
+      - architecture.md
+      - adr/ADR-*.md
+      - tasks.md
+      - "{squad_dir}/reasoning-journal.jsonl"
+    outputs:
+      - adr-quality-report.md
+      - adr_quality_pass -> state.json
+    allowed_state_updates:
+      - adr_quality_pass
+      - adr_quality_attempts
+      - adr_quality_findings
+      - blocked_reason
+      - status
+    state_update_types:
+      adr_quality_pass: boolean
+      adr_quality_attempts: integer
+      status: string
+    state_update_enums:
+      status: [blocked]
+    transitions:
+      - to: done
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: done
+    label: "Run Complete"
+    type: terminal
+
+  # --------------------------------------------------------------------------
+  - id: terminal-blocked
+    label: "Run Blocked"
+    type: terminal
+
+  # --------------------------------------------------------------------------
+  - id: escalate
+    label: "Human Escalation"
+    type: terminal
+    description: >
+      Write escalation-request.md using templates/escalation-request.md.
+      Set state.json status = blocked.
+      Resume with speckit.echelon.resume <answer>.
+
+  # --------------------------------------------------------------------------
+  # BUGFIX WORKFLOW
+  # Invoked via speckit.echelon.bugfix. Entry point: bugfix-1-init.
+  # --------------------------------------------------------------------------
+  - id: bugfix-1-init
+    label: "Bugfix Init"
+    spec_file: workflow/phases/bugfix-1-init.md
+    type: commander_internal
+    description: >
+      Parse arguments, verify default branch, locate spec dir,
+      identify relevant source files. No agent dispatch.
+    steps:
+      - id: branch_check
+        label: "Ensure on default branch"
+      - id: parse_args
+        label: "Parse spec_id and description from $ARGUMENTS"
+      - id: locate_spec
+        label: "Locate specs/{spec_id}-{spec_name}/ directory"
+      - id: read_context
+        label: "Read spec files and source files into context"
+        files:
+          - spec.md
+          - coverage-map.md
+          - tasks.md
+          - deploy-state.json
+        missing_files: skip_gracefully
+      - id: identify_source_files
+        label: "Identify relevant source files from description"
+    transitions:
+      - to: bugfix-2-diagnose
+        condition: always
+
+  - id: bugfix-2-diagnose
+    label: "Root Cause Analysis (DEBUGGER)"
+    spec_file: workflow/phases/bugfix-2-diagnose.md
+    type: agent
+    agent: echelon.debugger
+    tier: build
+    context_pack:
+      - user description
+      - spec.md
+      - relevant source files (from bugfix-1-init)
+      - deploy-state.json (if exists)
+    outputs:
+      - debugger_report (root cause, fix description, risk surface)
+    allowed_state_updates:
+      - shadow_output_recovered
+    transitions:
+      - to: bugfix-3-test-strategy
+        condition: always
+
+  - id: bugfix-3-test-strategy
+    label: "Test Strategy (SENTINEL)"
+    spec_file: workflow/phases/bugfix-3-test-strategy.md
+    type: agent
+    agent: echelon.sentinel
+    tier: solution
+    context_pack:
+      - debugger_report
+      - spec.md
+      - coverage-map.md (if exists)
+      - existing test files for affected component
+    outputs:
+      - test_strategy (failing test spec + regression coverage)
+    allowed_state_updates:
+      - shadow_output_recovered
+    transitions:
+      - to: bugfix-4-spec-compliance
+        condition: always
+
+  - id: bugfix-4-spec-compliance
+    label: "Spec Compliance (SPEC GUARD)"
+    spec_file: workflow/phases/bugfix-4-spec-compliance.md
+    type: agent
+    agent: echelon.spec-guard
+    tier: build
+    context_pack:
+      - spec.md
+      - coverage-map.md (if exists)
+      - debugger_report
+    outputs:
+      - spec_guard_report (scope validation, requirement mapping)
+    allowed_state_updates:
+      - shadow_output_recovered
+    transitions:
+      - to: bugfix-5-finalize
+        condition: always
+
+  - id: bugfix-5-finalize
+    label: "Bugfix Finalize"
+    spec_file: workflow/phases/bugfix-5-finalize.md
+    type: commander_internal
+    description: >
+      Write bugfix-{n}.md from all three reports. Append BF{n} tasks
+      to tasks.md. Switch to feature branch for artifact commit.
+      Return to default branch. Print handoff banner.
+    context_pack:
+      - debugger_report
+      - test_strategy
+      - spec_guard_report
+    outputs:
+      - specs/{spec_id}-{spec_name}/bugfix-{n}.md
+      - specs/{spec_id}-{spec_name}/tasks.md
+    transitions:
+      - to: bugfix-done
+        condition: always
+
+  - id: bugfix-done
+    label: "Bugfix Complete"
+    type: terminal
+
+  # --------------------------------------------------------------------------
+  # BUILD WORKFLOW
+  # Invoked via speckit.echelon.build. Entry point: build-1-init.
+  # Routing config (task loop ordering, verdict routing, wave lanes) lives in
+  # the top-level build: section below — echelon.commander (COMMANDER) reads both.
+  # --------------------------------------------------------------------------
+  - id: build-1-init
+    label: "Build Init"
+    spec_file: workflow/phases/build-1-init.md
+    type: commander_internal
+    description: >
+      Anchor project root, validate deploy infrastructure,
+      validate Phase A artifacts, parse tasks, determine build order,
+      initialize state.json and report files.
+    transitions:
+      - to: build-2-implement
+        condition: always
+
+  - id: build-2-implement
+    label: "Task Implementation (IMPLEMENTER)"
+    spec_file: workflow/phases/build-2-implement.md
+    type: agent
+    agent: echelon.implementer
+    tier: build
+    context_pack:
+      - task definition (from tasks.md)
+      - spec.md (relevant FRs only)
+      - constitution.md
+      - research.md (relevant ADRs)
+      - existing code from completed tasks
+      - test-strategy.md (relevant section)
+      - data-model.md (if present)
+      - contracts/ (if present)
+    outputs:
+      - implementation/<file>
+    allowed_state_updates:
+      - shadow_output_recovered
+    transitions:
+      - to: build-3-spec-guard
+        condition: verdict in [DONE, DONE_WITH_CONCERNS]
+      - to: build-2-implement
+        condition: verdict = NEEDS_CONTEXT AND retry_count < 2
+      - to: build-2-implement
+        condition: verdict = BLOCKED
+        state_update:
+          task_status: BLOCKED
+          note: skip task, check if blocked_task_count >= 3
+
+  - id: build-3-spec-guard
+    label: "Spec Compliance Gate (SPEC GUARD)"
+    spec_file: workflow/phases/build-3-spec-guard.md
+    type: agent
+    agent: echelon.spec-guard
+    tier: build
+    context_pack:
+      - files changed by echelon.implementer (IMPLEMENTER)
+      - task definition (acceptance criteria, FR references)
+      - spec.md (full, for cross-reference)
+    outputs:
+      - spec-compliance-report.md
+      - traceability-matrix.md
+    allowed_state_updates:
+      - shadow_output_recovered
+    transitions:
+      - to: build-4-code-review
+        condition: verdict = PASS
+      - to: build-2-implement
+        condition: verdict = FAIL AND fix_cycle < 2
+      - to: build-4-code-review
+        condition: verdict = FAIL AND fix_cycle >= 2
+        state_update:
+          task_status: DEGRADED
+
+  - id: build-4-code-review
+    label: "Code Review Gate (CODE REVIEWER)"
+    spec_file: workflow/phases/build-4-code-review.md
+    type: agent
+    agent: echelon.code-reviewer
+    tier: build
+    context_pack:
+      - files changed by echelon.implementer (IMPLEMENTER)
+      - constitution.md
+      - research.md (relevant ADRs)
+      - existing codebase patterns (prior completed tasks)
+    outputs:
+      - code-review-report.md
+    allowed_state_updates:
+      - shadow_output_recovered
+    transitions:
+      - to: build-5-test-guard
+        condition: verdict = APPROVED
+      - to: build-2-implement
+        condition: verdict = CHANGES_REQUESTED AND fix_cycle < 2
+      - to: build-5-test-guard
+        condition: verdict = CHANGES_REQUESTED AND fix_cycle >= 2
+        state_update:
+          task_status: DEGRADED
+      - to: escalate
+        condition: verdict = BLOCKED
+
+  - id: build-5-test-guard
+    label: "Test Quality Gate (TEST GUARDIAN)"
+    spec_file: workflow/phases/build-5-test-guard.md
+    type: agent
+    agent: echelon.test-guardian
+    tier: build
+    context_pack:
+      - test files from echelon.implementer (IMPLEMENTER)
+      - source files from echelon.implementer (IMPLEMENTER)
+      - task acceptance criteria
+      - test-strategy.md (relevant section)
+      - coverage-map.md
+    outputs:
+      - test-quality-report.md
+    allowed_state_updates:
+      - shadow_output_recovered
+    transitions:
+      - to: build-6-progress
+        condition: verdict in [PASS, WARN]
+      - to: build-2-implement
+        condition: verdict = FAIL AND fix_cycle < 2
+      - to: build-6-progress
+        condition: verdict = FAIL AND fix_cycle >= 2
+        state_update:
+          task_status: DEGRADED
+
+  - id: build-6-progress
+    label: "Progress Tracking (PROGRESS TRACKER + MODELER)"
+    spec_file: workflow/phases/build-6-progress.md
+    type: agent
+    agent: echelon.progress-tracker
+    tier: build
+    description: >
+      Records task effort and checks for drift. echelon.commander (COMMANDER) then dispatches
+      echelon.modeler (MODELER) to update mental-model-code.md and increments
+      state.json.build.completed_tasks. Loops to build-2-implement for
+      the next task, or to build-7-integration when the phase group ends.
+    context_pack:
+      - completed task ID and estimated effort
+      - count of review cycles
+      - estimates.md
+      - knowledge-base/calibration-profile.yaml
+      - knowledge-base/estimates-log.yaml
+      - progress-report.md (current)
+    outputs:
+      - progress-report.md
+      - process-metrics.md
+    allowed_state_updates:
+      - build
+      - phase_group_complete
+      - more_tasks_in_phase_group
+      - all_tasks_complete
+      - no_more_phase_checkpoints
+      - shadow_output_recovered
+    transitions:
+      - to: build-7-integration
+        condition: phase_group_complete
+      - to: build-2-implement
+        condition: more_tasks_in_phase_group
+      - to: build-8-documentation
+        condition: all_tasks_complete AND no_more_phase_checkpoints
+
+  - id: build-7-integration
+    label: "Phase Checkpoint (INTEGRATOR + VISUAL VALIDATOR)"
+    spec_file: workflow/phases/build-7-integration.md
+    type: agent
+    agent: echelon.integrator
+    tier: build
+    description: >
+      Integration check after each phase group. Optionally dispatches
+      echelon.visual-validator (VISUAL echelon.validator (VALIDATOR)) for browser/SPA stacks after echelon.integrator (INTEGRATOR) PASS.
+      Also runs as final full-system check (all phases complete).
+    context_pack:
+      - all code produced in this phase group
+      - build configuration files
+      - contracts/
+      - data-model.md (if present)
+      - prior integration-report.md (if any)
+    outputs:
+      - integration-report.md
+    allowed_state_updates:
+      - shadow_output_recovered
+    transitions:
+      - to: build-2-implement
+        condition: verdict = PASS AND more_phase_groups
+      - to: build-8-documentation
+        condition: verdict = PASS AND all_phase_groups_complete
+      - to: build-2-implement
+        condition: verdict = FAIL AND fix_cycle < 2
+      - to: build-8-documentation
+        condition: verdict = FAIL AND fix_cycle >= 2
+        state_update:
+          phase_status: DEGRADED
+
+  - id: build-8-documentation
+    label: "Documentation Currency (TECH WRITER)"
+    spec_file: workflow/phases/build-8-documentation.md
+    type: agent
+    agent: echelon.tech-writer
+    tier: build
+    description: >
+      Updates README.md and Keep a Changelog-style CHANGELOG.md when the
+      completed implementation changes user-visible behavior, public APIs,
+      install/run instructions, configuration, operations, or significant
+      performance characteristics. Always writes documentation-impact-report.md.
+    context_pack:
+      - spec.md
+      - tasks.md
+      - verification-summary.md if present
+      - gap-report.md if present
+      - progress-report.md if present
+      - traceability-matrix.md if present
+      - README.md if present
+      - CHANGELOG.md if present
+      - changed files from the build worktree
+    outputs:
+      - documentation-impact-report.md
+    allowed_state_updates:
+      - shadow_output_recovered
+    transitions:
+      - to: build-8-verify-docs
+        condition: always
+
+  - id: build-8-verify-docs
+    label: "Documentation Verification (DOCS VERIFIER)"
+    spec_file: workflow/phases/build-8-verify-docs.md
+    type: agent
+    agent: echelon.docs-verifier
+    tier: build
+    description: >
+      Verifies TECH WRITER output before build finalization. Checks that README.md
+      works as a first-run manual for runnable projects, CHANGELOG.md records
+      actual changes, and documentation-impact-report.md honestly reflects the
+      update. Produces docs-verification-report.md with structured repair findings.
+    context_pack:
+      - spec.md
+      - tasks.md
+      - documentation-impact-report.md
+      - README.md
+      - CHANGELOG.md
+      - package/app metadata when present
+      - safe harness smoke evidence when present
+      - changed files from the build worktree
+    outputs:
+      - docs-verification-report.md
+    allowed_state_updates:
+      - shadow_output_recovered
+    transitions:
+      - to: build-8-finalize
+        condition: verdict = PASS
+      - to: build-8-documentation
+        condition: verdict = FAIL
+      - to: build-8-documentation
+        condition: verdict = BLOCKED
+
+  - id: build-8-finalize
+    label: "Build Finalize"
+    spec_file: workflow/phases/build-8-finalize.md
+    type: commander_internal
+    description: >
+      Final integration pass, Engineering Manager sign-off,
+      Verification (backpropagation), Scorekeeper, auto-feedback loop
+      (Auditor + post-build validation + KB update), constitution
+      amendment candidates (Mirror + Veteran), run history write,
+      harness status report, print summary.
+    transitions:
+      - to: build-done
+        condition: always
+
+  - id: build-done
+    label: "Build Complete"
+    type: terminal
+
+# =============================================================================
+# BUILD WORKFLOW
+# Invoked separately via speckit.echelon.build
+# echelon.commander (COMMANDER) reads this section when build phase is active.
+# =============================================================================
+
+build:
+
+  entry_guard:
+    required_artifacts:
+      - tasks.md
+      - spec.md
+      - constitution.md
+    optional_artifacts:
+      - research.md
+
+  pre_build:
+    - id: dispatch_validator
+      agent: echelon.validator (VALIDATOR)
+      tier: verification
+      block_until: verdict
+      verdicts:
+        INTERNALIZED:
+          action: proceed
+        PARTIAL:
+          action: log_doubts_to_journal_proceed_with_enhanced_context_packs
+        FAILED:
+          action: escalate_to_human
+      note: "echelon.validator (VALIDATOR) dispatched exactly once per build run. Never again — phase_gate uses echelon.verification (VERIFICATION)."
+
+  task_loop:
+    ordering: phase_group_then_dependency_order
+    state_field: workflow_state   # Written to state.json per task
+
+    per_task:
+
+      - agent: echelon.implementer (IMPLEMENTER)
+        tier: build
+        workflow_state: BUILD_IN_PROGRESS
+        context_pack:
+          - task definition from tasks.md
+          - spec.md (relevant FRs only)
+          - architecture.md
+          - adr/ADR-*.md
+          - constitution.md
+          - test-strategy.md (relevant sections)
+          - validator doubts    # if PARTIAL verdict — inject as enhanced context
+        verdicts:
+          DONE:
+            next: SPEC_GUARD
+          NEEDS_CONTEXT:
+            action: provide_context_redispatch
+            max_retries: 2
+            on_max_exceeded: skip_task_blocked
+          BLOCKED:
+            action: skip_task_log
+
+      - agent: SPEC_GUARD
+        tier: build
+        context_pack:
+          - task definition
+          - code produced by echelon.implementer (IMPLEMENTER)
+          - spec.md FRs for this task
+        verdicts:
+          PASS:
+            next: CODE_REVIEWER
+          FAIL:
+            action: dispatch_implementer_fix
+            max_cycles: 2
+            on_max_exceeded:
+              action: accept_DEGRADED
+              next: CODE_REVIEWER
+
+      - agent: CODE_REVIEWER
+        tier: build
+        context_pack:
+          - code produced
+          - spec.md
+          - adr/ADR-*.md
+          - constitution.md
+        verdicts:
+          APPROVED:
+            next: TEST_GUARDIAN
+          CHANGES_REQUESTED:
+            action: dispatch_implementer_fix
+            max_cycles: 2
+            on_BLOCKED: escalate_to_human
+            on_max_exceeded:
+              action: accept_DEGRADED
+              next: TEST_GUARDIAN
+
+      - agent: TEST_GUARDIAN
+        tier: build
+        context_pack:
+          - code produced
+          - test-strategy.md (relevant sections)
+          - coverage-map.md
+        verdicts:
+          PASS:
+            action: task_complete
+            workflow_state: BUILD_COMPLETE
+          FAIL:
+            action: dispatch_implementer_add_tests
+            max_cycles: 2
+            on_max_exceeded:
+              action: accept_DEGRADED
+              workflow_state: BUILD_COMPLETE
+
+      - agent: PROGRESS_TRACKER
+        tier: build
+        action: record_effort_check_drift
+
+    pause_conditions:
+      - condition: "blocked_task_count >= 3"
+        action: assess_reorder_or_replan
+
+    force_complete_conditions:
+      - condition: token_budget_exhausted
+        action: mark_remaining_tasks_SKIPPED
+      - condition: wall_clock_exceeded
+        action: mark_remaining_tasks_SKIPPED
+
+  phase_checkpoint:
+    trigger: end_of_each_phase_group
+    agent: echelon.integrator
+    tier: build
+    workflow_state_during: QA_IN_PROGRESS
+    verdicts:
+      PASS:
+        workflow_state: QA_COMPLETE
+        action: proceed_to_next_phase_group
+      FAIL:
+        workflow_state: QA_FAILED
+        action: dispatch_implementer_fix_integration
+        max_cycles: 2
+        on_max_exceeded:
+          action: escalate_to_human
+          workflow_state: ESCALATED
+
+  post_build:
+    sequential:
+      - agent: echelon.realist (REALIST)
+        tier: learning
+      - agent: echelon.mirror (MIRROR)
+        tier: learning
+      - agent: echelon.auditor (AUDITOR)
+        tier: learning
+      - agent: echelon.scorekeeper (SCOREKEEPER)
+        tier: learning
+    then: write_completion_signal
+
+# =============================================================================
+# ESCALATION PATHS
+# Before escalating to human, echelon.commander (COMMANDER) must exhaust these in order.
+# =============================================================================
+
+escalation:
+
+  pre_escalation_sequence:
+    description: >
+      Before producing escalation-request.md, echelon.commander (COMMANDER) MUST try these three in order.
+      Only after all three are exhausted → diagnostic pipeline or direct human escalation.
+    steps:
+      - dispatch: echelon.guardian (GUARDIAN)
+        question: "Can the Risk Acceptance Protocol resolve this autonomously?"
+        accept_resolution: "risk-acceptance-log.md verdict = ACCEPT or ACCEPT_WITH_MITIGATIONS"
+      - dispatch: echelon.investigator (INVESTIGATOR)
+        question: "Can new evidence upgrade confidence above calibrate_confidence_floor?"
+        accept_resolution: "confidence >= calibrate_confidence_floor"
+      - dispatch: echelon.maverick (MAVERICK)
+        question: "Can an alternative approach eliminate the risk entirely?"
+        accept_resolution: "viable alternative identified"
+
+  diagnostic_pipeline:
+    description: >
+      Route here when root cause is UNKNOWN (before escalating to human).
+      Skip if root cause is known — escalate directly.
+    trigger_conditions:
+      - "echelon.implementer (IMPLEMENTER) returns BLOCKED twice on the same task"
+      - "gap-report.md has open gaps with no clear owner"
+      - "echelon.integrator (INTEGRATOR) reports > 3 failures after 2 fix cycles"
+      - "Same issue raised >= issue_repetition_limit times without resolution"
+      - "echelon.sage (SAGE) and another agent disagree and Toulmin resolution cannot settle"
+      - "echelon.tracker (TRACKER) signals intent drift persisting across multiple agents"
+    skip_for:
+      - missing_context         # Use NEEDS_CONTEXT flow instead
+      - spec_ambiguity          # Route to echelon.cartographer (CARTOGRAPHER) via clarification
+      - approach_disagreements  # Use Toulmin conflict resolution first
+    skill: speckit.diagnostic.run
+    on_skill_failure: skip_to_direct_escalation  # If kt-diagnostic unavailable, skip to direct escalation
+    state_fields:
+      in_progress:
+        diagnostic_status: IN_PROGRESS
+        diagnostic_concern_id: "<CRN-...>"
+      resolved:
+        diagnostic_status: VERIFICATION_PASS
+      failed:
+        diagnostic_status: MAX_CYCLES_EXCEEDED
+    on_VERIFICATION_PASS: apply_fix_clear_diagnostic_status_continue
+    on_MAX_CYCLES_EXCEEDED: escalate_to_human_with_full_diagnostic_record
+
+  direct_escalation:
+    description: "Root cause known but unresolvable without human."
+    template: templates/escalation-request.md
+    state: blocked
+    resume_command: speckit.echelon.resume <answer>
+
+# =============================================================================
+# RE-EXTRACTION — read by speckit.echelon.re-extract COMMANDER
+# COMMANDER contract: read this section at init, read state_file for current
+# phase, execute each phase node, write results to state_file.
+# =============================================================================
+re_extraction:
+
+  state_file: "{state.output_dir}/state.json"
+
+  phases:
+
+    - id: re-extract-0-preflight
+      label: "Brownfield Extraction Preflight"
+      spec_file: workflow/phases/re-extract-0-preflight.md
+      type: commander_internal
+      transitions:
+        - to: re-extract-1-analyze
+          condition: always
+
+    - id: re-extract-1-analyze
+      label: "Codebase Analysis (RE-ANALYZER)"
+      spec_file: workflow/phases/re-extract-1-analyze.md
+      type: agent
+      agent: echelon.re-analyzer
+      tier: re_extraction
+      context_pack:
+        - "{state.output_dir}/state.json"
+        - "{state.output_dir}/re-execution-plan.json"
+        - "{state.output_dir}/re-analysis-manifest.json"
+        - "{state.output_dir}/workspace-manifest.json"
+        - "{state.output_dir}/re-source-index.json"
+        - echelon-config.yml (re: section)
+      outputs:
+        - "{state.output_dir}/analysis.json"
+        - "{state.output_dir}/sources/{source-id}/analysis.json"
+        - "{state.output_dir}/cross-repo.json"  # multiple selected sources only
+      transitions:
+        - to: re-extract-2-specify
+          condition: verdict = DONE
+
+    - id: re-extract-2-specify
+      label: "Domain Specification (RE-SPECIFIER)"
+      spec_file: workflow/phases/re-extract-2-specify.md
+      type: agent
+      agent: echelon.re-specifier
+      tier: re_extraction
+      context_pack:
+        - "{state.output_dir}/state.json"
+        - "{state.output_dir}/re-execution-plan.json"
+        - "{state.output_dir}/re-source-index.json"
+        - "{state.output_dir}/re-workspace-inputs.json"
+        - "{state.output_dir}/analysis.json"
+        - "{state.output_dir}/sources/{source-id}/analysis.json"
+      outputs:
+        - "{state.output_dir}/sources/{source-id}/overview.md"
+        - "{state.output_dir}/sources/{source-id}/specs/{domain-id}/spec.md"
+        - "{state.output_dir}/workspace/overview.md"
+        - "{state.output_dir}/workspace/relationships.md"
+        - "{state.output_dir}/workspace/contracts.md"
+      transitions:
+        - to: re-extract-3-verify
+          condition: verdict = DONE
+
+    - id: re-extract-3-verify
+      label: "Coverage Verification (RE-VERIFIER)"
+      spec_file: workflow/phases/re-extract-3-verify.md
+      type: agent
+      agent: echelon.re-verifier
+      tier: re_extraction
+      context_pack:
+        - "{state.output_dir}/state.json"
+        - "{state.output_dir}/re-source-index.json"
+        - "{state.output_dir}/sources/{source-id}/analysis.json"
+        - "{state.output_dir}/sources/{source-id}/specs/{domain-id}/spec.md"
+      outputs:
+        - "{state.output_dir}/quality/{source-id}/coverage-report.md"
+        - state.json[coverage_pct, verify_expand_iterations]  # controller-owned
+      transitions:
+        - to: re-extract-4-expand
+          condition: "coverage_pct < coverage_threshold AND verify_expand_iterations < max_verify_expand_iterations"
+        - to: re-extract-5-validate
+          condition: "coverage_pct >= coverage_threshold OR verify_expand_iterations >= max_verify_expand_iterations"
+
+    - id: re-extract-4-expand
+      label: "Coverage Expansion (RE-EXPANDER)"
+      spec_file: workflow/phases/re-extract-4-expand.md
+      type: agent
+      agent: echelon.re-expander
+      tier: re_extraction
+      context_pack:
+        - "{state.output_dir}/state.json"
+        - "{state.output_dir}/quality/{source-id}/coverage-report.md"
+        - "{state.output_dir}/sources/{source-id}/analysis.json"
+        - "{state.output_dir}/sources/{source-id}/specs/{domain-id}/spec.md"
+      outputs:
+        - "{state.output_dir}/sources/{source-id}/specs/{domain-id}/spec.md"
+        - state.json[verify_expand_iterations]  # controller-owned
+      transitions:
+        - to: re-extract-3-verify
+          condition: always                  # loop back until coverage met
+
+    - id: re-extract-5-validate
+      label: "Quality Validation (RE-VALIDATOR)"
+      spec_file: workflow/phases/re-extract-5-validate.md
+      type: agent
+      agent: echelon.re-validator
+      tier: re_extraction
+      context_pack:
+        - "{state.output_dir}/state.json"
+        - "{state.output_dir}/workspace/contracts.md"
+        - "{state.output_dir}/sources/{source-id}/analysis.json"
+        - "{state.output_dir}/sources/{source-id}/specs/{domain-id}/spec.md"
+        - "{state.output_dir}/quality/{source-id}/coverage-report.md"
+      outputs:
+        - "{state.output_dir}/quality/semantic-quality-review.json"
+      transitions:
+        - to: re-extract-6-checklist
+          condition: always
+
+    - id: re-extract-6-checklist
+      label: "Quality Checklists (RE-CHECKLISTER)"
+      spec_file: workflow/phases/re-extract-6-checklist.md
+      type: agent
+      agent: echelon.re-checklister
+      tier: re_extraction
+      context_pack:
+        - "{state.output_dir}/re-workspace-inputs.json"
+        - "{state.output_dir}/workspace/contracts.md"
+        - "{state.output_dir}/sources/{source-id}/specs/{domain-id}/spec.md"
+        - "{state.output_dir}/quality/{source-id}/coverage-report.md"
+        - "{state.output_dir}/quality/semantic-quality-review.json"
+      outputs:
+        - "{state.output_dir}/sources/{source-id}/specs/{domain-id}/checklist.md"
+        - "{state.output_dir}/workspace/checklist.md"
+      transitions:
+        - to: re-extract-7-constitute
+          condition: always
+
+    - id: re-extract-7-constitute
+      label: "Strategic Artifacts (RE-CONSTITUTER)"
+      spec_file: workflow/phases/re-extract-7-constitute.md
+      type: agent
+      agent: echelon.re-constituter
+      tier: re_extraction
+      context_pack:
+        - "{state.output_dir}/state.json"
+        - "{state.output_dir}/re-workspace-inputs.json"
+        - "{state.output_dir}/sources/{source-id}/specs/{domain-id}/spec.md"
+        - "{state.output_dir}/quality/{source-id}/coverage-report.md"
+        - "{state.output_dir}/quality/semantic-quality-review.json"
+        - "{state.output_dir}/workspace/overview.md"
+        - "{state.output_dir}/workspace/relationships.md"
+        - "{state.output_dir}/workspace/contracts.md"
+        - "{state.output_dir}/workspace/checklist.md"
+      outputs:
+        - "{state.output_dir}/workspace/strategy/constitution.md"
+        - "{state.output_dir}/workspace/strategy/migration-strategy.md"
+        - "{state.output_dir}/workspace/strategy/risk-matrix.md"
+        - "{state.output_dir}/workspace/strategy/gap-analysis.md"
+        - "{state.output_dir}/workspace/strategy/adrs/ADR-*.md"
+      transitions:
+        - to: DONE
+          condition: always
+
+# =============================================================================
+# RE-RETARGET — read by speckit.echelon.re-retarget COMMANDER
+# =============================================================================
+re_retarget:
+
+  state_file: "{state.output_dir}/state.json"
+
+  phases:
+
+    - id: re-retarget-0-preflight
+      label: "Retarget Preflight"
+      spec_file: workflow/phases/re-retarget-0-preflight.md
+      type: commander_internal
+      transitions:
+        - to: re-retarget-1-input
+          condition: always
+
+    - id: re-retarget-1-input
+      label: "Human Decision Input"
+      spec_file: workflow/phases/re-retarget-1-input.md
+      type: commander_internal    # interactive — COMMANDER prompts user directly, no agent dispatch
+      transitions:
+        - to: DONE
+          condition: always
+
+# =============================================================================
+# RE-PLANNING — read by speckit.echelon.re-plan-all COMMANDER
+# =============================================================================
+re_planning:
+
+  state_file: "{state.output_dir}/state.json"
+
+  phases:
+
+    - id: re-planning-0-preflight
+      label: "Planning Preflight"
+      spec_file: workflow/phases/re-planning-0-preflight.md
+      type: commander_internal
+      transitions:
+        - to: re-planning-1-plan
+          condition: always
+
+    - id: re-planning-1-plan
+      label: "Per-Domain Plans (RE-PLANNER)"
+      spec_file: workflow/phases/re-planning-1-plan.md
+      type: agent
+      agent: echelon.re-planner
+      tier: re_planning
+      context_pack:
+        - re/index.json
+        - re/sources/{source-id}/manifest.json
+        - re/sources/{source-id}/specs/{domain-id}/spec.md
+        - re/workspace/contracts.md
+        - re/workspace/relationships.md
+        - re/workspace/strategy/constitution.md
+        - re/workspace/strategy/migration-strategy.md
+        - "{state.output_dir}/state.json"
+      outputs:
+        - re/sources/{source-id}/specs/{domain-id}/plan.md
+      transitions:
+        - to: re-planning-2-tasks
+          condition: verdict = DONE
+
+    - id: re-planning-2-tasks
+      label: "Per-Domain Tasks (RE-TASKER)"
+      spec_file: workflow/phases/re-planning-2-tasks.md
+      type: agent
+      agent: echelon.re-tasker
+      tier: re_planning
+      context_pack:
+        - re/sources/{source-id}/specs/{domain-id}/plan.md
+        - re/sources/{source-id}/specs/{domain-id}/spec.md
+        - re/workspace/contracts.md
+        - re/workspace/strategy/constitution.md
+      outputs:
+        - re/sources/{source-id}/specs/{domain-id}/tasks.md
+      transitions:
+        - to: DONE
+          condition: always
+
+# =============================================================================
+# VERIFY-SPEC — read by speckit.echelon.verify-spec COMMANDER
+# COMMANDER contract: run a read-only fulfillment audit against an existing spec,
+# refresh local structural evidence, and write fulfillment artifacts.
+# =============================================================================
+verify_spec:
+
+  state_file: "{verify_run_dir}/state.json"
+
+  phases:
+
+    - id: verify-spec-1-init
+      label: "Fulfillment Verification Init"
+      spec_file: workflow/phases/verify-spec-1-init.md
+      type: commander_internal
+      transitions:
+        - to: verify-spec-2-codegraph
+          condition: always
+
+    - id: verify-spec-2-codegraph
+      label: "Fresh Structural Evidence"
+      spec_file: workflow/phases/verify-spec-2-codegraph.md
+      type: commander_internal
+      outputs:
+        - "{verify_run_dir}/codegraph-analysis.json"
+        - "{verify_run_dir}/codegraph-summary.json"
+        - "{verify_run_dir}/codegraph-error.txt"
+        - "{verify_run_dir}/perlgraph-analysis.json"
+        - "{verify_run_dir}/perlgraph-summary.json"
+        - "{verify_run_dir}/perlgraph-error.txt"
+        - "{verify_run_dir}/topology-receipt.json"
+      transitions:
+        - to: verify-spec-2-progress-integrity
+          condition: always
+
+    - id: verify-spec-2-progress-integrity
+      label: "Progress Integrity Evidence"
+      spec_file: workflow/phases/verify-spec-2-progress-integrity.md
+      type: commander_internal
+      outputs:
+        - "{verify_run_dir}/progress-integrity.json"
+        - "{verify_run_dir}/progress-integrity.md"
+      transitions:
+        - to: verify-spec-3-audit
+          condition: always
+
+    - id: verify-spec-3-audit
+      label: "Requirement Fulfillment Audit"
+      spec_file: workflow/phases/verify-spec-3-audit.md
+      type: commander_internal
+      tier: verification
+      outputs:
+        - "{verify_run_dir}/canonical-requirements.json"
+        - "{verify_run_dir}/canonical-requirements.md"
+        - "{verify_run_dir}/requirement-audit.md"
+      transitions:
+        - to: verify-spec-4-map
+          condition: verdict = DONE
+
+    - id: verify-spec-4-map
+      label: "Implementation Evidence Mapping"
+      spec_file: workflow/phases/verify-spec-4-map.md
+      type: agent
+      agent: echelon.implementation-mapper
+      tier: verification
+      context_pack:
+        - "{verify_run_dir}/state.json"
+        - "{verify_run_dir}/codegraph-analysis.json"
+        - "{verify_run_dir}/perlgraph-analysis.json"
+        - "{verify_run_dir}/requirement-audit.md"
+      outputs:
+        - "{verify_run_dir}/implementation-map.md"
+      transitions:
+        - to: verify-spec-5-judge
+          condition: verdict = DONE
+
+    - id: verify-spec-5-judge
+      label: "Fulfillment Judgment"
+      spec_file: workflow/phases/verify-spec-5-judge.md
+      type: agent
+      agent: echelon.spec-guard
+      tier: verification
+      context_pack:
+        - "{verify_run_dir}/state.json"
+        - "{verify_run_dir}/requirement-audit.md"
+        - "{verify_run_dir}/implementation-map.md"
+        - "{verify_run_dir}/progress-integrity.json"
+        - "{verify_run_dir}/progress-integrity.md"
+        - "{spec_dir}/tasks.md"
+      outputs:
+        - "{spec_dir}/fulfillment-report.md"
+        - "{spec_dir}/fulfillment-gaps.md"
+      transitions:
+        - to: verify-spec-6-reconcile
+          condition: reconcile = true
+        - to: verify-spec-7-finalize
+          condition: always
+
+    - id: verify-spec-6-reconcile
+      label: "Progress Reconciliation"
+      spec_file: workflow/phases/verify-spec-6-reconcile.md
+      type: commander_internal
+      outputs:
+        - "{verify_run_dir}/task-requirement-map.candidates.json"
+        - "{verify_run_dir}/task-requirement-map-plan.json"
+        - "{verify_run_dir}/task-requirement-map-plan.md"
+        - "{verify_run_dir}/task-requirement-map-applied.json"
+        - "{verify_run_dir}/task-requirement-map-applied.md"
+        - "{verify_run_dir}/progress-reconciliation-candidates.json"
+        - "{verify_run_dir}/progress-reconciliation-plan.json"
+        - "{verify_run_dir}/progress-reconciliation-plan.md"
+        - "{verify_run_dir}/progress-reconciliation-applied.json"
+        - "{verify_run_dir}/progress-reconciliation-applied.md"
+      transitions:
+        - to: verify-spec-7-finalize
+          condition: always
+
+    - id: verify-spec-7-finalize
+      label: "Verify Evidence Finalization"
+      spec_file: workflow/phases/verify-spec-7-finalize.md
+      type: commander_internal
+      outputs:
+        - "{verify_run_dir}/state.json"
+      transitions:
+        - to: DONE
+          condition: always
+
+# =============================================================================
+# REOPEN — read by speckit.echelon.reopen COMMANDER
+# COMMANDER contract: mutate only spec artifacts to convert verified fulfillment
+# gaps into harness-ready follow-up work.
+# =============================================================================
+reopen:
+
+  phases:
+
+    - id: reopen-1-apply-gaps
+      label: "Apply Fulfillment Gaps"
+      spec_file: workflow/phases/reopen-1-apply-gaps.md
+      type: commander_internal
+      transitions:
+        - to: DONE
+          condition: always

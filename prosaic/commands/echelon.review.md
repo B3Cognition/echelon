@@ -1,5 +1,5 @@
 ---
-name: speckit.echelon.review
+name: echelon.review
 description: Automated PR review triage — fetches blocking comments from GitHub/GitLab,
   groups by proximity + reviewer, DEBUGGER + SENTINEL + SPEC GUARD per group → review-fix
   plan + tasks. Machine-invoked by ReviewLoopController.
@@ -23,7 +23,7 @@ You are COMMANDER executing automated PR review triage — dispatching DEBUGGER,
 
 | Command | Input | Produces |
 | ------- | ----- | -------- |
-| `speckit.echelon.review` | PR URL + blocking comments fetched from API | `review-fix-{n}.md` + `RF{n}-T*` tasks |
+| `echelon.review` | PR URL + blocking comments fetched from API | `review-fix-{n}.md` + `RF{n}-T*` tasks |
 | `echelon delivery run <spec_id>` Phase 3 | review-fix tasks | Fixed code pushed, threads resolved, re-review requested |
 
 **`echelon.review` always diagnoses and plans. It never implements.** The `ReviewLoopController` re-enters Phase 1 with the new tasks.
@@ -34,9 +34,9 @@ Squad agents used:
 
 | Phase | Agent | Purpose |
 | ----- | ----- | ------- |
-| Per group | **speckit-echelon-debugger (DEBUGGER)** | Root cause for the reviewer's concern |
-| Per group | **speckit-echelon-sentinel (SENTINEL)** | Failing test that proves the bug and will prove the fix |
-| Per group | **speckit-echelon-spec-guard (SPEC GUARD)** | Confirms fix is within spec boundary |
+| Per group | **echelon.debugger (DEBUGGER)** | Root cause for the reviewer's concern |
+| Per group | **echelon.sentinel (SENTINEL)** | Failing test that proves the bug and will prove the fix |
+| Per group | **echelon.spec-guard (SPEC GUARD)** | Confirms fix is within spec boundary |
 
 ---
 
@@ -159,63 +159,63 @@ Sort groups oldest-first by the earliest `created_at` in the group. Name groups 
 
 ## Step 4: Per-Group Diagnosis
 
-For each group `G{i}`, run speckit-echelon-debugger (DEBUGGER) → speckit-echelon-sentinel (SENTINEL) → speckit-echelon-spec-guard (SPEC GUARD) in sequence. Complete one group fully before starting the next.
+For each group `G{i}`, run echelon.debugger (DEBUGGER) → echelon.sentinel (SENTINEL) → echelon.spec-guard (SPEC GUARD) in sequence. Complete one group fully before starting the next.
 
 ### 4a. Read source context
 
-For each file referenced in the group's comments, read the surrounding ±20 lines from `worktree` (if provided) or the main project directory. Pass this source context to speckit-echelon-debugger (DEBUGGER).
+For each file referenced in the group's comments, read the surrounding ±20 lines from `worktree` (if provided) or the main project directory. Pass this source context to echelon.debugger (DEBUGGER).
 
-### 4b. speckit-echelon-debugger (DEBUGGER) — Root Cause
+### 4b. echelon.debugger (DEBUGGER) — Root Cause
 
-Dispatch speckit-echelon-debugger using the Agent tool:
+Dispatch echelon.debugger using the Agent tool:
 
-- **subagent_type:** `speckit-echelon-debugger`
+- **subagent_type:** `echelon.debugger`
 - **prompt:**
   - The comment body/bodies for this group
   - The reviewer name(s)
   - The file + line context from 4a
   - `spec.md`
-- **description:** "speckit-echelon-debugger (DEBUGGER): G{i} — root cause analysis"
+- **description:** "echelon.debugger (DEBUGGER): G{i} — root cause analysis"
 
-speckit-echelon-debugger (DEBUGGER) must produce:
+echelon.debugger (DEBUGGER) must produce:
 - Exact root cause (file + line + mechanism)
 - Minimal fix description (what changes and why)
 - Risk surface (what else could break)
 
 Store as `{debugger_report_i}`.
 
-If speckit-echelon-debugger (DEBUGGER) cannot identify a root cause (comment is too vague, referenced code does not exist in worktree): skip this group, log `"Group G{i}: skipped — insufficient context"`, continue to next group.
+If echelon.debugger (DEBUGGER) cannot identify a root cause (comment is too vague, referenced code does not exist in worktree): skip this group, log `"Group G{i}: skipped — insufficient context"`, continue to next group.
 
-### 4c. speckit-echelon-sentinel (SENTINEL) — Test Strategy
+### 4c. echelon.sentinel (SENTINEL) — Test Strategy
 
-Dispatch speckit-echelon-sentinel using the Agent tool:
+Dispatch echelon.sentinel using the Agent tool:
 
-- **subagent_type:** `speckit-echelon-sentinel`
+- **subagent_type:** `echelon.sentinel`
 - **prompt:**
   - `{debugger_report_i}`
   - `spec.md`
   - `coverage-map.md`
   - Existing test files for the affected component
-- **description:** "speckit-echelon-sentinel (SENTINEL): G{i} — test strategy"
+- **description:** "echelon.sentinel (SENTINEL): G{i} — test strategy"
 
-speckit-echelon-sentinel (SENTINEL) must produce:
+echelon.sentinel (SENTINEL) must produce:
 - A failing test specification (assertion only, not implementation)
 - Regression coverage: what adjacent behaviour needs protecting
 
 Store as `{test_strategy_i}`.
 
-### 4d. speckit-echelon-spec-guard (SPEC GUARD) — Scope Validation
+### 4d. echelon.spec-guard (SPEC GUARD) — Scope Validation
 
-Dispatch speckit-echelon-spec-guard using the Agent tool:
+Dispatch echelon.spec-guard using the Agent tool:
 
-- **subagent_type:** `speckit-echelon-spec-guard`
+- **subagent_type:** `echelon.spec-guard`
 - **prompt:**
   - `spec.md`
   - `coverage-map.md`
   - `{debugger_report_i}`
-- **description:** "speckit-echelon-spec-guard (SPEC GUARD): G{i} — scope validation"
+- **description:** "echelon.spec-guard (SPEC GUARD): G{i} — scope validation"
 
-speckit-echelon-spec-guard (SPEC GUARD) confirms the fix is within spec boundary. If scope expansion is required, it must say so explicitly.
+echelon.spec-guard (SPEC GUARD) confirms the fix is within spec boundary. If scope expansion is required, it must say so explicitly.
 
 Store as `{spec_guard_report_i}`.
 
@@ -252,22 +252,22 @@ Comments:
 {comment bodies verbatim}
 
 ## Root Cause
-{from speckit-echelon-debugger (DEBUGGER): file, line, mechanism}
+{from echelon.debugger (DEBUGGER): file, line, mechanism}
 
 ## Fix Scope
-{from speckit-echelon-debugger (DEBUGGER): what changes and why}
+{from echelon.debugger (DEBUGGER): what changes and why}
 
 ## Risk Surface
-{from speckit-echelon-debugger (DEBUGGER): what else could break}
+{from echelon.debugger (DEBUGGER): what else could break}
 
 ## Test Strategy
-{from speckit-echelon-sentinel (SENTINEL): failing test specification + regression coverage}
+{from echelon.sentinel (SENTINEL): failing test specification + regression coverage}
 
 ## Spec Compliance
-{from speckit-echelon-spec-guard (SPEC GUARD): which requirement(s) this addresses, any scope notes}
+{from echelon.spec-guard (SPEC GUARD): which requirement(s) this addresses, any scope notes}
 ```
 
-Then append tasks to `{spec_dir}/tasks.md` using `extension/templates/review-fix-task-fragment.md` and the canonical task row contract:
+Then append tasks to `{spec_dir}/tasks.md` using `.echelon/runtime/templates/review-fix-task-fragment.md` and the canonical task row contract:
 
 ```markdown
 ---

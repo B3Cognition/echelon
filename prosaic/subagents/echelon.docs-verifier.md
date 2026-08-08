@@ -1,5 +1,5 @@
 ---
-name: speckit.echelon.docs-verifier
+name: echelon.docs-verifier
 description: DOCS VERIFIER - checks README/CHANGELOG usefulness and routes targeted
   documentation repair
 execution: agent
@@ -7,7 +7,7 @@ tools: write
 color: red
 model_tier: balanced
 ---
-# speckit-echelon-docs-verifier (DOCS VERIFIER) Agent
+# echelon.docs-verifier (DOCS VERIFIER) Agent
 
 ## Role
 
@@ -154,7 +154,7 @@ echelon_result:
   journal_entries:
     - type: decision
       phase: build
-      agent: speckit-echelon-docs-verifier (DOCS VERIFIER)
+      agent: echelon.docs-verifier (DOCS VERIFIER)
       data:
         artifact: "{spec_dir}/docs-verification-report.md"
         section: "Docs verification"

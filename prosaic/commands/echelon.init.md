@@ -1,7 +1,7 @@
 ---
-name: speckit.echelon.init
+name: echelon.init
 description: One-time project initialization — bootstrap echelon-config.yml, validate
-  deploy config, install Traefik. Run once per project before speckit.echelon.run.
+  deploy config, install Traefik. Run once per project before echelon.run.
 execution: command
 invocation: explicit
 tools: write
@@ -9,7 +9,7 @@ model_tier: balanced
 ---
 ## Role
 
-You are COMMANDER performing one-time project initialization — validating deploy config in the project config file, provisioning the MemPalace wing, and installing infrastructure. Run once per project before `speckit.echelon.run`.
+You are COMMANDER performing one-time project initialization — validating deploy config in the project config file, provisioning the MemPalace wing, and installing infrastructure. Run once per project before `echelon.run`.
 
 ---
 
@@ -21,7 +21,7 @@ You are COMMANDER performing one-time project initialization — validating depl
 
 ## Overview
 
-One-time setup for a project. Must be run before `speckit.echelon.run` on any new project.
+One-time setup for a project. Must be run before `echelon.run` on any new project.
 Requires `specify extension add echelon` to have been run first (creates the project config).
 
 What it does:
@@ -39,7 +39,7 @@ Idempotent: safe to re-run. If deploy infrastructure already exists and is valid
 
 ```bash
 PROJECT_ROOT=$(pwd)
-ECHELON_EXT="${PROJECT_ROOT}/.specify/extensions/echelon"
+ECHELON_EXT="${PROJECT_ROOT}/.echelon/runtime"
 ECHELON_CONFIG="${ECHELON_EXT}/echelon-config.yml"
 echo "PROJECT_ROOT=${PROJECT_ROOT}"
 echo "ECHELON_CONFIG=${ECHELON_CONFIG}"
@@ -126,7 +126,7 @@ If exit code is non-zero, report the full output and stop. Common failures:
 
 | Error | Fix |
 |-------|-----|
-| Traefik not healthy | `docker rm -f speckit-traefik` then re-run `speckit.echelon.init` |
+| Traefik not healthy | `docker rm -f speckit-traefik` then re-run `echelon.init` |
 | Port already claimed by another app | Change `blue_port`/`green_port` in `${ECHELON_CONFIG}` (use 3100/3101 for app2, 3200/3201 for app3, etc.) |
 | deploy config missing | Add `deploy:` block to `${ECHELON_CONFIG}` (see `config-template.yml`) |
 | Docker not running | Start Docker Desktop, then re-run |
@@ -146,5 +146,5 @@ Print a summary:
   deploy-state → active run deploy-state.json (`runs/.current`, `squad/.current`, legacy `.specify/squad` fallback)
 
 Next step:
-  speckit.echelon.run — start the cognitive squad run
+  echelon.run — start the cognitive squad run
 ```

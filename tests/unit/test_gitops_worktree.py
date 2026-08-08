@@ -91,6 +91,43 @@ def test_sync_runtime_extension_copies_untracked_project_extension(tmp_path):
     assert ".specify/extensions/echelon/" in exclude.read_text(encoding="utf-8")
 
 
+def test_sync_runtime_extension_prefers_deployed_prosaic_bundle(tmp_path):
+    """Prosaic workspaces copy their deployed prose and runtime into delivery worktrees."""
+    prose = tmp_path / ".echelon" / "prosaic"
+    runtime = tmp_path / ".echelon" / "runtime"
+    (prose / "commands").mkdir(parents=True)
+    (prose / "subagents").mkdir()
+    (runtime / "workflow").mkdir(parents=True)
+    (prose / "commands" / "echelon.build.md").write_text("build\n", encoding="utf-8")
+    (prose / "subagents" / "echelon.implementer.md").write_text(
+        "implementer\n", encoding="utf-8"
+    )
+    (runtime / "workflow" / "definition.yaml").write_text("phases: []\n", encoding="utf-8")
+    (runtime / "scripts").mkdir()
+    (runtime / "scripts" / "runtime-helper.sh").write_text("helper\n", encoding="utf-8")
+
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree.mkdir(parents=True)
+    exclude = tmp_path / "git-exclude"
+
+    gitops = _make_gitops(tmp_path)
+    with patch("harness.gitops._run_git") as run_git:
+        run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
+        gitops.sync_runtime_extension(worktree)
+
+    assert (worktree / ".echelon/prosaic/commands/echelon.build.md").read_text(
+        encoding="utf-8"
+    ) == "build\n"
+    assert (worktree / ".echelon/prosaic/subagents/echelon.implementer.md").exists()
+    assert (worktree / ".echelon/runtime/workflow/definition.yaml").read_text(
+        encoding="utf-8"
+    ) == "phases: []\n"
+    assert (worktree / ".echelon/runtime/scripts/runtime-helper.sh").exists()
+    assert not (worktree / ".specify/extensions/echelon").exists()
+    assert ".echelon/prosaic/" in exclude.read_text(encoding="utf-8")
+    assert ".echelon/runtime/" in exclude.read_text(encoding="utf-8")
+
+
 def test_prepare_codegraph_runtime_runs_locked_npm_ci(tmp_path, monkeypatch):
     """Delivery worktrees install the locked CodeGraph SDK without source copies."""
     source = tmp_path / ".specify" / "extensions" / "echelon"

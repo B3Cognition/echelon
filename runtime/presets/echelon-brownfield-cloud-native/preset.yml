@@ -1,0 +1,63 @@
+schema_version: "1.0"
+
+preset:
+  id: "echelon-brownfield-cloud-native"
+  name: "Cloud-Native Migration"
+  version: "1.0.0"
+  description: "Templates for migrating applications to cloud-native architecture with 12-factor assessment"
+  author: "Michal Bachorik"
+  repository: "https://github.com/B3Cognition/echelon"
+  license: "MIT"
+
+requires:
+  speckit_version: ">=0.1.0"
+  extensions:
+    - id: "echelon"
+      version: ">=2.1.0"
+
+provides:
+  templates:
+    # Strategic artifact templates
+    - type: "template"
+      name: "constitution-template"
+      file: "templates/constitution-template.md"
+      description: "Constitution with cloud-native principles and 12-factor assessment"
+      replaces: "constitution-template"
+
+    - type: "template"
+      name: "migration-strategy-template"
+      file: "templates/migration-strategy-template.md"
+      description: "Migration strategy with 7R cloud migration framework"
+      replaces: "migration-strategy-template"
+
+    - type: "template"
+      name: "domain-spec-template"
+      file: "templates/domain-spec-template.md"
+      description: "Domain spec with containerization and cloud service mapping"
+      replaces: "domain-spec-template"
+
+    - type: "template"
+      name: "gap-analysis-template"
+      file: "templates/gap-analysis-template.md"
+      description: "Gap analysis with cloud infrastructure focus"
+      replaces: "gap-analysis-template"
+
+    # Pre-populated ADR templates
+    - type: "template"
+      name: "adr-cloud-provider"
+      file: "adrs/001-cloud-provider-template.md"
+      description: "ADR template for cloud provider selection"
+
+    - type: "template"
+      name: "adr-container-strategy"
+      file: "adrs/002-container-strategy-template.md"
+      description: "ADR template for containerization approach"
+
+tags:
+  - "cloud-native"
+  - "12-factor"
+  - "containers"
+  - "kubernetes"
+  - "aws"
+  - "azure"
+  - "gcp"

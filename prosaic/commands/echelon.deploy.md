@@ -1,5 +1,5 @@
 ---
-name: speckit.echelon.deploy
+name: echelon.deploy
 description: Manual deploy trigger, status, and rollback for blue/green local CD
 execution: skill
 tools: write
@@ -39,7 +39,7 @@ Parse `{{args}}`:
 ### Step 1: CI/CD Freshness Check
 
 ```bash
-ECHELON_EXT="$(git rev-parse --show-toplevel)/.specify/extensions/echelon"
+ECHELON_EXT="$(git rev-parse --show-toplevel)/.echelon/runtime"
 bash "${ECHELON_EXT}/scripts/bash/cicd-fingerprint.sh" --check
 ```
 
@@ -48,12 +48,12 @@ bash "${ECHELON_EXT}/scripts/bash/cicd-fingerprint.sh" --check
 
 ### Step 1b: Regenerate CI/CD Artifacts
 
-Invoke the `speckit-echelon-cicd` skill now. This runs the full cognitive squad to regenerate the Dockerfile(s), echelon-config.yml deploy block, db-start.sh, and CI workflow for the current project state.
+Invoke the `echelon.cicd` skill now. This runs the full cognitive squad to regenerate the Dockerfile(s), echelon-config.yml deploy block, db-start.sh, and CI workflow for the current project state.
 
-After `speckit-echelon-cicd` completes successfully, update the fingerprint:
+After `echelon.cicd` completes successfully, update the fingerprint:
 
 ```bash
-ECHELON_EXT="$(git rev-parse --show-toplevel)/.specify/extensions/echelon"
+ECHELON_EXT="$(git rev-parse --show-toplevel)/.echelon/runtime"
 bash "${ECHELON_EXT}/scripts/bash/cicd-fingerprint.sh" --update
 ```
 
@@ -62,7 +62,7 @@ Then proceed to **Step 2**.
 ### Step 2: Deploy
 
 ```bash
-ECHELON_EXT="$(git rev-parse --show-toplevel)/.specify/extensions/echelon"
+ECHELON_EXT="$(git rev-parse --show-toplevel)/.echelon/runtime"
 bash "${ECHELON_EXT}/scripts/bash/deploy.sh"
 ```
 
@@ -73,7 +73,7 @@ Report the full output. If exit code is non-zero, report the error and stop.
 ## Show Status
 
 ```bash
-ECHELON_EXT="$(git rev-parse --show-toplevel)/.specify/extensions/echelon"
+ECHELON_EXT="$(git rev-parse --show-toplevel)/.echelon/runtime"
 bash "${ECHELON_EXT}/scripts/bash/deploy-status.sh"
 ```
 

@@ -16,10 +16,12 @@ from harness.controller_state_contracts import (
 from harness.controller_state_contract_requirements import (
     required_controller_contract_name,
 )
-from harness.phase_graph import PhaseGraph
+from harness.phase_graph import PhaseGraph, load_workspace_phase_graph
 
 DEFINITION = EXT_ROOT / "extension/workflow/definition.yaml"
 EXT_YML = EXT_ROOT / "extension/extension.yml"
+PROSAIC_RUNTIME_DEFINITION = EXT_ROOT / "runtime/workflow/definition.yaml"
+PROSAIC_SUBAGENTS = EXT_ROOT / "prosaic/subagents"
 REQUIRED_CONTROLLER_CONTRACTS = {
     "phase1-lexicon": "spec_lexicon",
     "phase1-understanding": "understanding",
@@ -59,6 +61,47 @@ def test_unknown_structural_artifact_has_no_contract() -> None:
             "structural_artifact": "unknown",
         }
     ) is None
+
+
+def test_prosaic_graph_resolves_neutral_agents_from_subagents() -> None:
+    graph = PhaseGraph(
+        PROSAIC_RUNTIME_DEFINITION,
+        prosaic_subagents_dir=PROSAIC_SUBAGENTS,
+    )
+
+    assert graph.get("phase1-discover").agent == "echelon.scout"
+    assert graph.agent_file("echelon.scout") == str(
+        (PROSAIC_SUBAGENTS / "echelon.scout.md").resolve()
+    )
+    assert graph.agent_file("echelon.lexicon-deriver") == str(
+        (PROSAIC_SUBAGENTS / "echelon.lexicon-deriver.md").resolve()
+    )
+
+
+def test_prosaic_runtime_uses_echelon_canonical_constitution() -> None:
+    graph = PhaseGraph(
+        PROSAIC_RUNTIME_DEFINITION,
+        prosaic_subagents_dir=PROSAIC_SUBAGENTS,
+    )
+
+    assert ".echelon/constitution.md" in graph.get("phase1-why2").context_pack
+
+
+def test_workspace_graph_prefers_deployed_prosaic_runtime(tmp_path: Path) -> None:
+    runtime = tmp_path / ".echelon/runtime"
+    prose = tmp_path / ".echelon/prosaic/subagents"
+    (runtime / "workflow").mkdir(parents=True)
+    prose.mkdir(parents=True)
+    (runtime / "workflow/definition.yaml").write_text(
+        "phases:\n  - id: discover\n    type: agent\n    agent: echelon.scout\n",
+        encoding="utf-8",
+    )
+    (prose / "echelon.scout.md").write_text("# Scout\n", encoding="utf-8")
+
+    graph, runtime_root = load_workspace_phase_graph(tmp_path, tmp_path / "legacy")
+
+    assert runtime_root == runtime
+    assert graph.agent_file("echelon.scout") == str((prose / "echelon.scout.md").resolve())
 
 
 def _write_structural_graph(

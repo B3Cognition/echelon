@@ -1,0 +1,22 @@
+schema_version: 1
+proposal_id: kb-prop-sage-template
+proposal_type: sage_decision
+run_id: squad-template
+agent: echelon.sage
+created_at: "2026-07-17T12:00:00Z"
+targets:
+  - knowledge-base/sage-decisions.yaml
+confidence: 0.78
+source_artifacts:
+  - runs/squad-template/reasoning-journal.jsonl
+evidence_refs:
+  - artifact: runs/squad-template/reasoning-journal.jsonl
+    locator: RJ-template
+    claim: Decision resolved a Phase A challenge.
+payload:
+  artifact: spec.md
+  challenge_type: missing_evidence
+  challenge_summary: Scope boundary required an explicit decision.
+  outcome: blocked
+  resolution: Record assumptions and defer expansion to change control.
+  was_correct: true

@@ -12,7 +12,7 @@ if str(EXT_ROOT) not in sys.path:
 from kernel.re_state import complete_dispatch, init_re_state, write_last_dispatch
 
 
-PERLGRAPH_RUNTIME_DIR = EXT_ROOT / "extension" / "scripts" / "node" / "perlgraph"
+PERLGRAPH_RUNTIME_DIR = EXT_ROOT / "runtime" / "scripts" / "node" / "perlgraph"
 PERLGRAPH_VERSION = "0.1.0"
 
 
@@ -21,7 +21,7 @@ def test_install_script_prepares_perlgraph_in_shared_runtime() -> None:
 
     assert 'NODE_RUNTIME_ROOT="${ECHELON_HOME:-$HOME/.echelon}/node"' in install_script
     assert (
-        'PERLGRAPH_SOURCE_DIR="$ECHELON_DIR/extension/scripts/node/perlgraph"'
+        'PERLGRAPH_SOURCE_DIR="$ECHELON_DIR/runtime/scripts/node/perlgraph"'
         in install_script
     )
     assert 'PERLGRAPH_NODE_DIR="$NODE_RUNTIME_ROOT/perlgraph"' in install_script

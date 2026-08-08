@@ -9,6 +9,23 @@ from typer.testing import CliRunner
 
 
 @pytest.mark.unit
+def test_re_runtime_resolution_prefers_deployed_prosaic_bundle(tmp_path: Path) -> None:
+    from echelon.cli import _installed_re_runtime_or_exit
+
+    runtime = tmp_path / ".echelon" / "runtime"
+    (runtime / "workflow").mkdir(parents=True)
+    (runtime / "workflow" / "definition.yaml").write_text("phases: {}\n")
+    prose = tmp_path / ".echelon" / "prosaic" / "subagents"
+    prose.mkdir(parents=True)
+    (tmp_path / ".specify" / "extensions" / "echelon").mkdir(parents=True)
+
+    resolved_runtime, resolved_prose = _installed_re_runtime_or_exit(tmp_path)
+
+    assert resolved_runtime == runtime
+    assert resolved_prose == prose
+
+
+@pytest.mark.unit
 def test_re_run_help_exposes_clean_reconstruction_switch() -> None:
     from echelon.cli_app import app
 

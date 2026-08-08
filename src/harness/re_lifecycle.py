@@ -82,9 +82,15 @@ class ReLifecycleController:
         project_root: Path,
         extension_root: Path,
         provider_factory: Callable[[], object],
+        prosaic_subagents_dir: Path | None = None,
     ) -> None:
         self._project_root = project_root.resolve()
         self._extension_root = extension_root.resolve()
+        self._prosaic_subagents_dir = (
+            prosaic_subagents_dir.resolve()
+            if prosaic_subagents_dir is not None
+            else None
+        )
         self._provider_factory = provider_factory
 
     def run(
@@ -509,6 +515,7 @@ class ReLifecycleController:
                 project_root=self._project_root,
                 run_dir=run_dir,
                 extension_root=self._extension_root,
+                prosaic_subagents_dir=self._prosaic_subagents_dir,
             ).run()
             self._sync_controller_usage(run_dir, state)
             if not outcome.completed:

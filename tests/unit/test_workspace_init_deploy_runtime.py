@@ -111,6 +111,53 @@ def test_workspace_init_skips_deploy_when_disabled(tmp_path, monkeypatch, capsys
     assert "skipped (deploy.enabled=false)" in captured.out
 
 
+def test_workspace_init_with_prosaic_seeds_config_without_spec_kit(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    def deploy_bundle(project_root):
+        runtime = project_root / ".echelon" / "runtime"
+        runtime.mkdir(parents=True)
+        (runtime / "echelon-config.yml").write_text(
+            "deploy:\n  enabled: false\n  type: cli\n",
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr("echelon.prosaic_packages.install_prosaic_bundle", deploy_bundle)
+    monkeypatch.setattr(cli, "_provision_wing", lambda _project_dir, _config: "test-wing")
+
+    cli._cmd_init(tmp_path, with_prosaic=True)
+
+    captured = capsys.readouterr()
+    assert "Prosaic prose deployed" in captured.out
+    assert "Project config created" in captured.out
+    assert (tmp_path / ".echelon" / "config.yml").exists()
+    assert not (tmp_path / ".specify").exists()
+
+
+def test_workspace_init_with_prosaic_bootstraps_git_without_spec_kit(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    def deploy_bundle(project_root):
+        runtime = project_root / ".echelon" / "runtime"
+        runtime.mkdir(parents=True)
+        (runtime / "echelon-config.yml").write_text(
+            "deploy:\n  enabled: false\n  type: cli\n",
+            encoding="utf-8",
+        )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("echelon.prosaic_packages.install_prosaic_bundle", deploy_bundle)
+    monkeypatch.setattr(cli, "_provision_wing", lambda _project_dir, _config: "test-wing")
+    monkeypatch.setattr(cli, "_wants_unsafe_host_execution_interactively", lambda: False)
+
+    cli._cmd_workspace(["init", "--with-prosaic", "--no-unsafe-host-execution"])
+
+    assert (tmp_path / ".git").exists()
+
+
 def test_workspace_init_persists_selected_llm_provider(tmp_path, monkeypatch, capsys) -> None:
     _write_workspace_config(
         tmp_path,
@@ -226,6 +273,8 @@ def test_workspace_init_initializes_git_for_specify_workspace(
     gitignore = (tmp_path / ".gitignore").read_text(encoding="utf-8")
     assert "/.specify/" in gitignore
     assert "/runs/" in gitignore
+    assert "/.echelon/packages/" in gitignore
+    assert "/.echelon/prosaic/" in gitignore
     assert "/sources/*" in gitignore
     assert "!/sources/README.md" in gitignore
     commit = subprocess.run(

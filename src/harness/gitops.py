@@ -69,6 +69,19 @@ RUNTIME_EXTENSION_EXCLUDED_NAMES = (
     ".pytest_cache",
     "node_modules",
 )
+PROSAIC_PROSE_REL = Path(".echelon") / "prosaic"
+PROSAIC_RUNTIME_REL = Path(".echelon") / "runtime"
+PROSAIC_RUNTIME_REQUIRED = (
+    Path("workflow") / "definition.yaml",
+)
+PROSAIC_PROSE_REQUIRED = (
+    Path("commands"),
+    Path("subagents"),
+)
+PROSAIC_RUNTIME_EXCLUDES = (
+    ".echelon/prosaic/",
+    ".echelon/runtime/",
+)
 
 
 CODEGRAPH_RUNTIME_REL = Path("scripts") / "node" / "codegraph"
@@ -88,6 +101,20 @@ def copy_runtime_extension(source: Path, dest: Path) -> None:
         source,
         dest,
         ignore=runtime_extension_copy_ignore(source),
+    )
+
+
+def copy_prosaic_runtime_tree(source: Path, dest: Path) -> None:
+    """Replace one deployed Prosaic/runtime tree in a delivery worktree."""
+    if dest.is_symlink() or dest.is_file():
+        dest.unlink()
+    elif dest.exists():
+        shutil.rmtree(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(
+        source,
+        dest,
+        ignore=shutil.ignore_patterns(*RUNTIME_EXTENSION_EXCLUDED_NAMES),
     )
 
 
@@ -784,6 +811,10 @@ class GitOpsManager:
         worktree as ignored runtime support, not as product source.
         """
         worktree = Path(worktree_dir)
+        if self._prosaic_runtime_source_ready():
+            self._sync_prosaic_runtime(worktree, prepare_codegraph=prepare_codegraph)
+            return
+
         source = self._base_dir / RUNTIME_EXTENSION_REL
         dest = worktree / RUNTIME_EXTENSION_REL
 
@@ -803,6 +834,34 @@ class GitOpsManager:
         self._sync_provider_runtime_shims(dest, worktree)
         self._exclude_runtime_extension(worktree)
         logger.info("Synced runtime Echelon extension into worktree at %s", dest)
+
+    def _prosaic_runtime_source_ready(self) -> bool:
+        prose = self._base_dir / PROSAIC_PROSE_REL
+        runtime = self._base_dir / PROSAIC_RUNTIME_REL
+        return (
+            prose.is_dir()
+            and runtime.is_dir()
+            and all((prose / required).is_dir() for required in PROSAIC_PROSE_REQUIRED)
+            and all((runtime / required).exists() for required in PROSAIC_RUNTIME_REQUIRED)
+        )
+
+    def _sync_prosaic_runtime(self, worktree: Path, *, prepare_codegraph: bool) -> None:
+        prose_source = self._base_dir / PROSAIC_PROSE_REL
+        runtime_source = self._base_dir / PROSAIC_RUNTIME_REL
+        prose_dest = worktree / PROSAIC_PROSE_REL
+        runtime_dest = worktree / PROSAIC_RUNTIME_REL
+
+        copy_prosaic_runtime_tree(prose_source, prose_dest)
+        copy_prosaic_runtime_tree(runtime_source, runtime_dest)
+        if prepare_codegraph:
+            prepare_codegraph_runtime(runtime_dest)
+            prepare_perlgraph_runtime(runtime_dest)
+        self._exclude_prosaic_runtime(worktree)
+        logger.info(
+            "Synced deployed Echelon Prosaic/runtime into worktree at %s and %s",
+            prose_dest,
+            runtime_dest,
+        )
 
     def _sync_provider_runtime_shims(self, extension_root: Path, worktree: Path) -> None:
         """Materialize AI-CLI-specific helper files only for their provider."""
@@ -842,6 +901,14 @@ class GitOpsManager:
             self._append_unique_line(self._git_exclude_path(worktree), RUNTIME_EXTENSION_EXCLUDE)
         except GitOpsError as e:
             logger.warning("Could not exclude runtime extension from git status: %s", e)
+
+    def _exclude_prosaic_runtime(self, worktree: Path) -> None:
+        try:
+            exclude_path = self._git_exclude_path(worktree)
+            for line in PROSAIC_RUNTIME_EXCLUDES:
+                self._append_unique_line(exclude_path, line)
+        except GitOpsError as e:
+            logger.warning("Could not exclude Prosaic runtime from git status: %s", e)
 
     def _exclude_provider_scaffold_line(self, worktree: Path, line: str) -> None:
         try:

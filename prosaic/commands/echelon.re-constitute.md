@@ -1,5 +1,5 @@
 ---
-name: speckit.echelon.re-constitute
+name: echelon.re-constitute
 description: Generate strategic artifacts (constitution, strategy, risks, gaps, ADRs)
 ---
 ## Role

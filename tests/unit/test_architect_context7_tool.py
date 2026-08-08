@@ -12,7 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 ARCHITECT = ROOT / "extension" / "agents" / "solution" / "architect.md"
 PHASE = ROOT / "extension" / "workflow" / "phases" / "phase3-how.md"
-CTX7_NODE_DIR = ROOT / "extension" / "scripts" / "node" / "context7"
+CTX7_NODE_DIR = ROOT / "runtime" / "scripts" / "node" / "context7"
 CTX7_WRAPPER = ROOT / "extension" / "scripts" / "bash" / "context7-docs.sh"
 NODE_RUNTIME_RESOLVER = (
     ROOT / "extension" / "scripts" / "bash" / "node-runtime-resolver.sh"
@@ -34,7 +34,7 @@ def test_install_script_installs_context7_with_npm_ci() -> None:
     install_script = (ROOT / "scripts" / "install.sh").read_text(encoding="utf-8")
 
     assert 'NODE_RUNTIME_ROOT="${ECHELON_HOME:-$HOME/.echelon}/node"' in install_script
-    assert 'CTX7_SOURCE_DIR="$ECHELON_DIR/extension/scripts/node/context7"' in install_script
+    assert 'CTX7_SOURCE_DIR="$ECHELON_DIR/runtime/scripts/node/context7"' in install_script
     assert 'CTX7_NODE_DIR="$NODE_RUNTIME_ROOT/context7"' in install_script
     assert (
         '_refresh_node_runtime "$CTX7_SOURCE_DIR" "$CTX7_NODE_DIR" dist'

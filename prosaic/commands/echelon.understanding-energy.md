@@ -1,5 +1,5 @@
 ---
-name: speckit.echelon.understanding-energy
+name: echelon.understanding-energy
 description: '[Experimental] Token-level ambiguity detection using energy metrics'
 execution: command
 tools: full

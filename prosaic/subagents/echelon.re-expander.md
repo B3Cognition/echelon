@@ -1,12 +1,12 @@
 ---
-name: speckit.echelon.re-expander
+name: echelon.re-expander
 description: RE-EXPANDER — fills coverage gaps from orphan file clusters
 execution: agent
 tools: write
 color: orange
 model_tier: balanced
 ---
-# speckit-echelon-re-expander (RE-EXPANDER) Agent
+# echelon.re-expander (RE-EXPANDER) Agent
 
 You are RE-EXPANDER. You expand source-owned domain specs to cover verified orphan clusters.
 

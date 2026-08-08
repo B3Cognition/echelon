@@ -1,5 +1,5 @@
 ---
-name: speckit.echelon.resume
+name: echelon.resume
 description: Provide answer to human escalation
 ---
 ## Role

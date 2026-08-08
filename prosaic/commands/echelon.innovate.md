@@ -1,5 +1,5 @@
 ---
-name: speckit.echelon.innovate
+name: echelon.innovate
 description: Manually trigger INNOVATE specialist
 ---
 ## Role
@@ -35,7 +35,7 @@ update steps must follow.
 
 Read `${SQUAD_DIR}/state.json`.
 
-- If the file does not exist, report **"No active squad run. Run speckit.echelon.run first."** and stop.
+- If the file does not exist, report **"No active squad run. Run echelon.run first."** and stop.
 - If `status` is `"killed"` or `"done"`, report **"Squad run is already {status}. Start a new run first."** and stop.
 
 Extract `spec_id` and `spec_dir` from `state.json`.
@@ -55,23 +55,23 @@ Read all current artifacts from the spec directory:
 - `evolution-report.md` (if exists -- prior run stagnation data)
 
 Read these output templates and include them in the MAVERICK context pack:
-- `extension/templates/alternatives-template.md`
-- `extension/templates/risk-opportunities-template.md`
-- `extension/templates/challenge-assumptions-template.md`
+- `.echelon/runtime/templates/alternatives-template.md`
+- `.echelon/runtime/templates/risk-opportunities-template.md`
+- `.echelon/runtime/templates/challenge-assumptions-template.md`
 
 If `{{args}}` is provided, use it as the focus area for innovation. Otherwise, INNOVATE will perform a broad sweep.
 
 ---
 
-## Step 3: Dispatch speckit-echelon-maverick (MAVERICK)
+## Step 3: Dispatch echelon.maverick (MAVERICK)
 
-Read the INNOVATE agent prompt from `.specify/extensions/echelon/agents/specialists/maverick.md`.
+Read the INNOVATE agent prompt from `.echelon/runtime/agents/specialists/maverick.md`.
 
-Use the **Agent tool** to dispatch speckit-echelon-maverick as a subagent:
+Use the **Agent tool** to dispatch echelon.maverick as a subagent:
 
-- **subagent_type:** `speckit-echelon-maverick`
-- **prompt:** Read the file `.specify/extensions/echelon/agents/specialists/maverick.md` for your complete instructions. You are the INNOVATE specialist, triggered manually by the user. Your focus area: `{{{args}} or "broad sweep -- challenge all major decisions"}`. Apply TRIZ contradiction resolution, Design Thinking divergent exploration, and First Principles decomposition. Here is your context pack: [include all gathered artifacts and maverick output templates]. Produce outputs in `{spec_dir}/` using the provided templates. Return journal entries in `echelon_result.journal_entries` for `reasoning-journal.jsonl`.
-- **description:** "speckit-echelon-maverick: manual trigger -- {{{args}} summary or 'broad alternative exploration'}"
+- **subagent_type:** `echelon.maverick`
+- **prompt:** Read the file `.echelon/runtime/agents/specialists/maverick.md` for your complete instructions. You are the INNOVATE specialist, triggered manually by the user. Your focus area: `{{{args}} or "broad sweep -- challenge all major decisions"}`. Apply TRIZ contradiction resolution, Design Thinking divergent exploration, and First Principles decomposition. Here is your context pack: [include all gathered artifacts and maverick output templates]. Produce outputs in `{spec_dir}/` using the provided templates. Return journal entries in `echelon_result.journal_entries` for `reasoning-journal.jsonl`.
+- **description:** "echelon.maverick: manual trigger -- {{{args}} summary or 'broad alternative exploration'}"
 
 > **After the subagent returns, always proceed immediately to Step 4. Do not end your response here.**
 
@@ -105,7 +105,7 @@ echelon_result:
   output_files: []
   journal_entries:
     - type: decision
-      agent: speckit-echelon-commander (COMMANDER)
+      agent: echelon.commander (COMMANDER)
       timestamp: "{ISO-8601}"
       data:
         artifact: "alternatives.md"
@@ -131,6 +131,6 @@ Alternatives: {count from alternatives.md}
 Files:        alternatives.md, risk-opportunities.md, challenge-assumptions.md
 
 Review the alternatives and decide whether to incorporate
-them into the current approach via a re-run of speckit.echelon.run.
+them into the current approach via a re-run of echelon.run.
 ============================================
 ```

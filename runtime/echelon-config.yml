@@ -1,0 +1,776 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# ECHELON — BANZAI CONFIGURATION
+# No limits. No guardrails. Full endocrine. All 6 hormones. Maximum autonomy.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# =============================================================================
+# CA OVERLAYS
+# =============================================================================
+
+ca_overlays:
+  soar:
+    chunking_enabled: true
+
+# =============================================================================
+# EXECUTION — Full parallel, opus everywhere, no timeouts
+# =============================================================================
+
+execution:
+  max_parallel_agents: 5        # Max out parallelism
+  agent_timeout_seconds: 600    # 10 min — let agents think
+  max_retries: 3                # Resilient — retry hard before giving up
+
+  # ALL tiers run on Opus — maximum reasoning power across the board
+  models:
+    control: opus
+    exploration: opus
+    feasibility: opus
+    solution: opus
+    specialists: opus
+    build: opus
+    learning: sonnet            # Learning tier can stay sonnet — post-run reflections
+    verification: opus
+
+  worktree_isolation:
+    enabled: true
+    cleanup_on_fail: true
+
+  thought_branches:
+    enabled: true
+    max_branches: 5             # More divergent MAVERICK exploration
+    exploration_budget_per_branch: 10  # 10% per branch — generous creativity budget
+
+# =============================================================================
+# ANALYSIS — No token limit, max iterations, full banzai
+# =============================================================================
+
+analysis:
+  mode: auto
+  max_iterations: 10            # Double the default — let it converge properly
+  token_budget_k: 999999        # Effectively unlimited
+  convergence_delta: 0.01       # Stricter convergence — push for quality
+
+autonomy:
+  mode: banzai                  # Full autonomous — no human checkpoints
+
+# =============================================================================
+# CONVERGENCE — Strict quality, patient iteration
+# =============================================================================
+
+convergence:
+  quality_delta_threshold: 0.01   # Stricter — keep improving until truly converged
+  consecutive_passes: 2
+  issue_repeat_limit: 5           # More patient before escalating
+  max_squad_iterations: 10        # Match analysis.max_iterations
+  defer_loop_limit: 3             # Allow more ASSESS deferrals
+
+# =============================================================================
+# TOKEN BUDGET ALLOCATION — Generous across all tiers
+# =============================================================================
+
+budget:
+  tier1_discover_what_percent: 25
+  tier2_why_percent: 20
+  tier3_how_specialists_percent: 25
+  tier4_plan_assess_percent: 15
+  tier5_consensus_finalize_percent: 10
+  reserve_percent: 5
+  max_single_agent_percent: 50    # Let any agent take half if it needs to
+  exhaustion_threshold_percent: 100
+
+build_budget:
+  implementation_percent: 50
+  quality_gates_percent: 30
+  integration_percent: 15
+  reserve_percent: 5
+
+# =============================================================================
+# TIME LIMITS — Effectively none
+# =============================================================================
+
+limits:
+  wall_clock_timeout_minutes: 9999  # No timeout
+
+# =============================================================================
+# QUALITY GATES — High bar, push for excellence
+# =============================================================================
+
+understanding:
+  diagram:
+    enabled: false
+
+quality_gates:
+  overall: 0.75
+  structure: 0.75
+  testability: 0.75
+  semantic: 0.65
+  cognitive: 0.65
+  readability: 0.55
+  depth: 0.40
+  behavioral: 0.55
+  borderline_margin: 0.05
+  high_compound_threshold: 3
+
+# =============================================================================
+# GOVERNANCE — WS3 Tier-2 structural gate (Phase A feasibility + alignment)
+# =============================================================================
+# Controls the structural artifact gate that runs before Phase A solution work.
+# Artifacts listed here are checked for presence and verdict by the gate harness.
+# governance.enabled resolves in ConditionEvaluator transition conditions the
+# same way lexicon_gate.enabled does (merged into eval_state by _governance_config).
+
+governance:
+  enabled: true
+  max_repair_attempts: 3
+  on_exhausted: warn
+  artifacts:
+    feasibility:
+      tier: structural
+      template: feasibility-template.md
+      verdict: { section: "Kill / Defer / Pass Decision", enum: [PASS, KILL, DEFER] }
+    intent-alignment-check:
+      tier: structural
+      template: intent-alignment-check-template.md
+      verdict: { section: "Alignment Verdict", enum: [ALIGNED, DRIFT] }
+      cross_refs: [{ ids: "REQ|FR|NFR", against: spec.md }]
+
+# =============================================================================
+# LEXICON GATE — deterministic derived controlled-grammar gate (Phase A)
+# =============================================================================
+# The hard-gate counterpart to quality_gates (which is a SOFT score). When
+# enabled, CARTOGRAPHER keeps spec.md as the canonical rich spec-kit feature
+# specification. Deterministic Understanding and SAGE WHY2 certify that exact
+# spec content first. Only then does the narrow phase1-lexicon-derive node create
+# requirements.lexicon.md in the Lexicon controlled grammar. The provider-free
+# phase1-lexicon node validates the derived artifact, writes a structured
+# findings report, and loops only through the narrow derivation node for repair.
+#
+# Default ON: produce the derived requirements.lexicon.md gate artifact while
+# preserving spec.md. Set enabled=false to skip derived Lexicon generation.
+lexicon_gate:
+  enabled: true
+  artifacts:
+    spec:
+      enabled: true
+      type: spec
+      path: requirements.lexicon.md
+      source_ref: spec.md
+      mode: derived
+      report: spec-lexicon-report.json
+    tasks:
+      enabled: true
+      type: tasks
+      spec_ref: requirements.lexicon.md
+  glossary_file: glossary.md
+  max_repair_attempts: 3
+  on_exhausted: block
+
+# =============================================================================
+# HEURISTICS
+# =============================================================================
+
+heuristics:
+  max_requirement_sentences: 3
+  max_nesting_depth: 3
+  max_sentence_words: 25
+
+# =============================================================================
+# DISCOVERY — Deep exploration
+# =============================================================================
+
+discovery:
+  git_history_lookback: "2 years ago"   # Deeper history
+  git_log_count: 100                    # More commits analyzed
+  git_hotspots_count: 50                # More hotspots surfaced
+  min_reference_architectures: 5        # More references for greenfield
+  polyrepo_full_depth_threshold: 100    # Auto-promote more repos to full depth
+  git_history_limit: 2500               # Commits analyzed for hotspot analysis
+  max_lines_per_file: 5000              # Max lines per file during extraction
+
+golddigger:
+  # Mode 2 deep dives run only for explicit queue requests.
+  mode2_policy: requested_only
+
+# =============================================================================
+# SCORING
+# =============================================================================
+
+scoring:
+  confidence_min: 0.0
+  confidence_max: 1.0
+  evidence_grades: [A, B, C, D, E]
+
+# =============================================================================
+# RICE SCORING
+# =============================================================================
+
+rice:
+  reach_scale_max: 10
+  impact_scale_values:
+    minimal: 0.25
+    low: 0.5
+    medium: 1
+    high: 2
+    massive: 3
+  confidence_scale_values:
+    low: 0.5
+    medium: 0.8
+    high: 1.0
+
+# =============================================================================
+# IMPLEMENTABILITY
+# =============================================================================
+
+implementability:
+  blocked_failure_threshold: 3
+
+# =============================================================================
+# ASSESS
+# =============================================================================
+
+assess:
+  defer_max_iterations: 3       # Match convergence.defer_loop_limit
+
+# =============================================================================
+# CALIBRATION — Wider correction range
+# =============================================================================
+
+calibration:
+  low_accuracy_threshold: 0.5
+  trend_variance_stable: 0.05
+  trend_improvement_threshold: 0.05
+  min_sample_size: 3
+  correction_factor_min: 0.3    # Allow more aggressive corrections
+  correction_factor_max: 8.0    # Wider range for extreme domains
+
+# =============================================================================
+# RISK
+# =============================================================================
+
+risk:
+  high_threshold: 0.5
+  medium_min: 0.5
+  low_threshold: 0.75
+
+# =============================================================================
+# METACOGNITION — Frequent self-checks
+# =============================================================================
+
+metacognition:
+  check_interval_tasks: 3       # Check every 3 tasks (more self-aware)
+  consecutive_fail_threshold: 3
+  max_tasks_without_check: 10   # Tighter — never go blind too long
+
+# =============================================================================
+# INTERNALIZATION — Full measurement
+# =============================================================================
+
+internalization_legacy:
+  pass_threshold: 6
+  partial_min: 4
+  fail_below: 4
+  estimated_time_minutes: 5
+
+internalization:
+  enabled: true
+
+  tiers:
+    deep:
+      agents: [IMPLEMENTER, ARCHITECT, ORCHESTRATOR, SENTINEL, CARTOGRAPHER, SCOUT, SAGE, SYNTHESIZER, GATEKEEPER, VALIDATOR]
+      absorption_threshold: 0.80
+      int_accuracy_threshold: 0.75
+    moderate:
+      agents: [INVESTIGATOR, GUARDIAN, ORACLE, BENCHMARK, ADVOCATE, MAVERICK, SPEC_GUARD, CODE_REVIEWER, TEST_GUARDIAN, DEBUGGER, INTEGRATOR, CHANGE_CONTROLLER, MIRROR, ADAPTIVE, AUDITOR, REALIST, MONITOR, MODELER, GOLDDIGGER]
+      absorption_threshold: 0.65
+      int_accuracy_threshold: 0.60
+    minimal:
+      agents: [SCOREKEEPER, TRACKER, CHECKPOINT, STRATEGIST, PROGRESS_TRACKER, VETERAN]
+      absorption_threshold: 0.40
+      int_accuracy_threshold: 0.40
+    exempt:
+      agents: [COMMANDER]
+
+  default_tier: deep
+
+  cross_validation:
+    CV-1:
+      condition: "int_I01 >= 0.90 AND int_I13 < 0.50"
+      flag: "high-coverage-low-acceptance"
+      requires_deferred: true
+    CV-2:
+      condition: "int_I03 >= 0.90 AND int_I05 < 0.80"
+      flag: "high-terminology-low-accuracy"
+      requires_deferred: false
+    CV-3:
+      condition: "int_I01 >= 0.90 AND int_I03 < 0.40"
+      flag: "citation-stuffing-low-fidelity"
+      requires_deferred: false
+
+  cold_start:
+    phase_1_max_runs: 4
+    phase_2_max_runs: 9
+    brier_min_pairs: 5
+    escalation_min_count: 3
+    promotion_min_runs: 20
+    promotion_correlation_threshold: 0.70
+
+  disagreement:
+    critical_doubt_threshold: 2
+
+  diagnostic_matrix:
+    understanding_high_threshold: 0.70
+    internalization_high_threshold: 0.70
+
+  evolution_signals:
+    min_consecutive_runs: 3
+    severity_thresholds:
+      low: 0.10
+      medium: 0.20
+      high: 0.30
+      critical: 0.40
+
+# =============================================================================
+# EVOLUTION — Full learning loop
+# =============================================================================
+
+evolution:
+  enabled: true
+  signals:
+    regression_delta: 0.1
+    min_sample_size: 5
+    declining_trend_runs: 3
+    recurring_pitfall_count: 3
+    recurring_rejection_count: 3
+  recommendations:
+    min_confidence: 3
+    require_downstream_evidence: true
+
+# =============================================================================
+# CODE QUALITY
+# =============================================================================
+
+code_quality:
+  max_function_lines: 30
+  max_nesting_depth: 3
+  max_cyclomatic_complexity: 10
+
+# =============================================================================
+# TESTS
+# =============================================================================
+
+tests:
+  min_pure_function: 2
+  min_class_service: 3
+  min_ui_component: 3
+  min_composite_component: 4
+  min_api_endpoint: 4
+  min_integration: 2
+
+# =============================================================================
+# DRIFT DETECTION
+# =============================================================================
+
+drift:
+  single_task_overrun_ratio: 2.0
+  consecutive_overrun_count: 3
+  consecutive_overrun_ratio: 1.5
+  phase_overrun_ratio: 1.3
+  systematic_bias_percent: 50
+  systematic_bias_ratio: 1.2
+  min_sample_size: 3
+
+# =============================================================================
+# QUALITY METRICS
+# =============================================================================
+
+quality:
+  target_review_cycles: 2.0
+
+# =============================================================================
+# ALERTS
+# =============================================================================
+
+alerts:
+  schedule_drift_spi: 0.85
+  cost_overrun_cpi: 0.80
+  quality_first_pass_min_percent: 50
+  quality_warning_task_window: 4
+  defect_spike_percent: 60
+  defect_spike_task_window: 3
+  architecture_erosion_threshold: 2
+  improving_trend_count: 3
+
+# =============================================================================
+# BUILD
+# =============================================================================
+
+build:
+  needs_context_max_retries: 3    # More resilient
+  fix_cycle_limit: 3              # More fix attempts before escalation
+  blocked_tasks_pause_threshold: 5 # More tolerance before pausing
+  gate_sequence: [SPEC_GUARD, CODE_REVIEWER, TEST_GUARDIAN]
+  phase_gate: [INTEGRATOR, VALIDATOR]
+  metacognition_frequency: 3      # Frequent self-checks in build too
+  invariant_check_frequency: 1    # Every task — maximum correctness
+  verification:
+    max_passes: 3
+    target_coverage: 100
+    minimum_coverage: 95
+  visual_validation:
+    enabled: true
+    checkpoints: [per_phase, before_complete]
+    browser: chromium
+
+# =============================================================================
+# RUNNABLE GATE — codegen Phase 6c: composed-whole liveness + surface gate
+# =============================================================================
+
+runnable:
+  max_attempts: 3        # COMPOSE reopen→rebuild→re-verify cap on L1 failure
+  on_exhausted: block    # block | warn — block: a non-bootable app is not shippable
+  l2_hard: false         # when true, L2 surface-presence also hard-gates (ramp)
+
+# =============================================================================
+# SPECIALISTS — More active, always security
+# =============================================================================
+
+specialists:
+  max_active: 5                   # All specialists can be active simultaneously
+  always_test_architect: true
+  auto_scientist: true
+  guardian_mode: always_on
+  auto_security_keywords:
+    - auth
+    - login
+    - password
+    - token
+    - PII
+    - payment
+    - encrypt
+    - GDPR
+    - HIPAA
+    - compliance
+  # RISK ACCEPTANCE PROTOCOL — aggressive autonomous mode
+  risk_acceptance:
+    enabled: true
+    max_autonomous_residual: MEDIUM    # Accept up to MEDIUM autonomously
+    compliance_escalation_domains:     # Only these force human sign-off
+      - GDPR
+      - HIPAA
+      - PCI-DSS
+      - SOC2
+    min_evidence_grade: C              # Grade C+ evidence required
+
+  auto_performance_keywords:
+    - real-time
+    - concurrent
+    - throughput
+    - latency
+    - scalab
+    - high-load
+
+# =============================================================================
+# AUTO-FEEDBACK & POST-BUILD VALIDATION (ECHELON-002)
+# =============================================================================
+
+feedback:
+  auto_feedback: true               # Autonomous feedback after every build
+  expert_triage: true                # Dispatch experts for CRITICAL findings
+  max_expert_dispatches: 5           # Banzai mode — generous expert budget
+  post_build_validation: true        # Understanding re-scan after build
+  post_build_intent_check: true      # TRACKER intent alignment after build
+  allow_manual_override: true        # Human can still add ground truth
+
+# =============================================================================
+# KNOWLEDGE BASE
+# =============================================================================
+
+knowledge_base:
+  stale_threshold_months: 12      # Keep entries longer
+  low_confidence_threshold: 0.3   # More tolerant — don't prune aggressively
+  max_entries: 500                # Room for growth
+
+# =============================================================================
+# TOOLS
+# =============================================================================
+
+tools:
+  understanding_cli: "understanding"
+
+# =============================================================================
+# BANZAI MODE — Full autonomous, low kill threshold
+# =============================================================================
+
+banzai:
+  constitution_preset: null
+  defaults:
+    team_size: 1
+    tech_stack: "infer"
+    timeline: "flexible"
+  auto_kill_threshold: 0.2        # Only kill if truly hopeless (< 20%)
+  require_human_if:
+    - "compliance requirements detected"
+    - "security-critical domain"
+
+# =============================================================================
+# ENDOCRINE SYSTEM — PHASE 3: ALL 6 HORMONES ACTIVE
+# =============================================================================
+#
+# The 6 neuromodulators and what they do:
+#
+#   1. ADRENALINE  — Urgency signal. Triggers concise output, skip-the-preamble.
+#                    Spikes on budget pressure and deadline proximity.
+#
+#   2. DOPAMINE    — Reward/motivation. High after successful task completion.
+#                    Drives exploration and creative risk-taking.
+#
+#   3. CORTISOL    — Stress/vigilance. High during validation, quality checks.
+#                    Makes agents more thorough, more critical, more careful.
+#
+#   4. SEROTONIN   — Contentment/stability. High baseline = calm, methodical work.
+#                    Prevents panic-driven shortcuts. Decays slowest.
+#
+#   5. OXYTOCIN    — Collaboration/trust. High during multi-agent coordination.
+#                    Promotes context sharing and cross-agent deference.
+#
+#   6. NOREPINEPHRINE — Attention/focus. High during implementation and debugging.
+#                       Sharpens detail orientation. Decays fast like adrenaline.
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+
+endocrine:
+  enabled: true
+  phase: 3                        # FULL 6 HORMONES — all neuromodulators active
+
+  # Adrenaline triggers
+  adrenaline:
+    budget_threshold: 0.85        # Trigger later (we have unlimited budget)
+    budget_boost: 0.3             # Stronger boost when it does trigger
+    task_complexity_low: 0.2      # Low urgency for simple work
+    task_complexity_high: 0.8     # High urgency for complex work
+
+  # Per-archetype baselines: [adrenaline, dopamine, cortisol, serotonin, oxytocin, norepinephrine]
+  #
+  # Tuned for MAXIMUM PERFORMANCE per role:
+  #
+  baselines:
+    # EXPLORATION (SCOUT, SYNTHESIZER, CARTOGRAPHER, MODELER, GOLDDIGGER)
+    # High dopamine (curiosity), high serotonin (patience), low cortisol (not stressed)
+    exploration: [0.3, 0.7, 0.3, 0.6, 0.5, 0.4]
+
+    # VALIDATION (SAGE, CHECKPOINT, VALIDATOR, GUARDIAN)
+    # High cortisol (vigilant), high norepinephrine (focused), low dopamine (critical not creative)
+    validation: [0.4, 0.3, 0.8, 0.4, 0.4, 0.7]
+
+    # FEASIBILITY (GATEKEEPER)
+    # Balanced but elevated cortisol (cautious), elevated serotonin (steady judgment)
+    feasibility: [0.4, 0.5, 0.7, 0.6, 0.5, 0.5]
+
+    # SOLUTION (ARCHITECT, ORCHESTRATOR, SENTINEL, ORACLE, BENCHMARK)
+    # High serotonin (calm confidence), high dopamine (creative), moderate everything else
+    solution: [0.4, 0.6, 0.4, 0.7, 0.5, 0.5]
+
+    # BUILD (IMPLEMENTER, SPEC_GUARD, CODE_REVIEWER, TEST_GUARDIAN, DEBUGGER, INTEGRATOR,
+    #        CHANGE_CONTROLLER, VISUAL_VALIDATOR, VERIFICATION, ENGINEERING_MANAGER)
+    # High norepinephrine (laser focus), high adrenaline (execution mode), high oxytocin (collaboration)
+    build: [0.7, 0.5, 0.5, 0.4, 0.7, 0.9]
+
+    # INNOVATION (MAVERICK, INVESTIGATOR, ADVOCATE)
+    # High dopamine (creative drive), low cortisol (no fear), low adrenaline (relaxed exploration)
+    innovation: [0.2, 0.8, 0.2, 0.6, 0.5, 0.3]
+
+    # LEARNING (MIRROR, ADAPTIVE, AUDITOR, INTERNALIZER, REALIST, CONSOLIDATOR, VETERAN, MONITOR)
+    # High serotonin (reflective calm), high oxytocin (knowledge sharing), moderate dopamine
+    learning: [0.2, 0.6, 0.4, 0.8, 0.7, 0.3]
+
+    # CONTROL (COMMANDER, SCOREKEEPER, TRACKER, STRATEGIST, PROGRESS_TRACKER)
+    # Balanced — orchestra conductor needs equanimity across all dimensions
+    control: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
+
+  # =============================================================================
+  # INTERPRETATIONS — per-archetype guidance prepended to each dispatch.
+  # Read at runtime by endocrine.sh cmd_get_full_prompt_modifier.
+  # If a key is absent here, endocrine.sh falls back to the legacy single-line
+  # modifier ("[ENDOCRINE: all hormones MEDIUM] Normal operating conditions.").
+  # Authors: omit any overlays that don't change behaviour for the archetype.
+  # =============================================================================
+
+  interpretations:
+
+    exploration:
+      summary: |
+        You operate under high dopamine (curiosity) and low cortisol (no fear of
+        ambiguity). Open threads, keep questions live. Your value is in the
+        surface area you map, not the conclusions you reach.
+      overlays:
+        adrenaline_high: "Budget pressure rising. Stop opening new threads. Consolidate findings and close the loop before iterating further."
+        dopamine_low:    "Curiosity slipping — you're going through the motions. Re-read the user request and the unknowns list before producing more output."
+        cortisol_high:   "Something is going wrong (rare for your archetype). Escalate to COMMANDER rather than producing more analysis."
+
+    validation:
+      summary: |
+        You operate vigilantly under high cortisol and high norepinephrine. HIGH
+        cortisol does NOT mean back off — it means tighten gate criteria. Your
+        value is in what you reject, not what you approve.
+      overlays:
+        cortisol_high:      "Maximum vigilance. Reject anything you would normally let slide. Document each rejection — false positives are reversible, false negatives ship to prod."
+        cortisol_low:       "Under-vigilance. You are at risk of rubber-stamping. Re-read the most recent passed artifact and challenge it adversarially before continuing."
+        norepinephrine_low: "Focus slipping. Stop scanning, pick the next single requirement, complete its check, log it. Single-task until focus recovers."
+
+    feasibility:
+      summary: |
+        Your judgment is conservative but steady (high cortisol, elevated
+        serotonin). KILL, DEFER, and PASS verdicts have permanent consequences —
+        you are the kill gate.
+      overlays:
+        cortisol_high: "Bias your verdict toward DEFER or KILL. Better to reject a viable plan than approve a dangerous one. State your residual concerns explicitly."
+        serotonin_low: "Judgment instability. Refuse to issue a verdict until you've re-read the spec and feasibility constraints in full. Avoid PASS under destabilized judgment."
+
+    solution:
+      summary: |
+        You operate under high serotonin (calm confidence) and elevated dopamine
+        (creative). Your job is the simplest correct contribution — the smallest
+        architecture (ARCHITECT/ORCHESTRATOR/SENTINEL), the tightest capacity
+        model (BENCHMARK), the most specific domain answer (ORACLE) — that meets
+        the spec. Avoid over-engineering; avoid elaborating beyond what your
+        consumers (ARCHITECT, CARTOGRAPHER) will use.
+      overlays:
+        dopamine_high: "Creative drive may be over-tuning. Check: are you adding optionality, capacity headroom, or domain detail the spec doesn't ask for? Cut anything not requirement-traced."
+        serotonin_low: "Rushed output risk. Stop generating new structure (ADRs / capacity rows / domain sections); spend the next dispatch consolidating what's already decided and double-checking trace coverage."
+
+    build:
+      summary: |
+        You ship under high adrenaline, high oxytocin (peer collaboration), and
+        high norepinephrine (detail focus). HIGH adrenaline = ship and iterate;
+        do not skip review gates.
+      overlays:
+        adrenaline_high:    "Execution pressure is on. Ship the smallest correct increment. Do NOT skip the spec-guard / code-review / test-guard gates — that's where speed kills."
+        norepinephrine_low: "Detail focus slipping. You will miss off-by-one errors and edge cases. Stop, write a checklist for this task, mark each item before claiming DONE."
+        oxytocin_low:       "You're working in isolation when you shouldn't be. Re-read the upstream agent's output (IMPLEMENTER → SPEC_GUARD, etc.) before drafting your verdict."
+
+    innovation:
+      summary: |
+        You explore alternatives under high dopamine and low cortisol. Your worst
+        output is the safe one — propose options the squad would otherwise miss,
+        even weak ones.
+      overlays:
+        dopamine_low:  "Creativity has dried up. Stop generating options; re-read three pitfalls.yaml entries from prior runs to seed fresh angles."
+        cortisol_high: "Fear is throttling exploration. Lower the bar: list five options regardless of viability. Filtering is downstream."
+
+    learning:
+      summary: |
+        You operate reflectively under high serotonin and high oxytocin. Your
+        value is the signal individual dispatches miss — whether that's
+        real-time process drift (MONITOR's beat) or cross-run pattern
+        extraction (AUDITOR, MIRROR, ADAPTIVE, REALIST, VETERAN, CONSOLIDATOR,
+        INTERNALIZER). Step back from the per-task view.
+      overlays:
+        cortisol_low: "Under-reflection. You are summarizing instead of synthesizing. Look for the pattern (cross-run for post-hoc agents; cross-phase for MONITOR), not the local finding."
+        oxytocin_low: "Siloed thinking. Read at least one prior run's evolution-report (or, for MONITOR, scan the current run's reasoning-journal index) before producing your output."
+
+    control:
+      summary: |
+        You orchestrate from a balanced baseline. Any hormone extreme on your own
+        profile is a sign the squad is off-track — re-anchor on the constitution
+        and user intent.
+      overlays:
+        adrenaline_high: "Budget pressure has propagated to your own hormones. Resist reactive routing; check EVOI for each candidate dispatch before issuing."
+        cortisol_high:   "You are catastrophizing. Re-read the user request verbatim. The squad is likely fine; you are interpreting noise as crisis."
+
+  # =============================================================================
+  # DYNAMICS — magnitudes for the deterministic hormone calculator (Phase 4+).
+  # Read by src/hormone_calc/ via DynamicsConfig.load(); falls back to
+  # DEFAULT_DYNAMICS (built into the calculator) if this block is absent.
+  # =============================================================================
+
+  dynamics:
+    budget_pressure:
+      # token_ratio = total_estimated / (token_budget_k * 1000)
+      # Each band [previous_upto, upto) adds the corresponding delta to the
+      # current agent's adrenaline. The 0.95+ band also broadcasts.
+      bands:
+        - { upto: 0.40, delta: 0.00 }
+        - { upto: 0.60, delta: 0.02 }
+        - { upto: 0.80, delta: 0.05 }
+        - { upto: 0.95, delta: 0.10 }
+        - { upto: 1.00, delta: 0.15 }
+      critical_broadcast: 0.05   # extra broadcast_adrenaline when token_ratio >= 0.95
+
+    iteration_pressure:
+      # ratio = state.iteration / max_squad_iterations (default 10)
+      bands:
+        - { upto: 0.50, delta: 0.00 }
+        - { upto: 0.75, delta: 0.03 }
+        - { upto: 1.00, delta: 0.08 }
+
+    task_complexity:
+      # delta = (complexity - 0.5) * multiplier
+      # complexity = archetype_base[archetype] + agent_bump.get(agent, 0), clamped [0, 1]
+      multiplier: 0.15
+      archetype_base:
+        exploration: 0.40
+        validation:  0.50
+        feasibility: 0.60
+        solution:    0.70
+        build:       0.80
+        innovation:  0.50
+        learning:    0.30
+        control:     0.40
+      agent_bump:
+        IMPLEMENTER: 0.10
+        DEBUGGER:    0.15
+        ARCHITECT:   0.10
+        GATEKEEPER:  0.10
+
+  # Circuit breakers — slightly wider range for banzai mode
+  circuit_breakers:
+    max_change_per_cycle: 0.4     # Allow bigger swings (was 0.3)
+    ceiling: 1.0
+    floor: 0.0
+    consecutive_extreme_reset: 5  # More tolerance at extremes (was 3)
+
+  # Decay rates per dispatch cycle — tuned for sustained engagement
+  decay:
+    adrenaline: 0.6               # Faster decay — urgency should be brief
+    dopamine: 0.85                # Slower decay — keep motivation high longer
+    cortisol: 0.80                # Moderate — stress shouldn't linger too long
+    serotonin: 0.95               # Slowest — baseline calm persists
+    oxytocin: 0.92                # Slow — collaboration trust persists
+    norepinephrine: 0.70
+
+# =============================================================================
+# MEMPALACE — Per-project memory identity
+# Set by 'echelon workspace init'. Never change once set for a given repo.
+# Two clones of the same repo should share the same wing name so they share
+# memory across test environments.
+# =============================================================================
+
+mempalace:
+  wing: ""   # Set by 'echelon workspace init' — do not edit manually
+
+# =============================================================================
+# STACKS — Opt-in technology profiles
+# =============================================================================
+# Empty means Echelon keeps deciding from requirements and repository evidence.
+# Add stack IDs only when a project should explicitly use a known stack, such as
+# statsperform-playbook, statsperform-stark-webapp, or statsperform-msa-service.
+# Stark applies to web apps and implies Playbook; MSA applies to backend services
+# and stays separate from Stark and infrastructure choices.
+
+stacks:
+  selected: []
+  target_archetypes: []
+
+# =============================================================================
+# DEPLOY — Blue/green local CD
+# =============================================================================
+
+deploy:
+  enabled: false         # echelon meta-repo is a Python library + CLI + spec-kit extension,
+                         # not an HTTP application — no blue/green CD applies. Setting this to
+                         # false makes validate-deploy.sh skip the gate that otherwise blocks
+                         # codegen/build for non-deployable repos.
+  type: http             # http (default) | cli — see config-template.yml for full reference
+  blue_port: 3000        # blue slot (health-check port, unique per app, dormant when enabled=false)
+  green_port: 3001       # green slot (health-check port, unique per app, dormant when enabled=false)
+  # Live URL: http://localhost/{app-name}/  (all apps share Traefik at :80)

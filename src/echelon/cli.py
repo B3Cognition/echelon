@@ -83,6 +83,7 @@ Commands:
   workspace init [--llm <provider>] [--openai-base-url <url>] [--openai-model <model>]
                     [--openai-api-key-file <path>|--openai-api-key-env <env>]
                     [--allow-unsafe-host-execution|--no-unsafe-host-execution]
+                    [--with-prosaic]
                                             One-time project setup (no LLM)
   workspace doctor                          Check workspace/source/runtime contract
   workspace sources sync [--write]          Sync discovered sources/* roots into config
@@ -275,7 +276,11 @@ def _maybe_bootstrap_workspace_git(project_root: Path) -> None:
         elif result.staged_paths:
             print("  workspace repair left staged because the worktree was not clean")
         return
-    if not ((project_root / ".specify").exists() or (project_root / "specs").exists()):
+    if not (
+        (project_root / ".specify").exists()
+        or (project_root / "specs").exists()
+        or (project_root / ".echelon" / "config.yml").exists()
+    ):
         return
 
     from echelon.workspace_git_migration import migrate_workspace
@@ -627,23 +632,37 @@ def _cmd_init(
     openai_model: str | None = None,
     openai_api_key_file: str | None = None,
     openai_api_key_env: str | None = None,
+    with_prosaic: bool = False,
 ) -> None:
     ext_dir = project_dir / ".specify" / "extensions" / "echelon"
     legacy_cfg = ext_dir / "echelon-config.yml"
     echelon_cfg = project_dir / ".echelon" / "config.yml"
+    runtime_dir = project_dir / ".echelon" / "runtime"
 
-    # Step 1: Confirm project config exists. New workspaces commit .echelon/config.yml;
-    # legacy extension-local config remains a migration/template source.
+    if with_prosaic:
+        from echelon.prosaic_packages import ProsaicBundleInstallError, install_prosaic_bundle
+
+        try:
+            install_prosaic_bundle(project_dir)
+        except ProsaicBundleInstallError as exc:
+            print(f"✗ {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
+        print(f"✓ Prosaic prose deployed: {project_dir / '.echelon/prosaic'}")
+        print(f"✓ Prosaic runtime deployed: {runtime_dir}")
+
+    # Step 1: Confirm project config exists. The Prosaic runtime is the source
+    # for new migration workspaces; the installed extension remains the legacy fallback.
+    config_template = runtime_dir / "echelon-config.yml" if with_prosaic else legacy_cfg
     if not echelon_cfg.exists():
-        if legacy_cfg.exists():
+        if config_template.exists():
             echelon_cfg.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(legacy_cfg, echelon_cfg)
+            shutil.copyfile(config_template, echelon_cfg)
             print(f"✓ Project config created: {echelon_cfg}")
         else:
             print(
                 f"✗ Project config not found: {echelon_cfg}\n"
-                f"  Legacy template also missing: {legacy_cfg}\n"
-                "  Run: specify extension add echelon",
+                f"  Config template also missing: {config_template}\n"
+                "  Run: echelon workspace init --with-prosaic or specify extension add echelon",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -718,7 +737,11 @@ def _cmd_init(
     _provision_wing(project_dir, echelon_cfg)
 
     # Step 3: Run deploy-init.sh
-    init_script = ext_dir / "scripts" / "bash" / "deploy-init.sh"
+    init_script = (
+        runtime_dir / "scripts" / "bash" / "deploy-init.sh"
+        if with_prosaic
+        else ext_dir / "scripts" / "bash" / "deploy-init.sh"
+    )
     deploy_state_label = str(project_dir / ".specify" / "squad" / "deploy-state.json")
     if not deploy_enabled:
         deploy_state_label = "skipped (deploy.enabled=false)"
@@ -727,7 +750,7 @@ def _cmd_init(
     elif not init_script.exists():
         print(
             f"✗ deploy-init.sh not found at {init_script}\n"
-            "  Ensure the echelon extension is deployed via spec-kit.",
+            "  Ensure the selected Echelon runtime is installed.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -5384,18 +5407,20 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
     # 1. Constitution — phase provenance first, artifact integrity second
     completed = current_state.get("completed_phases")
     completed_phases = completed if isinstance(completed, list) else []
-    const_path = project_root / ".specify" / "memory" / "constitution.md"
+    from echelon.constitution import canonical_constitution_path
+
+    const_path = canonical_constitution_path(project_root)
     if current_state and "phase1-constitution" not in completed_phases:
         blockers.append(
             "phase1-constitution has not completed in this run\n"
             "     → echelon spec continue\n"
-            "       (CHIEF will invoke speckit.constitution and record provenance)"
+            "       (CHIEF will author the constitution and record provenance)"
         )
     elif not const_path.exists():
         blockers.append(
             "constitution.md absent\n"
             "     → echelon spec continue\n"
-            "       (CHIEF will invoke speckit.constitution and fill it)"
+            "       (CHIEF will author the constitution)"
         )
     else:
         markers = _constitution_template_markers(const_path.read_text(errors="replace"))
@@ -6297,12 +6322,12 @@ def _cmd_run(
 ) -> None:
     """Drive the pre-code squad run via deterministic Python harness."""
     from harness.config import load_config
-    from harness.phase_graph import PhaseGraph
     from harness.squad import SquadController
     from harness.squad_provider import SquadCliProvider
     from harness.squad_state import SquadStateStore
 
-    _print_extension_drift_warning(project_root, ext_dir)
+    if (ext_dir / "extension.yml").is_file():
+        _print_extension_drift_warning(project_root, ext_dir)
     _enforce_project_config_compatibility(project_root)
     _workspace_git_preflight(project_root, command_name="echelon spec run")
     _require_phase_a_git_ownership(project_root, command_name="echelon spec run")
@@ -6527,10 +6552,8 @@ def _cmd_run(
             raise SystemExit(1) from exc
 
     provider = SquadCliProvider(config)
-    graph = PhaseGraph(
-        ext_dir / "workflow/definition.yaml",
-        ext_dir / "extension.yml",
-    )
+    from harness.phase_graph import load_workspace_phase_graph
+    graph, ext_dir = load_workspace_phase_graph(project_root, ext_dir)
     # token_budget_k lives under analysis: in echelon-config.yml.
     # Use get_full_resolved_config so the 4-level cascade (ConfigManager →
     # echelon-config.yml → local-config.yml → env vars) is respected.
@@ -6989,7 +7012,9 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
     # 0. Constitution phase provenance first, artifact integrity second.
     if "phase1-constitution" not in completed_phases:
         return "phase1-constitution"
-    const_path = project_root / ".specify" / "memory" / "constitution.md"
+    from echelon.constitution import canonical_constitution_path
+
+    const_path = canonical_constitution_path(project_root)
     if not const_path.exists():
         return "phase1-constitution"
     const_text = const_path.read_text(errors="replace")
@@ -7166,7 +7191,9 @@ def _phase_a_ready_to_build(project_root: Path, current_state: dict) -> bool:
     if current_state and "phase1-constitution" not in completed_phases:
         return False
 
-    const_path = project_root / ".specify" / "memory" / "constitution.md"
+    from echelon.constitution import canonical_constitution_path
+
+    const_path = canonical_constitution_path(project_root)
     if not const_path.exists():
         return False
     if _constitution_template_markers(const_path.read_text(errors="replace")):
@@ -7519,7 +7546,8 @@ def _cmd_continue_impl(
     """
     import json as _json
 
-    _print_extension_drift_warning(project_root, ext_dir)
+    if (ext_dir / "extension.yml").is_file():
+        _print_extension_drift_warning(project_root, ext_dir)
 
     # Optionally accept --mode override
     mode_override = ""
@@ -7630,7 +7658,7 @@ def _cmd_continue_impl(
 
     phase_labels = {
         "phase1-discover":     "SCOUT (retry failed discovery dispatch)",
-        "phase1-constitution": "CHIEF → speckit.constitution (creates constitution.md)",
+        "phase1-constitution": "CHIEF → constitution protocol (creates constitution.md)",
         "phase1-what":         "CARTOGRAPHER (spec authoring or amendment)",
         "phase1-lexicon-derive": "LEXICON DERIVER (derived artifact repair)",
         "phase1-lexicon":      "Deterministic spec Lexicon gate",
@@ -8847,17 +8875,15 @@ def _cmd_phase(
 ) -> None:
     from harness.config import get_full_resolved_config, load_config
     from harness.paths import make_spec_run_id
-    from harness.phase_graph import PhaseGraph
+    from harness.phase_graph import load_workspace_phase_graph
     from harness.squad import SquadController
     from harness.squad_provider import SquadCliProvider
     from harness.squad_state import SquadStateStore
 
-    _print_extension_drift_warning(project_root, ext_dir)
+    if (ext_dir / "extension.yml").is_file():
+        _print_extension_drift_warning(project_root, ext_dir)
 
-    graph = PhaseGraph(
-        ext_dir / "workflow/definition.yaml",
-        ext_dir / "extension.yml",
-    )
+    graph, ext_dir = load_workspace_phase_graph(project_root, ext_dir)
 
     if not args or args[0] in ("-h", "--help"):
         print(
@@ -9043,7 +9069,6 @@ def _resume_v2_human_input(
 ) -> None:
     from harness.config import get_full_resolved_config, load_config
     from harness.human_input import HumanInputPolicyError
-    from harness.phase_graph import PhaseGraph
     from harness.squad import SquadController
     from harness.squad_provider import SquadCliProvider
 
@@ -9056,10 +9081,8 @@ def _resume_v2_human_input(
         print("✗ Active schema-v2 decision is missing.", file=sys.stderr)
         raise SystemExit(1)
 
-    graph = PhaseGraph(
-        ext_dir / "workflow/definition.yaml",
-        ext_dir / "extension.yml",
-    )
+    from harness.phase_graph import load_workspace_phase_graph
+    graph, ext_dir = load_workspace_phase_graph(project_root, ext_dir)
     config = load_config(project_root, squad_only=True)
     provider = SquadCliProvider(config)
     token_budget = 0
@@ -9117,7 +9140,6 @@ def _cmd_resume(
         ensure_blocked_decision,
         mark_blocked_decision_resolved,
     )
-    from harness.phase_graph import PhaseGraph
     from harness.squad import SquadController
     from harness.squad_provider import SquadCliProvider
     from harness.squad_state import SquadStateStore
@@ -9129,7 +9151,8 @@ def _cmd_resume(
     from threading import get_ident
     from uuid import uuid4
 
-    _print_extension_drift_warning(project_root, ext_dir)
+    if (ext_dir / "extension.yml").is_file():
+        _print_extension_drift_warning(project_root, ext_dir)
 
     answer = " ".join(args).strip()
     if not answer:
@@ -9241,10 +9264,8 @@ def _cmd_resume(
         f"{answer}\n"
     )
 
-    graph = PhaseGraph(
-        ext_dir / "workflow/definition.yaml",
-        ext_dir / "extension.yml",
-    )
+    from harness.phase_graph import load_workspace_phase_graph
+    graph, ext_dir = load_workspace_phase_graph(project_root, ext_dir)
     raw_options = state.get("escalation_options")
     has_structured_options = isinstance(raw_options, list) and bool(raw_options)
     selected_option = None
@@ -9872,11 +9893,12 @@ def _re_lifecycle_controller(project_root: Path):
     from harness.re_lifecycle import ReLifecycleController
     from harness.squad_provider import SquadCliProvider
 
-    extension_root = _installed_extension_or_exit(project_root)
+    runtime_root, prosaic_subagents_dir = _installed_re_runtime_or_exit(project_root)
     config = load_config(project_root, squad_only=True)
     return ReLifecycleController(
         project_root=project_root,
-        extension_root=extension_root,
+        extension_root=runtime_root,
+        prosaic_subagents_dir=prosaic_subagents_dir,
         provider_factory=lambda: SquadCliProvider(config),
     )
 
@@ -10140,14 +10162,15 @@ def _cmd_re_execute_run(args: list[str]) -> None:
             file=sys.stderr,
         )
         raise SystemExit(1)
-    extension_root = _installed_extension_or_exit(project_root)
+    runtime_root, prosaic_subagents_dir = _installed_re_runtime_or_exit(project_root)
     try:
         provider = SquadCliProvider(_load_cli_config(project_root))
         result = ReExtractionController(
             provider=provider,
             project_root=project_root,
             run_dir=run_dir,
-            extension_root=extension_root,
+            extension_root=runtime_root,
+            prosaic_subagents_dir=prosaic_subagents_dir,
         ).run()
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"echelon re execute-run: {exc}", file=sys.stderr)
@@ -10365,6 +10388,113 @@ def _installed_extension_or_exit(project_root: Path) -> Path:
     return ext_dir
 
 
+def _installed_phase_runtime_or_exit(project_root: Path) -> Path:
+    """Return a legacy extension or a complete deployed Prosaic runtime for Phase A."""
+    runtime = project_root / ".echelon" / "runtime"
+    prose = project_root / ".echelon" / "prosaic" / "subagents"
+    if (runtime / "workflow" / "definition.yaml").is_file() and prose.is_dir():
+        return runtime
+    legacy_extension = project_root / ".specify" / "extensions" / "echelon"
+    if legacy_extension.is_dir():
+        return legacy_extension
+    print(
+        "✗ Echelon runtime not installed.\n"
+        "  Run: echelon workspace init --with-prosaic\n"
+        "  Or:  specify extension add echelon",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+
+def _installed_re_runtime_or_exit(project_root: Path) -> tuple[Path, Path | None]:
+    """Return RE runtime assets and optionally the deployed Prosaic agents."""
+    runtime = project_root / ".echelon" / "runtime"
+    prose = project_root / ".echelon" / "prosaic" / "subagents"
+    if (runtime / "workflow" / "definition.yaml").is_file() and prose.is_dir():
+        return runtime, prose
+    legacy_extension = project_root / ".specify" / "extensions" / "echelon"
+    if legacy_extension.is_dir():
+        return legacy_extension, None
+    print(
+        "✗ Echelon runtime not installed.\n"
+        "  Run: echelon workspace init --with-prosaic\n"
+        "  Or:  specify extension add echelon",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+
+def _cmd_workspace_migrate_to_prosaic(project_root: Path) -> None:
+    """Deploy and validate Prosaic without deleting legacy workspace state."""
+    from echelon.prosaic_packages import ProsaicBundleInstallError, install_prosaic_bundle
+    from echelon.constitution import migrate_legacy_constitution
+    from harness.phase_graph import load_workspace_phase_graph
+
+    config_path = project_root / ".echelon" / "config.yml"
+    legacy_config = project_root / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+    if not config_path.exists():
+        if not legacy_config.is_file():
+            print(
+                f"✗ Project config not found: {config_path}\n"
+                f"  Legacy config also missing: {legacy_config}",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(legacy_config, config_path)
+        print(f"✓ copied canonical config from {legacy_config}")
+
+    try:
+        install_prosaic_bundle(project_root)
+    except ProsaicBundleInstallError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+    try:
+        graph, runtime_root = load_workspace_phase_graph(
+            project_root,
+            project_root / ".specify" / "extensions" / "echelon",
+        )
+    except Exception as exc:
+        print(f"✗ Prosaic bundle validation failed: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+    if not graph.all_phase_ids():
+        print("✗ Prosaic bundle validation failed: workflow has no phases", file=sys.stderr)
+        raise SystemExit(1)
+    _ensure_prosaic_workspace_ignores(project_root)
+    migrated_constitution = migrate_legacy_constitution(project_root)
+
+    print("✓ Prosaic migration complete")
+    print(f"  prose:   {project_root / '.echelon' / 'prosaic'}")
+    print(f"  runtime: {runtime_root}")
+    print(f"  phases:  {len(graph.all_phase_ids())}")
+    if migrated_constitution is not None:
+        print(f"  constitution: {migrated_constitution}")
+    print("  legacy .specify/extensions/echelon was left unchanged")
+
+
+def _ensure_prosaic_workspace_ignores(project_root: Path) -> None:
+    """Ignore generated Prosaic deployment state without rewriting user rules."""
+    ignore_path = project_root / ".gitignore"
+    existing = ignore_path.read_text(encoding="utf-8") if ignore_path.exists() else ""
+    lines = existing.splitlines()
+    required = (
+        "/.echelon/runtime/",
+        "/.echelon/packages/",
+        "/.echelon/prosaic/",
+        "/.prosaic-manifest.json",
+        "/.prosaic-backups/",
+    )
+    missing = [line for line in required if line not in lines]
+    if not missing:
+        return
+    suffix = "" if not existing or existing.endswith("\n") else "\n"
+    ignore_path.write_text(
+        f"{existing}{suffix}" + "".join(f"{line}\n" for line in missing),
+        encoding="utf-8",
+    )
+
+
 def _cmd_spec_amend(args: list[str]) -> None:
     """Prepare a pre-build amendment without switching the caller checkout."""
     if args and args[0] == "status":
@@ -10423,7 +10553,7 @@ def _cmd_spec_run(args: list[str]) -> None:
         )
         sys.exit(1)
     project_root = Path.cwd()
-    ext_dir = _installed_extension_or_exit(project_root)
+    ext_dir = _installed_phase_runtime_or_exit(project_root)
     cfg_file = _project_echelon_config(project_root)
     if not cfg_file.exists():
         print(
@@ -10449,7 +10579,7 @@ def _cmd_spec_retarget(args: list[str]) -> None:
         raise SystemExit(1) from exc
     if not result.applied:
         return
-    ext_dir = _installed_extension_or_exit(project_root)
+    ext_dir = _installed_phase_runtime_or_exit(project_root)
     run_args = [result.original_user_message, "--mode", result.autonomy_mode]
     for target in result.replacement_targets:
         run_args.extend(("--target", target))
@@ -10462,7 +10592,7 @@ def _cmd_spec_retarget(args: list[str]) -> None:
 
 def _cmd_spec_continue(args: list[str]) -> None:
     project_root = Path.cwd()
-    ext_dir = _installed_extension_or_exit(project_root)
+    ext_dir = _installed_phase_runtime_or_exit(project_root)
     _require_provider_capability("echelon spec continue", ProviderCapability.ARTIFACT, project_dir=project_root)
     _require_phase_a_git_ownership(project_root, command_name="echelon spec continue")
     _cmd_continue(args, project_root=project_root, ext_dir=ext_dir)
@@ -10476,7 +10606,7 @@ def _cmd_spec_resume(args: list[str]) -> None:
         )
         sys.exit(1)
     project_root = Path.cwd()
-    ext_dir = _installed_extension_or_exit(project_root)
+    ext_dir = _installed_phase_runtime_or_exit(project_root)
     _require_provider_capability("echelon spec resume", ProviderCapability.ARTIFACT, project_dir=project_root)
     _require_phase_a_git_ownership(project_root, command_name="echelon spec resume")
     _cmd_resume(args, project_root=project_root, ext_dir=ext_dir)
@@ -10803,9 +10933,11 @@ def _cmd_workspace(args: list[str]) -> None:
             "  init [--llm <provider>] [--openai-base-url <url>] [--openai-model <model>]\n"
             "       [--openai-api-key-file <path>|--openai-api-key-env <env>]\n"
             "       [--allow-unsafe-host-execution|--no-unsafe-host-execution]\n"
+            "       [--with-prosaic]\n"
             "                            One-time project setup (no LLM)\n"
             "                            Prompts on an interactive TTY; use the flag to opt in non-interactively\n"
             "  doctor                    Validate workspace/source/runtime contract\n"
+            "  migrate-to-prosaic        Deploy and validate Prosaic runtime without deleting legacy files\n"
             "  sources sync [--write]    Sync discovered sources/* roots into config\n"
             "  migrate [--write]         Copy legacy config, ignore runtime state, stage fixes\n"
             "          [--commit] [--message <msg>]\n"
@@ -10815,6 +10947,12 @@ def _cmd_workspace(args: list[str]) -> None:
         sys.exit(0)
 
     subcmd = args[0]
+    if subcmd == "migrate-to-prosaic":
+        if len(args) != 1:
+            print("Usage: echelon workspace migrate-to-prosaic", file=sys.stderr)
+            sys.exit(1)
+        _cmd_workspace_migrate_to_prosaic(Path.cwd())
+        return
     if subcmd == "init":
         init_args = args[1:]
         if any(arg in {"-h", "--help"} for arg in init_args):
@@ -10823,7 +10961,8 @@ def _cmd_workspace(args: list[str]) -> None:
                 "[--llm <provider>] "
                 "[--openai-base-url <url>] [--openai-model <model>] "
                 "[--openai-api-key-file <path>|--openai-api-key-env <env>] "
-                "[--allow-unsafe-host-execution|--no-unsafe-host-execution]\n\n"
+                "[--allow-unsafe-host-execution|--no-unsafe-host-execution] "
+                "[--with-prosaic]\n\n"
                 "  --llm <provider>              Persist the workspace AI CLI provider\n"
                 "  --openai-base-url <url>       Persist OpenAI-compatible API base URL\n"
                 "  --openai-model <model>        Persist OpenAI-compatible model name\n"
@@ -10831,7 +10970,8 @@ def _cmd_workspace(args: list[str]) -> None:
                 "  --openai-api-key-env <env>    Persist API key environment variable name\n"
                 "  --allow-unsafe-host-execution  Write local approval for AI CLI "
                 "permission-bypass flags\n"
-                "  --no-unsafe-host-execution     Do not prompt or write local approval",
+                "  --no-unsafe-host-execution     Do not prompt or write local approval\n"
+                "  --with-prosaic                 Install experimental Echelon Prosaic packages",
                 file=sys.stderr,
             )
             sys.exit(0)
@@ -10898,6 +11038,9 @@ def _cmd_workspace(args: list[str]) -> None:
             elif arg in {"--allow-unsafe-host-execution", "--no-unsafe-host-execution"}:
                 parsed_init_args.append(arg)
                 i += 1
+            elif arg == "--with-prosaic":
+                parsed_init_args.append(arg)
+                i += 1
             else:
                 print(f"echelon workspace init: unknown option '{arg}'\n", file=sys.stderr)
                 print(
@@ -10905,7 +11048,8 @@ def _cmd_workspace(args: list[str]) -> None:
                     "[--llm <provider>] "
                     "[--openai-base-url <url>] [--openai-model <model>] "
                     "[--openai-api-key-file <path>|--openai-api-key-env <env>] "
-                    "[--allow-unsafe-host-execution|--no-unsafe-host-execution]",
+                    "[--allow-unsafe-host-execution|--no-unsafe-host-execution] "
+                    "[--with-prosaic]",
                     file=sys.stderr,
                 )
                 sys.exit(1)
@@ -10927,18 +11071,21 @@ def _cmd_workspace(args: list[str]) -> None:
             )
             sys.exit(1)
         allow_unsafe = "--allow-unsafe-host-execution" in parsed_init_args
+        with_prosaic = "--with-prosaic" in parsed_init_args
         if "--no-unsafe-host-execution" not in parsed_init_args and not allow_unsafe:
             allow_unsafe = _wants_unsafe_host_execution_interactively()
         project_root = Path.cwd()
-        _cmd_init(
-            project_root,
-            allow_unsafe_host_execution=allow_unsafe,
-            llm_cli=llm_cli,
-            openai_base_url=openai_base_url,
-            openai_model=openai_model,
-            openai_api_key_file=openai_api_key_file,
-            openai_api_key_env=openai_api_key_env,
-        )
+        init_kwargs = {
+            "allow_unsafe_host_execution": allow_unsafe,
+            "llm_cli": llm_cli,
+            "openai_base_url": openai_base_url,
+            "openai_model": openai_model,
+            "openai_api_key_file": openai_api_key_file,
+            "openai_api_key_env": openai_api_key_env,
+        }
+        if with_prosaic:
+            init_kwargs["with_prosaic"] = True
+        _cmd_init(project_root, **init_kwargs)
         _maybe_bootstrap_workspace_git(project_root)
         try:
             from echelon.speckit_git import disable_speckit_git

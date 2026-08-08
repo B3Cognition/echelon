@@ -211,7 +211,7 @@ def test_spec_retarget_dispatches_preserved_phase_a_arguments(monkeypatch, tmp_p
         "echelon.spec_retarget_cli.run_spec_retarget_command",
         lambda *_args, **_kwargs: result,
     )
-    monkeypatch.setattr(cli, "_installed_extension_or_exit", lambda root: root / "ext")
+    monkeypatch.setattr(cli, "_installed_phase_runtime_or_exit", lambda root: root / "ext")
     monkeypatch.setattr(
         cli,
         "_cmd_run",

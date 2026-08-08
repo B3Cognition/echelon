@@ -36,17 +36,20 @@ esac
 ECHELON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOAR_VERSION="9.6.4"
 CODEGRAPH_CLI_VERSION="1.4.1"
+PROSAIC_GIT_SPEC="git+ssh://git@github.com/B3Cognition/prosaic.git#b6c9701"
 SOAR_DIR="$HOME/.echelon/soar"
 VENV_DIR="$HOME/.echelon/venv"
 CODEGEN_LAUNCHER="$VENV_DIR/bin/codegen"
 MEMORY_DIR="$HOME/.echelon/memory"
 NODE_RUNTIME_ROOT="${ECHELON_HOME:-$HOME/.echelon}/node"
-CODEGRAPH_SOURCE_DIR="$ECHELON_DIR/extension/scripts/node/codegraph"
-PERLGRAPH_SOURCE_DIR="$ECHELON_DIR/extension/scripts/node/perlgraph"
-CTX7_SOURCE_DIR="$ECHELON_DIR/extension/scripts/node/context7"
+CODEGRAPH_SOURCE_DIR="$ECHELON_DIR/runtime/scripts/node/codegraph"
+PERLGRAPH_SOURCE_DIR="$ECHELON_DIR/runtime/scripts/node/perlgraph"
+CTX7_SOURCE_DIR="$ECHELON_DIR/runtime/scripts/node/context7"
 CODEGRAPH_NODE_DIR="$NODE_RUNTIME_ROOT/codegraph"
 PERLGRAPH_NODE_DIR="$NODE_RUNTIME_ROOT/perlgraph"
 CTX7_NODE_DIR="$NODE_RUNTIME_ROOT/context7"
+PROSAIC_NODE_DIR="$NODE_RUNTIME_ROOT/prosaic"
+PROSAIC_LAUNCHER="$VENV_DIR/bin/prosaic"
 
 echo ""
 echo "╔══════════════════════════════════════════╗"
@@ -208,8 +211,8 @@ fi
 
 # ── 2b. Pre-convert journal-entry-types.yaml to JSON ─────────────────────────
 echo "▶ Converting journal-entry-types.yaml to JSON..."
-JETYPES_YAML="$ECHELON_DIR/extension/workflow/journal-entry-types.yaml"
-JETYPES_JSON="$ECHELON_DIR/extension/workflow/journal-entry-types.json"
+JETYPES_YAML="$ECHELON_DIR/runtime/workflow/journal-entry-types.yaml"
+JETYPES_JSON="$ECHELON_DIR/runtime/workflow/journal-entry-types.json"
 "$VENV_DIR/bin/python" -c "
 import yaml, json, sys
 with open(sys.argv[1]) as f:
@@ -300,6 +303,26 @@ else
   echo "  ✓ Context7 CLI dependencies installed → $CTX7_NODE_DIR/node_modules"
 fi
 
+# ── 3e. Prosaic package deployment runtime ───────────────────────────────────
+echo "▶ Installing Prosaic package deployment runtime..."
+if ! command -v node &>/dev/null; then
+  echo "  ⚠ Node.js not found; Prosaic workspace bundle deployment will be unavailable."
+  rm -f "$PROSAIC_LAUNCHER"
+elif ! command -v npm &>/dev/null; then
+  echo "  ⚠ npm not found; Prosaic workspace bundle deployment will be unavailable."
+  rm -f "$PROSAIC_LAUNCHER"
+else
+  mkdir -p "$PROSAIC_NODE_DIR"
+  npm install --prefix "$PROSAIC_NODE_DIR" --no-audit --no-fund "$PROSAIC_GIT_SPEC"
+  cat > "$PROSAIC_LAUNCHER" <<EOF
+#!/usr/bin/env bash
+exec node "$PROSAIC_NODE_DIR/node_modules/prosaic/dist/cli/index.js" "\$@"
+EOF
+  chmod +x "$PROSAIC_LAUNCHER"
+  echo "  ✓ Prosaic runtime installed → $PROSAIC_NODE_DIR/node_modules"
+  echo "  ✓ Prosaic launcher installed → $PROSAIC_LAUNCHER"
+fi
+
 # ── 4. Memory directory ──────────────────────────────────────────────────────
 echo "▶ Setting up memory directory..."
 mkdir -p "$MEMORY_DIR"
@@ -357,6 +380,11 @@ if [ -x "$CTX7_NODE_DIR/node_modules/.bin/ctx7" ]; then
   echo "  Context7 CLI  → $CTX7_NODE_DIR/node_modules/.bin/ctx7"
 else
   echo "  Context7 CLI  → not ready (rerun this installer after installing Node.js/npm)"
+fi
+if [ -x "$PROSAIC_LAUNCHER" ]; then
+  echo "  Prosaic       → $PROSAIC_LAUNCHER"
+else
+  echo "  Prosaic       → not ready (rerun this installer after installing Node.js/npm)"
 fi
 echo "  Memory        → $MEMORY_DIR"
 echo ""

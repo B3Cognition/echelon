@@ -1,5 +1,5 @@
 ---
-name: speckit.echelon.bugfix
+name: echelon.bugfix
 description: Diagnostic squad for a bug or enhancement — DEBUGGER + SENTINEL + SPEC
   GUARD → bugfix plan + tasks → hand off to harness.run
 ---

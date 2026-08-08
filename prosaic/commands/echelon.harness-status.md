@@ -1,5 +1,5 @@
 ---
-name: speckit.echelon.harness-status
+name: echelon.harness-status
 description: Show current harness state — active sandbox, phase progress, GC status
 invocation: automatic
 visibility: user
@@ -28,7 +28,7 @@ Canonical CLI equivalent: `echelon delivery status`.
 
 ## Step 1: Check Initialized
 
-If neither `.echelon/config.yml` nor the legacy `.specify/extensions/echelon/echelon-config.yml` exists, report:
+If neither `.echelon/config.yml` nor the legacy `.echelon/config.yml` exists, report:
 
 **"Delivery not initialized. Run `echelon delivery init` first."** and stop.
 
@@ -37,7 +37,7 @@ If neither `.echelon/config.yml` nor the legacy `.specify/extensions/echelon/ech
 ## Step 2: Run Status
 
 ```bash
-PYTHONPATH=.specify/extensions/echelon python3 -c "from harness.skills.status_skill import show_status; show_status()"
+PYTHONPATH=.echelon/runtime python3 -c "from harness.skills.status_skill import show_status; show_status()"
 ```
 
 ---

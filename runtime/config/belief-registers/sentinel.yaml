@@ -1,0 +1,74 @@
+agent: SENTINEL
+last_updated: "2026-03-28"
+beliefs:
+  - id: SNT-001
+    claim: "The default test pyramid ratio (~70% unit / ~20% integration / ~10% e2e) is the right starting distribution for most architectures"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Testing pyramid (Mike Cohn); widely adopted practice"
+    confidence: 0.75
+    severity: high
+
+  - id: SNT-002
+    claim: "Microservices architectures need proportionally more integration tests than the default pyramid"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Distributed systems testing literature; practical convention"
+    confidence: 0.75
+    severity: medium
+
+  - id: SNT-003
+    claim: "Running new tests with --repeat-each=5 before merge is sufficient to detect flakiness"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Design choice; no empirical validation"
+    confidence: 0.65
+    severity: high
+
+  - id: SNT-004
+    claim: "Flaky rate < 5% of total test suite is an acceptable stability target"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Design choice; no empirical validation"
+    confidence: 0.65
+    severity: high
+
+  - id: SNT-005
+    claim: "Tests quarantined for more than 2 weeks without a fix attempt must be escalated — this cadence is appropriate"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Design choice; no empirical validation"
+    confidence: 0.65
+    severity: medium
+
+  - id: SNT-006
+    claim: "Re-running a fixed test with --repeat-each=10 (double the detection run) is sufficient to validate stability"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Design choice; no empirical validation"
+    confidence: 0.65
+    severity: medium
+
+  - id: SNT-007
+    claim: "hard_constraint_ratio, constraint_density, and negative_space_coverage below 0.50 are the right testability deficiency signals"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "FR-005 spec; Understanding tooling definitions"
+    confidence: 0.75
+    severity: high
+
+  - id: SNT-008
+    claim: "Pre-commit unit tests should complete in < 30s — this is a reasonable developer-experience target"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Industry convention; no empirical validation for this codebase"
+    confidence: 0.70
+    severity: medium
+
+  - id: SNT-009
+    claim: "PR/Merge full test suite should complete in < 5 minutes — this is a reasonable CI target"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Industry convention; no empirical validation for this codebase"
+    confidence: 0.70
+    severity: medium

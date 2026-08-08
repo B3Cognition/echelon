@@ -1,0 +1,66 @@
+agent: INVESTIGATOR
+last_updated: "2026-03-28"
+beliefs:
+  - id: INV-001
+    claim: "The 5-grade evidence scale (A=1.0 / B=0.8 / C=0.6 / D=0.3 / E=0.1 weights) correctly represents relative source reliability"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Scientific method; evidence hierarchy conventions"
+    confidence: 0.80
+    severity: critical
+
+  - id: INV-002
+    claim: "A recommendation based solely on Grade E evidence must be flagged LOW_CONFIDENCE — Grade E is never sufficient on its own"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Evidence grading system; NEVER rule"
+    confidence: 0.85
+    severity: critical
+
+  - id: INV-003
+    claim: "An experiment that validates a Grade C-E finding upgrades it to Grade B"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Scientific method — empirical validation principle"
+    confidence: 0.80
+    severity: high
+
+  - id: INV-004
+    claim: "10 minutes of searching with no results above Grade D is the right time-box before documenting a gap"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Design choice; no empirical validation"
+    confidence: 0.65
+    severity: medium
+
+  - id: INV-005
+    claim: "Conflicting evidence of the same grade should be resolved by recency (more recent wins)"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Scientific method; recency convention for fast-moving tech"
+    confidence: 0.75
+    severity: high
+
+  - id: INV-006
+    claim: "The 8-step scientific method (Question → Research → Evaluate → Hypothesize → Experiment → Measure → Synthesize → Recommend) is complete and sufficient for squad investigations"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Scientific method (Popper, Kuhn)"
+    confidence: 0.80
+    severity: high
+
+  - id: INV-007
+    claim: "Experiments should be run in isolated git worktrees — contamination to the main branch is a real risk"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Design choice; git workflow best practice"
+    confidence: 0.85
+    severity: medium
+
+  - id: INV-008
+    claim: "Negative results ('we tested X and it failed') have equal scientific value to positive results"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Scientific method; publication bias literature"
+    confidence: 0.90
+    severity: medium

@@ -3312,17 +3312,21 @@ class RalphController:
             if path.is_file():
                 candidates.append((name, path))
                 seen_paths.add(path.resolve())
-        canonical_constitution = (
-            workspace_root / ".specify" / "memory" / "constitution.md"
-            if workspace_root is not None
-            else None
-        )
+        if workspace_root is not None:
+            from echelon.constitution import canonical_constitution_path
+
+            canonical_constitution = canonical_constitution_path(workspace_root)
+        else:
+            canonical_constitution = None
         if (
             canonical_constitution is not None
             and canonical_constitution.is_file()
             and canonical_constitution.resolve() not in seen_paths
         ):
-            candidates.append((".specify/memory/constitution.md", canonical_constitution))
+            candidates.append((
+                str(canonical_constitution.relative_to(workspace_root)),
+                canonical_constitution,
+            ))
             seen_paths.add(canonical_constitution.resolve())
         contracts_dir = spec_dir / "contracts"
         if contracts_dir.is_dir():
@@ -3777,9 +3781,12 @@ class RalphController:
         shutil.copytree(source, dest, dirs_exist_ok=True)
         self._reconcile_synced_task_progress(dest)
 
-        source_constitution = self._orchestration_root(worktree) / ".specify" / "memory" / "constitution.md"
+        from echelon.constitution import canonical_constitution_path
+
+        orchestration_root = self._orchestration_root(worktree)
+        source_constitution = canonical_constitution_path(orchestration_root)
         if source_constitution.exists():
-            target_constitution = worktree / ".specify" / "memory" / "constitution.md"
+            target_constitution = worktree / source_constitution.relative_to(orchestration_root)
             target_constitution.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source_constitution, target_constitution)
 

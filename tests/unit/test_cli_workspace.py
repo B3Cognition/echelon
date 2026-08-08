@@ -56,6 +56,37 @@ def test_workspace_init_accepts_openai_compatible_llm(
     ]
 
 
+def test_workspace_init_accepts_with_prosaic_flag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.cli import _cmd_workspace
+
+    calls: list[dict[str, object]] = []
+
+    def fake_init(project_root, **kwargs):
+        calls.append({"project_root": project_root, **kwargs})
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("echelon.cli._cmd_init", fake_init)
+    monkeypatch.setattr("echelon.cli._wants_unsafe_host_execution_interactively", lambda: False)
+
+    _cmd_workspace(["init", "--with-prosaic", "--no-unsafe-host-execution"])
+
+    assert calls == [
+        {
+            "project_root": tmp_path,
+            "allow_unsafe_host_execution": False,
+            "llm_cli": None,
+            "openai_base_url": None,
+            "openai_model": None,
+            "openai_api_key_file": None,
+            "openai_api_key_env": None,
+            "with_prosaic": True,
+        }
+    ]
+
+
 def test_workspace_init_accepts_openai_compatible_endpoint_config(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -283,3 +314,50 @@ def test_workspace_sources_sync_normalizes_path_only_sources_entries(
     assert "unchanged: api" in out
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     assert config["sources"] == [{"id": "api", "path": "sources/api"}]
+
+
+def test_phase_runtime_guard_accepts_complete_prosaic_workspace(tmp_path: Path) -> None:
+    from echelon.cli import _installed_phase_runtime_or_exit
+
+    workflow = tmp_path / ".echelon/runtime/workflow"
+    subagents = tmp_path / ".echelon/prosaic/subagents"
+    workflow.mkdir(parents=True)
+    subagents.mkdir(parents=True)
+    (tmp_path / ".specify/extensions/echelon").mkdir(parents=True)
+    (workflow / "definition.yaml").write_text("phases: []\n", encoding="utf-8")
+
+    assert _installed_phase_runtime_or_exit(tmp_path) == workflow.parent
+
+
+def test_workspace_migrate_to_prosaic_preserves_config_and_validates_graph(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    legacy_config = tmp_path / ".specify/extensions/echelon/echelon-config.yml"
+    legacy_config.parent.mkdir(parents=True)
+    legacy_config.write_text("verify_command: pytest\n", encoding="utf-8")
+
+    def deploy_bundle(project_root: Path) -> object:
+        workflow = project_root / ".echelon/runtime/workflow"
+        subagents = project_root / ".echelon/prosaic/subagents"
+        workflow.mkdir(parents=True)
+        subagents.mkdir(parents=True)
+        (workflow / "definition.yaml").write_text(
+            "phases:\n  - id: discover\n    type: agent\n    agent: echelon.scout\n",
+            encoding="utf-8",
+        )
+        (subagents / "echelon.scout.md").write_text("# Scout\n", encoding="utf-8")
+        return object()
+
+    monkeypatch.setattr("echelon.prosaic_packages.install_prosaic_bundle", deploy_bundle)
+
+    from echelon.cli import _cmd_workspace_migrate_to_prosaic
+
+    _cmd_workspace_migrate_to_prosaic(tmp_path)
+
+    assert (tmp_path / ".echelon/config.yml").read_text(encoding="utf-8") == "verify_command: pytest\n"
+    assert "/.echelon/prosaic/" in (tmp_path / ".gitignore").read_text(encoding="utf-8")
+    assert "/.prosaic-manifest.json" in (tmp_path / ".gitignore").read_text(encoding="utf-8")
+    assert "/.prosaic-backups/" in (tmp_path / ".gitignore").read_text(encoding="utf-8")
+    assert "Prosaic migration complete" in capsys.readouterr().out

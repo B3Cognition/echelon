@@ -65,6 +65,31 @@ specify extension add --force --dev ~/echelon/extension
 Use the integration you installed in place of `claude`. The extension is
 installed into the workspace, not into the Echelon checkout.
 
+### Experimental Prosaic bundle
+
+To test the Prosaic migration path alongside the existing Spec-Kit extension,
+run workspace initialization with the explicit opt-in flag:
+
+```bash
+echelon workspace init --with-prosaic
+```
+
+The normal Echelon installer installs the pinned Prosaic CLI into Echelon's
+managed Node runtime. The workspace command stages the Echelon-owned package
+sources under `.echelon/packages/` and uses that CLI to deploy:
+
+```text
+.echelon/prosaic/   # neutral commands and subagents
+.echelon/runtime/   # workflow, templates, scripts, config, and stacks
+```
+
+The workspace's existing Spec-Kit extension remains installed and continues to
+run the workflow. The flag is a non-default migration test, not a replacement
+for `specify extension add`. Echelon creates a temporary Prosaic package config
+only for deployment and removes it afterwards; a workspace that already owns a
+root `prosaic.config.yaml`, `prosaic.config.yml`, or `.prosaic.yaml` is left
+unchanged and the command stops with an actionable error.
+
 ---
 
 ## Verify Installation

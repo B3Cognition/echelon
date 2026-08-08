@@ -140,10 +140,17 @@ class PhaseNode:
 class PhaseGraph:
     """Loads the main squad phases from definition.yaml.
 
-    Also reads extension.yml to map agent dispatch ids to file paths.
+    Legacy graphs read extension.yml to map agent dispatch ids to files.
+    Prosaic graphs resolve neutral agent ids from a subagents directory.
     """
 
-    def __init__(self, definition_path: Path, extension_yml_path: Path) -> None:
+    def __init__(
+        self,
+        definition_path: Path,
+        extension_yml_path: Path | None = None,
+        *,
+        prosaic_subagents_dir: Path | None = None,
+    ) -> None:
         raw = yaml.safe_load(definition_path.read_text())
         if not isinstance(raw, dict):
             raise ControllerContractRegistryError(
@@ -281,14 +288,22 @@ class PhaseGraph:
             self._phases[node.id] = node
             self._human_input_policies.extend(node.human_input_policies)
 
-        # Build dispatch-id → file path map from extension.yml
+        # Build dispatch-id → file path map from the selected runtime source.
         self._agent_files: dict[str, str] = {}
-        ext = yaml.safe_load(extension_yml_path.read_text())
-        for cmd in ext.get("provides", {}).get("commands", []):
-            if cmd.get("behavior", {}).get("execution") == "agent":
-                # "speckit.echelon.scout" → "speckit-echelon-scout"
-                dispatch_id = cmd["name"].replace(".", "-")
-                self._agent_files[dispatch_id] = cmd["file"]
+        if prosaic_subagents_dir is not None:
+            for agent_file in sorted(prosaic_subagents_dir.glob("echelon.*.md")):
+                self._agent_files[agent_file.stem] = str(agent_file.resolve())
+        elif extension_yml_path is not None:
+            ext = yaml.safe_load(extension_yml_path.read_text())
+            for cmd in ext.get("provides", {}).get("commands", []):
+                if cmd.get("behavior", {}).get("execution") == "agent":
+                    # "speckit.echelon.scout" → "speckit-echelon-scout"
+                    dispatch_id = cmd["name"].replace(".", "-")
+                    self._agent_files[dispatch_id] = cmd["file"]
+        else:
+            raise ControllerContractRegistryError(
+                "PhaseGraph requires extension_yml_path or prosaic_subagents_dir"
+            )
 
     def get(self, phase_id: str) -> PhaseNode:
         if phase_id not in self._phases:
@@ -325,3 +340,25 @@ class PhaseGraph:
             for node in self._phases.values()
             for t in node.transitions
         }
+
+
+def load_workspace_phase_graph(
+    project_root: Path,
+    legacy_extension_dir: Path,
+) -> tuple[PhaseGraph, Path]:
+    """Load the deployed Prosaic graph when present, otherwise the legacy graph."""
+    runtime_root = project_root / ".echelon" / "runtime"
+    subagents_dir = project_root / ".echelon" / "prosaic" / "subagents"
+    definition_path = runtime_root / "workflow" / "definition.yaml"
+    if definition_path.is_file() and subagents_dir.is_dir():
+        return (
+            PhaseGraph(definition_path, prosaic_subagents_dir=subagents_dir),
+            runtime_root,
+        )
+    return (
+        PhaseGraph(
+            legacy_extension_dir / "workflow" / "definition.yaml",
+            legacy_extension_dir / "extension.yml",
+        ),
+        legacy_extension_dir,
+    )

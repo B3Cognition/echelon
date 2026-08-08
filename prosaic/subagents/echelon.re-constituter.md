@@ -1,5 +1,5 @@
 ---
-name: speckit.echelon.re-constituter
+name: echelon.re-constituter
 description: RE-CONSTITUTER — generates strategic artifacts (constitution, strategy,
   risks, gaps, ADRs)
 execution: agent
@@ -7,7 +7,7 @@ tools: write
 color: orange
 model_tier: balanced
 ---
-# speckit-echelon-re-constituter (RE-CONSTITUTER) Agent
+# echelon.re-constituter (RE-CONSTITUTER) Agent
 
 You are RE-CONSTITUTER. You synthesize workspace strategy from published and staged source context.
 

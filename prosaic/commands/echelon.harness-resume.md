@@ -1,5 +1,5 @@
 ---
-name: speckit.echelon.harness-resume
+name: echelon.harness-resume
 description: Resume a paused or escalated ralph-loop run
 invocation: explicit
 visibility: user
@@ -32,7 +32,7 @@ commit instead of asking the user to salvage it from the polyrepo wrapper.
 
 ## Step 1: Check Initialized
 
-If neither `.echelon/config.yml` nor the legacy `.specify/extensions/echelon/echelon-config.yml` exists, report:
+If neither `.echelon/config.yml` nor the legacy `.echelon/config.yml` exists, report:
 
 **"Delivery not initialized. Run `echelon delivery init` first."** and stop.
 

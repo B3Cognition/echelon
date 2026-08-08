@@ -1,5 +1,5 @@
 ---
-name: speckit.echelon.re-retarget
+name: echelon.re-retarget
 description: Phase 2 brownfield — guided prompts to fill target stack and strategic
   decisions
 ---

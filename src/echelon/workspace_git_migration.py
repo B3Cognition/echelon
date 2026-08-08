@@ -101,7 +101,11 @@ def _git_ignored(root: Path, path: str) -> bool:
 
 
 def _is_echelon_workspace(root: Path) -> bool:
-    return (root / ".specify").exists() or (root / "specs").exists()
+    return (
+        (root / ".specify").exists()
+        or (root / "specs").exists()
+        or (root / ".echelon" / "config.yml").exists()
+    )
 
 
 def _existing_stage_paths(root: Path) -> tuple[str, ...]:
@@ -123,7 +127,7 @@ def build_migration_plan(workspace_root: Path) -> WorkspaceGitMigrationPlan:
         raise MigrationError(f"workspace root does not exist: {root}")
     if not _is_echelon_workspace(root):
         raise MigrationError(
-            f"not an Echelon workspace: {root} (expected .specify/ or specs/)"
+            f"not an Echelon workspace: {root} (expected .echelon/config.yml, .specify/, or specs/)"
         )
 
     manifest = discover_workspace(root)
@@ -143,6 +147,10 @@ def build_migration_plan(workspace_root: Path) -> WorkspaceGitMigrationPlan:
         "!/.echelon/config.yml",
         "/.echelon/local.yml",
         "/.echelon/runtime/",
+        "/.echelon/packages/",
+        "/.echelon/prosaic/",
+        "/.prosaic-manifest.json",
+        "/.prosaic-backups/",
         "/.echelon/cache/",
         "/.echelon/recovery-backups/",
         ".DS_Store",

@@ -1,5 +1,5 @@
 ---
-name: speckit.echelon.tech-writer
+name: echelon.tech-writer
 description: TECH WRITER - keeps README and Keep a Changelog release history current
   after implementation
 execution: agent
@@ -7,7 +7,7 @@ tools: write
 color: red
 model_tier: balanced
 ---
-# speckit-echelon-tech-writer (TECH WRITER) Agent
+# echelon.tech-writer (TECH WRITER) Agent
 
 ## Role
 
@@ -182,7 +182,7 @@ echelon_result:
   journal_entries:
     - type: decision
       phase: build
-      agent: speckit-echelon-tech-writer (TECH WRITER)
+      agent: echelon.tech-writer (TECH WRITER)
       data:
         artifact: "{spec_dir}/documentation-impact-report.md"
         section: "Documentation decision"

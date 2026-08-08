@@ -1,5 +1,5 @@
 ---
-name: speckit.echelon.status
+name: echelon.status
 description: Check current squad state and progress
 ---
 ## Role

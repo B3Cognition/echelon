@@ -656,13 +656,7 @@ def _render_memory_audit_markdown(
 def _dispatch_phase(args: list[str]) -> None:
     legacy_cli = _legacy_cli()
     project_root = Path.cwd()
-    ext_dir = project_root / ".specify" / "extensions" / "echelon"
-    if not ext_dir.exists():
-        typer.echo(
-            f"✗ Echelon extension not installed: {ext_dir}\n  Run: specify extension add echelon",
-            err=True,
-        )
-        raise typer.Exit(1)
+    ext_dir = legacy_cli._installed_phase_runtime_or_exit(project_root)
     cfg_file = legacy_cli._project_echelon_config(project_root)
     if not cfg_file.exists():
         typer.echo(
@@ -1524,6 +1518,11 @@ def workspace_init(
         "--allow-unsafe-host-execution/--no-unsafe-host-execution",
         help="Persist or deny local approval for unsafe host execution flags.",
     ),
+    with_prosaic: bool = typer.Option(
+        False,
+        "--with-prosaic",
+        help="Install Prosaic and deploy Echelon's experimental prose and runtime bundles.",
+    ),
 ) -> None:
     """One-time project setup."""
     legacy_cli = _legacy_cli()
@@ -1538,6 +1537,8 @@ def workspace_init(
         args.append("--allow-unsafe-host-execution")
     elif allow_unsafe_host_execution is False:
         args.append("--no-unsafe-host-execution")
+    if with_prosaic:
+        args.append("--with-prosaic")
     args.extend(_ctx_args(ctx))
     legacy_cli._cmd_workspace(args)
 
@@ -1548,6 +1549,14 @@ def workspace_doctor() -> None:
     legacy_cli = _legacy_cli()
 
     legacy_cli._cmd_workspace(["doctor"])
+
+
+@workspace_app.command("migrate-to-prosaic")
+def workspace_migrate_to_prosaic() -> None:
+    """Deploy and validate the Prosaic runtime without deleting legacy files."""
+    legacy_cli = _legacy_cli()
+
+    legacy_cli._cmd_workspace(["migrate-to-prosaic"])
 
 
 @workspace_app.command("migrate", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})

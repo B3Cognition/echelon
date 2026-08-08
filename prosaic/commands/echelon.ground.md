@@ -1,5 +1,5 @@
 ---
-name: speckit.echelon.ground
+name: echelon.ground
 description: Manually trigger reality check on artifacts
 ---
 ## Role
@@ -34,7 +34,7 @@ the end of this command; the state update and report steps must follow.
 
 Read `${SQUAD_DIR}/state.json`.
 
-- If the file does not exist, report **"No active squad run. Run speckit.echelon.run first."** and stop.
+- If the file does not exist, report **"No active squad run. Run echelon.run first."** and stop.
 - If `status` is `"killed"`, report **"Squad run was killed. Start a new run."** and stop.
 
 Extract `spec_id` and `spec_dir` from `state.json`.
@@ -65,15 +65,15 @@ If `{{args}}` is provided, use it to focus the reality check on a specific area 
 
 ---
 
-## Step 3: Dispatch speckit-echelon-realist (REALIST)
+## Step 3: Dispatch echelon.realist (REALIST)
 
-Read the GROUND agent prompt from `.specify/extensions/echelon/agents/learning/realist.md`.
+Read the GROUND agent prompt from `.echelon/runtime/agents/learning/realist.md`.
 
-Use the **Agent tool** to dispatch speckit-echelon-realist as a subagent:
+Use the **Agent tool** to dispatch echelon.realist as a subagent:
 
-- **subagent_type:** `speckit-echelon-realist`
-- **prompt:** Read the file `.specify/extensions/echelon/agents/learning/realist.md` for your complete instructions. You are the GROUND agent. Perform a comprehensive reality check on all current artifacts. Focus area: `{{{args}} or "full sweep"}`. Connect plans to real-world data: check infrastructure costs against actual cloud pricing, validate performance claims against published benchmarks, compare effort estimates to historical data in estimates-log.yaml, check architectural decisions against production operational constraints. Apply reference class forecasting where applicable. Here is your context pack: [include all gathered artifacts and knowledge base files]. Produce outputs in `{spec_dir}/`. Return journal entries in `echelon_result.journal_entries` for `reasoning-journal.jsonl`.
-- **description:** "speckit-echelon-realist: reality check -- {{{args}} summary or 'full artifact sweep'}"
+- **subagent_type:** `echelon.realist`
+- **prompt:** Read the file `.echelon/runtime/agents/learning/realist.md` for your complete instructions. You are the GROUND agent. Perform a comprehensive reality check on all current artifacts. Focus area: `{{{args}} or "full sweep"}`. Connect plans to real-world data: check infrastructure costs against actual cloud pricing, validate performance claims against published benchmarks, compare effort estimates to historical data in estimates-log.yaml, check architectural decisions against production operational constraints. Apply reference class forecasting where applicable. Here is your context pack: [include all gathered artifacts and knowledge base files]. Produce outputs in `{spec_dir}/`. Return journal entries in `echelon_result.journal_entries` for `reasoning-journal.jsonl`.
+- **description:** "echelon.realist: reality check -- {{{args}} summary or 'full artifact sweep'}"
 
 > **After the subagent returns, always proceed immediately to Step 4. Do not end your response here.**
 
@@ -105,7 +105,7 @@ echelon_result:
   output_files: []
   journal_entries:
     - type: decision
-      agent: speckit-echelon-commander (COMMANDER)
+      agent: echelon.commander (COMMANDER)
       timestamp: "{ISO-8601}"
       data:
         artifact: "reality-check.md"

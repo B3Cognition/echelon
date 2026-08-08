@@ -1,0 +1,1937 @@
+# Echelon Configuration
+# Copy to echelon-config.yml and customize
+#
+# GUIDANCE NOTATION:
+#   [range: X-Y]     = sensible values, beyond this is likely wasteful or broken
+#   [default: X]     = recommended starting point
+#   [disable: X]     = set to this value to effectively disable the check
+#
+# =============================================================================
+# EXECUTION — How agents run
+# =============================================================================
+
+execution:
+  # Maximum concurrent subagents (Claude Code Agent tool calls in one message)
+  # [range: 1-5] Higher = faster but more tokens. Lower = sequential but cheaper.
+  # @belief(claim: "3 parallel agents is the sweet spot balancing speed and coherence without context fragmentation", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: medium)
+  max_parallel_agents: 3
+
+  # Per-agent timeout (seconds). Agent is killed and retried once if exceeded.
+  # [range: 60-600] Most agents complete in 60-180s. 600s = edge cases.
+  # @belief(claim: "300s timeout captures 95th-percentile agent completion while preventing stuck-agent budget drain", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: high)
+  agent_timeout_seconds: 300
+
+  # Max retries per agent before skipping with warning
+  # [range: 0-3] Higher = more resilient, but may waste tokens on stuck agents.
+  # @belief(claim: "1 retry recovers transient failures without masking systematic ones or doubling token cost", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: medium)
+  max_retries: 1
+
+  # Model selection per tier (use cheapest model that works for each role)
+  # Options: opus | sonnet | haiku
+  models:
+    # @belief(claim: "Sonnet has sufficient reasoning for control-plane agents (COMMANDER, SCOREKEEPER, TRACKER) without opus cost", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.75, severity: high)
+    control: sonnet       # COMMANDER, SCOREKEEPER, TRACKER, CHECKPOINT, STRATEGIST
+    # @belief(claim: "Sonnet adequately handles exploratory synthesis and knowledge mapping", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: medium)
+    exploration: sonnet   # SCOUT, SYNTHESIZER, SAGE, CARTOGRAPHER, MODELER
+    # @belief(claim: "Sonnet has sufficient judgment for feasibility gating without opus reliability premium", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: high)
+    feasibility: sonnet   # GATEKEEPER, VALIDATOR
+    # @belief(claim: "Sonnet is capable of architectural reasoning for solution-tier agents", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: high)
+    solution: sonnet      # ARCHITECT, ORCHESTRATOR, SENTINEL
+    # @belief(claim: "Sonnet meets the depth needed for specialist investigation and advocacy roles", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: medium)
+    specialists: sonnet   # INVESTIGATOR, GUARDIAN, ORACLE, BENCHMARK, ADVOCATE, MAVERICK
+    # @belief(claim: "Sonnet provides sufficient code-generation and review quality for build-tier tasks", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.75, severity: high)
+    build: sonnet         # IMPLEMENTER, SPEC GUARD, CODE REVIEWER, etc.
+    # @belief(claim: "Haiku is adequate for post-run learning summarization where cost matters more than depth", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.75, severity: low)
+    learning: haiku       # MIRROR, ADAPTIVE, AUDITOR, REALIST (post-run, less critical)
+    # @belief(claim: "Opus is required for final verification — the cost premium is justified by correctness stakes", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.85, severity: critical)
+    verification: opus    # VALIDATOR — most important check, use best model
+    # @belief(claim: "Sonnet has enough context and synthesis quality for reverse-engineering extraction while avoiding Opus cost", verified: 2026-06-12, expires: 2026-12-12, confidence: 0.70, severity: high)
+    re_extraction: sonnet  # RE-ANALYZER, RE-SPECIFIER, RE-VERIFIER, RE-EXPANDER, RE-VALIDATOR, RE-CHECKLISTER, RE-CONSTITUTER
+    # @belief(claim: "Sonnet is sufficient for per-domain brownfield planning and task generation", verified: 2026-06-12, expires: 2026-12-12, confidence: 0.70, severity: high)
+    re_planning: sonnet    # RE-PLANNER, RE-TASKER
+
+  # Git worktree isolation for build tasks
+  worktree_isolation:
+    # @belief(claim: "Worktree isolation prevents cross-task file conflicts and is worth the setup overhead", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.80, severity: high)
+    enabled: true
+    # Each build task runs in isolated worktree, merges only when all gates pass
+    # @belief(claim: "Cleaning up failed worktrees prevents stale state from contaminating reruns", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.85, severity: medium)
+    cleanup_on_fail: true
+
+  # Parallel thought branches for MAVERICK
+  thought_branches:
+    # @belief(claim: "Parallel thought branches produce higher-quality MAVERICK alternatives than sequential ideation", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.60, severity: low)
+    enabled: true
+    # @belief(claim: "3 branches provides enough divergence for MAVERICK without excessive token spend", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.60, severity: low)
+    max_branches: 3
+    # @belief(claim: "5% of total token budget per branch keeps MAVERICK exploration affordable while meaningful", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.55, severity: medium)
+    exploration_budget_per_branch: 5  # % of total token budget per branch
+
+# =============================================================================
+# ANALYSIS SETTINGS
+# =============================================================================
+
+analysis:
+  # Auto-detect greenfield vs brownfield
+  # @belief(claim: "Auto-detection correctly classifies project context in the majority of cases, avoiding manual mis-classification", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: medium)
+  mode: auto  # auto | greenfield | brownfield
+
+  # Maximum squad iterations before forced convergence
+  # [range: 3-10] Most runs converge in 2-3. Beyond 10 = likely stuck in a loop.
+  # Setting to 99 wastes tokens - if not converged by 10, there's a deeper problem.
+  # @belief(claim: "5 iterations is sufficient for convergence in well-specified projects; exceeding this indicates spec or architecture pathology", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.75, severity: high)
+  max_iterations: 5
+
+  # Token budget (approximate, in thousands)
+  # [range: 100-2000] Purpose: prevent runaway costs and force convergence decisions.
+  #
+  # Q: "I have unlimited Claude tokens, should I set this very high?"
+  # A: No. Even with unlimited tokens, high budgets (>2000k) lead to diminishing
+  #    returns. The squad converges via quality gates and iteration limits anyway.
+  #    A high budget just means slower convergence and more verbose output.
+  #    Recommended: 500-1000k for most projects, 1500-2000k for very large codebases.
+  # [disable: 999999] - effectively no budget limit (not recommended)
+  # @belief(claim: "1000k tokens is adequate for most project analyses without diminishing returns from verbosity", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: medium)
+  token_budget_k: 9999
+
+  # Convergence threshold for Understanding score delta
+  # [range: 0.01-0.05] Smaller = stricter (more iterations), larger = looser.
+  # Below 0.01 may never converge due to noise. Above 0.05 may stop too early.
+  # @belief(claim: "0.02 delta balances noise tolerance against premature convergence for Understanding score", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: medium)
+  convergence_delta: 0.02
+
+# Autonomy mode
+# - guided: Checkpoint after every phase
+# - semi: Checkpoint after Phase 1 only (default)
+# - banzai: Full autonomous, human reviews final output
+autonomy:
+  # @belief(claim: "Semi autonomy provides the right tradeoff — human review after discovery but not after every phase", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: medium)
+  mode: banzai  # guided | semi | banzai
+
+# =============================================================================
+# CONVERGENCE RULES (COMMANDER)
+# =============================================================================
+
+convergence:
+  # Quality delta threshold - stop if improvement < this
+  # [range: 0.01-0.05] Same guidance as analysis.convergence_delta
+  # @belief(claim: "0.02 quality delta mirrors analysis convergence_delta — consistent stopping criterion across both systems", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: medium)
+  quality_delta_threshold: 0.02
+
+  # Consecutive passes needed before declaring convergence
+  # [range: 2-5] Higher = more confidence but slower. Beyond 5 = paranoid.
+  # @belief(claim: "2 consecutive passes avoids single-pass flukes while not over-penalizing the run for noise", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: medium)
+  consecutive_passes: 2
+
+  # Escalate if same issue appears this many times
+  # [range: 2-5] Lower = faster escalation, higher = more patient.
+  # @belief(claim: "3 repetitions of the same issue indicates a structural problem warranting escalation rather than retry", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: medium)
+  issue_repeat_limit: 3
+
+  # Maximum squad iterations (mirrors analysis.max_iterations)
+  # [range: 3-10] See analysis.max_iterations for guidance.
+  # @belief(claim: "5 max iterations is consistent with analysis.max_iterations — convergence boundary applies equally here", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.75, severity: high)
+  max_squad_iterations: 5
+
+  # DEFER loop limit before forcing decision
+  # [range: 1-3] How many times ASSESS can DEFER before forced PASS/KILL.
+  # @belief(claim: "2 DEFERs is enough information-gathering before forcing a decision; 3+ indicates indecision pathology", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: medium)
+  defer_loop_limit: 2
+
+  # Confidence floor below which INVESTIGATOR is summoned (or human escalation flagged)
+  # [range: 0.3-0.7] Lower = more tolerant of uncertainty before escalating.
+  calibrate_confidence_floor: 0.5
+
+  # FEP-RLIF routing augmentation (FR-FEP-*) — see commander.md for procedures
+  # [range: see FEP-RLIF documentation]
+  evoi_marginal_range: [0.3, 0.7]     # EVOI range where confidence signals augment routing
+  evoi_confidence_floor: 0.6          # Bias toward dispatch when domain confidence_floor < this (FR-FEP-004)
+  evoi_brier_policy_baseline: 0.70    # Policy baseline for confidence_brier accuracy (FR-FEP-007)
+  evoi_brier_gap_threshold: 0.10      # Gap below baseline triggering confidence_floor governance (FR-FEP-007)
+
+# =============================================================================
+# TOKEN BUDGET ALLOCATION (COMMANDER)
+# =============================================================================
+
+budget:
+  # Phase 1 tier allocations (must sum to ~95%, leaving reserve)
+  # @belief(claim: "25% for discovery correctly weights the most token-intensive phase (codebase + context reading)", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: medium)
+  tier1_discover_what_percent: 25
+  # @belief(claim: "20% for WHY analysis balances depth of reasoning against total budget", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.60, severity: medium)
+  tier2_why_percent: 20
+  # @belief(claim: "25% for specialist HOW work reflects that domain expertise is the most expensive phase per insight", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.60, severity: medium)
+  tier3_how_specialists_percent: 25
+  # @belief(claim: "15% for plan and assess is sufficient for synthesis after the expensive exploration phases", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.60, severity: medium)
+  tier4_plan_assess_percent: 15
+  # @belief(claim: "10% for consensus and finalize is adequate — by this stage most decisions are already locked", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: medium)
+  tier5_consensus_finalize_percent: 10
+  # @belief(claim: "5% reserve is enough buffer for unexpected re-runs without being wasteful", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: low)
+  reserve_percent: 5
+
+  # Max any single agent can consume
+  # @belief(claim: "40% single-agent cap prevents any one agent from monopolizing the budget while still enabling deep work", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: high)
+  max_single_agent_percent: 40
+
+  # Budget exhaustion trigger
+  # @belief(claim: "100% exhaustion threshold means no budget headroom — forced convergence fires exactly at limit", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.80, severity: medium)
+  exhaustion_threshold_percent: 100
+
+# Build phase token budget allocation
+build_budget:
+  # @belief(claim: "50% for implementation is appropriate — build phase is primarily code generation work", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: medium)
+  implementation_percent: 50
+  # @belief(claim: "30% for quality gates reflects that verification is expensive and critical in build phase", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: high)
+  quality_gates_percent: 30
+  # @belief(claim: "15% for integration is sufficient when components are well-defined before build starts", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.60, severity: medium)
+  integration_percent: 15
+  # @belief(claim: "5% build reserve mirrors analysis reserve — consistent buffer policy across phases", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: low)
+  reserve_percent: 5
+
+# =============================================================================
+# TIME LIMITS
+# =============================================================================
+
+limits:
+  # Wall-clock timeout for entire squad run (minutes)
+  # [range: 20-90] Beyond 90 mins, something is likely stuck or looping.
+  # [disable: 9999] - no timeout (not recommended for unattended runs)
+  # @belief(claim: "40 minutes is sufficient for most squad runs while preventing indefinite hangs in unattended mode", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: high)
+  wall_clock_timeout_minutes: 40
+
+# =============================================================================
+# LEXICON GATE — derived controlled-grammar validation
+# =============================================================================
+
+lexicon_gate:
+  # When enabled, keep spec.md as the canonical rich spec-kit feature
+  # specification and generate requirements.lexicon.md as a derived
+  # machine-checkable requirements artifact. Do not replace spec.md unless a
+  # future explicit replace-spec mode is added and every downstream consumer is
+  # made Lexicon-aware.
+  enabled: true
+  artifacts:
+    spec:
+      enabled: true
+      type: spec
+      path: requirements.lexicon.md
+      source_ref: spec.md
+      mode: derived
+      # phase1-lexicon validation evidence injected only into the narrow
+      # phase1-lexicon-derive repair dispatch.
+      report: spec-lexicon-report.json
+    tasks:
+      enabled: true
+      type: tasks
+      spec_ref: requirements.lexicon.md
+  glossary_file: glossary.md
+  max_repair_attempts: 3
+  on_exhausted: block
+
+# =============================================================================
+# QUALITY GATES (SAGE, Understanding thresholds)
+# =============================================================================
+
+understanding:
+  diagram:
+    enabled: false
+
+quality_gates:
+  # WHY spec-validation mode thresholds (from Understanding CLI v3.6+)
+  # @belief(claim: "0.70 overall threshold represents minimum viable spec quality for reliable squad output", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.75, severity: high)
+  overall: 0.70
+  # @belief(claim: "0.70 structure threshold ensures spec sections are complete enough for agents to navigate", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.75, severity: high)
+  structure: 0.70
+  # @belief(claim: "0.70 testability threshold ensures requirements are concrete enough to generate verifiable tests", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.75, severity: high)
+  testability: 0.70
+  # @belief(claim: "0.60 semantic threshold is lower than structural because meaning is harder to quantify mechanically", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: high)
+  semantic: 0.60
+  # @belief(claim: "0.60 cognitive threshold allows moderately complex specs while rejecting cognitively overloaded ones", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: medium)
+  cognitive: 0.60
+  # @belief(claim: "0.50 readability threshold is intentionally lenient — prose style varies widely without affecting correctness", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: low)
+  readability: 0.50
+  # @belief(
+  #   claim: "0.30 depth threshold is a provisional floor — current squad runs score 0.628 (2x this threshold), making the gate non-binding; SC-006 tracks raising this as baseline stabilizes"
+  #   verified: 2026-03-28
+  #   expires: 2026-06-28
+  #   confidence: 0.30
+  #   severity: high
+  # )
+  depth: 0.30        # NEW in Understanding v3.6 — low bar initially, raise as baseline stabilizes
+  # @belief(claim: "0.50 behavioral threshold balances scenario decomposition completeness against early-stage spec maturity", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.60, severity: high)
+  behavioral: 0.50   # FR-004: scenario decomposition, transition completeness, branch coverage, observability
+
+  # Margin for "borderline" warnings
+  # @belief(claim: "0.05 borderline margin is wide enough to flag near-miss gates without causing excessive warnings", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: low)
+  borderline_margin: 0.05
+
+  # HIGH severity issues compound threshold
+  # @belief(claim: "3 high-severity issues compounding is the tipping point where spec quality materially degrades squad output", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.60, severity: high)
+  high_compound_threshold: 3
+
+# =============================================================================
+# HEURISTICS (SAGE quality checks)
+# =============================================================================
+
+heuristics:
+  # Max sentences per requirement
+  # @belief(claim: "3 sentences per requirement is the upper bound for atomic, testable requirements without splitting", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.75, severity: medium)
+  max_requirement_sentences: 3
+
+  # Max nesting depth in requirements
+  # @belief(claim: "3 levels of nesting is the cognitive limit before readers lose track of parent context", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.75, severity: medium)
+  max_nesting_depth: 3
+
+  # Max words per sentence
+  # @belief(claim: "25 words per sentence is the threshold above which comprehension and parseability drop significantly", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.75, severity: medium)
+  max_sentence_words: 25
+
+# =============================================================================
+# DISCOVERY SETTINGS (SCOUT)
+# =============================================================================
+
+discovery:
+  # Git history lookback period
+  # @belief(claim: "1 year of git history captures enough evolution signal without pulling in irrelevant ancient commits", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: low)
+  git_history_lookback: "1 year ago"
+
+  # Number of recent commits to analyze
+  # @belief(claim: "50 commits provides a statistically representative recent activity sample for hotspot analysis", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: low)
+  git_log_count: 50
+
+  # Number of hotspots to display
+  # @belief(claim: "30 hotspots surfaces the key churn-prone areas without overwhelming the SCOUT report", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: low)
+  git_hotspots_count: 30
+
+  # Minimum reference architectures for greenfield
+  # @belief(claim: "3 reference architectures is the minimum for triangulating a sound greenfield recommendation", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: medium)
+  min_reference_architectures: 3
+
+  # Polyrepo: repos with fewer source files than this threshold
+  # are auto-promoted to full depth during GOLDDIGGER Mode 1 extraction.
+  # This saves Mode 2 roundtrips for small repos that are cheap to analyze fully.
+  # Set to 0 to disable auto-promotion (all repos get signatures depth).
+  # [range: 0-200] [default: 50]
+  polyrepo_full_depth_threshold: 100
+
+  # Maximum number of git commits to analyze for hotspot and history analysis.
+  # Higher values surface deeper evolutionary patterns at the cost of extraction time.
+  # [range: 100-5000] [default: 2500]
+  git_history_limit: 2500
+
+  # Maximum lines to read per file during extraction.
+  # Applies to GOLDDIGGER Mode 1 and Mode 2. Higher values improve coverage of large files.
+  # [range: 500-10000] [default: 5000]
+  max_lines_per_file: 5000
+
+# =============================================================================
+# GOLDDIGGER
+# =============================================================================
+
+golddigger:
+  # Mode 2 deep dives run only for explicit queue requests.
+  mode2_policy: requested_only
+
+# =============================================================================
+# SCORING (GATEKEEPER, SCOUT, AUDITOR)
+# =============================================================================
+
+scoring:
+  # Confidence score range
+  # @belief(claim: "0.0–1.0 normalized range enables consistent cross-agent score comparison and aggregation", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.90, severity: low)
+  confidence_min: 0.0
+  confidence_max: 1.0
+
+  # Evidence grades (from most to least reliable)
+  evidence_grades:
+    - A  # Primary source, empirical
+    - B  # Authoritative secondary
+    - C  # General reference
+    - D  # Expert opinion
+    - E  # Speculation/inference
+
+# =============================================================================
+# RICE SCORING (GATEKEEPER)
+# =============================================================================
+
+rice:
+  # Reach scale maximum
+  # @belief(claim: "10-point reach scale gives enough granularity for audience-size differentiation without false precision", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: low)
+  reach_scale_max: 10
+
+  # Impact scale values
+  impact_scale_values:
+    # @belief(claim: "0.25 minimal impact weight correctly deprioritizes features with negligible user effect", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: low)
+    minimal: 0.25
+    # @belief(claim: "0.5 low impact weight is half of medium — linear scaling matches intuitive effort-to-value judgment", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: low)
+    low: 0.5
+    # @belief(claim: "1.0 medium impact is the neutral reference point for RICE scoring normalization", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.80, severity: low)
+    medium: 1
+    # @belief(claim: "2.0 high impact reflects 2x the business value of a medium feature — doubling is a standard multiplier", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: low)
+    high: 2
+    # @belief(claim: "3.0 massive impact cap prevents outliers from distorting RICE rankings to meaninglessness", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: medium)
+    massive: 3
+
+  # Confidence scale values
+  confidence_scale_values:
+    # @belief(claim: "0.5 low confidence halves the RICE score — appropriate penalty for speculative features", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.75, severity: medium)
+    low: 0.5
+    # @belief(claim: "0.8 medium confidence reflects the typical state of validated but unbuilt features", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: medium)
+    medium: 0.8
+    # @belief(claim: "1.0 high confidence is the full multiplier — reserved for empirically validated bets", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.80, severity: medium)
+    high: 1.0
+
+# =============================================================================
+# IMPLEMENTABILITY (GATEKEEPER)
+# =============================================================================
+
+implementability:
+  # Number of failures before marking "blocked"
+  # @belief(claim: "3 failures before blocked status tolerates transient issues while detecting genuine blockers", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: medium)
+  blocked_failure_threshold: 3
+
+# =============================================================================
+# ASSESS SETTINGS (GATEKEEPER)
+# =============================================================================
+
+assess:
+  # Maximum DEFER iterations before forcing decision.
+  # MUST match convergence.defer_loop_limit — COMMANDER is the enforcement authority.
+  # [authoritative key: convergence.defer_loop_limit]
+  # @belief(claim: "2 defer max iterations mirrors convergence.defer_loop_limit — both systems must agree on patience limit", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: medium)
+  defer_max_iterations: 2
+
+# =============================================================================
+# CALIBRATION (AUDITOR)
+# =============================================================================
+
+calibration:
+  # Accuracy below this triggers warning
+  # [range: 0.3-0.7] Lower = more tolerant of bad estimates
+  # @belief(claim: "0.5 accuracy threshold is the minimum for estimates to be predictively useful rather than noise", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: medium)
+  low_accuracy_threshold: 0.5
+
+  # Trend variance threshold for "stable"
+  # @belief(claim: "0.05 variance classifies a trend as stable — larger swings indicate an unstable estimation process", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: low)
+  trend_variance_stable: 0.05
+
+  # Trend improvement threshold
+  # @belief(claim: "0.05 improvement threshold is meaningful signal above calibration noise floor", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: low)
+  trend_improvement_threshold: 0.05
+
+  # Minimum samples before calculating accuracy
+  # [range: 3-10] Too low = noisy, too high = slow to learn
+  # @belief(claim: "3 samples is the minimum for a non-trivial accuracy mean while avoiding slow cold-start", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: medium)
+  min_sample_size: 3
+
+  # Correction factor caps - how much AUDITOR can adjust estimates
+  # [range: 0.3-0.8 for min, 2.0-5.0 for max]
+  # Beyond 5x correction means estimates are essentially random - investigate root cause.
+  # @belief(claim: "0.5 minimum correction factor prevents AUDITOR from shrinking estimates to near-zero on outliers", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: medium)
+  correction_factor_min: 0.5
+  # @belief(claim: "3.0 maximum correction factor caps AUDITOR amplification — beyond 3x the original estimate is meaningless", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: medium)
+  correction_factor_max: 3.0
+
+# =============================================================================
+# RISK LEVELS (AUDITOR)
+# =============================================================================
+
+risk:
+  # Accuracy thresholds for risk levels
+  # @belief(claim: "Accuracy below 0.5 is HIGH risk — coin-flip estimates are dangerous for planning", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.75, severity: high)
+  high_threshold: 0.5      # < this = HIGH risk
+  # @belief(claim: "0.5 medium_min aligns with high_threshold — MEDIUM risk begins exactly where HIGH ends", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.75, severity: medium)
+  medium_min: 0.5          # >= this AND < low_threshold = MEDIUM
+  # @belief(claim: "0.75 accuracy is the LOW risk threshold — 3 out of 4 estimates correct is reliable enough for planning", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: medium)
+  low_threshold: 0.75      # >= this = LOW risk
+
+# =============================================================================
+# METACOGNITION (MONITOR)
+# =============================================================================
+
+metacognition:
+  # Check interval (every N tasks)
+  # @belief(claim: "Check every 5 tasks provides metacognitive feedback at a cadence that catches drift without constant overhead", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: medium)
+  check_interval_tasks: 5
+
+  # Consecutive failures before signaling
+  # @belief(claim: "3 consecutive failures distinguishes a bad run from a systematic problem worth signaling", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: medium)
+  consecutive_fail_threshold: 3
+
+  # Warning if no check for this many tasks
+  # @belief(claim: "20 tasks without a metacognition check is the upper bound before blind-spot risk becomes unacceptable", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: medium)
+  max_tasks_without_check: 20
+
+# =============================================================================
+# INTERNALIZATION (VALIDATOR — legacy pass/partial/fail)
+# =============================================================================
+
+internalization_legacy:
+  # Pass/partial/fail thresholds (out of 6 checks) — VALIDATOR's old binary check
+  # @belief(claim: "6/6 pass threshold enforces full internalization — any gap in the legacy 6-check model is a fail", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: high)
+  pass_threshold: 6
+  # @belief(claim: "4/6 partial threshold is the minimum for an agent to proceed with warnings rather than being blocked", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: high)
+  partial_min: 4
+  # @belief(claim: "Below 4/6 is a hard fail — fewer than 4 checks passing means foundational internalization is missing", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: high)
+  fail_below: 4
+
+  # Estimated time for internalization
+  # @belief(claim: "5 minutes is the expected wall-clock internalization time, used for progress estimates and SLA planning", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.55, severity: low)
+  estimated_time_minutes: 5
+
+# =============================================================================
+# INTERNALIZATION — Deterministic Metrics (AUDITOR, 16 metrics, 4 categories)
+# =============================================================================
+#
+# Replaces the binary CHECKPOINT pass/partial/fail with 16 deterministic
+# metrics across 4 categories: Absorption (I-01..I-04), int-Accuracy (I-05..I-08),
+# int-Calibration (I-09..I-12), int-Transfer (I-13..I-16).
+#
+# AUDITOR computes these metrics; CHECKPOINT doubt scores are informational only.
+# See specs/003-internalization-metrics/data-model.md for full schema.
+#
+
+internalization:
+  # Master switch — set false to disable all internalization measurement
+  # @belief(claim: "Internalization measurement is worth enabling by default — the diagnostic value outweighs the logging overhead", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.80, severity: medium)
+  enabled: true
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # TIER CLASSIFICATION (FR-027)
+  # Maps each of the 37 squad agents to an internalization tier.
+  # Tiers determine which absorption and accuracy thresholds apply.
+  # Every agent in extension.yml MUST appear in exactly one tier.
+  # ───────────────────────────────────────────────────────────────────────────
+  tiers:
+    deep:
+      # Agents that must absorb the FULL spec — core builders and architects.
+      # Highest thresholds: absorption >= 0.80, int-accuracy >= 0.75.
+      agents: [IMPLEMENTER, ARCHITECT, ORCHESTRATOR, SENTINEL, CARTOGRAPHER, SCOUT, SAGE, SYNTHESIZER, GATEKEEPER, VALIDATOR]
+      # @belief(claim: "0.80 absorption threshold for deep-tier agents ensures core builders have genuine spec comprehension before acting", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.75, severity: critical)
+      absorption_threshold: 0.80
+      # @belief(claim: "0.75 int-accuracy threshold for deep-tier ensures builders correctly reproduce spec requirements in outputs", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.75, severity: critical)
+      int_accuracy_threshold: 0.75
+    moderate:
+      # Agents that must absorb RELEVANT sections — reviewers, specialists, learning.
+      # Medium thresholds: absorption >= 0.65, int-accuracy >= 0.60.
+      agents: [INVESTIGATOR, GUARDIAN, ORACLE, BENCHMARK, ADVOCATE, MAVERICK, SPEC_GUARD, CODE_REVIEWER, TEST_GUARDIAN, DEBUGGER, INTEGRATOR, CHANGE_CONTROLLER, MIRROR, ADAPTIVE, AUDITOR, REALIST, MONITOR, MODELER, GOLDDIGGER]
+      # @belief(claim: "0.65 absorption for moderate-tier covers relevant sections without requiring full spec depth", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: high)
+      absorption_threshold: 0.65
+      # @belief(claim: "0.60 int-accuracy for moderate-tier is sufficient for reviewers who flag issues rather than generate output", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: high)
+      int_accuracy_threshold: 0.60
+    minimal:
+      # Task-oriented agents — trackers, scorekeepers, memory.
+      # Low thresholds: absorption >= 0.40, int-accuracy >= 0.40.
+      agents: [SCOREKEEPER, TRACKER, CHECKPOINT, STRATEGIST, PROGRESS_TRACKER, VETERAN]
+      # @belief(claim: "0.40 absorption for minimal-tier is appropriate — task-tracking agents need orientation, not deep spec comprehension", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: medium)
+      absorption_threshold: 0.40
+      # @belief(claim: "0.40 int-accuracy for minimal-tier matches absorption — both thresholds set low for administrative agents", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: medium)
+      int_accuracy_threshold: 0.40
+    exempt:
+      # Not subject to internalization gate — orchestrator only.
+      agents: [COMMANDER]
+
+  # Fallback tier for any agent not listed above (FR-051)
+  # @belief(claim: "Defaulting unknown agents to deep tier is conservative — better to over-require than under-require internalization", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.75, severity: high)
+  default_tier: deep
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # CROSS-VALIDATION RULES (FR-041)
+  # Detect metric combinations that suggest superficial compliance rather
+  # than genuine internalization. Each rule fires a flag on the log entry.
+  # ───────────────────────────────────────────────────────────────────────────
+  cross_validation:
+    CV-1:
+      # High requirement coverage but low first-pass acceptance →
+      # agent cites requirements without actually satisfying them.
+      # @belief(claim: "I01 >= 0.90 with I13 < 0.50 reliably detects citation-without-satisfaction pattern in agent outputs", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.60, severity: high)
+      condition: "int_I01 >= 0.90 AND int_I13 < 0.50"
+      flag: "high-coverage-low-acceptance"
+      # Requires deferred metrics (I-13 is Transfer) — skipped during cold-start Phase 1
+      requires_deferred: true
+    CV-2:
+      # High terminology fidelity but low numeric accuracy →
+      # agent uses correct words but gets the numbers wrong.
+      # @belief(claim: "I03 >= 0.90 with I05 < 0.80 catches agents that parrot domain language without understanding quantitative requirements", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: high)
+      condition: "int_I03 >= 0.90 AND int_I05 < 0.80"
+      flag: "high-terminology-low-accuracy"
+      requires_deferred: false
+    CV-3:
+      # High requirement coverage but low terminology fidelity →
+      # agent copies requirement IDs without understanding the domain language.
+      # @belief(claim: "I01 >= 0.90 with I03 < 0.40 identifies agents that reference requirements by ID without domain comprehension", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: high)
+      condition: "int_I01 >= 0.90 AND int_I03 < 0.40"
+      flag: "citation-stuffing-low-fidelity"
+      requires_deferred: false
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # COLD-START PROTOCOL (FR-048)
+  # Governs metric availability during early runs when historical data
+  # is insufficient for deferred metrics (calibration, transfer).
+  # ───────────────────────────────────────────────────────────────────────────
+  cold_start:
+    # Phase 1 (runs 1-4): Only immediate metrics (I-01..I-08) computed.
+    # Deferred metrics (I-09..I-16) are null. Gate uses absorption only.
+    # @belief(claim: "4 runs is sufficient to bootstrap immediate metrics before deferred metrics become meaningful", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.60, severity: medium)
+    phase_1_max_runs: 4
+
+    # Phase 2 (runs 5-9): Deferred metrics begin populating as data accrues.
+    # Gate uses absorption + available deferred metrics.
+    # @belief(claim: "Runs 5–9 provide enough data for deferred metrics to stabilize before full gate enforcement", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.55, severity: medium)
+    phase_2_max_runs: 9
+
+    # Brier Score (I-09) requires at least this many confidence-outcome pairs.
+    # Below this count, I-09 remains null.
+    # @belief(claim: "5 confidence-outcome pairs is the minimum for a statistically meaningful Brier Score", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: medium)
+    brier_min_pairs: 5
+
+    # Escalation precision (I-12) requires at least this many escalation events.
+    # Below this count, I-12 remains null.
+    # @belief(claim: "3 escalation events is the minimum sample before escalation precision rate is meaningful", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: medium)
+    escalation_min_count: 3
+
+    # Promotion to "stable" status requires this many completed runs.
+    # Below this, entry is tagged run_type: validation_run.
+    # @belief(claim: "20 completed runs is sufficient to declare an agent entry stable and remove the validation_run tag", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.55, severity: medium)
+    promotion_min_runs: 20
+
+    # Minimum prompt-version correlation (Spearman) before ADAPTIVE
+    # can recommend prompt changes based on internalization trends.
+    # [range: 0.50-0.90] Higher = more conservative recommendations.
+    # @belief(claim: "0.70 Spearman correlation threshold ensures ADAPTIVE recommendations are driven by genuine prompt-metric relationships", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: medium)
+    promotion_correlation_threshold: 0.70
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # DISAGREEMENT PROTOCOL (FR-032)
+  # Detects when CHECKPOINT doubt scores conflict with AUDITOR metrics.
+  # ───────────────────────────────────────────────────────────────────────────
+  disagreement:
+    # If AUDITOR metrics PASS but CHECKPOINT recorded >= this many critical
+    # doubts, flag the entry with disagreement_flag: "metrics-pass-doubts-high".
+    # @belief(claim: "2 or more critical doubts despite AUDITOR pass warrants a disagreement flag — one doubt could be noise", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: medium)
+    critical_doubt_threshold: 2
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # DIAGNOSTIC MATRIX (FR-039)
+  # Combines Understanding score (U) with internalization score (I) to
+  # classify outcomes into four quadrants:
+  #   U-high + I-high = aligned
+  #   U-high + I-low  = confounded (spec is good but agent doesn't absorb)
+  #   U-low  + I-high = compensating (agent absorbs despite poor spec)
+  #   U-low  + I-low  = systemic (both spec quality and absorption are low)
+  # ───────────────────────────────────────────────────────────────────────────
+  diagnostic_matrix:
+    # Threshold above which Understanding score is considered "high"
+    # @belief(claim: "0.70 Understanding high threshold aligns with quality_gates.overall — consistent definition of spec quality across systems", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.75, severity: medium)
+    understanding_high_threshold: 0.70
+    # Threshold above which internalization score is considered "high"
+    # @belief(claim: "0.70 internalization high threshold symmetrically matches understanding threshold — equal weighting in diagnostic matrix", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: medium)
+    internalization_high_threshold: 0.70
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # EVOLUTION SIGNALS — Internalization-specific (FR-052..FR-055)
+  # Extends the existing evolution.signals section with int-specific triggers.
+  # AUDITOR fires these when internalization metrics show sustained decline.
+  # ───────────────────────────────────────────────────────────────────────────
+  evolution_signals:
+    # Minimum consecutive runs with declining metrics before signal fires.
+    # [range: 2-5] Lower = more sensitive, higher = fewer false alarms.
+    # @belief(claim: "3 consecutive declining runs distinguishes trend from noise — 2 could be random variance", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: medium)
+    min_consecutive_runs: 3
+
+    # Severity is mapped from the magnitude of decline (peak - current).
+    # Each threshold is the minimum decline delta for that severity level.
+    severity_thresholds:
+      # @belief(claim: "10% decline from peak is the minimum meaningful degradation worth flagging as low severity", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: low)
+      low: 0.10       # 10-19% decline from peak
+      # @belief(claim: "20% decline from peak is a notable regression warranting medium severity attention", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: medium)
+      medium: 0.20    # 20-29% decline from peak
+      # @belief(claim: "30% decline from peak indicates serious degradation requiring high severity response", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: high)
+      high: 0.30      # 30-39% decline from peak
+      # @belief(claim: "40% decline from peak is a critical regression — the agent's internalization has fundamentally broken", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: critical)
+      critical: 0.40  # 40%+ decline from peak
+
+# =============================================================================
+# EVOLUTION (AUDITOR + ADAPTIVE)
+# =============================================================================
+
+evolution:
+  # Master switch for the evolution learning loop
+  # [disable: false] Disables evolution signals and recommendations
+  # @belief(claim: "Evolution learning loop is worth enabling by default — the improvement signals justify the tracking overhead", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.75, severity: medium)
+  enabled: true
+
+  signals:
+    # Trigger evolution signal when accuracy drops this much from best-known value
+    # [range: 0.05-0.2] Lower = more sensitive, higher = fewer false alarms
+    # @belief(claim: "0.1 regression delta is the minimum meaningful accuracy drop above noise for triggering evolution signals", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: medium)
+    regression_delta: 0.1
+
+    # Minimum runs before any evolution signal can fire
+    # [range: 3-10] Prevents premature signals from limited run history
+    # @belief(claim: "5 runs minimum prevents false evolution signals during cold-start when variance is high", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: medium)
+    min_sample_size: 5
+
+    # Consecutive declining runs before declining_trend signal fires
+    # [range: 2-5]
+    # @belief(claim: "3 consecutive declining runs for evolution trend mirrors internalization evolution_signals.min_consecutive_runs — consistent trend threshold", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: medium)
+    declining_trend_runs: 3
+
+    # Same pitfall triggered N times before recurring_pitfall signal fires
+    # [range: 2-5]
+    # @belief(claim: "3 recurrences of a pitfall indicates a structural pattern that won't self-resolve without intervention", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: medium)
+    recurring_pitfall_count: 3
+
+    # Same agent rejected N times for same reason before recurring_rejection signal fires
+    # [range: 2-5]
+    # @belief(claim: "3 repeated rejections for the same reason indicates a systematic agent capability gap or misaligned expectation", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: medium)
+    recurring_rejection_count: 3
+
+  recommendations:
+    # Minimum correlated data points for ADAPTIVE to produce a recommendation
+    # [range: 2-5] 3 = HIGH confidence (recommended), 2 = MEDIUM, 1 = LOW (noisy)
+    # @belief(claim: "3 correlated data points is the minimum for HIGH confidence ADAPTIVE recommendations — fewer points produce noisy suggestions", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.75, severity: medium)
+    min_confidence: 3
+
+    # Require downstream outcome evidence (doubt->rework chain) for recommendations
+    # [disable: false] Allows recommendations based on accuracy alone (less reliable)
+    # @belief(claim: "Requiring downstream evidence prevents ADAPTIVE from recommending changes based on intermediate metrics that don't affect final outcomes", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: medium)
+    require_downstream_evidence: true
+
+# =============================================================================
+# CODE QUALITY (CODE-REVIEWER)
+# =============================================================================
+
+code_quality:
+  # Maximum function length (lines)
+  # [range: 20-50] Industry standard ~30. Setting to 500 defeats the purpose.
+  # [disable: 9999] - no limit (not recommended)
+  # @belief(claim: "30-line function limit is the industry-standard clean-code threshold, above which functions typically violate single responsibility", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.80, severity: medium)
+  max_function_lines: 30
+
+  # Maximum nesting depth
+  # [range: 2-5] Deep nesting (>5) is almost always refactorable.
+  # @belief(claim: "3-level nesting maximum is the standard readability threshold — beyond this, arrow anti-patterns and extract-function fixes are warranted", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.80, severity: medium)
+  max_nesting_depth: 3
+
+  # Maximum cyclomatic complexity
+  # [range: 5-15] Research shows >10 correlates with defects.
+  # [disable: 9999] - no limit (not recommended)
+  # @belief(claim: "Cyclomatic complexity > 10 correlates with increased defect rates per McCabe's original research — 10 is the empirical threshold", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.85, severity: high)
+  max_cyclomatic_complexity: 10
+
+# =============================================================================
+# TEST REQUIREMENTS (TEST-GUARDIAN)
+# =============================================================================
+
+tests:
+  # Minimum tests by component type
+  # [range: 1-10 each] These are minimums - actual tests may be more.
+  # Setting all to 1 = minimal coverage. Setting all to 10 = thorough but slow.
+  # @belief(claim: "2 tests minimum for pure functions is sufficient — pure functions are simple enough that 2 cases cover happy path and edge case", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: medium)
+  min_pure_function: 2
+  # @belief(claim: "3 tests minimum for class/service covers happy path, error, and at least one interaction scenario", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: medium)
+  min_class_service: 3
+  # @belief(claim: "3 tests minimum for UI components covers render, interaction, and conditional display", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: medium)
+  min_ui_component: 3
+  # @belief(claim: "4 tests minimum for composite components reflects their higher complexity from component composition", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: medium)
+  min_composite_component: 4
+  # @belief(claim: "4 tests minimum for API endpoints covers success, validation error, auth failure, and not-found cases", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: medium)
+  min_api_endpoint: 4
+  # @belief(claim: "2 tests minimum for integration is a floor — real integration suites will exceed this but 2 verifies the connection works", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: medium)
+  min_integration: 2
+
+# =============================================================================
+# DRIFT DETECTION (PROGRESS-TRACKER)
+# =============================================================================
+
+drift:
+  # Single task overrun ratio trigger
+  # @belief(claim: "2x overrun on a single task is the threshold above which the estimate was fundamentally wrong, not just off", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: medium)
+  single_task_overrun_ratio: 2.0
+
+  # Consecutive overrun settings
+  # @belief(claim: "3 consecutive overruns indicates systematic underestimation rather than task-specific variance", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: medium)
+  consecutive_overrun_count: 3
+  # @belief(claim: "1.5x ratio for consecutive overruns is a gentler threshold than single-task — pattern matters more than magnitude", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.60, severity: medium)
+  consecutive_overrun_ratio: 1.5
+
+  # Phase overrun threshold
+  # @belief(claim: "1.3x phase overrun triggers drift warning — 30% over budget at phase level is significant enough to replan", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: high)
+  phase_overrun_ratio: 1.3
+
+  # Systematic bias detection
+  # @belief(claim: "50% of tasks overrunning indicates systematic optimism bias in estimates", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: high)
+  systematic_bias_percent: 50
+  # @belief(claim: "1.2x average overrun ratio confirms systematic bias when combined with the 50% frequency threshold", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: high)
+  systematic_bias_ratio: 1.2
+
+  # Minimum tasks before drift detection kicks in
+  # @belief(claim: "3 tasks minimum before drift detection mirrors calibration.min_sample_size — consistent noise floor across both systems", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: medium)
+  min_sample_size: 3
+
+# =============================================================================
+# QUALITY METRICS (PROGRESS-TRACKER)
+# =============================================================================
+
+quality:
+  # Target review cycle time
+  # @belief(claim: "2.0 target review cycles is the baseline expectation — most tasks should pass review within 2 rounds", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.60, severity: medium)
+  target_review_cycles: 2.0
+
+# =============================================================================
+# ALERTS (PROGRESS-TRACKER)
+# =============================================================================
+
+alerts:
+  # Schedule Performance Index threshold
+  # @belief(claim: "SPI below 0.85 means schedule is critically behind — 85% of planned work being delivered is the warning floor", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: high)
+  schedule_drift_spi: 0.85
+
+  # Cost Performance Index threshold
+  # @belief(claim: "CPI below 0.80 signals significant cost overrun — delivering only 80 cents of value per dollar spent requires intervention", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: high)
+  cost_overrun_cpi: 0.80
+
+  # First-pass rate warning threshold
+  # @belief(claim: "Below 50% first-pass rate in a 4-task window indicates a quality process problem, not random variance", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: high)
+  quality_first_pass_min_percent: 50
+  # @belief(claim: "4-task window for first-pass rate is small enough to detect acute quality drops without buffering them away", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.60, severity: medium)
+  quality_warning_task_window: 4
+
+  # Defect spike detection
+  # @belief(claim: "60% defect rate in a 3-task window is a spike — more than half the work is broken and requires immediate attention", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: high)
+  defect_spike_percent: 60
+  # @belief(claim: "3-task window for defect spike detection is narrow enough to catch acute regressions without false alarms", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: medium)
+  defect_spike_task_window: 3
+
+  # Architecture erosion threshold
+  # @belief(claim: "2 architecture violations triggers erosion alert — one could be intentional, two indicates a drifting standard", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: high)
+  architecture_erosion_threshold: 2
+
+  # Improving trend detection
+  # @belief(claim: "3 consecutive improvements constitute a genuine positive trend rather than random fluctuation", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: low)
+  improving_trend_count: 3
+
+# =============================================================================
+# BUILD SETTINGS
+# =============================================================================
+
+build:
+  # NEEDS_CONTEXT re-dispatch limit
+  # @belief(claim: "2 NEEDS_CONTEXT retries gives an agent enough attempts to gather missing context without infinite dispatch loops", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: medium)
+  needs_context_max_retries: 2
+
+  # Fix cycle limit before escalation
+  # @belief(claim: "2 fix cycles before escalation prevents thrashing — if 2 attempts haven't fixed it, human judgment is needed", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: medium)
+  fix_cycle_limit: 2
+
+  # Tasks blocked before pausing build
+  # @belief(claim: "3 blocked tasks is the threshold where the build is effectively stalled and should pause rather than attempt parallel workarounds", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: high)
+  blocked_tasks_pause_threshold: 3
+
+  # Per-task quality gate sequence (agents run in this order)
+  gate_sequence: [SPEC_GUARD, CODE_REVIEWER, TEST_GUARDIAN]
+
+  # Phase gate agents (run at each phase checkpoint)
+  phase_gate: [INTEGRATOR, VALIDATOR]
+
+  # MONITOR (metacognition) frequency (every N tasks)
+  # @belief(claim: "Metacognition check every 5 build tasks mirrors metacognition.check_interval_tasks — consistent cadence across build and analysis", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: medium)
+  metacognition_frequency: 5
+
+  # MODELER invariant checking (every N tasks or per task)
+  # [range: 1-10] 1 = every task, 5 = every 5th task
+  # @belief(claim: "Checking invariants on every task (frequency=1) provides maximum correctness guarantee at the cost of MODELER overhead", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: high)
+  invariant_check_frequency: 1
+
+  # VALIDATOR (backpropagation) settings
+  verification:
+    # @belief(claim: "3 backpropagation passes is sufficient for VALIDATOR to converge on full requirement coverage", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: high)
+    max_passes: 3
+    # @belief(claim: "100% target coverage is the ideal — every requirement should be verifiable in the output", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.80, severity: high)
+    target_coverage: 100
+    # @belief(claim: "95% minimum coverage allows for edge cases that cannot be mechanically verified while maintaining high bar", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: high)
+    minimum_coverage: 95
+
+  # Visual validation (if VISUAL VALIDATOR is added)
+  visual_validation:
+    # @belief(claim: "Visual validation disabled by default — most projects don't have visual requirements and the browser overhead is non-trivial", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.80, severity: low)
+    enabled: false
+    checkpoints: [per_phase, before_complete]
+    # @belief(claim: "Chromium is the most compatible headless browser for visual validation across platforms", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.75, severity: low)
+    browser: chromium
+
+# =============================================================================
+# SPECIALIST SETTINGS
+# =============================================================================
+
+specialists:
+  # Max active specialists per run (to control token cost)
+  # @belief(claim: "3 active specialists caps specialist token cost while allowing enough domain coverage for typical projects", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: medium)
+  max_active: 3
+
+  # Always summon TEST ARCHITECT (SENTINEL)
+  # @belief(claim: "Always summoning SENTINEL ensures test strategy is designed up-front rather than retrofitted — cost justified by quality", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.75, severity: high)
+  always_test_architect: true
+
+  # Auto-summon SCIENTIST (INVESTIGATOR) for unknowns
+  # @belief(claim: "Auto-summoning INVESTIGATOR for unknowns prevents blind spots from propagating into architecture decisions", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: medium)
+  auto_scientist: true
+
+  # GUARDIAN dispatch mode
+  # - always_on: GUARDIAN runs on every squad run (Minimum Security Checklist for non-security
+  #   domains, full STRIDE/OWASP for security domains). Does not count toward max_active cap.
+  # - on_demand: GUARDIAN only dispatched when security domain keywords detected (legacy).
+  # [default: always_on]
+  # @belief(claim: "always_on GUARDIAN mode ensures security is checked on every run — security debt accumulates silently under on_demand mode", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.80, severity: high)
+  guardian_mode: always_on
+
+  # Auto-summon SECURITY (GUARDIAN) when these keywords appear in spec (on_demand mode only)
+  auto_security_keywords:
+    - auth
+    - login
+    - password
+    - token
+    - PII
+    - payment
+    - encrypt
+    - GDPR
+    - HIPAA
+    - compliance
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # RISK ACCEPTANCE PROTOCOL (GUARDIAN)
+  # Controls when GUARDIAN can autonomously accept risk vs escalate to human.
+  # ─────────────────────────────────────────────────────────────────────────
+
+  risk_acceptance:
+    # Enable autonomous risk acceptance (disable to always escalate)
+    # @belief(claim: "Autonomous risk acceptance reduces human bottlenecks by 70-80% while preserving escalation for genuine compliance risks", verified: 2026-03-31, expires: 2026-09-30, confidence: 0.65, severity: high)
+    enabled: true
+
+    # Maximum residual risk GUARDIAN can accept autonomously (without human)
+    # LOW = only low residual risk | MEDIUM = up to medium | HIGH = up to high (not recommended)
+    # @belief(claim: "MEDIUM is the right autonomous ceiling — HIGH residual risk requires human judgment", verified: 2026-03-31, expires: 2026-09-30, confidence: 0.70, severity: critical)
+    max_autonomous_residual: MEDIUM
+
+    # Compliance domains that always require human sign-off for MEDIUM+ residual risk
+    # @belief(claim: "GDPR/HIPAA/PCI-DSS require human accountability — autonomous acceptance creates legal liability", verified: 2026-03-31, expires: 2026-09-30, confidence: 0.85, severity: critical)
+    compliance_escalation_domains:
+      - GDPR
+      - HIPAA
+      - PCI-DSS
+      - SOC2
+
+    # Minimum evidence grade for autonomous ACCEPT_WITH_MITIGATIONS
+    # @belief(claim: "Grade C (general reference) is the minimum for autonomous risk acceptance — D/E evidence is too speculative", verified: 2026-03-31, expires: 2026-09-30, confidence: 0.70, severity: high)
+    min_evidence_grade: C
+
+  # Auto-summon PERFORMANCE (BENCHMARK) when these keywords appear
+  auto_performance_keywords:
+    - real-time
+    - concurrent
+    - throughput
+    - latency
+    - scalab
+    - high-load
+
+# =============================================================================
+# AUTO-FEEDBACK & POST-BUILD VALIDATION (ECHELON-002)
+# =============================================================================
+#
+# Autonomous feedback loop that closes the learning cycle without human input.
+# After every build, AUDITOR self-assesses by comparing predictions against
+# build outcomes. CRITICAL findings are routed to expert agents for investigation.
+#
+
+feedback:
+  # Enable autonomous post-build feedback (no human required)
+  # @belief(claim: "Auto-feedback eliminates the biggest learning loop gap — most runs never get human feedback, causing calibration stagnation", verified: 2026-03-31, expires: 2026-09-30, confidence: 0.75, severity: high)
+  auto_feedback: true
+
+  # Dispatch expert agents for CRITICAL findings
+  # @belief(claim: "Expert triage of critical findings produces actionable KB updates that passive logging cannot", verified: 2026-03-31, expires: 2026-09-30, confidence: 0.70, severity: high)
+  expert_triage: true
+
+  # Maximum expert dispatches during feedback phase (budget control)
+  # [range: 1-5] Higher = more thorough but more expensive
+  # @belief(claim: "3 expert dispatches covers the most impactful critical findings without excessive budget drain in the feedback phase", verified: 2026-03-31, expires: 2026-09-30, confidence: 0.65, severity: medium)
+  max_expert_dispatches: 3
+
+  # Run Understanding re-scan on final state after build
+  # @belief(claim: "Post-build Understanding re-scan detects spec quality regressions caused by build-phase amendments", verified: 2026-03-31, expires: 2026-09-30, confidence: 0.65, severity: medium)
+  post_build_validation: true
+
+  # Run TRACKER intent alignment check after build
+  # @belief(claim: "Post-build intent check catches scope drift that accumulated across many small build decisions", verified: 2026-03-31, expires: 2026-09-30, confidence: 0.70, severity: medium)
+  post_build_intent_check: true
+
+  # Still allow manual /feedback override (human ground truth on top of auto)
+  # @belief(claim: "Human feedback adds perception, business outcome, and team friction data that agents cannot self-assess", verified: 2026-03-31, expires: 2026-09-30, confidence: 0.85, severity: medium)
+  allow_manual_override: true
+
+# =============================================================================
+# KNOWLEDGE BASE
+# =============================================================================
+
+knowledge_base:
+  # Pruning: entries older than this (months) flagged stale
+  # @belief(claim: "6 months is the shelf life of knowledge base entries — architectural patterns and benchmarks shift significantly within a year", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: medium)
+  stale_threshold_months: 6
+
+  # Pruning: accuracy below this flagged low_confidence
+  # @belief(claim: "0.4 accuracy threshold for knowledge base pruning is conservative — entries below 40% accuracy are worse than no information", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: medium)
+  low_confidence_threshold: 0.4
+
+  # Max active entries per file
+  # @belief(claim: "200 max entries per file keeps knowledge base files scannable without requiring pagination or indexing", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: low)
+  max_entries: 200
+
+# =============================================================================
+# TOOL PATHS
+# =============================================================================
+
+tools:
+  understanding_cli: "understanding"
+
+# =============================================================================
+# BANZAI MODE (Full Autonomous)
+# =============================================================================
+
+banzai:
+  # Pull defaults from installed presets (optional)
+  constitution_preset: null
+
+  # Inline defaults for Phase 2 decisions
+  defaults:
+    # @belief(claim: "team_size=1 default for banzai mode assumes solo developer context — multi-person teams should override", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: medium)
+    team_size: 1
+    # @belief(claim: "Inferring tech stack in banzai mode is safer than defaulting to a specific stack that may be wrong", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.75, severity: medium)
+    tech_stack: "infer"
+    # @belief(claim: "Flexible timeline default in banzai mode avoids artificial deadline pressure in autonomous runs", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: low)
+    timeline: "flexible"
+
+  # Safety rails (scores are 0.0-1.0)
+  # @belief(claim: "0.3 auto-kill threshold in banzai mode: ASSESS confidence below 30% means the squad is guessing — human must intervene", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: critical)
+  auto_kill_threshold: 0.3
+
+  # Conditions that force human checkpoint even in banzai mode
+  require_human_if:
+    - "compliance requirements detected"
+    - "security-critical domain"
+    - "ASSESS confidence < 0.5"
+
+# =============================================================================
+# ENDOCRINE SYSTEM — Hormone-modulated agent motivation
+# =============================================================================
+#
+# Bio-inspired neuromodulator system that dynamically adjusts agent behavior
+# based on budget pressure, task complexity, and run phase.
+#
+# Phase 1: Adrenaline only (urgency signal)
+# Phase 2: Four neuromodulators (dopamine, cortisol, serotonin, norepinephrine)
+# Phase 3: Full six hormones
+# Phase 4: Adaptive baselines from run history
+#
+
+endocrine:
+  # @belief(claim: "Endocrine system provides measurable behavior modulation benefit that justifies its complexity overhead", verified: 2026-03-28, expires: 2026-06-28, confidence: 0.50, severity: medium)
+  enabled: true  # Enabled by default; set to false to disable all endocrine mutations
+  # @belief(claim: "Phase 3 (all 6 hormones) is the right default — the system has been validated across multiple runs and full endocrine modulation provides measurable behavior differentiation", verified: 2026-04-27, expires: 2026-10-27, confidence: 0.70, severity: low)
+  phase: 3  # 1=adrenaline only, 2=four neuromodulators, 3=full 6, 4=adaptive
+
+  # Adrenaline triggers (Phase 1)
+  adrenaline:
+    # @belief(claim: "80% budget consumed is the right urgency trigger — early enough to adjust behavior before hard exhaustion at 100%", verified: 2026-03-28, expires: 2026-06-28, confidence: 0.60, severity: medium)
+    budget_threshold: 0.80  # Trigger at 80% budget consumed
+    # @belief(claim: "+0.2 adrenaline boost at budget pressure is a calibrated nudge — large enough to change behavior, small enough not to thrash", verified: 2026-03-28, expires: 2026-06-28, confidence: 0.50, severity: medium)
+    budget_boost: 0.2       # +0.2 adrenaline when triggered
+    # @belief(claim: "0.3 baseline adrenaline for simple tasks reflects low urgency when work is straightforward", verified: 2026-03-28, expires: 2026-06-28, confidence: 0.50, severity: low)
+    task_complexity_low: 0.3  # Adrenaline for simple tasks
+    # @belief(claim: "0.7 baseline adrenaline for complex tasks reflects that hard work warrants elevated focus and urgency", verified: 2026-03-28, expires: 2026-06-28, confidence: 0.50, severity: low)
+    task_complexity_high: 0.7  # Adrenaline for complex tasks
+
+  # Baseline per archetype (all 6 hormones, but only adrenaline used in Phase 1)
+  # Order: [adrenaline, dopamine, cortisol, serotonin, oxytocin, norepinephrine]
+  baselines:
+    # @belief(claim: "Exploration archetype has low adrenaline (0.4) and high dopamine (0.5) — curious and motivated but not stressed", verified: 2026-03-28, expires: 2026-06-28, confidence: 0.45, severity: low)
+    exploration: [0.4, 0.5, 0.4, 0.5, 0.5, 0.3]
+    # @belief(claim: "Validation archetype has high cortisol (0.7) and norepinephrine (0.6) — vigilant and stress-driven for quality checking", verified: 2026-03-28, expires: 2026-06-28, confidence: 0.45, severity: low)
+    validation: [0.3, 0.5, 0.7, 0.5, 0.4, 0.6]
+    # @belief(claim: "Feasibility archetype has elevated adrenaline (0.5) and cortisol (0.6) — needs urgency and caution for gate decisions", verified: 2026-03-28, expires: 2026-06-28, confidence: 0.45, severity: low)
+    feasibility: [0.5, 0.5, 0.6, 0.5, 0.5, 0.5]
+    # @belief(claim: "Solution archetype has balanced profile with elevated serotonin (0.6) — calm confidence suits architectural decision-making", verified: 2026-03-28, expires: 2026-06-28, confidence: 0.45, severity: low)
+    solution: [0.5, 0.5, 0.5, 0.6, 0.5, 0.5]
+    # @belief(claim: "Build archetype has high adrenaline (0.6), oxytocin (0.6), and norepinephrine (0.8) — execution-mode focus and collaboration drive", verified: 2026-03-28, expires: 2026-06-28, confidence: 0.45, severity: low)
+    build: [0.6, 0.5, 0.5, 0.5, 0.6, 0.8]
+    # @belief(claim: "Innovation archetype has low adrenaline (0.3) and norepinephrine (0.2) — relaxed state promotes creative divergence over urgency", verified: 2026-03-28, expires: 2026-06-28, confidence: 0.45, severity: low)
+    innovation: [0.3, 0.5, 0.3, 0.5, 0.5, 0.2]
+    # @belief(claim: "Learning archetype has high serotonin (0.7) and oxytocin (0.6) — contentment and social bonding support reflective processing", verified: 2026-03-28, expires: 2026-06-28, confidence: 0.45, severity: low)
+    learning: [0.3, 0.5, 0.5, 0.7, 0.6, 0.4]
+    # @belief(claim: "Control archetype uses uniform 0.5 baseline across all hormones — neutral state suits orchestration without bias", verified: 2026-03-28, expires: 2026-06-28, confidence: 0.50, severity: low)
+    control: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
+
+  # Circuit breakers
+  circuit_breakers:
+    # @belief(claim: "0.3 max hormone change per cycle prevents destabilizing oscillation while allowing meaningful behavioral shifts", verified: 2026-03-28, expires: 2026-06-28, confidence: 0.55, severity: medium)
+    max_change_per_cycle: 0.3
+    # @belief(claim: "1.0 hormone ceiling is the natural maximum — no biological neuromodulator exceeds full saturation", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.90, severity: medium)
+    ceiling: 1.0
+    # @belief(claim: "0.0 hormone floor is the natural minimum — no neuromodulator goes negative", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.90, severity: medium)
+    floor: 0.0
+    # @belief(claim: "Reset after 3 cycles at ceiling/floor prevents stuck-at-extreme behavior that would make hormones meaningless", verified: 2026-03-28, expires: 2026-06-28, confidence: 0.55, severity: medium)
+    consecutive_extreme_reset: 3  # Reset after 3 cycles at ceiling/floor
+
+  # Decay rates (per dispatch cycle)
+  decay:
+    # @belief(claim: "Adrenaline decays fastest (0.7) — urgency signals should be transient and not persist across task boundaries", verified: 2026-03-28, expires: 2026-06-28, confidence: 0.50, severity: low)
+    adrenaline: 0.7
+    # @belief(claim: "Dopamine decays at 0.8 — motivation fades moderately, requiring periodic reinforcement from task completion", verified: 2026-03-28, expires: 2026-06-28, confidence: 0.45, severity: low)
+    dopamine: 0.8
+    # @belief(claim: "Cortisol decays at 0.85 — stress persists longer than urgency, reflecting real-world psychophysiology", verified: 2026-03-28, expires: 2026-06-28, confidence: 0.45, severity: low)
+    cortisol: 0.85
+    # @belief(claim: "Serotonin decays slowest (0.95) among stress hormones — contentment is the most persistent baseline state", verified: 2026-03-28, expires: 2026-06-28, confidence: 0.45, severity: low)
+    serotonin: 0.95
+    # @belief(claim: "Oxytocin decays at 0.9 — social bonding signals persist moderately, matching collaborative task continuity", verified: 2026-03-28, expires: 2026-06-28, confidence: 0.45, severity: low)
+    oxytocin: 0.9
+    # @belief(claim: "Norepinephrine decays at 0.75 — attention/focus signals are second-fastest to decay after adrenaline", verified: 2026-03-28, expires: 2026-06-28, confidence: 0.45, severity: low)
+    norepinephrine: 0.75
+
+# =============================================================================
+# MEMPALACE — Per-project memory identity
+# Set by 'echelon workspace init'. Never change once set for a given repo.
+# Two clones of the same repo should share the same wing name so they share
+# memory across test environments.
+# =============================================================================
+
+mempalace:
+  wing: ""   # Set by 'echelon workspace init' — do not edit manually
+
+# =============================================================================
+# =============================================================================
+# DEPLOY — Blue/green local CD
+# =============================================================================
+
+deploy:
+  # Set to false to skip all deploy infrastructure checks and post-merge deploy.
+  # Use when the project does not need echelon's local blue/green CD.
+  # Default: true
+  enabled: true
+
+  # Deployment type. Controls which infrastructure is used.
+  # [values: http | cli]  Default: http
+  # - http: Traefik reverse proxy, two long-lived containers (blue/green), curl health check
+  # - cli:  No Traefik, no containers — build → optional health check → tag → state pointer
+  type: http
+
+  # ── HTTP only ──────────────────────────────────────────────────────────────
+  # All apps share a single Traefik instance at :80 and are routed by path prefix:
+  #   http://localhost/{app-name}/
+  # Traefik auto-discovers containers via Docker labels — no restart needed for new apps.
+  #
+  # These are health-check ports (host-bound for curl). They must be unique across
+  # all registered apps. Convention: App1=3000/3001, App2=3100/3101, AppN=3N00/3N01.
+  # [range: 1024-65535] Must not conflict with other apps registered in ~/.speckit-deploy/
+
+  # Host port for the blue slot container (health check only)
+  blue_port: 3000
+
+  # Host port for the green slot container (health check only)
+  green_port: 3001
+
+  # NOTE: active_port removed. All apps share Traefik at :80.
+  # SPA note: if your app is a Vite/React/Next.js SPA, echelon.init will automatically
+  # set base/basePath to '/{app-name}/' in your framework config so assets load correctly.
+
+  # ── CLI only ───────────────────────────────────────────────────────────────
+  # Command run inside the candidate container to verify the build is healthy.
+  # Example: "myapp --version"   Empty string (default) = skip health check.
+  # health_check: ""
+
+  # Directory where the wrapper script is installed. Empty = no wrapper installed.
+  # Wrapper reads active tag at runtime — rollbacks are instant, no reinstall needed.
+  # Example: "~/.local/bin"
+  # install_path: ""
+
+  # ── Shared ─────────────────────────────────────────────────────────────────
+  # Path to Dockerfile relative to project root. Optional — defaults to "Dockerfile"
+  # The Dockerfile must: COPY the build output, install a server/entrypoint, EXPOSE port 80.
+  # Example minimal Dockerfile for a Vite/React app:
+  #   FROM nginx:alpine
+  #   COPY dist/ /usr/share/nginx/html/
+  #   EXPOSE 80
+  # dockerfile: Dockerfile
+
+# =============================================================================
+# STACKS — Opt-in technology profiles for generated apps and services
+# =============================================================================
+#
+# Default is empty, which means Echelon decides from requirements and repository
+# evidence. Add stack IDs only when you want to force a known implementation
+# path. Bundled examples:
+#   - statsperform-playbook       # Playbook UI components and tooling
+#   - statsperform-stark-webapp   # Stark Nx/Next.js web app; implies Playbook
+#   - statsperform-msa-service    # CAIC MSA FastAPI service; does not imply Stark
+#
+# Infrastructure capabilities such as Postgres, Kafka, and Flink should be
+# selected through their own stacks when those stacks exist.
+stacks:
+  selected: []
+  # Optional guard. When set, selected stacks must apply to at least one listed
+  # target archetype. Supported initial values include web_app, service, and
+  # api_service. Spec frontmatter can also declare target_archetypes.
+  target_archetypes: []
+
+# =============================================================================
+# HARNESS — Sandbox execution substrate (echelon delivery run / echelon delivery init)
+# =============================================================================
+#
+# Environment variables override all file settings:
+#   SPECKIT_HARNESS_<SECTION>_<KEY>=value
+#   e.g. SPECKIT_HARNESS_RESOURCE_LIMITS_MEMORY=8g
+
+harness:
+  # Implementation targets are declared in spec frontmatter, not here:
+  #   echelon spec run <description> --target <source-path>
+  #   echelon spec run <description> --target sources/<new-repo> --init
+
+  # Sandbox provider
+  # Phase 1: "docker" (production-ready)
+  # Phase 3 (planned): "e2b", "modal", "daytona"
+  provider: "docker"
+
+  # Docker-compatible CLI used by the docker provider: "docker" or "podman".
+  # Set by `ECHELON_CONTAINER_CLI=podman echelon delivery init` when using Podman.
+  container_cli: "docker"
+
+  # --- Docker Image ---
+
+  # Base image for the sandbox container.
+  # Unset = auto-resolve from target repo's devcontainer.json (recommended).
+  # base_image: "ubuntu:22.04"
+
+  # Pin the image to a specific digest for reproducibility.
+  # image_digest_pin: "sha256:abc123..."
+
+  # --- LLM Provider ---
+
+  # LLM provider used by Echelon commands.
+  # Overrides ECHELON_LLM env var when set.
+  # Build-capable CLIs: claude (default) | copilot | opencode | codex
+  # Artifact-only API provider: openai-compatible
+  # llm:
+  #   cli: claude
+  #   config_dir: ~/.claude-personal   # sets CLAUDE_CONFIG_DIR (claude only)
+  #   timeout_ms: 1200000              # 20 minutes
+  #
+  #   # OpenAI-compatible artifact-only provider example:
+  #   # cli: openai-compatible
+  #   # base_url: http://127.0.0.1:8000/v1
+  #   # model: local-model
+  #   # api_key_env: LOCAL_LLM_API_KEY
+  #   # api_key_file: ~/.omlx_token
+  #   # temperature: 0.2
+  #   # max_tokens: 8192
+  #   # features:
+  #   #   streaming: true
+  #   #   stream_preview: true
+  #   #   stream_preview_max_chars: 1200
+  #   #   stream_preview_max_lines: 12
+  #   #   progress_detail: normal  # normal | debug
+  #   #   stream_options: true
+  #   #   json_mode: false
+  #   #   structured_outputs: false
+  #   #   tool_calls: true
+  #   #   max_tool_rounds: 24
+  #   #   web_tools: false
+  #   #   web_timeout_s: 10
+  #   #   web_search_url: https://duckduckgo.com/html/
+  #   #   transcript: true
+  #   #   provider_transcript_dir: ""  # optional override; run dirs auto-detected
+  #   #   tool_result_compaction: true
+  #   #   compact_after_tool_results: 8
+  #   #   keep_recent_tool_results: 4
+  #   #   compact_tool_result_after_chars: 96000
+  #   #   compacted_result_chars: 2000
+  #   #   default_ignore_filters: true
+  #   #   ignore_globs:
+  #   #     - "**/generated/**"
+  #   #   ignore_extensions:
+  #   #     - ".lock"
+  #   #   reasoning_content: auto
+  #   #   reasoning_effort: false  # false | low | medium | high
+  #   tool_policy:
+  #     file_boundary: workspace
+  #     network_boundary: harness_allowlist
+  #     allow_unsafe_host_execution: false
+  #     # Required when allow_unsafe_host_execution is true. This re-enables
+  #     # CLI permission-bypass flags such as --dangerously-skip-permissions.
+  #     # `echelon workspace init --allow-unsafe-host-execution` writes this as
+  #     # a local override in .echelon/local.yml.
+  #     approval_reason: null
+
+  # --- Resource Limits ---
+
+  resource_limits:
+    memory: "4g"
+    cpu: 2.0
+    pids: 256
+    storage: "10g"
+
+  # --- Network Policy (Squid proxy) ---
+
+  network:
+    allowlist:
+      - "registry.npmjs.org"
+      - "pypi.org"
+      - "files.pythonhosted.org"
+      - "proxy.golang.org"
+      - "crates.io"
+      - "static.crates.io"
+      - "repo1.maven.org"
+      - "playwright.azureedge.net"
+      - "cdn.playwright.dev"
+    proxy_image: "ubuntu/squid:latest"
+
+  # Max bytes captured from sandbox stdout/stderr per command (10 MB)
+  buffer_limit_bytes: 10485760
+
+  # --- GitOps ---
+
+  ci_skip_tag: "[skip ci]"
+  ci_skip_enabled: true
+  # secrets_env_file: "secrets.env"
+  bind_mount_ack: false
+
+  # PR integration host: "github" | "gitlab" | "none"
+  pr_host: "none"
+
+  # Full verify-spec refresh policy. Full refreshes are expensive because they
+  # invoke the LLM fulfillment audit.
+  # - every_slice: old behavior; refresh after each passing build verification
+  # - milestone: refresh at normal milestone boundaries (default)
+  # - scoped: re-judge only deterministically impacted requirement rows, but
+  #   still require a full verify-spec before convergence or land
+  # - convergence_only: skip full refresh until task progress is complete enough
+  fulfillment:
+    refresh_policy: milestone
+
+  # --- Garbage Collection ---
+
+  gc:
+    worktree_max_age_hours: 24
+    container_max_age_hours: 1
+    backup_max_age_days: 7
+
+  # --- Visual Tests (Phase 2, Playwright) ---
+
+  visual_tests:
+    enabled: false
+    test_command: "npx playwright test --reporter=json"
+    serve_command: "npm run preview"
+    timeout_ms: 300000
+    screenshot_dir: "playwright-report"
+    max_iterations: 3
+
+  # --- App Runtime (brownfield browser/screenshot checks) ---
+  #
+  # Written by `echelon delivery init` only when Docker-backed startup is
+  # high-confidence. Leave disabled/absent for non-browser or unclear projects.
+  #
+  # Docker Compose example:
+  # app:
+  #   enabled: true
+  #   mode: docker_compose
+  #   compose_file: docker-compose.yml
+  #   service: web
+  #   url: http://localhost:3000
+  #
+  # Dockerfile example:
+  # app:
+  #   enabled: true
+  #   mode: dockerfile
+  #   dockerfile: Dockerfile
+  #   container_port: 3000
+  #   url: http://localhost:3000
+  #
+  # Command example (runs inside the harness sandbox/worktree):
+  # app:
+  #   enabled: true
+  #   mode: command
+  #   app: frontend
+  #   setup_commands:
+  #     - docker compose -f compose.db.yml up -d postgres
+  #   start_commands:
+  #     - npx nx dev frontend
+  #   stop_commands:
+  #     - docker compose -f compose.db.yml down
+  #     - npx nx reset
+  #   url: http://localhost:3000
+  #   readiness_timeout_ms: 120000
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Brownfield extraction (re-* commands)
+# ─────────────────────────────────────────────────────────────────────────────
+
+re:
+  # End-to-end execution goal. Resolved values are frozen into each run so
+  # continue/resume cannot reset accounting or silently change policy.
+  default_profile: balanced
+  profiles:
+    fast:
+      performance_target_minutes: 30
+      hard_active_minutes: 60
+      hard_token_limit: 1000000
+      max_domain_repairs: 1
+      max_source_cycles: 1
+      max_source_reanalysis: 1
+    balanced:
+      performance_target_minutes: 60
+      hard_active_minutes: 180
+      hard_token_limit: 5000000
+      max_domain_repairs: 3
+      max_source_cycles: 2
+      max_source_reanalysis: 2
+    high:
+      performance_target_minutes: 180
+      hard_active_minutes: 720
+      hard_token_limit: 15000000
+      max_domain_repairs: 5
+      max_source_cycles: 5
+      max_source_reanalysis: 5
+
+  # Extraction profile passed to run-analysis.sh. Default is intentionally deep;
+  # use "survey" only when you explicitly want a cheaper first pass.
+  profile: full
+
+
+  # ── Analysis ──────────────────────────────────────────────────────────────
+  # Analysis scope - what to include/exclude
+  analysis:
+    # Glob patterns for files to include
+    include_patterns:
+      - "**/*"
+
+    # Glob patterns for files to exclude
+    exclude_patterns:
+      - "node_modules/**"
+      - "dist/**"
+      - "build/**"
+      - ".git/**"
+      - "vendor/**"
+      - "__pycache__/**"
+      - "*.pyc"
+      - "*.min.js"
+      - "*.min.css"
+      - "*.map"
+
+    # Skip files larger than this (KB)
+    max_file_size_kb: 500
+
+  # Source file extensions by language
+  # Used by verify, expand, and other commands to enumerate source files
+  # Commands will build glob patterns like **/*.{ext} for each extension
+  source_extensions:
+    typescript: [ts, tsx]
+    javascript: [js, jsx, mjs, cjs]
+    python: [py, pyw]
+    go: [go]
+    rust: [rs]
+    java: [java]
+    kotlin: [kt, kts]
+    csharp: [cs]
+    vb: [vb, bas, frm, cls]  # Covers both VB6 and VB.NET (shared .vb extension)
+    ruby: [rb, rake]
+    php: [php]
+    swift: [swift]
+    c: [c, h]
+    cpp: [cpp, hpp, cc, hh, cxx, hxx]
+    perl: [pl, pm]
+    delphi: [pas, dpr, dfm]
+    plsql: [sql, pls, pkb, pks]
+    groovy: [groovy, gvy]
+    terraform: [tf, tfvars]
+    opentofu: [tf, tfvars]
+
+  # Which sources to analyze
+  sources:
+    # Source code files
+    code: true
+
+    # Test files
+    tests: true
+
+    # Documentation (README, docs/, comments)
+    docs: true
+
+    # Git commit history
+    git_history: true
+
+    # Number of commits to analyze
+    git_history_limit: 2500
+
+    # CI/CD configs (GitHub Actions, GitLab CI, etc.)
+    ci_cd: true
+
+    # Deployment configs (Docker, k8s, terraform)
+    deployment: true
+
+    # External integrations (databases, APIs, queues)
+    integrations: true
+
+  # Analysis depth - how deeply to read source code
+  # Controls the richness of extracted specifications
+  depth:
+    # Level: metadata, signatures, logic, full
+    #
+    # metadata (fastest, least context):
+    #   - File structure and counts
+    #   - Package dependencies
+    #   - Git history and hotspots
+    #   - No source code reading
+    #
+    # signatures (moderate):
+    #   - Everything in metadata, plus:
+    #   - Function/method signatures and parameters
+    #   - Class/interface definitions
+    #   - Public API surface
+    #   - Type definitions and enums
+    #
+    # logic (recommended for migrations):
+    #   - Everything in signatures, plus:
+    #   - Function bodies for business logic
+    #   - Validation rules and constraints
+    #   - Error handling patterns
+    #   - Data transformation flows
+    #
+    # full (slowest, most context):
+    #   - Everything in logic, plus:
+    #   - Complete source file reading
+    #   - Deep data flow analysis
+    #   - All edge cases from code paths
+    #   - Test assertion extraction
+    #
+    level: full
+
+    # Maximum lines to read per file
+    # Default is intentionally high for brownfield reverse engineering.
+    # Lower this only when a specific workspace repeatedly exceeds context limits.
+    max_lines_per_file: 5000
+
+    # Context management strategy (critical for large codebases)
+    #
+    # progressive (recommended):
+    #   - Process one domain at a time
+    #   - Extract structured data immediately after reading
+    #   - Discard raw source before moving to next domain
+    #   - Allows higher max_lines_per_file (1000-2000)
+    #
+    # hold_all:
+    #   - Keep all source in context during extraction
+    #   - Faster for small codebases
+    #   - Requires lower max_lines_per_file (300-500)
+    #
+    context_management: progressive
+
+    # Priority files to always read deeply (glob patterns)
+    # These are read first within each domain
+    priority_patterns:
+      - "**/main.*"
+      - "**/index.*"
+      - "**/app.*"
+      - "**/*Service.*"
+      - "**/*Controller.*"
+      - "**/*Handler.*"
+
+  # Language-specific extraction patterns
+  # Maps code patterns to semantic meaning for richer spec extraction
+  # Format: "pattern" → "semantic meaning"
+  language_patterns:
+    java:
+      annotations:
+        "@Entity": "JPA/Hibernate persistence entity"
+        "@Table": "Database table mapping"
+        "@Service": "Spring service component"
+        "@Repository": "Spring data access component"
+        "@Controller": "Spring MVC controller"
+        "@RestController": "Spring REST API endpoint"
+        "@Transactional": "Transaction boundary"
+        "@Autowired": "Dependency injection point"
+        "@Valid": "Input validation required"
+        "@NotNull": "Required field constraint"
+        "@RequestMapping": "API route definition"
+        "@Scheduled": "Scheduled task/cron job"
+      patterns:
+        "extends JpaRepository": "Spring Data repository"
+        "implements Serializable": "Serializable entity"
+        "throw new.*Exception": "Error scenario"
+
+    typescript:
+      decorators:
+        "@Injectable": "NestJS/Angular service"
+        "@Controller": "NestJS controller"
+        "@Module": "NestJS module boundary"
+        "@Entity": "TypeORM entity"
+        "@Column": "Database column"
+        "@Get|@Post|@Put|@Delete": "REST endpoint"
+        "@Body|@Param|@Query": "Request parameter"
+        "@UseGuards": "Authentication/authorization"
+      patterns:
+        "z.object": "Zod validation schema"
+        "z.string|z.number|z.boolean": "Zod type validation"
+        "export interface": "Type definition"
+        "export type": "Type alias"
+        "async function": "Async operation"
+        "throw new": "Error scenario"
+
+    javascript:
+      patterns:
+        "module.exports": "Module export"
+        "require\\(": "Module import"
+        "express\\.Router": "Express route"
+        "app\\.get|app\\.post": "Express endpoint"
+        "mongoose\\.Schema": "MongoDB schema"
+        "sequelize\\.define": "Sequelize model"
+        "throw new Error": "Error scenario"
+        "Promise\\.": "Async operation"
+
+    python:
+      decorators:
+        "@app\\.route|@router\\.": "Flask/FastAPI route"
+        "@pytest\\.": "Pytest decorator"
+        "@classmethod": "Class method"
+        "@staticmethod": "Static method"
+        "@property": "Property accessor"
+        "@dataclass": "Data class"
+        "@abstractmethod": "Abstract method"
+      patterns:
+        "def __init__": "Constructor"
+        "class.*:": "Class definition"
+        "async def": "Async function"
+        "raise.*Error|raise.*Exception": "Error scenario"
+        "try:.*except": "Exception handling"
+        "with.*as": "Context manager"
+        "import.*from|from.*import": "Module import"
+        "SQLAlchemy|Base\\.metadata": "SQLAlchemy ORM"
+        "pydantic\\.BaseModel": "Pydantic model"
+
+    go:
+      patterns:
+        "func.*\\(.*\\).*\\{": "Function definition"
+        "type.*struct": "Struct definition"
+        "type.*interface": "Interface definition"
+        "func.*ServeHTTP": "HTTP handler"
+        "http\\.HandleFunc|mux\\.": "HTTP route"
+        "go func": "Goroutine"
+        "chan\\s": "Channel definition"
+        "select\\s*\\{": "Channel select"
+        "defer": "Deferred execution"
+        "panic|recover": "Error handling"
+        "sql\\.Open|gorm\\.": "Database access"
+
+    rust:
+      attributes:
+        "#\\[derive\\(": "Derive macro"
+        "#\\[test\\]": "Test function"
+        "#\\[async_trait\\]": "Async trait"
+        "#\\[tokio::main\\]": "Async main"
+        "#\\[serde\\(": "Serialization config"
+      patterns:
+        "fn.*->": "Function definition"
+        "impl.*for": "Trait implementation"
+        "pub struct": "Public struct"
+        "pub enum": "Public enum"
+        "async fn": "Async function"
+        "Result<|Option<": "Result/Option type"
+        "unwrap\\(|expect\\(": "Error unwrap"
+        "match.*\\{": "Pattern matching"
+        "tokio::|async_std::": "Async runtime"
+
+    kotlin:
+      annotations:
+        "@Entity": "JPA entity"
+        "@Service|@Component": "Spring component"
+        "@RestController|@Controller": "Spring controller"
+        "@GetMapping|@PostMapping": "REST endpoint"
+        "@Transactional": "Transaction boundary"
+        "@Inject|@Autowired": "Dependency injection"
+      patterns:
+        "fun.*:": "Function definition"
+        "class.*:": "Class definition"
+        "data class": "Data class"
+        "sealed class": "Sealed class"
+        "suspend fun": "Coroutine function"
+        "object.*:": "Singleton object"
+        "companion object": "Companion object"
+        "throw.*Exception": "Error scenario"
+
+    swift:
+      attributes:
+        "@objc": "Objective-C interop"
+        "@IBOutlet|@IBAction": "Interface Builder"
+        "@Published": "SwiftUI observable"
+        "@State|@Binding": "SwiftUI state"
+        "@MainActor": "Main thread"
+      patterns:
+        "func.*->": "Function definition"
+        "class.*:": "Class definition"
+        "struct.*:": "Struct definition"
+        "protocol.*:": "Protocol definition"
+        "enum.*:": "Enum definition"
+        "async.*throws": "Async throwing function"
+        "try.*catch|do.*catch": "Error handling"
+        "guard.*else": "Guard statement"
+        "Task\\s*\\{": "Async task"
+
+    c:
+      patterns:
+        "int main\\(": "Entry point"
+        "void.*\\(": "Void function"
+        "struct.*\\{": "Struct definition"
+        "typedef.*struct": "Type definition"
+        "enum.*\\{": "Enum definition"
+        "#include": "Header include"
+        "#define": "Macro definition"
+        "malloc|calloc|realloc": "Memory allocation"
+        "free\\(": "Memory deallocation"
+        "FILE\\s*\\*": "File I/O"
+        "pthread_": "Thread operation"
+
+    csharp:
+      attributes:
+        "[HttpGet]|[HttpPost]|[HttpPut]|[HttpDelete]": "ASP.NET API endpoint"
+        "[Route]": "API route definition"
+        "[Authorize]": "Authorization required"
+        "[Required]": "Required field validation"
+        "[Table]": "Entity Framework table mapping"
+        "[Key]": "Primary key"
+        "[ForeignKey]": "Foreign key relationship"
+        "[DbContext]": "EF database context"
+        "[Inject]": "Dependency injection"
+      patterns:
+        "public class.*Controller": "MVC/API controller"
+        "public interface I.*": "Interface definition"
+        "Task<": "Async operation"
+        "throw new.*Exception": "Error scenario"
+
+    vb:  # Visual Basic 6 / VBA / VB.NET (shared .vb extension)
+      attributes:
+        "<HttpGet>|<HttpPost>": "ASP.NET endpoint (VB.NET)"
+        "<Required>": "Validation attribute (VB.NET)"
+        "<Authorize>": "Authorization (VB.NET)"
+      patterns:
+        # VB6/VBA patterns
+        "Public Sub": "Public procedure"
+        "Public Function": "Public function"
+        "Private Sub": "Private procedure"
+        "Dim.*As": "Variable declaration"
+        "Set.*= New": "Object instantiation"
+        "On Error": "Error handling"
+        "DoCmd\\.": "Access command"
+        "Recordset": "Database access"
+        "Connection": "Database connection"
+        # VB.NET patterns
+        "Public Class": "Class definition"
+        "Public Interface": "Interface definition"
+        "Inherits": "Inheritance"
+        "Implements": "Interface implementation"
+        "Async Function": "Async operation"
+        "Throw New": "Error scenario"
+
+    php:
+      annotations:
+        "#\\[Route\\]": "PHP 8 route attribute"
+        "@Route": "Symfony route annotation"
+        "@ORM\\\\Entity": "Doctrine entity"
+        "@ORM\\\\Column": "Doctrine column"
+        "@Assert\\\\": "Symfony validation"
+        "@Inject": "Dependency injection"
+      patterns:
+        "class.*Controller": "Controller class"
+        "class.*Service": "Service class"
+        "class.*Repository": "Repository class"
+        "public function": "Public method"
+        "throw new": "Error scenario"
+        "->validate": "Validation call"
+
+    perl:
+      patterns:
+        "package": "Module definition"
+        "sub": "Subroutine definition"
+        "use strict": "Strict mode"
+        "use warnings": "Warnings enabled"
+        "use.*qw": "Module import"
+        "my \\$": "Variable declaration"
+        "DBI->connect": "Database connection"
+        "prepare.*execute": "SQL execution"
+        "die|croak": "Error scenario"
+        "eval \\{": "Exception handling"
+
+    delphi:
+      patterns:
+        "TForm": "UI Form class"
+        "TDataModule": "Data module"
+        "TFrame": "UI Frame component"
+        "procedure.*\\(": "Procedure definition"
+        "function.*:": "Function definition"
+        "property.*read.*write": "Property definition"
+        "TADOQuery|TQuery": "Database query"
+        "TADOConnection": "Database connection"
+        "raise": "Exception raise"
+        "try.*except": "Exception handling"
+        "published": "Published property (UI binding)"
+
+    plsql:
+      patterns:
+        "CREATE PROCEDURE": "Stored procedure"
+        "CREATE FUNCTION": "Stored function"
+        "CREATE PACKAGE": "Package definition"
+        "CREATE TRIGGER": "Database trigger"
+        "CREATE TABLE": "Table definition"
+        "CURSOR": "Cursor definition"
+        "EXCEPTION": "Exception handler"
+        "RAISE_APPLICATION_ERROR": "Custom error"
+        "COMMIT|ROLLBACK": "Transaction control"
+        "SELECT.*INTO": "Query into variable"
+
+    terraform:
+      patterns:
+        "resource": "Infrastructure resource"
+        "data": "Data source lookup"
+        "variable": "Input variable"
+        "output": "Output value"
+        "module": "Module reference"
+        "provider": "Provider configuration"
+        "locals": "Local values"
+        "depends_on": "Explicit dependency"
+
+    opentofu:
+      # Same patterns as Terraform (fork)
+      patterns:
+        "resource": "Infrastructure resource"
+        "data": "Data source lookup"
+        "variable": "Input variable"
+        "output": "Output value"
+        "module": "Module reference"
+        "provider": "Provider configuration"
+
+    cpp:
+      patterns:
+        "class.*public": "Class definition"
+        "virtual": "Virtual method (polymorphism)"
+        "override": "Method override"
+        "template<": "Template definition"
+        "namespace": "Namespace definition"
+        "#include": "Header include"
+        "throw": "Exception throw"
+        "try.*catch": "Exception handling"
+        "std::": "Standard library usage"
+        "unique_ptr|shared_ptr": "Smart pointer"
+
+    groovy:
+      annotations:
+        "@Grab": "Dependency grab"
+        "@Service": "Spring service"
+        "@Controller": "Spring controller"
+        "@Transactional": "Transaction boundary"
+      patterns:
+        "def": "Dynamic variable/method"
+        "class.*extends": "Class inheritance"
+        "class.*implements": "Interface implementation"
+        "pipeline \\{": "Jenkins pipeline"
+        "stage\\(": "Pipeline stage"
+        "steps \\{": "Pipeline steps"
+        "throw new": "Error scenario"
+
+    ruby:
+      patterns:
+        "class.*<": "Class inheritance"
+        "module": "Module definition"
+        "def": "Method definition"
+        "attr_accessor|attr_reader": "Attribute accessor"
+        "has_many|belongs_to|has_one": "ActiveRecord association"
+        "validates": "ActiveRecord validation"
+        "before_action|after_action": "Controller callback"
+        "scope :": "ActiveRecord scope"
+        "raise": "Exception raise"
+        "rescue": "Exception handling"
+        "render": "View rendering"
+
+  # Output settings
+  output:
+    # Directory for generated artifacts (relative to project root)
+    # Specs use NNN-re-{domain} naming (e.g., 000-re-overview, 003-re-core-framework)
+    # which makes them identifiable without a separate subdirectory
+    directory: ".specify/echelon/re"
+
+    # Generate spec.md
+    generate_spec: true
+
+    # Generate plan.md
+    generate_plan: true
+
+    # Generate tasks.md
+    generate_tasks: true
+
+    # Keep intermediate analysis artifacts
+    keep_analysis_artifacts: true
+
+  # Workflow settings
+  workflow:
+    # Pause between phases for review
+    pause_between_phases: false
+
+    # Require confirmation before each phase
+    require_confirmation: false
+
+    # Coverage threshold for every refreshed source (0-100).
+    # A workspace cannot be complete while any refreshed source is below this.
+    coverage_threshold: 99
+
+    # Resolution threshold for validate loop (0-100)
+    # Loop repeats until this percentage of findings are auto-resolved
+    resolution_threshold: 99
+
+    # Max iterations for validate loop
+    # Stops after this many iterations even if threshold not met
+    max_validate_iterations: 5
+
+    # Bounded source-local convergence. A source follows
+    # analyze -> specify/repair -> measure until it passes or carries explicit
+    # quality debt. These are independently persisted per active RE run.
+    max_source_cycles: 5
+    max_domain_repairs: 5
+    max_source_reanalysis: 5
+
+  # Polyrepo settings - for analyzing multiple repos under a top-level directory
+  polyrepo:
+    # Auto-detection: 'auto' detects based on directory structure,
+    # 'true' forces polyrepo mode, 'false' forces single-repo
+    enabled: auto
+
+    # Discovery scope: immediate children only
+    discovery: flat
+
+    # Exclude directories from auto-discovery
+    exclude: []
+    #  - docs
+    #  - scripts
+
+    # Override: only include these directories (disables auto-discovery)
+    include: []
+    #  - repo-a
+    #  - repo-b
+
+    # Per-repo overrides (key = directory name)
+    # Each repo can override depth and analysis settings
+    repos: {}
+    #  heavy-cpp-repo:
+    #    depth:
+    #      level: signatures
+    #    analysis:
+    #      exclude_patterns:
+    #        - "test-fixtures/**"
+
+  # Environment variable overrides (for re-* commands):
+  # ECHELON_CFG_RE_ANALYSIS_MAX_FILE_SIZE_KB
+  # ECHELON_CFG_RE_SOURCES_GIT_HISTORY_LIMIT
+  # ECHELON_CFG_RE_OUTPUT_DIRECTORY

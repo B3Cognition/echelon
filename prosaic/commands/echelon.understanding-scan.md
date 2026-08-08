@@ -1,5 +1,5 @@
 ---
-name: speckit.echelon.understanding-scan
+name: echelon.understanding-scan
 description: Scan spec for 31 requirements quality metrics with quality gates
 execution: command
 tools: full
@@ -55,7 +55,7 @@ if [ -z "$SPEC_PATH" ]; then
 fi
 
 if [ ! -f "$SPEC_PATH" ]; then
-  echo "No spec.md found. Provide a path: /speckit.echelon.understanding-scan path/to/spec.md"
+  echo "No spec.md found. Provide a path: /echelon.understanding-scan path/to/spec.md"
   exit 1
 fi
 

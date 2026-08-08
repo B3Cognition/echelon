@@ -1,0 +1,330 @@
+# workflow/journal-entry-types.yaml
+# Canonical registry of all valid reasoning-journal entry types.
+# Agents return entries of these types in their echelon_result block.
+# echelon.commander (COMMANDER) assigns id and timestamp before writing.
+#
+# Adding a new type: add it here first, then update the agent prompt.
+# Removing a type: mark deprecated: true — never delete (journal entries are permanent).
+
+schema_version: 1
+
+types:
+
+  # --- Discovery / Exploration ---
+  insight:
+    description: "An interpretive conclusion derived from analyzed evidence — use when the finding is an inference or synthesis, not a directly verifiable external fact"
+    agents: [echelon.scout]
+    required_data_fields: [artifact, section, reasoning, confidence, evidence_grade]
+    optional_data_fields: [implications]
+
+  assumption:
+    description: "Something taken as true without proof"
+    agents: [echelon.scout]
+    required_data_fields: [artifact, section, reasoning, validation_method]
+
+  evidence:
+    description: "A finding with an externally verifiable source (code, official docs, measured benchmark) — use when the finding can be confirmed independently of the agent's reasoning"
+    agents: [echelon.scout]
+    required_data_fields: [artifact, section, reasoning, confidence, evidence_grade]
+
+  challenge:
+    description: "A WHY-agent challenge to an assumption or claim"
+    agents: [echelon.sage]
+    required_data_fields: [artifact, section, reasoning, confidence, severity, action_required]
+    optional_data_fields: [references]
+
+  quality_check:
+    description: "Controller-certified quality gate scores interpreted by WHY agent"
+    agents: [echelon.sage]
+    required_data_fields: [pass, scores, issues]
+
+  decision:
+    description: "A significant agent decision with rationale"
+    agents: [echelon.cartographer, echelon.gatekeeper, echelon.architect, echelon.orchestrator, echelon.sentinel, echelon.advocate, echelon.benchmark, echelon.oracle, echelon.maverick, echelon.sage, echelon.scout]
+    required_data_fields: [artifact, section, reasoning, rationale]
+    optional_data_fields: [alternatives_considered, confidence]
+
+  # --- Architecture ---
+  adr_self_check:
+    description: "echelon.architect (ARCHITECT) ADR consistency self-check result — echelon.auditor (AUDITOR) FINALIZE parsing depends on this type name (FR-INH-006)"
+    agents: [echelon.architect]
+    required_data_fields: [adr_id, never_rule_result, consistency_result]
+    optional_data_fields: [concerns]
+
+  # --- Feasibility ---
+  assessment:
+    description: "echelon.gatekeeper (GATEKEEPER) feasibility or implementability assessment"
+    agents: [echelon.gatekeeper]
+    required_data_fields: [verdict, rationale, scope_notes]
+    optional_data_fields: [risk_flags, deferred_items]
+
+  # --- Build ---
+  self_check:
+    description: "echelon.implementer (IMPLEMENTER) inter-step self-check — enables echelon.auditor (AUDITOR) FINALIZE parsing (FR-INH-006)"
+    agents: [echelon.implementer]
+    required_data_fields: [task_id, check_type, result]
+    optional_data_fields: [concerns]
+
+  implementation_decision:
+    description: "Significant implementation decision made by echelon.implementer (IMPLEMENTER)"
+    agents: [echelon.implementer]
+    required_data_fields: [task_id, artifact, section, reasoning]
+
+  compliance_finding:
+    description: "SPEC_GUARD requirement compliance finding"
+    agents: [echelon.spec-guard]
+    required_data_fields: [task_id, verdict, requirements_checked, failures]
+
+  review_finding:
+    description: "CODE_REVIEWER task review summary — issues and strengths found"
+    agents: [echelon.code-reviewer]
+    required_data_fields: [task_id, issues, strengths]
+    optional_data_fields: [adr_violations, constitution_violations]
+
+  test_quality_finding:
+    description: "TEST_GUARDIAN test quality finding"
+    agents: [echelon.test-guardian]
+    required_data_fields: [task_id, verdict, coverage_assessment]
+    optional_data_fields: [missing_cases]
+
+  integration_finding:
+    description: "echelon.integrator (INTEGRATOR) phase checkpoint result"
+    agents: [echelon.integrator]
+    required_data_fields: [components_checked, failures]
+    optional_data_fields: [phase_group]
+
+  implementation_complete:
+    description: "echelon.implementer (IMPLEMENTER) task completion record — files changed, tests passing"
+    agents: [echelon.implementer]
+    required_data_fields: [task_id, files_changed, tests_passing]
+
+  progress_update:
+    description: "PROGRESS_TRACKER velocity and schedule drift record for an iteration"
+    agents: [echelon.progress-tracker]
+    required_data_fields: [iteration, velocity, drift_days]
+
+  visual_check:
+    description: "VISUAL_VALIDATOR screenshot comparison result for UI components"
+    agents: [echelon.visual-validator]
+    required_data_fields: [components_checked, failures]
+
+  debug_finding:
+    description: "echelon.debugger (DEBUGGER) root cause analysis"
+    agents: [echelon.debugger]
+    required_data_fields: [task_id, root_cause, fix_applied]
+
+  change_assessment:
+    description: "CHANGE_CONTROLLER scope change assessment"
+    agents: [echelon.change-controller]
+    required_data_fields: [change_description, verdict, reentry_target]
+
+  build_progress:
+    description: "PROGRESS_TRACKER effort and drift record"
+    agents: [echelon.progress-tracker]
+    required_data_fields: [task_id, effort_recorded, drift_detected]
+
+  verification_result:
+    description: "echelon.verification (VERIFICATION) final coverage check result"
+    agents: [echelon.verification]
+    required_data_fields: [coverage_pct, gaps]
+    optional_data_fields: [requirements_traced, verdict]
+
+  # --- echelon.commander (COMMANDER) internal ---
+  init_knowledge_read:
+    description: "KB files read at run init"
+    agents: [echelon.commander]
+    required_data_fields: [files_read, files_absent, cold_start]
+
+  cold_start_warning:
+    description: "No real feedback data — proxy-estimated calibration"
+    agents: [echelon.commander]
+    required_data_fields: [message]
+
+  confidence_thresholds_written:
+    description: "echelon.commander (COMMANDER) wrote confidence-thresholds.yaml"
+    agents: [echelon.commander]
+    required_data_fields: [path, domains_count]
+
+  belief_gate_triggered:
+    description: "Belief freshness check found stale beliefs"
+    agents: [echelon.commander]
+    required_data_fields: [exit_code, recommended_action, stale_beliefs]
+
+  belief_fallback_applied:
+    description: "Conservative fallback applied for stale belief"
+    agents: [echelon.commander]
+    required_data_fields: [belief_id, config_key, fallback_value]
+
+  belief_invalidated:
+    description: "echelon.commander (COMMANDER) recorded that echelon.investigator (INVESTIGATOR) invalidated a previously held belief"
+    agents: [echelon.commander]
+    required_data_fields: [belief_id, claim, reason]
+
+  dependency_failure:
+    description: "Required dependency unavailable — fallback mode active"
+    agents: [echelon.commander]
+    required_data_fields: [dependency, phase, fallback_mode]
+
+  validator_dispatch:
+    description: "echelon.validator (VALIDATOR) dispatched (exactly once per build run)"
+    agents: [echelon.commander]
+    required_data_fields: [verdict, doubts]
+
+  routing_decision:
+    description: "echelon.commander (COMMANDER) routing decision"
+    agents: [echelon.commander]
+    required_data_fields: [from_phase, to_phase, reason, evoi_score]
+    optional_data_fields: [alternatives_rejected]
+
+  phase_transition:
+    description: "Phase transition executed"
+    agents: [echelon.commander]
+    required_data_fields: [from_phase, to_phase, trigger_reason]
+
+  phase_complete:
+    description: "Phase or RE extraction step completed and produced its expected artifacts"
+    agents: [echelon.commander, echelon.re-analyzer, echelon.re-specifier, echelon.re-verifier, echelon.re-expander, echelon.re-validator, echelon.re-checklister, echelon.re-constituter, echelon.re-planner, echelon.re-tasker]
+    required_data_fields: [summary]
+    optional_data_fields: [artifacts, domains]
+
+  state_contract_warning:
+    description: "Harness quarantined undeclared agent reporting fields instead of mutating squad state"
+    agents: [echelon.commander]
+    required_data_fields: [dropped_keys, action, reason]
+
+  convergence_check:
+    description: "Convergence detection result"
+    agents: [echelon.commander]
+    required_data_fields: [iteration, delta, converged, consecutive_passes]
+
+  conflict_resolution:
+    description: "Conflict between agents resolved via Toulmin model"
+    agents: [echelon.commander]
+    required_data_fields: [agents_in_conflict, winner, rejected_alternative, resolution_reason]
+
+  budget_exhausted:
+    description: "Token budget exhausted — force finalize triggered"
+    agents: [echelon.commander]
+    required_data_fields: [used_tokens, budget_tokens, phase]
+
+  index_rebuilt:
+    description: "Journal index rebuilt from full journal scan (recovery)"
+    agents: [echelon.commander]
+    required_data_fields: [entries_scanned, reason]
+
+  endocrine_budget_trigger:
+    description: "Budget pressure adrenaline broadcast triggered"
+    agents: [echelon.commander]
+    required_data_fields: [budget_consumed_ratio, boost_applied]
+
+  endocrine_gate_pass:
+    description: "Quality gate passed — endocrine signal applied"
+    agents: [echelon.commander]
+    required_data_fields: [agent, phase]
+
+  endocrine_gate_fail:
+    description: "Quality gate failed — endocrine signal applied"
+    agents: [echelon.commander]
+    required_data_fields: [agent, phase]
+
+  endocrine_quality_improvement:
+    description: "Quality improved >= 0.05 — endocrine signal applied"
+    agents: [echelon.commander]
+    required_data_fields: [agent, delta]
+
+  endocrine_quality_regression:
+    description: "Quality regressed >= 0.05 — endocrine signal applied"
+    agents: [echelon.commander]
+    required_data_fields: [agent, delta]
+
+  # --- Control ---
+  prediction:
+    description: "echelon.tracker (TRACKER) intent prediction"
+    agents: [echelon.tracker]
+    required_data_fields: [predicted_intent, confidence, evidence]
+
+  social_prediction_error:
+    description: "echelon.tracker (TRACKER) prediction error — model update needed"
+    agents: [echelon.tracker]
+    required_data_fields: [expected, observed, error_magnitude]
+
+  tracker_model_update_requested:
+    description: "echelon.tracker (TRACKER) requests a model update from echelon.mirror (MIRROR)"
+    agents: [echelon.tracker]
+    required_data_fields: [reason]
+
+  constitution_created:
+    description: "echelon.chief (CHIEF) created or amended the project constitution"
+    agents: [echelon.chief]
+    required_data_fields: [mode, constitution_path, repair_attempted]
+
+  # --- Learning ---
+  calibration_update:
+    description: "echelon.auditor (AUDITOR) accuracy calibration update"
+    agents: [echelon.auditor]
+    required_data_fields: [domain, prior_accuracy, new_accuracy, sample_size]
+
+  confidence_thresholds_refreshed:
+    description: "echelon.auditor (AUDITOR) triggered confidence threshold refresh"
+    agents: [echelon.auditor]
+    required_data_fields: [domains_updated]
+
+  hallucination_risk_flag:
+    description: "echelon.auditor (AUDITOR) flagged hallucination risk for a domain"
+    agents: [echelon.auditor]
+    required_data_fields: [domain, risk_level, evidence]
+
+  pattern_extracted:
+    description: "echelon.mirror (MIRROR) extracted a reusable pattern from this run"
+    agents: [echelon.mirror]
+    required_data_fields: [pattern_id, pattern_summary, applicable_phases]
+
+  pattern_identified:
+    description: "echelon.veteran (VETERAN) or echelon.consolidator (CONSOLIDATOR) recognized existing patterns as relevant to this run and evaluated them for promotion — distinct from pattern_extracted (which creates new patterns)"
+    agents: [echelon.veteran, echelon.consolidator]
+    required_data_fields: [patterns_matched, pitfalls_flagged, confidence]
+
+  pitfall_extracted:
+    description: "echelon.mirror (MIRROR) extracted a pitfall from this run"
+    agents: [echelon.mirror]
+    required_data_fields: [pitfall_id, pitfall_summary, trigger_conditions]
+
+  quality_trajectory:
+    description: "echelon.adaptive (ADAPTIVE) cross-run quality trajectory assessment"
+    agents: [echelon.adaptive]
+    required_data_fields: [run_ids_compared, trajectory, regression_detected]
+
+  adaptation_triggered:
+    description: "echelon.adaptive (ADAPTIVE) detected a quality trajectory shift and recommends a process adaptation"
+    agents: [echelon.adaptive]
+    required_data_fields: [trajectory, iteration_delta, action_recommended]
+
+  retrospective:
+    description: "echelon.mirror (MIRROR) end-of-run synthesis — patterns found, recommendations, agent performance notes"
+    agents: [echelon.mirror]
+    required_data_fields: [patterns_found, recommendations, agent_performance_notes]
+
+  internalization_score:
+    description: "echelon.internalizer (INTERNALIZER) computed internalization metric scores for a set of agents"
+    agents: [echelon.internalizer]
+    required_data_fields: [overall_score, metrics, gaps]
+
+  reality_check:
+    description: "echelon.realist (REALIST) reality check finding"
+    agents: [echelon.realist]
+    required_data_fields: [artifact, finding, grounded_value]
+
+  # --- Validation ---
+  schema_warning:
+    description: "Emitted by journal-append helper when the validator detects a schema violation (DR-001 warn-then-allow)"
+    agents: [echelon.commander]
+    required_data_fields: [violating_entry_id, violation_type, details]
+    optional_data_fields: [violating_entry_type]
+    # violation_type enum: missing_required_field, type_not_registered
+
+  # --- Unknown fallback ---
+  unknown:
+    description: "Entry with an unregistered type — written by echelon.commander (COMMANDER) with warning"
+    agents: [echelon.commander]
+    required_data_fields: [original_type, original_data, warning]
+    deprecated: false

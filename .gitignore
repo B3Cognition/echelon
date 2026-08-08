@@ -1,6 +1,10 @@
 *-config.local.yml
 .echelon/local.yml
 .echelon/runtime/
+.echelon/packages/
+.echelon/prosaic/
+.prosaic-manifest.json
+.prosaic-backups/
 .echelon/cache/
 .echelon/recovery-backups/
 .venv/

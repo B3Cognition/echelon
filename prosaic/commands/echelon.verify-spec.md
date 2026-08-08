@@ -1,5 +1,5 @@
 ---
-name: speckit.echelon.verify-spec
+name: echelon.verify-spec
 description: Read-only fulfillment audit for an existing spec against the current
   implementation
 ---

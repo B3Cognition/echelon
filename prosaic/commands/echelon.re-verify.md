@@ -1,5 +1,5 @@
 ---
-name: speckit.echelon.re-verify
+name: echelon.re-verify
 description: Verify spec coverage against codebase and identify orphan files
 ---
 ## Role

@@ -1798,6 +1798,51 @@ def test_re_prompt_appends_phase_and_canonical_result_contract(tmp_path: Path) -
 
 
 @pytest.mark.unit
+def test_re_prompt_uses_prosaic_agent_with_runtime_assets(tmp_path: Path) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    runtime_root = _extension_root(tmp_path)
+    (runtime_root / "agents" / "re" / "analyzer.md").write_text(
+        "LEGACY ANALYZER\n", encoding="utf-8"
+    )
+    phase_path = runtime_root / "workflow" / "phases" / "re-extract-1-analyze.md"
+    phase_path.parent.mkdir(parents=True)
+    phase_path.write_text("RUNTIME PHASE\n", encoding="utf-8")
+    template_path = runtime_root / "templates" / "echelon-result-template.yaml"
+    template_path.parent.mkdir(parents=True)
+    template_path.write_text("RUNTIME CONTRACT\n", encoding="utf-8")
+    prosaic_subagents = tmp_path / "prosaic" / "subagents"
+    prosaic_subagents.mkdir(parents=True)
+    (prosaic_subagents / "echelon.re-analyzer.md").write_text(
+        "---\nmodel_tier: balanced\ntools: full\ncolor: orange\n---\n"
+        "PROSAIC ANALYZER\n",
+        encoding="utf-8",
+    )
+
+    controller = ReExtractionController(
+        provider=_ShallowSpecifierProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=runtime_root,
+        prosaic_subagents_dir=prosaic_subagents,
+    )
+
+    prompt = controller._prompt_for(
+        "re-extract-1-analyze", {}, controller._load_plan()
+    )
+
+    assert "PROSAIC ANALYZER" in prompt
+    assert "LEGACY ANALYZER" not in prompt
+    assert "model_tier: balanced" not in prompt
+    assert "RUNTIME PHASE" in prompt
+    assert "RUNTIME CONTRACT" in prompt
+    assert controller._agent_prompt_metadata("re-extract-1-analyze") == {
+        "model_tier": "balanced",
+        "tools": "full",
+        "color": "orange",
+    }
+
+
+@pytest.mark.unit
 def test_source_domain_prompt_injects_canonical_paths_and_exact_gate_findings(
     tmp_path: Path,
 ) -> None:

@@ -57,6 +57,7 @@ from echelon.telemetry.model import ExecutionSpan, TokenUsage
 from echelon.telemetry.store import TelemetryStore
 from harness.re_budget import evaluate_re_budget
 from harness.re_repair_packet import ReRepairFinding, ReRepairPacket
+from harness.prompt_markdown import read_prompt_markdown
 from harness.squad_executors import _canonical_echelon_result_contract
 
 
@@ -164,12 +165,18 @@ class ReExtractionController:
         project_root: Path,
         run_dir: Path,
         extension_root: Path,
+        prosaic_subagents_dir: Path | None = None,
     ) -> None:
         self._provider = provider
         self._project_root = project_root.resolve()
         self._run_dir = run_dir.resolve()
         self._run_re_dir = self._run_dir / "re"
         self._extension_root = extension_root.resolve()
+        self._prosaic_subagents_dir = (
+            prosaic_subagents_dir.resolve()
+            if prosaic_subagents_dir is not None
+            else None
+        )
         self._reported_source_id: str | None = None
         self._invocation_started_monotonic = 0.0
 
@@ -329,7 +336,7 @@ class ReExtractionController:
                     dispatch_kwargs["result_contract"] = self._result_contract_for_phase(
                         phase
                     )
-                prompt_metadata: dict[str, object] = {}
+                prompt_metadata = self._agent_prompt_metadata(phase)
                 if isinstance(target, dict) and target.get("kind") == "workspace-synthesis":
                     if (
                         getattr(
@@ -348,7 +355,9 @@ class ReExtractionController:
                         )
                     try:
                         self._clean_workspace_synthesis_sources(state, plan)
-                        prompt_metadata = self._prompt_metadata_for_target(plan, target)
+                        prompt_metadata.update(
+                            self._prompt_metadata_for_target(plan, target)
+                        )
                     except (OSError, ValueError, json.JSONDecodeError) as exc:
                         state["re_agent_result_detail"] = (
                             f"workspace synthesis canonical inputs are invalid: {exc}"
@@ -357,7 +366,9 @@ class ReExtractionController:
                             state, "re_workspace_synthesis_inputs_invalid"
                         )
                 elif getattr(self._provider, "supports_prompt_metadata", False):
-                    prompt_metadata = self._prompt_metadata_for_target(plan, target)
+                    prompt_metadata.update(
+                        self._prompt_metadata_for_target(plan, target)
+                    )
                 if (
                     prompt_metadata
                     and getattr(self._provider, "supports_prompt_metadata", False)
@@ -1774,8 +1785,8 @@ class ReExtractionController:
         semantic_target: dict[str, str] | None = None,
     ) -> str:
         agent = _PHASES[phase]
-        agent_path = self._extension_root / "agents" / "re" / f"{agent}.md"
-        agent_text = agent_path.read_text(encoding="utf-8")
+        agent_path = self._agent_path(agent)
+        agent_text = read_prompt_markdown(agent_path).body
         phase_path = self._extension_root / "workflow" / "phases" / _PHASE_SPECS[phase]
         phase_text = (
             phase_path.read_text(encoding="utf-8") if phase_path.is_file() else ""
@@ -1836,6 +1847,18 @@ class ReExtractionController:
             + self._phase_result_contract_prompt(phase)
             + _canonical_echelon_result_contract(self._extension_root)
         )
+
+    def _agent_path(self, agent: str) -> Path:
+        if self._prosaic_subagents_dir is None:
+            return self._extension_root / "agents" / "re" / f"{agent}.md"
+        agent_path = self._prosaic_subagents_dir / f"echelon.re-{agent}.md"
+        if not agent_path.is_file():
+            raise FileNotFoundError(f"Prosaic RE agent is missing: {agent_path}")
+        return agent_path
+
+    def _agent_prompt_metadata(self, phase: str) -> dict[str, object]:
+        """Return normalized provider metadata from the dispatched RE agent."""
+        return dict(read_prompt_markdown(self._agent_path(_PHASES[phase])).metadata)
 
     @staticmethod
     def _semantic_domain_inventory_prompt(target: dict[str, str]) -> str:

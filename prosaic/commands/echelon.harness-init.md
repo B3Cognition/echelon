@@ -1,5 +1,5 @@
 ---
-name: speckit.echelon.harness-init
+name: echelon.harness-init
 description: Initialize harness for a target repository — clone, config, Docker image
   build
 invocation: explicit
@@ -22,7 +22,7 @@ You are COMMANDER performing one-time delivery runtime initialization — clone 
 
 ## Overview
 
-One-time setup that clones a mirror of the workspace, detects its language and Docker base image, and writes `.echelon/config.yml`. Legacy workspaces may still read `.specify/extensions/echelon/echelon-config.yml` during migration. Run this before any delivery build invocation.
+One-time setup that clones a mirror of the workspace, detects its language and Docker base image, and writes `.echelon/config.yml`. Legacy workspaces may still read `.echelon/config.yml` during migration. Run this before any delivery build invocation.
 
 ---
 
@@ -55,7 +55,7 @@ If `.echelon/config.yml` exists, reuse it and update runtime-detection fields on
 ## Step 3: Run Init
 
 ```bash
-PYTHONPATH=.specify/extensions/echelon python3 -c "
+PYTHONPATH=.echelon/runtime python3 -c "
 from harness.init import init_harness
 config = init_harness('.')
 print('provider:', config.provider)

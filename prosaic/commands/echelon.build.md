@@ -1,5 +1,5 @@
 ---
-name: speckit.echelon.build
+name: echelon.build
 description: Execute the building phase — implement tasks with role-based agents
 ---
 ## Role

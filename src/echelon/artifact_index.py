@@ -224,7 +224,7 @@ _ARTIFACTS = (
     ArtifactDefinition(
         "constitution.md",
         "Constitution snapshot",
-        "Published read-only snapshot of `.specify/memory/constitution.md`.",
+        "Published read-only snapshot of `.echelon/constitution.md`.",
         "Phase A",
         "CHIEF",
         "Republished after CHIEF/spec-kit constitution creation or amendment.",

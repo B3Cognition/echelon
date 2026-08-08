@@ -1,0 +1,78 @@
+# Phase: codegen-resume
+# Source: echelon.codegen.md §Resume Mode + §Error Handling
+# Read by: echelon.orchestrator (ORCHESTRATOR) when invoked with --resume, or on any error condition
+
+## Resume Mode
+
+If `$ARGUMENTS` is `--resume`:
+
+```bash
+if [ ! -f codegen-state.json ]; then
+  echo "[ECHELON CODEGEN] ERROR: No codegen-state.json found. Cannot resume."
+  exit 1
+fi
+
+RESUME_PHASE=$(jq -r '.current_phase' codegen-state.json | tr '[:upper:]' '[:lower:]')
+RESUME_COMPLETED=$(jq '.task_queue.completed | length' codegen-state.json 2>/dev/null || echo 0)
+TOTAL_TASKS=$(jq '(.task_queue.pending | length) + (.task_queue.completed | length)' codegen-state.json 2>/dev/null || echo 0)
+WING=$(jq -r '.wing' codegen-state.json 2>/dev/null || echo "unknown")
+
+write_state() {
+  local phase="$1" phase_status="$2" completed="${3:-0}" current="${4:-null}" verdict="${5:-null}"
+  mkdir -p "$(dirname "$HARNESS_STATE_FILE")"
+  cat > "$HARNESS_STATE_FILE" << STATEOF
+{
+  "status": "${phase_status}", "phase": "${phase}",
+  "build": { "total_tasks": ${TOTAL_TASKS:-0}, "completed_tasks": ${completed}, "current_task": ${current}, "verification_verdict": ${verdict} },
+  "updated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+STATEOF
+}
+write_state "codegen_${RESUME_PHASE}" "building" $RESUME_COMPLETED null null
+```
+
+Display:
+
+```text
+[CODEGEN RESUME]
+Pipeline ID : <pipeline_id>
+Wing        : <wing>
+Resuming at : <current_phase>
+Completed   : <phases_completed joined by " → ">
+Tasks done  : <completed> / <total>
+Ψ score     : <psi.score> (threshold 0.70)
+Tier 1 gate : <tier1_gate>
+```
+
+Always jump to `current_phase`. Do NOT re-mine specs — MemPalace already has them.
+
+Resumable phase names (as stored in `codegen-state.json` `.current_phase`):
+`re`, `decompose`, `implement`, `gate`, `test`, `security`, `runnable`, `deliver`.
+If `current_phase == "runnable"`, resume at Phase 6c (RUNNABLE) — re-run the
+runnable gate from scratch; do NOT skip it on resume.
+
+---
+
+## Error Handling
+
+Before stopping for any error below, write the harness status file if set:
+
+```bash
+if [ -n "${HARNESS_BUILD_STATUS_FILE:-}" ]; then
+  if [ -f "codegen-impasse.md" ]; then
+    printf '{"status":"impasse","impasse_file":"codegen-impasse.md"}' > "$HARNESS_BUILD_STATUS_FILE"
+  else
+    printf '{"status":"failed","reason":"%s"}' "${_CURRENT_PHASE:-unknown}" > "$HARNESS_BUILD_STATUS_FILE"
+  fi
+fi
+```
+
+| Error | Response |
+| --- | --- |
+| Missing Phase A artifact | STOP — print which file is missing + hint to run `speckit.echelon.run` |
+| SOAR binary not found | HARD STOP — print `bash ~/echelon/scripts/install.sh` |
+| codegen CLI not found | HARD STOP — print `bash ~/echelon/scripts/install.sh` |
+| No test runner found | Warn, mark tier1 unavailable, generate CI config |
+| Impasse (exit 2) | Stop, report `codegen-impasse.md` — do NOT enter feedback loop |
+| Context window limit | Write state.json + harness status file, print `[CODEGEN] Run speckit.echelon.codegen --resume to continue` |
+| Filesystem write outside target | BLOCK — `[CODEGEN SECURITY] Write outside target blocked` |

@@ -1,5 +1,5 @@
 ---
-name: speckit.echelon.re-validator
+name: echelon.re-validator
 description: RE-VALIDATOR — quality-checks specs and auto-resolves ambiguities from
   code
 execution: agent
@@ -7,7 +7,7 @@ tools: write
 color: orange
 model_tier: balanced
 ---
-# speckit-echelon-re-validator (RE-VALIDATOR) Agent
+# echelon.re-validator (RE-VALIDATOR) Agent
 
 You are RE-VALIDATOR. You perform a source-evidenced semantic audit of the one source-owned domain spec requested by the controller.
 

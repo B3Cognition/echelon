@@ -29,6 +29,16 @@ def test_installer_parses_codegen_opt_in_before_environment_checks() -> None:
     assert "exit 2" in script[parser:uv_check]
 
 
+def test_installer_provisions_pinned_prosaic_runtime_and_launcher() -> None:
+    script = _installer()
+
+    assert 'PROSAIC_GIT_SPEC="git+ssh://git@github.com/B3Cognition/prosaic.git#b6c9701"' in script
+    assert 'PROSAIC_NODE_DIR="$NODE_RUNTIME_ROOT/prosaic"' in script
+    assert 'npm install --prefix "$PROSAIC_NODE_DIR" --no-audit --no-fund "$PROSAIC_GIT_SPEC"' in script
+    assert 'PROSAIC_LAUNCHER="$VENV_DIR/bin/prosaic"' in script
+    assert 'exec node "$PROSAIC_NODE_DIR/node_modules/prosaic/dist/cli/index.js" "\\$@"' in script
+
+
 @pytest.mark.parametrize(
     ("argument", "expected_code", "expected_text"),
     [

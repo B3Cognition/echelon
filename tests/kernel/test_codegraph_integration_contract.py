@@ -13,7 +13,7 @@ if str(EXT_ROOT) not in sys.path:
 from kernel.re_state import complete_dispatch, init_re_state, write_last_dispatch
 
 
-CODEGRAPH_RUNTIME_DIR = EXT_ROOT / "extension" / "scripts" / "node" / "codegraph"
+CODEGRAPH_RUNTIME_DIR = EXT_ROOT / "runtime" / "scripts" / "node" / "codegraph"
 CODEGRAPH_PACKAGE = "@colbymchenry/codegraph"
 CODEGRAPH_VERSION = "1.4.1"
 
@@ -23,7 +23,7 @@ def test_install_script_installs_codegraph_in_shared_runtime_with_npm_ci():
 
     assert 'NODE_RUNTIME_ROOT="${ECHELON_HOME:-$HOME/.echelon}/node"' in install_script
     assert (
-        'CODEGRAPH_SOURCE_DIR="$ECHELON_DIR/extension/scripts/node/codegraph"'
+        'CODEGRAPH_SOURCE_DIR="$ECHELON_DIR/runtime/scripts/node/codegraph"'
         in install_script
     )
     assert 'CODEGRAPH_NODE_DIR="$NODE_RUNTIME_ROOT/codegraph"' in install_script

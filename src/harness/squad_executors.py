@@ -1688,6 +1688,7 @@ class PhaseExecutor(ABC):
         def _translate_context_ref(ref: str) -> str:
             return _translate_squad_path(
                 ref.replace("{spec_dir}", spec_dir_ref)
+                .replace("{squad_dir}", squad_dir_str)
                 .replace("{context_dir}", context_dir_str)
                 .replace("{staging_dir}", staging_dir_str)
             )
@@ -1852,6 +1853,7 @@ class PhaseExecutor(ABC):
 
         prompt = "\n\n".join(static_parts + [context_preamble] + selected_dynamic_parts)
         prompt = prompt.replace("{spec_dir}", spec_dir_ref)
+        prompt = prompt.replace("{squad_dir}", squad_dir_str)
         prompt = prompt.replace("{context_dir}", context_dir_str)
         prompt = prompt.replace("{staging_dir}", staging_dir_str)
 
@@ -2233,7 +2235,7 @@ class CommanderInternalExecutor(PhaseExecutor):
 
     In the harness path these phases are no-ops: the harness already performed
     the equivalent init work (SquadStateStore.initialize, cli.py config checks),
-    and any LLM-specific steps (KB reads, speckit.constitution) only run in the
+    and any LLM-specific steps (KB reads, constitution authoring) only run in the
     interactive COMMANDER path.
     """
 

@@ -478,7 +478,9 @@ def _phase_requires_constitution_provenance(phase: str) -> bool:
 
 def _constitution_artifact_is_real(project_root: Path) -> bool:
     """Secondary integrity check for constitution completion provenance."""
-    path = project_root / ".specify" / "memory" / "constitution.md"
+    from echelon.constitution import canonical_constitution_path
+
+    path = canonical_constitution_path(project_root)
     if not path.exists():
         return False
     text = path.read_text(errors="replace")
@@ -7203,7 +7205,9 @@ class SquadController:
 
     def _publish_constitution_snapshot(self, published_spec_dir: Path) -> None:
         """Copy the project constitution into the published spec build inputs."""
-        source = self._project_root / ".specify" / "memory" / "constitution.md"
+        from echelon.constitution import canonical_constitution_path
+
+        source = canonical_constitution_path(self._project_root)
         target = published_spec_dir / "constitution.md"
         content = self._read_project_regular_file(source)
         if content is not None:

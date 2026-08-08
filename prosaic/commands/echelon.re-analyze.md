@@ -1,5 +1,5 @@
 ---
-name: speckit.echelon.re-analyze
+name: echelon.re-analyze
 description: Extract structured data from codebase into analysis.json
 ---
 ## Role
