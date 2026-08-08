@@ -1,0 +1,735 @@
+{
+  "schema_version": 1,
+  "units": [
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-35B242FAD892",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:1",
+      "statement": "# SUE Challenge Script \u2014 Design"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-DA5A2A3AEAB5",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:3",
+      "statement": "**Date:** 2026-07-18"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-7698BBDFCDF2",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:4",
+      "statement": "**Status:** approved (brainstorming session)"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-8E578B6660BB",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:5",
+      "statement": "**Scope:** v1 of the Socratic Understanding Engine as a standalone script \u2014 the"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-032461DF1B5D",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:6",
+      "statement": "question\u2192answer dialogue tier only. No graphs, no convergence scoring, no workflow"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-9C4F8635A18F",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:7",
+      "statement": "integration."
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-F565489C0B76",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:9",
+      "statement": "## Purpose"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-60DEBB978E62",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:11",
+      "statement": "Challenge a specification by generating Socratic questions and testing whether the"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-B0E70720E09A",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:12",
+      "statement": "specification itself can answer them. Questions the spec text cannot answer are the"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-BF81CFD48938",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:13",
+      "statement": "findings. This operationalizes the session's grounding rule: *the engine asks, the"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-7802BD15CC2F",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:14",
+      "statement": "text testifies, the human decides.*"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-AA478A158AB9",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:16",
+      "statement": "## Interface"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-3EA7EE65BD18",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:18",
+      "statement": "```"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-F7DA9407BAE0",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:19",
+      "statement": "python3 scripts/sue_challenge.py <path/to/spec.md> [--questions N] [--claude-cmd CMD] [--timeout SECS]"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-B41782F5561C",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:20",
+      "statement": "```"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-75BC4F8B9974",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:22",
+      "statement": "- `--questions` \u2014 max questions generated in round 1 (default 15)"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-D8FCFCDDC59E",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:23",
+      "statement": "- `--claude-cmd` \u2014 the claude binary/command to invoke (default `claude`); also the test seam"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-F124765D491A",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:24",
+      "statement": "- `--timeout` \u2014 per-call timeout in seconds (default 300)"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-E8F14EBD27A7",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:26",
+      "statement": "Exit codes: 0 success (report written), 1 bad input (spec missing/unreadable),"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-2189E42069FA",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:27",
+      "statement": "2 claude CLI unavailable, 3 unrecoverable model-output parse failure."
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-CF04C07BA415",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:29",
+      "statement": "## Mechanism (two fresh `claude -p` calls)"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-FAF233549D79",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:31",
+      "statement": "1. **Round 1 \u2014 question generation.** Input: the spec text plus an instruction to"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-1C338DB49929",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:32",
+      "statement": "produce up to N Socratic challenge questions targeting ambiguity, hidden"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-FFF3DC4D608F",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:33",
+      "statement": "assumptions, contradictions, undefined terms, and missing boundaries. Each"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-D50BEC5F92D0",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:34",
+      "statement": "question is tagged with its target requirement ID and source line references."
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-046E9F3A20C7",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:35",
+      "statement": "Output: strict JSON."
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-3709F66E4C4E",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:36",
+      "statement": "2. **Round 2 \u2014 the Socratic test.** A fresh call that receives ONLY the spec text and"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-15BAE48979B6",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:37",
+      "statement": "the round-1 questions (not round-1 reasoning). For each question it must answer"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-8470DD94F1D6",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:38",
+      "statement": "using only the spec text and assign a verdict:"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-EED398D6F6E8",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:39",
+      "statement": "- `ANSWERED` \u2014 the spec answers it; quote the answering lines"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-D1279F33E7C9",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:40",
+      "statement": "- `UNANSWERABLE` \u2014 the spec is silent; state what is missing"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-3E606DDF0F98",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:41",
+      "statement": "- `CONTRADICTED` \u2014 the spec gives conflicting answers; quote both sides"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-97C434377BBE",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:42",
+      "statement": "3. **Deterministic assembly (no third model call).** Findings = `CONTRADICTED` +"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-BEC67C964B9A",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:43",
+      "statement": "`UNANSWERABLE`, ranked contradictions first. `ANSWERED` questions are kept in a"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-2D4902546481",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:44",
+      "statement": "collapsed audit section so the filter itself can be reviewed."
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-242349C9B920",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:46",
+      "statement": "## Isolation contract"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-2F84DF72B209",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:48",
+      "statement": "- Both calls run via `subprocess` with the working directory set to a neutral temp"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-DDDD35B79FFA",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:49",
+      "statement": "directory, because `claude -p` loads CLAUDE.md from cwd \u2014 repo context must not"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-1A64043748C4",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:50",
+      "statement": "leak into the reading."
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-7906C2CCFEBC",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:51",
+      "statement": "- Round 2 must not see round-1 rationale, only the questions and the spec."
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-E431AE277766",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:53",
+      "statement": "## Round JSON schemas"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-1BB9602CB2BA",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:55",
+      "statement": "Round 1: `{\"questions\": [{\"id\": \"Q1\", \"question\": str, \"target\": \"REQ-nnn\"|\"general\","
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-D67B2760CFF6",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:56",
+      "statement": "\"lines\": [int], \"category\": \"ambiguity\"|\"assumption\"|\"contradiction\"|\"undefined-term\"|\"boundary\"}]}`"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-FFF8B8176BC8",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:58",
+      "statement": "Round 2: `{\"answers\": [{\"id\": \"Q1\", \"verdict\": \"ANSWERED\"|\"UNANSWERABLE\"|\"CONTRADICTED\","
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-D003F04C0FC3",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:59",
+      "statement": "\"answer\": str, \"evidence_lines\": [int]}]}` \u2014 every round-1 id must appear exactly once;"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-0F5AB554CF9C",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:60",
+      "statement": "missing/extra ids are a parse failure (retry path)."
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-C03A6B2ECF2B",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:62",
+      "statement": "## Output"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-44BED4ECFE26",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:64",
+      "statement": "`<spec-dir>/socratic-challenge.md` next to the challenged spec, plus a stdout summary"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-AF7AFAF68FBD",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:65",
+      "statement": "(finding counts and top 3). Reruns overwrite the previous report (v1 keeps no history \u2014"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-D305BB37F9EB",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:66",
+      "statement": "the file is regenerable). Report sections:"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-A06052CA8E2C",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:68",
+      "statement": "1. Header: spec path, run date, question/finding counts"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-EBFAED130BFF",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:69",
+      "statement": "2. Findings: verdict, question, target REQ, evidence (quoted lines or the named gap)"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-31A836647EEC",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:70",
+      "statement": "3. Audit appendix: answered-and-discarded questions with their answering lines"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-276774A45535",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:72",
+      "statement": "## Error handling"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-49464B14EFA0",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:74",
+      "statement": "- `claude` not found \u2192 exit 2 with an install pointer (mirrors the workbench spec's"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-CE9317854005",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:75",
+      "statement": "ERR-CLI-MISSING pattern)"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-5086BCDE7BCE",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:76",
+      "statement": "- Model output fails JSON parsing \u2192 one corrective retry appended to the same prompt;"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-DAB2BB350DF1",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:77",
+      "statement": "second failure \u2192 exit 3, raw output saved to `<spec-dir>/.sue-debug/` for diagnosis"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-09CAF50DCD15",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:78",
+      "statement": "- Spec path missing/unreadable \u2192 exit 1 before any model call"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-35B2A2BF9F9D",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:79",
+      "statement": "- Per-call timeout (default 300s) \u2192 treated as parse failure path (retry once, then exit 3)"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-C806E13967B4",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:81",
+      "statement": "## Testing"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-B97DBA8344BE",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:83",
+      "statement": "- Unit tests (pytest, `tests/unit/test_sue_challenge.py`) for the deterministic parts:"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-BE91B88E2D80",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:84",
+      "statement": "prompt assembly, JSON extraction/validation, verdict filtering and ranking, report"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-B9724D0168AB",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:85",
+      "statement": "rendering, exit codes. Model calls faked via `--claude-cmd` pointing at a stub"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-18F823464DCC",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:86",
+      "statement": "executable that replays canned JSON."
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-760CA37F3F8F",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:87",
+      "statement": "- Acceptance: one manual live run against `specs/029-builder-spec-workbench/spec.md`;"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-A78CE7C82F30",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:88",
+      "statement": "success = report generated and findings overlap the known issues (REQ-009/AC-010"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-D05A70A0F5B4",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:89",
+      "statement": "ordering contradiction; score-recording loop; undefined active-run pointer)."
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-64F3FEA20D8C",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:91",
+      "statement": "## Non-goals (v1)"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-4E9070D640A5",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:93",
+      "statement": "Multi-reader consensus, interpretation graphs, convergence metrics, WHY3/workflow"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-D9CE68110258",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:94",
+      "statement": "integration, encoding answers back into specs, `echelon` CLI verb. The script's"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-128505B4CC53",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:95",
+      "statement": "interface (spec path in, markdown report out) is stable under all of these later"
+    },
+    {
+      "declaration_id": "requirement-001",
+      "id": "IN-REQ-C68D7D0CB17E",
+      "media_type": "text/markdown",
+      "role": "requirement",
+      "sha256": "b35fd15ff68aed08f9987ed29b22df924e64030d74cc278e3f21ec392c84acc0",
+      "snapshot": "snapshots/requirement/requirement-001/2026-07-18-sue-challenge-script-design.md",
+      "source_locator": "docs/superpowers/specs/2026-07-18-sue-challenge-script-design.md:line:96",
+      "statement": "additions."
+    }
+  ]
+}
