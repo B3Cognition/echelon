@@ -31,6 +31,84 @@ def test_re_refresh_help_requires_one_source_selector() -> None:
 
 
 @pytest.mark.unit
+def test_re_status_reports_live_state_and_source_quality_debt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.cli_app import app
+
+    run_dir = tmp_path / "runs" / "re-20260808-100000-000001"
+    re_dir = run_dir / "re"
+    quality_dir = re_dir / "quality" / "sources"
+    quality_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current-re").write_text(
+        run_dir.name + "\n", encoding="utf-8"
+    )
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "blocked_reason": "re_workspace_synthesis_incomplete",
+                "re_policy": "refresh-all",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (re_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "in_progress",
+                "phase": "re-extract-5-validate",
+                "coverage_threshold": 99,
+                "resolution_threshold": 99,
+                "re_token_usage": 172_000_000,
+                "re_execution_profile": {"hard_token_limit": 210_000_000},
+                "re_workspace_synthesis_complete": True,
+                "re_source_order": ["api", "web"],
+                "re_source_states": {
+                    "api": {"status": "passed", "coverage_pct": 100.0},
+                    "web": {
+                        "status": "partial_quality_debt",
+                        "coverage_pct": 12.0,
+                    },
+                },
+                "re_source_budgets": {"max_source_cycles": 10},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (quality_dir / "web.json").write_text(
+        json.dumps(
+            {
+                "source_id": "web",
+                "passed": False,
+                "coverage_pct": 46.2,
+                "orphan_paths": ["src/a.ts", "src/b.ts"],
+                "domain_failures": [{"domain_id": "001-re-src"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(app, ["re", "status"])
+
+    assert result.exit_code == 0
+    assert "RE STATUS" in result.output
+    assert "in_progress" in result.output
+    assert "outer lifecycle state is blocked" in result.output
+    assert "api" in result.output
+    assert "passed" in result.output
+    assert "100.0%" in result.output
+    assert "web" in result.output
+    assert "partial quality debt" in result.output
+    assert "46.2%" in result.output
+    assert "2 uncovered" in result.output
+    assert "1 incomplete domain" in result.output
+    assert "Do not start another continuation" in result.output
+
+
+@pytest.mark.unit
 def test_re_continue_prints_controller_summary_before_provider_dispatch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

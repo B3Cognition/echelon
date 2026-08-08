@@ -913,6 +913,12 @@ def re_refresh(
     _legacy_cli()._cmd_re_refresh(["--source", source])
 
 
+@re_app.command("status")
+def re_status() -> None:
+    """Show live RE state, source quality, debt, and the next safe action."""
+    _legacy_cli()._cmd_re_status([])
+
+
 @re_app.command("continue")
 def re_continue(
     re_max_inner: Optional[int] = typer.Option(
