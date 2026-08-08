@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # deploy.sh — blue/green swap (http) or tag-pointer swap (cli)
-# Called by .git/hooks/post-merge (or manually via echelon.deploy)
+# Called by .git/hooks/post-merge (or by Echelon delivery automation)
 set -euo pipefail
 
 PROJECT_ROOT=$(git rev-parse --show-toplevel)
@@ -40,7 +40,7 @@ if [ -f "${FINGERPRINT_SCRIPT}" ]; then
   if ! bash "${FINGERPRINT_SCRIPT}" --check >/dev/null 2>&1; then
     echo "✗ CI/CD artifacts are stale or missing." >&2
     echo "  Project dependencies or Dockerfiles have changed since the last echelon.cicd run." >&2
-    echo "  Run: speckit.echelon.deploy  (auto-regenerates CI/CD before deploying)" >&2
+    echo "  Run: echelon delivery run <spec-id>  (regenerates CI/CD before deploying)" >&2
     exit 1
   fi
 fi

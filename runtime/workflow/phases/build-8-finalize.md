@@ -263,7 +263,7 @@ End of build:
 
 After echelon.scorekeeper (SCOREKEEPER) and before final summary, echelon.commander (COMMANDER) runs the autonomous feedback pipeline. This closes the learning loop without human input.
 
-**Config gate:** Run `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh feedback.auto_feedback` (default: `true`). If `false`, skip to Section 8.7 Print Summary.
+**Config gate:** Run `bash .echelon/runtime/scripts/bash/echelon-config-get.sh feedback.auto_feedback` (default: `true`). If `false`, skip to Section 8.7 Print Summary.
 
 Load `workflow/phases/appendices/build-8-feedback-reference.md` before running auto-feedback. It contains:
 

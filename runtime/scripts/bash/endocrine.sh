@@ -32,8 +32,7 @@
 #   endocrine.sh get_hormone_snapshot <agent>      — returns all 6 values as comma-separated
 #   endocrine.sh log_hormone_event <agent> <event> — appends to hormone_history in state.json
 #
-# Reads config via `specify extension config resolve echelon` (preferred).
-# Falls back to direct YAML read from .specify/extensions/echelon/echelon-config.yml when specify is unavailable.
+# Reads the canonical Echelon project configuration when environment values are absent.
 # State stored in runs/spec-<run-id>/state.json under "endocrine_state" (auto-detected via runs/.current).
 set -euo pipefail
 . "$(CDPATH='' cd "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/python-detect.sh"
@@ -43,15 +42,15 @@ export LC_ALL=C
 
 SCRIPT_DIR="$(CDPATH='' cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Detect project root by walking up from pwd until .specify/ is found.
-# This works in both dev context (script at extension/scripts/bash/) and
-# installed context (script at .specify/extensions/echelon/scripts/bash/).
-# The 3-level fallback covers dev mode where no .specify exists in the tree.
+# Detect project root by walking up from pwd until .echelon/ is found.
+# This works in both development and
+# deployed runtime context (script under .echelon/runtime/scripts/bash/).
+# The 3-level fallback covers development mode where no workspace exists yet.
 _endocrine_find_repo_root() {
   local dir
   dir="$(pwd)"
   while [ "$dir" != "/" ]; do
-    if [ -d "$dir/.specify" ]; then
+    if [ -d "$dir/.echelon" ]; then
       echo "$dir"
       return 0
     fi
@@ -81,42 +80,13 @@ _endocrine_find_squad_dir() {
 SQUAD_DIR="${ENDOCRINE_SQUAD_DIR:-$(_endocrine_find_squad_dir "$REPO_ROOT")}"
 STATE_FILE="${ENDOCRINE_STATE_FILE:-$SQUAD_DIR/state.json}"
 
-# Config resolution: prefer spec-kit ConfigurationManager resolver.
-# Falls back to direct YAML read when specify is unavailable (test/offline use).
-_ECHELON_RESOLVER_OK=false
-if command -v specify &>/dev/null; then
-  # Capture resolver stdout, then only eval + mark OK when it actually emitted
-  # at least one ECHELON_CFG_* line. The naive `&& _ECHELON_RESOLVER_OK=true`
-  # pattern wrongly succeeds on a `specify` that exits non-zero but still prints
-  # to stdout (e.g. when `config resolve` is missing from the installed CLI),
-  # which silently defaults every agent's hormones to 0.5 because get_baseline
-  # then never reaches the CONFIG_FILE fallback.
-  if _resolver_out=$(specify extension config resolve echelon --format env --prefix ECHELON_CFG_ 2>/dev/null); then
-    if [[ -n "$_resolver_out" ]] \
-      && printf '%s\n' "$_resolver_out" | grep -q '^ECHELON_CFG_' \
-      && ! printf '%s\n' "$_resolver_out" | grep -Eq '^ECHELON_CFG_[^=]*-.*='; then
-      # shellcheck disable=SC1090
-      eval "$_resolver_out"
-      _ECHELON_RESOLVER_OK=true
-    fi
-  fi
-  unset _resolver_out
-fi
-
-if [[ "$_ECHELON_RESOLVER_OK" != "true" ]]; then
-  # Fallback: read from project config (resolver's source) or bundled defaults.
-  # The source config is included in the chain BEFORE config-template.yml so
-  # CI checkouts (where .specify/extensions/ is gitignored) still resolve
-  # correct archetype baselines. Same fix shape as commit df99b73 / 5c2f653.
-  if [[ -n "${ENDOCRINE_CONFIG_FILE:-}" ]]; then
-    CONFIG_FILE="$ENDOCRINE_CONFIG_FILE"
-  elif [[ -f "$REPO_ROOT/.specify/extensions/echelon/echelon-config.yml" ]]; then
-    CONFIG_FILE="$REPO_ROOT/.specify/extensions/echelon/echelon-config.yml"
-  elif [[ -f "$REPO_ROOT/extension/echelon-config.yml" ]]; then
-    CONFIG_FILE="$REPO_ROOT/extension/echelon-config.yml"
-  else
-    CONFIG_FILE="$SCRIPT_DIR/../../config-template.yml"
-  fi
+# Read canonical project config or bundled defaults.
+if [[ -n "${ENDOCRINE_CONFIG_FILE:-}" ]]; then
+  CONFIG_FILE="$ENDOCRINE_CONFIG_FILE"
+elif [[ -f "$REPO_ROOT/.echelon/config.yml" ]]; then
+  CONFIG_FILE="$REPO_ROOT/.echelon/config.yml"
+else
+  CONFIG_FILE="$SCRIPT_DIR/../../config-template.yml"
 fi
 
 # ---------------------------------------------------------------------------
@@ -956,18 +926,14 @@ cmd_get_full_prompt_modifier() {
 
   # Load summary + overlays from echelon-config.yml interpretations block.
   # Use python3 since yaml_get only handles flat top-level keys.
-  # CFG_PATH precedence: env var override > extension source > deployed copy > bare.
+  # CFG_PATH precedence: env var override > canonical workspace config.
   # Honours ENDOCRINE_CONFIG_FILE so tests can substitute a custom interpretations
   # block without modifying the project's echelon-config.yml.
   local CFG_PATH=""
   if [[ -n "${ENDOCRINE_CONFIG_FILE:-}" ]] && [[ -f "$ENDOCRINE_CONFIG_FILE" ]]; then
     CFG_PATH="$ENDOCRINE_CONFIG_FILE"
-  elif [[ -f "$REPO_ROOT/extension/echelon-config.yml" ]]; then
-    CFG_PATH="$REPO_ROOT/extension/echelon-config.yml"
-  elif [[ -f "$REPO_ROOT/.specify/extensions/echelon/echelon-config.yml" ]]; then
-    CFG_PATH="$REPO_ROOT/.specify/extensions/echelon/echelon-config.yml"
-  elif [[ -f "$REPO_ROOT/echelon-config.yml" ]]; then
-    CFG_PATH="$REPO_ROOT/echelon-config.yml"
+  elif [[ -f "$REPO_ROOT/.echelon/config.yml" ]]; then
+    CFG_PATH="$REPO_ROOT/.echelon/config.yml"
   fi
 
   local INTERP_RAW=""

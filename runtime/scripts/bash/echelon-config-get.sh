@@ -12,9 +12,8 @@
 #       → ECHELON_CFG_ENDOCRINE_CIRCUIT_BREAKERS_CEILING=0.9
 #         ECHELON_CFG_ENDOCRINE_CIRCUIT_BREAKERS_FLOOR=0.1
 #
-# Repo root is auto-detected by walking up from cwd until .specify/ or .echelon/ is found.
-# Falls back to reading .echelon/config.yml directly when specify is unavailable;
-# legacy .specify/extensions/echelon/echelon-config.yml is read only during migration.
+# Repo root is auto-detected by walking up from cwd until .echelon/ is found.
+# Configuration is resolved from .echelon/config.yml plus .echelon/local.yml.
 #
 # Exit codes:
 #   0  key found and printed
@@ -53,7 +52,7 @@ _find_repo_root() {
   local dir
   dir="$(pwd)"
   while [[ "$dir" != "/" ]]; do
-    if [[ -d "$dir/.specify" || -d "$dir/.echelon" ]]; then
+    if [[ -d "$dir/.echelon" ]]; then
       echo "$dir"
       return 0
     fi
@@ -64,38 +63,15 @@ _find_repo_root() {
 
 REPO_ROOT=""
 if ! REPO_ROOT="$(_find_repo_root)"; then
-  echo "echelon-config-get: could not find repo root (.specify/ or .echelon/ not found in any parent)" >&2
+  echo "echelon-config-get: could not find repo root (.echelon/ not found in any parent)" >&2
   exit 1
 fi
 
 # ─── config resolution ───────────────────────────────────────────────────────
 
-_SPECIFY_BIN=""
-if command -v specify &>/dev/null; then
-  _SPECIFY_BIN="specify"
-fi
-
 _get_json() {
-  # Try the specify resolver first, but only trust its output if it actually
-  # returned a JSON object. The naive `if [[ -n "$_SPECIFY_BIN" ]]; then specify…`
-  # pattern wrongly accepted empty output on installs where
-  # `specify extension config resolve` exits non-zero (subcommand missing) —
-  # exactly the same failure mode commit df99b73 fixed in endocrine.sh's
-  # bootstrap. When the resolver fails, fall through to the YAML fallback.
-  if [[ -n "$_SPECIFY_BIN" ]]; then
-    local _out
-    _out="$(cd "$REPO_ROOT" && "$_SPECIFY_BIN" extension config resolve echelon 2>/dev/null)" || true
-    if [[ -n "$_out" && "$_out" =~ ^[[:space:]]*\{ ]]; then
-      echo "$_out"
-      return 0
-    fi
-  fi
-  # Fallback: read the same migration cascade as harness.config for callers
-  # that run before/without `specify extension config resolve`.
-  if [[ ! -f "$REPO_ROOT/.echelon/config.yml" \
-        && ! -f "$REPO_ROOT/.specify/extensions/echelon/echelon-config.yml" \
-        && ! -f "$REPO_ROOT/extension/echelon-config.yml" ]]; then
-    echo "echelon-config-get: specify resolver failed and no config file found" >&2
+  if [[ ! -f "$REPO_ROOT/.echelon/config.yml" ]]; then
+    echo "echelon-config-get: .echelon/config.yml not found" >&2
     return 1
   fi
   REPO_ROOT="$REPO_ROOT" python3 -c '
@@ -127,14 +103,7 @@ def merge(base, override):
     return result
 
 
-project = load(".echelon/config.yml")
-if not project:
-    project = load(".specify/extensions/echelon/echelon-config.yml")
-if not project:
-    project = load("extension/echelon-config.yml")
-
-config = merge(project, load(".specify/extensions/echelon/local-config.yml"))
-config = merge(config, load(".echelon/local.yml"))
+config = merge(load(".echelon/config.yml"), load(".echelon/local.yml"))
 print(json.dumps(config))
 '
 }

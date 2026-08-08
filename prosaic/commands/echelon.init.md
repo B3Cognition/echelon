@@ -1,6 +1,6 @@
 ---
 name: echelon.init
-description: One-time project initialization — bootstrap echelon-config.yml, validate
+description: One-time project initialization — bootstrap Echelon configuration, validate
   deploy config, install Traefik. Run once per project before echelon.run.
 execution: command
 invocation: explicit
@@ -9,7 +9,7 @@ model_tier: balanced
 ---
 ## Role
 
-You are COMMANDER performing one-time project initialization — validating deploy config in the project config file, provisioning the MemPalace wing, and installing infrastructure. Run once per project before `echelon.run`.
+You are COMMANDER performing one-time project initialization — validating deploy config in the project config file, provisioning the MemPalace wing, and installing infrastructure. Run once per project before `echelon spec run`.
 
 ---
 
@@ -21,12 +21,13 @@ You are COMMANDER performing one-time project initialization — validating depl
 
 ## Overview
 
-One-time setup for a project. Must be run before `echelon.run` on any new project.
-Requires `specify extension add echelon` to have been run first (creates the project config).
+One-time setup for a project. Initialize the workspace first with
+`echelon workspace init --with-prosaic`; that creates `.echelon/config.yml` and
+deploys the Echelon Prosaic and runtime bundles.
 
 What it does:
 
-1. Confirm project config exists at `ECHELON_EXT/echelon-config.yml`
+1. Confirm project config exists at `.echelon/config.yml`
 2. Validate the deploy config block
 3. Provision MemPalace wing
 4. Run `deploy-init.sh` — installs Docker/Traefik (http type) or CLI wrapper, writes `deploy-state.json`
@@ -40,7 +41,7 @@ Idempotent: safe to re-run. If deploy infrastructure already exists and is valid
 ```bash
 PROJECT_ROOT=$(pwd)
 ECHELON_EXT="${PROJECT_ROOT}/.echelon/runtime"
-ECHELON_CONFIG="${ECHELON_EXT}/echelon-config.yml"
+ECHELON_CONFIG="${PROJECT_ROOT}/.echelon/config.yml"
 echo "PROJECT_ROOT=${PROJECT_ROOT}"
 echo "ECHELON_CONFIG=${ECHELON_CONFIG}"
 ```
@@ -49,12 +50,13 @@ echo "ECHELON_CONFIG=${ECHELON_CONFIG}"
 
 ## Step 2: Confirm project config exists
 
-The project config is created automatically by `specify extension add echelon`. If it is missing, the extension was not installed correctly.
+The project config is created by `echelon workspace init --with-prosaic`. If it
+is missing, initialize the workspace before continuing.
 
 ```bash
 if [ ! -f "${ECHELON_CONFIG}" ]; then
   echo "✗ Project config not found: ${ECHELON_CONFIG}" >&2
-  echo "  Run: specify extension add echelon" >&2
+  echo "  Run: echelon workspace init --with-prosaic" >&2
   exit 1
 fi
 echo "✓ Project config found: ${ECHELON_CONFIG}"

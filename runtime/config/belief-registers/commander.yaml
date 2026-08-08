@@ -69,7 +69,7 @@ beliefs:
     claim: "spec-kit dependency validation at install time is sufficient; no runtime preflight agent required"
     verified: "2026-04-11"
     expires: "2026-10-11"
-    anchor: "Architectural decision (PROSPECTOR removed; depends on `specify extension add` validation)"
+    anchor: "Architectural decision (PROSPECTOR removed; depends on workspace initialization validation)"
     confidence: 0.85
     severity: medium
 

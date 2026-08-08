@@ -24,7 +24,7 @@ If not resume and `$ARGUMENTS` is empty or `SPEC_ID` is empty, stop:
 
 ```
 [ECHELON CODEGEN] ERROR: Feature path required.
-Usage: speckit.echelon.codegen 001-feature-name
+Usage: echelon delivery run 001-feature-name --strategy codegen
 ```
 
 ### A.2 Validate Phase A artifacts (skip on resume)
@@ -131,7 +131,7 @@ echo "[ECHELON CODEGEN] Harness state file: ${HARNESS_STATE_FILE:-not set (stand
 ### A.5 Validate deploy infrastructure
 
 ```bash
-ECHELON_EXT="${PROJECT_ROOT}/.specify/extensions/echelon"
+ECHELON_EXT="${PROJECT_ROOT}/.echelon/runtime"
 _DEPLOY_ROOT="${PROJECT_ROOT}"
 
 # In a harness worktree, PROJECT_ROOT is the worktree path — .specify/ and deploy
@@ -145,8 +145,8 @@ if [ ! -d "${ECHELON_EXT}" ] && [ -n "${HARNESS_BUILD_STATUS_FILE:-}" ]; then
   _p=$(dirname "${_p}")
   _p=$(dirname "${_p}")
   _p=$(dirname "${_p}")
-  if [ -d "${_p}/.specify/extensions/echelon" ]; then
-    ECHELON_EXT="${_p}/.specify/extensions/echelon"
+  if [ -d "${_p}/.echelon/runtime" ]; then
+    ECHELON_EXT="${_p}/.echelon/runtime"
     _DEPLOY_ROOT="${_p}"
   fi
 fi
@@ -164,10 +164,10 @@ if [ "$RESUME_MODE" -eq 0 ]; then
   STRATEGY_FILE="${STRATEGY_DIR}/codegen.md"
   mkdir -p "$STRATEGY_DIR"
 
-  if [ ! -f "$STRATEGY_FILE" ] || ! grep -qF "command: speckit.echelon.codegen" "$STRATEGY_FILE"; then
+  if [ ! -f "$STRATEGY_FILE" ] || ! grep -qF "command: echelon delivery run" "$STRATEGY_FILE"; then
     cat > "$STRATEGY_FILE" << EOF
 ---
-command: speckit.echelon.codegen
+command: echelon delivery run
 ---
 # Codegen Strategy
 

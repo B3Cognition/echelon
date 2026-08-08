@@ -69,10 +69,10 @@ fi
 
 | Error | Response |
 | --- | --- |
-| Missing Phase A artifact | STOP — print which file is missing + hint to run `speckit.echelon.run` |
+| Missing Phase A artifact | STOP — print which file is missing + hint to run `echelon spec run <description>` |
 | SOAR binary not found | HARD STOP — print `bash ~/echelon/scripts/install.sh` |
 | codegen CLI not found | HARD STOP — print `bash ~/echelon/scripts/install.sh` |
 | No test runner found | Warn, mark tier1 unavailable, generate CI config |
 | Impasse (exit 2) | Stop, report `codegen-impasse.md` — do NOT enter feedback loop |
-| Context window limit | Write state.json + harness status file, print `[CODEGEN] Run speckit.echelon.codegen --resume to continue` |
+| Context window limit | Write state.json + harness status file, print `[CODEGEN] Run echelon delivery resume <spec-id> to continue` |
 | Filesystem write outside target | BLOCK — `[CODEGEN SECURITY] Write outside target blocked` |

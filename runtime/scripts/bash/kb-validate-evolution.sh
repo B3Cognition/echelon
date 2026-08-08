@@ -17,21 +17,10 @@ PROMPT_VERSIONS="$KB_DIR/prompt-versions.yaml"
 INTERNALIZATION_LOG="$KB_DIR/internalization-log.yaml"
 EVOLUTION_SIGNALS="$KB_DIR/evolution-signals.yaml"
 
-# Config resolution: prefer spec-kit ConfigurationManager resolver.
-# Falls back to direct YAML read when specify is unavailable.
-CONFIG_FILE=""
-_ECHELON_RESOLVER_OK=false
-if command -v specify &>/dev/null; then
-  # shellcheck disable=SC2046
-  eval "$(specify extension config resolve echelon --format env --prefix ECHELON_CFG_)" 2>/dev/null \
-    && _ECHELON_RESOLVER_OK=true
-fi
-if [[ "$_ECHELON_RESOLVER_OK" != "true" ]]; then
-  if [[ -f "$REPO_ROOT/.specify/extensions/echelon/echelon-config.yml" ]]; then
-    CONFIG_FILE="$REPO_ROOT/.specify/extensions/echelon/echelon-config.yml"
-  else
-    CONFIG_FILE="$SCRIPT_DIR/../../config-template.yml"
-  fi
+# Configuration is Echelon-owned: project config first, then bundled defaults.
+CONFIG_FILE="$REPO_ROOT/.echelon/config.yml"
+if [[ ! -f "$CONFIG_FILE" ]]; then
+  CONFIG_FILE="$SCRIPT_DIR/../../config-template.yml"
 fi
 
 STATE_FILE=""
@@ -50,7 +39,7 @@ Validates Knowledge Base evolution files with 3 checks:
     - Every evolution-signals entry affected_agents exist in extension.yml
 
   Check 2: Score/result consistency
-    - Reads internalization thresholds from ECHELON_CFG_* (resolver) or .specify/extensions/echelon/echelon-config.yml
+    - Reads internalization thresholds from .echelon/config.yml or bundled defaults
     - Verifies score and result (PASS/PARTIAL/FAIL) agree per threshold rules
 
   Check 3: Downstream outcome completeness (--state required)
@@ -124,7 +113,7 @@ for cmd in ext_data.get('provides', {}).get('commands', []):
     name = cmd.get('name', '')
     fname = cmd.get('file', '')
     if fname.startswith('agents/'):
-        # Derive codename from name: speckit.echelon.auditor -> AUDITOR
+        # Derive codename from a dotted agent name: echelon.auditor -> AUDITOR
         codename = name.split('.')[-1].upper().replace('-', '_')
         agent_names.add(codename)
 

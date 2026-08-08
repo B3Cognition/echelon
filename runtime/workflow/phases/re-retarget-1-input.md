@@ -11,7 +11,7 @@ files through provider-native tools.
 
 Report to user: "Found {count} sections requiring your input."
 
-If count is 0: report "All decisions are already filled in. You can proceed to `/speckit.echelon.re-plan-all`." and stop.
+If count is 0: report "All decisions are already filled in. You can proceed to Echelon RE planning." and stop.
 
 ## Step 2: Present introduction
 
@@ -127,10 +127,10 @@ Retargeting complete.
 Remaining [REQUIRES INPUT] markers: {REMAINING}
 
 {if REMAINING == 0}
-All decisions filled. Run /speckit.echelon.re-plan-all to generate per-domain plans.
+All decisions filled. Run Echelon RE planning to generate per-domain plans.
 
 {if REMAINING > 0}
-{REMAINING} decisions deferred. You can run /speckit.echelon.re-retarget again
-to fill them, or proceed with /speckit.echelon.re-plan-all (planning will work
+{REMAINING} decisions deferred. You can re-run the Echelon RE retarget flow
+to fill them, or proceed with Echelon RE planning (planning will work
 around the remaining placeholders).
 ```

@@ -14,7 +14,7 @@ Use these templates for run-local feedback and escalation artifacts:
 
 After echelon.scorekeeper (SCOREKEEPER) and before final summary, echelon.commander (COMMANDER) runs the autonomous feedback pipeline. This closes the learning loop without human input.
 
-**Config gate:** Run `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh feedback.auto_feedback` (default: `true`). If `false`, skip post-build feedback and continue to final summary.
+**Config gate:** Run `bash .echelon/runtime/scripts/bash/echelon-config-get.sh feedback.auto_feedback` (default: `true`). If `false`, skip post-build feedback and continue to final summary.
 
 ### Dispatch echelon.auditor (AUDITOR)
 
@@ -62,7 +62,7 @@ For each expert dispatch:
 
 ## Post-Build Validation
 
-**Config gate:** Run `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh feedback.post_build_validation` (default: `true`). If `false`, skip this section.
+**Config gate:** Run `bash .echelon/runtime/scripts/bash/echelon-config-get.sh feedback.post_build_validation` (default: `true`). If `false`, skip this section.
 
 ### Understanding Re-Scan
 
@@ -78,7 +78,7 @@ Dispatch echelon.sage (SAGE) in post-build-validation mode using the Agent tool:
 
   <instructions>
   You are SAGE. Read agents/exploration/sage.md for your complete protocol. Operate in **post-build-validation mode**.
-  Run `speckit.echelon.understanding-validate` against the final `spec.md`. Compare scores against the last WHY3 `quality-gates.md`. If any category dropped > 0.05: flag as REGRESSION. If overall improved: log as IMPROVEMENT.
+  Run the Echelon understanding validation phase against the final `spec.md`. Compare scores against the last WHY3 `quality-gates.md`. If any category dropped > 0.05: flag as REGRESSION. If overall improved: log as IMPROVEMENT.
   Produce `post-build-validation.md`.
   </instructions>
   ```
@@ -87,7 +87,7 @@ Dispatch echelon.sage (SAGE) in post-build-validation mode using the Agent tool:
 
 ### Intent Alignment Check
 
-**Config gate:** Run `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh feedback.post_build_intent_check` (default: `true`).
+**Config gate:** Run `bash .echelon/runtime/scripts/bash/echelon-config-get.sh feedback.post_build_intent_check` (default: `true`).
 
 Dispatch echelon.tracker (TRACKER) in post-build-alignment mode using the Agent tool:
 

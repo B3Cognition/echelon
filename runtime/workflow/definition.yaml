@@ -101,7 +101,7 @@ glossary:
   - term: "Run"
     senses:
       - sense: "Echelon run (squad run)"
-        detect: "when referring to a single speckit.echelon.run invocation (run_id: squad-N)"
+        detect: "when referring to a single echelon spec run invocation (run_id: spec-N)"
         example: "This run produced 52 journal entries"
       - sense: "shell command execution"
         detect: "when used in bash/script context"
@@ -1288,7 +1288,7 @@ phases:
     description: >
       Collate all artifacts. Produce squad report.
       Run evolution signal review protocol.
-      User must explicitly invoke speckit.echelon.build to start build phase.
+      User must explicitly invoke echelon delivery run <spec-id> to start delivery.
     steps:
       - collate_artifacts
       - write_squad_report
@@ -1426,11 +1426,11 @@ phases:
     description: >
       Write escalation-request.md using templates/escalation-request.md.
       Set state.json status = blocked.
-      Resume with speckit.echelon.resume <answer>.
+      Resume with echelon spec resume <answer>.
 
   # --------------------------------------------------------------------------
   # BUGFIX WORKFLOW
-  # Invoked via speckit.echelon.bugfix. Entry point: bugfix-1-init.
+  # Invoked via echelon spec bugfix. Entry point: bugfix-1-init.
   # --------------------------------------------------------------------------
   - id: bugfix-1-init
     label: "Bugfix Init"
@@ -1541,7 +1541,7 @@ phases:
 
   # --------------------------------------------------------------------------
   # BUILD WORKFLOW
-  # Invoked via speckit.echelon.build. Entry point: build-1-init.
+  # Invoked via echelon delivery run <spec-id>. Entry point: build-1-init.
   # Routing config (task loop ordering, verdict routing, wave lanes) lives in
   # the top-level build: section below — echelon.commander (COMMANDER) reads both.
   # --------------------------------------------------------------------------
@@ -1814,7 +1814,7 @@ phases:
 
 # =============================================================================
 # BUILD WORKFLOW
-# Invoked separately via speckit.echelon.build
+# Invoked separately via echelon delivery run <spec-id>
 # echelon.commander (COMMANDER) reads this section when build phase is active.
 # =============================================================================
 
@@ -2017,10 +2017,10 @@ escalation:
     description: "Root cause known but unresolvable without human."
     template: templates/escalation-request.md
     state: blocked
-    resume_command: speckit.echelon.resume <answer>
+    resume_command: echelon spec resume <answer>
 
 # =============================================================================
-# RE-EXTRACTION — read by speckit.echelon.re-extract COMMANDER
+# RE-EXTRACTION — read by the Echelon RE runner
 # COMMANDER contract: read this section at init, read state_file for current
 # phase, execute each phase node, write results to state_file.
 # =============================================================================
@@ -2184,7 +2184,7 @@ re_extraction:
           condition: always
 
 # =============================================================================
-# RE-RETARGET — read by speckit.echelon.re-retarget COMMANDER
+# RE-RETARGET — read by the Echelon RE retarget flow
 # =============================================================================
 re_retarget:
 
@@ -2209,7 +2209,7 @@ re_retarget:
           condition: always
 
 # =============================================================================
-# RE-PLANNING — read by speckit.echelon.re-plan-all COMMANDER
+# RE-PLANNING — read by the Echelon RE planning flow
 # =============================================================================
 re_planning:
 
@@ -2264,7 +2264,7 @@ re_planning:
           condition: always
 
 # =============================================================================
-# VERIFY-SPEC — read by speckit.echelon.verify-spec COMMANDER
+# VERIFY-SPEC — read by echelon spec verify
 # COMMANDER contract: run a read-only fulfillment audit against an existing spec,
 # refresh local structural evidence, and write fulfillment artifacts.
 # =============================================================================
@@ -2391,7 +2391,7 @@ verify_spec:
           condition: always
 
 # =============================================================================
-# REOPEN — read by speckit.echelon.reopen COMMANDER
+# REOPEN — read by echelon spec reopen
 # COMMANDER contract: mutate only spec artifacts to convert verified fulfillment
 # gaps into harness-ready follow-up work.
 # =============================================================================

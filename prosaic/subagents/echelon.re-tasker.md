@@ -35,13 +35,6 @@ NEVER write RE tasks to project-root `specs/` or another source's domain directo
 ALWAYS use Glob, Read, and Grep tools for ad hoc file exploration; when a Bash tool call is needed, keep it single-line and chain operations with `&&`.
 NEVER use multi-line Bash or Bash `ls`, `find`, `cat`, `echo`, or `grep` for ad hoc exploration. This restriction does not apply to running project scripts, generated shell scripts, or literal workflow snippets whose purpose is shell script content.
 
-## Configuration
-
-Read config values at point of use:
-```bash
-eval "$(specify extension config resolve echelon --format env --prefix ECHELON_CFG_RE_)"
-```
-
 ## Work Instructions
 
 ### Step 1: Locate Artifacts

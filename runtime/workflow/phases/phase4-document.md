@@ -487,13 +487,13 @@ RISKS ACCEPTED AUTONOMOUSLY:
 ──────────────────────────────────────────
 
 Spec ID for feedback: {NNN}
-Run: speckit.echelon.feedback {NNN} after implementation
+After implementation, run Echelon's delivery feedback loop for spec {NNN}.
 
 BRANCH: {NNN}-{feature}
-Ready for: speckit.echelon.build {NNN}-{feature}
+Ready for: echelon delivery run {NNN}-{feature}
 
 NOTE: No application source files were modified by this command.
-      Implementation is performed by speckit.echelon.build / harness.run.
+      Implementation is performed by echelon delivery run.
 ============================================
 ```
 
@@ -547,4 +547,4 @@ controller finalization.
 Start another specification only through `echelon spec run`. After the active
 run passes checkpoint and cleanliness validation, Echelon creates its sibling branch from the configured default branch. The new spec is not stacked on the current feature branch.
 
-**DONE.** The squad run is complete. The feature branch `{NNN}-{feature}` is ready for `speckit.echelon.build`.
+**DONE.** The spec run is complete. The feature branch `{NNN}-{feature}` is ready for `echelon delivery run {NNN}-{feature}`.

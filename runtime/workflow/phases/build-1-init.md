@@ -84,7 +84,7 @@ echo "SPEC_DIR=${SPEC_DIR}"
 Before loading Phase A artifacts, confirm the deploy pipeline is intact:
 
 ```bash
-ECHELON_EXT="${PROJECT_ROOT}/.specify/extensions/echelon"
+ECHELON_EXT="${PROJECT_ROOT}/.echelon/runtime"
 bash "${ECHELON_EXT}/scripts/bash/validate-deploy.sh" "${PROJECT_ROOT}"
 ```
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # deploy-init.sh — one-time blue/green deploy infrastructure setup
-# Called from speckit.echelon.init. Idempotent: exits 0 immediately if
+# Called during Echelon workspace initialization. Idempotent: exits 0 immediately if
 # deploy-state.json already exists and is valid.
 #
 # HTTP mode: single shared Traefik at :80, apps routed by PathPrefix(/{app}).

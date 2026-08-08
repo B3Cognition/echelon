@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # validate-deploy.sh — pre-harness deploy infrastructure check
-# Called from echelon.build / echelon.codegen before launching harness.
+# Called from Echelon delivery before launching the harness.
 # Exits 0 if all checks pass; exits 1 with actionable error on any failure.
 set -euo pipefail
 
@@ -55,7 +55,7 @@ echo "deploy: validating infrastructure before harness launch..."
 if [ ! -f "${STATE_FILE}" ]; then
   _fail "deploy-state.json not found at ${STATE_FILE}"
   echo "     echelon.run was not completed or deploy-init failed." >&2
-  echo "     Fix: re-run speckit.echelon.run" >&2
+  echo "     Fix: re-run echelon spec run <description>" >&2
   exit 1
 fi
 
@@ -83,7 +83,7 @@ APP_NAME=$(echo "${DEPLOY_INFO}" | sed -n '2p')
 
 if [ -z "${DEPLOY_TYPE}" ]; then
   _fail "deploy-state.json is invalid or empty."
-  echo "     Fix: rm ${STATE_FILE} && re-run speckit.echelon.run" >&2
+  echo "     Fix: rm ${STATE_FILE} && re-run echelon spec run <description>" >&2
   exit 1
 fi
 
@@ -92,8 +92,7 @@ echo "  ✓ deploy-state.json valid (app=${APP_NAME}, type=${DEPLOY_TYPE})"
 # ── 2. deploy.sh reachable ────────────────────────────────────────────────────
 if [ ! -f "${SCRIPTS_DIR}/deploy.sh" ]; then
   _fail "deploy.sh not found at ${SCRIPTS_DIR}/deploy.sh"
-  echo "     Fix: ensure the echelon extension is registered:" >&2
-  echo "       specify extension add --dev ~/echelon/extension" >&2
+  echo "     Fix: re-initialize the workspace with echelon workspace init --with-prosaic" >&2
   ERRORS=$((ERRORS + 1))
 else
   echo "  ✓ deploy.sh reachable"
@@ -109,7 +108,7 @@ if [ "${DEPLOY_TYPE}" = "http" ]; then
     echo "     Fix:" >&2
     echo "       docker rm -f speckit-traefik 2>/dev/null || true" >&2
     echo "       rm ${STATE_FILE}" >&2
-    echo "       re-run speckit.echelon.run" >&2
+    echo "       re-run echelon spec run <description>" >&2
     ERRORS=$((ERRORS + 1))
   else
     echo "  ✓ Traefik running"

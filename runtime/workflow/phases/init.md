@@ -18,23 +18,24 @@ Store `PROJECT_ROOT` in your context. All paths written to state.json, passed to
 **MANDATORY — Run this check with the Bash tool before any other init step:**
 
 ```bash
-ECHELON_EXT="${PROJECT_ROOT}/.specify/extensions/echelon"
-if [ ! -f "${ECHELON_EXT}/echelon-config.yml" ]; then
-  echo "✗ echelon-config.yml not found at ${ECHELON_EXT}/echelon-config.yml" >&2
-  echo "  Run 'speckit.echelon.init' first to create the project configuration." >&2
+ECHELON_EXT="${PROJECT_ROOT}/.echelon/runtime"
+ECHELON_CONFIG="${PROJECT_ROOT}/.echelon/config.yml"
+if [ ! -f "${ECHELON_CONFIG}" ]; then
+  echo "✗ Echelon config not found at ${ECHELON_CONFIG}" >&2
+  echo "  Run 'echelon workspace init --with-prosaic' first." >&2
   exit 1
 fi
-echo "✓ echelon-config.yml found at ${ECHELON_EXT}/echelon-config.yml"
+echo "✓ Echelon config found at ${ECHELON_CONFIG}"
 ```
 
 If this exits non-zero: **HARD STOP**. Always print the message below. Do not proceed.
 
 ```text
-✗ echelon-config.yml not found.
-  Run speckit.echelon.init first, then re-run speckit.echelon.run.
+✗ Echelon config not found.
+  Run echelon workspace init --with-prosaic first, then re-run echelon spec run.
 ```
 
-> **Note:** `validate-deploy.sh` is only relevant for `speckit.echelon.build` and `speckit.echelon.codegen` (it validates deploy infrastructure written by `echelon workspace init`). Always leave `echelon.run` startup deploy-neutral. Do NOT call `validate-deploy.sh` from `echelon.run` — it will fail on fresh projects that have not yet run a build.
+> **Note:** `validate-deploy.sh` is only relevant to `echelon delivery run` (it validates deploy infrastructure written during workspace initialization). Always leave `echelon spec run` startup deploy-neutral. Do NOT call `validate-deploy.sh` from `echelon spec run` — it will fail on fresh projects that have not yet run delivery.
 
 ### 1.1 Detect Greenfield vs Brownfield
 
@@ -152,20 +153,15 @@ Never search for or create a nested archive beneath the active run.
 
 ### 1.6 Load Configuration — MANDATORY
 
-**Reading threshold values:** COMMANDER's preferred path is `specify extension config resolve echelon --format env --prefix ECHELON_CFG_`, which would layer manifest defaults → project overrides → local overrides → env vars and emit `ECHELON_CFG_*` env vars for the current shell.
+**Reading threshold values:** COMMANDER reads `.echelon/config.yml` plus optional `.echelon/local.yml` through the deployed Echelon runtime resolver. It emits `ECHELON_CFG_*` values for the current shell.
 
 ```bash
-# Optional layered-config attempt (resolver may not be installed):
-_resolver_out=$(specify extension config resolve echelon --format env --prefix ECHELON_CFG_ 2>/dev/null)
-if [[ -n "$_resolver_out" ]] && printf '%s\n' "$_resolver_out" | grep -q '^ECHELON_CFG_'; then
-  eval "$_resolver_out"
-  _ECHELON_RESOLVER_OK=true
-fi
+eval "$(bash "${PROJECT_ROOT}/.echelon/runtime/scripts/bash/echelon-config-get.sh" --env convergence)"
 ```
 
-**However: the `config` subcommand is not implemented in the currently installed `specify` CLI.** The endocrine.sh bootstrap (commit `df99b73`, post-DEP-FIX T2) detects this and falls through to reading `echelon-config.yml` directly. COMMANDER should also treat the direct YAML read via `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh <key>` as the production-equivalent path, not a degraded fallback. Log `dependency_failure` (`dependency: specify_extension_config_resolve`) once per run if the resolver attempt failed.
+For a scalar or a different mapping, call `bash .echelon/runtime/scripts/bash/echelon-config-get.sh <key>` or use `--env <mapping>` as above. Treat resolver failure as a configuration error; do not substitute a Spec-Kit fallback.
 
-This merges manifest defaults → `echelon-config.yml` (project overrides) → `local-config.yml` → `SPECKIT_ECHELON_*` env vars. Key defaults when no project config exists:
+This merges `.echelon/config.yml` (project config) and `.echelon/local.yml` (local overrides). Key defaults when no project config exists:
 
 - `ECHELON_CFG_CONVERGENCE_MAX_ITERATIONS`: 5
 - `ECHELON_CFG_CONVERGENCE_DELTA`: 0.02
@@ -173,7 +169,7 @@ This merges manifest defaults → `echelon-config.yml` (project overrides) → `
 - `ECHELON_CFG_BUDGET_TOKEN_BUDGET_K`: 1000
 - Quality gates: use the Resolved Quality Gates injected from the project configuration; workflow files never restate numeric thresholds.
 
-> **Authoritative values:** `echelon-config.yml` (project overrides) / manifest `config.defaults` (fallback) is the single source of truth for all tunable thresholds (`convergence:`, `budget:`, `quality_gates:`). `workflow/definition.yaml` is the authority for the phase graph and routing structure only.
+> **Authoritative values:** `.echelon/config.yml` plus optional `.echelon/local.yml` are the source of truth for all tunable thresholds (`convergence:`, `budget:`, `quality_gates:`). `workflow/definition.yaml` is the authority for the phase graph and routing structure only.
 
 ### 1.7 Check Constitution Status
 
@@ -191,9 +187,9 @@ Check if `.echelon/constitution.md` exists and note the status:
 - Always continue with `constitution_status: "pending"`. **Do NOT block** — constitution will be created after UNDERSTAND phase when we have enough context
 - Note: Constitution creation happens in section 3.5 (after WHY1) using UNDERSTAND findings
 
-### Spec-kit Availability
+### Provider Availability
 
-spec-kit skill availability is validated at install time (`specify extension add echelon`). echelon.commander (COMMANDER) assumes `fallback_mode = false` at run start. If a skill invocation fails during the run, echelon.commander (COMMANDER) returns the fallback fields in `echelon_result.state_updates` at that point:
+Provider availability is validated by Echelon before dispatch. echelon.commander (COMMANDER) assumes `fallback_mode = false` at run start. If a provider invocation fails during the run, echelon.commander (COMMANDER) returns the fallback fields in `echelon_result.state_updates` at that point:
 
 ```yaml
 fallback_mode: true
@@ -206,7 +202,7 @@ For reconciliation after recovery, reference `templates/recovery-checklist.md` a
 
 ### Preflight: KB Evolution Validation
 
-If `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh evolution.enabled` returns `true`:
+If `bash .echelon/runtime/scripts/bash/echelon-config-get.sh evolution.enabled` returns `true`:
 
 ```bash
 scripts/bash/kb-validate-evolution.sh --state ${SQUAD_DIR}/state.json

@@ -93,10 +93,10 @@ Print the handoff block and stop:
   Next step — choose your build strategy:
 
     Default (LLM implements directly):
-      speckit.echelon.harness-run {spec_id} strategy=default
+      echelon delivery run {spec_id} --strategy default
 
     Codegen (SOAR pipeline):
-      speckit.echelon.harness-run {spec_id} strategy=codegen
+      echelon delivery run {spec_id} --strategy codegen
 ════════════════════════════════════════════════
 ```
 
