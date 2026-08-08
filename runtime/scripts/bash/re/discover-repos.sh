@@ -16,7 +16,7 @@ fi
 # ---------- constants ----------
 
 # Directories to skip (hidden dirs handled separately via leading-dot check)
-SKIP_DIRS="node_modules .specify dist build vendor __pycache__ .venv venv target"
+SKIP_DIRS="node_modules .echelon dist build vendor __pycache__ .venv venv target"
 
 # Exact-name project markers
 EXACT_MARKERS="package.json pyproject.toml go.mod Cargo.toml pom.xml build.gradle build.gradle.kts CMakeLists.txt composer.json Gemfile setup.py Makefile"

@@ -60,3 +60,39 @@ def test_runtime_workflow_uses_echelon_commands_and_runtime_paths() -> None:
     ]
 
     assert stale == []
+
+
+def test_prosaic_harness_operations_use_echelon_owned_state() -> None:
+    command_names = (
+        "echelon.harness-status.md",
+        "echelon.harness-resume.md",
+        "echelon.harness-run.md",
+        "echelon.deploy.md",
+    )
+    stale = [
+        path.name
+        for name in command_names
+        if ".specify" in (path := ROOT / "prosaic" / "commands" / name).read_text(
+            encoding="utf-8"
+        )
+    ]
+
+    assert stale == []
+
+
+def test_runtime_workspace_helpers_anchor_on_echelon_paths() -> None:
+    helper_paths = (
+        ROOT / "runtime" / "scripts" / "bash" / "kb-read-init.sh",
+        ROOT / "runtime" / "scripts" / "bash" / "detect-project.sh",
+        ROOT / "runtime" / "scripts" / "bash" / "cicd-fingerprint.sh",
+        ROOT / "runtime" / "scripts" / "bash" / "re" / "discover-repos.sh",
+        ROOT / "runtime" / "workflow" / "phases" / "codegen-A-preamble.md",
+    )
+
+    stale = [
+        path.relative_to(ROOT).as_posix()
+        for path in helper_paths
+        if ".specify" in path.read_text(encoding="utf-8")
+    ]
+
+    assert stale == []

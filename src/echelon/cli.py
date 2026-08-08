@@ -742,7 +742,7 @@ def _cmd_init(
         if with_prosaic
         else ext_dir / "scripts" / "bash" / "deploy-init.sh"
     )
-    deploy_state_label = str(project_dir / ".specify" / "squad" / "deploy-state.json")
+    deploy_state_label = str(project_dir / "runs" / "deploy-state.json")
     if not deploy_enabled:
         deploy_state_label = "skipped (deploy.enabled=false)"
     elif not deploy_runtime_ready:

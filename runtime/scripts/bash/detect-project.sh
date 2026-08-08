@@ -18,7 +18,7 @@ SOURCE_COUNT=$(find "$TARGET_DIR" \
   -not -path "*/vendor/*" \
   -not -path "*/dist/*" \
   -not -path "*/build/*" \
-  -not -path "*/.specify/*" \
+  -not -path "*/.echelon/*" \
   2>/dev/null | wc -l | tr -d ' ')
 
 if [ "$SOURCE_COUNT" -gt 5 ]; then

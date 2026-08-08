@@ -90,16 +90,14 @@ export DEPLOY_STATE_FILE="$(python3 - <<'PYEOF'
 from pathlib import Path
 
 root = Path.cwd()
-for base in ("runs", "squad"):
-    current = root / base / ".current"
-    if current.exists():
-        run_id = current.read_text().strip()
-        candidate = root / base / run_id / "deploy-state.json"
-        if run_id and candidate.parent.is_dir():
-            print(candidate)
-            raise SystemExit(0)
-
-print(root / ".specify" / "squad" / "deploy-state.json")
+current = root / "runs" / ".current"
+if not current.exists():
+    raise SystemExit("No active Echelon run. Run echelon delivery status first.")
+run_id = current.read_text().strip()
+state_file = root / "runs" / run_id / "deploy-state.json"
+if not run_id or not state_file.exists():
+    raise SystemExit("No deploy state for the active Echelon run.")
+print(state_file)
 PYEOF
 )"
 ```

@@ -14,7 +14,7 @@
 #
 # Exit codes:
 #   0 = success (cold-start and all-files-absent are valid states)
-#   1 = no .specify/ found walking up from CWD
+#   1 = no .echelon/ found walking up from CWD
 
 set -euo pipefail
 
@@ -35,13 +35,13 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Walk up from CWD looking for .specify/ — anchors the project root deterministically.
+# Walk up from CWD looking for .echelon/ — anchors the project root deterministically.
 ROOT="$(pwd)"
-while [ "$ROOT" != "/" ] && [ ! -d "$ROOT/.specify" ]; do
+while [ "$ROOT" != "/" ] && [ ! -d "$ROOT/.echelon" ]; do
   ROOT=$(dirname "$ROOT")
 done
 if [ "$ROOT" = "/" ]; then
-  echo "kb-read-init: no .specify/ in CWD or any parent" >&2
+  echo "kb-read-init: no .echelon/ in CWD or any parent" >&2
   exit 1
 fi
 cd "$ROOT"

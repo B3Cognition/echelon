@@ -32,7 +32,7 @@ commit instead of asking the user to salvage it from the polyrepo wrapper.
 
 ## Step 1: Check Initialized
 
-If neither `.echelon/config.yml` nor the legacy `.echelon/config.yml` exists, report:
+If `.echelon/config.yml` does not exist, report:
 
 **"Delivery not initialized. Run `echelon delivery init` first."** and stop.
 
@@ -51,30 +51,20 @@ If `answer` is empty, ask: **"Please provide your answer to the escalation quest
 
 ---
 
-## Step 3: Validate State
+## Step 3: Resume
 
-Read `.specify/harness/state/{spec_id}/{strategy_id}.json`.
-
-- If file does not exist: report **"No state found for spec `{spec_id}`, strategy `{strategy_id}`."** and stop.
-- If `status` is not `blocked`: report **"Loop is not blocked. Current status: `{status}`."** Suggest `echelon delivery status` and stop.
-- If `escalation_file` is set: read it and display the escalation question to confirm the answer is relevant.
-
----
-
-## Step 4: Resume
+Echelon resolves the active build and its strategy state. Do not locate or read
+delivery state files yourself.
 
 ```bash
-HARNESS_SPEC="{spec_id}" \
-HARNESS_STRATEGY="{strategy_id}" \
-HARNESS_ANSWER="{answer}" \
-python -m harness resume
+echelon delivery resume "{spec_id}" "{answer}" --strategy "{strategy_id}"
 ```
 
 If the command exits non-zero, report the full error output and stop.
 
 ---
 
-## Step 5: Display Result
+## Step 4: Display Result
 
 ```
 Resume complete: {CONVERGED|status}

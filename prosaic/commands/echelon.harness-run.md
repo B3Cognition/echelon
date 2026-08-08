@@ -62,7 +62,7 @@ named spec inputs, and `HARNESS_BUILD_STATUS_FILE`.
 ## Step 1: Check Initialized
 
 ```bash
-test -f .echelon/config.yml || test -f .echelon/config.yml && echo "ok" || echo "missing"
+test -f .echelon/config.yml && echo "ok" || echo "missing"
 ```
 
 If the output is `missing`, report:
@@ -158,16 +158,13 @@ Before building, read the deployment configuration from CWD (not the worktree) t
 PYTHONPATH=.echelon/runtime python3 -c "
 import json, pathlib, sys
 root = pathlib.Path.cwd()
-p = root / '.specify' / 'squad' / 'deploy-state.json'
-for base in ('runs', 'squad'):
-    current = root / base / '.current'
-    if current.exists():
-        run_id = current.read_text().strip()
-        candidate = root / base / run_id / 'deploy-state.json'
-        if run_id and candidate.parent.is_dir():
-            p = candidate
-            break
-if not p.exists():
+current = root / 'runs' / '.current'
+if not current.exists():
+    print('none none')
+    sys.exit(0)
+run_id = current.read_text().strip()
+p = root / 'runs' / run_id / 'deploy-state.json'
+if not run_id or not p.exists():
     print('none none')
     sys.exit(0)
 try:
@@ -208,7 +205,7 @@ This makes the fix durable — it is now in the worktree's git history and canno
 Read the lessons file for this spec and the project-wide pitfalls with the Read tool. The lessons file records invariants learned from previous failed runs.
 
 - `{spec_dir}/lessons.md` (if missing, treat as `(no lessons yet)`)
-- `.specify/knowledge-base/pitfalls.yaml` (if missing, treat as `(no pitfalls yet)`)
+- `knowledge-base/pitfalls.yaml` (if missing, treat as `(no pitfalls yet)`)
 
 **If either file has content:** these are HARD constraints for the build step. Every lesson is an invariant that MUST NOT be violated by any implementation. Pass them verbatim to the strategy:
 

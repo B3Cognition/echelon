@@ -37,7 +37,7 @@ if [ "$RESUME_MODE" -eq 0 ]; then
   done
 
   # constitution.md is a published Phase A snapshot. Do not copy or repair it
-  # from .specify/memory here; rerun Phase A finalization if the snapshot is
+  # from mutable workspace artifacts here; rerun Phase A finalization if the snapshot is
   # missing or stale.
 
   # If spec.md (or other core artifacts) are still missing, the worktree may not
@@ -63,7 +63,7 @@ if [ "$RESUME_MODE" -eq 0 ]; then
           [ ! -f "${FEATURE_DIR}/${f}" ] && MISSING="${MISSING} ${f}"
         done
         # Keep constitution.md as a published Phase A snapshot. Do not copy or
-        # repair it from .specify/memory after merge.
+        # repair it from mutable workspace artifacts after merge.
       else
         echo "[RECOVERY] Merge failed — branch ${FEATURE_BRANCH} may not be accessible"
       fi
@@ -134,7 +134,7 @@ echo "[ECHELON CODEGEN] Harness state file: ${HARNESS_STATE_FILE:-not set (stand
 ECHELON_EXT="${PROJECT_ROOT}/.echelon/runtime"
 _DEPLOY_ROOT="${PROJECT_ROOT}"
 
-# In a harness worktree, PROJECT_ROOT is the worktree path — .specify/ and deploy
+# In a harness worktree, PROJECT_ROOT is the worktree path — .echelon/runtime and deploy
 # config live in the main checkout, not the worktree. Derive the main project root
 # from HARNESS_BUILD_STATUS_FILE (injected by the harness at worktree creation):
 #   .harness-build-status.json → iter-{n}/ → {strategy}/ → worktrees/ → build-{id}/ → runs/ → project root
@@ -189,7 +189,7 @@ If `RESUME_MODE=1`, skip to **Resume Mode** at the end of this document.
 
 ```bash
 LESSONS_FILE="${FEATURE_DIR}/lessons.md"
-PITFALLS_FILE="${PROJECT_ROOT}/.specify/knowledge-base/pitfalls.yaml"
+PITFALLS_FILE="${PROJECT_ROOT}/knowledge-base/pitfalls.yaml"
 
 LESSONS_CONTENT=""
 [ -f "${LESSONS_FILE}" ] && LESSONS_CONTENT=$(cat "${LESSONS_FILE}")

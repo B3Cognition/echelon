@@ -28,7 +28,7 @@ Canonical CLI equivalent: `echelon delivery status`.
 
 ## Step 1: Check Initialized
 
-If neither `.echelon/config.yml` nor the legacy `.echelon/config.yml` exists, report:
+If `.echelon/config.yml` does not exist, report:
 
 **"Delivery not initialized. Run `echelon delivery init` first."** and stop.
 
@@ -37,7 +37,7 @@ If neither `.echelon/config.yml` nor the legacy `.echelon/config.yml` exists, re
 ## Step 2: Run Status
 
 ```bash
-PYTHONPATH=.echelon/runtime python3 -c "from harness.skills.status_skill import show_status; show_status()"
+echelon delivery status
 ```
 
 ---
@@ -80,6 +80,6 @@ Based on the status output:
 |----------------|---------|
 | `blocked` | `echelon delivery resume <spec_id> "<your answer>"` |
 | `converged` with PR shown | Review the PR; merge when satisfied — that closes the feature branch into `main` |
-| `converged` with no PR | Review `.specify/harness/state/{spec_id}/` for output; push manually if needed |
+| `converged` with no PR | Run `echelon delivery status <spec_id>` for the recorded delivery state; push manually if needed |
 | `failed` | Check error details, then re-run with `echelon delivery run <spec_id>` |
 | No active loops | `echelon delivery run <spec_id>` to start one |

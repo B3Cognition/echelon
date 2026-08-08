@@ -33,7 +33,7 @@ _compute_hash() {
   # Find all CI/CD-relevant files, sort for determinism, hash contents
   {
     find "${PROJECT_ROOT}" \
-      -not -path "*/.specify/*" \
+      -not -path "*/.echelon/*" \
       -not -path "*/node_modules/*" \
       -not -path "*/.git/*" \
       \( \
