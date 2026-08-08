@@ -114,7 +114,7 @@ assert_file_exists "structure.json at root output dir" "$TMPDIR1/structure.json"
 assert_file_exists "dependencies.json at root output dir" "$TMPDIR1/dependencies.json"
 if [[ -f "$TMPDIR1/codegraph-analysis.json" ]]; then
     assert_file_exists "codegraph-summary.json at root output dir" "$TMPDIR1/codegraph-summary.json"
-    assert_json_field "codegraph summary has index_state" "$TMPDIR1/codegraph-summary.json" '.index_state' "ready"
+    assert_json_field "codegraph summary has provider_status" "$TMPDIR1/codegraph-summary.json" '.provider_status' "complete"
     assert_json_field "codegraph excludes hidden source evidence" "$TMPDIR1/codegraph-analysis.json" 'tostring | contains(".github")' "false"
 fi
 assert_path_not_exists "single-repo fixture remains free of .codegraph" "$FIXTURES_DIR/single-repo/.codegraph"
