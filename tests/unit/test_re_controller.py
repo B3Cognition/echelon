@@ -977,7 +977,37 @@ def test_workspace_synthesis_retry_prompt_includes_controller_feedback(
     )
 
     assert "Controller Validation Feedback" in prompt
+    assert "Repair only these missing workspace-synthesis output files" in prompt
     assert "workspace/domains/001-re-domain.md" in prompt
+    assert str((run_dir / "re" / "sources" / "api" / "overview.md").resolve()) not in prompt
+
+
+@pytest.mark.unit
+def test_workspace_synthesis_retry_metadata_allows_only_missing_outputs(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    controller = ReExtractionController(
+        provider=_ShallowSpecifierProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    )
+    plan = controller._load_plan()
+    state = {
+        "re_agent_result_detail": (
+            "workspace synthesis has missing or empty artifacts: "
+            "workspace/domains/001-re-domain.md"
+        )
+    }
+
+    metadata = controller._prompt_metadata_for_target(
+        plan, {"kind": "workspace-synthesis"}, state
+    )
+
+    assert metadata["tool_write_paths"] == [
+        str((run_dir / "re/workspace/domains/001-re-domain.md").resolve())
+    ]
 
 
 @pytest.mark.unit
@@ -1066,7 +1096,7 @@ def test_continue_redispatches_legacy_unscoped_workspace_synthesis(
 
 
 @pytest.mark.unit
-def test_continue_does_not_recover_incomplete_workspace_synthesis(
+def test_workspace_synthesis_blocks_after_automatic_repair_is_exhausted(
     tmp_path: Path,
 ) -> None:
     run_dir = write_valid_re_run(tmp_path, ("api",))
@@ -1097,9 +1127,42 @@ def test_continue_does_not_recover_incomplete_workspace_synthesis(
 
     assert not result.completed
     assert result.blocked_reason == "re_workspace_synthesis_incomplete"
-    assert provider.phases.count("re-extract-2-specify") == 1
+    assert provider.phases.count("re-extract-2-specify") == 2
     assert result.blocked_detail is not None
     assert "workspace/domains/001-re-domain.md" in result.blocked_detail
+    state = json.loads((run_dir / "re" / "state.json").read_text(encoding="utf-8"))
+    assert state["re_workspace_synthesis_repair_attempts"] == 1
+
+
+@pytest.mark.unit
+def test_workspace_synthesis_automatically_repairs_missing_artifacts(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    _strand_completed_workspace_synthesis(run_dir)
+    missing = run_dir / "re" / "workspace" / "domains" / "001-re-domain.md"
+    missing.unlink()
+
+    class RepairOnceWorkspaceProvider(_ShallowSpecifierProvider):
+        def exec_agent(self, project_root: str, prompt: str) -> SquadAgentResult:
+            result = super().exec_agent(project_root, prompt)
+            if self.phases.count("re-extract-2-specify") == 1:
+                missing.unlink(missing_ok=True)
+            return result
+
+    provider = RepairOnceWorkspaceProvider()
+    result = ReExtractionController(
+        provider=provider,
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert result.completed
+    assert provider.phases.count("re-extract-2-specify") == 2
+    state = json.loads((run_dir / "re" / "state.json").read_text(encoding="utf-8"))
+    assert state["re_workspace_synthesis_repair_attempts"] == 1
+    assert state["re_workspace_synthesis_complete"] is True
 
 
 @pytest.mark.unit

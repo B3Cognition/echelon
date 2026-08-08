@@ -9889,18 +9889,88 @@ def _print_re_lifecycle_result(result: object) -> None:
     if status == "done":
         if no_work:
             print(f"RE publication is current (generation {generation}); no agent work required.")
+            _banner(
+                "RE FINAL STATE — CURRENT",
+                [("run", run_id or "(not created)"), ("generation", str(generation))],
+                subtitle="No reverse-engineering work was required.",
+            )
         else:
             print(
                 f"RE run {run_id} complete; publication is pending. "
                 f"Publish explicitly with: echelon re publish {run_id}"
             )
+            _banner(
+                "RE FINAL STATE — COMPLETE",
+                [
+                    ("run", run_id),
+                    ("generation", str(generation)),
+                    ("next step", f"echelon re publish {run_id}"),
+                ],
+                subtitle="Reverse engineering completed; publication is pending.",
+            )
         return
     reason = str(getattr(result, "blocked_reason", "RE lifecycle failed"))
     print(f"RE run {run_id or '(not created)'} blocked: {reason}", file=sys.stderr)
     detail = str(getattr(result, "blocked_detail", "")).strip()
-    if detail:
-        print(f"  detail: {detail}", file=sys.stderr)
+    fields = [
+        ("run", run_id or "(not created)"),
+        ("status", "blocked"),
+        ("reason", reason),
+    ]
+    phase = str(getattr(result, "phase", "")).strip()
+    if phase:
+        fields.append(("phase", phase))
+    missing_workspace_artifacts = _workspace_synthesis_missing_artifacts(detail)
+    if missing_workspace_artifacts:
+        fields.extend(
+            [
+                (
+                    "validation",
+                    "Agent reported DONE, but deterministic artifact validation failed.",
+                ),
+                (
+                    "missing artifacts",
+                    _format_missing_workspace_artifacts(missing_workspace_artifacts),
+                ),
+                ("retry", "echelon re continue"),
+            ]
+        )
+    else:
+        if detail:
+            fields.append(("detail", _summarize_re_lifecycle_detail(detail)))
+        fields.append(("action", "Resolve the blocker, then continue or resume the run."))
+    _banner(
+        "RE FINAL STATE — BLOCKED",
+        fields,
+        subtitle="No further provider work was run after the controller gate failed.",
+        file=sys.stderr,
+    )
     raise SystemExit(1)
+
+
+def _summarize_re_lifecycle_detail(detail: str) -> str:
+    """Keep the terminal's final RE state legible when a gate reports many paths."""
+    compact = " ".join(detail.split())
+    return compact if len(compact) <= 300 else compact[:297] + "…"
+
+
+def _workspace_synthesis_missing_artifacts(detail: str) -> list[str]:
+    prefix = "workspace synthesis has missing or empty artifacts: "
+    if not detail.startswith(prefix):
+        return []
+    return [
+        path.strip()
+        for path in detail.removeprefix(prefix).split(",")
+        if path.strip()
+    ]
+
+
+def _format_missing_workspace_artifacts(paths: list[str]) -> str:
+    displayed = paths[:10]
+    heading = f"{len(paths)} required artifacts are absent."
+    remainder = len(paths) - len(displayed)
+    suffix = f"… and {remainder} more" if remainder else ""
+    return "\n".join([heading, *displayed, suffix]).strip()
 
 
 def _cmd_re_run(args: list[str]) -> None:

@@ -157,8 +157,43 @@ def test_re_lifecycle_block_prints_precise_controller_detail(
 
     assert exc.value.code == 1
     error = capsys.readouterr().err
+    assert "RE FINAL STATE — BLOCKED" in error
     assert "re_agent_result_invalid" in error
     assert "state_updates key was rejected" in error
+
+
+@pytest.mark.unit
+def test_re_lifecycle_banner_explains_workspace_synthesis_contradiction(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _print_re_lifecycle_result
+
+    missing = [
+        "workspace/domains/002-re-src.md",
+        "workspace/domains/004-re-scripts.md",
+        "workspace/domains/006-re-tests.md",
+        "workspace/domains/007-re-typings.md",
+        "workspace/domains/010-re-src-models-types.md",
+    ]
+    with pytest.raises(SystemExit):
+        _print_re_lifecycle_result(
+            SimpleNamespace(
+                status="blocked",
+                run_id="re-1",
+                blocked_reason="re_workspace_synthesis_incomplete",
+                blocked_detail=(
+                    "workspace synthesis has missing or empty artifacts: "
+                    + ", ".join(missing)
+                ),
+            )
+        )
+
+    error = capsys.readouterr().err
+    assert "Agent reported DONE, but deterministic artifact validation failed." in error
+    assert "5 required artifacts are absent." in error
+    for path in missing:
+        assert path in error
+    assert "echelon re continue" in error
 
 
 @pytest.mark.unit
