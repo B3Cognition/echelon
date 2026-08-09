@@ -1,5 +1,5 @@
 ---
-name: speckit.echelon.status
+name: echelon.status
 description: "Show current Echelon spec run status through the Python harness"
 behavior:
   invocation: explicit

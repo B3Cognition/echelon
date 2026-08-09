@@ -1,5 +1,5 @@
 # Phase: phase1-constitution
-# Agent: speckit-echelon-chief (CHIEF)
+# Agent: echelon-chief (CHIEF)
 # Mode: Creation
 
 > **Dispatcher contract** — this file tells CHIEF what to read, what mode to

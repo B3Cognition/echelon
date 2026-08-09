@@ -20,8 +20,8 @@ Run periodic health checks on existing squad artifacts. Catches spec drift, stal
 
 ## Checks
 
-1. **Spec-Code Drift:** Run speckit-echelon-verification (VERIFICATION) in check-only mode — is the traceability matrix still accurate?
-2. **Estimate Drift:** Compare speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER))'s latest CPI/SPI against initial ASSESS estimates
+1. **Spec-Code Drift:** Run echelon-verification (VERIFICATION) in check-only mode — is the traceability matrix still accurate?
+2. **Estimate Drift:** Compare echelon-progress-tracker (PROGRESS echelon-tracker (TRACKER))'s latest CPI/SPI against initial ASSESS estimates
 3. **Risk Drift:** Re-run STRATEGIC OVERVIEW — has the risk profile changed since last check?
 4. **Constitution Compliance:** Scan recent code changes against constitution rules
 5. **Knowledge Base Freshness:** Check for stale patterns/pitfalls (>6 months, no feedback)

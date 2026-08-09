@@ -16,7 +16,7 @@ class TestManualCommandContracts:
         ]:
             text = (COMMAND_DIR / filename).read_text(encoding="utf-8")
 
-            assert "agent: speckit-echelon-commander (COMMANDER)" in text
+            assert "agent: echelon-commander (COMMANDER)" in text
             assert "agent: MANAGER" not in text
             assert "  output_files: []\n" in text
 
@@ -148,4 +148,4 @@ class TestManualCommandContracts:
         text = (COMMAND_DIR / "echelon.cicd.md").read_text(encoding="utf-8")
 
         assert "Retired" in text
-        assert "speckit-echelon-run" not in text
+        assert "echelon-run" not in text

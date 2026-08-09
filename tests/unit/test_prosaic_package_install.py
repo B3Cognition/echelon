@@ -119,7 +119,7 @@ def test_runtime_workflow_dispatches_only_neutral_prosaic_subagents() -> None:
         re.findall(r"^\s+- id:\s*(echelon\.[a-z0-9-]+)\s*$", workflow, flags=re.MULTILINE)
     )
 
-    assert "speckit-echelon-" not in "\n".join(
+    assert "echelon-" not in "\n".join(
         path.read_text(encoding="utf-8", errors="ignore")
         for path in runtime.rglob("*")
         if path.is_file()

@@ -56,7 +56,7 @@ def test_flags_vague_skill_tool_reference(tmp_path: Path) -> None:
 def test_accepts_exact_skill_tool_reference(tmp_path: Path) -> None:
     prompt = tmp_path / "agent.md"
     prompt.write_text(
-        "Use the Skill tool: `speckit.echelon.understanding-validate <spec.md>`.\n",
+        "Use the Skill tool: `echelon.understanding-validate <spec.md>`.\n",
         encoding="utf-8",
     )
 

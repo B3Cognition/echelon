@@ -1,5 +1,5 @@
 # Phase: re-extract-5-validate
-# Agent: speckit-echelon-re-validator
+# Agent: echelon-re-validator
 
 ## Context Pack
 

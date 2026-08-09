@@ -1,6 +1,6 @@
 # Phase: build-8-finalize
 # Source: echelon.build.md §8–§12 — Build Complete through Harness Integration
-# Read by: speckit-echelon-commander (COMMANDER) after all phase checkpoints pass
+# Read by: echelon-commander (COMMANDER) after all phase checkpoints pass
 
 ## 8. Build Complete (BUILD_DONE)
 
@@ -8,11 +8,11 @@ After all tasks are built and all phase checkpoints pass:
 
 ### 8.1 Final Integration
 
-Run speckit-echelon-integrator (INTEGRATOR) one last time against the complete codebase (all phases combined).
+Run echelon-integrator (INTEGRATOR) one last time against the complete codebase (all phases combined).
 
 ### 8.1b Engineering Manager Sign-Off
 
-Before completion, dispatch speckit-echelon-engineering-manager (ENGINEERING MANAGER) with the TECH WRITER documentation output.
+Before completion, dispatch echelon-engineering-manager (ENGINEERING MANAGER) with the TECH WRITER documentation output.
 
 Use the Ralph-owned context pack:
 
@@ -27,7 +27,7 @@ Use the Ralph-owned context pack:
 
 Use the Agent tool:
 
-- **subagent_type:** `speckit-echelon-engineering-manager`
+- **subagent_type:** `echelon-engineering-manager`
 - **prompt:**
 
   ```xml
@@ -41,13 +41,13 @@ Use the Agent tool:
   </instructions>
   ```
 
-- **description:** "speckit-echelon-engineering-manager (ENGINEERING MANAGER): final pre-verification sign-off"
+- **description:** "echelon-engineering-manager (ENGINEERING MANAGER): final pre-verification sign-off"
 
-speckit-echelon-engineering-manager (ENGINEERING MANAGER) must confirm:
+echelon-engineering-manager (ENGINEERING MANAGER) must confirm:
 
 1. Spec-kit task workflow was actually followed.
 2. Task status, state tracking, and reports are internally consistent.
-3. The build is ready for full speckit-echelon-verification (VERIFICATION).
+3. The build is ready for full echelon-verification (VERIFICATION).
 4. **`verify.sh` exists and contains a smoke test** (see below).
 5. **Documentation Convergence Gate passed**: `documentation-impact-report.md` and `docs-verification-report.md` exist; when docs are required, `README.md` and `CHANGELOG.md` were updated, README.md works as a first-run manual for runnable projects, CHANGELOG.md follows Keep a Changelog-style `[Unreleased]` entries, and DOCS VERIFIER returned PASS.
 
@@ -59,19 +59,19 @@ Every build must produce a repo-root `verify.sh` that starts the produced applic
 
 For complete smoke-test patterns, Next.js-specific checks, and stack-specific examples, load `workflow/phases/appendices/build-8-verify-gates.md` before ENGINEERING MANAGER sign-off or when IMPLEMENTER needs to create or repair `verify.sh`.
 
-If `verify.sh` does not contain a smoke test, speckit-echelon-engineering-manager (ENGINEERING MANAGER) must request speckit-echelon-implementer (IMPLEMENTER) add one before sign-off. This is not optional.
+If `verify.sh` does not contain a smoke test, echelon-engineering-manager (ENGINEERING MANAGER) must request echelon-implementer (IMPLEMENTER) add one before sign-off. This is not optional.
 
 ### 8.1b.2 verify.sh Security and License Gate (MANDATORY)
 
 Every `verify.sh` must run security and dependency license checks after the smoke test, inside the same Docker sandbox.
 
-speckit-echelon-implementer (IMPLEMENTER) must select commands for every detected ecosystem and add them to `verify.sh` after the smoke test block. If an audit or license check fails, `verify.sh` must exit non-zero so the harness marks the build as failed.
+echelon-implementer (IMPLEMENTER) must select commands for every detected ecosystem and add them to `verify.sh` after the smoke test block. If an audit or license check fails, `verify.sh` must exit non-zero so the harness marks the build as failed.
 
 For exact commands, permitted licenses, and polyglot handling, load `workflow/phases/appendices/build-8-verify-gates.md`.
 
 ### 8.1c Final Verification
 
-Dispatch speckit-echelon-verification (VERIFICATION) after final integration and EM pre-check.
+Dispatch echelon-verification (VERIFICATION) after final integration and EM pre-check.
 
 Use the Ralph-owned context pack:
 
@@ -84,7 +84,7 @@ Use the Ralph-owned context pack:
 
 Use the Agent tool:
 
-- **subagent_type:** `speckit-echelon-verification`
+- **subagent_type:** `echelon-verification`
 - **prompt:**
 
   ```xml
@@ -99,9 +99,9 @@ Use the Agent tool:
   </instructions>
   ```
 
-- **description:** "speckit-echelon-verification (VERIFICATION): final backpropagation check"
+- **description:** "echelon-verification (VERIFICATION): final backpropagation check"
 
-speckit-echelon-verification (VERIFICATION) must:
+echelon-verification (VERIFICATION) must:
 
 1. Use the provided spec context and Ralph-owned requirement checklist for every FR-*, AC-*, and NFR-*.
 2. Verify code, tests, integration evidence, and gate evidence.
@@ -110,7 +110,7 @@ speckit-echelon-verification (VERIFICATION) must:
 Handle result:
 
 - **PASS** — continue to BUILD_DONE
-- **FAIL** — create RW-* tasks, route through speckit-echelon-implementer (IMPLEMENTER) and quality gates, then re-run speckit-echelon-verification (VERIFICATION)
+- **FAIL** — create RW-* tasks, route through echelon-implementer (IMPLEMENTER) and quality gates, then re-run echelon-verification (VERIFICATION)
 
 BUILD_DONE is forbidden while `verification-summary.md` is FAIL or `gap-report.md` contains open gaps.
 
@@ -121,12 +121,12 @@ Before BUILD_DONE, run the post-build TRACKER intent alignment check from
 `drift_severity` from `intent-alignment-final.md`.
 
 - `ALIGNED` / `MINOR_DRIFT`: record the result in `feedback-report.md`.
-- `MAJOR_DRIFT`: dispatch speckit-echelon-change-controller (CHANGE CONTROLLER)
+- `MAJOR_DRIFT`: dispatch echelon-change-controller (CHANGE CONTROLLER)
   for one bounded rework pass unless `autonomy_mode == "banzai"`.
 - `MAJOR_DRIFT` in `banzai`: return `requires_human_review: true` and write
   `drift-escalation.md` using the supplied template.
 
-**Specification Complete (mandatory on speckit-echelon-verification (VERIFICATION) PASS):**
+**Specification Complete (mandatory on echelon-verification (VERIFICATION) PASS):**
 
 1. Validate task progress integrity with `python -m harness validate-task-progress "{spec_dir}/tasks.md" "{state_json_path}"`.
 2. Confirm `state.json.build.tasks_completed_pct` is `100`. If not, recompute from canonical checked task rows in `tasks.md` and return the full updated `build` object in `echelon_result.state_updates`.
@@ -191,13 +191,13 @@ authoritative for:
 - returning `constitution_amendments_pending`
 - requiring human review through `speckit.constitution`
 
-### 8.3b Run speckit-echelon-consolidator (CONSOLIDATOR)
+### 8.3b Run echelon-consolidator (CONSOLIDATOR)
 
-After the implementation is verified and before speckit-echelon-scorekeeper (SCOREKEEPER), dispatch speckit-echelon-consolidator (CONSOLIDATOR) in `offline_consolidation` mode so build-phase lessons become reusable schemas.
+After the implementation is verified and before echelon-scorekeeper (SCOREKEEPER), dispatch echelon-consolidator (CONSOLIDATOR) in `offline_consolidation` mode so build-phase lessons become reusable schemas.
 
 Use the Agent tool:
 
-- **subagent_type:** `speckit-echelon-consolidator`
+- **subagent_type:** `echelon-consolidator`
 - **prompt:**
 
   ```xml
@@ -211,17 +211,17 @@ Use the Agent tool:
   </instructions>
   ```
 
-- **description:** "speckit-echelon-consolidator (CONSOLIDATOR): build-phase schema consolidation before scoring"
+- **description:** "echelon-consolidator (CONSOLIDATOR): build-phase schema consolidation before scoring"
 
-If speckit-echelon-consolidator (CONSOLIDATOR) is unavailable, record a warning and continue to speckit-echelon-scorekeeper (SCOREKEEPER). Do not block BUILD_DONE on consolidation availability.
+If echelon-consolidator (CONSOLIDATOR) is unavailable, record a warning and continue to echelon-scorekeeper (SCOREKEEPER). Do not block BUILD_DONE on consolidation availability.
 
-### 8.4 Run speckit-echelon-scorekeeper (SCOREKEEPER)
+### 8.4 Run echelon-scorekeeper (SCOREKEEPER)
 
-After all build tasks complete, dispatch speckit-echelon-scorekeeper (SCOREKEEPER) to produce the build phase scorecard:
+After all build tasks complete, dispatch echelon-scorekeeper (SCOREKEEPER) to produce the build phase scorecard:
 
 Use the Agent tool:
 
-- **subagent_type:** `speckit-echelon-scorekeeper`
+- **subagent_type:** `echelon-scorekeeper`
 - **prompt:**
 
   ```xml
@@ -231,37 +231,37 @@ Use the Agent tool:
 
   <instructions>
   You are SCOREKEEPER. Read agents/control/scorekeeper.md for your complete protocol.
-  Score all build agents: speckit-echelon-implementer (IMPLEMENTER) (first-pass approvals vs rework), speckit-echelon-spec-guard (SPEC GUARD) (gaps caught vs missed by speckit-echelon-verification (VERIFICATION)), speckit-echelon-code-reviewer (CODE REVIEWER) (issues found), speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN)) (coverage improvements). Collect peer appreciation from reasoning-journal.jsonl. Check badge criteria. Produce `agent-scorecard.md` using the provided template. Update `knowledge-base/agent-scores.yaml`.
+  Score all build agents: echelon-implementer (IMPLEMENTER) (first-pass approvals vs rework), echelon-spec-guard (SPEC GUARD) (gaps caught vs missed by echelon-verification (VERIFICATION)), echelon-code-reviewer (CODE REVIEWER) (issues found), echelon-test-guardian (TEST echelon-guardian (GUARDIAN)) (coverage improvements). Collect peer appreciation from reasoning-journal.jsonl. Check badge criteria. Produce `agent-scorecard.md` using the provided template. Update `knowledge-base/agent-scores.yaml`.
   </instructions>
   ```
 
-- **description:** "speckit-echelon-scorekeeper (SCOREKEEPER): build phase scoring and badges"
+- **description:** "echelon-scorekeeper (SCOREKEEPER): build phase scoring and badges"
 
 Build-specific scoring:
 
 ```
 Per task completed:
-  speckit-echelon-implementer (IMPLEMENTER) first-pass approval: +3
-  speckit-echelon-implementer (IMPLEMENTER) rework required: -1
-  speckit-echelon-implementer (IMPLEMENTER) third rework: -3
-  speckit-echelon-spec-guard (SPEC GUARD) caught gap: +3
-  speckit-echelon-code-reviewer (CODE REVIEWER) found issue: +2
-  speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN)) improved coverage: +2
+  echelon-implementer (IMPLEMENTER) first-pass approval: +3
+  echelon-implementer (IMPLEMENTER) rework required: -1
+  echelon-implementer (IMPLEMENTER) third rework: -3
+  echelon-spec-guard (SPEC GUARD) caught gap: +3
+  echelon-code-reviewer (CODE REVIEWER) found issue: +2
+  echelon-test-guardian (TEST echelon-guardian (GUARDIAN)) improved coverage: +2
 
 Per phase gate:
-  speckit-echelon-integrator (INTEGRATOR) pass: +2
-  speckit-echelon-visual-validator (VISUAL speckit-echelon-validator (VALIDATOR)) caught visual issue: +4
+  echelon-integrator (INTEGRATOR) pass: +2
+  echelon-visual-validator (VISUAL echelon-validator (VALIDATOR)) caught visual issue: +4
 
 End of build:
-  speckit-echelon-verification (VERIFICATION) 100% coverage: speckit-echelon-spec-guard (SPEC GUARD) gets +5 (Guardian Angel badge candidate)
-  speckit-echelon-verification (VERIFICATION) found gaps: speckit-echelon-spec-guard (SPEC GUARD) gets -2 per gap (Blind Spot badge candidate)
+  echelon-verification (VERIFICATION) 100% coverage: echelon-spec-guard (SPEC GUARD) gets +5 (Guardian Angel badge candidate)
+  echelon-verification (VERIFICATION) found gaps: echelon-spec-guard (SPEC GUARD) gets -2 per gap (Blind Spot badge candidate)
 ```
 
 ---
 
 ## 8.5 Auto-Feedback & Post-Build Validation (Phase 5)
 
-After speckit-echelon-scorekeeper (SCOREKEEPER) and before final summary, speckit-echelon-commander (COMMANDER) runs the autonomous feedback pipeline. This closes the learning loop without human input.
+After echelon-scorekeeper (SCOREKEEPER) and before final summary, echelon-commander (COMMANDER) runs the autonomous feedback pipeline. This closes the learning loop without human input.
 
 **Config gate:** Run `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh feedback.auto_feedback` (default: `true`). If `false`, skip to Section 8.7 Print Summary.
 
@@ -278,7 +278,7 @@ Load `workflow/phases/appendices/build-8-feedback-reference.md` before running a
 
 ### 8.6 Consolidation Phase — Constitution Amendment Candidates
 
-Load `workflow/phases/appendices/build-8-feedback-reference.md` and run its Consolidation Phase. Always leave constitution promotion to humans. speckit-echelon-commander (COMMANDER) never auto-amends constitution content.
+Load `workflow/phases/appendices/build-8-feedback-reference.md` and run its Consolidation Phase. Always leave constitution promotion to humans. echelon-commander (COMMANDER) never auto-amends constitution content.
 
 ---
 

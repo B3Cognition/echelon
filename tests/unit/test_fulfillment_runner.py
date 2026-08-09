@@ -14,7 +14,7 @@ from kernel.fulfillment import read_fulfillment_metadata
 
 
 def _write_verify_skill(root):
-    skill_dir = root / ".claude" / "skills" / "speckit-echelon-verify-spec"
+    skill_dir = root / ".claude" / "skills" / "echelon-verify-spec"
     skill_dir.mkdir(parents=True)
     (skill_dir / "skill.md").write_text(
         "---\nname: echelon.verify-spec\n---\nverify $ARGUMENTS\n",
@@ -523,7 +523,7 @@ class TestFulfillmentRunner:
         assert read_fulfillment_metadata(report) == {}
 
     def test_refresh_rejects_report_with_ids_not_in_requirement_audit(self, tmp_path):
-        skill_dir = tmp_path / ".claude" / "skills" / "speckit-echelon-verify-spec"
+        skill_dir = tmp_path / ".claude" / "skills" / "echelon-verify-spec"
         skill_dir.mkdir(parents=True)
         (skill_dir / "skill.md").write_text(
             "---\nname: echelon.verify-spec\n---\nverify $ARGUMENTS\n",
@@ -564,7 +564,7 @@ class TestFulfillmentRunner:
         assert read_fulfillment_metadata(report) == {}
 
     def test_refresh_fails_when_report_drops_canonical_inventory_row(self, tmp_path):
-        skill_dir = tmp_path / ".claude" / "skills" / "speckit-echelon-verify-spec"
+        skill_dir = tmp_path / ".claude" / "skills" / "echelon-verify-spec"
         skill_dir.mkdir(parents=True)
         (skill_dir / "skill.md").write_text(
             "---\nname: echelon.verify-spec\n---\nverify $ARGUMENTS\n",
@@ -609,7 +609,7 @@ class TestFulfillmentRunner:
         assert read_fulfillment_metadata(report) == {}
 
     def test_refresh_rejects_large_audit_scope_drop_without_scope_change(self, tmp_path):
-        skill_dir = tmp_path / ".claude" / "skills" / "speckit-echelon-verify-spec"
+        skill_dir = tmp_path / ".claude" / "skills" / "echelon-verify-spec"
         skill_dir.mkdir(parents=True)
         (skill_dir / "skill.md").write_text(
             "---\nname: echelon.verify-spec\n---\nverify $ARGUMENTS\n",
@@ -672,7 +672,7 @@ class TestFulfillmentRunner:
         assert read_fulfillment_metadata(report) == {}
 
     def test_refresh_allows_large_audit_scope_drop_after_spec_change(self, tmp_path):
-        skill_dir = tmp_path / ".claude" / "skills" / "speckit-echelon-verify-spec"
+        skill_dir = tmp_path / ".claude" / "skills" / "echelon-verify-spec"
         skill_dir.mkdir(parents=True)
         (skill_dir / "skill.md").write_text(
             "---\nname: echelon.verify-spec\n---\nverify $ARGUMENTS\n",
@@ -736,7 +736,7 @@ class TestFulfillmentRunner:
 
     def test_refresh_uses_orchestration_spec_dir_for_polyrepo_runs(self, tmp_path):
         worktree = tmp_path / "runs" / "build-1" / "worktrees" / "default" / "iter-0"
-        skill_dir = worktree / ".claude" / "skills" / "speckit-echelon-verify-spec"
+        skill_dir = worktree / ".claude" / "skills" / "echelon-verify-spec"
         skill_dir.mkdir(parents=True)
         (skill_dir / "skill.md").write_text(
             "---\nname: echelon.verify-spec\n---\nverify $ARGUMENTS\n",

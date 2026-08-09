@@ -1,6 +1,6 @@
 # Phase: phase-exp-tasks-quality
-# Agent: speckit-echelon-orchestrator (ORCHESTRATOR)
-# Read by: speckit-echelon-commander (COMMANDER) for manual experimental phase runs only
+# Agent: echelon-orchestrator (ORCHESTRATOR)
+# Read by: echelon-commander (COMMANDER) for manual experimental phase runs only
 
 ## Purpose
 

@@ -1,5 +1,5 @@
 ---
-name: speckit-echelon-chief
+name: echelon-chief
 description: CHIEF — project constitution author and governance steward
 model: claude-sonnet-4-6
 tools: Read Write Edit Bash Glob Grep
@@ -151,7 +151,7 @@ echelon_result:
   journal_entries:
     - type: constitution_created
       phase: phase1-constitution
-      agent: speckit-echelon-chief (CHIEF)
+      agent: echelon-chief (CHIEF)
       data:
         mode: <Creation | Amendment>
         constitution_path: .specify/memory/constitution.md

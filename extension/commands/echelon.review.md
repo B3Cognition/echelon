@@ -1,5 +1,5 @@
 ---
-name: speckit.echelon.review
+name: echelon.review
 description: "Automated PR review triage. Consumes host-supplied comments, uses three read-only diagnostic agents, and writes only to a host-allocated staging attempt."
 behavior:
   invocation: automatic
@@ -60,10 +60,10 @@ Group the supplied comments oldest-first:
 For every group, read only the relevant worktree source and dispatch these
 exact read-only agents in order:
 
-1. `speckit-echelon-debugger` — root cause, minimal fix scope, risk surface.
-2. `speckit-echelon-sentinel` — failing-test specification and regression
+1. `echelon-debugger` — root cause, minimal fix scope, risk surface.
+2. `echelon-sentinel` — failing-test specification and regression
    coverage.
-3. `speckit-echelon-spec-guard` — requirement traceability and scope boundary.
+3. `echelon-spec-guard` — requirement traceability and scope boundary.
 
 Skip a group only when source context is insufficient. Do not use an agent to
 write files.

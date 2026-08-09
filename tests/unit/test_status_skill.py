@@ -19,4 +19,4 @@ def test_status_skill_corrupted_state_uses_delivery_resume_hint(
     assert result["strategies"]["default"]["status"] == "corrupted"
     err = capsys.readouterr().err
     assert "echelon delivery resume" in err
-    assert "speckit.echelon.harness-resume" not in err
+    assert "echelon.harness-resume" not in err

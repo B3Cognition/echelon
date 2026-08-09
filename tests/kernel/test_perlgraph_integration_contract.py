@@ -81,7 +81,7 @@ def test_re_state_tracks_perlgraph_artifacts_by_default() -> None:
 
 def test_re_state_accepts_perlgraph_artifact_updates() -> None:
     state = init_re_state()
-    state = write_last_dispatch(state, "re-extract-1-analyze", "speckit-echelon-re-analyzer")
+    state = write_last_dispatch(state, "re-extract-1-analyze", "echelon-re-analyzer")
 
     updated = complete_dispatch(
         state,

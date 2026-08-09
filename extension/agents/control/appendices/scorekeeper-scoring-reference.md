@@ -4,20 +4,20 @@
 
 | Action | Points | Agent | Description |
 |--------|--------|-------|-------------|
-| First-pass approval | +3 | speckit-echelon-implementer (IMPLEMENTER) | Task passes speckit-echelon-spec-guard (SPEC GUARD) + speckit-echelon-code-reviewer (CODE REVIEWER) on first try |
-| Rework required | -1 | speckit-echelon-implementer (IMPLEMENTER) | Task needs fixes after review |
-| Third rework | -3 | speckit-echelon-implementer (IMPLEMENTER) | Same task fails review 3 times |
-| Critical bug caught | +5 | WHY, speckit-echelon-spec-guard (SPEC GUARD) | Found a CRITICAL issue that would have reached production |
-| High bug caught | +3 | WHY, speckit-echelon-spec-guard (SPEC GUARD) | Found a HIGH issue |
-| False positive | -1 | WHY, speckit-echelon-spec-guard (SPEC GUARD) | Flagged an issue that wasn't actually a problem |
+| First-pass approval | +3 | echelon-implementer (IMPLEMENTER) | Task passes echelon-spec-guard (SPEC GUARD) + echelon-code-reviewer (CODE REVIEWER) on first try |
+| Rework required | -1 | echelon-implementer (IMPLEMENTER) | Task needs fixes after review |
+| Third rework | -3 | echelon-implementer (IMPLEMENTER) | Same task fails review 3 times |
+| Critical bug caught | +5 | WHY, echelon-spec-guard (SPEC GUARD) | Found a CRITICAL issue that would have reached production |
+| High bug caught | +3 | WHY, echelon-spec-guard (SPEC GUARD) | Found a HIGH issue |
+| False positive | -1 | WHY, echelon-spec-guard (SPEC GUARD) | Flagged an issue that wasn't actually a problem |
 | Accurate estimate | +3 | ASSESS | Estimate within 20% of actual |
 | Inaccurate estimate | -2 | ASSESS | Estimate off by > 50% |
 | Assumption validated | +2 | SCIENTIST | Empirical evidence confirmed an assumption |
 | Assumption invalidated | +4 | SCIENTIST | Found that an assumption was WRONG (more valuable — prevented bad decisions) |
 | Architecture held | +3 | HOW | ADR decision survived implementation without changes |
 | Architecture changed | -1 | HOW | ADR had to be revised during build |
-| Gap found by speckit-echelon-verification (VERIFICATION) | -2 | speckit-echelon-spec-guard (SPEC GUARD) | speckit-echelon-verification (VERIFICATION) found a requirement speckit-echelon-spec-guard (SPEC GUARD) missed |
-| 100% coverage on verification | +5 | speckit-echelon-spec-guard (SPEC GUARD) | Zero gaps found by speckit-echelon-verification (VERIFICATION) |
+| Gap found by echelon-verification (VERIFICATION) | -2 | echelon-spec-guard (SPEC GUARD) | echelon-verification (VERIFICATION) found a requirement echelon-spec-guard (SPEC GUARD) missed |
+| 100% coverage on verification | +5 | echelon-spec-guard (SPEC GUARD) | Zero gaps found by echelon-verification (VERIFICATION) |
 | Internalization: 6/6 | +2 | Any build agent | Perfect internalization score |
 | Internalization: <4/6 | -2 | Any build agent | Failed internalization |
 | Doubt raised that revealed gap | +3 | Any agent | During internalization, raised a question that exposed a missing artifact |
@@ -37,7 +37,7 @@
 Peer appreciation is recorded with:
 
 ```yaml
-- from: "speckit-echelon-implementer (IMPLEMENTER)"
+- from: "echelon-implementer (IMPLEMENTER)"
   to: "HOW"
   type: "clear_and_actionable"
   points: +2
@@ -54,7 +54,7 @@ Peer appreciation is recorded with:
 | **Bug Hunter** | Caught 5+ CRITICAL/HIGH issues in one run | ★★★ |
 | **Oracle** | 3 consecutive accurate estimates (within 20%) | ★★ |
 | **Scientist of the Run** | SCIENTIST investigation that changed an architecture decision | ★★★ |
-| **Guardian Angel** | speckit-echelon-verification (VERIFICATION) found zero gaps (speckit-echelon-spec-guard (SPEC GUARD) caught everything) | ★★★ |
+| **Guardian Angel** | echelon-verification (VERIFICATION) found zero gaps (echelon-spec-guard (SPEC GUARD) caught everything) | ★★★ |
 | **Internalization Master** | 6/6 internalization score on first attempt, 3 runs in a row | ★★ |
 | **Peer Favorite** | Most peer appreciation points in a run | ★★ |
 | **Comeback** | Failed internalization, then achieved first-pass approval on all tasks | ★★ |
@@ -64,17 +64,17 @@ Peer appreciation is recorded with:
 | Badge | Criteria | Signal |
 |-------|----------|--------|
 | **Rework Magnet** | 3+ tasks required rework in one run | Prompt needs refinement |
-| **False Alarm** | 3+ false positives in one run (WHY/speckit-echelon-spec-guard (SPEC GUARD)) | Over-aggressive validation |
-| **Blind Spot** | speckit-echelon-verification (VERIFICATION) found 3+ gaps speckit-echelon-spec-guard (SPEC GUARD) missed | Per-task checking insufficient |
+| **False Alarm** | 3+ false positives in one run (WHY/echelon-spec-guard (SPEC GUARD)) | Over-aggressive validation |
+| **Blind Spot** | echelon-verification (VERIFICATION) found 3+ gaps echelon-spec-guard (SPEC GUARD) missed | Per-task checking insufficient |
 | **Optimist** | 3+ estimates off by > 50% | Calibration needed |
 
 ## Prompt Refinement Triggers
 
 | Signal | Action |
 |--------|--------|
-| speckit-echelon-implementer (IMPLEMENTER) score < -5 over 3 runs | Flag: speckit-echelon-implementer (IMPLEMENTER) prompt needs more examples or stricter constraints |
+| echelon-implementer (IMPLEMENTER) score < -5 over 3 runs | Flag: echelon-implementer (IMPLEMENTER) prompt needs more examples or stricter constraints |
 | WHY false positive rate > 30% | Flag: WHY prompt is over-aggressive — add "verify before flagging" instruction |
-| speckit-echelon-spec-guard (SPEC GUARD) "Blind Spot" badge | Flag: speckit-echelon-spec-guard (SPEC GUARD) needs aggregate checking, not just per-task |
+| echelon-spec-guard (SPEC GUARD) "Blind Spot" badge | Flag: echelon-spec-guard (SPEC GUARD) needs aggregate checking, not just per-task |
 | ASSESS "Optimist" badge | Increase correction factor in calibration-profile.yaml automatically |
 | Any agent internalization < 4/6 twice | Flag: context pack for that agent is insufficient — add more artifacts |
 

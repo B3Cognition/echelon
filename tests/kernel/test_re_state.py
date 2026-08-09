@@ -103,36 +103,36 @@ class TestInitReState:
 class TestWriteLastDispatch:
     def test_sets_phase_id_and_agent(self):
         s = _base_state()
-        s2 = write_last_dispatch(s, "re-extract-2-specify", "speckit-echelon-re-specifier")
+        s2 = write_last_dispatch(s, "re-extract-2-specify", "echelon-re-specifier")
         assert s2["last_dispatch"]["phase_id"] == "re-extract-2-specify"
-        assert s2["last_dispatch"]["agent"] == "speckit-echelon-re-specifier"
+        assert s2["last_dispatch"]["agent"] == "echelon-re-specifier"
 
     def test_sets_post_dispatch_complete_false(self):
         s = _base_state()
-        s2 = write_last_dispatch(s, "re-extract-1-analyze", "speckit-echelon-re-analyzer")
+        s2 = write_last_dispatch(s, "re-extract-1-analyze", "echelon-re-analyzer")
         assert s2["last_dispatch"]["post_dispatch_complete"] is False
 
     def test_updates_phase_field(self):
         s = _base_state()
-        s2 = write_last_dispatch(s, "re-extract-3-verify", "speckit-echelon-re-verifier")
+        s2 = write_last_dispatch(s, "re-extract-3-verify", "echelon-re-verifier")
         assert s2["phase"] == "re-extract-3-verify"
 
     def test_dispatched_at_is_iso8601(self):
         s = _base_state()
-        s2 = write_last_dispatch(s, "re-extract-1-analyze", "speckit-echelon-re-analyzer")
+        s2 = write_last_dispatch(s, "re-extract-1-analyze", "echelon-re-analyzer")
         datetime.fromisoformat(s2["last_dispatch"]["dispatched_at"].replace("Z", "+00:00"))
 
     def test_does_not_mutate_input(self):
         s = _base_state()
         original_phase = s["phase"]
-        write_last_dispatch(s, "re-extract-2-specify", "speckit-echelon-re-specifier")
+        write_last_dispatch(s, "re-extract-2-specify", "echelon-re-specifier")
         assert s["phase"] == original_phase
 
 
 class TestCompleteDispatch:
     def _dispatched_state(self):
         s = _base_state()
-        return write_last_dispatch(s, "re-extract-3-verify", "speckit-echelon-re-verifier")
+        return write_last_dispatch(s, "re-extract-3-verify", "echelon-re-verifier")
 
     def test_sets_post_dispatch_complete_true(self):
         s = self._dispatched_state()
@@ -156,7 +156,7 @@ class TestCompleteDispatch:
 
     def test_applies_validate_iterations_update(self):
         s = _base_state()
-        s = write_last_dispatch(s, "re-extract-5-validate", "speckit-echelon-re-validator")
+        s = write_last_dispatch(s, "re-extract-5-validate", "echelon-re-validator")
         result = {"verdict": "DONE", "phase_id": "re-extract-5-validate",
                   "state_updates": {"resolution_pct": 85, "validate_iterations": 1}}
         s2 = complete_dispatch(s, result)
@@ -189,14 +189,14 @@ class TestCompleteDispatch:
 
     def test_rejects_unknown_state_update_key(self):
         s = _base_state()
-        s = write_last_dispatch(s, "re-extract-1-analyze", "speckit-echelon-re-analyzer")
+        s = write_last_dispatch(s, "re-extract-1-analyze", "echelon-re-analyzer")
         with pytest.raises(ValueError, match="not allowed"):
             complete_dispatch(s, {"verdict": "DONE", "phase_id": "x",
                                    "state_updates": {"last_dispatch": {"post_dispatch_complete": False}}})
 
     def test_rejects_status_override(self):
         s = _base_state()
-        s = write_last_dispatch(s, "re-extract-1-analyze", "speckit-echelon-re-analyzer")
+        s = write_last_dispatch(s, "re-extract-1-analyze", "echelon-re-analyzer")
         with pytest.raises(ValueError, match="not allowed"):
             complete_dispatch(s, {"verdict": "DONE", "phase_id": "x",
                                    "state_updates": {"status": "blocked"}})
@@ -205,12 +205,12 @@ class TestCompleteDispatch:
 class TestShouldRedispatch:
     def test_true_when_post_dispatch_complete_false(self):
         s = _base_state()
-        s = write_last_dispatch(s, "re-extract-2-specify", "speckit-echelon-re-specifier")
+        s = write_last_dispatch(s, "re-extract-2-specify", "echelon-re-specifier")
         assert should_redispatch(s) is True
 
     def test_false_when_post_dispatch_complete_true(self):
         s = _base_state()
-        s = write_last_dispatch(s, "re-extract-2-specify", "speckit-echelon-re-specifier")
+        s = write_last_dispatch(s, "re-extract-2-specify", "echelon-re-specifier")
         s = complete_dispatch(s, {"verdict": "DONE", "phase_id": "re-extract-2-specify",
                                   "state_updates": {}})
         assert should_redispatch(s) is False
@@ -223,7 +223,7 @@ class TestShouldRedispatch:
 class TestGetCurrentPhase:
     def test_returns_phase_field(self):
         s = _base_state()
-        s = write_last_dispatch(s, "re-extract-3-verify", "speckit-echelon-re-verifier")
+        s = write_last_dispatch(s, "re-extract-3-verify", "echelon-re-verifier")
         assert get_current_phase(s) == "re-extract-3-verify"
 
     def test_returns_none_on_empty_state(self):

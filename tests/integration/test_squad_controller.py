@@ -2115,7 +2115,7 @@ class TestAgentResultIntegrity:
             exit_code=0,
             echelon_result=None,
             raw_output=(
-                "speckit-echelon-cartographer (CARTOGRAPHER) BLOCKED — "
+                "echelon-cartographer (CARTOGRAPHER) BLOCKED — "
                 "specification authoring incomplete"
             ),
             duration_ms=100,
@@ -7031,17 +7031,17 @@ class TestConstitutionPhase:
         """phase1-constitution must dispatch CHIEF, not COMMANDER."""
         graph = PhaseGraph(DEFINITION, EXT_YML)
         node = graph.get("phase1-constitution")
-        assert node.agent == "speckit-echelon-chief", (
-            f"phase1-constitution must dispatch speckit-echelon-chief. "
+        assert node.agent == "echelon-chief", (
+            f"phase1-constitution must dispatch echelon-chief. "
             f"Got: {node.agent!r}. COMMANDER must not own constitution creation."
         )
 
     def test_chief_resolves_to_agent_file(self, tmp_path):
-        """speckit-echelon-chief must resolve to a real agent file path."""
+        """echelon-chief must resolve to a real agent file path."""
         graph = PhaseGraph(DEFINITION, EXT_YML)
-        rel = graph.agent_file("speckit-echelon-chief")
+        rel = graph.agent_file("echelon-chief")
         assert rel == "agents/control/chief.md", (
-            f"speckit-echelon-chief should resolve to agents/control/chief.md. "
+            f"echelon-chief should resolve to agents/control/chief.md. "
             f"Got: {rel!r}. Check extension.yml provides.commands registration."
         )
         agent_path = EXT_ROOT / "extension" / rel
@@ -7289,7 +7289,7 @@ class TestCommanderJudgmentStateUpdates:
                 "journal_entries": [
                     {
                         "type": "decision",
-                        "agent": "speckit-echelon-commander",
+                        "agent": "echelon-commander",
                         "data": {"decision": "must-not-persist"},
                     }
                 ],

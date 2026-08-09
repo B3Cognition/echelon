@@ -1,6 +1,6 @@
 # Phase: verify-spec-4-map
-# Read by: speckit-echelon-commander (COMMANDER)
-# Agent: speckit-echelon-implementation-mapper
+# Read by: echelon-commander (COMMANDER)
+# Agent: echelon-implementation-mapper
 
 ## Context Pack
 

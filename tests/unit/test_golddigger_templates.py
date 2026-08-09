@@ -31,7 +31,7 @@ class TestGolddiggerTemplates:
     def test_golddigger_prompt_uses_canonical_agent_label(self) -> None:
         text = AGENT.read_text(encoding="utf-8")
 
-        assert "agent: speckit-echelon-golddigger (GOLDDIGGER)" in text
+        assert "agent: echelon-golddigger (GOLDDIGGER)" in text
         assert "agent: EXTRACT" not in text
 
     def test_golddigger_mode1_is_one_workspace_flow(self) -> None:

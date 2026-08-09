@@ -1,5 +1,5 @@
 # Phase: phase1-investigate
-# Agent: speckit-echelon-investigator (INVESTIGATOR)
+# Agent: echelon-investigator (INVESTIGATOR)
 
 ## Purpose
 

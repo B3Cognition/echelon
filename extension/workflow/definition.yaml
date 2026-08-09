@@ -1,7 +1,7 @@
 # Echelon Workflow Definition
 # =============================================================================
-# speckit-echelon-commander (COMMANDER) reads this file at step 0 before every routing decision.
-# Routing logic lives here — not in speckit-echelon-commander (COMMANDER)'s prompt.
+# echelon-commander (COMMANDER) reads this file at step 0 before every routing decision.
+# Routing logic lives here — not in echelon-commander (COMMANDER)'s prompt.
 #
 # Structure:
 #   convergence   — all threshold values
@@ -12,7 +12,7 @@
 #   build         — per-task inner loop state machine
 #   escalation    — pre-escalation checks and diagnostic pipeline routing
 #
-# speckit-echelon-commander (COMMANDER) contract:
+# echelon-commander (COMMANDER) contract:
 #   1. Read this file at init (before any dispatch)
 #   2. Read .specify/squad/state.json for current phase + runtime state
 #   3. Look up current phase node in phases[]
@@ -46,12 +46,12 @@ glossary:
 
   - term: "Assess"
     senses:
-      - sense: "speckit-echelon-gatekeeper (GATEKEEPER) agent action"
+      - sense: "echelon-gatekeeper (GATEKEEPER) agent action"
         detect: "when Assess appears as a phase node id or agent name in definition.yaml"
-        example: "phase4-assess node dispatches speckit-echelon-gatekeeper (GATEKEEPER)"
+        example: "phase4-assess node dispatches echelon-gatekeeper (GATEKEEPER)"
       - sense: "general evaluation verb"
-        detect: "when used in prose (speckit-echelon-commander (COMMANDER) prompt, reasoning journal)"
-        example: "speckit-echelon-commander (COMMANDER) assesses whether to continue"
+        detect: "when used in prose (echelon-commander (COMMANDER) prompt, reasoning journal)"
+        example: "echelon-commander (COMMANDER) assesses whether to continue"
 
   - term: "State"
     senses:
@@ -78,16 +78,16 @@ glossary:
         example: "mode: brownfield"
       - sense: "agent sub-mode"
         detect: "when it refers to a named agent operating variant"
-        example: "speckit-echelon-sage (SAGE) mode: WHY2, speckit-echelon-auditor (AUDITOR) mode: post_build_self_assessment"
+        example: "echelon-sage (SAGE) mode: WHY2, echelon-auditor (AUDITOR) mode: post_build_self_assessment"
 
   - term: "Review"
     senses:
       - sense: "code review gate"
         detect: "when used in the build phase for CODE_REVIEWER or quality gate"
-        example: "speckit-echelon-code-reviewer (CODE REVIEWER) APPROVED — proceed to speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN))"
-      - sense: "speckit-echelon-commander (COMMANDER) evolution signal review"
-        detect: "when speckit-echelon-commander (COMMANDER) reviews evolution signals after FINALIZE"
-        example: "speckit-echelon-commander (COMMANDER) reviews open evolution signals post-run"
+        example: "echelon-code-reviewer (CODE REVIEWER) APPROVED — proceed to echelon-test-guardian (TEST echelon-guardian (GUARDIAN))"
+      - sense: "echelon-commander (COMMANDER) evolution signal review"
+        detect: "when echelon-commander (COMMANDER) reviews evolution signals after FINALIZE"
+        example: "echelon-commander (COMMANDER) reviews open evolution signals post-run"
 
   - term: "Widget"
     senses:
@@ -101,7 +101,7 @@ glossary:
   - term: "Run"
     senses:
       - sense: "Echelon run (squad run)"
-        detect: "when referring to a single speckit.echelon.run invocation (run_id: squad-N)"
+        detect: "when referring to a single echelon.run invocation (run_id: squad-N)"
         example: "This run produced 52 journal entries"
       - sense: "shell command execution"
         detect: "when used in bash/script context"
@@ -121,7 +121,7 @@ glossary:
 evidence_hierarchy:
   - rank: 1
     type: investigator_experiment
-    description: "Measured results from speckit-echelon-investigator (INVESTIGATOR) prototype spikes"
+    description: "Measured results from echelon-investigator (INVESTIGATOR) prototype spikes"
     example: "Latency measured at 340ms under load"
   - rank: 2
     type: understanding_metrics
@@ -129,7 +129,7 @@ evidence_hierarchy:
     example: "Testability score: 0.42 (below the resolved project gate)"
   - rank: 3
     type: investigator_research
-    description: "speckit-echelon-investigator (INVESTIGATOR) graded sources (A through E)"
+    description: "echelon-investigator (INVESTIGATOR) graded sources (A through E)"
     example: "Grade B: official Kafka docs confirm this limit"
   - rank: 4
     type: code_evidence
@@ -160,7 +160,7 @@ conflict_resolution:
 #   agent(s):      which agent(s) to invoke (omitted for commander_internal)
 #   tier:          model-tier selection key from echelon-config.yml execution.models
 #   context_pack:  artifacts injected into the agent's dispatch prompt
-#   pre_dispatch:  checks/actions speckit-echelon-commander (COMMANDER) takes before invoking the agent
+#   pre_dispatch:  checks/actions echelon-commander (COMMANDER) takes before invoking the agent
 #   outputs:       artifacts the agent is expected to produce
 #   transitions:   ordered list — first matching condition wins
 #
@@ -194,7 +194,7 @@ phases:
     spec_file: workflow/phases/init.md
     type: commander_internal
     description: >
-      speckit-echelon-commander (COMMANDER) executes directly — no agent dispatch.
+      echelon-commander (COMMANDER) executes directly — no agent dispatch.
       Read knowledge base, materialize confidence thresholds, run belief freshness check.
     steps:
 
@@ -242,7 +242,7 @@ phases:
     label: "Discovery (SCOUT)"
     spec_file: workflow/phases/phase1-discover.md
     type: agent
-    agent: speckit-echelon-scout
+    agent: echelon-scout
     tier: exploration
     context_pack:
       - user_request
@@ -251,14 +251,14 @@ phases:
       - "{context_dir}/prior-spec-context.md"
       - "{context_dir}/current-feature-context.md"
       - "{context_dir}/stale-memory-report.md"
-      - calibration_map entry for speckit-echelon-scout (SCOUT)    # from init
+      - calibration_map entry for echelon-scout (SCOUT)    # from init
     pre_dispatch:
       - id: guardian_init
         label: "Dispatch GUARDIAN (always_on default)"
         condition: "guardian_mode = always_on"
         timing: after_assess_completes
-        # speckit-echelon-guardian (GUARDIAN) is dispatched during phase3-specialists, not here —
-        # this entry documents the trigger so speckit-echelon-commander (COMMANDER) doesn't need to remember it.
+        # echelon-guardian (GUARDIAN) is dispatched during phase3-specialists, not here —
+        # this entry documents the trigger so echelon-commander (COMMANDER) doesn't need to remember it.
     outputs:
       - glossary.md
       - mental-model.md
@@ -277,10 +277,10 @@ phases:
     label: "Knowledge Fusion (SYNTHESIZER)"
     spec_file: workflow/phases/phase1-synthesizer.md
     type: agent
-    agent: speckit-echelon-synthesizer
+    agent: echelon-synthesizer
     tier: exploration
     context_pack:
-      - all speckit-echelon-scout (SCOUT) outputs from .specify/squad/staging/
+      - all echelon-scout (SCOUT) outputs from .specify/squad/staging/
       - .specify/squad/reasoning-journal.jsonl [phase=phase1-discover]
       - "{context_dir}/prior-spec-context.md"
       - "{context_dir}/current-feature-context.md"
@@ -304,7 +304,7 @@ phases:
     label: "Codebase Map (MODELER)"
     spec_file: workflow/phases/phase1-modeler.md
     type: agent
-    agent: speckit-echelon-modeler
+    agent: echelon-modeler
     tier: exploration
     condition: "mode = brownfield"
     context_pack:
@@ -329,7 +329,7 @@ phases:
     label: "Intent Capture (TRACKER)"
     spec_file: workflow/phases/phase1-tracker.md
     type: agent
-    agent: speckit-echelon-tracker
+    agent: echelon-tracker
     tier: control
     context_pack:
       - user_request
@@ -373,7 +373,7 @@ phases:
     label: "Assumption Challenge (SAGE WHY1)"
     spec_file: workflow/phases/phase1-why1.md
     type: agent
-    agent: speckit-echelon-sage
+    agent: echelon-sage
     mode: WHY1
     tier: exploration
     context_pack:
@@ -386,7 +386,7 @@ phases:
       - "{context_dir}/current-feature-context.md"
       - "{context_dir}/stale-memory-report.md"
       - .specify/squad/reasoning-journal.jsonl [type=routing_decision, phase=phase1-discover]
-      - calibration_map entry for speckit-echelon-sage (SAGE)
+      - calibration_map entry for echelon-sage (SAGE)
     outputs:
       - updated assumptions.md
       - quality_scores[pass=N] → state.json
@@ -428,7 +428,7 @@ phases:
     label: "Constitution Creation"
     spec_file: workflow/phases/phase1-constitution.md
     type: agent
-    agent: speckit-echelon-chief
+    agent: echelon-chief
     tier: control
     context_pack:
       - .specify/squad/staging/glossary.md
@@ -437,7 +437,7 @@ phases:
       - .specify/squad/staging/assumptions.md
       - .specify/squad/staging/user-intent.md
     description: >
-      speckit-echelon-chief (CHIEF) invokes the speckit.constitution Skill
+      echelon-chief (CHIEF) invokes the speckit.constitution Skill
       to create constitution.md from UNDERSTAND artifacts. CHIEF extracts domain
       context, calls the skill, verifies output, and fixes placeholders if needed.
       See phase1-constitution.md for phase contract; chief.md for full protocol.
@@ -455,7 +455,7 @@ phases:
     label: "Requirements (CARTOGRAPHER)"
     spec_file: workflow/phases/phase1-what.md
     type: agent
-    agent: speckit-echelon-cartographer
+    agent: echelon-cartographer
     tier: exploration
     context_pack:
       - .specify/memory/constitution.md
@@ -472,7 +472,7 @@ phases:
       - "{context_dir}/current-feature-context.md"
       - "{context_dir}/stale-memory-report.md"
       - .specify/squad/reasoning-journal.jsonl [type=routing_decision, phase=phase1-why1]
-      - calibration_map entry for speckit-echelon-cartographer (CARTOGRAPHER)
+      - calibration_map entry for echelon-cartographer (CARTOGRAPHER)
     outputs:
       - spec.md
       - requirements-overview.md
@@ -520,7 +520,7 @@ phases:
     label: "Spec Validation (SAGE WHY2)"
     spec_file: workflow/phases/phase1-why2.md
     type: agent
-    agent: speckit-echelon-sage
+    agent: echelon-sage
     mode: WHY2
     tier: exploration
     context_pack:
@@ -531,7 +531,7 @@ phases:
       - "{context_dir}/current-feature-context.md"
       - "{context_dir}/stale-memory-report.md"
       - .specify/squad/reasoning-journal.jsonl [type=routing_decision, phase=phase1-what]
-      - calibration_map entry for speckit-echelon-sage (SAGE)
+      - calibration_map entry for echelon-sage (SAGE)
     outputs:
       - quality-gates.md
       - issues.md
@@ -596,7 +596,7 @@ phases:
     label: "Evidence Resolution (INVESTIGATOR)"
     spec_file: workflow/phases/phase1-investigate.md
     type: agent
-    agent: speckit-echelon-investigator
+    agent: echelon-investigator
     tier: specialists
     context_pack:
       - "{spec_dir}/spec.md"
@@ -659,7 +659,7 @@ phases:
     label: "Derived Spec Lexicon Authoring"
     spec_file: workflow/phases/phase1-lexicon-derive.md
     type: agent
-    agent: speckit-echelon-lexicon-deriver
+    agent: echelon-lexicon-deriver
     tier: exploration
     context_pack:
       - "{spec_dir}/spec.md"
@@ -739,7 +739,7 @@ phases:
     label: "Feasibility Gate (GATEKEEPER)"
     spec_file: workflow/phases/phase2-decide.md
     type: agent
-    agent: speckit-echelon-gatekeeper
+    agent: echelon-gatekeeper
     timing_window_start: phase2-decide   # opens timing window; budget below
     budget_seconds: 1800                 # wall-clock budget for the phase2-decide window
                                          # (spans phase2-decide + phase2-strategic-overview + phase2-tracker-alignment)
@@ -753,7 +753,7 @@ phases:
       - knowledge-base/calibration-profile.yaml
       - knowledge-base/estimates-log.yaml      # if exists
       - .specify/squad/reasoning-journal.jsonl [phase=phase1-* summary]
-      - calibration_map entry for speckit-echelon-gatekeeper (GATEKEEPER)
+      - calibration_map entry for echelon-gatekeeper (GATEKEEPER)
     outputs:
       - gatekeeper_verdict: PASS | KILL | DEFER
       - kill-report.md    # if KILL
@@ -800,7 +800,7 @@ phases:
     label: "Strategic Overview (STRATEGIST)"
     spec_file: workflow/phases/phase2-strategic-overview.md
     type: agent
-    agent: speckit-echelon-strategist
+    agent: echelon-strategist
     tier: control
     context_pack:
       - spec.md
@@ -819,7 +819,7 @@ phases:
     label: "Intent Alignment Check (TRACKER)"
     spec_file: workflow/phases/phase2-tracker-alignment.md
     type: agent
-    agent: speckit-echelon-tracker
+    agent: echelon-tracker
     tier: control
     context_pack:
       - user-intent.md
@@ -877,21 +877,21 @@ phases:
     label: "Architecture (ARCHITECT)"
     spec_file: workflow/phases/phase3-how.md
     type: agent
-    agent: speckit-echelon-architect
+    agent: echelon-architect
     tier: solution
     context_pack:
       - spec.md
       - constitution.md
       - requirements-overview.md
       - gatekeeper output (constraints, scope)
-      - security-findings.md        # from speckit-echelon-guardian (GUARDIAN) (if exists)
-      - performance-model.md        # from speckit-echelon-benchmark (BENCHMARK) (if exists)
-      - ux-report.md                # from speckit-echelon-advocate (ADVOCATE) (if exists)
-      - domain-knowledge.md         # from speckit-echelon-oracle (ORACLE) (if exists)
-      - research.md                 # from speckit-echelon-investigator (INVESTIGATOR) (if exists)
-      - alternatives.md             # from speckit-echelon-maverick (MAVERICK) (if exists)
+      - security-findings.md        # from echelon-guardian (GUARDIAN) (if exists)
+      - performance-model.md        # from echelon-benchmark (BENCHMARK) (if exists)
+      - ux-report.md                # from echelon-advocate (ADVOCATE) (if exists)
+      - domain-knowledge.md         # from echelon-oracle (ORACLE) (if exists)
+      - research.md                 # from echelon-investigator (INVESTIGATOR) (if exists)
+      - alternatives.md             # from echelon-maverick (MAVERICK) (if exists)
       - .specify/squad/reasoning-journal.jsonl [phase=phase2-decide, phase=phase3-specialists]
-      - calibration_map entry for speckit-echelon-architect (ARCHITECT)
+      - calibration_map entry for echelon-architect (ARCHITECT)
     outputs:
       - plan.md
       - architecture.md
@@ -910,17 +910,17 @@ phases:
     spec_file: workflow/phases/phase3-specialists.md
     type: conditional_sequential
     description: >
-      speckit-echelon-guardian (GUARDIAN) always runs first (always_on default).
+      echelon-guardian (GUARDIAN) always runs first (always_on default).
       Others evaluated in order; each dispatched only after the previous completes
-      post-dispatch protocol. speckit-echelon-investigator (INVESTIGATOR) may run in parallel with one domain
+      post-dispatch protocol. echelon-investigator (INVESTIGATOR) may run in parallel with one domain
       specialist (the only permitted parallelism). All others are strictly sequential.
     agents:
-      - id: speckit-echelon-guardian
+      - id: echelon-guardian
         tier: specialists
         condition: "guardian_mode = always_on OR domain_security_relevant"
         exempt_from_max_active_specialists: true
         context_pack:
-          - spec.md            # architecture.md does not exist yet — specialists run before speckit-echelon-architect (ARCHITECT)
+          - spec.md            # architecture.md does not exist yet — specialists run before echelon-architect (ARCHITECT)
           - boundaries.md
           - constitution.md
           - "{context_dir}/prior-spec-context.md"
@@ -930,7 +930,7 @@ phases:
           - security-findings.md
           - risk-acceptance-log.md
 
-      - id: speckit-echelon-investigator
+      - id: echelon-investigator
         tier: specialists
         condition: "unknown_territory OR calibrate_confidence < calibrate_confidence_floor"
         context_pack:
@@ -945,35 +945,35 @@ phases:
           - research.md
           - experiment-results.md  # if prototype spike run
 
-      - id: speckit-echelon-oracle
+      - id: echelon-oracle
         tier: specialists
         condition: domain_specific_knowledge_needed
         outputs:
           - domain-knowledge.md
 
-      - id: speckit-echelon-benchmark
+      - id: echelon-benchmark
         tier: specialists
         condition: performance_requirements_present
         outputs:
           - performance-model.md
 
-      - id: speckit-echelon-advocate
+      - id: echelon-advocate
         tier: specialists
         condition: user_facing_ui_present
         outputs:
           - ux-report.md
 
-      - id: speckit-echelon-maverick
+      - id: echelon-maverick
         tier: specialists
         # Dispatch when ANY of the 8 INNOVATE triggers is true:
         #   1. stagnation_detected          — EVOLVE: no quality improvement between runs
         #   2. same_issue_count >= issue_repetition_limit — circular: same issue ≥3× unresolved
         #   3. why_reject_count >= 2        — WHY2 rejected spec ≥2 consecutive times
-        #   4. assess_borderline_defer      — speckit-echelon-gatekeeper (GATEKEEPER) issued DEFER (not clear PASS or KILL)
-        #   5. hard_tradeoff_detected       — speckit-echelon-architect (ARCHITECT) flagged unresolved ADR with no clear winner
+        #   4. assess_borderline_defer      — echelon-gatekeeper (GATEKEEPER) issued DEFER (not clear PASS or KILL)
+        #   5. hard_tradeoff_detected       — echelon-architect (ARCHITECT) flagged unresolved ADR with no clear winner
         #   6. quality_plateau_detected     — max abs delta < 0.02 across last 2 WHY passes
         #   7. agent_blocked               — any agent returned BLOCKED verdict this run
-        #   8. assess_scope_large          — speckit-echelon-gatekeeper (GATEKEEPER) estimates > 100 person-weeks
+        #   8. assess_scope_large          — echelon-gatekeeper (GATEKEEPER) estimates > 100 person-weeks
         condition: >
           stagnation_detected OR
           same_issue_count >= issue_repetition_limit OR
@@ -987,7 +987,7 @@ phases:
           - alternatives.md
 
     limits:
-      max_active_specialists: 3   # Excludes speckit-echelon-guardian (GUARDIAN)
+      max_active_specialists: 3   # Excludes echelon-guardian (GUARDIAN)
 
     allowed_state_updates:
       - active_specialists
@@ -1006,7 +1006,7 @@ phases:
     label: "Test Strategy (SENTINEL)"
     spec_file: workflow/phases/phase3-sentinel.md
     type: agent
-    agent: speckit-echelon-sentinel
+    agent: echelon-sentinel
     tier: solution
     context_pack:
       - spec.md
@@ -1018,7 +1018,7 @@ phases:
       - security-findings.md    # if exists
       - research.md             # if exists
       - quality-gates.md
-      - calibration_map entry for speckit-echelon-sentinel (SENTINEL)
+      - calibration_map entry for echelon-sentinel (SENTINEL)
     outputs:
       - test-strategy.md
       - test-architecture.md
@@ -1034,7 +1034,7 @@ phases:
     label: "Implementation Planning (ORCHESTRATOR)"
     spec_file: workflow/phases/phase3-plan.md
     type: agent
-    agent: speckit-echelon-orchestrator
+    agent: echelon-orchestrator
     tier: solution
     context_pack:
       - spec.md
@@ -1043,7 +1043,7 @@ phases:
       - adr/ADR-*.md
       - test-strategy.md
       - gatekeeper constraints
-      - calibration_map entry for speckit-echelon-orchestrator (ORCHESTRATOR)
+      - calibration_map entry for echelon-orchestrator (ORCHESTRATOR)
     outputs:
       - tasks.md
       - critical-path.md
@@ -1101,10 +1101,10 @@ phases:
     type: staged_parallel            # Stage 1: WHY3 + ASSESS2 in parallel; Stage 2: PLAN2 after both complete
     description: >
       Stage 1: dispatch WHY3 and ASSESS2 in parallel. Stage 2: dispatch PLAN2 only after BOTH complete
-      (PLAN2 depends on implementability-report.md from ASSESS2). speckit-echelon-commander (COMMANDER) must NOT dispatch PLAN2
+      (PLAN2 depends on implementability-report.md from ASSESS2). echelon-commander (COMMANDER) must NOT dispatch PLAN2
       in the same parallel batch as WHY3 and ASSESS2.
     agents:
-      - id: speckit-echelon-sage
+      - id: echelon-sage
         mode: WHY3
         stage: 1
         tier: exploration
@@ -1129,7 +1129,7 @@ phases:
           - why3-verdict: PASS | FAIL | BLOCKED
           - issues (CRITICAL | HIGH | MEDIUM)
 
-      - id: speckit-echelon-gatekeeper
+      - id: echelon-gatekeeper
         mode: ASSESS2
         stage: 1
         tier: feasibility
@@ -1162,10 +1162,10 @@ phases:
           - assess2-verdict: PASS | REJECTED | BLOCKED
           - implementability-report.md     # required by PLAN2
 
-      - id: speckit-echelon-orchestrator
+      - id: echelon-orchestrator
         mode: PLAN2
         stage: 2                           # dispatched AFTER stage 1 completes
-        depends_on: [speckit-echelon-gatekeeper-assess2]   # needs implementability-report.md
+        depends_on: [echelon-gatekeeper-assess2]   # needs implementability-report.md
         tier: solution
         allowed_state_updates: []
         state_update_types: {}
@@ -1184,8 +1184,8 @@ phases:
           - "{spec_dir}/critical-path.md"
           - "{spec_dir}/risk-matrix.md"
           - "{spec_dir}/dependencies.md"
-          - "{spec_dir}/quality-gates.md"          # from speckit-echelon-sage (SAGE) WHY3 output
-          - "{spec_dir}/issues.md"                 # from speckit-echelon-sage (SAGE) WHY3 output
+          - "{spec_dir}/quality-gates.md"          # from echelon-sage (SAGE) WHY3 output
+          - "{spec_dir}/issues.md"                 # from echelon-sage (SAGE) WHY3 output
           - "{spec_dir}/implementability-report.md"  # MUST exist before PLAN2 is dispatched
         outputs:
           - revised tasks.md  # if changes needed
@@ -1288,7 +1288,7 @@ phases:
     description: >
       Collate all artifacts. Produce squad report.
       Run evolution signal review protocol.
-      User must explicitly invoke speckit.echelon.build to start build phase.
+      User must explicitly invoke echelon.build to start build phase.
     steps:
       - collate_artifacts
       - write_squad_report
@@ -1316,7 +1316,7 @@ phases:
     label: "Experimental Constitution Quality"
     spec_file: workflow/phases/phase-exp-constitution-quality.md
     type: agent
-    agent: speckit-echelon-chief
+    agent: echelon-chief
     tier: experimental
     context_pack:
       - .specify/memory/constitution.md
@@ -1348,7 +1348,7 @@ phases:
     label: "Experimental Tasks Quality"
     spec_file: workflow/phases/phase-exp-tasks-quality.md
     type: agent
-    agent: speckit-echelon-orchestrator
+    agent: echelon-orchestrator
     tier: experimental
     context_pack:
       - spec.md
@@ -1382,7 +1382,7 @@ phases:
     label: "Experimental ADR Quality"
     spec_file: workflow/phases/phase-exp-adr-quality.md
     type: agent
-    agent: speckit-echelon-architect
+    agent: echelon-architect
     tier: experimental
     context_pack:
       - plan.md
@@ -1426,11 +1426,11 @@ phases:
     description: >
       Write escalation-request.md using templates/escalation-request.md.
       Set state.json status = blocked.
-      Resume with speckit.echelon.resume <answer>.
+      Resume with echelon.resume <answer>.
 
   # --------------------------------------------------------------------------
   # BUGFIX WORKFLOW
-  # Invoked via speckit.echelon.bugfix. Entry point: bugfix-1-init.
+  # Invoked via echelon.bugfix. Entry point: bugfix-1-init.
   # --------------------------------------------------------------------------
   - id: bugfix-1-init
     label: "Bugfix Init"
@@ -1464,7 +1464,7 @@ phases:
     label: "Root Cause Analysis (DEBUGGER)"
     spec_file: workflow/phases/bugfix-2-diagnose.md
     type: agent
-    agent: speckit-echelon-debugger
+    agent: echelon-debugger
     tier: build
     context_pack:
       - user description
@@ -1483,7 +1483,7 @@ phases:
     label: "Test Strategy (SENTINEL)"
     spec_file: workflow/phases/bugfix-3-test-strategy.md
     type: agent
-    agent: speckit-echelon-sentinel
+    agent: echelon-sentinel
     tier: solution
     context_pack:
       - debugger_report
@@ -1502,7 +1502,7 @@ phases:
     label: "Spec Compliance (SPEC GUARD)"
     spec_file: workflow/phases/bugfix-4-spec-compliance.md
     type: agent
-    agent: speckit-echelon-spec-guard
+    agent: echelon-spec-guard
     tier: build
     context_pack:
       - spec.md
@@ -1541,9 +1541,9 @@ phases:
 
   # --------------------------------------------------------------------------
   # BUILD WORKFLOW
-  # Invoked via speckit.echelon.build. Entry point: build-1-init.
+  # Invoked via echelon.build. Entry point: build-1-init.
   # Routing config (task loop ordering, verdict routing, wave lanes) lives in
-  # the top-level build: section below — speckit-echelon-commander (COMMANDER) reads both.
+  # the top-level build: section below — echelon-commander (COMMANDER) reads both.
   # --------------------------------------------------------------------------
   - id: build-1-init
     label: "Build Init"
@@ -1561,7 +1561,7 @@ phases:
     label: "Task Implementation (IMPLEMENTER)"
     spec_file: workflow/phases/build-2-implement.md
     type: agent
-    agent: speckit-echelon-implementer
+    agent: echelon-implementer
     tier: build
     context_pack:
       - task definition (from tasks.md)
@@ -1591,10 +1591,10 @@ phases:
     label: "Spec Compliance Gate (SPEC GUARD)"
     spec_file: workflow/phases/build-3-spec-guard.md
     type: agent
-    agent: speckit-echelon-spec-guard
+    agent: echelon-spec-guard
     tier: build
     context_pack:
-      - files changed by speckit-echelon-implementer (IMPLEMENTER)
+      - files changed by echelon-implementer (IMPLEMENTER)
       - task definition (acceptance criteria, FR references)
       - spec.md (full, for cross-reference)
     outputs:
@@ -1616,10 +1616,10 @@ phases:
     label: "Code Review Gate (CODE REVIEWER)"
     spec_file: workflow/phases/build-4-code-review.md
     type: agent
-    agent: speckit-echelon-code-reviewer
+    agent: echelon-code-reviewer
     tier: build
     context_pack:
-      - files changed by speckit-echelon-implementer (IMPLEMENTER)
+      - files changed by echelon-implementer (IMPLEMENTER)
       - constitution.md
       - research.md (relevant ADRs)
       - existing codebase patterns (prior completed tasks)
@@ -1643,11 +1643,11 @@ phases:
     label: "Test Quality Gate (TEST GUARDIAN)"
     spec_file: workflow/phases/build-5-test-guard.md
     type: agent
-    agent: speckit-echelon-test-guardian
+    agent: echelon-test-guardian
     tier: build
     context_pack:
-      - test files from speckit-echelon-implementer (IMPLEMENTER)
-      - source files from speckit-echelon-implementer (IMPLEMENTER)
+      - test files from echelon-implementer (IMPLEMENTER)
+      - source files from echelon-implementer (IMPLEMENTER)
       - task acceptance criteria
       - test-strategy.md (relevant section)
       - coverage-map.md
@@ -1669,11 +1669,11 @@ phases:
     label: "Progress Tracking (PROGRESS TRACKER + MODELER)"
     spec_file: workflow/phases/build-6-progress.md
     type: agent
-    agent: speckit-echelon-progress-tracker
+    agent: echelon-progress-tracker
     tier: build
     description: >
-      Records task effort and checks for drift. speckit-echelon-commander (COMMANDER) then dispatches
-      speckit-echelon-modeler (MODELER) to update mental-model-code.md and increments
+      Records task effort and checks for drift. echelon-commander (COMMANDER) then dispatches
+      echelon-modeler (MODELER) to update mental-model-code.md and increments
       state.json.build.completed_tasks. Loops to build-2-implement for
       the next task, or to build-7-integration when the phase group ends.
     context_pack:
@@ -1705,11 +1705,11 @@ phases:
     label: "Phase Checkpoint (INTEGRATOR + VISUAL VALIDATOR)"
     spec_file: workflow/phases/build-7-integration.md
     type: agent
-    agent: speckit-echelon-integrator
+    agent: echelon-integrator
     tier: build
     description: >
       Integration check after each phase group. Optionally dispatches
-      speckit-echelon-visual-validator (VISUAL speckit-echelon-validator (VALIDATOR)) for browser/SPA stacks after speckit-echelon-integrator (INTEGRATOR) PASS.
+      echelon-visual-validator (VISUAL echelon-validator (VALIDATOR)) for browser/SPA stacks after echelon-integrator (INTEGRATOR) PASS.
       Also runs as final full-system check (all phases complete).
     context_pack:
       - all code produced in this phase group
@@ -1737,7 +1737,7 @@ phases:
     label: "Documentation Currency (TECH WRITER)"
     spec_file: workflow/phases/build-8-documentation.md
     type: agent
-    agent: speckit-echelon-tech-writer
+    agent: echelon-tech-writer
     tier: build
     description: >
       Updates README.md and Keep a Changelog-style CHANGELOG.md when the
@@ -1766,7 +1766,7 @@ phases:
     label: "Documentation Verification (DOCS VERIFIER)"
     spec_file: workflow/phases/build-8-verify-docs.md
     type: agent
-    agent: speckit-echelon-docs-verifier
+    agent: echelon-docs-verifier
     tier: build
     description: >
       Verifies TECH WRITER output before build finalization. Checks that README.md
@@ -1814,8 +1814,8 @@ phases:
 
 # =============================================================================
 # BUILD WORKFLOW
-# Invoked separately via speckit.echelon.build
-# speckit-echelon-commander (COMMANDER) reads this section when build phase is active.
+# Invoked separately via echelon.build
+# echelon-commander (COMMANDER) reads this section when build phase is active.
 # =============================================================================
 
 build:
@@ -1830,7 +1830,7 @@ build:
 
   pre_build:
     - id: dispatch_validator
-      agent: speckit-echelon-validator (VALIDATOR)
+      agent: echelon-validator (VALIDATOR)
       tier: verification
       block_until: verdict
       verdicts:
@@ -1840,7 +1840,7 @@ build:
           action: log_doubts_to_journal_proceed_with_enhanced_context_packs
         FAILED:
           action: escalate_to_human
-      note: "speckit-echelon-validator (VALIDATOR) dispatched exactly once per build run. Never again — phase_gate uses speckit-echelon-verification (VERIFICATION)."
+      note: "echelon-validator (VALIDATOR) dispatched exactly once per build run. Never again — phase_gate uses echelon-verification (VERIFICATION)."
 
   task_loop:
     ordering: phase_group_then_dependency_order
@@ -1848,7 +1848,7 @@ build:
 
     per_task:
 
-      - agent: speckit-echelon-implementer (IMPLEMENTER)
+      - agent: echelon-implementer (IMPLEMENTER)
         tier: build
         workflow_state: BUILD_IN_PROGRESS
         context_pack:
@@ -1873,7 +1873,7 @@ build:
         tier: build
         context_pack:
           - task definition
-          - code produced by speckit-echelon-implementer (IMPLEMENTER)
+          - code produced by echelon-implementer (IMPLEMENTER)
           - spec.md FRs for this task
         verdicts:
           PASS:
@@ -1936,7 +1936,7 @@ build:
 
   phase_checkpoint:
     trigger: end_of_each_phase_group
-    agent: speckit-echelon-integrator
+    agent: echelon-integrator
     tier: build
     workflow_state_during: QA_IN_PROGRESS
     verdicts:
@@ -1953,35 +1953,35 @@ build:
 
   post_build:
     sequential:
-      - agent: speckit-echelon-realist (REALIST)
+      - agent: echelon-realist (REALIST)
         tier: learning
-      - agent: speckit-echelon-mirror (MIRROR)
+      - agent: echelon-mirror (MIRROR)
         tier: learning
-      - agent: speckit-echelon-auditor (AUDITOR)
+      - agent: echelon-auditor (AUDITOR)
         tier: learning
-      - agent: speckit-echelon-scorekeeper (SCOREKEEPER)
+      - agent: echelon-scorekeeper (SCOREKEEPER)
         tier: learning
     then: write_completion_signal
 
 # =============================================================================
 # ESCALATION PATHS
-# Before escalating to human, speckit-echelon-commander (COMMANDER) must exhaust these in order.
+# Before escalating to human, echelon-commander (COMMANDER) must exhaust these in order.
 # =============================================================================
 
 escalation:
 
   pre_escalation_sequence:
     description: >
-      Before producing escalation-request.md, speckit-echelon-commander (COMMANDER) MUST try these three in order.
+      Before producing escalation-request.md, echelon-commander (COMMANDER) MUST try these three in order.
       Only after all three are exhausted → diagnostic pipeline or direct human escalation.
     steps:
-      - dispatch: speckit-echelon-guardian (GUARDIAN)
+      - dispatch: echelon-guardian (GUARDIAN)
         question: "Can the Risk Acceptance Protocol resolve this autonomously?"
         accept_resolution: "risk-acceptance-log.md verdict = ACCEPT or ACCEPT_WITH_MITIGATIONS"
-      - dispatch: speckit-echelon-investigator (INVESTIGATOR)
+      - dispatch: echelon-investigator (INVESTIGATOR)
         question: "Can new evidence upgrade confidence above calibrate_confidence_floor?"
         accept_resolution: "confidence >= calibrate_confidence_floor"
-      - dispatch: speckit-echelon-maverick (MAVERICK)
+      - dispatch: echelon-maverick (MAVERICK)
         question: "Can an alternative approach eliminate the risk entirely?"
         accept_resolution: "viable alternative identified"
 
@@ -1990,15 +1990,15 @@ escalation:
       Route here when root cause is UNKNOWN (before escalating to human).
       Skip if root cause is known — escalate directly.
     trigger_conditions:
-      - "speckit-echelon-implementer (IMPLEMENTER) returns BLOCKED twice on the same task"
+      - "echelon-implementer (IMPLEMENTER) returns BLOCKED twice on the same task"
       - "gap-report.md has open gaps with no clear owner"
-      - "speckit-echelon-integrator (INTEGRATOR) reports > 3 failures after 2 fix cycles"
+      - "echelon-integrator (INTEGRATOR) reports > 3 failures after 2 fix cycles"
       - "Same issue raised >= issue_repetition_limit times without resolution"
-      - "speckit-echelon-sage (SAGE) and another agent disagree and Toulmin resolution cannot settle"
-      - "speckit-echelon-tracker (TRACKER) signals intent drift persisting across multiple agents"
+      - "echelon-sage (SAGE) and another agent disagree and Toulmin resolution cannot settle"
+      - "echelon-tracker (TRACKER) signals intent drift persisting across multiple agents"
     skip_for:
       - missing_context         # Use NEEDS_CONTEXT flow instead
-      - spec_ambiguity          # Route to speckit-echelon-cartographer (CARTOGRAPHER) via clarification
+      - spec_ambiguity          # Route to echelon-cartographer (CARTOGRAPHER) via clarification
       - approach_disagreements  # Use Toulmin conflict resolution first
     skill: speckit.diagnostic.run
     on_skill_failure: skip_to_direct_escalation  # If kt-diagnostic unavailable, skip to direct escalation
@@ -2017,10 +2017,10 @@ escalation:
     description: "Root cause known but unresolvable without human."
     template: templates/escalation-request.md
     state: blocked
-    resume_command: speckit.echelon.resume <answer>
+    resume_command: echelon.resume <answer>
 
 # =============================================================================
-# RE-EXTRACTION — read by speckit.echelon.re-extract COMMANDER
+# RE-EXTRACTION — read by echelon.re-extract COMMANDER
 # COMMANDER contract: read this section at init, read state_file for current
 # phase, execute each phase node, write results to state_file.
 # =============================================================================
@@ -2042,7 +2042,7 @@ re_extraction:
       label: "Codebase Analysis (RE-ANALYZER)"
       spec_file: workflow/phases/re-extract-1-analyze.md
       type: agent
-      agent: speckit-echelon-re-analyzer
+      agent: echelon-re-analyzer
       tier: re_extraction
       context_pack:
         - "{state.output_dir}/state.json"
@@ -2063,7 +2063,7 @@ re_extraction:
       label: "Domain Specification (RE-SPECIFIER)"
       spec_file: workflow/phases/re-extract-2-specify.md
       type: agent
-      agent: speckit-echelon-re-specifier
+      agent: echelon-re-specifier
       tier: re_extraction
       context_pack:
         - "{state.output_dir}/state.json"
@@ -2086,7 +2086,7 @@ re_extraction:
       label: "Coverage Verification (RE-VERIFIER)"
       spec_file: workflow/phases/re-extract-3-verify.md
       type: agent
-      agent: speckit-echelon-re-verifier
+      agent: echelon-re-verifier
       tier: re_extraction
       context_pack:
         - "{state.output_dir}/state.json"
@@ -2106,7 +2106,7 @@ re_extraction:
       label: "Coverage Expansion (RE-EXPANDER)"
       spec_file: workflow/phases/re-extract-4-expand.md
       type: agent
-      agent: speckit-echelon-re-expander
+      agent: echelon-re-expander
       tier: re_extraction
       context_pack:
         - "{state.output_dir}/state.json"
@@ -2124,7 +2124,7 @@ re_extraction:
       label: "Quality Validation (RE-VALIDATOR)"
       spec_file: workflow/phases/re-extract-5-validate.md
       type: agent
-      agent: speckit-echelon-re-validator
+      agent: echelon-re-validator
       tier: re_extraction
       context_pack:
         - "{state.output_dir}/state.json"
@@ -2142,7 +2142,7 @@ re_extraction:
       label: "Quality Checklists (RE-CHECKLISTER)"
       spec_file: workflow/phases/re-extract-6-checklist.md
       type: agent
-      agent: speckit-echelon-re-checklister
+      agent: echelon-re-checklister
       tier: re_extraction
       context_pack:
         - "{state.output_dir}/re-workspace-inputs.json"
@@ -2161,7 +2161,7 @@ re_extraction:
       label: "Strategic Artifacts (RE-CONSTITUTER)"
       spec_file: workflow/phases/re-extract-7-constitute.md
       type: agent
-      agent: speckit-echelon-re-constituter
+      agent: echelon-re-constituter
       tier: re_extraction
       context_pack:
         - "{state.output_dir}/state.json"
@@ -2184,7 +2184,7 @@ re_extraction:
           condition: always
 
 # =============================================================================
-# RE-RETARGET — read by speckit.echelon.re-retarget COMMANDER
+# RE-RETARGET — read by echelon.re-retarget COMMANDER
 # =============================================================================
 re_retarget:
 
@@ -2209,7 +2209,7 @@ re_retarget:
           condition: always
 
 # =============================================================================
-# RE-PLANNING — read by speckit.echelon.re-plan-all COMMANDER
+# RE-PLANNING — read by echelon.re-plan-all COMMANDER
 # =============================================================================
 re_planning:
 
@@ -2229,7 +2229,7 @@ re_planning:
       label: "Per-Domain Plans (RE-PLANNER)"
       spec_file: workflow/phases/re-planning-1-plan.md
       type: agent
-      agent: speckit-echelon-re-planner
+      agent: echelon-re-planner
       tier: re_planning
       context_pack:
         - re/index.json
@@ -2250,7 +2250,7 @@ re_planning:
       label: "Per-Domain Tasks (RE-TASKER)"
       spec_file: workflow/phases/re-planning-2-tasks.md
       type: agent
-      agent: speckit-echelon-re-tasker
+      agent: echelon-re-tasker
       tier: re_planning
       context_pack:
         - re/sources/{source-id}/specs/{domain-id}/plan.md
@@ -2264,7 +2264,7 @@ re_planning:
           condition: always
 
 # =============================================================================
-# VERIFY-SPEC — read by speckit.echelon.verify-spec COMMANDER
+# VERIFY-SPEC — read by echelon.verify-spec COMMANDER
 # COMMANDER contract: run a read-only fulfillment audit against an existing spec,
 # refresh local structural evidence, and write fulfillment artifacts.
 # =============================================================================
@@ -2326,7 +2326,7 @@ verify_spec:
       label: "Implementation Evidence Mapping"
       spec_file: workflow/phases/verify-spec-4-map.md
       type: agent
-      agent: speckit-echelon-implementation-mapper
+      agent: echelon-implementation-mapper
       tier: verification
       context_pack:
         - "{verify_run_dir}/state.json"
@@ -2343,7 +2343,7 @@ verify_spec:
       label: "Fulfillment Judgment"
       spec_file: workflow/phases/verify-spec-5-judge.md
       type: agent
-      agent: speckit-echelon-spec-guard
+      agent: echelon-spec-guard
       tier: verification
       context_pack:
         - "{verify_run_dir}/state.json"
@@ -2391,7 +2391,7 @@ verify_spec:
           condition: always
 
 # =============================================================================
-# REOPEN — read by speckit.echelon.reopen COMMANDER
+# REOPEN — read by echelon.reopen COMMANDER
 # COMMANDER contract: mutate only spec artifacts to convert verified fulfillment
 # gaps into harness-ready follow-up work.
 # =============================================================================

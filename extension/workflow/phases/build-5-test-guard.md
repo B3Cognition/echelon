@@ -1,11 +1,11 @@
 # Phase: build-5-test-guard
 # Source: echelon.build.md §5 — Test Guardian Gate (TEST_GUARD)
-# Agent: speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN))
-# Read by: speckit-echelon-commander (COMMANDER) before each speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN)) dispatch
+# Agent: echelon-test-guardian (TEST echelon-guardian (GUARDIAN))
+# Read by: echelon-commander (COMMANDER) before each echelon-test-guardian (TEST echelon-guardian (GUARDIAN)) dispatch
 
 ## 5. Test Guardian Gate (TEST_GUARD)
 
-### 5.1 Dispatch speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN))
+### 5.1 Dispatch echelon-test-guardian (TEST echelon-guardian (GUARDIAN))
 
 Use the Ralph-owned context pack:
 
@@ -18,7 +18,7 @@ Use the Ralph-owned context pack:
 
 Use the Agent tool:
 
-- **subagent_type:** `speckit-echelon-test-guardian`
+- **subagent_type:** `echelon-test-guardian`
 - **prompt:**
 
   ```xml
@@ -33,10 +33,10 @@ Use the Agent tool:
   </instructions>
   ```
 
-- **description:** "speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN)): {task_id} — test quality validation"
+- **description:** "echelon-test-guardian (TEST echelon-guardian (GUARDIAN)): {task_id} — test quality validation"
 
 ### 5.2 Handle Result
 
-- **PASS** — Run `endocrine.sh on_gate_pass speckit-echelon-implementer (IMPLEMENTER)`. Task complete. Proceed to speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER)).
-- **FAIL** — Run `endocrine.sh on_gate_fail speckit-echelon-implementer (IMPLEMENTER)` + `endocrine.sh on_rework speckit-echelon-implementer (IMPLEMENTER)`. Route back to speckit-echelon-implementer (IMPLEMENTER) to add missing tests. Max 2 fix cycles. If still failing, flag as DEGRADED and proceed.
-- **WARN** — Task complete with noted improvements. Proceed to speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER)).
+- **PASS** — Run `endocrine.sh on_gate_pass echelon-implementer (IMPLEMENTER)`. Task complete. Proceed to echelon-progress-tracker (PROGRESS echelon-tracker (TRACKER)).
+- **FAIL** — Run `endocrine.sh on_gate_fail echelon-implementer (IMPLEMENTER)` + `endocrine.sh on_rework echelon-implementer (IMPLEMENTER)`. Route back to echelon-implementer (IMPLEMENTER) to add missing tests. Max 2 fix cycles. If still failing, flag as DEGRADED and proceed.
+- **WARN** — Task complete with noted improvements. Proceed to echelon-progress-tracker (PROGRESS echelon-tracker (TRACKER)).

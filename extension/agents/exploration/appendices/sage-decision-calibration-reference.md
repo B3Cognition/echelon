@@ -89,6 +89,6 @@ Thresholds:
 | 21-30% | Log a calibration warning and review the current challenge with extra scrutiny |
 | > 30% | Raise the blocking threshold for this run; only standalone CRITICAL issues block |
 
-If the rate exceeds 30%, log: `"speckit-echelon-sage (SAGE) self-calibration: false-positive rate {rate}% exceeds 30% - raising blocking threshold for this run."`
+If the rate exceeds 30%, log: `"echelon-sage (SAGE) self-calibration: false-positive rate {rate}% exceeds 30% - raising blocking threshold for this run."`
 
-If fewer than 10 entries exist, skip self-calibration and log: `"speckit-echelon-sage (SAGE) self-calibration: insufficient history ({N} entries, need 10). Using default thresholds."`
+If fewer than 10 entries exist, skip self-calibration and log: `"echelon-sage (SAGE) self-calibration: insufficient history ({N} entries, need 10). Using default thresholds."`

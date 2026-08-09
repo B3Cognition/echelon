@@ -1,6 +1,6 @@
 # Phase: codegen-0-preflight
 # Source: echelon.codegen.md §Phase 0 — Pre-Flight Checks
-# Read by: speckit-echelon-orchestrator (ORCHESTRATOR) before Phase 1 RE
+# Read by: echelon-orchestrator (ORCHESTRATOR) before Phase 1 RE
 
 **Execution Continuity:** After each Bash tool call, immediately execute the next step without pausing unless a hard stop condition is reached.
 

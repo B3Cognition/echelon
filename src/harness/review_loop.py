@@ -52,9 +52,9 @@ _EXCLUSION_PATTERNS = re.compile(
     r"^(nit:|nit\b|\[nit\]|optional:|minor:|suggestion:)", re.IGNORECASE
 )
 _REVIEW_AGENT_NAMES = (
-    "speckit-echelon-debugger",
-    "speckit-echelon-sentinel",
-    "speckit-echelon-spec-guard",
+    "echelon-debugger",
+    "echelon-sentinel",
+    "echelon-spec-guard",
 )
 
 

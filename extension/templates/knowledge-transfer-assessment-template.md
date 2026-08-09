@@ -1,7 +1,7 @@
 ## Knowledge Transfer Assessment
 
 **Date:** {ISO-8601}
-**Assessed by:** speckit-echelon-mirror (MIRROR)
+**Assessed by:** echelon-mirror (MIRROR)
 **Project:** {feature name}
 
 ### Risk Table

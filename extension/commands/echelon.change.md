@@ -1,5 +1,5 @@
 ---
-name: speckit.echelon.change
+name: echelon.change
 description: "Handle specification change during build phase"
 behavior:
   invocation: explicit
@@ -11,9 +11,9 @@ You are ORCHESTRATOR handling a mid-build specification change. Dispatch CHANGE 
 
 ---
 
-# speckit.echelon.change
+# echelon.change
 
-Handle a specification change during the build phase by dispatching the speckit-echelon-change-controller (CHANGE CONTROLLER) agent.
+Handle a specification change during the build phase by dispatching the echelon-change-controller (CHANGE CONTROLLER) agent.
 
 ## $ARGUMENTS
 
@@ -23,7 +23,7 @@ The change description provided by the user. This should describe:
 - Why the change is needed
 - Any urgency or priority context
 
-Example: `speckit.echelon.change "FR-012 payment flow now requires 3DS2 authentication instead of 3DS1"`
+Example: `echelon.change "FR-012 payment flow now requires 3DS2 authentication instead of 3DS1"`
 
 ---
 
@@ -46,9 +46,9 @@ If any prerequisite fails, explain why the change command is not applicable and 
 
 ## Steps
 
-### Step 1: Dispatch speckit-echelon-change-controller (CHANGE CONTROLLER)
+### Step 1: Dispatch echelon-change-controller (CHANGE CONTROLLER)
 
-Compile a context pack for the speckit-echelon-change-controller agent:
+Compile a context pack for the echelon-change-controller agent:
 
 - The user's change description (`$ARGUMENTS`)
 - Current `spec.md`
@@ -60,7 +60,7 @@ Compile a context pack for the speckit-echelon-change-controller agent:
 
 Use the Agent tool:
 
-- **subagent_type:** `speckit-echelon-change-controller`
+- **subagent_type:** `echelon-change-controller`
 - **prompt:**
 
   ```xml
@@ -99,11 +99,11 @@ If ACCEPTED:
 3. Update `estimates.md` with revised effort figures
 4. Record the change in `reasoning-journal.jsonl`
 5. Resume build with the propagation plan's task sequence
-6. Notify speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER)) of the re-baseline
+6. Notify echelon-progress-tracker (PROGRESS echelon-tracker (TRACKER)) of the re-baseline
 
 7. Resolve re-entry dispatch target:
-   - `BUILD_RESTART` -> resume via `speckit.echelon.build {feature}`
-   - `QA_RESTART` -> resume via `speckit.echelon.verify {feature}`
+   - `BUILD_RESTART` -> resume via `echelon.build {feature}`
+   - `QA_RESTART` -> resume via `echelon.verify {feature}`
 
 If DEFERRED:
 

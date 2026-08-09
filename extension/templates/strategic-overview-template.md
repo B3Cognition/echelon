@@ -45,6 +45,6 @@
 
 | Specialist | Recommended Focus | Why |
 |------------|-------------------|-----|
-| speckit-echelon-investigator (INVESTIGATOR) | {area} | {high uncertainty + high blast radius} |
-| speckit-echelon-guardian (GUARDIAN) | {area} | {security risk identified} |
-| speckit-echelon-benchmark (BENCHMARK) | {area} | {performance risk identified} |
+| echelon-investigator (INVESTIGATOR) | {area} | {high uncertainty + high blast radius} |
+| echelon-guardian (GUARDIAN) | {area} | {security risk identified} |
+| echelon-benchmark (BENCHMARK) | {area} | {performance risk identified} |

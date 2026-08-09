@@ -70,7 +70,7 @@ class TestBenchmarkTemplates:
             "  journal_entries:\n"
             in text
         )
-        assert "agent: speckit-echelon-benchmark (BENCHMARK)" in text
+        assert "agent: echelon-benchmark (BENCHMARK)" in text
 
     def test_phase3_specialist_dispatch_includes_benchmark_templates(self) -> None:
         text = PHASE.read_text(encoding="utf-8")

@@ -82,7 +82,7 @@ class TestSageTemplates:
         assert "${STAGING_DIR}/issues.md" in text
         assert "{spec_dir}/quality-gates.md" in text
         assert "{spec_dir}/issues.md" in text
-        assert "agent: speckit-echelon-sage (SAGE)" in text
+        assert "agent: echelon-sage (SAGE)" in text
         assert "agent: WHY" not in text
         assert "architecture_requirement_drift" in text
         assert "plan.md, research.md, data-model.md, contracts/" in text

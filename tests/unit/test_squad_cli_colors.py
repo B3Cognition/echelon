@@ -31,7 +31,7 @@ def test_phase_dispatch_line_uses_agent_frontmatter_color(tmp_path: Path, monkey
         id="phase1-constitution",
         type="agent",
         label="Constitution",
-        agent="speckit-echelon-chief",
+        agent="echelon-chief",
     )
 
     line = _format_phase_dispatch_line(node, graph, ext_dir, file=_TTYBuffer())
@@ -43,7 +43,7 @@ def test_phase_dispatch_line_is_plain_without_agent_color(tmp_path: Path, monkey
     monkeypatch.delenv("NO_COLOR", raising=False)
     graph = MagicMock()
     graph.agent_file.return_value = None
-    node = PhaseNode(id="phase1-what", type="agent", label="What", agent="speckit-echelon-scout")
+    node = PhaseNode(id="phase1-what", type="agent", label="What", agent="echelon-scout")
 
     line = _format_phase_dispatch_line(node, graph, tmp_path / "ext", file=_TTYBuffer())
 

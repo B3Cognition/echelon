@@ -1,6 +1,6 @@
 # Phase: init
 # Source: echelon.run.md §1 — Initialization (INIT)
-# Read by: speckit-echelon-commander (COMMANDER) before starting any phase dispatch
+# Read by: echelon-commander (COMMANDER) before starting any phase dispatch
 
 ## 1. Initialization (INIT)
 
@@ -21,7 +21,7 @@ Store `PROJECT_ROOT` in your context. All paths written to state.json, passed to
 ECHELON_EXT="${PROJECT_ROOT}/.specify/extensions/echelon"
 if [ ! -f "${ECHELON_EXT}/echelon-config.yml" ]; then
   echo "✗ echelon-config.yml not found at ${ECHELON_EXT}/echelon-config.yml" >&2
-  echo "  Run 'speckit.echelon.init' first to create the project configuration." >&2
+  echo "  Run 'echelon.init' first to create the project configuration." >&2
   exit 1
 fi
 echo "✓ echelon-config.yml found at ${ECHELON_EXT}/echelon-config.yml"
@@ -31,10 +31,10 @@ If this exits non-zero: **HARD STOP**. Always print the message below. Do not pr
 
 ```text
 ✗ echelon-config.yml not found.
-  Run speckit.echelon.init first, then re-run speckit.echelon.run.
+  Run echelon.init first, then re-run echelon.run.
 ```
 
-> **Note:** `validate-deploy.sh` is only relevant for `speckit.echelon.build` and `speckit.echelon.codegen` (it validates deploy infrastructure written by `echelon workspace init`). Always leave `echelon.run` startup deploy-neutral. Do NOT call `validate-deploy.sh` from `echelon.run` — it will fail on fresh projects that have not yet run a build.
+> **Note:** `validate-deploy.sh` is only relevant for `echelon.build` and `echelon.codegen` (it validates deploy infrastructure written by `echelon workspace init`). Always leave `echelon.run` startup deploy-neutral. Do NOT call `validate-deploy.sh` from `echelon.run` — it will fail on fresh projects that have not yet run a build.
 
 ### 1.1 Detect Greenfield vs Brownfield
 
@@ -116,8 +116,8 @@ section 3.5 after constitution creation.
 2. If `run-history.json` exists:
    - Read `runs` array. Find the latest entry where `phase: "A"` and `status: "done"`.
    - Compare `constitution_hash` from that entry against current SHA of `.specify/memory/constitution.md`.
-   - If Phase A is done AND constitution hash matches: log `[speckit-echelon-commander (COMMANDER)] Phase A already complete for run {run_id} — skipping to Phase B routing` and jump to the ASSESS/DECIDE section. Return `phase: phase1-constitution` in `echelon_result.state_updates` to signal resume.
-   - If Phase A is done but constitution hash differs: log `[speckit-echelon-commander (COMMANDER)] Constitution changed since last Phase A run — re-running Phase A to update spec/plan/tasks`, continue normally.
+   - If Phase A is done AND constitution hash matches: log `[echelon-commander (COMMANDER)] Phase A already complete for run {run_id} — skipping to Phase B routing` and jump to the ASSESS/DECIDE section. Return `phase: phase1-constitution` in `echelon_result.state_updates` to signal resume.
+   - If Phase A is done but constitution hash differs: log `[echelon-commander (COMMANDER)] Constitution changed since last Phase A run — re-running Phase A to update spec/plan/tasks`, continue normally.
 3. If `run-history.json` does not exist: continue normally (new spec, first run).
 
 ### 1.4 Initialize Staging Reasoning Journal
@@ -182,7 +182,7 @@ Check if `.specify/memory/constitution.md` exists and note the status:
 **If EXISTS:**
 
 - Read the constitution — it will guide all architectural decisions
-- Store constitution principles in context for speckit-echelon-architect (ARCHITECT) and all build agents
+- Store constitution principles in context for echelon-architect (ARCHITECT) and all build agents
 - Return `constitution_status: exists` in `echelon_result.state_updates`
 
 **If MISSING:**
@@ -193,14 +193,14 @@ Check if `.specify/memory/constitution.md` exists and note the status:
 
 ### Spec-kit Availability
 
-spec-kit skill availability is validated at install time (`specify extension add echelon`). speckit-echelon-commander (COMMANDER) assumes `fallback_mode = false` at run start. If a skill invocation fails during the run, speckit-echelon-commander (COMMANDER) returns the fallback fields in `echelon_result.state_updates` at that point:
+spec-kit skill availability is validated at install time (`specify extension add echelon`). echelon-commander (COMMANDER) assumes `fallback_mode = false` at run start. If a skill invocation fails during the run, echelon-commander (COMMANDER) returns the fallback fields in `echelon_result.state_updates` at that point:
 
 ```yaml
 fallback_mode: true
 execution_mode: manual_specification
 ```
 
-Always continue routing in both available and fallback paths (AC-001a-4). speckit-echelon-cartographer (CARTOGRAPHER) dispatch must never be blocked by fallback detection.
+Always continue routing in both available and fallback paths (AC-001a-4). echelon-cartographer (CARTOGRAPHER) dispatch must never be blocked by fallback detection.
 
 For reconciliation after recovery, reference `templates/recovery-checklist.md` and operational guidance in `docs/fallback-mode.md`.
 

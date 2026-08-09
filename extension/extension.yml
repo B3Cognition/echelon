@@ -47,22 +47,22 @@ requires:
       note: "Bundled — installed via scripts/install.sh into ~/.echelon/venv/."
     - name: "docker"
       required: true
-      required_for: "speckit.echelon.harness-run — DockerWorktreeProvider sandbox isolation for build/test/verify"
+      required_for: "echelon.harness-run — DockerWorktreeProvider sandbox isolation for build/test/verify"
       hard_stop: true
       note: "Docker daemon must be running. Required only when using harness commands."
     - name: "git"
       required: true
-      required_for: "speckit.echelon.harness-run — GitOpsManager two-repo gitops and worktree creation"
+      required_for: "echelon.harness-run — GitOpsManager two-repo gitops and worktree creation"
       hard_stop: true
 
 provides:
-  # Name convention: entries use dot-notation (speckit.echelon.scout).
+  # Name convention: entries use dot-notation (echelon.scout).
   # spec-kit transforms this to dash-notation for deployed filenames and
-  # injected frontmatter: speckit.echelon.scout → speckit-echelon-scout.
+  # injected frontmatter: echelon.scout → echelon-scout.
   # That dash-notation name is the canonical dispatch identifier used in
   # Agent tool calls (subagent_type) and in workflow/definition.yaml agent: fields.
   commands:
-    - name: "speckit.echelon.codegenlight"
+    - name: "echelon.codegenlight"
       file: "commands/echelon.codegenlight.md"
       description: "Standalone SOAR-powered build pipeline — RE → DECOMPOSE → IMPLEMENT → GATE → TEST → DELIVER"
       behavior:
@@ -72,63 +72,63 @@ provides:
         effort: high
         tools: full
 
-    - name: "speckit.echelon.init"
+    - name: "echelon.init"
       file: "commands/echelon.init.md"
-      description: "One-time project initialization — bootstrap echelon-config.yml, validate deploy config, install Traefik. Run once per project before speckit.echelon.run."
+      description: "One-time project initialization — bootstrap echelon-config.yml, validate deploy config, install Traefik. Run once per project before echelon.run."
       behavior:
         execution: isolated
         invocation: explicit
         capability: balanced
         tools: write
 
-    - name: "speckit.echelon.run"
+    - name: "echelon.run"
       file: "commands/echelon.run.md"
-      description: "Full autonomous cognitive squad run — requires speckit.echelon.init first"
-    - name: "speckit.echelon.build"
+      description: "Full autonomous cognitive squad run — requires echelon.init first"
+    - name: "echelon.build"
       file: "commands/echelon.build.md"
       description: "Execute the building phase — implement tasks with role-based agents"
-    - name: "speckit.echelon.status"
+    - name: "echelon.status"
       file: "commands/echelon.status.md"
       description: "Check current squad state and progress"
-    - name: "speckit.echelon.innovate"
+    - name: "echelon.innovate"
       file: "commands/echelon.innovate.md"
       description: "Manually trigger INNOVATE specialist"
-    - name: "speckit.echelon.investigate"
+    - name: "echelon.investigate"
       file: "commands/echelon.investigate.md"
       description: "Manually trigger SCIENTIST for a specific question"
-    - name: "speckit.echelon.ground"
+    - name: "echelon.ground"
       file: "commands/echelon.ground.md"
       description: "Manually trigger reality check on artifacts"
-    - name: "speckit.echelon.feedback"
+    - name: "echelon.feedback"
       file: "commands/echelon.feedback.md"
       description: "Post-implementation feedback intake"
-    - name: "speckit.echelon.resume"
+    - name: "echelon.resume"
       file: "commands/echelon.resume.md"
       description: "Provide answer to human escalation"
-    - name: "speckit.echelon.bugfix"
+    - name: "echelon.bugfix"
       file: "commands/echelon.bugfix.md"
       description: "Diagnostic squad for a bug or enhancement — DEBUGGER + SENTINEL + SPEC GUARD → bugfix plan + tasks → hand off to harness.run"
-    - name: "speckit.echelon.review"
+    - name: "echelon.review"
       file: "commands/echelon.review.md"
       description: "Automated PR review triage — fetches blocking comments from GitHub/GitLab, groups by proximity + reviewer, DEBUGGER + SENTINEL + SPEC GUARD per group → review-fix plan + tasks. Machine-invoked by ReviewLoopController."
       behavior:
         invocation: automatic
-    - name: "speckit.echelon.change"
+    - name: "echelon.change"
       file: "commands/echelon.change.md"
       description: "Handle specification change during build phase"
-    - name: "speckit.echelon.verify"
+    - name: "echelon.verify"
       file: "commands/echelon.verify.md"
       description: "Run full backpropagation verification — 100% spec coverage check"
-    - name: "speckit.echelon.verify-spec"
+    - name: "echelon.verify-spec"
       file: "commands/echelon.verify-spec.md"
       description: "Read-only fulfillment audit for an existing spec against the current implementation"
-    - name: "speckit.echelon.reopen"
+    - name: "echelon.reopen"
       file: "commands/echelon.reopen.md"
       description: "Reopen a spec from fulfillment gaps and append harness-ready tasks"
-    - name: "speckit.echelon.health"
+    - name: "echelon.health"
       file: "commands/echelon.health.md"
       description: "Periodic health check — spec-code drift, estimate drift, KB freshness"
-    - name: "speckit.echelon.codegen"
+    - name: "echelon.codegen"
       file: "commands/echelon.codegen.md"
       description: "Execute building phase via SOAR-powered codegen pipeline — alternative to echelon.build"
       behavior:
@@ -138,7 +138,7 @@ provides:
         effort: high
         tools: full
         color: red
-    - name: "speckit.echelon.deploy"
+    - name: "echelon.deploy"
       file: "commands/echelon.deploy.md"
       description: "Manual deploy trigger, status, and rollback for blue/green local CD"
       behavior:
@@ -146,7 +146,7 @@ provides:
         capability: balanced
         tools: write
         color: red
-    - name: "speckit.echelon.cicd"
+    - name: "echelon.cicd"
       file: "commands/echelon.cicd.md"
       description: "Design and implement CI/CD for this project — Dockerfile, echelon-config.yml deploy block, GitHub Actions CI, and database services if detected. Re-runnable."
       behavior:
@@ -159,7 +159,7 @@ provides:
 
     # ── Agent Definitions ──────────────────────────────────────────
     # Control layer
-    - name: "speckit.echelon.commander"
+    - name: "echelon.commander"
       file: "agents/control/commander.md"
       description: "COMMANDER — principal orchestrator for all echelon phases"
       behavior:
@@ -167,7 +167,7 @@ provides:
         capability: strong
         tools: full          # needs Bash (state-backup.sh) + Write (journal, state.json)
         color: blue
-    - name: "speckit.echelon.chief"
+    - name: "echelon.chief"
       file: "agents/control/chief.md"
       description: "CHIEF — project constitution author and governance steward"
       behavior:
@@ -176,7 +176,7 @@ provides:
         tools: full          # needs Skill (speckit.constitution) + Bash (verification) + Write (placeholder fix)
         color: blue
         invocation: explicit
-    - name: "speckit.echelon.checkpoint"
+    - name: "echelon.checkpoint"
       file: "agents/control/checkpoint.md"
       description: "CHECKPOINT — internalization quality assessor"
       behavior:
@@ -184,7 +184,7 @@ provides:
         capability: balanced
         tools: write         # writes internalization-report.md
         color: blue
-    - name: "speckit.echelon.scorekeeper"
+    - name: "echelon.scorekeeper"
       file: "agents/control/scorekeeper.md"
       description: "SCOREKEEPER — tracks and scores agent performance"
       behavior:
@@ -192,7 +192,7 @@ provides:
         capability: balanced
         tools: write         # writes agent-scorecard.md, agent-scores.yaml
         color: blue
-    - name: "speckit.echelon.strategist"
+    - name: "echelon.strategist"
       file: "agents/control/strategist.md"
       description: "STRATEGIST — risk-weighted alignment advisor for COMMANDER"
       behavior:
@@ -200,7 +200,7 @@ provides:
         capability: strong
         tools: write         # writes strategic-overview.md
         color: blue
-    - name: "speckit.echelon.tracker"
+    - name: "echelon.tracker"
       file: "agents/control/tracker.md"
       description: "TRACKER — intent analyst detecting scope drift"
       behavior:
@@ -209,7 +209,7 @@ provides:
         tools: write         # writes user-intent.md
         color: blue
     # Exploration layer
-    - name: "speckit.echelon.scout"
+    - name: "echelon.scout"
       file: "agents/exploration/scout.md"
       description: "SCOUT — reconnaissance analyst mapping domain territory"
       behavior:
@@ -217,7 +217,7 @@ provides:
         capability: balanced
         tools: write         # writes glossary.md, mental-model.md, boundaries.md, assumptions.md, unknowns.md, reference-architectures.md
         color: green
-    - name: "speckit.echelon.golddigger"
+    - name: "echelon.golddigger"
       file: "agents/exploration/golddigger.md"
       description: "GOLDDIGGER — brownfield extraction driver via native re-extract pipeline"
       behavior:
@@ -225,7 +225,7 @@ provides:
         capability: strong
         tools: full         # writes brownfield-index.md, golddigger-cache/
         color: green
-    - name: "speckit.echelon.synthesizer"
+    - name: "echelon.synthesizer"
       file: "agents/exploration/synthesizer.md"
       description: "SYNTHESIZER — fuses raw discovery outputs into unified knowledge base"
       behavior:
@@ -233,7 +233,7 @@ provides:
         capability: balanced
         tools: write         # writes contradictions-and-gaps.md, risks.md, unified outputs
         color: green
-    - name: "speckit.echelon.cartographer"
+    - name: "echelon.cartographer"
       file: "agents/exploration/cartographer.md"
       description: "CARTOGRAPHER — transforms domain understanding into testable specifications"
       behavior:
@@ -241,7 +241,7 @@ provides:
         capability: strong
         tools: full         # writes spec.md, requirements-overview.md (via Skill + direct)
         color: green
-    - name: "speckit.echelon.lexicon-deriver"
+    - name: "echelon.lexicon-deriver"
       file: "agents/exploration/lexicon-deriver.md"
       description: "LEXICON DERIVER — compiles a quality-certified specification into the controlled requirements grammar"
       behavior:
@@ -249,7 +249,7 @@ provides:
         capability: balanced
         tools: write
         color: green
-    - name: "speckit.echelon.sage"
+    - name: "echelon.sage"
       file: "agents/exploration/sage.md"
       description: "SAGE — adversarial critic and requirements quality gatekeeper"
       behavior:
@@ -257,7 +257,7 @@ provides:
         capability: strong
         tools: full          # needs Bash to run `understanding` CLI in WHY2/WHY3
         color: green
-    - name: "speckit.echelon.modeler"
+    - name: "echelon.modeler"
       file: "agents/exploration/modeler.md"
       description: "MODELER — maintains living queryable map of the codebase"
       behavior:
@@ -266,7 +266,7 @@ provides:
         tools: write         # writes mental-model-code.md, invariant alerts
         color: green
     # Feasibility layer
-    - name: "speckit.echelon.gatekeeper"
+    - name: "echelon.gatekeeper"
       file: "agents/feasibility/gatekeeper.md"
       description: "GATEKEEPER — kill gate for project feasibility and RICE scoring"
       behavior:
@@ -274,7 +274,7 @@ provides:
         capability: strong
         tools: write         # writes feasibility.md, prioritization.md, estimates.md, mvp-scope.md
         color: orange
-    - name: "speckit.echelon.validator"
+    - name: "echelon.validator"
       file: "agents/feasibility/validator.md"
       description: "VALIDATOR — internalization gate ensuring comprehension before work"
       behavior:
@@ -283,7 +283,7 @@ provides:
         tools: write         # writes internalization-report.md
         color: orange
     # Solution layer
-    - name: "speckit.echelon.architect"
+    - name: "echelon.architect"
       file: "agents/solution/architect.md"
       description: "ARCHITECT — designs system structure and makes technology decisions"
       behavior:
@@ -291,7 +291,7 @@ provides:
         capability: strong
         tools: full         # writes plan.md, research.md, data-model.md, contracts/
         color: purple
-    - name: "speckit.echelon.orchestrator"
+    - name: "echelon.orchestrator"
       file: "agents/solution/orchestrator.md"
       description: "ORCHESTRATOR — decomposes projects into executable task sequences"
       behavior:
@@ -299,7 +299,7 @@ provides:
         capability: strong
         tools: full         # writes tasks.md, critical-path.md, risk-matrix.md, dependencies.md
         color: purple
-    - name: "speckit.echelon.sentinel"
+    - name: "echelon.sentinel"
       file: "agents/solution/sentinel.md"
       description: "SENTINEL — test architecture lead designing test strategies"
       behavior:
@@ -308,7 +308,7 @@ provides:
         tools: write         # writes test-strategy.md, test-architecture.md, coverage-map.md
         color: purple
     # Specialists layer
-    - name: "speckit.echelon.investigator"
+    - name: "echelon.investigator"
       file: "agents/specialists/investigator.md"
       description: "INVESTIGATOR — scientific researcher for unknowns and spike investigations"
       behavior:
@@ -316,7 +316,7 @@ provides:
         capability: strong
         tools: full          # needs Bash to run experiments in worktrees
         color: cyan
-    - name: "speckit.echelon.guardian"
+    - name: "echelon.guardian"
       file: "agents/specialists/guardian.md"
       description: "GUARDIAN — security architect conducting threat models"
       behavior:
@@ -324,7 +324,7 @@ provides:
         capability: strong
         tools: write         # writes threat-model.md, compliance-requirements.md, risk-acceptance-log.md
         color: cyan
-    - name: "speckit.echelon.benchmark"
+    - name: "echelon.benchmark"
       file: "agents/specialists/benchmark.md"
       description: "BENCHMARK — performance engineer modeling capacity and scalability"
       behavior:
@@ -332,7 +332,7 @@ provides:
         capability: balanced
         tools: write         # writes performance-requirements.md, capacity-model.md
         color: cyan
-    - name: "speckit.echelon.advocate"
+    - name: "echelon.advocate"
       file: "agents/specialists/advocate.md"
       description: "ADVOCATE — accessibility specialist ensuring WCAG compliance"
       behavior:
@@ -340,7 +340,7 @@ provides:
         capability: balanced
         tools: write         # writes accessibility-requirements.md, user-flow.md
         color: cyan
-    - name: "speckit.echelon.oracle"
+    - name: "echelon.oracle"
       file: "agents/specialists/oracle.md"
       description: "ORACLE — domain-specific knowledge specialist"
       behavior:
@@ -348,7 +348,7 @@ provides:
         capability: balanced
         tools: write         # writes domain amendments to spec, plan, glossary
         color: cyan
-    - name: "speckit.echelon.maverick"
+    - name: "echelon.maverick"
       file: "agents/specialists/maverick.md"
       description: "MAVERICK — innovation consultant breaking assumptions via AutoTRIZ"
       behavior:
@@ -357,7 +357,7 @@ provides:
         tools: write         # writes alternatives.md, risk-opportunities.md, challenge-assumptions.md
         color: cyan
     # Learning layer
-    - name: "speckit.echelon.auditor"
+    - name: "echelon.auditor"
       file: "agents/learning/auditor.md"
       description: "AUDITOR — calibration engineer tracking squad confidence profile"
       behavior:
@@ -365,7 +365,7 @@ provides:
         capability: balanced
         tools: full          # needs Bash to run `understanding` CLI in Mode 4 post-build self-assessment
         color: yellow
-    - name: "speckit.echelon.internalizer"
+    - name: "echelon.internalizer"
       file: "agents/learning/internalizer.md"
       description: "INTERNALIZER — computes 16 internalization metrics for comprehension measurement"
       behavior:
@@ -373,7 +373,7 @@ provides:
         capability: balanced
         tools: write         # writes internalization-metrics.md, internalization-log.yaml
         color: yellow
-    - name: "speckit.echelon.adaptive"
+    - name: "echelon.adaptive"
       file: "agents/learning/adaptive.md"
       description: "ADAPTIVE — quality trajectory analyst detecting stagnation and regression"
       behavior:
@@ -381,7 +381,7 @@ provides:
         capability: balanced
         tools: write         # writes evolution-report.md, stagnation-flags.md
         color: yellow
-    - name: "speckit.echelon.realist"
+    - name: "echelon.realist"
       file: "agents/learning/realist.md"
       description: "REALIST — connects squad artifacts to real-world data and historical outcomes"
       behavior:
@@ -389,7 +389,7 @@ provides:
         capability: balanced
         tools: write         # writes reality-check.md, cost-analysis.md, benchmark-data.md
         color: yellow
-    - name: "speckit.echelon.mirror"
+    - name: "echelon.mirror"
       file: "agents/learning/mirror.md"
       description: "MIRROR — post-mortem facilitator extracting patterns from retrospectives"
       behavior:
@@ -397,7 +397,7 @@ provides:
         capability: balanced
         tools: write         # writes patterns.yaml, pitfalls.yaml, knowledge-transfer-assessment.md
         color: yellow
-    - name: "speckit.echelon.monitor"
+    - name: "echelon.monitor"
       file: "agents/learning/monitor.md"
       description: "MONITOR — metacognition watchdog asking if the squad is still on track"
       behavior:
@@ -405,7 +405,7 @@ provides:
         capability: balanced
         tools: write         # writes metacognition-log.md
         color: yellow
-    - name: "speckit.echelon.veteran"
+    - name: "echelon.veteran"
       file: "agents/learning/veteran.md"
       description: "VETERAN — cross-project knowledge curator managing patterns and pitfalls"
       behavior:
@@ -413,7 +413,7 @@ provides:
         capability: balanced
         tools: write         # writes updated scope fields in patterns.yaml
         color: yellow
-    - name: "speckit.echelon.consolidator"
+    - name: "echelon.consolidator"
       file: "agents/learning/consolidator.md"
       description: "CONSOLIDATOR — transforms raw episodic experience into generalized schemas"
       behavior:
@@ -422,7 +422,7 @@ provides:
         tools: write         # writes pattern schemas
         color: yellow
     # Build layer
-    - name: "speckit.echelon.implementer"
+    - name: "echelon.implementer"
       file: "agents/build/implementer.md"
       description: "IMPLEMENTER — senior developer writing production code following TDD"
       behavior:
@@ -430,7 +430,7 @@ provides:
         capability: strong
         tools: full          # needs Bash (run tests, git worktree) + Write (source + test files)
         color: red
-    - name: "speckit.echelon.spec-guard"
+    - name: "echelon.spec-guard"
       file: "agents/build/spec-guard.md"
       description: "SPEC GUARD — verifies implemented code matches specification requirements"
       behavior:
@@ -438,7 +438,7 @@ provides:
         capability: balanced
         tools: write         # writes spec-compliance-report.md, traceability-matrix.md
         color: red
-    - name: "speckit.echelon.spec-fulfillment-auditor"
+    - name: "echelon.spec-fulfillment-auditor"
       file: "agents/build/spec-fulfillment-auditor.md"
       description: "SPEC FULFILLMENT AUDITOR — extracts a canonical checklist from a spec for implementation verification"
       behavior:
@@ -446,7 +446,7 @@ provides:
         capability: balanced
         tools: write         # writes requirement-audit.md
         color: red
-    - name: "speckit.echelon.implementation-mapper"
+    - name: "echelon.implementation-mapper"
       file: "agents/build/implementation-mapper.md"
       description: "IMPLEMENTATION MAPPER — maps spec checklist items to concrete implementation and test evidence"
       behavior:
@@ -454,7 +454,7 @@ provides:
         capability: balanced
         tools: write         # writes implementation-map.md
         color: red
-    - name: "speckit.echelon.code-reviewer"
+    - name: "echelon.code-reviewer"
       file: "agents/build/code-reviewer.md"
       description: "CODE REVIEWER — reviews code quality, patterns, security, and architecture"
       behavior:
@@ -462,7 +462,7 @@ provides:
         capability: strong
         tools: write         # writes code-review-report.md
         color: red
-    - name: "speckit.echelon.test-guardian"
+    - name: "echelon.test-guardian"
       file: "agents/build/test-guardian.md"
       description: "TEST GUARDIAN — audits test sufficiency and edge case coverage"
       behavior:
@@ -470,7 +470,7 @@ provides:
         capability: balanced
         tools: write         # writes test-quality-report.md, updated coverage-map.md
         color: red
-    - name: "speckit.echelon.engineering-manager"
+    - name: "echelon.engineering-manager"
       file: "agents/build/engineering-manager.md"
       description: "ENGINEERING MANAGER — orchestrates build phase convergence toward spec coverage"
       behavior:
@@ -478,7 +478,7 @@ provides:
         capability: strong
         tools: write         # writes workflow-compliance-report.md
         color: red
-    - name: "speckit.echelon.tech-writer"
+    - name: "echelon.tech-writer"
       file: "agents/build/tech-writer.md"
       description: "TECH WRITER - keeps README and Keep a Changelog release history current after implementation"
       behavior:
@@ -486,7 +486,7 @@ provides:
         capability: balanced
         tools: write         # writes README.md, CHANGELOG.md, documentation-impact-report.md
         color: red
-    - name: "speckit.echelon.docs-verifier"
+    - name: "echelon.docs-verifier"
       file: "agents/build/docs-verifier.md"
       description: "DOCS VERIFIER - checks README/CHANGELOG usefulness and routes targeted documentation repair"
       behavior:
@@ -494,7 +494,7 @@ provides:
         capability: balanced
         tools: write         # writes docs-verification-report.md
         color: red
-    - name: "speckit.echelon.integrator"
+    - name: "echelon.integrator"
       file: "agents/build/integrator.md"
       description: "INTEGRATOR — verifies system integration after each build phase"
       behavior:
@@ -502,7 +502,7 @@ provides:
         capability: balanced
         tools: write         # writes integration-report.md
         color: red
-    - name: "speckit.echelon.progress-tracker"
+    - name: "echelon.progress-tracker"
       file: "agents/build/progress-tracker.md"
       description: "PROGRESS TRACKER — tracks effort vs estimates and warns on schedule drift"
       behavior:
@@ -510,7 +510,7 @@ provides:
         capability: balanced
         tools: write         # writes progress-report.md, process-metrics.md
         color: red
-    - name: "speckit.echelon.change-controller"
+    - name: "echelon.change-controller"
       file: "agents/build/change-controller.md"
       description: "CHANGE CONTROLLER — assesses blast radius of spec changes and plans propagation"
       behavior:
@@ -518,7 +518,7 @@ provides:
         capability: strong
         tools: write         # writes change-impact-report.md, updated tasks.md
         color: red
-    - name: "speckit.echelon.debugger"
+    - name: "echelon.debugger"
       file: "agents/build/debugger.md"
       description: "DEBUGGER — systematic root cause analyst for build failures"
       behavior:
@@ -526,7 +526,7 @@ provides:
         capability: strong
         tools: full          # needs Bash (reproduce failures, run tests) + Write (fixes)
         color: red
-    - name: "speckit.echelon.verification"
+    - name: "echelon.verification"
       file: "agents/build/verification.md"
       description: "VERIFICATION — backpropagation specialist tracing requirements to 100% coverage"
       behavior:
@@ -534,7 +534,7 @@ provides:
         capability: balanced
         tools: write         # writes gap-report.md, traceability-matrix.md, verification-summary.md
         color: red
-    - name: "speckit.echelon.visual-validator"
+    - name: "echelon.visual-validator"
       file: "agents/build/visual-validator.md"
       description: "VISUAL VALIDATOR — UI verification specialist using Playwright for visual checks"
       behavior:
@@ -544,10 +544,10 @@ provides:
         color: red
 
     # ── Understanding commands ─────────────────────────────────────────────────
-    - name: "speckit.echelon.understanding-scan"
+    - name: "echelon.understanding-scan"
       file: "commands/echelon.understanding-scan.md"
       description: "Scan spec for 31 requirements quality metrics with quality gates"
-      aliases: ["speckit.echelon.understanding-run"]
+      aliases: ["echelon.understanding-run"]
       behavior:
         execution: command
         capability: balanced
@@ -556,7 +556,7 @@ provides:
         visibility: user
         color: green
 
-    - name: "speckit.echelon.understanding-validate"
+    - name: "echelon.understanding-validate"
       file: "commands/echelon.understanding-validate.md"
       description: "Enforce quality gates on spec (exit code 1 on failure)"
       behavior:
@@ -567,7 +567,7 @@ provides:
         visibility: user
         color: green
 
-    - name: "speckit.echelon.understanding-energy"
+    - name: "echelon.understanding-energy"
       file: "commands/echelon.understanding-energy.md"
       description: "[Experimental] Token-level ambiguity detection using energy metrics"
       behavior:
@@ -578,7 +578,7 @@ provides:
         visibility: user
         color: green
 
-    - name: "speckit.echelon.understanding-diagram"
+    - name: "echelon.understanding-diagram"
       file: "commands/echelon.understanding-diagram.md"
       description: "Generate entity relationship diagrams from spec requirements"
       behavior:
@@ -589,7 +589,7 @@ provides:
         visibility: user
         color: green
 
-    - name: "speckit.echelon.understanding-batch"
+    - name: "echelon.understanding-batch"
       file: "commands/echelon.understanding-batch.md"
       description: "Batch-analyze all specs in a directory with summary report"
       behavior:
@@ -601,7 +601,7 @@ provides:
         color: green
 
     # ── Re-extraction layer ──────────────────────────────────────────────────
-    - name: "speckit.echelon.re-analyzer"
+    - name: "echelon.re-analyzer"
       file: "agents/re/analyzer.md"
       description: "RE-ANALYZER — extracts structured codebase data via analysis scripts"
       behavior:
@@ -609,7 +609,7 @@ provides:
         capability: balanced
         tools: full
         color: orange
-    - name: "speckit.echelon.re-specifier"
+    - name: "echelon.re-specifier"
       file: "agents/re/specifier.md"
       description: "RE-SPECIFIER — synthesises domain specifications from analysis artifacts"
       behavior:
@@ -617,7 +617,7 @@ provides:
         capability: balanced
         tools: write
         color: orange
-    - name: "speckit.echelon.re-verifier"
+    - name: "echelon.re-verifier"
       file: "agents/re/verifier.md"
       description: "RE-VERIFIER — computes spec coverage and clusters orphan files"
       behavior:
@@ -625,7 +625,7 @@ provides:
         capability: balanced
         tools: write
         color: orange
-    - name: "speckit.echelon.re-expander"
+    - name: "echelon.re-expander"
       file: "agents/re/expander.md"
       description: "RE-EXPANDER — fills coverage gaps from orphan file clusters"
       behavior:
@@ -633,7 +633,7 @@ provides:
         capability: balanced
         tools: write
         color: orange
-    - name: "speckit.echelon.re-validator"
+    - name: "echelon.re-validator"
       file: "agents/re/validator.md"
       description: "RE-VALIDATOR — quality-checks specs and auto-resolves ambiguities from code"
       behavior:
@@ -641,7 +641,7 @@ provides:
         capability: balanced
         tools: write
         color: orange
-    - name: "speckit.echelon.re-checklister"
+    - name: "echelon.re-checklister"
       file: "agents/re/checklister.md"
       description: "RE-CHECKLISTER — generates per-domain and summary quality checklists"
       behavior:
@@ -649,7 +649,7 @@ provides:
         capability: fast
         tools: write
         color: orange
-    - name: "speckit.echelon.re-constituter"
+    - name: "echelon.re-constituter"
       file: "agents/re/constituter.md"
       description: "RE-CONSTITUTER — generates strategic artifacts (constitution, strategy, risks, gaps, ADRs)"
       behavior:
@@ -657,7 +657,7 @@ provides:
         capability: balanced
         tools: write
         color: orange
-    - name: "speckit.echelon.re-planner"
+    - name: "echelon.re-planner"
       file: "agents/re/planner.md"
       description: "RE-PLANNER — generates per-domain plan.md informed by constitution"
       behavior:
@@ -665,7 +665,7 @@ provides:
         capability: balanced
         tools: write
         color: orange
-    - name: "speckit.echelon.re-tasker"
+    - name: "echelon.re-tasker"
       file: "agents/re/tasker.md"
       description: "RE-TASKER — generates per-domain tasks.md files"
       behavior:
@@ -674,7 +674,7 @@ provides:
         tools: write
         color: orange
 
-    - name: "speckit.echelon.harness-init"
+    - name: "echelon.harness-init"
       file: "commands/echelon.harness-init.md"
       description: "Initialize harness for a target repository — clone, config, Docker image build"
       behavior:
@@ -684,7 +684,7 @@ provides:
         tools: full
         color: blue
 
-    - name: "speckit.echelon.harness-run"
+    - name: "echelon.harness-run"
       file: "commands/echelon.harness-run.md"
       description: "Run the ralph-loop (build/verify/feedback) for a spec against the target repository"
       behavior:
@@ -694,7 +694,7 @@ provides:
         tools: full
         color: blue
 
-    - name: "speckit.echelon.harness-status"
+    - name: "echelon.harness-status"
       file: "commands/echelon.harness-status.md"
       description: "Show current harness state — active sandbox, phase progress, GC status"
       behavior:
@@ -704,7 +704,7 @@ provides:
         tools: write
         color: blue
 
-    - name: "speckit.echelon.harness-resume"
+    - name: "echelon.harness-resume"
       file: "commands/echelon.harness-resume.md"
       description: "Resume a paused or escalated ralph-loop run"
       behavior:
@@ -715,53 +715,53 @@ provides:
         color: blue
 
     # ── Brownfield (re-) commands ──────────────────────────────────────────────────────────
-    - name: "speckit.echelon.re-extract"
+    - name: "echelon.re-extract"
       file: "commands/echelon.re-extract.md"
       description: "Phase 1 brownfield extraction — analyze codebase and generate domain specs + strategic artifacts"
 
-    - name: "speckit.echelon.re-retarget"
+    - name: "echelon.re-retarget"
       file: "commands/echelon.re-retarget.md"
       description: "Phase 2 brownfield — guided prompts to fill target stack and strategic decisions"
 
-    - name: "speckit.echelon.re-plan-all"
+    - name: "echelon.re-plan-all"
       file: "commands/echelon.re-plan-all.md"
       description: "Phase 3 brownfield — generate per-domain plans and tasks after strategic decisions are filled"
 
-    - name: "speckit.echelon.re-analyze"
+    - name: "echelon.re-analyze"
       file: "commands/echelon.re-analyze.md"
       description: "Extract structured data from codebase into analysis.json"
       scripts:
         sh: "scripts/bash/re/run-analysis.sh"
 
-    - name: "speckit.echelon.re-specify"
+    - name: "echelon.re-specify"
       file: "commands/echelon.re-specify.md"
       description: "Generate domain specifications from analysis artifacts"
 
-    - name: "speckit.echelon.re-verify"
+    - name: "echelon.re-verify"
       file: "commands/echelon.re-verify.md"
       description: "Verify spec coverage against codebase and identify orphan files"
 
-    - name: "speckit.echelon.re-expand"
+    - name: "echelon.re-expand"
       file: "commands/echelon.re-expand.md"
       description: "Expand spec coverage by filling gaps from orphan file clusters"
 
-    - name: "speckit.echelon.re-validate"
+    - name: "echelon.re-validate"
       file: "commands/echelon.re-validate.md"
       description: "Validate specs for quality, auto-resolve ambiguities from code"
 
-    - name: "speckit.echelon.re-checklist"
+    - name: "echelon.re-checklist"
       file: "commands/echelon.re-checklist.md"
       description: "Generate quality checklists for specs (per-domain + summary)"
 
-    - name: "speckit.echelon.re-constitute"
+    - name: "echelon.re-constitute"
       file: "commands/echelon.re-constitute.md"
       description: "Generate strategic artifacts (constitution, strategy, risks, gaps, ADRs)"
 
-    - name: "speckit.echelon.re-plan"
+    - name: "echelon.re-plan"
       file: "commands/echelon.re-plan.md"
       description: "Generate per-domain plan.md files"
 
-    - name: "speckit.echelon.re-tasks"
+    - name: "echelon.re-tasks"
       file: "commands/echelon.re-tasks.md"
       description: "Generate per-domain tasks.md files"
 
@@ -773,12 +773,12 @@ provides:
 
 hooks:
   before_plan:
-    command: "speckit.echelon.understanding-scan"
+    command: "echelon.understanding-scan"
     optional: true
     prompt: "Run requirements quality scan on the spec before planning?"
     description: "Scan spec quality before creating the plan"
   after_tasks:
-    command: "speckit.echelon.run"
+    command: "echelon.run"
     optional: true
     prompt: "Run echelon analysis on generated tasks?"
     description: "Automatically analyze tasks with the echelon cognitive system for insights and improvements"

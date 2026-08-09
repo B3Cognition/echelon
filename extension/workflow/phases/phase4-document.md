@@ -1,11 +1,11 @@
 # Phase: phase4-document
 # Source: echelon.run.md §12 — FINALIZE Phase
-# Agent: speckit-echelon-commander (COMMANDER) internal (sequential: speckit-echelon-realist (REALIST), speckit-echelon-mirror (MIRROR), speckit-echelon-adaptive (ADAPTIVE), speckit-echelon-auditor (AUDITOR), speckit-echelon-consolidator (CONSOLIDATOR), speckit-echelon-scorekeeper (SCOREKEEPER))
-# Read by: speckit-echelon-commander (COMMANDER) before executing finalization sequence
+# Agent: echelon-commander (COMMANDER) internal (sequential: echelon-realist (REALIST), echelon-mirror (MIRROR), echelon-adaptive (ADAPTIVE), echelon-auditor (AUDITOR), echelon-consolidator (CONSOLIDATOR), echelon-scorekeeper (SCOREKEEPER))
+# Read by: echelon-commander (COMMANDER) before executing finalization sequence
 
 ## 12. FINALIZE Phase
 
-> **Always execute steps 12.1–12.7 in order before step 12.8. NEVER skip to step 12.8.** The learning agents (speckit-echelon-realist (REALIST), speckit-echelon-mirror (MIRROR), speckit-echelon-auditor (AUDITOR), speckit-echelon-consolidator (CONSOLIDATOR), speckit-echelon-scorekeeper (SCOREKEEPER)) are the system's only mechanism for improving accuracy and pattern knowledge across runs. Skipping them means every run starts cold, estimates drift uncorrected, schemas fail to consolidate, and failure modes repeat. Each step below is mandatory.
+> **Always execute steps 12.1–12.7 in order before step 12.8. NEVER skip to step 12.8.** The learning agents (echelon-realist (REALIST), echelon-mirror (MIRROR), echelon-auditor (AUDITOR), echelon-consolidator (CONSOLIDATOR), echelon-scorekeeper (SCOREKEEPER)) are the system's only mechanism for improving accuracy and pattern knowledge across runs. Skipping them means every run starts cold, estimates drift uncorrected, schemas fail to consolidate, and failure modes repeat. Each step below is mandatory.
 
 ### 12.1 GROUND Agent — MANDATORY
 
@@ -33,7 +33,7 @@ The active runtime dispatches this role with the following request:
   </instructions>
   ```
 
-- **description:** "speckit-echelon-realist (REALIST): reality check and reference class forecasting"
+- **description:** "echelon-realist (REALIST): reality check and reference class forecasting"
 
 Expected outputs: `reality-check.md`, `cost-analysis.md`, `benchmark-data.md`
 
@@ -61,7 +61,7 @@ The active runtime dispatches this role with the following request:
   </instructions>
   ```
 
-- **description:** "speckit-echelon-mirror (MIRROR): post-run learning extraction"
+- **description:** "echelon-mirror (MIRROR): post-run learning extraction"
 
 ### 12.3 EVOLVE Agent (if re-run)
 
@@ -95,21 +95,21 @@ The active runtime dispatches this role with the following request:
   </instructions>
   ```
 
-- **description:** "speckit-echelon-adaptive (ADAPTIVE): cross-run diffing and improvement measurement"
+- **description:** "echelon-adaptive (ADAPTIVE): cross-run diffing and improvement measurement"
 
 Expected outputs: `evolution-report.md`, `improvement-metrics.md`; conditionally `stagnation-flags.md`, `regression-alerts.md`, `bias-check.md`, and `prompt-recommendations.md`
 
 ### 12.4 CALIBRATE Agent — MANDATORY
 
-**Precondition: run the Per-Agent Internalization Data Handoff before dispatching speckit-echelon-auditor (AUDITOR).**
+**Precondition: run the Per-Agent Internalization Data Handoff before dispatching echelon-auditor (AUDITOR).**
 
-speckit-echelon-internalizer (INTERNALIZER) must run first so speckit-echelon-auditor (AUDITOR) can incorporate per-agent accuracy data into the calibration profile. See `commander.md` §"Per-Agent Internalization Data Handoff" for the full sequence:
+echelon-internalizer (INTERNALIZER) must run first so echelon-auditor (AUDITOR) can incorporate per-agent accuracy data into the calibration profile. See `commander.md` §"Per-Agent Internalization Data Handoff" for the full sequence:
 
-1. Collect internalization artifacts (speckit-echelon-checkpoint (CHECKPOINT)'s report, verdict reports, prior `agent-scores.yaml`)
-2. Dispatch speckit-echelon-internalizer (INTERNALIZER) (Measurement pass — 16 metrics per agent)
-3. Dispatch speckit-echelon-internalizer (INTERNALIZER) (Per-Agent Scoring pass)
-4. **Then** dispatch speckit-echelon-auditor (AUDITOR) (Calibration Dashboard Generation — uses speckit-echelon-internalizer (INTERNALIZER) results)
-5. speckit-echelon-auditor (AUDITOR) writes `calibration-dashboard.md` to `{spec_dir}/`
+1. Collect internalization artifacts (echelon-checkpoint (CHECKPOINT)'s report, verdict reports, prior `agent-scores.yaml`)
+2. Dispatch echelon-internalizer (INTERNALIZER) (Measurement pass — 16 metrics per agent)
+3. Dispatch echelon-internalizer (INTERNALIZER) (Per-Agent Scoring pass)
+4. **Then** dispatch echelon-auditor (AUDITOR) (Calibration Dashboard Generation — uses echelon-internalizer (INTERNALIZER) results)
+5. echelon-auditor (AUDITOR) writes `calibration-dashboard.md` to `{spec_dir}/`
 
 Context pack:
 
@@ -118,7 +118,7 @@ Context pack:
 - `knowledge-base/estimates-log.yaml`
 - `reasoning-journal.jsonl`
 - Quality scores from all WHY passes (from state.json)
-- speckit-echelon-internalizer (INTERNALIZER) outputs (per-agent composite scores and trends)
+- echelon-internalizer (INTERNALIZER) outputs (per-agent composite scores and trends)
 - `agents/learning/appendices/internalizer-output-formats.md`
 - `agents/learning/appendices/internalizer-tier-definitions.md`
 - `agents/learning/appendices/auditor-dashboard-template.md`
@@ -135,23 +135,23 @@ The active runtime dispatches this role with the following request:
 
   ```xml
   <context>
-  [include all artifacts in {spec_dir}/, knowledge-base/calibration-profile.yaml, knowledge-base/estimates-log.yaml, reasoning-journal.jsonl, quality scores from all WHY passes in state.json, speckit-echelon-internalizer (INTERNALIZER) per-agent scores, auditor appendices, and AUDITOR run-local artifact templates]
+  [include all artifacts in {spec_dir}/, knowledge-base/calibration-profile.yaml, knowledge-base/estimates-log.yaml, reasoning-journal.jsonl, quality scores from all WHY passes in state.json, echelon-internalizer (INTERNALIZER) per-agent scores, auditor appendices, and AUDITOR run-local artifact templates]
   </context>
 
   <instructions>
   You are AUDITOR. Read agents/learning/auditor.md for your complete protocol.
-  Track AI accuracy per domain. Build the confidence profile and adjust ASSESS estimate multipliers based on historical data. Flag low-confidence domains for human input or speckit-echelon-investigator (INVESTIGATOR) investigation. Write any durable calibration observations as proposals under `${SQUAD_DIR}/kb-proposals/` using `extension/templates/kb-proposals/calibration-observation-proposal-template.yaml`; do not edit canonical KB files directly. Produce `confidence-flags.md` and `calibration-dashboard.md` in `{spec_dir}/` using the provided appendices and their supplied template contracts: use the confidence-flags template and the dashboard appendix respectively. When triggered, use the supplied standalone templates for evolution signals, prompt-version observations, and calibration analytics. Return journal entries in `echelon_result.journal_entries`.
+  Track AI accuracy per domain. Build the confidence profile and adjust ASSESS estimate multipliers based on historical data. Flag low-confidence domains for human input or echelon-investigator (INVESTIGATOR) investigation. Write any durable calibration observations as proposals under `${SQUAD_DIR}/kb-proposals/` using `extension/templates/kb-proposals/calibration-observation-proposal-template.yaml`; do not edit canonical KB files directly. Produce `confidence-flags.md` and `calibration-dashboard.md` in `{spec_dir}/` using the provided appendices and their supplied template contracts: use the confidence-flags template and the dashboard appendix respectively. When triggered, use the supplied standalone templates for evolution signals, prompt-version observations, and calibration analytics. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
-- **description:** "speckit-echelon-auditor (AUDITOR): accuracy tracking and confidence profiling"
+- **description:** "echelon-auditor (AUDITOR): accuracy tracking and confidence profiling"
 
 ### 12.5 CALIBRATE Confidence Check
 
 After CALIBRATE completes, read `confidence-flags.md`:
 
-- If any domain has **confidence < 0.5** → summon speckit-echelon-investigator (INVESTIGATOR) for that domain (if not already investigated). This is a late-stage safety net.
-- If speckit-echelon-investigator (INVESTIGATOR) was already summoned and confidence is still < 0.5 → always flag for human in the final report (do not block delivery).
+- If any domain has **confidence < 0.5** → summon echelon-investigator (INVESTIGATOR) for that domain (if not already investigated). This is a late-stage safety net.
+- If echelon-investigator (INVESTIGATOR) was already summoned and confidence is still < 0.5 → always flag for human in the final report (do not block delivery).
 
 ### 12.6 Prepare Artifact Manifest
 
@@ -174,7 +174,7 @@ prioritization.md                 | ASSESS          | ...
 estimates.md                      | ASSESS          | ...
 mvp-scope.md                      | ASSESS          | ...
 plan.md                           | HOW             | ...
-research.md                       | HOW+speckit-echelon-investigator (INVESTIGATOR)   | ...
+research.md                       | HOW+echelon-investigator (INVESTIGATOR)   | ...
 data-model.md                     | HOW             | ...
 contracts/                        | HOW             | ...
 constitution.md                   | HOW             | ...
@@ -184,9 +184,9 @@ risk-matrix.md                    | PLAN            | ...
 dependencies.md                   | PLAN            | ...
 plan-conformance.md               | FINALIZE        | ...
 plan-conformance.json             | FINALIZE        | ...
-test-strategy.md                  | TEST speckit-echelon-architect (ARCHITECT)  | ...
-test-architecture.md              | TEST speckit-echelon-architect (ARCHITECT)  | ...
-coverage-map.md                   | TEST speckit-echelon-architect (ARCHITECT)  | ...
+test-strategy.md                  | TEST echelon-architect (ARCHITECT)  | ...
+test-architecture.md              | TEST echelon-architect (ARCHITECT)  | ...
+coverage-map.md                   | TEST echelon-architect (ARCHITECT)  | ...
 issues.md                         | WHY             | ...
 quality-gates.md                  | WHY             | ...
 reality-check.md                  | GROUND          | ...
@@ -201,10 +201,10 @@ Additional artifacts (conditional):
 
 - `reference-architectures.md` (greenfield only)
 - `assumption-review.md` (if WHY1 produced it)
-- `investigation/*.md` (if speckit-echelon-investigator (INVESTIGATOR) ran)
-- `evidence-grades.md` (if speckit-echelon-investigator (INVESTIGATOR) ran)
-- `experiment-results.md` (if speckit-echelon-investigator (INVESTIGATOR) ran)
-- `recommendations.md` (if speckit-echelon-investigator (INVESTIGATOR) ran)
+- `investigation/*.md` (if echelon-investigator (INVESTIGATOR) ran)
+- `evidence-grades.md` (if echelon-investigator (INVESTIGATOR) ran)
+- `experiment-results.md` (if echelon-investigator (INVESTIGATOR) ran)
+- `recommendations.md` (if echelon-investigator (INVESTIGATOR) ran)
 - `threat-model.md` (if SECURITY ran)
 - `compliance-requirements.md` (if SECURITY ran)
 - `performance-requirements.md` (if PERFORMANCE ran)
@@ -221,7 +221,7 @@ Additional artifacts (conditional):
 - `prompt-version-observations.md` (if AUDITOR recorded observations)
 - `calibration-analytics.md` (if AUDITOR produced analytics)
 - `constitution-amendment-candidates.md` (if ARCHITECT or consolidation proposed amendments)
-- `risk-acceptance-log.md` (if speckit-echelon-guardian (GUARDIAN) produced Risk Acceptance Records)
+- `risk-acceptance-log.md` (if echelon-guardian (GUARDIAN) produced Risk Acceptance Records)
 
 ### 12.6a Write Plan Conformance and Final Overview — MANDATORY
 
@@ -292,9 +292,9 @@ MVP/post-MVP split. If final overview guidance would conflict with
 `spec.md`, `mvp-scope.md`, `plan.md`, or `tasks.md`, fix the conflicting
 artifact first or record the conformance finding.
 
-### 12.6b Run speckit-echelon-consolidator (CONSOLIDATOR) — MANDATORY
+### 12.6b Run echelon-consolidator (CONSOLIDATOR) — MANDATORY
 
-Dispatch speckit-echelon-consolidator (CONSOLIDATOR) in `offline_consolidation` mode before speckit-echelon-scorekeeper (SCOREKEEPER). This turns run episodes and learning outputs into reusable schemas while the full run context is still available.
+Dispatch echelon-consolidator (CONSOLIDATOR) in `offline_consolidation` mode before echelon-scorekeeper (SCOREKEEPER). This turns run episodes and learning outputs into reusable schemas while the full run context is still available.
 
 Context pack:
 
@@ -303,7 +303,7 @@ Context pack:
 - `knowledge-base/patterns.yaml`
 - `knowledge-base/pitfalls.yaml`
 - `knowledge-base/calibration-profile.yaml`
-- speckit-echelon-mirror (MIRROR), speckit-echelon-adaptive (ADAPTIVE), and speckit-echelon-auditor (AUDITOR) outputs from this FINALIZE run
+- echelon-mirror (MIRROR), echelon-adaptive (ADAPTIVE), and echelon-auditor (AUDITOR) outputs from this FINALIZE run
 - `extension/templates/schema-consolidation-template.md`
 
 The active runtime dispatches this role with the following request:
@@ -321,13 +321,13 @@ The active runtime dispatches this role with the following request:
   </instructions>
   ```
 
-- **description:** "speckit-echelon-consolidator (CONSOLIDATOR): offline schema consolidation before scoring"
+- **description:** "echelon-consolidator (CONSOLIDATOR): offline schema consolidation before scoring"
 
-If speckit-echelon-consolidator (CONSOLIDATOR) is unavailable, record the skip in the final warnings and continue to speckit-echelon-scorekeeper (SCOREKEEPER). Do not block run completion on consolidation availability.
+If echelon-consolidator (CONSOLIDATOR) is unavailable, record the skip in the final warnings and continue to echelon-scorekeeper (SCOREKEEPER). Do not block run completion on consolidation availability.
 
-### 12.7 Run speckit-echelon-scorekeeper (SCOREKEEPER) — MANDATORY
+### 12.7 Run echelon-scorekeeper (SCOREKEEPER) — MANDATORY
 
-Dispatch speckit-echelon-scorekeeper (SCOREKEEPER) to produce the final scorecard (see Section 13 for full protocol). Pass the per-agent internalization composite scores from step 12.4 so SCOREKEEPER can incorporate the internalization trend into the scorecard.
+Dispatch echelon-scorekeeper (SCOREKEEPER) to produce the final scorecard (see Section 13 for full protocol). Pass the per-agent internalization composite scores from step 12.4 so SCOREKEEPER can incorporate the internalization trend into the scorecard.
 
 Include `agents/control/appendices/scorekeeper-output-template.md` and `agents/control/appendices/scorekeeper-scoring-reference.md` in the context pack. Produce `agent-scorecard.md` using the provided template. Write durable per-agent internalization observations as proposals under `${SQUAD_DIR}/kb-proposals/` using `extension/templates/kb-proposals/internalization-observation-proposal-template.yaml`; do not edit canonical KB files directly.
 
@@ -487,13 +487,13 @@ RISKS ACCEPTED AUTONOMOUSLY:
 ──────────────────────────────────────────
 
 Spec ID for feedback: {NNN}
-Run: speckit.echelon.feedback {NNN} after implementation
+Run: echelon.feedback {NNN} after implementation
 
 BRANCH: {NNN}-{feature}
-Ready for: speckit.echelon.build {NNN}-{feature}
+Ready for: echelon.build {NNN}-{feature}
 
 NOTE: No application source files were modified by this command.
-      Implementation is performed by speckit.echelon.build / harness.run.
+      Implementation is performed by echelon.build / harness.run.
 ============================================
 ```
 
@@ -547,4 +547,4 @@ controller finalization.
 Start another specification only through `echelon spec run`. After the active
 run passes checkpoint and cleanliness validation, Echelon creates its sibling branch from the configured default branch. The new spec is not stacked on the current feature branch.
 
-**DONE.** The squad run is complete. The feature branch `{NNN}-{feature}` is ready for `speckit.echelon.build`.
+**DONE.** The squad run is complete. The feature branch `{NNN}-{feature}` is ready for `echelon.build`.

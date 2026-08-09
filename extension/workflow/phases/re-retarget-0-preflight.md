@@ -1,5 +1,5 @@
 # Phase: re-retarget-0-preflight
-# Read by: speckit-echelon-commander (COMMANDER)
+# Read by: echelon-commander (COMMANDER)
 # Type: commander_internal
 
 ## Preflight checks

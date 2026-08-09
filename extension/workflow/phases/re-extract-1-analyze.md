@@ -1,6 +1,6 @@
 # Phase: re-extract-1-analyze
-# Read by: speckit-echelon-commander (COMMANDER) before dispatching RE-ANALYZER
-# Agent: speckit-echelon-re-analyzer
+# Read by: echelon-commander (COMMANDER) before dispatching RE-ANALYZER
+# Agent: echelon-re-analyzer
 
 ## Context Pack
 

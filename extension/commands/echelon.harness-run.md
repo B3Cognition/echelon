@@ -20,7 +20,7 @@ $ARGUMENTS
 
 Runs the harness loop for a spec. Architecture:
 
-- **Build / Feedback** — executed by the LLM on the host (strategy `default` uses `echelon.build`; strategy `codegen` uses the SOAR pipeline via `speckit.echelon.codegen`)
+- **Build / Feedback** — executed by the LLM on the host (strategy `default` uses `echelon.build`; strategy `codegen` uses the SOAR pipeline via `echelon.codegen`)
 - **Verification** — test suite runs inside a Docker sandbox (deterministic, isolated)
 - **GitOps** — harness commits and pushes to the echelon feature branch; opens/updates the PR
 
@@ -101,14 +101,14 @@ Extract `{spec_name}` from the directory name (e.g., `weather-dashboard` from `0
 
 ## Step 3: Detect Feature Branch
 
-Find the echelon feature branch for this spec. The feature branch was created by `speckit.echelon.run` and is named after the spec directory (e.g., `001-weather-dashboard`).
+Find the echelon feature branch for this spec. The feature branch was created by `echelon.run` and is named after the spec directory (e.g., `001-weather-dashboard`).
 
 ```bash
 PYTHONPATH=.specify/extensions/echelon python -m harness gitops find-branch '{spec_id}'
 ```
 
 - If a feature branch is found (e.g., `001-weather-dashboard`): use it as `{feature_branch}`. The worktree will be checked out on this branch, and all commits will land here.
-- If not found: warn — **"No echelon feature branch found for spec `{spec_id}`. Expected a branch named `{spec_id}-*`. Run `speckit.echelon.run` first, or the harness will fall back to branching from `main`."** — and set `{feature_branch}` to empty string (legacy mode).
+- If not found: warn — **"No echelon feature branch found for spec `{spec_id}`. Expected a branch named `{spec_id}-*`. Run `echelon.run` first, or the harness will fall back to branching from `main`."** — and set `{feature_branch}` to empty string (legacy mode).
 
 ---
 
@@ -208,7 +208,7 @@ Read the lessons file for this spec and the project-wide pitfalls with the Read 
 
 **If either file has content:** these are HARD constraints for the build step. Every lesson is an invariant that MUST NOT be violated by any implementation. Pass them verbatim to the strategy:
 
-- For `strategy = default`: include in the speckit-echelon-implementer (IMPLEMENTER) dispatch prompt under a `## Mandatory Constraints (Lessons)` header
+- For `strategy = default`: include in the echelon-implementer (IMPLEMENTER) dispatch prompt under a `## Mandatory Constraints (Lessons)` header
 - For `strategy = codegen`: write the lessons as additional SOAR prohibit preferences before the pipeline starts (see codegen Phase A.7)
 
 Always pass lessons through even if they seem obvious. Do not skip this step; lessons exist because these invariants were violated at least once.
@@ -228,11 +228,11 @@ Read from the **worktree path** (synced in Step 4 — this is the single source 
 
 **`strategy = default`** — follow the `echelon.build` instructions directly (you are the LLM, reasoning on the host). Always write implementation files to the **worktree path** — never to CWD.
 
-**`strategy = codegen`** — invoke the `speckit-echelon-codegen` skill with argument `{spec_id}-{spec_name}`. The codegen pipeline manages its own quality gates (SOAR CQ-ISC, Ψ ≥ 0.70, Tier 1 tests). Always write implementation files to the **worktree path** — never to CWD. On impasse (`codegen-impasse.md` written), stop and report the impasse to the human instead of entering the feedback loop.
+**`strategy = codegen`** — invoke the `echelon-codegen` skill with argument `{spec_id}-{spec_name}`. The codegen pipeline manages its own quality gates (SOAR CQ-ISC, Ψ ≥ 0.70, Tier 1 tests). Always write implementation files to the **worktree path** — never to CWD. On impasse (`codegen-impasse.md` written), stop and report the impasse to the human instead of entering the feedback loop.
 
 **ABSOLUTE RULE — codegen skill failures are HARD STOPS. No fallback, no substitution:**
 
-If the `speckit-echelon-codegen` skill invocation fails for any reason — `disable-model-invocation`, skill not found, error returned, timeout — stop immediately and report:
+If the `echelon-codegen` skill invocation fails for any reason — `disable-model-invocation`, skill not found, error returned, timeout — stop immediately and report:
 
 ```text
 ✗ strategy=codegen failed: {exact error from skill tool}
@@ -308,7 +308,7 @@ Look for `{spec_dir}/coverage-map.md` in the current working directory.
 **If coverage-map.md exists**, read it and classify each row:
 
 - **`coverage_type = automated`**: fully verified — no action needed.
-- **`coverage_type = manual`**: intentionally manual — auto-accepted. speckit-echelon-sentinel (SENTINEL) marked these "manual only" by design (Canvas rendering, frame rates, visual checks). Always allow them to pass; they do not block the run.
+- **`coverage_type = manual`**: intentionally manual — auto-accepted. echelon-sentinel (SENTINEL) marked these "manual only" by design (Canvas rendering, frame rates, visual checks). Always allow them to pass; they do not block the run.
 - **`coverage_type = none` or empty**: genuinely missing automation — these are gaps.
 
 Decision logic:
@@ -431,12 +431,12 @@ _deploy_enabled=$(bash "${ECHELON_EXT}/scripts/bash/echelon-config-get.sh" deplo
 
 If `_deploy_enabled = false`: print `deploy: skipped (deploy.enabled = false)` and proceed directly to Step 10.
 
-Otherwise, invoke the `speckit-echelon-deploy` skill now. This will:
+Otherwise, invoke the `echelon-deploy` skill now. This will:
 
-1. Check the CI/CD fingerprint — if the project changed, auto-regenerate CI/CD artifacts via `speckit-echelon-cicd` first
+1. Check the CI/CD fingerprint — if the project changed, auto-regenerate CI/CD artifacts via `echelon-cicd` first
 2. Run the blue/green (HTTP) or tag-pointer (CLI) deploy
 
-If `speckit.echelon.deploy` exits with an error, always report it clearly and continue; **do not fail the harness run** — the build and merge succeeded. The user can re-run `speckit.echelon.deploy` manually to retry the deploy.
+If `echelon.deploy` exits with an error, always report it clearly and continue; **do not fail the harness run** — the build and merge succeeded. The user can re-run `echelon.deploy` manually to retry the deploy.
 
 If `auto_merge=false`: skip this step entirely. The PR is open for review; deploy will happen when the user is ready.
 
@@ -462,7 +462,7 @@ Print a single formatted block:
     Deferred:   {n} requirements  (future milestones)
 
   What's next
-    Run a new feature:  speckit.echelon.run <description>
+    Run a new feature:  echelon.run <description>
     Then build it:      echelon delivery run <spec_id>
 ════════════════════════════════════════════════
 ```

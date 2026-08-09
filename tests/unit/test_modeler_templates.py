@@ -30,7 +30,7 @@ class TestModelerTemplates:
         assert "extension/templates/mental-model-code-template.md" in text
         assert "mental-model-code.md" in text
         assert "code-model.md" not in text
-        assert "agent: speckit-echelon-modeler (MODELER)" in text
+        assert "agent: echelon-modeler (MODELER)" in text
 
     def test_phase1_modeler_dispatch_includes_template(self) -> None:
         text = PHASE.read_text(encoding="utf-8")

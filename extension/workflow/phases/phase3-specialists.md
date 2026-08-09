@@ -1,7 +1,7 @@
 # Phase: phase3-specialists
 # Source: echelon.run.md §7 — Specialist Summoning
-# Agent: conditional_parallel (speckit-echelon-guardian (GUARDIAN) mandatory; others conditional)
-# Read by: speckit-echelon-commander (COMMANDER) before dispatching specialists
+# Agent: conditional_parallel (echelon-guardian (GUARDIAN) mandatory; others conditional)
+# Read by: echelon-commander (COMMANDER) before dispatching specialists
 
 ## 7. Specialist Summoning
 
@@ -17,27 +17,27 @@ After ASSESS passes, determine which specialists are needed:
 
 | Specialist | Summon When | Max Priority |
 |-----------|-------------|--------------|
-| **TEST speckit-echelon-architect (ARCHITECT)** | ALWAYS (mandatory) | Required |
-| **SCIENTIST** (speckit-echelon-investigator (INVESTIGATOR)) | `unknowns.md` has unresolved items OR `calibration-profile.yaml` shows confidence < 0.5 for relevant domain | High |
-| **SECURITY** (speckit-echelon-guardian (GUARDIAN)) | ALWAYS when `specialists.guardian_mode: always_on` (default); otherwise domain involves auth, payments, PII, regulatory compliance | Required (always_on) / High (on_demand) |
+| **TEST echelon-architect (ARCHITECT)** | ALWAYS (mandatory) | Required |
+| **SCIENTIST** (echelon-investigator (INVESTIGATOR)) | `unknowns.md` has unresolved items OR `calibration-profile.yaml` shows confidence < 0.5 for relevant domain | High |
+| **SECURITY** (echelon-guardian (GUARDIAN)) | ALWAYS when `specialists.guardian_mode: always_on` (default); otherwise domain involves auth, payments, PII, regulatory compliance | Required (always_on) / High (on_demand) |
 | **DOMAIN EXPERT** | Domain-specific knowledge needed (detected from DISCOVER) | Medium |
 | **PERFORMANCE** | High-load, real-time, scalability requirements in spec | Medium |
 | **UX / A11Y** | Frontend, user-facing features, accessibility | Medium |
 | **INNOVATE** | See expanded triggers below | Medium |
 
-**INNOVATE dispatch conditions** are defined in `workflow/definition.yaml` phase3-specialists → `speckit-echelon-maverick.condition` (8 conditions). speckit-echelon-commander (COMMANDER) evaluates each against `state.json` before finalising the specialist list and records the decision as a `routing_decision` journal entry. If `dispatch_innovate: false`, the entry must list which conditions were checked and why none fired.
+**INNOVATE dispatch conditions** are defined in `workflow/definition.yaml` phase3-specialists → `echelon-maverick.condition` (8 conditions). echelon-commander (COMMANDER) evaluates each against `state.json` before finalising the specialist list and records the decision as a `routing_decision` journal entry. If `dispatch_innovate: false`, the entry must list which conditions were checked and why none fired.
 
 ### Max Active Specialists
 
 Maximum `max_active_specialists` (default 3) can be active simultaneously. If more are needed, prioritize by domain signal strength. Defer lower-priority specialists (their insights can be incorporated in future runs).
 
-**Exception:** TEST speckit-echelon-architect (ARCHITECT) and speckit-echelon-guardian (GUARDIAN) (when `specialists.guardian_mode: always_on`) always run as mandatory agents and do not count toward the cap.
+**Exception:** TEST echelon-architect (ARCHITECT) and echelon-guardian (GUARDIAN) (when `specialists.guardian_mode: always_on`) always run as mandatory agents and do not count toward the cap.
 
 ### Dispatch Specialists
 
-This phase uses `type: conditional_sequential` (see `workflow/definition.yaml` phase3-specialists). Dispatch each specialist in turn — wait for completion and run the post-dispatch protocol before dispatching the next. speckit-echelon-investigator (INVESTIGATOR) is the only exception: it may run in parallel with one domain specialist.
+This phase uses `type: conditional_sequential` (see `workflow/definition.yaml` phase3-specialists). Dispatch each specialist in turn — wait for completion and run the post-dispatch protocol before dispatching the next. echelon-investigator (INVESTIGATOR) is the only exception: it may run in parallel with one domain specialist.
 
-#### SCIENTIST Dispatch (speckit-echelon-investigator (INVESTIGATOR) codename) — if summoned
+#### SCIENTIST Dispatch (echelon-investigator (INVESTIGATOR) codename) — if summoned
 
 Context pack:
 
@@ -65,13 +65,13 @@ The active runtime dispatches this role with the following request:
   </instructions>
   ```
 
-- **description:** "speckit-echelon-investigator (INVESTIGATOR): investigating unknowns — {topic summary}"
+- **description:** "echelon-investigator (INVESTIGATOR): investigating unknowns — {topic summary}"
 
-#### SECURITY Dispatch (speckit-echelon-guardian (GUARDIAN) codename) — always-on by default
+#### SECURITY Dispatch (echelon-guardian (GUARDIAN) codename) — always-on by default
 
 **Dispatch mode** is controlled by `echelon-config.yml` → `specialists.guardian_mode` (default: `always_on`).
 
-- **`always_on`**: Dispatch speckit-echelon-guardian (GUARDIAN) on every run. If the domain is NOT security-sensitive, speckit-echelon-guardian (GUARDIAN) runs only the **Minimum Security Checklist** (5-item lightweight check). If security-sensitive, speckit-echelon-guardian (GUARDIAN) runs the full STRIDE + OWASP + compliance analysis.
+- **`always_on`**: Dispatch echelon-guardian (GUARDIAN) on every run. If the domain is NOT security-sensitive, echelon-guardian (GUARDIAN) runs only the **Minimum Security Checklist** (5-item lightweight check). If security-sensitive, echelon-guardian (GUARDIAN) runs the full STRIDE + OWASP + compliance analysis.
 - **`on_demand`**: Dispatch only when domain involves auth, payments, PII, regulatory compliance (legacy behavior).
 
 Context pack:
@@ -99,7 +99,7 @@ The active runtime dispatches this role with the following request:
   </instructions>
   ```
 
-- **description:** "speckit-echelon-guardian (GUARDIAN): security analysis (mode: {specialists.guardian_mode})"
+- **description:** "echelon-guardian (GUARDIAN): security analysis (mode: {specialists.guardian_mode})"
 
 #### DOMAIN EXPERT Dispatch (if summoned)
 
@@ -127,7 +127,7 @@ The active runtime dispatches this role with the following request:
   </instructions>
   ```
 
-- **description:** "speckit-echelon-oracle (ORACLE): {domain} domain analysis"
+- **description:** "echelon-oracle (ORACLE): {domain} domain analysis"
 
 #### PERFORMANCE Dispatch (if summoned)
 
@@ -154,7 +154,7 @@ The active runtime dispatches this role with the following request:
   </instructions>
   ```
 
-- **description:** "speckit-echelon-benchmark (BENCHMARK): load modeling and capacity analysis"
+- **description:** "echelon-benchmark (BENCHMARK): load modeling and capacity analysis"
 
 #### UX / A11Y Dispatch (if summoned)
 
@@ -181,7 +181,7 @@ The active runtime dispatches this role with the following request:
   </instructions>
   ```
 
-- **description:** "speckit-echelon-advocate (ADVOCATE): accessibility and usability analysis"
+- **description:** "echelon-advocate (ADVOCATE): accessibility and usability analysis"
 
 #### INNOVATE Dispatch (if summoned)
 
@@ -209,7 +209,7 @@ The active runtime dispatches this role with the following request:
   </instructions>
   ```
 
-- **description:** "speckit-echelon-maverick (MAVERICK): alternative approaches and assumption challenges"
+- **description:** "echelon-maverick (MAVERICK): alternative approaches and assumption challenges"
 
 ### Post-Specialist
 

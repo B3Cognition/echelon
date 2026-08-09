@@ -14,5 +14,5 @@ class TestChangeControllerTemplates:
         assert ".specify/..." not in text
         assert "specs/{feature}/change-impact-report.md" not in text
         assert "{spec_dir}/change-impact-report.md" in text
-        assert "agent: speckit-echelon-change-controller (CHANGE CONTROLLER)" in text
+        assert "agent: echelon-change-controller (CHANGE CONTROLLER)" in text
         assert "agent: CHANGE_CONTROLLER" not in text

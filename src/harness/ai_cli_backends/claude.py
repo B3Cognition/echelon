@@ -24,9 +24,9 @@ _MODEL_TIER_TO_CLAUDE_MODEL = {
 
 _REVIEW_TRIAGE_PROFILE = "review_triage_v1"
 _REVIEW_TRIAGE_AGENT_NAMES = (
-    "speckit-echelon-debugger",
-    "speckit-echelon-sentinel",
-    "speckit-echelon-spec-guard",
+    "echelon-debugger",
+    "echelon-sentinel",
+    "echelon-spec-guard",
 )
 _CLAUDE_RULE_PATH_SAFE_CHARACTERS = frozenset("/._- ")
 

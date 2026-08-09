@@ -1,5 +1,5 @@
 # Phase: re-extract-4-expand
-# Agent: speckit-echelon-re-expander
+# Agent: echelon-re-expander
 
 ## Context Pack
 

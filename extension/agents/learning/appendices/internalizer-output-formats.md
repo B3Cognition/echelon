@@ -52,12 +52,12 @@ Each proposed internalization observation includes:
 
 - `id`: next sequential `int-NNN`
 - `run_id`: current run ID
-- `source`: "speckit-echelon-internalizer (INTERNALIZER)"
+- `source`: "echelon-internalizer (INTERNALIZER)"
 - `agent`: agent codename
 - `prompt_version`: the active version from prompt-versions.yaml
-- `score`: the numeric score (0-6) from speckit-echelon-checkpoint (CHECKPOINT)'s report (informational only)
+- `score`: the numeric score (0-6) from echelon-checkpoint (CHECKPOINT)'s report (informational only)
 - `result`: PASS/PARTIAL/FAIL based on config thresholds
-- `doubts_count`, `doubts_resolved`, `doubts_escalated`: from speckit-echelon-checkpoint (CHECKPOINT)'s report
+- `doubts_count`, `doubts_resolved`, `doubts_escalated`: from echelon-checkpoint (CHECKPOINT)'s report
 - `doubt_categories`: map each doubt to one of: `role`, `constraints`, `architecture`, `domain`, `tasks`, `doubts`
 - `resolution_types`: map each resolution to one of: `artifact_read`, `clarification`, `escalation`, `deferred`
 - `downstream_outcome`: set in Step 8
@@ -76,8 +76,8 @@ Each proposed internalization observation includes:
 
 | Agent | Composite | Absorption | Accuracy | Calibration | Transfer | Trend | Phase |
 |-------|-----------|------------|----------|-------------|----------|-------|-------|
-| speckit-echelon-architect (ARCHITECT) | 0.88 | 0.91 | 0.85 | 0.87 | 0.82 | improving | 3 |
-| speckit-echelon-implementer (IMPLEMENTER) | 0.72 | 0.78 | 0.71 | null | null | declining | 1 |
+| echelon-architect (ARCHITECT) | 0.88 | 0.91 | 0.85 | 0.87 | 0.82 | improving | 3 |
+| echelon-implementer (IMPLEMENTER) | 0.72 | 0.78 | 0.71 | null | null | declining | 1 |
 ```
 
 ## Cross-Validation Flags Summary
@@ -87,5 +87,5 @@ Each proposed internalization observation includes:
 
 | Agent | Flag | Rule | Triggering Metrics |
 |-------|------|------|--------------------|
-| speckit-echelon-implementer (IMPLEMENTER) | high-terminology-low-accuracy | CV-2 | I-03=0.92, I-05=0.68 |
+| echelon-implementer (IMPLEMENTER) | high-terminology-low-accuracy | CV-2 | I-03=0.92, I-05=0.68 |
 ```

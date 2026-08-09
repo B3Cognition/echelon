@@ -1,11 +1,11 @@
 # Phase: build-4-code-review
 # Source: echelon.build.md §4 — Code Review Gate (CODE_REVIEW)
-# Agent: speckit-echelon-code-reviewer (CODE REVIEWER)
-# Read by: speckit-echelon-commander (COMMANDER) before each speckit-echelon-code-reviewer (CODE REVIEWER) dispatch
+# Agent: echelon-code-reviewer (CODE REVIEWER)
+# Read by: echelon-commander (COMMANDER) before each echelon-code-reviewer (CODE REVIEWER) dispatch
 
 ## 4. Code Review Gate (CODE_REVIEW)
 
-### 4.1 Dispatch speckit-echelon-code-reviewer (CODE REVIEWER)
+### 4.1 Dispatch echelon-code-reviewer (CODE REVIEWER)
 
 Use the Ralph-owned context pack:
 
@@ -18,7 +18,7 @@ Use the Ralph-owned context pack:
 
 Use the Agent tool:
 
-- **subagent_type:** `speckit-echelon-code-reviewer`
+- **subagent_type:** `echelon-code-reviewer`
 - **prompt:**
 
   ```xml
@@ -33,10 +33,10 @@ Use the Agent tool:
   </instructions>
   ```
 
-- **description:** "speckit-echelon-code-reviewer (CODE REVIEWER): {task_id} — quality review"
+- **description:** "echelon-code-reviewer (CODE REVIEWER): {task_id} — quality review"
 
 ### 4.2 Handle Result
 
-- **APPROVED** — Run `endocrine.sh on_gate_pass speckit-echelon-implementer (IMPLEMENTER)`. Proceed to speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN)).
-- **CHANGES_REQUESTED** — Run `endocrine.sh on_gate_fail speckit-echelon-implementer (IMPLEMENTER)` + `endocrine.sh on_rework speckit-echelon-implementer (IMPLEMENTER)`. Route back to speckit-echelon-implementer (IMPLEMENTER) with the specific issues. speckit-echelon-implementer (IMPLEMENTER) fixes and re-submits for review. Max 2 fix cycles. If still failing, flag as DEGRADED and proceed.
-- **BLOCKED** — Run `endocrine.sh on_low_confidence speckit-echelon-implementer (IMPLEMENTER)`. Fundamental architectural issue. MANAGER decides: skip task, amend ADR, or escalate to human.
+- **APPROVED** — Run `endocrine.sh on_gate_pass echelon-implementer (IMPLEMENTER)`. Proceed to echelon-test-guardian (TEST echelon-guardian (GUARDIAN)).
+- **CHANGES_REQUESTED** — Run `endocrine.sh on_gate_fail echelon-implementer (IMPLEMENTER)` + `endocrine.sh on_rework echelon-implementer (IMPLEMENTER)`. Route back to echelon-implementer (IMPLEMENTER) with the specific issues. echelon-implementer (IMPLEMENTER) fixes and re-submits for review. Max 2 fix cycles. If still failing, flag as DEGRADED and proceed.
+- **BLOCKED** — Run `endocrine.sh on_low_confidence echelon-implementer (IMPLEMENTER)`. Fundamental architectural issue. MANAGER decides: skip task, amend ADR, or escalate to human.

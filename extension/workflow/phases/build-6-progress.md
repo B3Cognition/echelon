@@ -1,11 +1,11 @@
 # Phase: build-6-progress
 # Source: echelon.build.md §6 — Progress Tracking (PROGRESS)
-# Agents: after speckit-echelon-implementer (IMPLEMENTER), speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER)), then speckit-echelon-modeler (MODELER) (speckit-echelon-commander (COMMANDER)-dispatched)
-# Read by: speckit-echelon-commander (COMMANDER) after each task's quality gates complete
+# Agents: after echelon-implementer (IMPLEMENTER), echelon-progress-tracker (PROGRESS echelon-tracker (TRACKER)), then echelon-modeler (MODELER) (echelon-commander (COMMANDER)-dispatched)
+# Read by: echelon-commander (COMMANDER) after each task's quality gates complete
 
 ## 6. Progress Tracking (PROGRESS)
 
-### 6.1 Dispatch speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER))
+### 6.1 Dispatch echelon-progress-tracker (PROGRESS echelon-tracker (TRACKER))
 
 Use the Ralph-owned context pack:
 
@@ -19,7 +19,7 @@ Use the Ralph-owned context pack:
 
 Use the Agent tool:
 
-- **subagent_type:** `speckit-echelon-progress-tracker`
+- **subagent_type:** `echelon-progress-tracker`
 - **prompt:**
 
   ```xml
@@ -30,23 +30,23 @@ Use the Agent tool:
   <instructions>
   You are PROGRESS TRACKER. Read agents/build/progress-tracker.md for your complete protocol.
   Record completion of task {task_id}. Update running totals and check for drift.
-  Append to `{spec_dir}/progress-report.md`. Update `{spec_dir}/process-metrics.md`, `knowledge-base/estimates-log.yaml`, and `knowledge-base/calibration-profile.yaml`. Return drift or budget alerts in `echelon_result.journal_entries`; speckit-echelon-commander (COMMANDER) owns build counter state updates in Section 6.3.
+  Append to `{spec_dir}/progress-report.md`. Update `{spec_dir}/process-metrics.md`, `knowledge-base/estimates-log.yaml`, and `knowledge-base/calibration-profile.yaml`. Return drift or budget alerts in `echelon_result.journal_entries`; echelon-commander (COMMANDER) owns build counter state updates in Section 6.3.
   </instructions>
   ```
 
-- **description:** "speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER)): {task_id} — effort tracking"
+- **description:** "echelon-progress-tracker (PROGRESS echelon-tracker (TRACKER)): {task_id} — effort tracking"
 
 ### 6.2 Handle Alerts
 
-If speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER)) flags DRIFT WARNING or PHASE OVERRUN:
+If echelon-progress-tracker (PROGRESS echelon-tracker (TRACKER)) flags DRIFT WARNING or PHASE OVERRUN:
 
 - Return the alert in `echelon_result.journal_entries`
 - Print a warning to terminal
 - Always continue building unless MANAGER decides to re-scope; do not stop on the alert alone.
 
-### 6.3 Update Task Result (speckit-echelon-commander (COMMANDER) — mandatory after every task)
+### 6.3 Update Task Result (echelon-commander (COMMANDER) — mandatory after every task)
 
-**This is a speckit-echelon-commander (COMMANDER) action, not a speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER)) action.** speckit-echelon-commander (COMMANDER) performs this update after speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER)) returns, or after quality gates complete if speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER)) was skipped or if work was executed inline.
+**This is a echelon-commander (COMMANDER) action, not a echelon-progress-tracker (PROGRESS echelon-tracker (TRACKER)) action.** echelon-commander (COMMANDER) performs this update after echelon-progress-tracker (PROGRESS echelon-tracker (TRACKER)) returns, or after quality gates complete if echelon-progress-tracker (PROGRESS echelon-tracker (TRACKER)) was skipped or if work was executed inline.
 
 1. Load the current `build` object from state.
 2. **Increment `build.completed_tasks` by 1.**
@@ -85,22 +85,22 @@ echelon_result:
     updated_at: "{ISO-8601}"
 ```
 
-**This step MUST execute regardless of execution mode** — whether tasks were dispatched via subagents or executed inline by speckit-echelon-commander (COMMANDER). The `completed_tasks` counter is the authoritative progress indicator for speckit-echelon-engineering-manager (ENGINEERING MANAGER) and any external tooling reading state.json.
+**This step MUST execute regardless of execution mode** — whether tasks were dispatched via subagents or executed inline by echelon-commander (COMMANDER). The `completed_tasks` counter is the authoritative progress indicator for echelon-engineering-manager (ENGINEERING MANAGER) and any external tooling reading state.json.
 
-**speckit-echelon-modeler (MODELER) Update (mandatory after every task):**
-Dispatch speckit-echelon-modeler (MODELER) with:
+**echelon-modeler (MODELER) Update (mandatory after every task):**
+Dispatch echelon-modeler (MODELER) with:
 
-- Input: the file(s) written or modified by speckit-echelon-implementer (IMPLEMENTER) in this task (from speckit-echelon-implementer (IMPLEMENTER)'s output)
+- Input: the file(s) written or modified by echelon-implementer (IMPLEMENTER) in this task (from echelon-implementer (IMPLEMENTER)'s output)
 - Existing `${STAGING_DIR}/mental-model-code.md`
 - Task description and spec FR-* references for this task
 
-speckit-echelon-modeler (MODELER) incrementally updates `mental-model-code.md` to reflect the new code.
+echelon-modeler (MODELER) incrementally updates `mental-model-code.md` to reflect the new code.
 
-**Invariant alert gate:** After speckit-echelon-modeler (MODELER) returns, speckit-echelon-commander (COMMANDER) checks speckit-echelon-modeler (MODELER)'s output for any `invariant_violations` list. If non-empty:
+**Invariant alert gate:** After echelon-modeler (MODELER) returns, echelon-commander (COMMANDER) checks echelon-modeler (MODELER)'s output for any `invariant_violations` list. If non-empty:
 
 - Log each violation as a journal entry with `type: "alert"` and `severity: "HIGH"`
-- Emit warning in build log: `[speckit-echelon-modeler (MODELER) ALERT] Invariant violation detected: {violation}. Tests pass but contract may be broken — review before next phase.`
-- Always track violations for speckit-echelon-integrator (INTEGRATOR) to resolve at phase boundaries. Do NOT block task progression.
+- Emit warning in build log: `[echelon-modeler (MODELER) ALERT] Invariant violation detected: {violation}. Tests pass but contract may be broken — review before next phase.`
+- Always track violations for echelon-integrator (INTEGRATOR) to resolve at phase boundaries. Do NOT block task progression.
 
 ### 6.4 Update tasks.md (standalone build only)
 
@@ -112,7 +112,7 @@ the build invocation returns. Report completed task rows only by writing exact
 directly from the build agent.
 
 When `HARNESS_BUILD_STATUS_FILE` is not set, this is a
-speckit-echelon-commander (COMMANDER) action. After §6.3 state update, reflect
+echelon-commander (COMMANDER) action. After §6.3 state update, reflect
 task completion in `tasks.md` so the file remains a human-readable source of
 truth (not just state.json).
 

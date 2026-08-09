@@ -205,7 +205,7 @@ def _probe_brownfield(
     # re-* commands are bundled with echelon; check for the re-analyze script
     candidate_paths = [
         ext_dir / "scripts" / "bash" / "re" / "run-analysis.sh",
-        ext_dir.parent / "speckit-echelon-re-analyze",
+        ext_dir.parent / "echelon-re-analyze",
     ]
 
     for path in candidate_paths:
@@ -240,8 +240,8 @@ def _probe_skill_golddigger(
     """
     # Check skill manifest
     skill_paths = [
-        ext_dir.parent.parent.parent / ".claude" / "skills" / "speckit-echelon-run",
-        ext_dir.parent.parent.parent / ".claude" / "skills" / "speckit-echelon-re-extract",
+        ext_dir.parent.parent.parent / ".claude" / "skills" / "echelon-run",
+        ext_dir.parent.parent.parent / ".claude" / "skills" / "echelon-re-extract",
     ]
 
     for path in skill_paths:

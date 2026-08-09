@@ -46,7 +46,7 @@ def test_runtime_config_resolver_has_no_speckit_dependency() -> None:
 def test_runtime_workflow_uses_echelon_commands_and_runtime_paths() -> None:
     forbidden = (
         ".specify/extensions/echelon",
-        "speckit.echelon.",
+        "echelon.",
         "specify extension add",
         "specify extension config resolve",
     )

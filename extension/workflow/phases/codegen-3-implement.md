@@ -1,11 +1,11 @@
 # Phase: codegen-3-implement
 # Source: echelon.codegen.md §Phase 3 — IMPLEMENT Dispatch Loop
 # Shared: used by both echelon.codegen and echelon.codegenlight
-# Read by: speckit-echelon-orchestrator (ORCHESTRATOR) before each IMPLEMENT loop iteration
+# Read by: echelon-orchestrator (ORCHESTRATOR) before each IMPLEMENT loop iteration
 
 ---
 
-## Phase 3: IMPLEMENT — speckit-echelon-implementer (IMPLEMENTER) Dispatch Loop
+## Phase 3: IMPLEMENT — echelon-implementer (IMPLEMENTER) Dispatch Loop
 
 **Print:** `[CODEGEN] Phase IMPLEMENT — Starting (<N> tasks)...`
 
@@ -14,12 +14,12 @@ For each task in `task_queue.pending`:
 ### 3.1 SOAR dispatches task
 
 Inject task WME into SOAR. SOAR selects DISPATCH_IMPLEMENTER operator.
-Print: `[CODEGEN] Task <task-id>: DISPATCHING to speckit-echelon-implementer (IMPLEMENTER)...`
+Print: `[CODEGEN] Task <task-id>: DISPATCHING to echelon-implementer (IMPLEMENTER)...`
 
-### 3.2 speckit-echelon-implementer (IMPLEMENTER) executes task
+### 3.2 echelon-implementer (IMPLEMENTER) executes task
 
 ```
-Agent (speckit-echelon-implementer (IMPLEMENTER) role): Implement task <task-id>: <description>
+Agent (echelon-implementer (IMPLEMENTER) role): Implement task <task-id>: <description>
 Scope: <scope>, Language: <language>
 
 Requirements this task must satisfy (from MemPalace):
@@ -48,7 +48,7 @@ codegen gate --phase IMPLEMENT --language <language> --files <files> --state-fil
 ```
 
 - Exit 0 (ADVANCE): task complete → move to `completed`
-- Exit 1 (RETRY): re-dispatch speckit-echelon-implementer (IMPLEMENTER) with violation details + failed FR citation
+- Exit 1 (RETRY): re-dispatch echelon-implementer (IMPLEMENTER) with violation details + failed FR citation
 - Exit 2 (ESCALATE): write `codegen-impasse.md`, halt, wait for human
 
 ```bash

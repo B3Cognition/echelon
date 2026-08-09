@@ -1,6 +1,6 @@
 # Phase: phase3-consensus
 # Source: echelon.run.md §11 — CONSENSUS Phase (Parallel Validation)
-# Agent: parallel — speckit-echelon-sage (SAGE) (WHY3), speckit-echelon-gatekeeper (GATEKEEPER) (ASSESS2), speckit-echelon-orchestrator (ORCHESTRATOR) (PLAN2)
+# Agent: parallel — echelon-sage (SAGE) (WHY3), echelon-gatekeeper (GATEKEEPER) (ASSESS2), echelon-orchestrator (ORCHESTRATOR) (PLAN2)
 # Executed by: Echelon staged-parallel harness
 
 ## 11. CONSENSUS Phase (Parallel Validation)

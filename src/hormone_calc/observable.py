@@ -16,19 +16,19 @@ import yaml
 
 
 def normalize_agent_name(name: str) -> str:
-    """Normalize agent names from journal (speckit-echelon-foo-bar) to the
+    """Normalize agent names from journal (echelon-foo-bar) to the
     canonical codename form (FOO_BAR) that endocrine.sh expects.
 
     Examples:
-      "speckit-echelon-commander" → "COMMANDER"
-      "speckit-echelon-spec-guard" → "SPEC_GUARD"
+      "echelon-commander" → "COMMANDER"
+      "echelon-spec-guard" → "SPEC_GUARD"
       "COMMANDER" → "COMMANDER"  (idempotent)
       "" → ""
     """
     if not name:
         return name
-    if name.startswith("speckit-echelon-"):
-        suffix = name[len("speckit-echelon-"):]
+    if name.startswith("echelon-"):
+        suffix = name[len("echelon-"):]
         return suffix.upper().replace("-", "_")
     return name
 

@@ -87,7 +87,7 @@ class TestGuardianTemplates:
             "  journal_entries:\n"
             in text
         )
-        assert "agent: speckit-echelon-guardian (GUARDIAN)" in text
+        assert "agent: echelon-guardian (GUARDIAN)" in text
 
     def test_phase3_specialist_dispatch_includes_guardian_templates(self) -> None:
         text = PHASE.read_text(encoding="utf-8")

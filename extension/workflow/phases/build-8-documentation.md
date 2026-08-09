@@ -1,10 +1,10 @@
 # Phase: build-8-documentation
 # Source: Documentation Currency Gate
-# Read by: speckit-echelon-commander (COMMANDER) after all phase groups complete and before build finalization
+# Read by: echelon-commander (COMMANDER) after all phase groups complete and before build finalization
 
 ## Documentation Currency Gate
 
-After all implementation phase groups complete and before `build-8-finalize`, dispatch speckit-echelon-tech-writer (TECH WRITER).
+After all implementation phase groups complete and before `build-8-finalize`, dispatch echelon-tech-writer (TECH WRITER).
 
 Use the Ralph-owned context pack:
 
@@ -17,7 +17,7 @@ Use the Ralph-owned context pack:
 
 Use the Agent tool:
 
-- **subagent_type:** `speckit-echelon-tech-writer`
+- **subagent_type:** `echelon-tech-writer`
 - **prompt:**
 
   ```xml
@@ -31,9 +31,9 @@ Use the Agent tool:
   </instructions>
   ```
 
-- **description:** "speckit-echelon-tech-writer (TECH WRITER): README/CHANGELOG currency before build finalization"
+- **description:** "echelon-tech-writer (TECH WRITER): README/CHANGELOG currency before build finalization"
 
-speckit-echelon-tech-writer (TECH WRITER) must:
+echelon-tech-writer (TECH WRITER) must:
 
 1. Write `{spec_dir}/documentation-impact-report.md`.
 2. Update or create `README.md` and `CHANGELOG.md` when documentation impact is required.

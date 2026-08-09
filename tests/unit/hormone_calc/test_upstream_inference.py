@@ -87,9 +87,9 @@ def test_ignores_non_routing_decision_entries():
 
 
 def test_upstream_normalizes_speckit_form_to_uppercase():
-    """Journal contains 'speckit-echelon-commander'; derive_upstream returns 'COMMANDER'."""
+    """Journal contains 'echelon-commander'; derive_upstream returns 'COMMANDER'."""
     recent = [
-        {"id": "RJ-001", "type": "routing_decision", "agent": "speckit-echelon-commander",
+        {"id": "RJ-001", "type": "routing_decision", "agent": "echelon-commander",
          "phase": "init", "data": {"verdict": "DONE"}},
     ]
     obs = _obs(recent=recent)
@@ -97,9 +97,9 @@ def test_upstream_normalizes_speckit_form_to_uppercase():
 
 
 def test_upstream_normalizes_multi_part_speckit_name():
-    """speckit-echelon-spec-guard → SPEC_GUARD."""
+    """echelon-spec-guard → SPEC_GUARD."""
     recent = [
-        {"id": "RJ-001", "type": "routing_decision", "agent": "speckit-echelon-spec-guard",
+        {"id": "RJ-001", "type": "routing_decision", "agent": "echelon-spec-guard",
          "phase": "build-3", "data": {"verdict": "PASS"}},
     ]
     obs = _obs(recent=recent)

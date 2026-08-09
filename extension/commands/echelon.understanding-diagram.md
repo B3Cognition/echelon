@@ -48,7 +48,7 @@ if [ -z "$SPEC_PATH" ]; then
 fi
 
 if [ ! -f "$SPEC_PATH" ]; then
-  echo "No spec.md found. Provide a path: /speckit.echelon.understanding-diagram path/to/spec.md"
+  echo "No spec.md found. Provide a path: /echelon.understanding-diagram path/to/spec.md"
   exit 1
 fi
 ```

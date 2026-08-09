@@ -1,6 +1,6 @@
 # Brownfield Single-Phase Command Contract
 
-Shared contract for `speckit.echelon.re-*` commands that execute exactly one brownfield workflow phase.
+Shared contract for `echelon.re-*` commands that execute exactly one brownfield workflow phase.
 
 ## Required Context
 

@@ -16,7 +16,7 @@ class TestProgressTrackerTemplates:
         assert ".specify/..." not in text
         assert "{spec_dir}/progress-report.md" in text
         assert "{spec_dir}/process-metrics.md" in text
-        assert "agent: speckit-echelon-progress-tracker (PROGRESS TRACKER)" in text
+        assert "agent: echelon-progress-tracker (PROGRESS TRACKER)" in text
         assert "agent: PROGRESS_TRACKER" not in text
 
     def test_progress_phase_uses_canonical_output_paths(self) -> None:

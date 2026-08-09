@@ -1,5 +1,5 @@
 # Phase: verify-spec-2-progress-integrity
-# Read by: speckit-echelon-commander (COMMANDER)
+# Read by: echelon-commander (COMMANDER)
 
 ## Purpose
 

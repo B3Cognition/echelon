@@ -1,5 +1,5 @@
 # Phase: re-extract-3-verify
-# Agent: speckit-echelon-re-verifier
+# Agent: echelon-re-verifier
 
 ## Context Pack
 

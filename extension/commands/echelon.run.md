@@ -1,5 +1,5 @@
 ---
-name: speckit.echelon.run
+name: echelon.run
 description: "Full autonomous cognitive squad run — drives pre-code phases via deterministic harness"
 scripts:
   sh: ../../scripts/bash/startup-banner.sh

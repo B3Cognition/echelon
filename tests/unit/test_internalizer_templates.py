@@ -57,7 +57,7 @@ class TestInternalizerTemplates:
         assert "internalization-observation-proposal-template.yaml" in text
         assert "${SQUAD_DIR}/kb-proposals/" in text
         assert "kb-write.sh" not in text
-        assert "agent: speckit-echelon-internalizer (INTERNALIZER)" in text
+        assert "agent: echelon-internalizer (INTERNALIZER)" in text
         assert "agent: INTERNALIZE_METRICS" not in text
         assert "downstream_agent: SPEC_GUARD" not in text
         assert "downstream_agent: CODE_REVIEWER" not in text

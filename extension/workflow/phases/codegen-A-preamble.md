@@ -1,6 +1,6 @@
 # Phase: codegen-A-preamble
 # Source: echelon.codegen.md §Phase A — Echelon Preamble
-# Read by: speckit-echelon-orchestrator (ORCHESTRATOR) before starting codegen pipeline (skip entirely on --resume)
+# Read by: echelon-orchestrator (ORCHESTRATOR) before starting codegen pipeline (skip entirely on --resume)
 
 ### A.1 Parse arguments
 
@@ -24,7 +24,7 @@ If not resume and `$ARGUMENTS` is empty or `SPEC_ID` is empty, stop:
 
 ```
 [ECHELON CODEGEN] ERROR: Feature path required.
-Usage: speckit.echelon.codegen 001-feature-name
+Usage: echelon.codegen 001-feature-name
 ```
 
 ### A.2 Validate Phase A artifacts (skip on resume)
@@ -164,10 +164,10 @@ if [ "$RESUME_MODE" -eq 0 ]; then
   STRATEGY_FILE="${STRATEGY_DIR}/codegen.md"
   mkdir -p "$STRATEGY_DIR"
 
-  if [ ! -f "$STRATEGY_FILE" ] || ! grep -qF "command: speckit.echelon.codegen" "$STRATEGY_FILE"; then
+  if [ ! -f "$STRATEGY_FILE" ] || ! grep -qF "command: echelon.codegen" "$STRATEGY_FILE"; then
     cat > "$STRATEGY_FILE" << EOF
 ---
-command: speckit.echelon.codegen
+command: echelon.codegen
 ---
 # Codegen Strategy
 

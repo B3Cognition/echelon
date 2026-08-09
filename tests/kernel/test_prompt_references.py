@@ -226,13 +226,13 @@ def test_sage_understanding_contract_is_interpretation_only():
     combined = "\n".join((sage, appendix, why2, why3))
 
     forbidden = (
-        "speckit.echelon.understanding-validate",
+        "echelon.understanding-validate",
         "understanding scan",
         "understanding validate",
         "/tmp/u_",
         "jq -",
         "echelon-config-get.sh quality_gates",
-        "speckit.echelon.understanding-diagram",
+        "echelon.understanding-diagram",
     )
     assert not [token for token in forbidden if token in combined]
     assert "Certified Understanding Evidence" in sage
@@ -514,7 +514,7 @@ def test_re_agent_prompts_use_standard_output_block_heading():
 def test_verify_spec_command_and_phases_exist():
     assert (EXTENSION_ROOT / "commands" / "echelon.verify-spec.md").exists()
     extension_text = (EXTENSION_ROOT / "extension.yml").read_text()
-    assert 'name: "speckit.echelon.verify-spec"' in extension_text
+    assert 'name: "echelon.verify-spec"' in extension_text
     assert 'file: "commands/echelon.verify-spec.md"' in extension_text
     for phase in [
         "verify-spec-1-init.md",
@@ -530,8 +530,8 @@ def test_verify_spec_agents_are_registered():
     text = (EXTENSION_ROOT / "extension.yml").read_text()
 
     expected = {
-        "speckit.echelon.spec-fulfillment-auditor": "agents/build/spec-fulfillment-auditor.md",
-        "speckit.echelon.implementation-mapper": "agents/build/implementation-mapper.md",
+        "echelon.spec-fulfillment-auditor": "agents/build/spec-fulfillment-auditor.md",
+        "echelon.implementation-mapper": "agents/build/implementation-mapper.md",
     }
     for name, rel_path in expected.items():
         assert f'name: "{name}"' in text
@@ -544,7 +544,7 @@ def test_reopen_command_and_phase_exist():
     assert (EXTENSION_ROOT / "workflow" / "phases" / "reopen-1-apply-gaps.md").exists()
 
     extension_text = (EXTENSION_ROOT / "extension.yml").read_text()
-    assert 'name: "speckit.echelon.reopen"' in extension_text
+    assert 'name: "echelon.reopen"' in extension_text
     assert 'file: "commands/echelon.reopen.md"' in extension_text
 
 
@@ -746,7 +746,7 @@ def test_phase1_modeler_routes_last_dispatch_through_echelon_result():
     assert "Set `state.json.last_dispatch.agent`" not in text
     assert "echelon_result.state_updates" in text
     assert "last_dispatch:" in text
-    assert 'agent: "speckit-echelon-modeler (MODELER)"' in text
+    assert 'agent: "echelon-modeler (MODELER)"' in text
 
 
 def test_build_7_integration_routes_checkpoint_through_echelon_result():

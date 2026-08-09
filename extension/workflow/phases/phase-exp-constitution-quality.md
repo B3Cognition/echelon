@@ -1,6 +1,6 @@
 # Phase: phase-exp-constitution-quality
-# Agent: speckit-echelon-chief (CHIEF)
-# Read by: speckit-echelon-commander (COMMANDER) for manual experimental phase runs only
+# Agent: echelon-chief (CHIEF)
+# Read by: echelon-commander (COMMANDER) for manual experimental phase runs only
 
 ## Purpose
 

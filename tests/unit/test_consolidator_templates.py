@@ -29,22 +29,22 @@ class TestConsolidatorTemplates:
         assert "extension/templates/schema-consolidation-template.md" in text
         assert ".specify/specs/" not in text
         assert "{spec_dir}/patterns/schema-consolidation.md" in text
-        assert "agent: speckit-echelon-consolidator (CONSOLIDATOR)" in text
+        assert "agent: echelon-consolidator (CONSOLIDATOR)" in text
 
     def test_phase4_finalize_dispatches_consolidator_before_scorekeeper(self) -> None:
         text = PHASE4_DOCUMENT.read_text(encoding="utf-8")
 
-        assert "speckit-echelon-consolidator (CONSOLIDATOR)" in text
+        assert "echelon-consolidator (CONSOLIDATOR)" in text
         assert "extension/templates/schema-consolidation-template.md" in text
-        assert text.index("12.6b Run speckit-echelon-consolidator") < text.index(
-            "12.7 Run speckit-echelon-scorekeeper"
+        assert text.index("12.6b Run echelon-consolidator") < text.index(
+            "12.7 Run echelon-scorekeeper"
         )
 
     def test_build_finalize_dispatches_consolidator_before_scorekeeper(self) -> None:
         text = BUILD_FINALIZE.read_text(encoding="utf-8")
 
-        assert "speckit-echelon-consolidator (CONSOLIDATOR)" in text
+        assert "echelon-consolidator (CONSOLIDATOR)" in text
         assert "extension/templates/schema-consolidation-template.md" in text
-        assert text.index("8.3b Run speckit-echelon-consolidator") < text.index(
-            "8.4 Run speckit-echelon-scorekeeper"
+        assert text.index("8.3b Run echelon-consolidator") < text.index(
+            "8.4 Run echelon-scorekeeper"
         )

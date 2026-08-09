@@ -1,11 +1,11 @@
 # Phase: phase1-tracker
-# Source: echelon.run.md §2c — speckit-echelon-tracker (TRACKER) Intent Model Capture
-# Agent: speckit-echelon-tracker (TRACKER)
-# Read by: speckit-echelon-commander (COMMANDER) before dispatching speckit-echelon-tracker (TRACKER)
+# Source: echelon.run.md §2c — echelon-tracker (TRACKER) Intent Model Capture
+# Agent: echelon-tracker (TRACKER)
+# Read by: echelon-commander (COMMANDER) before dispatching echelon-tracker (TRACKER)
 
-## 2c. speckit-echelon-tracker (TRACKER) — Intent Model Capture
+## 2c. echelon-tracker (TRACKER) — Intent Model Capture
 
-> **Note:** speckit-echelon-tracker (TRACKER) captures the user's stated intent before requirements formalization. This produces `user-intent.md` which speckit-echelon-gatekeeper (GATEKEEPER) needs to honor rule #3 ("ALWAYS preserve user intent; NEVER override user intent").
+> **Note:** echelon-tracker (TRACKER) captures the user's stated intent before requirements formalization. This produces `user-intent.md` which echelon-gatekeeper (GATEKEEPER) needs to honor rule #3 ("ALWAYS preserve user intent; NEVER override user intent").
 
 ### Context Pack Assembly
 
@@ -30,11 +30,11 @@ The active runtime dispatches this role with the following request:
 
   <instructions>
   You are TRACKER. Read agents/control/tracker.md for your complete protocol.
-  Read the user's original request and speckit-echelon-scout (SCOUT)'s discovery outputs. Capture the user's stated intent, scope preferences, and explicit constraints into `user-intent.md` using the provided template. Produce `stakeholder-model.md` when multiple stakeholders are detectable. Produce outputs in `${STAGING_DIR}/`. Return journal entries in `echelon_result.journal_entries`.
+  Read the user's original request and echelon-scout (SCOUT)'s discovery outputs. Capture the user's stated intent, scope preferences, and explicit constraints into `user-intent.md` using the provided template. Produce `stakeholder-model.md` when multiple stakeholders are detectable. Produce outputs in `${STAGING_DIR}/`. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
-- **description:** "speckit-echelon-tracker (TRACKER): capture user intent model before requirements formalization"
+- **description:** "echelon-tracker (TRACKER): capture user intent model before requirements formalization"
 
 ### Expected Outputs
 

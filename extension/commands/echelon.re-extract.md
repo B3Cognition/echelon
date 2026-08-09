@@ -1,5 +1,5 @@
 ---
-name: speckit.echelon.re-extract
+name: echelon.re-extract
 description: "Phase 1 brownfield extraction — analyze codebase and generate domain specs + strategic artifacts"
 scripts:
   sh: ../../scripts/bash/startup-banner.sh

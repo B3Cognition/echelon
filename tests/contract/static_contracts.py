@@ -1048,12 +1048,12 @@ def validate_constitution_context_pack_contract(root: Path) -> list[str]:
         PatternCheck(
             "workflow WHY3 includes canonical constitution memory",
             workflow,
-            r"id:\s+speckit-echelon-sage[\s\S]*?mode:\s+WHY3[\s\S]*?context_pack:[\s\S]*?- \.specify/memory/constitution\.md",
+            r"id:\s+echelon-sage[\s\S]*?mode:\s+WHY3[\s\S]*?context_pack:[\s\S]*?- \.specify/memory/constitution\.md",
         ),
         PatternCheck(
             "workflow PLAN2 includes canonical constitution memory",
             workflow,
-            r"id:\s+speckit-echelon-orchestrator[\s\S]*?mode:\s+PLAN2[\s\S]*?context_pack:[\s\S]*?- \.specify/memory/constitution\.md",
+            r"id:\s+echelon-orchestrator[\s\S]*?mode:\s+PLAN2[\s\S]*?context_pack:[\s\S]*?- \.specify/memory/constitution\.md",
         ),
         PatternCheck(
             "phase1 what prompt includes read-only constitution",

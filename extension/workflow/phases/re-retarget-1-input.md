@@ -1,5 +1,5 @@
 # Phase: re-retarget-1-input
-# Read by: speckit-echelon-commander (COMMANDER)
+# Read by: echelon-commander (COMMANDER)
 # Type: commander_internal — COMMANDER prompts the user directly, no agent dispatch
 
 Guided walkthrough to fill in `[REQUIRES INPUT]` sections in strategic artifacts.
@@ -11,7 +11,7 @@ files through provider-native tools.
 
 Report to user: "Found {count} sections requiring your input."
 
-If count is 0: report "All decisions are already filled in. You can proceed to `/speckit.echelon.re-plan-all`." and stop.
+If count is 0: report "All decisions are already filled in. You can proceed to `/echelon.re-plan-all`." and stop.
 
 ## Step 2: Present introduction
 
@@ -127,10 +127,10 @@ Retargeting complete.
 Remaining [REQUIRES INPUT] markers: {REMAINING}
 
 {if REMAINING == 0}
-All decisions filled. Run /speckit.echelon.re-plan-all to generate per-domain plans.
+All decisions filled. Run /echelon.re-plan-all to generate per-domain plans.
 
 {if REMAINING > 0}
-{REMAINING} decisions deferred. You can run /speckit.echelon.re-retarget again
-to fill them, or proceed with /speckit.echelon.re-plan-all (planning will work
+{REMAINING} decisions deferred. You can run /echelon.re-retarget again
+to fill them, or proceed with /echelon.re-plan-all (planning will work
 around the remaining placeholders).
 ```

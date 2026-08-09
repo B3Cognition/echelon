@@ -417,7 +417,7 @@ class TestPhaseGraph:
     def test_phase1_discover_type_agent(self):
         node = self.graph.get("phase1-discover")
         assert node.type == "agent"
-        assert node.agent == "speckit-echelon-scout"
+        assert node.agent == "echelon-scout"
 
     def test_unknown_phase_raises(self):
         import pytest
@@ -468,7 +468,7 @@ class TestPhaseGraph:
             ),
         }
         assert derive.type == "agent"
-        assert derive.agent == "speckit-echelon-lexicon-deriver"
+        assert derive.agent == "echelon-lexicon-deriver"
         assert derive.outputs == ["requirements.lexicon.md"]
         assert derive.allowed_state_updates == []
         assert set(derive.allowed_verdicts or []) == {"DONE", "FAIL"}
@@ -573,7 +573,7 @@ class TestPhaseGraph:
             why2.allowed_state_updates or []
         )
         assert investigate.type == "agent"
-        assert investigate.agent == "speckit-echelon-investigator"
+        assert investigate.agent == "echelon-investigator"
         assert investigate.transitions == [
             {
                 "to": "phase1-what",
@@ -722,7 +722,7 @@ class TestPhaseGraph:
         assert all("condition" in t for t in node.transitions)
 
     def test_agent_file_lookup(self):
-        path = self.graph.agent_file("speckit-echelon-scout")
+        path = self.graph.agent_file("echelon-scout")
         assert path is not None
         assert "scout" in path
 
@@ -748,8 +748,8 @@ def test_chief_registered_in_extension():
     )
     commands = ext.get("provides", {}).get("commands", [])
     names = [c["name"] for c in commands]
-    assert "speckit.echelon.chief" in names, "speckit.echelon.chief not in extension.yml provides.commands"
-    chief = next(c for c in commands if c["name"] == "speckit.echelon.chief")
+    assert "echelon.chief" in names, "echelon.chief not in extension.yml provides.commands"
+    chief = next(c for c in commands if c["name"] == "echelon.chief")
     assert chief["file"] == "agents/control/chief.md"
     assert chief["behavior"]["execution"] == "agent"
 
@@ -759,10 +759,10 @@ def test_phase1_constitution_uses_chief():
     graph = PhaseGraph(DEFINITION, EXT_YML)
     node = graph.get("phase1-constitution")
     assert node.type == "agent", f"Expected type=agent, got {node.type!r}"
-    assert node.agent == "speckit-echelon-chief", f"Expected speckit-echelon-chief, got {node.agent!r}"
+    assert node.agent == "echelon-chief", f"Expected echelon-chief, got {node.agent!r}"
     # Must resolve to an actual file
-    rel = graph.agent_file("speckit-echelon-chief")
-    assert rel is not None, "speckit-echelon-chief not resolved by agent_file()"
+    rel = graph.agent_file("echelon-chief")
+    assert rel is not None, "echelon-chief not resolved by agent_file()"
     assert rel == "agents/control/chief.md"
 
 
@@ -802,11 +802,11 @@ def test_phase1_context_packs_include_generated_context_files():
     specialist_packs = {
         agent["id"]: set(agent.get("context_pack", []))
         for agent in specialists.agents
-        if agent["id"] in {"speckit-echelon-guardian", "speckit-echelon-investigator"}
+        if agent["id"] in {"echelon-guardian", "echelon-investigator"}
     }
-    assert expected_full_pack.issubset(specialist_packs["speckit-echelon-guardian"])
+    assert expected_full_pack.issubset(specialist_packs["echelon-guardian"])
     assert expected_full_pack.issubset(
-        specialist_packs["speckit-echelon-investigator"]
+        specialist_packs["echelon-investigator"]
     )
 
 
@@ -819,7 +819,7 @@ def test_phase_graph_preserves_allowed_state_updates(tmp_path: Path):
 phases:
   - id: phase1-discover
     type: agent
-    agent: speckit-echelon-scout
+    agent: echelon-scout
     outputs:
       - spec.md
     allowed_state_updates:
@@ -1579,7 +1579,7 @@ def test_experimental_artifact_quality_phases_are_registered():
 
     expected = {
         "phase-exp-constitution-quality": {
-            "agent": "speckit-echelon-chief",
+            "agent": "echelon-chief",
             "updates": {
                 "constitution_quality_pass",
                 "constitution_quality_attempts",
@@ -1589,7 +1589,7 @@ def test_experimental_artifact_quality_phases_are_registered():
             },
         },
         "phase-exp-tasks-quality": {
-            "agent": "speckit-echelon-orchestrator",
+            "agent": "echelon-orchestrator",
             "updates": {
                 "tasks_quality_pass",
                 "tasks_quality_attempts",
@@ -1599,7 +1599,7 @@ def test_experimental_artifact_quality_phases_are_registered():
             },
         },
         "phase-exp-adr-quality": {
-            "agent": "speckit-echelon-architect",
+            "agent": "echelon-architect",
             "updates": {
                 "adr_quality_pass",
                 "adr_quality_attempts",

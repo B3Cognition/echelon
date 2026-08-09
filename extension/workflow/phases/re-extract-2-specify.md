@@ -1,5 +1,5 @@
 # Phase: re-extract-2-specify
-# Agent: speckit-echelon-re-specifier
+# Agent: echelon-re-specifier
 
 ## Context Pack
 

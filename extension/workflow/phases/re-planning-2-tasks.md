@@ -1,5 +1,5 @@
 # Phase: re-planning-2-tasks
-# Agent: speckit-echelon-re-tasker
+# Agent: echelon-re-tasker
 
 ## Context Pack
 

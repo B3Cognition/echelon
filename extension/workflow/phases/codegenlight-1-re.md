@@ -1,6 +1,6 @@
 # Phase: codegenlight-1-re
 # Source: echelon.codegenlight.md §Phase 1 — RE Requirements Lookup + Domain Research
-# Read by: speckit-echelon-orchestrator (ORCHESTRATOR) before Phase 1 RE execution
+# Read by: echelon-orchestrator (ORCHESTRATOR) before Phase 1 RE execution
 
 **Print:** `[CODEGEN] Phase RE — Starting...`
 
@@ -21,7 +21,7 @@ Print the retrieved requirements block — these are what IMPLEMENT will be veri
 
 ### Step 1.2 — Additional RE (if brownfield target provided)
 
-If a `<target-path>` was given, additionally delegate to speckit-echelon-golddigger (GOLDDIGGER) via Agent tool:
+If a `<target-path>` was given, additionally delegate to echelon-golddigger (GOLDDIGGER) via Agent tool:
 ```
 Agent: Analyze <target_path>.
 Produce: glossary.md, mental-model.md, boundaries.md, unknowns.md, assumptions.md in ./codegen-staging/.

@@ -1,6 +1,6 @@
 # Phase: codegen-6c-runnable
 # Source: design 2026-06-22-codegen-runnable-composition-gate
-# Read by: speckit-echelon-orchestrator before Phase 6c RUNNABLE (echelon.codegen only)
+# Read by: echelon-orchestrator before Phase 6c RUNNABLE (echelon.codegen only)
 
 ## Phase 6c: RUNNABLE — static composition probe
 

@@ -1,7 +1,7 @@
 # Phase: build-2-implement
 # Source: echelon.build.md §2 — Task Iteration (BUILD_LOOP)
-# Agent: speckit-echelon-implementer (IMPLEMENTER)
-# Read by: speckit-echelon-commander (COMMANDER) before each speckit-echelon-implementer (IMPLEMENTER) dispatch
+# Agent: echelon-implementer (IMPLEMENTER)
+# Read by: echelon-commander (COMMANDER) before each echelon-implementer (IMPLEMENTER) dispatch
 
 ## 2. Task Iteration (BUILD_LOOP)
 
@@ -13,7 +13,7 @@ For `002-build-qa-phase-split`, BUILD execution uses dependency-safe wave lanes:
 
 1. Group tasks by dependency level (same level = same wave).
 2. Execute tasks in each wave before moving to the next wave.
-3. Within a wave, process up to 3 speckit-echelon-implementer (IMPLEMENTER) lanes.
+3. Within a wave, process up to 3 echelon-implementer (IMPLEMENTER) lanes.
 4. A failed task in a wave must not block unrelated tasks in that same wave.
 5. A failed task must block only dependents in later waves.
 
@@ -38,7 +38,7 @@ Before allowing QA entry, enforce blocked semantics:
 }
 ```
 
-### 2.3 Dispatch speckit-echelon-implementer (IMPLEMENTER)
+### 2.3 Dispatch echelon-implementer (IMPLEMENTER)
 
 Use the Ralph-owned context pack:
 
@@ -51,7 +51,7 @@ Use the Ralph-owned context pack:
 
 Use the Agent tool:
 
-- **subagent_type:** `speckit-echelon-implementer`
+- **subagent_type:** `echelon-implementer`
 - **prompt:**
 
   ```xml
@@ -66,15 +66,15 @@ Use the Agent tool:
   </instructions>
   ```
 
-- **description:** "speckit-echelon-implementer (IMPLEMENTER): {task_id} — {task_title}"
+- **description:** "echelon-implementer (IMPLEMENTER): {task_id} — {task_title}"
 
-### 2.4 Handle speckit-echelon-implementer (IMPLEMENTER) Result
+### 2.4 Handle echelon-implementer (IMPLEMENTER) Result
 
-- **DONE / DONE_WITH_CONCERNS** — Proceed to speckit-echelon-spec-guard (SPEC GUARD)
-- **NEEDS_CONTEXT** — MANAGER reads the question, compiles additional context, re-dispatches speckit-echelon-implementer (IMPLEMENTER). Max 2 re-dispatches per task.
+- **DONE / DONE_WITH_CONCERNS** — Proceed to echelon-spec-guard (SPEC GUARD)
+- **NEEDS_CONTEXT** — MANAGER reads the question, compiles additional context, re-dispatches echelon-implementer (IMPLEMENTER). Max 2 re-dispatches per task.
 - **BLOCKED** — Log the blocker. Skip to next task. If 3 tasks are BLOCKED, pause and assess (MANAGER may need to re-order tasks or escalate).
 
-**Inline execution mode:** If speckit-echelon-commander (COMMANDER) executes task work directly in the main conversation (without dispatching speckit-echelon-implementer (IMPLEMENTER) as a subagent), speckit-echelon-commander (COMMANDER) MUST still execute Sections 3 through 6.3 in sequence: run quality gate checks, track progress, and update `state.json` via Section 6.3. Skipping subagent dispatch does NOT skip state tracking. The `build.completed_tasks` counter must be incremented after every task regardless of execution mode.
+**Inline execution mode:** If echelon-commander (COMMANDER) executes task work directly in the main conversation (without dispatching echelon-implementer (IMPLEMENTER) as a subagent), echelon-commander (COMMANDER) MUST still execute Sections 3 through 6.3 in sequence: run quality gate checks, track progress, and update `state.json` via Section 6.3. Skipping subagent dispatch does NOT skip state tracking. The `build.completed_tasks` counter must be incremented after every task regardless of execution mode.
 
 **Quality gate sequence:** Quality gates are sequential hard gates, not a parallel batch. After implementation work completes, run SPEC GUARD first, then CODE REVIEWER, then TEST GUARDIAN, using the gate order provided by Ralph and this phase contract. NEVER dispatch SPEC GUARD, CODE REVIEWER, and TEST GUARDIAN in one parallel batch. NEVER skip CODE REVIEWER or TEST GUARDIAN by vacuity. A gate may be skipped only when Ralph's build context or this phase spec declares an explicit workflow-approved skip condition, and the skip rationale must be recorded in `echelon_result.journal_entries`.
 

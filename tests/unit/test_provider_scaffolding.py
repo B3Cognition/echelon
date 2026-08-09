@@ -15,7 +15,7 @@ def _prosaic_prose(root: Path) -> Path:
     )
     (prose / "commands" / "echelon.verify-spec.md").write_text(
         "---\n"
-        "name: speckit.echelon.verify-spec\n"
+        "name: echelon.verify-spec\n"
         "description: Verify spec\n"
         "---\n\n"
         "Read `agents/control/commander.md`.\n",
@@ -23,7 +23,7 @@ def _prosaic_prose(root: Path) -> Path:
     )
     (prose / "commands" / "echelon.build.md").write_text(
         "---\n"
-        "name: speckit.echelon.build\n"
+        "name: echelon.build\n"
         "description: Build spec\n"
         "---\n\n"
         "Build from `workflow/definition.yaml`.\n",
@@ -31,7 +31,7 @@ def _prosaic_prose(root: Path) -> Path:
     )
     (prose / "commands" / "echelon.run.md").write_text(
         "---\n"
-        "name: speckit.echelon.run\n"
+        "name: echelon.run\n"
         "description: Run Phase A\n"
         "---\n\n"
         "Run Phase A.\n",
@@ -39,7 +39,7 @@ def _prosaic_prose(root: Path) -> Path:
     )
     (prose / "commands" / "echelon.re-extract.md").write_text(
         "---\n"
-        "name: speckit.echelon.re-extract\n"
+        "name: echelon.re-extract\n"
         "description: Reverse engineer\n"
         "---\n\n"
         "Run reverse engineering.\n",

@@ -1,5 +1,5 @@
 # Phase: verify-spec-1-init
-# Read by: speckit-echelon-commander (COMMANDER) before verification dispatch
+# Read by: echelon-commander (COMMANDER) before verification dispatch
 # Type: commander_internal
 
 ## Objective

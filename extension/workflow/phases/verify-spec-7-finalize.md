@@ -1,5 +1,5 @@
 # Phase: verify-spec-7-finalize
-# Read by: speckit-echelon-commander (COMMANDER)
+# Read by: echelon-commander (COMMANDER)
 # Type: commander_internal
 
 ## Objective

@@ -1,6 +1,6 @@
 # Phase: codegen-1-re
 # Source: echelon.codegen.md §Phase 1 — RE Requirements Lookup
-# Read by: speckit-echelon-orchestrator (ORCHESTRATOR) before Phase 1 RE execution
+# Read by: echelon-orchestrator (ORCHESTRATOR) before Phase 1 RE execution
 
 ---
 

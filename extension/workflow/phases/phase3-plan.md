@@ -1,7 +1,7 @@
 # Phase: phase3-plan
 # Source: echelon.run.md §10 — PLAN Phase (Task Breakdown)
-# Agent: speckit-echelon-orchestrator (ORCHESTRATOR)
-# Read by: speckit-echelon-commander (COMMANDER) before dispatching speckit-echelon-orchestrator (ORCHESTRATOR)
+# Agent: echelon-orchestrator (ORCHESTRATOR)
+# Read by: echelon-commander (COMMANDER) before dispatching echelon-orchestrator (ORCHESTRATOR)
 
 ## 10. PLAN Phase (Task Breakdown)
 
@@ -42,11 +42,11 @@ The active runtime dispatches this role with the following request:
   </instructions>
   ```
 
-- **description:** "speckit-echelon-orchestrator (ORCHESTRATOR): task breakdown, critical path, dependencies, risk"
+- **description:** "echelon-orchestrator (ORCHESTRATOR): task breakdown, critical path, dependencies, risk"
 
 ### Expected Outputs — EXACT FILENAMES
 
-speckit-echelon-orchestrator (ORCHESTRATOR) produces these four files in `{spec_dir}/` with **exactly** these names. Naming variants break downstream consumers (CONSENSUS, build phase, harness).
+echelon-orchestrator (ORCHESTRATOR) produces these four files in `{spec_dir}/` with **exactly** these names. Naming variants break downstream consumers (CONSENSUS, build phase, harness).
 
 | Required filename | Purpose |
 | --- | --- |

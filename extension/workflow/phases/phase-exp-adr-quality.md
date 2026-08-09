@@ -1,6 +1,6 @@
 # Phase: phase-exp-adr-quality
-# Agent: speckit-echelon-architect (ARCHITECT)
-# Read by: speckit-echelon-commander (COMMANDER) for manual experimental phase runs only
+# Agent: echelon-architect (ARCHITECT)
+# Read by: echelon-commander (COMMANDER) for manual experimental phase runs only
 
 ## Purpose
 

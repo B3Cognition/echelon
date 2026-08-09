@@ -81,7 +81,7 @@ class TestSynthesizerTemplates:
             assert f"extension/templates/{filename}" in text
 
         assert ".specify/..." not in text
-        assert "agent: speckit-echelon-synthesizer (SYNTHESIZER)" in text
+        assert "agent: echelon-synthesizer (SYNTHESIZER)" in text
         assert "agent: SYNTHESIZER" not in text
 
     def test_phase1_synthesizer_dispatch_includes_templates(self) -> None:

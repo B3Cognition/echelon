@@ -49,7 +49,7 @@ class TestAuditorTemplates:
         assert "{spec_dir}/calibration-analytics.md" in text
         assert "{spec_dir}/confidence-flags.md" in text
         assert "{spec_dir}/feedback-report.md" in text
-        assert "agent: speckit-echelon-auditor (AUDITOR)" in text
+        assert "agent: echelon-auditor (AUDITOR)" in text
         assert "agent: CALIBRATE" not in text
 
     def test_auditor_output_appendix_uses_canonical_feedback_report_path(self) -> None:

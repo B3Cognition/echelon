@@ -1,6 +1,6 @@
 # Phase: bugfix-5-finalize
 # Source: echelon.bugfix.md §Steps 5–6 — Write Artifacts + Handoff
-# Read by: speckit-echelon-commander (COMMANDER) before executing finalization sequence
+# Read by: echelon-commander (COMMANDER) before executing finalization sequence
 
 ## Step 5: Write Bugfix Artifacts
 
@@ -26,19 +26,19 @@ Write `{spec_dir}/bugfix-{n}.md`:
 # Bugfix {n}: {description}
 
 ## Root Cause
-{from speckit-echelon-debugger (DEBUGGER): file, line, mechanism}
+{from echelon-debugger (DEBUGGER): file, line, mechanism}
 
 ## Fix Scope
-{from speckit-echelon-debugger (DEBUGGER): what changes and why}
+{from echelon-debugger (DEBUGGER): what changes and why}
 
 ## Risk Surface
-{from speckit-echelon-debugger (DEBUGGER): what else could break}
+{from echelon-debugger (DEBUGGER): what else could break}
 
 ## Test Strategy
-{from speckit-echelon-sentinel (SENTINEL): failing test specification + regression coverage}
+{from echelon-sentinel (SENTINEL): failing test specification + regression coverage}
 
 ## Spec Compliance
-{from speckit-echelon-spec-guard (SPEC GUARD): which requirement(s) this addresses, any scope notes}
+{from echelon-spec-guard (SPEC GUARD): which requirement(s) this addresses, any scope notes}
 ```
 
 Then append the bugfix tasks to `{spec_dir}/tasks.md`. Use `extension/templates/bugfix-task-fragment.md` and the canonical task row contract. Add a clearly delimited section at the end:
@@ -82,7 +82,7 @@ Print the handoff block and stop:
   ✓ echelon.bugfix — {spec_id}: {spec_name}
 ════════════════════════════════════════════════
   Issue:      {description}
-  Root cause: {one-liner from speckit-echelon-debugger (DEBUGGER)}
+  Root cause: {one-liner from echelon-debugger (DEBUGGER)}
   Fix:        {what changes — N files}
   Risk:       {risk surface summary}
 
@@ -93,10 +93,10 @@ Print the handoff block and stop:
   Next step — choose your build strategy:
 
     Default (LLM implements directly):
-      speckit.echelon.harness-run {spec_id} strategy=default
+      echelon.harness-run {spec_id} strategy=default
 
     Codegen (SOAR pipeline):
-      speckit.echelon.harness-run {spec_id} strategy=codegen
+      echelon.harness-run {spec_id} strategy=codegen
 ════════════════════════════════════════════════
 ```
 

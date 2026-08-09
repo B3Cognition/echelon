@@ -1881,7 +1881,7 @@ def prepare_completion_journal_plan(
             raw_entries.append(
                 {
                     "type": "state_contract_warning",
-                    "agent": "speckit-echelon-commander",
+                    "agent": "echelon-commander",
                     "data": {
                         "dropped_keys": sorted(quarantined),
                         "action": "quarantined",

@@ -167,8 +167,8 @@ def _agent_registry(extension_yml: dict[str, Any]) -> dict[str, Path]:
 
 
 def _manifest_agent_name(agent_id: str) -> str:
-    if agent_id.startswith("speckit-echelon-"):
-        return "speckit.echelon." + agent_id.removeprefix("speckit-echelon-")
+    if agent_id.startswith("echelon-"):
+        return "echelon." + agent_id.removeprefix("echelon-")
     return agent_id.replace("-", ".")
 
 

@@ -11,4 +11,4 @@ class TestDebuggerTemplates:
 
         assert ".specify/..." not in text
         assert "{spec_dir}/debug-report.md" in text
-        assert "agent: speckit-echelon-debugger (DEBUGGER)" in text
+        assert "agent: echelon-debugger (DEBUGGER)" in text

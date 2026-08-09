@@ -1,13 +1,13 @@
 # Phase: phase2-decide
 # Source: echelon.run.md §6 — ASSESS Phase (Kill Gate)
-# Agent: speckit-echelon-gatekeeper (GATEKEEPER)
-# Read by: speckit-echelon-commander (COMMANDER) before dispatching speckit-echelon-gatekeeper (GATEKEEPER)
+# Agent: echelon-gatekeeper (GATEKEEPER)
+# Read by: echelon-commander (COMMANDER) before dispatching echelon-gatekeeper (GATEKEEPER)
 
 ## 6. ASSESS Phase (Kill Gate)
 
 ### Context Pack Assembly — MUST INCLUDE
 
-Every file below MUST be included (or marked `[ABSENT: <path>]` if missing). Silently omitting any of these is a routing error — speckit-echelon-gatekeeper (GATEKEEPER) calibrates against the calibration profile, scopes against the glossary, and re-uses prior estimates if available.
+Every file below MUST be included (or marked `[ABSENT: <path>]` if missing). Silently omitting any of these is a routing error — echelon-gatekeeper (GATEKEEPER) calibrates against the calibration profile, scopes against the glossary, and re-uses prior estimates if available.
 
 | File | Path | Notes |
 | --- | --- | --- |
@@ -46,7 +46,7 @@ The active runtime dispatches this role with the following request:
   </instructions>
   ```
 
-- **description:** "speckit-echelon-gatekeeper (GATEKEEPER): feasibility, estimation, prioritization, kill gate"
+- **description:** "echelon-gatekeeper (GATEKEEPER): feasibility, estimation, prioritization, kill gate"
 
 ### Expected Outputs
 

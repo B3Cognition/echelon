@@ -1,5 +1,5 @@
 # Phase: re-planning-1-plan
-# Agent: speckit-echelon-re-planner
+# Agent: echelon-re-planner
 
 ## Context Pack
 

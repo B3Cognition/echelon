@@ -72,7 +72,7 @@ class TestOrchestratorTemplates:
             "  journal_entries:\n"
             in text
         )
-        assert "agent: speckit-echelon-orchestrator (ORCHESTRATOR)" in text
+        assert "agent: echelon-orchestrator (ORCHESTRATOR)" in text
         assert "agent: PLAN" not in text
         assert "sources/<source-id>/" in text
         assert "exactly one declared IMPLEMENTATION_TARGET" in text

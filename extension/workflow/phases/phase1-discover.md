@@ -1,7 +1,7 @@
 # Phase: phase1-discover
 # Source: echelon.run.md §2 — DISCOVER Phase (UNDERSTAND)
-# Agent: speckit-echelon-scout (SCOUT)
-# Read by: speckit-echelon-commander (COMMANDER) before dispatching speckit-echelon-scout (SCOUT)
+# Agent: echelon-scout (SCOUT)
+# Read by: echelon-commander (COMMANDER) before dispatching echelon-scout (SCOUT)
 
 ## 2. DISCOVER Phase (UNDERSTAND)
 
@@ -43,7 +43,7 @@ The active runtime dispatches this role with the following request:
   </instructions>
   ```
 
-- **description:** "speckit-echelon-scout (SCOUT): reconnaissance and domain mapping ({mode})"
+- **description:** "echelon-scout (SCOUT): reconnaissance and domain mapping ({mode})"
 
 ### Expected Outputs
 

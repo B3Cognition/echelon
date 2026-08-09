@@ -219,7 +219,7 @@ def prepare_completion_journal_contents(
             {
                 "type": "schema_warning",
                 "phase": phase_id,
-                "agent": "speckit-echelon-commander",
+                "agent": "echelon-commander",
                 "data": {
                     "violating_entry_id": "controller_completion_entry",
                     "violating_entry_type": verdict.entry_type,
@@ -807,7 +807,7 @@ def _schema_warning_entry(
         "id": warning_id,
         "type": "schema_warning",
         "phase": entry.get("phase") or "unknown",
-        "agent": "speckit-echelon-commander",
+        "agent": "echelon-commander",
         "timestamp": timestamp,
         "data": {
             "violating_entry_id": entry.get("id", "unknown"),

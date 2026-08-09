@@ -103,10 +103,10 @@ def test_harness_compatibility_docs_point_to_delivery_commands() -> None:
     assert "echelon delivery resume <spec_id>" in docs["resume"]
     assert "echelon delivery status" in docs["status"]
     for text in docs.values():
-        assert "speckit.echelon.harness-init" not in text
-        assert "speckit.echelon.harness-run" not in text
-        assert "speckit.echelon.harness-resume" not in text
-        assert "speckit.echelon.harness-status" not in text
+        assert "echelon.harness-init" not in text
+        assert "echelon.harness-run" not in text
+        assert "echelon.harness-resume" not in text
+        assert "echelon.harness-status" not in text
 
 
 @pytest.mark.unit

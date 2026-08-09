@@ -15,7 +15,7 @@ class TestTestGuardianTemplates:
         assert ".specify/specs/" not in text
         assert ".specify/..." not in text
         assert "{spec_dir}/test-quality-report.md" in text
-        assert "agent: speckit-echelon-test-guardian (TEST GUARDIAN)" in text
+        assert "agent: echelon-test-guardian (TEST GUARDIAN)" in text
         assert "agent: TEST_GUARDIAN" not in text
 
     def test_test_guardian_phase_uses_canonical_output_path(self) -> None:

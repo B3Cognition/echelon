@@ -1,9 +1,9 @@
 # Phase: bugfix-3-test-strategy
-# Source: echelon.bugfix.md §Step 3 — speckit-echelon-sentinel (SENTINEL) Test Strategy
-# Agent: speckit-echelon-sentinel (SENTINEL)
-# Read by: speckit-echelon-commander (COMMANDER) before dispatching speckit-echelon-sentinel (SENTINEL)
+# Source: echelon.bugfix.md §Step 3 — echelon-sentinel (SENTINEL) Test Strategy
+# Agent: echelon-sentinel (SENTINEL)
+# Read by: echelon-commander (COMMANDER) before dispatching echelon-sentinel (SENTINEL)
 
-## Step 3: speckit-echelon-sentinel (SENTINEL) — Test Strategy
+## Step 3: echelon-sentinel (SENTINEL) — Test Strategy
 
 Dispatch `agents/solution/sentinel.md` with:
 
@@ -12,7 +12,7 @@ Dispatch `agents/solution/sentinel.md` with:
 - `coverage-map.md`
 - Existing test files for the affected component/module
 
-The speckit-echelon-sentinel (SENTINEL) must produce:
+The echelon-sentinel (SENTINEL) must produce:
 
 - A **failing test specification** — the test that will be red before the fix and green after (write the assertion, not the code)
 - Regression test coverage: what adjacent behaviour needs protecting

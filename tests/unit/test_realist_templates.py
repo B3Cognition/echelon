@@ -65,7 +65,7 @@ class TestRealistTemplates:
         assert "{spec_dir}/reality-check.md" in text
         assert "{spec_dir}/cost-analysis.md" in text
         assert "{spec_dir}/benchmark-data.md" in text
-        assert "agent: speckit-echelon-realist (REALIST)" in text
+        assert "agent: echelon-realist (REALIST)" in text
         assert "agent: GROUND" not in text
 
     def test_finalize_dispatch_includes_realist_templates(self) -> None:

@@ -84,7 +84,7 @@ class TestArchitectTemplates:
             "  journal_entries:\n"
             in text
         )
-        assert text.count("agent: speckit-echelon-architect (ARCHITECT)") == 2
+        assert text.count("agent: echelon-architect (ARCHITECT)") == 2
         assert "agent: HOW" not in text
         assert "Requirement Preservation" in text
         assert "HOW may refine implementation mechanisms" in text

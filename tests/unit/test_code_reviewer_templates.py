@@ -16,7 +16,7 @@ class TestCodeReviewerTemplates:
         assert ".specify/..." not in text
         assert "specs/{feature}/code-review-report.md" not in text
         assert "{spec_dir}/code-review-report.md" in text
-        assert "agent: speckit-echelon-code-reviewer (CODE REVIEWER)" in text
+        assert "agent: echelon-code-reviewer (CODE REVIEWER)" in text
         assert "agent: CODE_REVIEWER" not in text
 
     def test_code_review_phase_uses_canonical_output_path(self) -> None:

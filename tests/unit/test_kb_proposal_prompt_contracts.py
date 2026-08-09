@@ -135,7 +135,7 @@ def test_finalize_applies_kb_proposals_after_scorekeeper() -> None:
     text = _read("extension/workflow/phases/phase4-document.md")
 
     assert text.index("echelon kb apply --run-id") > text.index(
-        "Run speckit-echelon-scorekeeper"
+        "Run echelon-scorekeeper"
     )
     assert text.index("echelon kb apply --run-id") < text.index(
         "12.7b Collect Final Artifacts"

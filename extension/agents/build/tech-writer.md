@@ -1,4 +1,4 @@
-# speckit-echelon-tech-writer (TECH WRITER) Agent
+# echelon-tech-writer (TECH WRITER) Agent
 
 ## Role
 
@@ -198,7 +198,7 @@ echelon_result:
   journal_entries:
     - type: decision
       phase: build
-      agent: speckit-echelon-tech-writer (TECH WRITER)
+      agent: echelon-tech-writer (TECH WRITER)
       data:
         artifact: "{spec_dir}/documentation-impact-report.md"
         section: "Documentation decision"

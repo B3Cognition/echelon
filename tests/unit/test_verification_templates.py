@@ -23,7 +23,7 @@ class TestVerificationTemplates:
             "  journal_entries:\n"
             in text
         )
-        assert "agent: speckit-echelon-verification (VERIFICATION)" in text
+        assert "agent: echelon-verification (VERIFICATION)" in text
         assert "agent: VERIFICATION" not in text
 
     def test_verification_prompt_separates_lint_evidence_channels(self) -> None:

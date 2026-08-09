@@ -1,6 +1,6 @@
 # Phase: verify-spec-5-judge
-# Read by: speckit-echelon-commander (COMMANDER)
-# Agent: speckit-echelon-spec-guard
+# Read by: echelon-commander (COMMANDER)
+# Agent: echelon-spec-guard
 
 ## Context Pack
 

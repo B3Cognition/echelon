@@ -1,9 +1,9 @@
 # Phase: phase3-sentinel
-# Source: echelon.run.md §9 — TEST speckit-echelon-architect (ARCHITECT) Phase
-# Agent: speckit-echelon-sentinel (SENTINEL)
-# Read by: speckit-echelon-commander (COMMANDER) before dispatching speckit-echelon-sentinel (SENTINEL)
+# Source: echelon.run.md §9 — TEST echelon-architect (ARCHITECT) Phase
+# Agent: echelon-sentinel (SENTINEL)
+# Read by: echelon-commander (COMMANDER) before dispatching echelon-sentinel (SENTINEL)
 
-## 9. TEST speckit-echelon-architect (ARCHITECT) Phase (Mandatory)
+## 9. TEST echelon-architect (ARCHITECT) Phase (Mandatory)
 
 ### Context Pack Assembly
 
@@ -31,15 +31,15 @@ The active runtime dispatches this role with the following request:
 
   <instructions>
   You are SENTINEL. Read agents/solution/sentinel.md for your complete protocol. When Product Input Contract paths are present, confirm each included `IN-REQ-*` unit reaches at least one mapped acceptance criterion; return corrective `product_input_updates` using the exact canonical fields `input_unit_id`, `disposition`, `rationale`, `spec_ids`, `task_ids`, and `targets`, rather than editing the ledger. PLAN has not run yet, so always return `task_ids: []`; ORCHESTRATOR adds task ownership in the next phase.
-  Produce a comprehensive test strategy from plan.md + data-model.md + spec.md acceptance criteria. Use the testability sub-metrics from quality-gates.md (hard_constraint_ratio, constraint_density, negative_space_coverage) to identify which testability dimension is weakest and prioritize test effort accordingly. Map every acceptance criterion to a test approach. Define the test pyramid. Identify boundary value cases. If acceptance criteria have no testable form, flag them for routing back to speckit-echelon-cartographer (CARTOGRAPHER). Produce outputs in `{spec_dir}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
+  Produce a comprehensive test strategy from plan.md + data-model.md + spec.md acceptance criteria. Use the testability sub-metrics from quality-gates.md (hard_constraint_ratio, constraint_density, negative_space_coverage) to identify which testability dimension is weakest and prioritize test effort accordingly. Map every acceptance criterion to a test approach. Define the test pyramid. Identify boundary value cases. If acceptance criteria have no testable form, flag them for routing back to echelon-cartographer (CARTOGRAPHER). Produce outputs in `{spec_dir}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
-- **description:** "speckit-echelon-sentinel (SENTINEL): testability-informed test strategy and coverage mapping"
+- **description:** "echelon-sentinel (SENTINEL): testability-informed test strategy and coverage mapping"
 
 ### Precondition: `plan.md` Availability
 
-`plan.md` is the canonical input to speckit-echelon-sentinel (SENTINEL). It is produced by speckit-echelon-architect (ARCHITECT) in phase3-how.
+`plan.md` is the canonical input to echelon-sentinel (SENTINEL). It is produced by echelon-architect (ARCHITECT) in phase3-how.
 
 - **If `plan.md` exists** → proceed normally with the full context pack.
 - **If `plan.md` is absent** → this is a phase failure in phase3-how. Return a
@@ -59,13 +59,13 @@ The phase produces exactly three files in `{spec_dir}/`. Skipping any of them is
 
 ```bash
 for f in test-strategy.md test-architecture.md coverage-map.md; do
-  [ -f "{spec_dir}/$f" ] || { echo "ERROR: speckit-echelon-sentinel (SENTINEL) missing $f" >&2; exit 1; }
+  [ -f "{spec_dir}/$f" ] || { echo "ERROR: echelon-sentinel (SENTINEL) missing $f" >&2; exit 1; }
 done
 ```
 
 ### Gate Check
 
-If TEST speckit-echelon-architect (ARCHITECT) flags untestable acceptance criteria → route back to WHAT for amendment. Increment iteration. Check limits.
+If TEST echelon-architect (ARCHITECT) flags untestable acceptance criteria → route back to WHAT for amendment. Increment iteration. Check limits.
 
 The controller-owned `phase3-solution` timing window remains open through PLAN.
 It closes after successful `phase3-plan` execution before deterministic

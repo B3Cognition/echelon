@@ -73,7 +73,7 @@ class TestInvestigatorTemplates:
             "  journal_entries:\n"
             in text
         )
-        assert "agent: speckit-echelon-investigator (INVESTIGATOR)" in text
+        assert "agent: echelon-investigator (INVESTIGATOR)" in text
 
     def test_phase3_specialist_dispatch_includes_templates(self) -> None:
         text = PHASE.read_text(encoding="utf-8")

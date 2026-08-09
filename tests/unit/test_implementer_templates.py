@@ -13,5 +13,5 @@ class TestImplementerTemplates:
 
         assert ".specify/..." not in text
         assert "{spec_dir}/implementation/<file>" in text
-        assert "agent: speckit-echelon-implementer (IMPLEMENTER)" in text
+        assert "agent: echelon-implementer (IMPLEMENTER)" in text
         assert "agent: IMPLEMENTER" not in text

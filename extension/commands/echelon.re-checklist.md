@@ -1,5 +1,5 @@
 ---
-name: speckit.echelon.re-checklist
+name: echelon.re-checklist
 description: "Generate quality checklists for specs (per-domain + summary)"
 scripts:
   sh: ../../scripts/bash/startup-banner.sh

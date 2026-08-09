@@ -83,7 +83,7 @@ class TestTrackerTemplates:
         assert "${STAGING_DIR}/stakeholder-model.md" in text
         assert ".specify/.../user-intent.md" not in text
         assert "agent: INTENT" not in text
-        assert "agent: speckit-echelon-tracker (TRACKER)" in text
+        assert "agent: echelon-tracker (TRACKER)" in text
 
     def test_phase1_tracker_dispatch_includes_intent_templates(self) -> None:
         text = PHASE1.read_text(encoding="utf-8")

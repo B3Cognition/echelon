@@ -45,7 +45,7 @@ def test_build_prompt_includes_dedicated_stack_context_section() -> None:
         worktree_path="/wt/001",
         spec_content="spec",
         tasks_content="tasks",
-        build_skill="speckit.echelon.build",
+        build_skill="echelon.build",
         stack_context="# Resolved Echelon Stacks\n\n- statsperform-playbook\n",
     )
 

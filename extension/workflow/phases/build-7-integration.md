@@ -1,15 +1,15 @@
 # Phase: build-7-integration
 # Source: echelon.build.md §7 — Phase Checkpoint (INTEGRATION)
-# Agents: speckit-echelon-integrator (INTEGRATOR), then optionally speckit-echelon-visual-validator (VISUAL speckit-echelon-validator (VALIDATOR))
-# Read by: speckit-echelon-commander (COMMANDER) after all tasks in a phase group complete
+# Agents: echelon-integrator (INTEGRATOR), then optionally echelon-visual-validator (VISUAL echelon-validator (VALIDATOR))
+# Read by: echelon-commander (COMMANDER) after all tasks in a phase group complete
 
 ## 7. Phase Checkpoint (INTEGRATION)
 
 ### When
 
-After all tasks in a phase group (e.g., "Foundation") are complete, run the speckit-echelon-integrator (INTEGRATOR) before proceeding to the next phase group.
+After all tasks in a phase group (e.g., "Foundation") are complete, run the echelon-integrator (INTEGRATOR) before proceeding to the next phase group.
 
-### 7.1 Dispatch speckit-echelon-integrator (INTEGRATOR)
+### 7.1 Dispatch echelon-integrator (INTEGRATOR)
 
 Use the Ralph-owned context pack:
 
@@ -21,7 +21,7 @@ Use the Ralph-owned context pack:
 
 Use the Agent tool:
 
-- **subagent_type:** `speckit-echelon-integrator`
+- **subagent_type:** `echelon-integrator`
 - **prompt:**
 
   ```xml
@@ -36,18 +36,18 @@ Use the Agent tool:
   </instructions>
   ```
 
-- **description:** "speckit-echelon-integrator (INTEGRATOR): phase '{phase_group}' — system integration check"
+- **description:** "echelon-integrator (INTEGRATOR): phase '{phase_group}' — system integration check"
 
 ### 7.2 Handle Result
 
-- **PASS** — Run `endocrine.sh on_gate_pass speckit-echelon-integrator (INTEGRATOR)`. Run 7.2.1 (browser-app visual check if applicable). Record checkpoint. Proceed to next phase group.
-- **FAIL** — Run `endocrine.sh on_gate_fail speckit-echelon-integrator (INTEGRATOR)` + `endocrine.sh on_low_confidence speckit-echelon-implementer (IMPLEMENTER)` (for responsible task). Route integration failures back to the responsible task's speckit-echelon-implementer (IMPLEMENTER). Re-run speckit-echelon-integrator (INTEGRATOR) after fixes. Max 2 fix cycles per phase checkpoint. If still failing, flag phase as DEGRADED and proceed.
+- **PASS** — Run `endocrine.sh on_gate_pass echelon-integrator (INTEGRATOR)`. Run 7.2.1 (browser-app visual check if applicable). Record checkpoint. Proceed to next phase group.
+- **FAIL** — Run `endocrine.sh on_gate_fail echelon-integrator (INTEGRATOR)` + `endocrine.sh on_low_confidence echelon-implementer (IMPLEMENTER)` (for responsible task). Route integration failures back to the responsible task's echelon-implementer (IMPLEMENTER). Re-run echelon-integrator (INTEGRATOR) after fixes. Max 2 fix cycles per phase checkpoint. If still failing, flag phase as DEGRADED and proceed.
 
 ### 7.2.1 Visual Validator Dispatch (MANDATORY for browser/SPA apps)
 
 **Detect stack:** Check `research.md` and `plan.md` for browser/SPA indicators: Vite, React, Vue, Svelte, Angular, SolidJS, Astro, Next.js, Nuxt, Remix, static site, or any spec requirement for a web UI.
 
-**If browser/SPA detected:** Dispatch speckit-echelon-visual-validator (VISUAL speckit-echelon-validator (VALIDATOR)) immediately after speckit-echelon-integrator (INTEGRATOR) PASS — before recording the checkpoint and before proceeding to the next phase group.
+**If browser/SPA detected:** Dispatch echelon-visual-validator (VISUAL echelon-validator (VALIDATOR)) immediately after echelon-integrator (INTEGRATOR) PASS — before recording the checkpoint and before proceeding to the next phase group.
 
 Use the Ralph-owned context pack:
 
@@ -60,7 +60,7 @@ Use the Ralph-owned context pack:
 
 Use the Agent tool:
 
-- **subagent_type:** `speckit-echelon-visual-validator`
+- **subagent_type:** `echelon-visual-validator`
 - **prompt:**
 
   ```xml
@@ -75,12 +75,12 @@ Use the Agent tool:
   </instructions>
   ```
 
-- **description:** "speckit-echelon-visual-validator (VISUAL speckit-echelon-validator (VALIDATOR)): phase '{phase_group}' — browser render check"
+- **description:** "echelon-visual-validator (VISUAL echelon-validator (VALIDATOR)): phase '{phase_group}' — browser render check"
 
 Handle result:
 
 - **VISUAL_PASS** — proceed to 7.3.
-- **VISUAL_FAIL** — Run `endocrine.sh on_gate_fail speckit-echelon-implementer (IMPLEMENTER)`. Route visual failures back to speckit-echelon-implementer (IMPLEMENTER) with the specific rendering issues (blank page, missing components, console errors). speckit-echelon-implementer (IMPLEMENTER) fixes, speckit-echelon-integrator (INTEGRATOR) re-runs, then speckit-echelon-visual-validator (VISUAL speckit-echelon-validator (VALIDATOR)) re-runs. Max 2 fix cycles. If still failing, flag phase as DEGRADED and escalate to human.
+- **VISUAL_FAIL** — Run `endocrine.sh on_gate_fail echelon-implementer (IMPLEMENTER)`. Route visual failures back to echelon-implementer (IMPLEMENTER) with the specific rendering issues (blank page, missing components, console errors). echelon-implementer (IMPLEMENTER) fixes, echelon-integrator (INTEGRATOR) re-runs, then echelon-visual-validator (VISUAL echelon-validator (VALIDATOR)) re-runs. Max 2 fix cycles. If still failing, flag phase as DEGRADED and escalate to human.
 
 **If not browser/SPA:** skip 7.2.1 and proceed directly to 7.3.
 

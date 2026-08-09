@@ -14,7 +14,7 @@ class TestBuildPromptBuilder:
             worktree_path="/wt/001",
             spec_content="FR-001: login",
             tasks_content="Task 1: impl",
-            build_skill="speckit.echelon.build",
+            build_skill="echelon.build",
         )
         assert "/wt/001" in prompt
 
@@ -23,7 +23,7 @@ class TestBuildPromptBuilder:
             worktree_path="/wt/001",
             spec_content="spec",
             tasks_content="tasks",
-            build_skill="speckit.echelon.build",
+            build_skill="echelon.build",
         )
 
         assert "Do not search outside the worktree" in prompt
@@ -35,7 +35,7 @@ class TestBuildPromptBuilder:
             worktree_path="/wt/001",
             spec_content="spec",
             tasks_content="tasks",
-            build_skill="speckit.echelon.build",
+            build_skill="echelon.build",
         )
 
         assert "Ralph does not consume `next_phase`" in prompt
@@ -48,7 +48,7 @@ class TestBuildPromptBuilder:
             worktree_path="/wt/001",
             spec_content="spec",
             tasks_content="tasks",
-            build_skill="speckit.echelon.build",
+            build_skill="echelon.build",
         )
 
         assert '"status": "done"' in prompt
@@ -65,7 +65,7 @@ class TestBuildPromptBuilder:
             worktree_path="/wt/001",
             spec_content="spec",
             tasks_content="tasks",
-            build_skill="speckit.echelon.build",
+            build_skill="echelon.build",
         )
 
         assert "Do not edit `tasks.md`" in prompt
@@ -77,7 +77,7 @@ class TestBuildPromptBuilder:
             worktree_path="/wt/001",
             spec_content="spec",
             tasks_content="tasks",
-            build_skill="speckit.echelon.build",
+            build_skill="echelon.build",
         )
 
         assert "Do not use native task-planning tools" in prompt
@@ -91,7 +91,7 @@ class TestBuildPromptBuilder:
             worktree_path="/wt/001",
             spec_content="FR-001: login endpoint",
             tasks_content="Task 1: impl",
-            build_skill="speckit.echelon.build",
+            build_skill="echelon.build",
         )
         assert "FR-001: login endpoint" in prompt
 
@@ -109,7 +109,7 @@ class TestBuildPromptBuilder:
             worktree_path="/wt/001",
             spec_content="spec",
             tasks_content="tasks",
-            build_skill="speckit.echelon.build",
+            build_skill="echelon.build",
             lessons="NEVER hardcode ports",
         )
         assert "NEVER hardcode ports" in prompt
@@ -119,7 +119,7 @@ class TestBuildPromptBuilder:
             worktree_path="/wt/001",
             spec_content="spec",
             tasks_content="tasks",
-            build_skill="speckit.echelon.build",
+            build_skill="echelon.build",
             lessons="",
         )
         assert "Mandatory Constraints" not in prompt
@@ -129,7 +129,7 @@ class TestBuildPromptBuilder:
             worktree_path="/wt/001",
             spec_content="spec",
             tasks_content="tasks",
-            build_skill="speckit.echelon.build",
+            build_skill="echelon.build",
             bugfix_content="Root cause: null pointer in auth.py:42",
         )
         assert "Root cause: null pointer" in prompt
@@ -184,7 +184,7 @@ class TestBuildPromptBuilder:
             worktree_path="/wt/001",
             spec_content="spec",
             tasks_content="tasks",
-            build_skill="speckit.echelon.build",
+            build_skill="echelon.build",
             pitfalls="NEVER use sync I/O in async handlers",
         )
         assert "NEVER use sync I/O in async handlers" in prompt
@@ -195,7 +195,7 @@ class TestBuildPromptBuilder:
             worktree_path="/wt/001",
             spec_content="spec",
             tasks_content="tasks",
-            build_skill="speckit.echelon.build",
+            build_skill="echelon.build",
             lessons="",
             pitfalls="",
         )
@@ -206,7 +206,7 @@ class TestBuildPromptBuilder:
             worktree_path="/wt/001",
             spec_content="spec",
             tasks_content="tasks",
-            build_skill="speckit.echelon.build",
+            build_skill="echelon.build",
             strategy_context="Use the SOAR pipeline",
         )
         assert "Use the SOAR pipeline" in prompt

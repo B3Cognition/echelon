@@ -24,9 +24,9 @@ from harness.review_artifacts import PublishedReviewBatch, ReviewArtifactError
 
 
 _REVIEW_AGENT_NAMES = (
-    "speckit-echelon-debugger",
-    "speckit-echelon-sentinel",
-    "speckit-echelon-spec-guard",
+    "echelon-debugger",
+    "echelon-sentinel",
+    "echelon-spec-guard",
 )
 
 
@@ -174,7 +174,7 @@ class TestReviewLoopInvocation:
         workspace = tmp_path / "workspace"
         harness_root = workspace / "runs" / "targets" / "api"
         worktree = harness_root / "runs" / "build-1" / "worktrees" / "default" / "iter-0"
-        skill_dir = worktree / ".claude" / "skills" / "speckit-echelon-review"
+        skill_dir = worktree / ".claude" / "skills" / "echelon-review"
         skill_dir.mkdir(parents=True)
         (skill_dir / "skill.md").write_text(
             "---\nname: echelon.review\n---\nreview $ARGUMENTS\n",

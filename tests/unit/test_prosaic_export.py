@@ -28,14 +28,14 @@ def test_export_normalized_agents_uses_manifest_metadata_and_discards_native_fro
     (extension / "extension.yml").write_text(
         "provides:\n"
         "  commands:\n"
-        "    - name: speckit.echelon.chief\n"
+        "    - name: echelon.chief\n"
         "      file: agents/chief.md\n"
         "      description: Canonical chief\n"
         "      behavior:\n"
         "        execution: agent\n"
         "        capability: balanced\n"
         "        tools: full\n"
-        "    - name: speckit.echelon.re-validator\n"
+        "    - name: echelon.re-validator\n"
         "      file: agents/validator.md\n"
         "      description: Canonical validator\n"
         "      behavior:\n"
@@ -58,7 +58,7 @@ def test_export_normalized_agents_uses_manifest_metadata_and_discards_native_fro
     assert not stale.exists()
     _, chief_frontmatter, chief_body = chief.read_text(encoding="utf-8").split("---\n", 2)
     assert yaml.safe_load(chief_frontmatter) == {
-        "name": "speckit.echelon.chief",
+        "name": "echelon.chief",
         "description": "Canonical chief",
         "execution": "agent",
         "model_tier": "balanced",
@@ -81,7 +81,7 @@ def test_export_normalized_prose_writes_manifest_defined_commands(tmp_path: Path
     (extension / "extension.yml").write_text(
         "provides:\n"
         "  commands:\n"
-        "    - name: speckit.echelon.bugfix\n"
+        "    - name: echelon.bugfix\n"
         "      file: commands/echelon.bugfix.md\n"
         "      description: Canonical bugfix\n"
         "      behavior:\n"
@@ -103,7 +103,7 @@ def test_export_normalized_prose_writes_manifest_defined_commands(tmp_path: Path
     command = tmp_path / ".echelon" / "prosaic" / "commands" / "echelon.bugfix.md"
     _, frontmatter, body = command.read_text(encoding="utf-8").split("---\n", 2)
     assert yaml.safe_load(frontmatter) == {
-        "name": "speckit.echelon.bugfix",
+        "name": "echelon.bugfix",
         "description": "Canonical bugfix",
         "execution": "command",
         "model_tier": "strong",

@@ -1,10 +1,10 @@
-# speckit-echelon-validator (VALIDATOR) Agent (INTERNALIZATION-GATE)
+# echelon-validator (VALIDATOR) Agent (INTERNALIZATION-GATE)
 
 ## Role
 
 You are VALIDATOR. You ensure every agent has deeply comprehended the understanding artifacts before they begin work, implementing the middle phase: Understanding → Internalization → Application.
 
-speckit-echelon-commander (COMMANDER) routes your internalization verdict to control build-phase entry. A false PASS lets unprepared agents build.
+echelon-commander (COMMANDER) routes your internalization verdict to control build-phase entry. A false PASS lets unprepared agents build.
 
 The internalization check costs ~5 minutes per agent. Without it, agents misread constraints and ADRs, producing rework that costs 3× the original effort.
 
@@ -80,12 +80,12 @@ PHASE 3: APPLICATION (building)
 ### Step 1: Identify Agents That Need Internalization
 
 For the upcoming build phase, determine which agents will be active:
-- speckit-echelon-implementer (IMPLEMENTER) (always)
-- speckit-echelon-spec-guard (SPEC GUARD) (always)
-- speckit-echelon-code-reviewer (CODE REVIEWER) (always)
-- speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN)) (always)
-- speckit-echelon-engineering-manager (ENGINEERING MANAGER) (always)
-- speckit-echelon-integrator (INTEGRATOR) (per phase)
+- echelon-implementer (IMPLEMENTER) (always)
+- echelon-spec-guard (SPEC GUARD) (always)
+- echelon-code-reviewer (CODE REVIEWER) (always)
+- echelon-test-guardian (TEST echelon-guardian (GUARDIAN)) (always)
+- echelon-engineering-manager (ENGINEERING MANAGER) (always)
+- echelon-integrator (INTEGRATOR) (per phase)
 - Any specialists still active
 
 ### Step 2: For Each Agent — Internalization Check
@@ -180,18 +180,18 @@ Save to `{spec_dir}/internalization-report.md` and feed into Agent Scorecard.
 
 | Agent | Role | Constraints | Architecture | Domain | Tasks | Doubts | Score | Status |
 |-------|------|-------------|-------------|--------|-------|--------|-------|--------|
-| speckit-echelon-implementer (IMPLEMENTER) | PASS | PASS | PASS | PASS | PASS | 0 | 6/6 | INTERNALIZED |
-| speckit-echelon-spec-guard (SPEC GUARD) | PASS | PASS | PASS | PASS | PASS | 0 | 6/6 | INTERNALIZED |
-| speckit-echelon-code-reviewer (CODE REVIEWER) | PASS | PASS | PARTIAL | PASS | PASS | 1 | 5/6 | PARTIAL |
-| speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN)) | PASS | PASS | PASS | FAIL | PASS | 2 | 4/6 | PARTIAL |
+| echelon-implementer (IMPLEMENTER) | PASS | PASS | PASS | PASS | PASS | 0 | 6/6 | INTERNALIZED |
+| echelon-spec-guard (SPEC GUARD) | PASS | PASS | PASS | PASS | PASS | 0 | 6/6 | INTERNALIZED |
+| echelon-code-reviewer (CODE REVIEWER) | PASS | PASS | PARTIAL | PASS | PASS | 1 | 5/6 | PARTIAL |
+| echelon-test-guardian (TEST echelon-guardian (GUARDIAN)) | PASS | PASS | PASS | FAIL | PASS | 2 | 4/6 | PARTIAL |
 
 ## Doubts Raised
 
 | Agent | Doubt | Resolution | Source |
 |-------|-------|------------|--------|
-| speckit-echelon-code-reviewer (CODE REVIEWER) | "ADR-005 says component encapsulation but some modules use a different approach?" | ADR-013 allows fallback for media components | research.md ADR-013 |
-| speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN)) | "What test framework for component tests?" | Web Test Runner per ADR-006 | research.md ADR-006 |
-| speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN)) | "Is the data visualization SVG or Canvas?" | SVG per FR-VIZ-001 | spec.md FR-VIZ-001 |
+| echelon-code-reviewer (CODE REVIEWER) | "ADR-005 says component encapsulation but some modules use a different approach?" | ADR-013 allows fallback for media components | research.md ADR-013 |
+| echelon-test-guardian (TEST echelon-guardian (GUARDIAN)) | "What test framework for component tests?" | Web Test Runner per ADR-006 | research.md ADR-006 |
+| echelon-test-guardian (TEST echelon-guardian (GUARDIAN)) | "Is the data visualization SVG or Canvas?" | SVG per FR-VIZ-001 | spec.md FR-VIZ-001 |
 
 ## Gaps Discovered
 
@@ -218,8 +218,8 @@ echelon_result:
   journal_entries:
     - type: validator_dispatch
       phase: build_init
-      agent: speckit-echelon-validator (VALIDATOR)
+      agent: echelon-validator (VALIDATOR)
       data:
         verdict: "<INTERNALIZED | PARTIAL | FAILED>"
         doubts: ["<doubt 1 if PARTIAL or FAILED — specific artifact, section, and what was unclear>"]
-        agents_assessed: ["speckit-echelon-architect (ARCHITECT)", "speckit-echelon-scout (SCOUT)", "speckit-echelon-cartographer (CARTOGRAPHER)"]
+        agents_assessed: ["echelon-architect (ARCHITECT)", "echelon-scout (SCOUT)", "echelon-cartographer (CARTOGRAPHER)"]

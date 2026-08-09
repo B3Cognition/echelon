@@ -1,5 +1,5 @@
 ---
-name: speckit.echelon.re-validate
+name: echelon.re-validate
 description: "Validate specs for quality, auto-resolve ambiguities from code"
 scripts:
   sh: ../../scripts/bash/startup-banner.sh

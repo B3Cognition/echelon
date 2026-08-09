@@ -1,5 +1,5 @@
 # Phase: verify-spec-2-codegraph
-# Read by: speckit-echelon-commander (COMMANDER)
+# Read by: echelon-commander (COMMANDER)
 # Type: commander_internal
 
 ## Objective

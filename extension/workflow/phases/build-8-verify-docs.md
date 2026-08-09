@@ -1,10 +1,10 @@
 # Phase: build-8-verify-docs
 # Source: Documentation Convergence Gate
-# Read by: speckit-echelon-commander (COMMANDER) after TECH WRITER and before build finalization
+# Read by: echelon-commander (COMMANDER) after TECH WRITER and before build finalization
 
 ## Documentation Verification
 
-After speckit-echelon-tech-writer (TECH WRITER) writes README.md, CHANGELOG.md, and `{spec_dir}/documentation-impact-report.md`, dispatch speckit-echelon-docs-verifier (DOCS VERIFIER).
+After echelon-tech-writer (TECH WRITER) writes README.md, CHANGELOG.md, and `{spec_dir}/documentation-impact-report.md`, dispatch echelon-docs-verifier (DOCS VERIFIER).
 
 Use the Ralph-owned context pack:
 
@@ -17,7 +17,7 @@ Use the Ralph-owned context pack:
 
 Use the Agent tool:
 
-- **subagent_type:** `speckit-echelon-docs-verifier`
+- **subagent_type:** `echelon-docs-verifier`
 - **prompt:**
 
   ```xml
@@ -31,7 +31,7 @@ Use the Agent tool:
   </instructions>
   ```
 
-- **description:** "speckit-echelon-docs-verifier (DOCS VERIFIER): first-run README and documentation quality verification"
+- **description:** "echelon-docs-verifier (DOCS VERIFIER): first-run README and documentation quality verification"
 
 DOCS VERIFIER must:
 

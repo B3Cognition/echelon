@@ -1,5 +1,5 @@
 # Phase: re-extract-6-checklist
-# Agent: speckit-echelon-re-checklister
+# Agent: echelon-re-checklister
 
 ## Context Pack
 

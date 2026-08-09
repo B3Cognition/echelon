@@ -1587,7 +1587,7 @@ class PhaseExecutor(ABC):
                 0,
                 {
                     "type": "state_contract_warning",
-                    "agent": "speckit-echelon-commander",
+                    "agent": "echelon-commander",
                     "data": {
                         "dropped_keys": sorted(result.quarantined_state_updates),
                         "action": "quarantined",

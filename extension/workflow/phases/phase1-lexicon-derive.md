@@ -7,7 +7,7 @@ quality-certified `spec.md`.
 
 ## Actor
 
-`speckit-echelon-lexicon-deriver`
+`echelon-lexicon-deriver`
 
 ## Required Inputs
 

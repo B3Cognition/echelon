@@ -1,5 +1,5 @@
 ---
-name: speckit.echelon.re-plan-all
+name: echelon.re-plan-all
 description: "Phase 3 brownfield — generate per-domain plans and tasks after strategic decisions are filled"
 scripts:
   sh: ../../scripts/bash/startup-banner.sh

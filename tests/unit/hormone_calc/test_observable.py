@@ -135,9 +135,9 @@ def test_build_from_journal_tail_limit_50(minimal_state, tmp_path, minimal_resul
 
 
 def test_normalize_agent_name_speckit_form():
-    assert normalize_agent_name("speckit-echelon-commander") == "COMMANDER"
-    assert normalize_agent_name("speckit-echelon-spec-guard") == "SPEC_GUARD"
-    assert normalize_agent_name("speckit-echelon-test-guardian") == "TEST_GUARDIAN"
+    assert normalize_agent_name("echelon-commander") == "COMMANDER"
+    assert normalize_agent_name("echelon-spec-guard") == "SPEC_GUARD"
+    assert normalize_agent_name("echelon-test-guardian") == "TEST_GUARDIAN"
 
 
 def test_normalize_agent_name_canonical_form_idempotent():

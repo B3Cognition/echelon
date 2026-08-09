@@ -1,7 +1,7 @@
 # Phase: codegen-2-decompose
 # Source: echelon.codegen.md §Phase 2 — DECOMPOSE Task Decomposition
 # Shared: used by both echelon.codegen and echelon.codegenlight
-# Read by: speckit-echelon-orchestrator (ORCHESTRATOR) before Phase 2 DECOMPOSE execution
+# Read by: echelon-orchestrator (ORCHESTRATOR) before Phase 2 DECOMPOSE execution
 
 ---
 

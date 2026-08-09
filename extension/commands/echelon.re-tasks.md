@@ -1,5 +1,5 @@
 ---
-name: speckit.echelon.re-tasks
+name: echelon.re-tasks
 description: "Generate per-domain tasks.md files"
 scripts:
   sh: ../../scripts/bash/startup-banner.sh

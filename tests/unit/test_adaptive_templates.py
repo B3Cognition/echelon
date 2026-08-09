@@ -32,7 +32,7 @@ class TestAdaptiveTemplates:
         assert "{spec_dir}/" in text
         assert "{spec_dir}/evolution-report.md" in text
         assert "{spec_dir}/improvement-metrics.md" in text
-        assert "agent: speckit-echelon-adaptive (ADAPTIVE)" in text
+        assert "agent: echelon-adaptive (ADAPTIVE)" in text
         assert "agent: EVOLVE" not in text
 
     def test_finalize_dispatch_includes_adaptive_template(self) -> None:

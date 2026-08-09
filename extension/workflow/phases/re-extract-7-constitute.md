@@ -1,5 +1,5 @@
 # Phase: re-extract-7-constitute
-# Agent: speckit-echelon-re-constituter
+# Agent: echelon-re-constituter
 
 ## Context Pack
 

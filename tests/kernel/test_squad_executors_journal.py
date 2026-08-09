@@ -1641,7 +1641,7 @@ def test_pre_dispatch_quarantines_unallowed_state_updates_before_mutation(tmp_pa
         id="phase1-discover",
         type="agent",
         pre_dispatch=[
-            {"id": "test_pre_dispatch", "agent": "speckit-echelon-guardian"}
+            {"id": "test_pre_dispatch", "agent": "echelon-guardian"}
         ],
         allowed_state_updates=["allowed_key"],
     )
@@ -1731,7 +1731,7 @@ def test_pre_dispatch_applies_allowed_state_updates(tmp_path):
         id="phase1-discover",
         type="agent",
         pre_dispatch=[
-            {"id": "test_pre_dispatch", "agent": "speckit-echelon-guardian"}
+            {"id": "test_pre_dispatch", "agent": "echelon-guardian"}
         ],
         allowed_state_updates=["allowed_key"],
     )
@@ -1774,7 +1774,7 @@ def test_pre_dispatch_rejects_allowlisted_transaction_owned_update_before_write(
         type="agent",
         pre_dispatch=[{
             "id": "guard",
-            "agent": "speckit-echelon-guardian",
+            "agent": "echelon-guardian",
             "allowed_state_updates": ["manual_phase_runs"],
         }],
         allowed_state_updates=[],
@@ -1823,7 +1823,7 @@ def test_pre_dispatch_stop_and_ask_short_circuits_without_state_write(tmp_path):
         type="agent",
         pre_dispatch=[{
             "id": "guard",
-            "agent": "speckit-echelon-guardian",
+            "agent": "echelon-guardian",
             "allowed_state_updates": [
                 "status",
                 "blocked_reason",
@@ -1882,7 +1882,7 @@ def test_conditional_nested_rejects_transaction_owned_update_before_write(
     node = SimpleNamespace(
         id="phase-test",
         agents=[{
-            "id": "speckit-echelon-guardian",
+            "id": "echelon-guardian",
             "condition": "always",
             "allowed_state_updates": ["manual_phase_runs"],
         }],
@@ -1926,7 +1926,7 @@ def test_staged_nested_rejects_transaction_owned_update_before_write(tmp_path):
     node = SimpleNamespace(
         id="phase3-consensus",
         agents=[{
-            "id": "speckit-echelon-sage",
+            "id": "echelon-sage",
             "mode": "WHY3",
             "stage": 1,
             "context_pack": [],
@@ -2048,7 +2048,7 @@ def test_why3_staged_prompt_injects_certified_understanding_evidence(tmp_path):
     report = squad_dir / "evidence" / "understanding" / "phase3-consensus-iter-1.json"
 
     prompt = ex._build_agent_prompt(
-        {"id": "speckit-echelon-sage", "mode": "WHY3"},
+        {"id": "echelon-sage", "mode": "WHY3"},
         {
             "squad_dir": str(squad_dir),
             "understanding_evidence": {
@@ -2164,7 +2164,7 @@ def test_conditional_sequential_prompt_includes_allowed_state_updates(tmp_path):
     executor = ConditionalSequentialExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
     node = SimpleNamespace(
         id="phase-test",
-        agents=[{"id": "speckit-echelon-guardian", "condition": "always"}],
+        agents=[{"id": "echelon-guardian", "condition": "always"}],
         allowed_state_updates=["risk_status"],
     )
 
@@ -2253,7 +2253,7 @@ def test_staged_parallel_quarantines_state_update_outside_allowlist(tmp_path):
         id="phase3-consensus",
         agents=[
             {
-                "id": "speckit-echelon-sage",
+                "id": "echelon-sage",
                 "mode": "WHY3",
                 "stage": 1,
                 "context_pack": [],
@@ -2304,14 +2304,14 @@ def test_staged_parallel_blocks_plan2_when_implementability_report_is_missing(tm
         id="phase3-consensus",
         agents=[
             {
-                "id": "speckit-echelon-gatekeeper",
+                "id": "echelon-gatekeeper",
                 "mode": "ASSESS2",
                 "stage": 1,
                 "context_pack": [],
                 "allowed_verdicts": ["PASS", "REJECTED", "BLOCKED"],
             },
             {
-                "id": "speckit-echelon-orchestrator",
+                "id": "echelon-orchestrator",
                 "mode": "PLAN2",
                 "stage": 2,
                 "context_pack": [],
@@ -2404,7 +2404,7 @@ def test_staged_prompt_uses_agent_specific_state_contract(tmp_path):
     ex = StagedParallelExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
     state = {"squad_dir": str(squad_dir), "staging_dir": str(squad_dir / "staging")}
     entry = {
-        "id": "speckit-echelon-orchestrator",
+        "id": "echelon-orchestrator",
         "mode": "PLAN2",
         "allowed_state_updates": ["tasks_lexicon_attempts"],
         "required_state_updates": [],

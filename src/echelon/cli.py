@@ -167,10 +167,10 @@ Commands:
                                             Land a spec: merge PR/branch, clean up.
 
 Skill file locations (auto-detected from ECHELON_LLM env var):
-  Claude   : .claude/skills/speckit-echelon-<cmd>/[Ss]kill.md
-  Copilot  : .github/agents/speckit.echelon.<cmd>.agent.md
-  Opencode : .opencode/command/speckit.echelon.<cmd>.md
-  Codex    : .claude/skills/speckit-echelon-<cmd>/[Ss]kill.md
+  Claude   : .claude/skills/echelon-<cmd>/[Ss]kill.md
+  Copilot  : .github/agents/echelon.<cmd>.agent.md
+  Opencode : .opencode/command/echelon.<cmd>.md
+  Codex    : .claude/skills/echelon-<cmd>/[Ss]kill.md
 """
 
 

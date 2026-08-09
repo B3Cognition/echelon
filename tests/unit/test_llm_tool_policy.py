@@ -180,7 +180,7 @@ def test_opencode_skill_command_preserves_native_command_dispatch() -> None:
         "opencode",
         "run",
         "--command",
-        "speckit.echelon.build",
+        "echelon.build",
         "005",
     ]
     assert "--dangerously-skip-permissions" not in cmd

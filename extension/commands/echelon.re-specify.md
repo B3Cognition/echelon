@@ -1,5 +1,5 @@
 ---
-name: speckit.echelon.re-specify
+name: echelon.re-specify
 description: "Generate domain specifications from analysis artifacts"
 scripts:
   sh: ../../scripts/bash/startup-banner.sh

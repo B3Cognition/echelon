@@ -926,7 +926,7 @@ def test_sync_runtime_extension_materializes_claude_command_skills(tmp_path):
     (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
     (prose / "commands" / "echelon.verify-spec.md").write_text(
         "---\n"
-        "name: speckit.echelon.verify-spec\n"
+        "name: echelon.verify-spec\n"
         "description: Verify spec\n"
         "---\n\n"
         "Read `agents/control/commander.md` and `workflow/definition.yaml`.\n\n"
@@ -963,7 +963,7 @@ def test_sync_runtime_extension_skips_claude_command_skills_for_codex(tmp_path):
     (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
     (prose / "commands" / "echelon.verify-spec.md").write_text(
         "---\n"
-        "name: speckit.echelon.verify-spec\n"
+        "name: echelon.verify-spec\n"
         "description: Verify spec\n"
         "---\n\n"
         "$ARGUMENTS\n",

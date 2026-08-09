@@ -19,7 +19,7 @@ def _definition() -> dict:
 def test_tech_writer_agent_is_registered() -> None:
     commands = _extension()["provides"]["commands"]
     tech_writer = next(
-        (item for item in commands if item.get("name") == "speckit.echelon.tech-writer"),
+        (item for item in commands if item.get("name") == "echelon.tech-writer"),
         None,
     )
 
@@ -33,7 +33,7 @@ def test_tech_writer_agent_is_registered() -> None:
 def test_docs_verifier_agent_is_registered() -> None:
     commands = _extension()["provides"]["commands"]
     verifier = next(
-        (item for item in commands if item.get("name") == "speckit.echelon.docs-verifier"),
+        (item for item in commands if item.get("name") == "echelon.docs-verifier"),
         None,
     )
 
@@ -49,14 +49,14 @@ def test_tech_writer_phase_is_routed_before_build_finalize() -> None:
 
     docs_phase = phases["build-8-documentation"]
     assert docs_phase["type"] == "agent"
-    assert docs_phase["agent"] == "speckit-echelon-tech-writer"
+    assert docs_phase["agent"] == "echelon-tech-writer"
     assert "documentation-impact-report.md" in docs_phase["outputs"]
     assert "shadow_output_recovered" in docs_phase["allowed_state_updates"]
     assert docs_phase["transitions"] == [{"to": "build-8-verify-docs", "condition": "always"}]
 
     verify_docs = phases["build-8-verify-docs"]
     assert verify_docs["type"] == "agent"
-    assert verify_docs["agent"] == "speckit-echelon-docs-verifier"
+    assert verify_docs["agent"] == "echelon-docs-verifier"
     assert "docs-verification-report.md" in verify_docs["outputs"]
     assert "documentation-impact-report.md" in verify_docs["context_pack"]
     assert "README.md" in verify_docs["context_pack"]

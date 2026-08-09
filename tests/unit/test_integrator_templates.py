@@ -13,7 +13,7 @@ class TestIntegratorTemplates:
         assert ".specify/specs/" not in text
         assert ".specify/..." not in text
         assert "{spec_dir}/integration-report.md" in text
-        assert "agent: speckit-echelon-integrator (INTEGRATOR)" in text
+        assert "agent: echelon-integrator (INTEGRATOR)" in text
 
     def test_integration_phase_uses_canonical_output_path(self) -> None:
         text = PHASE.read_text(encoding="utf-8")

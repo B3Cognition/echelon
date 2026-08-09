@@ -3164,17 +3164,17 @@ def test_claude_backend_compiles_review_triage_profile(tmp_path) -> None:
         (tmp_path / "state" / "strategy-review-status.json").resolve(),
     ]
     review_agents = {
-        "speckit-echelon-debugger": {
+        "echelon-debugger": {
             "description": "Diagnose each review concern.",
             "prompt": "Read the supplied evidence and diagnose the issue.",
             "tools": ["Read"],
         },
-        "speckit-echelon-sentinel": {
+        "echelon-sentinel": {
             "description": "Check proposed fixes for regressions.",
             "prompt": "Read the evidence and identify delivery risks.",
             "tools": ["Read"],
         },
-        "speckit-echelon-spec-guard": {
+        "echelon-spec-guard": {
             "description": "Check the canonical specification.",
             "prompt": "Read the specification and report contract conflicts.",
             "tools": ["Read"],
@@ -3211,9 +3211,9 @@ def test_claude_backend_compiles_review_triage_profile(tmp_path) -> None:
         f"Read(/{worktree}/**)",
         f"Read(/{spec_dir}/**)",
         *(f"{tool}(/{path})" for path in staged_files for tool in ("Write", "Edit")),
-        "Agent(speckit-echelon-debugger)",
-        "Agent(speckit-echelon-sentinel)",
-        "Agent(speckit-echelon-spec-guard)",
+        "Agent(echelon-debugger)",
+        "Agent(echelon-sentinel)",
+        "Agent(echelon-spec-guard)",
     }
     assert json.loads(command[command.index("--agents") + 1]) == review_agents
     flattened = " ".join(command)
@@ -3278,9 +3278,9 @@ def test_claude_backend_rejects_review_triage_paths_not_representable_in_rules(
             "tools": ["Read"],
         }
         for name in (
-            "speckit-echelon-debugger",
-            "speckit-echelon-sentinel",
-            "speckit-echelon-spec-guard",
+            "echelon-debugger",
+            "echelon-sentinel",
+            "echelon-spec-guard",
         )
     }
     read_root = tmp_path / "safe-read-root"

@@ -14,7 +14,7 @@ class TestSpecGuardTemplates:
         assert ".specify/..." not in text
         assert "{spec_dir}/spec-compliance-report.md" in text
         assert "{spec_dir}/traceability-matrix.md" in text
-        assert "agent: speckit-echelon-spec-guard (SPEC GUARD)" in text
+        assert "agent: echelon-spec-guard (SPEC GUARD)" in text
         assert "agent: SPEC_GUARD" not in text
 
     def test_spec_guard_phase_uses_canonical_output_paths(self) -> None:

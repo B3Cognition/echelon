@@ -29,7 +29,7 @@ SPECS_DIR="${ARGUMENTS:-specs}"
 
 if [ ! -d "$SPECS_DIR" ]; then
   echo "Directory not found: $SPECS_DIR"
-  echo "Usage: /speckit.echelon.understanding-batch [directory]"
+  echo "Usage: /echelon.understanding-batch [directory]"
   echo "Default: specs/"
   exit 1
 fi
@@ -72,7 +72,7 @@ Review the batch output and provide:
 Based on the batch results:
 - Prioritize specs that fail quality gates for immediate improvement
 - Identify systemic issues (e.g., "all specs lack hard constraints" → team training on testability)
-- Suggest running `/speckit.echelon.understanding-scan` on specific failing specs for detailed analysis
+- Suggest running `/echelon.understanding-scan` on specific failing specs for detailed analysis
 
 ### 6. For CI/CD Integration
 

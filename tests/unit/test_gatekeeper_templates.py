@@ -90,7 +90,7 @@ class TestGatekeeperTemplates:
         assert "verdict: PASS | REJECTED | BLOCKED" in text
         assert "- {spec_dir}/kill-report.md  # KILL only" in text
         assert "- {spec_dir}/implementability-report.md" in text
-        assert "agent: speckit-echelon-gatekeeper (GATEKEEPER)" in text
+        assert "agent: echelon-gatekeeper (GATEKEEPER)" in text
         assert "agent: ASSESS" not in text
 
     def test_gatekeeper_mode_contracts_do_not_conflict(self) -> None:

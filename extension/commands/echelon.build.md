@@ -1,6 +1,6 @@
 ---
-name: speckit.echelon.build
-description: "Execute building phase — implement tasks with role-based agents and quality gates. Run after speckit.echelon.run completes Phase A."
+name: echelon.build
+description: "Execute building phase — implement tasks with role-based agents and quality gates. Run after echelon.run completes Phase A."
 argument-hint: "...you will be assimilated"
 scripts:
   sh: ../../scripts/bash/startup-banner.sh

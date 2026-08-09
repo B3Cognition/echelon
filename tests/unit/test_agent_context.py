@@ -53,7 +53,7 @@ def test_resolve_context_render_mode_rejects_unknown() -> None:
 def test_policy_for_why2_preserves_spec() -> None:
     policy = policy_for_context(
         phase_id="phase1-why2",
-        agent_id="speckit-echelon-sage",
+        agent_id="echelon-sage",
         mode="WHY2",
         path_ref="{spec_dir}/spec.md",
     )
@@ -66,7 +66,7 @@ def test_policy_for_why2_preserves_spec() -> None:
 def test_policy_for_journal_history_is_bounded() -> None:
     policy = policy_for_context(
         phase_id="phase1-why2",
-        agent_id="speckit-echelon-sage",
+        agent_id="echelon-sage",
         mode="WHY2",
         path_ref=".specify/squad/reasoning-journal.jsonl",
     )
@@ -230,7 +230,7 @@ def test_render_directory_marks_unreadable_child_unavailable(tmp_path: Path, mon
 def test_build_context_budget_report_compares_legacy_and_bounded() -> None:
     report: PromptRenderReport = build_context_budget_report(
         phase_id="phase1-why2",
-        agent_id="speckit-echelon-sage",
+        agent_id="echelon-sage",
         mode="WHY2",
         selected_render_mode="bounded",
         legacy_sections=[
@@ -258,7 +258,7 @@ def test_write_context_budget_report_persists_json(tmp_path: Path) -> None:
         tmp_path,
         {
             "phase": "phase1-why2",
-            "agent": "speckit-echelon-sage",
+            "agent": "echelon-sage",
             "mode": "WHY2",
             "selected_render_mode": "bounded",
             "legacy": {"bytes": 10, "approx_tokens": 3, "top_sections": []},

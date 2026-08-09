@@ -15,7 +15,7 @@ class TestVisualValidatorTemplates:
         assert ".specify/..." not in text
         assert "{spec_dir}/visual-validation-report.md" in text
         assert (
-            "agent: speckit-echelon-visual-validator (VISUAL VALIDATOR)"
+            "agent: echelon-visual-validator (VISUAL VALIDATOR)"
             in text
         )
         assert "agent: VISUAL_VALIDATOR" not in text

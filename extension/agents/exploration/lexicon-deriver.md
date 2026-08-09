@@ -1,4 +1,4 @@
-# speckit-echelon-lexicon-deriver (LEXICON DERIVER)
+# echelon-lexicon-deriver (LEXICON DERIVER)
 
 ## Role
 

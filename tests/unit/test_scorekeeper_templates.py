@@ -54,7 +54,7 @@ class TestScorekeeperTemplates:
         assert "squad-scorecard.md" not in text
         assert "{spec_dir}/agent-scorecard.md" in text
         assert "knowledge-base/agent-scores.yaml" in text
-        assert "agent: speckit-echelon-scorekeeper (SCOREKEEPER)" in text
+        assert "agent: echelon-scorekeeper (SCOREKEEPER)" in text
         assert "agent: SCORE" not in text
 
     def test_build_finalize_dispatch_includes_scorekeeper_templates(self) -> None:

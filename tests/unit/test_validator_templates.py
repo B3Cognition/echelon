@@ -12,10 +12,10 @@ class TestValidatorTemplates:
 
         assert ".specify/specs/" not in text
         assert "{spec_dir}/internalization-report.md" in text
-        assert "agent: speckit-echelon-validator (VALIDATOR)" in text
+        assert "agent: echelon-validator (VALIDATOR)" in text
         assert "agent: INTERNALIZATION_GATE" not in text
 
     def test_workflow_dispatches_validator_with_canonical_agent_label(self) -> None:
         text = WORKFLOW.read_text(encoding="utf-8")
 
-        assert "agent: speckit-echelon-validator (VALIDATOR)" in text
+        assert "agent: echelon-validator (VALIDATOR)" in text

@@ -1,11 +1,11 @@
 # Phase: phase1-what
 # Source: echelon.run.md §4 — WHAT Phase (Requirements Definition)
-# Agent: speckit-echelon-cartographer (CARTOGRAPHER)
-# Read by: speckit-echelon-commander (COMMANDER) before dispatching speckit-echelon-cartographer (CARTOGRAPHER)
+# Agent: echelon-cartographer (CARTOGRAPHER)
+# Read by: echelon-commander (COMMANDER) before dispatching echelon-cartographer (CARTOGRAPHER)
 
 ## 4. WHAT Phase (Requirements Definition)
 
-> **Transition from UNDERSTAND to DECIDE:** This phase bridges understanding to decision-making. Constitution is now established. Echelon owns the Phase A branch and full spec identity; speckit-echelon-cartographer (CARTOGRAPHER) authors the specification only in the controller-provided run-local directory.
+> **Transition from UNDERSTAND to DECIDE:** This phase bridges understanding to decision-making. Constitution is now established. Echelon owns the Phase A branch and full spec identity; echelon-cartographer (CARTOGRAPHER) authors the specification only in the controller-provided run-local directory.
 
 ### 4.1 Context Pack Assembly
 
@@ -22,7 +22,7 @@ Read and include in the subagent prompt:
 - `agents/exploration/templates/cartographer-spec-template.md`
 - `agents/exploration/templates/cartographer-overview-template.md`
 
-### 4.2 Dispatch speckit-echelon-cartographer (CARTOGRAPHER)
+### 4.2 Dispatch echelon-cartographer (CARTOGRAPHER)
 
 Echelon has already created and selected the feature branch and reserved the
 full run-local `{spec_dir}`. CARTOGRAPHER MUST author a first-pass `spec.md`
@@ -47,7 +47,7 @@ The active runtime dispatches this role with the following request:
 
   <instructions>
   You are CARTOGRAPHER. Read agents/exploration/cartographer.md for your complete protocol.
-  Phase A identity is controller-owned. If this is a first WHAT pass with no existing `{spec_dir}/spec.md`, create it from the supplied template in `{spec_dir}`, move discovery artifacts there, then enhance it with speckit-echelon-scout (SCOUT)'s domain insights. If this is a resumed/amendment pass, enhance the existing file in place. Never create, switch, rename, or discover a branch or another spec directory.
+  Phase A identity is controller-owned. If this is a first WHAT pass with no existing `{spec_dir}/spec.md`, create it from the supplied template in `{spec_dir}`, move discovery artifacts there, then enhance it with echelon-scout (SCOUT)'s domain insights. If this is a resumed/amendment pass, enhance the existing file in place. Never create, switch, rename, or discover a branch or another spec directory.
   Treat `.specify/memory/constitution.md` as read-only governance context. Apply its principles while authoring `spec.md`; do not edit, patch, append to, or regenerate the constitution from this phase.
   If `evidence-resolution.md` is present, apply its observed facts and confidence limits to the amendment. Do not re-investigate the same source, discard evidence because it conflicts with the prior draft, or invent facts beyond its stated gaps.
   Evidence routing is controller-owned. ALWAYS return `evidence_resolution_status: not_required` after an ordinary WHAT pass. When a declared input or directly relevant primary source must establish a project-specific fact before requirements can be amended, ALWAYS return `FAIL` with `evidence_resolution_status: pending` and a complete `evidence_requests` object. NEVER return `BLOCKED` merely because the missing fact is investigable; `BLOCKED` bypasses workflow transitions and is reserved for controller-owned operational failures.
@@ -78,7 +78,7 @@ The active runtime dispatches this role with the following request:
   </instructions>
   ```
 
-- **description:** "speckit-echelon-cartographer (CARTOGRAPHER): spec creation and requirements definition"
+- **description:** "echelon-cartographer (CARTOGRAPHER): spec creation and requirements definition"
 
 #### CARTOGRAPHER fallback
 
@@ -163,8 +163,8 @@ This step is part of the `echelon_result.state_updates` block above. Skipping it
 
 ### Expected Outputs — BOTH REQUIRED
 
-- `spec.md` (created and enhanced by speckit-echelon-cartographer (CARTOGRAPHER) in the controller-provided directory with GWT acceptance criteria and glossary cross-references)
-- `requirements-overview.md` (speckit-echelon-cartographer (CARTOGRAPHER)-authored 1–2 page Phase 1 requirements orientation: what the feature does, key requirements choices, primary constraints. This is not the final PM/developer brief; finalization generates `00-overview.md` after plan/task conformance.)
+- `spec.md` (created and enhanced by echelon-cartographer (CARTOGRAPHER) in the controller-provided directory with GWT acceptance criteria and glossary cross-references)
+- `requirements-overview.md` (echelon-cartographer (CARTOGRAPHER)-authored 1–2 page Phase 1 requirements orientation: what the feature does, key requirements choices, primary constraints. This is not the final PM/developer brief; finalization generates `00-overview.md` after plan/task conformance.)
 
 ### 4.4 Quality-Certified Transition
 

@@ -1,5 +1,5 @@
 ---
-name: speckit.echelon.cicd
+name: echelon.cicd
 description: "Retired. Re-run echelon delivery init to auto-detect high-confidence verify_command values."
 behavior:
   invocation: manual
@@ -7,7 +7,7 @@ behavior:
 
 # Retired
 
-`speckit.echelon.cicd` is retired.
+`echelon.cicd` is retired.
 
 Do not launch a squad run, create a new spec, generate Dockerfiles, rewrite
 deploy config, or create CI workflow files from this command.

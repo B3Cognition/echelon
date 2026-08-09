@@ -54,7 +54,7 @@ class TestCartographerTemplates:
         assert ".specify/..." not in text
         assert "{spec_dir}/spec.md" in text
         assert "{spec_dir}/requirements-overview.md" in text
-        assert "agent: speckit-echelon-cartographer (CARTOGRAPHER)" in text
+        assert "agent: echelon-cartographer (CARTOGRAPHER)" in text
         assert "agent: WHAT" not in text
 
     def test_cartographer_uses_only_the_controller_owned_spec_directory(self) -> None:

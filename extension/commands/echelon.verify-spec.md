@@ -1,5 +1,5 @@
 ---
-name: speckit.echelon.verify-spec
+name: echelon.verify-spec
 description: "Audit whether current implementation fulfills a spec; optionally reconcile task-progress bookkeeping"
 behavior:
   invocation: explicit

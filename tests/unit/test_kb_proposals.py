@@ -26,7 +26,7 @@ def _base_proposal(**overrides):
         "proposal_id": "kb-prop-0001",
         "proposal_type": "pattern",
         "run_id": "squad-001",
-        "agent": "speckit-echelon-mirror",
+        "agent": "echelon-mirror",
         "created_at": "2026-07-17T12:00:00Z",
         "targets": ["knowledge-base/patterns.yaml"],
         "confidence": 0.72,
@@ -217,7 +217,7 @@ def test_validate_with_project_root_rejects_missing_evidence_locator(tmp_path: P
 
 
 def test_rejects_fictitious_speckit_agent_identity() -> None:
-    proposal = _base_proposal(agent="speckit-echelon-invented")
+    proposal = _base_proposal(agent="echelon-invented")
 
     result = validate_proposal_document("bad-agent.yaml", proposal)
 
@@ -276,7 +276,7 @@ def test_rejects_reserved_payload_provenance_fields() -> None:
             **_base_proposal()["payload"],
             "operation_id": "forged/run",
             "run_id": "forged-run",
-            "source": "speckit-echelon-invented",
+            "source": "echelon-invented",
             "created_at": "1999-01-01T00:00:00Z",
         }
     )
@@ -292,7 +292,7 @@ def test_rejects_reserved_payload_provenance_fields() -> None:
     }
 
 
-@pytest.mark.parametrize("agent", ["mirror", "speckit-echelon-"])
+@pytest.mark.parametrize("agent", ["mirror", "echelon-"])
 def test_rejects_unknown_agent_identity(agent: str) -> None:
     proposal = _base_proposal(agent=agent)
 
@@ -428,7 +428,7 @@ def test_apply_sage_entry_defaults_correctness_and_passes_canonical_schema(tmp_p
     proposal = _base_proposal(
         proposal_id="kb-prop-sage-0001",
         proposal_type="sage_decision",
-        agent="speckit-echelon-sage",
+        agent="echelon-sage",
         targets=["knowledge-base/sage-decisions.yaml"],
         payload={
             "artifact": "spec.md",
@@ -459,7 +459,7 @@ def test_apply_rejects_new_sage_entry_that_fails_canonical_validation(tmp_path: 
     proposal_dir.mkdir(parents=True)
     proposal = _base_proposal(
         proposal_type="sage_decision",
-        agent="speckit-echelon-sage",
+        agent="echelon-sage",
         targets=["knowledge-base/sage-decisions.yaml"],
         payload={
             "artifact": "spec.md",
@@ -542,7 +542,7 @@ def test_apply_duplicate_operation_is_skipped(tmp_path: Path) -> None:
         "schema_version: 1\nappend_only: true\nentries:\n"
         "  - operation_id: squad-001/kb-prop-0001\n"
         "    run_id: squad-001\n"
-        "    source: speckit-echelon-mirror\n"
+        "    source: echelon-mirror\n"
         "    created_at: '2026-07-17T12:00:00Z'\n"
         "    confidence: 0.8\n"
         "    id: pat-existing001\n"

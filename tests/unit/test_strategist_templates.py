@@ -29,7 +29,7 @@ class TestStrategistTemplates:
         assert "extension/templates/strategic-overview-template.md" in text
         assert ".specify/..." not in text
         assert "{spec_dir}/strategic-overview.md" in text
-        assert "agent: speckit-echelon-strategist (STRATEGIST)" in text
+        assert "agent: echelon-strategist (STRATEGIST)" in text
         assert "agent: OVERVIEW" not in text
 
     def test_phase2_strategic_overview_dispatch_includes_template(self) -> None:

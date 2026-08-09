@@ -77,7 +77,7 @@ class TestOracleTemplates:
             "  journal_entries:\n"
             in text
         )
-        assert "agent: speckit-echelon-oracle (ORACLE)" in text
+        assert "agent: echelon-oracle (ORACLE)" in text
 
     def test_phase3_specialist_dispatch_includes_oracle_templates(self) -> None:
         text = PHASE.read_text(encoding="utf-8")

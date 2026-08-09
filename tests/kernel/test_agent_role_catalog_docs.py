@@ -20,13 +20,13 @@ def _registered_agent_slugs() -> set[str]:
     for entry in data["provides"]["commands"]:
         file_path = entry.get("file", "")
         if file_path.startswith("agents/") and file_path.endswith(".md"):
-            slugs.add(entry["name"].replace("speckit.echelon.", "speckit-echelon-"))
+            slugs.add(entry["name"].replace("echelon.", "echelon-"))
     return slugs
 
 
 def _workflow_dispatch_slugs() -> set[str]:
     text = WORKFLOW.read_text(encoding="utf-8")
-    return set(re.findall(r"speckit-echelon-[a-z0-9-]+", text))
+    return set(re.findall(r"echelon-[a-z0-9-]+", text))
 
 
 def _agent_entrypoint_files() -> set[Path]:
@@ -47,7 +47,7 @@ def test_readme_and_catalog_match_agent_role_inventory() -> None:
     assert len(registered) == 56
     assert len(active_manifest) == 46
     assert len(manifest_only) == 10
-    assert workflow_only == {"speckit-echelon-gatekeeper-assess2"}
+    assert workflow_only == {"echelon-gatekeeper-assess2"}
     assert len(support_files) == 14
 
     readme = README.read_text(encoding="utf-8")
@@ -63,4 +63,4 @@ def test_readme_and_catalog_match_agent_role_inventory() -> None:
     assert "| Manifest-only roles | 10 |" in catalog
     assert "| Workflow-only dispatch aliases | 1 |" in catalog
     assert "| Support prompt files | 14 |" in catalog
-    assert "`speckit-echelon-gatekeeper-assess2`" in catalog
+    assert "`echelon-gatekeeper-assess2`" in catalog

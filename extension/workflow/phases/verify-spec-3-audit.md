@@ -1,5 +1,5 @@
 # Phase: verify-spec-3-audit
-# Read by: speckit-echelon-commander (COMMANDER)
+# Read by: echelon-commander (COMMANDER)
 # Type: commander_internal
 
 ## Deterministic Audit

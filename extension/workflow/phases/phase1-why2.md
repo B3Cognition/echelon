@@ -1,5 +1,5 @@
 # Phase: phase1-why2
-# Agent: speckit-echelon-sage (SAGE), mode WHY2
+# Agent: echelon-sage (SAGE), mode WHY2
 
 ## Purpose
 

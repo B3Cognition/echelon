@@ -10,7 +10,7 @@ class TestChiefTemplates:
         text = AGENT.read_text(encoding="utf-8")
 
         assert ".specify/memory/constitution.md" in text
-        assert "agent: speckit-echelon-chief (CHIEF)" in text
+        assert "agent: echelon-chief (CHIEF)" in text
         assert "agent: CHIEF" not in text
 
     def test_chief_verifies_all_constitution_template_markers(self) -> None:

@@ -9,5 +9,5 @@ class TestMonitorTemplates:
     def test_monitor_prompt_uses_canonical_agent_label(self) -> None:
         text = AGENT.read_text(encoding="utf-8")
 
-        assert "agent: speckit-echelon-monitor (MONITOR)" in text
-        assert "METACOGNITION-speckit-echelon-monitor (MONITOR)" not in text
+        assert "agent: echelon-monitor (MONITOR)" in text
+        assert "METACOGNITION-echelon-monitor (MONITOR)" not in text

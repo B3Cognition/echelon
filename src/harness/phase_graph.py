@@ -297,7 +297,7 @@ class PhaseGraph:
             ext = yaml.safe_load(extension_yml_path.read_text())
             for cmd in ext.get("provides", {}).get("commands", []):
                 if cmd.get("behavior", {}).get("execution") == "agent":
-                    # "speckit.echelon.scout" → "speckit-echelon-scout"
+                    # "echelon.scout" → "echelon-scout"
                     dispatch_id = cmd["name"].replace(".", "-")
                     self._agent_files[dispatch_id] = cmd["file"]
         else:

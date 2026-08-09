@@ -1,5 +1,5 @@
 ---
-name: speckit.echelon.re-plan
+name: echelon.re-plan
 description: "Generate per-domain plan.md files"
 scripts:
   sh: ../../scripts/bash/startup-banner.sh

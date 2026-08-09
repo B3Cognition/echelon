@@ -33,7 +33,7 @@ class TestMirrorTemplates:
         assert "{spec_dir}/knowledge-transfer-assessment.md" in text
         assert "knowledge-base/patterns.yaml" in text
         assert "knowledge-base/pitfalls.yaml" in text
-        assert "agent: speckit-echelon-mirror (MIRROR)" in text
+        assert "agent: echelon-mirror (MIRROR)" in text
         assert "agent: REFLECT" not in text
 
     def test_finalize_dispatch_includes_mirror_template(self) -> None:

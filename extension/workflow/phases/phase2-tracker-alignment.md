@@ -1,11 +1,11 @@
 # Phase: phase2-tracker-alignment
-# Source: echelon.run.md §6c — speckit-echelon-tracker (TRACKER) Intent Alignment Check
-# Agent: speckit-echelon-tracker (TRACKER) (mode: alignment-check)
-# Read by: speckit-echelon-commander (COMMANDER) before dispatching speckit-echelon-tracker (TRACKER) for alignment check
+# Source: echelon.run.md §6c — echelon-tracker (TRACKER) Intent Alignment Check
+# Agent: echelon-tracker (TRACKER) (mode: alignment-check)
+# Read by: echelon-commander (COMMANDER) before dispatching echelon-tracker (TRACKER) for alignment check
 
-### 6c. speckit-echelon-tracker (TRACKER) — Intent Alignment Check
+### 6c. echelon-tracker (TRACKER) — Intent Alignment Check
 
-After speckit-echelon-gatekeeper (GATEKEEPER) passes, dispatch speckit-echelon-tracker (TRACKER) to verify intent alignment:
+After echelon-gatekeeper (GATEKEEPER) passes, dispatch echelon-tracker (TRACKER) to verify intent alignment:
 
 The active runtime dispatches this role with the following request:
 
@@ -18,16 +18,16 @@ The active runtime dispatches this role with the following request:
 
   <instructions>
   You are TRACKER. Read agents/control/tracker.md for your complete protocol. Operate in **alignment-check mode**.
-  Read `user-intent.md` and speckit-echelon-gatekeeper (GATEKEEPER)'s outputs (`feasibility.md`, `mvp-scope.md`). Check whether speckit-echelon-gatekeeper (GATEKEEPER)'s scoping decisions align with the user's stated intent. If MISALIGNED, emit an alignment alert with specific divergence points. Produce `intent-alignment-check.md` in `{spec_dir}/` using the provided template. Return journal entries in `echelon_result.journal_entries`.
+  Read `user-intent.md` and echelon-gatekeeper (GATEKEEPER)'s outputs (`feasibility.md`, `mvp-scope.md`). Check whether echelon-gatekeeper (GATEKEEPER)'s scoping decisions align with the user's stated intent. If MISALIGNED, emit an alignment alert with specific divergence points. Produce `intent-alignment-check.md` in `{spec_dir}/` using the provided template. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
-- **description:** "speckit-echelon-tracker (TRACKER): verify speckit-echelon-gatekeeper (GATEKEEPER) scope aligns with user intent"
+- **description:** "echelon-tracker (TRACKER): verify echelon-gatekeeper (GATEKEEPER) scope aligns with user intent"
 
-If speckit-echelon-tracker (TRACKER) reports MISALIGNED:
+If echelon-tracker (TRACKER) reports MISALIGNED:
 - MANAGER prints the divergence to terminal
 - In `guided` or `semi` mode: pause for human confirmation
-- In `banzai` mode: log the divergence, proceed with speckit-echelon-gatekeeper (GATEKEEPER)'s scope
+- In `banzai` mode: log the divergence, proceed with echelon-gatekeeper (GATEKEEPER)'s scope
 
 ### Routing Verdict Contract — MANDATORY
 

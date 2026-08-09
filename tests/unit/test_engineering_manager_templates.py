@@ -14,7 +14,7 @@ class TestEngineeringManagerTemplates:
         assert ".specify/..." not in text
         assert "{spec_dir}/build-status.md" in text
         assert (
-            "agent: speckit-echelon-engineering-manager (ENGINEERING MANAGER)"
+            "agent: echelon-engineering-manager (ENGINEERING MANAGER)"
             in text
         )
         assert "agent: ENGINEERING_MANAGER" not in text

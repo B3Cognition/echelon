@@ -1,5 +1,5 @@
 ---
-name: speckit.echelon.reopen
+name: echelon.reopen
 description: "Reopen a spec from fulfillment gaps and append harness-ready tasks"
 behavior:
   invocation: explicit

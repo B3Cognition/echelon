@@ -24,7 +24,7 @@ def _write_minimal_repo(
         """
 provides:
   commands:
-    - name: "speckit.echelon.tracker"
+    - name: "echelon.tracker"
       file: "agents/control/tracker.md"
 """.lstrip(),
         encoding="utf-8",
@@ -35,7 +35,7 @@ phases:
   - id: phase2-tracker-alignment
     spec_file: workflow/phases/phase2-tracker-alignment.md
     type: agent
-    agent: speckit-echelon-tracker
+    agent: echelon-tracker
     transitions:
       - to: done
         condition: "{workflow_condition}"

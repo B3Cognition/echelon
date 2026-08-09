@@ -27,4 +27,4 @@ class TestVeteranTemplates:
         assert "knowledge-base/patterns.yaml" in text
         assert "knowledge-base/pitfalls.yaml" in text
         assert "knowledge-base/marketplace-index.yaml" in text
-        assert "agent: speckit-echelon-veteran (VETERAN)" in text
+        assert "agent: echelon-veteran (VETERAN)" in text

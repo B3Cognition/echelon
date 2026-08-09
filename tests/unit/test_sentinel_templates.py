@@ -74,7 +74,7 @@ class TestSentinelTemplates:
             "  journal_entries:\n"
             in text
         )
-        assert "agent: speckit-echelon-sentinel (SENTINEL)" in text
+        assert "agent: echelon-sentinel (SENTINEL)" in text
 
     def test_phase3_sentinel_dispatch_includes_templates(self) -> None:
         text = PHASE.read_text(encoding="utf-8")

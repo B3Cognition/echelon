@@ -2,7 +2,7 @@ schema_version: 1
 proposal_id: kb-prop-internalization-template
 proposal_type: internalization_observation
 run_id: squad-template
-agent: speckit-echelon-internalizer
+agent: echelon-internalizer
 created_at: "2026-07-17T12:00:00Z"
 targets:
   - knowledge-base/internalization-log.yaml
@@ -14,7 +14,7 @@ evidence_refs:
     locator: RJ-template
     claim: Internalization health should be reviewed after Phase A.
 payload:
-  subject_agent: speckit-echelon-mirror
+  subject_agent: echelon-mirror
   agent_tier: stable
   metrics:
     artifact_coverage: 0.8

@@ -63,7 +63,7 @@ class TestScoutTemplates:
 
         assert "```markdown\n# Domain Glossary" not in text
         assert ".specify/..." not in text
-        assert "agent: speckit-echelon-scout (SCOUT)" in text
+        assert "agent: echelon-scout (SCOUT)" in text
         assert "agent: DISCOVER" not in text
 
     def test_scout_prompt_forbids_recursive_template_discovery(self) -> None:

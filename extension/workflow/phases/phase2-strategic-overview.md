@@ -1,7 +1,7 @@
 # Phase: phase2-strategic-overview
 # Source: echelon.run.md §6b — STRATEGIC OVERVIEW (Risk Map)
-# Agent: speckit-echelon-strategist (STRATEGIST)
-# Read by: speckit-echelon-commander (COMMANDER) before dispatching speckit-echelon-strategist (STRATEGIST)
+# Agent: echelon-strategist (STRATEGIST)
+# Read by: echelon-commander (COMMANDER) before dispatching echelon-strategist (STRATEGIST)
 
 ### 6b. STRATEGIC OVERVIEW (Risk Map)
 
@@ -25,7 +25,7 @@ The active runtime dispatches this role with the following request:
 
 - **description:** "STRATEGIC OVERVIEW: risk-weighted project map"
 
-Read the strategic overview. Use it to prioritize specialist allocation: spend speckit-echelon-investigator (INVESTIGATOR) time on high-blast-radius decisions, not low-risk areas.
+Read the strategic overview. Use it to prioritize specialist allocation: spend echelon-investigator (INVESTIGATOR) time on high-blast-radius decisions, not low-risk areas.
 
 The harness owns the surrounding `phase2-decide` timing window. STRATEGIST does
 not start, inspect, or close phase timers.

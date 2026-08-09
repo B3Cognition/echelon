@@ -25,7 +25,7 @@ def _write_fixture_extension(root: Path, agent_text: str, outputs=None) -> tuple
                 "provides": {
                     "commands": [
                         {
-                            "name": "speckit.echelon.scout",
+                            "name": "echelon.scout",
                             "file": "agents/scout.md",
                             "behavior": {"execution": "agent"},
                         }
@@ -39,7 +39,7 @@ def _write_fixture_extension(root: Path, agent_text: str, outputs=None) -> tuple
     phase = {
         "id": "phase1-discover",
         "type": "agent",
-        "agent": "speckit-echelon-scout",
+        "agent": "echelon-scout",
         "transitions": [{"to": "done", "condition": "always"}],
     }
     if outputs is not None:

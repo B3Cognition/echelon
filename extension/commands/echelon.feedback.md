@@ -29,7 +29,7 @@ Auto-feedback runs automatically after every build (see `echelon.build.md` Secti
 
 ## Step 1: Validate Input
 
-If `$ARGUMENTS` is empty, report **"Please provide the spec ID. Usage: speckit.echelon.feedback 001"** and stop.
+If `$ARGUMENTS` is empty, report **"Please provide the spec ID. Usage: echelon.feedback 001"** and stop.
 
 Extract `{spec-id}` from `$ARGUMENTS` (first token, e.g., "001").
 
@@ -101,14 +101,14 @@ Update `knowledge-base/feedback/{spec-id}-{project-name}.yaml`:
 
 If the human corrected any values that differ from auto-assessment:
 - Re-run calibration-profile.yaml update with corrected values
-- Log the auto-assessment error in `reasoning-journal.jsonl` so speckit-echelon-auditor (AUDITOR) can learn where its self-assessment was wrong
+- Log the auto-assessment error in `reasoning-journal.jsonl` so echelon-auditor (AUDITOR) can learn where its self-assessment was wrong
 
 ---
 
 ## Step 4b: Standalone Mode (Legacy — no auto-feedback exists)
 
 Full human questionnaire. This is the original behavior, used when:
-- Build was done manually (not via `speckit.echelon.build`)
+- Build was done manually (not via `echelon.build`)
 - `feedback.auto_feedback` was disabled in config
 
 Read the original artifacts:
@@ -208,7 +208,7 @@ If this was a manual override that corrected auto-assessed values, log the discr
       human_value: "partially"
 ```
 
-This data trains speckit-echelon-auditor (AUDITOR)'s self-assessment accuracy over time.
+This data trains echelon-auditor (AUDITOR)'s self-assessment accuracy over time.
 
 ---
 

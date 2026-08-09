@@ -10,7 +10,7 @@ incomplete. State the assumption and widen the range instead.
 | Field | Value |
 |-------|-------|
 | Spec | `{NNN-slug}` |
-| Gatekeeper | `speckit-echelon-gatekeeper (GATEKEEPER)` |
+| Gatekeeper | `echelon-gatekeeper (GATEKEEPER)` |
 | Mode | `first-pass` / `consensus` |
 | Date | `{ISO-8601 date}` |
 | Estimate revision | `{first-pass / ASSESS2 revision n}` |
