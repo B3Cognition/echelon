@@ -53,13 +53,7 @@ PY
 check_tests_passed() {
   cmd="$1"
   [ -z "$cmd" ] && return 0
-  # Route through sandbox-exec.sh if harness is installed (FR-SHIM-002a)
-  SHIM=".specify/extensions/harness/scripts/sandbox-exec.sh"
-  if [ -f "$SHIM" ] && [ -f ".specify/extensions/harness/manifest.json" ]; then
-    bash "$SHIM" "$cmd" >/dev/null 2>&1
-  else
-    sh -c "$cmd" >/dev/null 2>&1
-  fi
+  sh -c "$cmd" >/dev/null 2>&1
 }
 
 check_lint_clean() {

@@ -158,3 +158,16 @@ def test_runtime_diagnostics_and_kb_validation_use_echelon_artifacts() -> None:
     assert "speckit.diagnostic.run" not in workflow
     assert ".echelon/prosaic/subagents" in validator
     assert "extension/extension.yml" not in validator
+
+
+def test_runtime_light_gates_do_not_probe_legacy_harness_installations() -> None:
+    script = (
+        Path(__file__).resolve().parents[2]
+        / "runtime"
+        / "scripts"
+        / "bash"
+        / "build-light-gates.sh"
+    ).read_text(encoding="utf-8")
+
+    assert ".specify/extensions/harness" not in script
+    assert "sandbox-exec.sh" not in script
