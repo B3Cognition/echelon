@@ -194,7 +194,6 @@ def test_polyrepo_runtime_extension_exposes_only_delivery_safe_bash_helpers(
         "echelon-config-get.sh",
         "endocrine.sh",
         "fix-spa-base.sh",
-        "preflight-speckit.sh",
         "python-detect.sh",
         "setup-worktree.sh",
         "startup-banner.sh",
@@ -221,7 +220,6 @@ def test_polyrepo_runtime_extension_exposes_only_delivery_safe_bash_helpers(
     assert not (bash_dir / "context7-docs.sh").exists()
     assert not (bash_dir / "deploy.sh").exists()
     assert not (bash_dir / "detect-project.sh").exists()
-    assert not (bash_dir / "preflight-speckit.sh").exists()
     assert not (bash_dir / "python-detect.sh").exists()
     assert not (bash_dir / "state-lock.sh").exists()
 
