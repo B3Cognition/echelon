@@ -143,3 +143,18 @@ def test_runtime_workflow_dispatches_only_neutral_prosaic_subagents() -> None:
     )
     assert dispatched_agents <= prosaic_agents
     assert staged_agents <= prosaic_agents
+
+
+def test_runtime_diagnostics_and_kb_validation_use_echelon_artifacts() -> None:
+    echelon_root = Path(__file__).resolve().parents[2]
+    workflow = (echelon_root / "runtime" / "workflow" / "definition.yaml").read_text(
+        encoding="utf-8"
+    )
+    validator = (
+        echelon_root / "runtime" / "scripts" / "bash" / "kb-validate-evolution.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "agent: echelon.investigator" in workflow
+    assert "speckit.diagnostic.run" not in workflow
+    assert ".echelon/prosaic/subagents" in validator
+    assert "extension/extension.yml" not in validator

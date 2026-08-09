@@ -9,10 +9,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
 . "$SCRIPT_DIR/python-detect.sh"
-REPO_ROOT="$(CDPATH='' cd "$SCRIPT_DIR/../../.." && pwd)"
+REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || (CDPATH='' cd "$SCRIPT_DIR/../../../.." && pwd))"
 KB_DIR="$REPO_ROOT/knowledge-base"
 
-AGENTS_YAML="$REPO_ROOT/extension/extension.yml"
+AGENTS_DIR="$REPO_ROOT/.echelon/prosaic/subagents"
 PROMPT_VERSIONS="$KB_DIR/prompt-versions.yaml"
 INTERNALIZATION_LOG="$KB_DIR/internalization-log.yaml"
 EVOLUTION_SIGNALS="$KB_DIR/evolution-signals.yaml"
@@ -34,9 +34,9 @@ Usage: $(basename "$0") [--state path/to/state.json]
 Validates Knowledge Base evolution files with 3 checks:
 
   Check 1: Cross-file referential integrity
-    - Every internalization-log entry agent exists in extension.yml
+    - Every internalization-log entry agent exists in deployed Prosaic subagents
     - Every internalization-log entry prompt_version exists in prompt-versions.yaml
-    - Every evolution-signals entry affected_agents exist in extension.yml
+    - Every evolution-signals entry affected_agents exist in deployed Prosaic subagents
 
   Check 2: Score/result consistency
     - Reads internalization thresholds from .echelon/config.yml or bundled defaults
@@ -93,29 +93,27 @@ check_referential_integrity() {
   echo "=== Check 1: Cross-file referential integrity ==="
 
   local _check1_out
-  _check1_out=$($PYTHON - "$AGENTS_YAML" "$PROMPT_VERSIONS" "$INTERNALIZATION_LOG" "$EVOLUTION_SIGNALS" <<'PY'
+  _check1_out=$($PYTHON - "$AGENTS_DIR" "$PROMPT_VERSIONS" "$INTERNALIZATION_LOG" "$EVOLUTION_SIGNALS" <<'PY'
 import sys, yaml
 from pathlib import Path
 
-agents_path = Path(sys.argv[1])
+agents_dir  = Path(sys.argv[1])
 pv_path     = Path(sys.argv[2])
 ilog_path   = Path(sys.argv[3])
 esig_path   = Path(sys.argv[4])
 
 errors = 0
 
-# Load agent codenames from extension.yml (replaces agents.yaml)
-ext_path = agents_path.parent.parent / 'extension.yml'
-with open(ext_path) as f:
-    ext_data = yaml.safe_load(f)
 agent_names = set()
-for cmd in ext_data.get('provides', {}).get('commands', []):
-    name = cmd.get('name', '')
-    fname = cmd.get('file', '')
-    if fname.startswith('agents/'):
-        # Derive codename from a dotted agent name: echelon.auditor -> AUDITOR
-        codename = name.split('.')[-1].upper().replace('-', '_')
-        agent_names.add(codename)
+for path in agents_dir.glob('*.md'):
+    text = path.read_text(encoding='utf-8', errors='replace')
+    if not text.startswith('---'):
+        continue
+    frontmatter = text.split('---', 2)[1]
+    metadata = yaml.safe_load(frontmatter) or {}
+    name = metadata.get('name', '')
+    if isinstance(name, str) and name.startswith('echelon.'):
+        agent_names.add(name.removeprefix('echelon.').upper().replace('-', '_'))
 
 # Load prompt-versions.yaml — agents -> {AGENT: {versions: [{version: "X"}]}}
 with open(pv_path) as f:
@@ -136,7 +134,7 @@ for i, entry in enumerate(ilog_entries):
     line = i + 1  # approximate line
     agent = entry.get('agent', '')
     if agent and agent not in agent_names:
-        print(f"{ilog_path}:{line}: ERROR: agent '{agent}' not found in extension.yml")
+        print(f"{ilog_path}:{line}: ERROR: agent '{agent}' not found in deployed Prosaic subagents")
         errors += 1
     pv = str(entry.get('prompt_version', ''))
     if agent and pv and (agent, pv) not in valid_versions:
@@ -153,7 +151,7 @@ for i, sig in enumerate(esig_signals):
     affected = sig.get('affected_agents', []) or []
     for a in affected:
         if a not in agent_names:
-            print(f"{esig_path}:{line}: ERROR: affected_agent '{a}' not found in extension.yml")
+            print(f"{esig_path}:{line}: ERROR: affected_agent '{a}' not found in deployed Prosaic subagents")
             errors += 1
 
 if errors == 0:
@@ -315,11 +313,11 @@ PY
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 echo "kb-validate-evolution: validating Knowledge Base evolution files"
-echo "  extension.yml:         $AGENTS_YAML"
+echo "  Prosaic subagents:     $AGENTS_DIR"
 echo "  prompt-versions.yaml:  $PROMPT_VERSIONS"
 echo "  internalization-log:   $INTERNALIZATION_LOG"
 echo "  evolution-signals:     $EVOLUTION_SIGNALS"
-echo "  config:                ${CONFIG_FILE:-echelon-config.yml (via resolver)}"
+echo "  config:                ${CONFIG_FILE:-.echelon/config.yml (via resolver)}"
 [[ -n "$STATE_FILE" ]] && echo "  state.json:            $STATE_FILE"
 echo ""
 

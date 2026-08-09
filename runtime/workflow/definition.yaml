@@ -2000,8 +2000,8 @@ escalation:
       - missing_context         # Use NEEDS_CONTEXT flow instead
       - spec_ambiguity          # Route to echelon.cartographer (CARTOGRAPHER) via clarification
       - approach_disagreements  # Use Toulmin conflict resolution first
-    skill: speckit.diagnostic.run
-    on_skill_failure: skip_to_direct_escalation  # If kt-diagnostic unavailable, skip to direct escalation
+    agent: echelon.investigator
+    on_agent_failure: skip_to_direct_escalation
     state_fields:
       in_progress:
         diagnostic_status: IN_PROGRESS
