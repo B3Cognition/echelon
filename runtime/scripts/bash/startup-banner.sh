@@ -34,7 +34,8 @@ BANNER
 echo -e "${NC}"
 echo -e "${MAGENTA}${BOLD}    ⚡ RESISTANCE IS FUTILE. YOU WILL BE ASSIMILATED. ⚡${NC}"
 echo ""
-echo -e "${CYAN}    42 agents │ 7 layers │ v$(grep '  version:' "$(dirname "$0")/../../extension.yml" 2>/dev/null | head -1 | awk '{print $2}' | tr -d '"') │ endocrine: ON${NC}"
+ECHELON_VERSION="$(echelon version 2>/dev/null | awk 'NR == 1 {print $2}')"
+echo -e "${CYAN}    42 agents │ 7 layers │ v${ECHELON_VERSION:-unknown} │ endocrine: ON${NC}"
 echo -e "${DIM}    Understanding v3.7.0 │ 34 deterministic metrics │ CIQ: 1.061${NC}"
 echo ""
 
