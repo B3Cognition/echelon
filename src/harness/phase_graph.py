@@ -300,10 +300,7 @@ class PhaseGraph:
                     # "echelon.scout" → "echelon-scout"
                     dispatch_id = cmd["name"].replace(".", "-")
                     self._agent_files[dispatch_id] = cmd["file"]
-        else:
-            raise ControllerContractRegistryError(
-                "PhaseGraph requires extension_yml_path or prosaic_subagents_dir"
-            )
+        # Structural validators may load a graph without resolving prompts.
 
     def get(self, phase_id: str) -> PhaseNode:
         if phase_id not in self._phases:

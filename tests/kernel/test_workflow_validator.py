@@ -70,7 +70,6 @@ def _write_controller_registry(tmp_path: Path) -> Path:
 def test_real_workflow_definition_is_valid() -> None:
     report = validate_workflow_definition(
         definition_path=DEFINITION,
-        extension_yml_path=EXT_YML,
     )
 
     assert report.ok, report.format()
@@ -169,7 +168,6 @@ def test_workflow_validator_keeps_a_legacy_workflow_without_declarations_valid(t
 
     report = validate_workflow_definition(
         definition_path=definition,
-        extension_yml_path=_write_extension_yml(tmp_path),
     )
 
     assert report.ok, report.format()
@@ -194,7 +192,6 @@ def test_workflow_validator_allows_provider_policy_without_static_options(tmp_pa
 
     report = validate_workflow_definition(
         definition_path=definition,
-        extension_yml_path=_write_extension_yml(tmp_path),
     )
 
     assert report.ok, report.format()
@@ -223,7 +220,6 @@ def test_workflow_validator_requires_complete_provider_coverage_after_opt_in(tmp
 
     report = validate_workflow_definition(
         definition_path=definition,
-        extension_yml_path=_write_extension_yml(tmp_path),
     )
 
     assert not report.ok
@@ -261,7 +257,6 @@ def test_workflow_validator_closes_human_input_declarations(tmp_path: Path, muta
 
     report = validate_workflow_definition(
         definition_path=definition,
-        extension_yml_path=_write_extension_yml(tmp_path),
     )
 
     assert not report.ok
@@ -307,7 +302,6 @@ def test_workflow_validator_requires_list_mappings_unique_reasons_and_exact_gate
 
     report = validate_workflow_definition(
         definition_path=definition,
-        extension_yml_path=_write_extension_yml(tmp_path),
     )
 
     assert not report.ok
@@ -355,7 +349,6 @@ def _gate_workflow(
 def _gate_report(tmp_path: Path, definition: Path):
     return validate_workflow_definition(
         definition_path=definition,
-        extension_yml_path=_write_extension_yml(tmp_path),
     )
 
 
@@ -553,7 +546,6 @@ def test_workflow_validator_rejects_duplicate_human_input_reason_code(tmp_path: 
 
     report = validate_workflow_definition(
         definition_path=definition,
-        extension_yml_path=_write_extension_yml(tmp_path),
     )
 
     assert not report.ok
@@ -620,7 +612,6 @@ def test_workflow_validator_rejects_unknown_transition_key(tmp_path: Path) -> No
 
     report = validate_workflow_definition(
         definition_path=definition,
-        extension_yml_path=_write_extension_yml(tmp_path),
     )
 
     assert not report.ok
@@ -641,7 +632,6 @@ def test_workflow_validator_rejects_unknown_transition_target(tmp_path: Path) ->
 
     report = validate_workflow_definition(
         definition_path=definition,
-        extension_yml_path=_write_extension_yml(tmp_path),
     )
 
     assert not report.ok
@@ -664,7 +654,6 @@ def test_workflow_validator_accepts_terminal_blocked_runtime_target(tmp_path: Pa
 
     report = validate_workflow_definition(
         definition_path=definition,
-        extension_yml_path=_write_extension_yml(tmp_path),
     )
 
     assert report.ok, report.format()
@@ -686,7 +675,6 @@ def test_workflow_validator_rejects_unknown_evidence_routing_mode(tmp_path: Path
 
     report = validate_workflow_definition(
         definition_path=definition,
-        extension_yml_path=_write_extension_yml(tmp_path),
     )
 
     assert not report.ok
@@ -709,7 +697,6 @@ def test_workflow_validator_rejects_unknown_phase_condition_field(tmp_path: Path
 
     report = validate_workflow_definition(
         definition_path=definition,
-        extension_yml_path=_write_extension_yml(tmp_path),
     )
 
     assert not report.ok
@@ -733,7 +720,6 @@ def test_workflow_validator_rejects_unknown_greenfield_action(tmp_path: Path) ->
 
     report = validate_workflow_definition(
         definition_path=definition,
-        extension_yml_path=_write_extension_yml(tmp_path),
     )
 
     assert not report.ok
@@ -755,7 +741,6 @@ def test_workflow_validator_rejects_non_object_transition(tmp_path: Path) -> Non
 
     report = validate_workflow_definition(
         definition_path=definition,
-        extension_yml_path=_write_extension_yml(tmp_path),
     )
 
     assert not report.ok
@@ -777,7 +762,6 @@ def test_workflow_validator_rejects_invalid_condition(tmp_path: Path) -> None:
 
     report = validate_workflow_definition(
         definition_path=definition,
-        extension_yml_path=_write_extension_yml(tmp_path),
     )
 
     assert not report.ok
@@ -799,7 +783,6 @@ def test_workflow_validator_rejects_unresolvable_condition_field(tmp_path: Path)
 
     report = validate_workflow_definition(
         definition_path=definition,
-        extension_yml_path=_write_extension_yml(tmp_path),
     )
 
     assert not report.ok
@@ -831,7 +814,6 @@ def test_workflow_validator_accepts_derived_spec_lexicon_condition_field(
 
     report = validate_workflow_definition(
         definition_path=definition,
-        extension_yml_path=_write_extension_yml(tmp_path),
     )
 
     assert report.ok, report.format()
@@ -859,7 +841,6 @@ def test_workflow_validator_rejects_unknown_nested_lexicon_condition_field(
 
     report = validate_workflow_definition(
         definition_path=definition,
-        extension_yml_path=_write_extension_yml(tmp_path),
     )
 
     assert not report.ok
@@ -887,7 +868,6 @@ def test_workflow_validator_accepts_declared_state_update_condition_field(
 
     report = validate_workflow_definition(
         definition_path=definition,
-        extension_yml_path=_write_extension_yml(tmp_path),
     )
 
     assert report.ok, report.format()
@@ -914,7 +894,6 @@ def test_workflow_validator_rejects_later_phase_state_update_condition_field(
 
     report = validate_workflow_definition(
         definition_path=definition,
-        extension_yml_path=_write_extension_yml(tmp_path),
     )
 
     assert not report.ok
@@ -943,7 +922,6 @@ def test_workflow_validator_rejects_required_state_update_outside_allowlist(
 
     report = validate_workflow_definition(
         definition_path=definition,
-        extension_yml_path=_write_extension_yml(tmp_path),
     )
 
     assert not report.ok
@@ -985,7 +963,6 @@ def test_workflow_validator_rejects_transaction_owned_provider_allowlist(
 
     report = validate_workflow_definition(
         definition_path=definition,
-        extension_yml_path=_write_extension_yml(tmp_path),
     )
 
     assert not report.ok
@@ -1013,7 +990,6 @@ def test_workflow_validator_allows_provider_block_control_syntax(
 
     report = validate_workflow_definition(
         definition_path=definition,
-        extension_yml_path=_write_extension_yml(tmp_path),
     )
 
     assert report.ok, report.format()
@@ -1038,7 +1014,6 @@ def test_workflow_validator_rejects_legacy_controller_state_updates(
 
     report = validate_workflow_definition(
         definition_path=definition,
-        extension_yml_path=_write_extension_yml(tmp_path),
     )
 
     assert not report.ok
@@ -1066,7 +1041,6 @@ def test_workflow_validator_rejects_unknown_controller_contract(
 
     report = validate_workflow_definition(
         definition_path=definition,
-        extension_yml_path=_write_extension_yml(tmp_path),
     )
 
     assert any(
@@ -1092,7 +1066,6 @@ def test_workflow_validator_requires_explicit_allowlist_for_controller_contract(
 
     report = validate_workflow_definition(
         definition_path=definition,
-        extension_yml_path=_write_extension_yml(tmp_path),
     )
 
     assert any(
@@ -1120,7 +1093,6 @@ def test_workflow_validator_rejects_null_allowlist_for_controller_contract(
 
     report = validate_workflow_definition(
         definition_path=definition,
-        extension_yml_path=_write_extension_yml(tmp_path),
     )
 
     assert any(
@@ -1148,7 +1120,6 @@ def test_workflow_validator_reports_malformed_top_level_allowlist_with_contract(
 
     report = validate_workflow_definition(
         definition_path=definition,
-        extension_yml_path=_write_extension_yml(tmp_path),
     )
 
     assert any(
@@ -1175,7 +1146,6 @@ def test_workflow_validator_rejects_controller_provider_overlap(
 
     report = validate_workflow_definition(
         definition_path=definition,
-        extension_yml_path=_write_extension_yml(tmp_path),
     )
 
     assert any(
@@ -1207,7 +1177,6 @@ def test_workflow_validator_rejects_nested_controller_reference(
 
     report = validate_workflow_definition(
         definition_path=definition,
-        extension_yml_path=_write_extension_yml(tmp_path),
     )
 
     assert any(
@@ -1235,7 +1204,6 @@ def test_workflow_validator_reports_malformed_nested_allowlist_with_contract(
 
     report = validate_workflow_definition(
         definition_path=definition,
-        extension_yml_path=_write_extension_yml(tmp_path),
     )
 
     assert any(
@@ -1263,7 +1231,6 @@ def test_workflow_validator_rejects_nested_null_allowlist_override(
 
     report = validate_workflow_definition(
         definition_path=definition,
-        extension_yml_path=_write_extension_yml(tmp_path),
     )
 
     assert any(
@@ -1292,7 +1259,6 @@ def test_workflow_validator_rejects_contract_bearing_greenfield_skip(
 
     report = validate_workflow_definition(
         definition_path=definition,
-        extension_yml_path=_write_extension_yml(tmp_path),
     )
 
     assert any(
@@ -1355,7 +1321,6 @@ def test_workflow_validator_requires_exact_contract_for_controller_role(
 
     report = validate_workflow_definition(
         definition_path=definition,
-        extension_yml_path=EXT_YML,
     )
 
     assert any(
@@ -1379,7 +1344,6 @@ def test_workflow_validator_requires_registry_for_controller_producing_nodes(
 
     report = validate_workflow_definition(
         definition_path=definition,
-        extension_yml_path=EXT_YML,
     )
 
     assert any(
@@ -1410,7 +1374,6 @@ def test_workflow_validator_resolves_controller_condition_fields(
 
     report = validate_workflow_definition(
         definition_path=definition,
-        extension_yml_path=_write_extension_yml(tmp_path),
     )
 
     assert report.ok, report.format()
@@ -1435,7 +1398,6 @@ def test_workflow_validator_rejects_unsupported_state_update_type(
 
     report = validate_workflow_definition(
         definition_path=definition,
-        extension_yml_path=_write_extension_yml(tmp_path),
     )
 
     assert not report.ok
@@ -1461,7 +1423,6 @@ def test_workflow_validator_rejects_enum_for_undeclared_state_key(
 
     report = validate_workflow_definition(
         definition_path=definition,
-        extension_yml_path=_write_extension_yml(tmp_path),
     )
 
     assert not report.ok

@@ -126,7 +126,6 @@ class WorkflowValidationReport:
 def validate_workflow_definition(
     *,
     definition_path: Path,
-    extension_yml_path: Path,
 ) -> WorkflowValidationReport:
     """Validate the main squad phase graph before runtime dispatch.
 
@@ -225,7 +224,7 @@ def validate_workflow_definition(
         return WorkflowValidationReport(boundary_issues)
 
     try:
-        graph = PhaseGraph(definition_path, extension_yml_path)
+        graph = PhaseGraph(definition_path)
     except Exception as exc:
         return WorkflowValidationReport([
             WorkflowValidationIssue(f"cannot load phase graph: {exc}", path=path)
