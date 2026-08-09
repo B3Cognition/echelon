@@ -2055,9 +2055,6 @@ def spec_resolve(
         legacy_cli.ProviderCapability.ARTIFACT,
         project_dir=project_root,
     )
-    legacy_cli._require_phase_a_git_ownership(
-        project_root, command_name="echelon spec resolve"
-    )
     legacy_cli._cmd_spec_resolve(args, project_root=project_root, ext_dir=ext_dir)
 
 

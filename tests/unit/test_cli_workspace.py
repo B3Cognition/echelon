@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -366,6 +367,11 @@ def test_workspace_migrate_to_prosaic_preserves_config_and_validates_graph(
         return object()
 
     monkeypatch.setattr("echelon.prosaic_packages.install_prosaic_bundle", deploy_bundle)
+    disabled: list[Path] = []
+    monkeypatch.setattr(
+        "echelon.speckit_git.disable_speckit_git",
+        lambda root: disabled.append(root) or SimpleNamespace(installed=True),
+    )
 
     from echelon.cli import _cmd_workspace_migrate_to_prosaic
 
@@ -376,6 +382,7 @@ def test_workspace_migrate_to_prosaic_preserves_config_and_validates_graph(
     assert "/.echelon/prosaic/" in (tmp_path / ".gitignore").read_text(encoding="utf-8")
     assert "/.prosaic-manifest.json" in (tmp_path / ".gitignore").read_text(encoding="utf-8")
     assert "/.prosaic-backups/" in (tmp_path / ".gitignore").read_text(encoding="utf-8")
+    assert disabled == [tmp_path]
     assert "Prosaic migration complete" in capsys.readouterr().out
 
 

@@ -353,16 +353,6 @@ def _workspace_git_preflight_for_squad_run(
     _workspace_git_preflight(project_root, command_name=command_name)
 
 
-def _require_phase_a_git_ownership(project_root: Path, *, command_name: str) -> None:
-    try:
-        from echelon.speckit_git import require_speckit_git_disabled
-
-        require_speckit_git_disabled(project_root)
-    except Exception as exc:
-        print(f"✗ {command_name}: {exc}", file=sys.stderr)
-        raise SystemExit(1) from exc
-
-
 def _derive_wing_suggestion(project_dir: Path) -> str:
     """Suggest a wing name: git remote slug if available, else dirname-hash6."""
     try:
@@ -6277,7 +6267,6 @@ def _cmd_run(
 
     _enforce_project_config_compatibility(project_root)
     _workspace_git_preflight(project_root, command_name="echelon spec run")
-    _require_phase_a_git_ownership(project_root, command_name="echelon spec run")
 
     # Parse optional flags
     mode = "semi"
@@ -8867,7 +8856,6 @@ def _cmd_phase(
         _enforce_project_config_compatibility(project_root)
 
     _workspace_git_preflight(project_root, command_name="echelon phase run")
-    _require_phase_a_git_ownership(project_root, command_name="echelon phase run")
 
     mode = "semi"
     spec_arg = ""
@@ -10272,10 +10260,8 @@ def _cmd_spec(args: list[str]) -> None:
         project_root = Path.cwd()
         ext_dir = _installed_extension_or_exit(project_root)
         _require_provider_capability("echelon spec resolve", ProviderCapability.ARTIFACT, project_dir=project_root)
-        _require_phase_a_git_ownership(project_root, command_name="echelon spec resolve")
         _cmd_spec_resolve(args[1:], project_root=project_root, ext_dir=ext_dir)
     elif subcmd == "rewind":
-        _require_phase_a_git_ownership(Path.cwd(), command_name="echelon spec rewind")
         _cmd_rewind(args[1:], project_root=Path.cwd())
     elif subcmd == "repair-traceability":
         _cmd_repair_traceability(args[1:], project_root=Path.cwd())
@@ -10290,7 +10276,6 @@ def _cmd_spec(args: list[str]) -> None:
     elif subcmd == "retarget":
         _cmd_spec_retarget(args[1:])
     elif subcmd == "checkpoint":
-        _require_phase_a_git_ownership(Path.cwd(), command_name="echelon spec checkpoint")
         from echelon.checkpoint_cli import run_checkpoint_command
 
         run_checkpoint_command(args[1:], project_root=Path.cwd())
@@ -10301,10 +10286,6 @@ def _cmd_spec(args: list[str]) -> None:
     elif subcmd == "amend":
         _cmd_spec_amend(args[1:])
     elif subcmd in {"bugfix", "change", "reopen"}:
-        _require_phase_a_git_ownership(
-            Path.cwd(),
-            command_name=f"echelon spec {subcmd}",
-        )
         _dispatch_skill_command(subcmd, args[1:])
     else:
         print(f"echelon spec: unknown subcommand '{subcmd}'\n", file=sys.stderr)
@@ -10383,6 +10364,14 @@ def _cmd_workspace_migrate_to_prosaic(project_root: Path) -> None:
         raise SystemExit(1) from exc
 
     try:
+        from echelon.speckit_git import disable_speckit_git
+
+        legacy_git = disable_speckit_git(project_root)
+    except Exception as exc:
+        print(f"✗ Could not disable legacy Spec-Kit Git integration: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+    try:
         graph, runtime_root = load_workspace_phase_graph(project_root)
     except Exception as exc:
         print(f"✗ Prosaic bundle validation failed: {exc}", file=sys.stderr)
@@ -10399,6 +10388,8 @@ def _cmd_workspace_migrate_to_prosaic(project_root: Path) -> None:
     print(f"  phases:  {len(graph.all_phase_ids())}")
     if migrated_constitution is not None:
         print(f"  constitution: {migrated_constitution}")
+    if legacy_git.installed:
+        print("  legacy Git integration: disabled")
     print("  legacy .specify/extensions/echelon was left unchanged")
 
 
@@ -10538,7 +10529,6 @@ def _cmd_spec_continue(args: list[str]) -> None:
     project_root = Path.cwd()
     ext_dir = _installed_phase_runtime_or_exit(project_root)
     _require_provider_capability("echelon spec continue", ProviderCapability.ARTIFACT, project_dir=project_root)
-    _require_phase_a_git_ownership(project_root, command_name="echelon spec continue")
     _cmd_continue(args, project_root=project_root, ext_dir=ext_dir)
 
 
@@ -10552,7 +10542,6 @@ def _cmd_spec_resume(args: list[str]) -> None:
     project_root = Path.cwd()
     ext_dir = _installed_phase_runtime_or_exit(project_root)
     _require_provider_capability("echelon spec resume", ProviderCapability.ARTIFACT, project_dir=project_root)
-    _require_phase_a_git_ownership(project_root, command_name="echelon spec resume")
     _cmd_resume(args, project_root=project_root, ext_dir=ext_dir)
 
 
@@ -11031,14 +11020,6 @@ def _cmd_workspace(args: list[str]) -> None:
             init_kwargs["with_prosaic"] = True
         _cmd_init(project_root, **init_kwargs)
         _maybe_bootstrap_workspace_git(project_root)
-        try:
-            from echelon.speckit_git import disable_speckit_git
-
-            state = disable_speckit_git(project_root)
-        except Exception as exc:
-            print(f"✗ Could not establish exclusive Echelon Git ownership: {exc}", file=sys.stderr)
-            sys.exit(1)
-        print(f"✓ exclusive Git ownership established ({state.reason})")
         return
 
     if subcmd == "doctor":

@@ -53,7 +53,6 @@ from echelon.spec_switch import (
     stash_spec_worktree,
     validate_spec_checkpoint,
 )
-from echelon.speckit_git import SpecKitGitOwnershipError, require_speckit_git_disabled
 from echelon.strict_json import loads_strict_json
 from echelon.target_normalization import normalize_target_set
 from harness.published_re_context import explicit_re_sources
@@ -1075,7 +1074,6 @@ def start_phase_a_spec(
     try:
         with SpecLifecycleLock.acquire(root, operation_id):
             with PhaseAExecutionLock.acquire(root, operation_id):
-                require_speckit_git_disabled(root)
                 observed = current_branch(root)
                 if not observed:
                     raise PhaseAStartError("detached HEAD blocks a fresh spec start")
@@ -1163,7 +1161,6 @@ def start_phase_a_spec(
     except (
         GitHelperError,
         PhaseAGitError,
-        SpecKitGitOwnershipError,
         SpecLifecycleError,
         SpecSwitchError,
     ) as exc:

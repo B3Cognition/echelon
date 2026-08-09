@@ -30,10 +30,6 @@ from echelon.spec_lifecycle import (
     resolve_active_spec_run,
     resolve_spec_run,
 )
-from echelon.speckit_git import (
-    SpecKitGitOwnershipError,
-    require_speckit_git_disabled,
-)
 from harness.phase_checkpoints import (
     CheckpointLedger,
     PhaseCheckpoint,
@@ -626,7 +622,6 @@ def switch_spec(
     try:
         with SpecLifecycleLock.acquire(root, operation_id):
             with PhaseAExecutionLock.acquire(root, operation_id):
-                require_speckit_git_disabled(root)
                 return _switch_spec_locked(
                     root,
                     identity,
@@ -637,5 +632,5 @@ def switch_spec(
                 )
     except SpecSwitchError:
         raise
-    except (GitHelperError, SpecKitGitOwnershipError, SpecLifecycleError) as exc:
+    except (GitHelperError, SpecLifecycleError) as exc:
         raise SpecSwitchError(str(exc)) from exc
