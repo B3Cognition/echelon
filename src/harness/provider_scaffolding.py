@@ -68,7 +68,7 @@ class ClaudeProviderRuntimeScaffolder:
             if command_file.name not in DELIVERY_COMMAND_FILES:
                 continue
             command_name = command_file.stem
-            skill_name = "speckit-" + command_name.replace(".", "-")
+            skill_name = command_name.replace(".", "-")
             skill_dir = worktree / ".claude" / "skills" / skill_name
             skill_dir.mkdir(parents=True, exist_ok=True)
             (skill_dir / "SKILL.md").write_text(
@@ -95,7 +95,7 @@ class ClaudeProviderRuntimeScaffolder:
             if source_dir.exists():
                 agent_files.extend(source_dir.rglob("*.md"))
         for agent_file in sorted(agent_files):
-            agent_name = f"speckit-echelon-{agent_file.stem}"
+            agent_name = f"echelon-{agent_file.stem}"
             (target / f"{agent_name}.md").write_text(
                 _claude_agent_from_runtime_agent(agent_file, agent_name),
                 encoding="utf-8",
@@ -121,9 +121,9 @@ def _claude_skill_from_command(command_file: Path, skill_name: str) -> str:
         "---\n"
         f"name: {skill_name}\n"
         f"description: {description}\n"
-        "compatibility: Requires spec-kit project structure with .specify/ directory\n"
+        "compatibility: Requires an Echelon workspace with .echelon/runtime/\n"
         "metadata:\n"
-        "  author: github-spec-kit\n"
+        "  author: echelon\n"
         f"  source: echelon:commands/{command_file.name}\n"
         "disable-model-invocation: true\n"
         "---\n\n"
@@ -178,7 +178,7 @@ def _frontmatter_value(metadata: str, key: str) -> str | None:
 
 
 def _prefix_runtime_paths(body: str) -> str:
-    prefix = ".specify/extensions/echelon/"
+    prefix = ".echelon/runtime/"
     for name in (
         "agents/",
         "workflow/",

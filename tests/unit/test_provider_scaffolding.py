@@ -65,24 +65,26 @@ def test_claude_provider_scaffolder_materializes_claude_runtime_wrappers(tmp_pat
         exclude_line=excluded.append,
     )
 
-    assert (worktree / ".claude" / "skills" / "speckit-echelon-verify-spec" / "SKILL.md").exists()
-    assert (worktree / ".claude" / "skills" / "speckit-echelon-build" / "SKILL.md").exists()
+    assert (worktree / ".claude" / "skills" / "echelon-verify-spec" / "SKILL.md").exists()
+    assert (worktree / ".claude" / "skills" / "echelon-build" / "SKILL.md").exists()
     verify_skill = (
-        worktree / ".claude" / "skills" / "speckit-echelon-verify-spec" / "SKILL.md"
+        worktree / ".claude" / "skills" / "echelon-verify-spec" / "SKILL.md"
     ).read_text(encoding="utf-8")
     build_skill = (
-        worktree / ".claude" / "skills" / "speckit-echelon-build" / "SKILL.md"
+        worktree / ".claude" / "skills" / "echelon-build" / "SKILL.md"
     ).read_text(encoding="utf-8")
     assert "agents/control/commander.md" not in verify_skill
     assert "workflow/definition.yaml" not in build_skill
-    assert not (worktree / ".claude" / "skills" / "speckit-echelon-run").exists()
-    assert not (worktree / ".claude" / "skills" / "speckit-echelon-re-extract").exists()
-    assert not (worktree / ".claude" / "agents" / "speckit-echelon-commander.md").exists()
-    assert (worktree / ".claude" / "agents" / "speckit-echelon-spec-guard.md").exists()
-    assert ".claude/skills/speckit-echelon-verify-spec/" in excluded
-    assert ".claude/skills/speckit-echelon-build/" in excluded
-    assert ".claude/skills/speckit-echelon-run/" not in excluded
-    assert ".claude/skills/speckit-echelon-re-extract/" not in excluded
+    assert "compatibility: Requires an Echelon workspace with .echelon/runtime/" in verify_skill
+    assert "author: echelon" in verify_skill
+    assert not (worktree / ".claude" / "skills" / "echelon-run").exists()
+    assert not (worktree / ".claude" / "skills" / "echelon-re-extract").exists()
+    assert not (worktree / ".claude" / "agents" / "echelon-commander.md").exists()
+    assert (worktree / ".claude" / "agents" / "echelon-spec-guard.md").exists()
+    assert ".claude/skills/echelon-verify-spec/" in excluded
+    assert ".claude/skills/echelon-build/" in excluded
+    assert ".claude/skills/echelon-run/" not in excluded
+    assert ".claude/skills/echelon-re-extract/" not in excluded
     assert ".claude/agents/" in excluded
 
 

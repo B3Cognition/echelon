@@ -940,13 +940,13 @@ def test_sync_runtime_extension_materializes_claude_command_skills(tmp_path):
         run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
         gitops.sync_runtime_extension(worktree)
 
-    skill = worktree / ".claude" / "skills" / "speckit-echelon-verify-spec" / "SKILL.md"
+    skill = worktree / ".claude" / "skills" / "echelon-verify-spec" / "SKILL.md"
     text = skill.read_text(encoding="utf-8")
-    assert "name: speckit-echelon-verify-spec" in text
+    assert "name: echelon-verify-spec" in text
     assert "agents/control/commander.md" not in text
     assert "workflow/definition.yaml" not in text
     assert "$ARGUMENTS" in text
-    assert ".claude/skills/speckit-echelon-verify-spec/" in exclude.read_text(encoding="utf-8")
+    assert ".claude/skills/echelon-verify-spec/" in exclude.read_text(encoding="utf-8")
 
 
 def test_sync_runtime_extension_skips_claude_command_skills_for_codex(tmp_path):
@@ -1011,13 +1011,13 @@ def test_sync_runtime_extension_materializes_claude_agents(tmp_path):
         run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
         gitops.sync_runtime_extension(worktree)
 
-    commander = worktree / ".claude" / "agents" / "speckit-echelon-commander.md"
-    spec_guard = worktree / ".claude" / "agents" / "speckit-echelon-spec-guard.md"
-    scout = worktree / ".claude" / "agents" / "speckit-echelon-scout.md"
-    architect = worktree / ".claude" / "agents" / "speckit-echelon-architect.md"
+    commander = worktree / ".claude" / "agents" / "echelon-commander.md"
+    spec_guard = worktree / ".claude" / "agents" / "echelon-spec-guard.md"
+    scout = worktree / ".claude" / "agents" / "echelon-scout.md"
+    architect = worktree / ".claude" / "agents" / "echelon-architect.md"
     assert not commander.exists()
     spec_guard_text = spec_guard.read_text(encoding="utf-8")
-    assert spec_guard_text.startswith("---\nname: speckit-echelon-spec-guard\n")
+    assert spec_guard_text.startswith("---\nname: echelon-spec-guard\n")
     assert "description: SPEC GUARD" in spec_guard_text
     assert "# SPEC GUARD\n\nguard\n" in spec_guard_text
     assert not scout.exists()
