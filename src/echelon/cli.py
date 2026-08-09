@@ -3300,61 +3300,29 @@ class _RunRecoveryAction:
 
 
 @dataclass(frozen=True)
-class _RuntimeExtensionCompatibility:
+class _RuntimeBundleCompatibility:
     compatible: bool
     command: str = ""
     note: str = ""
 
 
-def _runtime_extension_compatibility(
+def _runtime_bundle_compatibility(
     project_root: Path,
-) -> _RuntimeExtensionCompatibility:
-    """Check whether controller-owned runtime contracts match this CLI."""
-    from harness.extension_drift import (
-        assess_extension_drift,
-        resolve_extension_source_dir,
-    )
-
-    installed_dir = project_root / ".specify" / "extensions" / "echelon"
-    source_dir = resolve_extension_source_dir(
-        installed_dir,
-        inferred_source_dir=_inferred_source_extension_dir(),
-    )
-    if source_dir is None:
-        return _RuntimeExtensionCompatibility(
+) -> _RuntimeBundleCompatibility:
+    """Validate the deployed Echelon runtime needed for safe retry."""
+    missing = _runtime_bundle_missing_paths(project_root)
+    if missing:
+        return _RuntimeBundleCompatibility(
             compatible=False,
-            command=(
-                "set ECHELON_EXTENSION_SOURCE to the Echelon checkout, "
-                "then run echelon spec continue"
-            ),
-            note="the source extension could not be identified for compatibility validation",
-        )
-
-    report = assess_extension_drift(source_dir, installed_dir)
-    update_command = (
-        f"specify extension update echelon --dev {shlex.quote(str(source_dir))}"
-    )
-    incompatible = (
-        report.status in {"source_missing", "installed_missing"}
-        or bool(report.changed_files)
-        or bool(report.missing_files)
-    )
-    if incompatible:
-        return _RuntimeExtensionCompatibility(
-            compatible=False,
-            command=update_command,
+            command="echelon workspace migrate-to-prosaic",
             note=(
-                "the installed runtime has changed or missing shipped files; "
-                "sync it before retrying the blocked phase"
+                "the deployed Echelon runtime is incomplete: "
+                + ", ".join(missing)
             ),
         )
-    return _RuntimeExtensionCompatibility(
+    return _RuntimeBundleCompatibility(
         compatible=True,
-        note=(
-            "runtime contracts are compatible"
-            if not report.extra_files
-            else "runtime contracts are compatible; installed-only extra files are retained"
-        ),
+        note="deployed Prosaic and runtime bundles are available",
     )
 
 
@@ -3370,9 +3338,9 @@ def _recovery_action_from_instruction(
 
     if kind == RecoveryKind.SYNC_RUNTIME_THEN_RETRY:
         compatibility = (
-            _runtime_extension_compatibility(project_root)
+            _runtime_bundle_compatibility(project_root)
             if project_root is not None
-            else _RuntimeExtensionCompatibility(compatible=True)
+            else _RuntimeBundleCompatibility(compatible=True)
         )
         if not compatibility.compatible:
             return _RunRecoveryAction(
@@ -6050,57 +6018,37 @@ def _select_squad_dir(
     return existing_dir, False
 
 
-def _inferred_source_extension_dir() -> Path:
-    """Possible dev-checkout extension path for source-aware drift checks."""
-    return Path(__file__).resolve().parents[2] / "extension"
+def _runtime_bundle_missing_paths(project_root: Path) -> list[str]:
+    """Return the deployed runtime contracts absent from a workspace."""
+    required = (
+        (
+            project_root / ".echelon" / "runtime" / "workflow" / "definition.yaml",
+            ".echelon/runtime/workflow/definition.yaml",
+        ),
+        (project_root / ".echelon" / "prosaic" / "commands", ".echelon/prosaic/commands"),
+        (project_root / ".echelon" / "prosaic" / "subagents", ".echelon/prosaic/subagents"),
+    )
+    return [display_path for path, display_path in required if not path.exists()]
 
 
-def _print_extension_drift_warning(project_root: Path, ext_dir: Path) -> None:
-    """Warn when installed extension differs from a trusted source extension."""
-    try:
-        from harness.extension_drift import (
-            assess_extension_drift,
-            resolve_extension_source_dir,
-        )
-
-        source_dir = resolve_extension_source_dir(
-            ext_dir,
-            inferred_source_dir=_inferred_source_extension_dir(),
-        )
-        if source_dir is None:
-            return
-        report = assess_extension_drift(source_dir, ext_dir)
-    except Exception:
-        return
-
-    if not report.drifted:
-        return
-
-    examples: list[str] = []
-    for label, paths in (
-        ("changed", report.changed_files),
-        ("missing", report.missing_files),
-        ("extra", report.extra_files),
-    ):
-        for rel_path in paths[:3]:
-            examples.append(f"{label}: {rel_path}")
-    examples = examples[:6]
-
+def _print_runtime_bundle_status(project_root: Path) -> None:
+    """Show whether the workspace has the deployed Echelon runtime contracts."""
+    missing = _runtime_bundle_missing_paths(project_root)
+    fields = [
+        ("prose", ".echelon/prosaic"),
+        ("runtime", ".echelon/runtime"),
+        (
+            "status",
+            "ready"
+            if not missing
+            else "incomplete; run echelon workspace migrate-to-prosaic",
+        ),
+    ]
+    if missing:
+        fields.append(("missing", ", ".join(missing)))
     _banner(
-        "EXTENSION DRIFT",
-        [
-            ("installed", _repo_relative_or_absolute(ext_dir, project_root)),
-            ("source", str(source_dir)),
-            (
-                "diff",
-                f"{len(report.changed_files)} changed, "
-                f"{len(report.missing_files)} missing, "
-                f"{len(report.extra_files)} extra",
-            ),
-            ("examples", "\n".join(examples) if examples else "(none)"),
-            ("update", f"specify extension update --dev {source_dir}"),
-        ],
-        subtitle="Installed Echelon extension differs from this checkout",
+        "ECHELON RUNTIME",
+        fields,
     )
 
 
@@ -6114,10 +6062,7 @@ class ProjectConfigCompatibilityIssue:
 
 
 def _project_echelon_config(project_root: Path) -> Path:
-    canonical = project_root / ".echelon" / "config.yml"
-    if canonical.exists():
-        return canonical
-    return project_root / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+    return project_root / ".echelon" / "config.yml"
 
 
 def _project_config_compatibility_issues(
@@ -6330,8 +6275,6 @@ def _cmd_run(
     from harness.squad_provider import SquadCliProvider
     from harness.squad_state import SquadStateStore
 
-    if (ext_dir / "extension.yml").is_file():
-        _print_extension_drift_warning(project_root, ext_dir)
     _enforce_project_config_compatibility(project_root)
     _workspace_git_preflight(project_root, command_name="echelon spec run")
     _require_phase_a_git_ownership(project_root, command_name="echelon spec run")
@@ -7398,10 +7341,7 @@ def _cmd_status(project_root: Path) -> None:
 
     print(flush=True)
     _banner("ECHELON STATUS", [("Project", str(project_root))])
-    _print_extension_drift_warning(
-        project_root,
-        project_root / ".specify" / "extensions" / "echelon",
-    )
+    _print_runtime_bundle_status(project_root)
     _print_project_config_compatibility_warning(project_root)
     _print_active_spec_status(project_root)
 
@@ -7549,9 +7489,6 @@ def _cmd_continue_impl(
     - nothing found:         prints guidance to start a fresh echelon spec run
     """
     import json as _json
-
-    if (ext_dir / "extension.yml").is_file():
-        _print_extension_drift_warning(project_root, ext_dir)
 
     # Optionally accept --mode override
     mode_override = ""
@@ -8884,9 +8821,6 @@ def _cmd_phase(
     from harness.squad_provider import SquadCliProvider
     from harness.squad_state import SquadStateStore
 
-    if (ext_dir / "extension.yml").is_file():
-        _print_extension_drift_warning(project_root, ext_dir)
-
     graph, ext_dir = load_workspace_phase_graph(project_root)
 
     if not args or args[0] in ("-h", "--help"):
@@ -9154,9 +9088,6 @@ def _cmd_resume(
     )
     from threading import get_ident
     from uuid import uuid4
-
-    if (ext_dir / "extension.yml").is_file():
-        _print_extension_drift_warning(project_root, ext_dir)
 
     answer = " ".join(args).strip()
     if not answer:

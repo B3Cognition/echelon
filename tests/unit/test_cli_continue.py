@@ -1691,7 +1691,7 @@ def test_persisted_runtime_sync_recovery_retries_after_compatible_sync(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
-        "echelon.cli._runtime_extension_compatibility",
+        "echelon.cli._runtime_bundle_compatibility",
         lambda _project_root: SimpleNamespace(
             compatible=True,
             command="",
@@ -1935,7 +1935,7 @@ def test_continue_consumes_controller_recovery_instruction(
         },
     )
     monkeypatch.setattr(
-        "echelon.cli._runtime_extension_compatibility",
+        "echelon.cli._runtime_bundle_compatibility",
         lambda _project_root: SimpleNamespace(
             compatible=True,
             command="",
@@ -1984,15 +1984,13 @@ def test_continue_requires_runtime_sync_before_retry(
             },
         },
     )
-    update_command = (
-        "specify extension update echelon --dev /checkout/echelon/extension"
-    )
+    update_command = "echelon workspace migrate-to-prosaic"
     monkeypatch.setattr(
-        "echelon.cli._runtime_extension_compatibility",
+        "echelon.cli._runtime_bundle_compatibility",
         lambda _project_root: SimpleNamespace(
             compatible=False,
             command=update_command,
-            note="installed runtime is missing shipped files",
+            note="the deployed Echelon runtime is incomplete",
         ),
         raising=False,
     )
@@ -2005,7 +2003,7 @@ def test_continue_requires_runtime_sync_before_retry(
     _cmd_continue(
         [],
         project_root=tmp_path,
-        ext_dir=tmp_path / ".specify/extensions/echelon",
+        ext_dir=tmp_path / ".echelon/runtime",
     )
 
     captured = capsys.readouterr()

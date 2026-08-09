@@ -500,64 +500,44 @@ def test_status_lists_active_spec_checkpoint_stash_and_other_runs(
     assert "002-spec-b" in output
 
 
-def test_status_warns_when_installed_extension_differs_from_source(
+def test_status_reports_missing_deployed_runtime_not_legacy_extension_drift(
     tmp_path: Path,
     capsys,
 ) -> None:
-    source_root = tmp_path / "source"
-    source = source_root / "extension"
     installed = tmp_path / ".specify" / "extensions" / "echelon"
-    (source / "agents" / "control").mkdir(parents=True)
     (installed / "agents" / "control").mkdir(parents=True)
-    (source_root / ".git").mkdir()
-    (source_root / "pyproject.toml").write_text(
-        "[project]\nname = 'echelon'\n",
-        encoding="utf-8",
-    )
-    (source / "extension.yml").write_text("name: echelon\n", encoding="utf-8")
     (installed / "extension.yml").write_text("name: echelon\n", encoding="utf-8")
-    (source / "agents" / "control" / "commander.md").write_text(
-        "new\n",
-        encoding="utf-8",
-    )
     (installed / "agents" / "control" / "commander.md").write_text(
         "old\n",
         encoding="utf-8",
     )
 
-    with patch("echelon.cli._inferred_source_extension_dir", return_value=source):
-        _cmd_status(tmp_path)
+    _cmd_status(tmp_path)
 
     captured = capsys.readouterr()
-    assert "EXTENSION DRIFT" in captured.out
-    assert "agents/control/commander.md" in captured.out
-    assert "specify extension update --dev" in captured.out
-
-
-def test_status_does_not_warn_without_trusted_extension_source(
-    tmp_path: Path,
-    capsys,
-) -> None:
-    source = tmp_path / "site-packages-like" / "extension"
-    installed = tmp_path / ".specify" / "extensions" / "echelon"
-    (source / "agents" / "control").mkdir(parents=True)
-    (installed / "agents" / "control").mkdir(parents=True)
-    (source / "extension.yml").write_text("name: echelon\n", encoding="utf-8")
-    (installed / "extension.yml").write_text("name: echelon\n", encoding="utf-8")
-    (source / "agents" / "control" / "commander.md").write_text(
-        "new\n",
-        encoding="utf-8",
-    )
-    (installed / "agents" / "control" / "commander.md").write_text(
-        "old\n",
-        encoding="utf-8",
-    )
-
-    with patch("echelon.cli._inferred_source_extension_dir", return_value=source):
-        _cmd_status(tmp_path)
-
-    captured = capsys.readouterr()
+    assert "ECHELON RUNTIME" in captured.out
+    assert "incomplete; run echelon workspace migrate-to-prosaic" in captured.out
     assert "EXTENSION DRIFT" not in captured.out
+    assert "specify extension update" not in captured.out
+
+
+def test_status_reports_ready_deployed_runtime(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    (tmp_path / ".echelon" / "runtime" / "workflow").mkdir(parents=True)
+    (tmp_path / ".echelon" / "runtime" / "workflow" / "definition.yaml").write_text(
+        "phases: []\n", encoding="utf-8"
+    )
+    (tmp_path / ".echelon" / "prosaic" / "commands").mkdir(parents=True)
+    (tmp_path / ".echelon" / "prosaic" / "subagents").mkdir()
+
+    _cmd_status(tmp_path)
+
+    captured = capsys.readouterr()
+    assert "ECHELON RUNTIME" in captured.out
+    assert "ready" in captured.out
+    assert "migrate-to-prosaic" not in captured.out
 
 
 def test_status_uses_controller_recovery_instruction_for_next_command(
@@ -589,7 +569,7 @@ def test_status_uses_controller_recovery_instruction_for_next_command(
     )
 
     with patch(
-        "echelon.cli._runtime_extension_compatibility",
+        "echelon.cli._runtime_bundle_compatibility",
         return_value=compatibility,
     ):
         _cmd_status(tmp_path)

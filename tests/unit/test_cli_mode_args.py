@@ -95,7 +95,6 @@ def test_cmd_run_exits_nonzero_when_squad_blocks(
                 run_id="spec-20260706-120000-000001",
             )
 
-    monkeypatch.setattr("echelon.cli._print_extension_drift_warning", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.cli._workspace_git_preflight", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.cli._workspace_git_preflight_for_squad_run", lambda *_args, **_kwargs: None)
@@ -110,6 +109,7 @@ def test_cmd_run_exits_nonzero_when_squad_blocks(
     monkeypatch.setattr("harness.config.get_full_resolved_config", lambda *_args, **_kwargs: {})
     monkeypatch.setattr("harness.squad_provider.SquadCliProvider", lambda *_args, **_kwargs: object())
     monkeypatch.setattr("harness.phase_graph.PhaseGraph", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr("harness.phase_graph.load_workspace_phase_graph", lambda *_args: (object(), tmp_path / ".echelon" / "runtime"))
     monkeypatch.setattr("harness.squad.SquadController", FakeController)
 
     with pytest.raises(SystemExit) as exc:
@@ -218,7 +218,6 @@ def test_cmd_run_passes_repeatable_implementation_targets_and_ignore_re(
                 run_id="spec-20260706-120000-000001",
             )
 
-    monkeypatch.setattr("echelon.cli._print_extension_drift_warning", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.cli._workspace_git_preflight", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.cli._workspace_git_preflight_for_squad_run", lambda *_args, **_kwargs: None)
@@ -233,6 +232,7 @@ def test_cmd_run_passes_repeatable_implementation_targets_and_ignore_re(
     monkeypatch.setattr("harness.config.get_full_resolved_config", lambda *_args, **_kwargs: {})
     monkeypatch.setattr("harness.squad_provider.SquadCliProvider", lambda *_args, **_kwargs: object())
     monkeypatch.setattr("harness.phase_graph.PhaseGraph", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr("harness.phase_graph.load_workspace_phase_graph", lambda *_args: (object(), tmp_path / ".echelon" / "runtime"))
     monkeypatch.setattr("harness.squad.SquadController", FakeController)
 
     _cmd_run(
@@ -265,7 +265,6 @@ def test_cmd_run_rejects_moved_reverse_engineering_policies(
     capsys: pytest.CaptureFixture[str],
     policy: str,
 ) -> None:
-    monkeypatch.setattr("echelon.cli._print_extension_drift_warning", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.cli._workspace_git_preflight", lambda *_args, **_kwargs: None)
 
@@ -305,7 +304,6 @@ def test_cmd_run_target_init_prepares_target_and_syncs_workspace_sources(
                 run_id="spec-20260711-120000-000001",
             )
 
-    monkeypatch.setattr("echelon.cli._print_extension_drift_warning", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.cli._workspace_git_preflight", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.cli._workspace_git_preflight_for_squad_run", lambda *_args, **_kwargs: None)
@@ -320,6 +318,7 @@ def test_cmd_run_target_init_prepares_target_and_syncs_workspace_sources(
     monkeypatch.setattr("harness.config.get_full_resolved_config", lambda *_args, **_kwargs: {})
     monkeypatch.setattr("harness.squad_provider.SquadCliProvider", lambda *_args, **_kwargs: object())
     monkeypatch.setattr("harness.phase_graph.PhaseGraph", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr("harness.phase_graph.load_workspace_phase_graph", lambda *_args: (object(), tmp_path / ".echelon" / "runtime"))
     monkeypatch.setattr("harness.squad.SquadController", FakeController)
 
     _cmd_run(
@@ -345,7 +344,6 @@ def test_cmd_run_target_init_requires_target(
 ) -> None:
     squad_dir = tmp_path / "runs" / "spec-20260711-120000-000001"
 
-    monkeypatch.setattr("echelon.cli._print_extension_drift_warning", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.cli._workspace_git_preflight", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.cli._workspace_git_preflight_for_squad_run", lambda *_args, **_kwargs: None)
@@ -369,7 +367,6 @@ def test_cmd_run_requires_targets_before_multi_source_phase_a(
         source_root.mkdir(parents=True)
         (source_root / "package.json").write_text("{}\n", encoding="utf-8")
 
-    monkeypatch.setattr("echelon.cli._print_extension_drift_warning", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.cli._workspace_git_preflight", lambda *_args, **_kwargs: None)
 

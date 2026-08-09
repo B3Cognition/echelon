@@ -452,7 +452,6 @@ def test_legacy_spec_parser_rejects_moved_re_options(
 ) -> None:
     from echelon.cli import _cmd_run
 
-    monkeypatch.setattr("echelon.cli._print_extension_drift_warning", lambda *a, **k: None)
     monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", lambda *a, **k: None)
     monkeypatch.setattr("echelon.cli._workspace_git_preflight", lambda *a, **k: None)
     value = "changed" if flag == "--re-policy" else "9"
@@ -472,7 +471,6 @@ def test_spec_continue_rejects_moved_re_budget(
 ) -> None:
     from echelon.cli import _cmd_continue
 
-    monkeypatch.setattr("echelon.cli._print_extension_drift_warning", lambda *a, **k: None)
 
     with pytest.raises(SystemExit) as exc:
         _cmd_continue(
