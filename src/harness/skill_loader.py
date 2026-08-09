@@ -21,21 +21,14 @@ ECHELON_SKILL_MAP = {
 def find_skill(skill_base: str, project_dir: Path, cli: str) -> Optional[Path]:
     """Locate the skill file for the given LLM CLI and skill base name.
 
-    Claude   : .claude/skills/speckit-echelon-<cmd>/[Ss]kill.md
-    Copilot  : .github/agents/speckit.<skill_base>.agent.md
-    Opencode : .opencode/command/speckit.<skill_base>.md
-    Codex    : .claude/skills/speckit-echelon-<cmd>/[Ss]kill.md
+    Claude/Codex: .claude/skills/echelon-<cmd>/[Ss]kill.md
     """
     if cli == "copilot":
-        candidates = [
-            project_dir / ".github" / "agents" / f"speckit.{skill_base}.agent.md",
-        ]
+        candidates = [project_dir / ".github" / "agents" / f"{skill_base}.agent.md"]
     elif cli == "opencode":
-        candidates = [
-            project_dir / ".opencode" / "command" / f"speckit.{skill_base}.md",
-        ]
+        candidates = [project_dir / ".opencode" / "command" / f"{skill_base}.md"]
     else:
-        dash_name = "speckit-" + skill_base.replace(".", "-")
+        dash_name = skill_base.replace(".", "-")
         candidates = [
             project_dir / ".claude" / "skills" / dash_name / "skill.md",
             project_dir / ".claude" / "skills" / dash_name / "SKILL.md",

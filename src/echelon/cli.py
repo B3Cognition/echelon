@@ -7,10 +7,10 @@ and invoke the configured LLM CLI so the LLM only executes the skill.
 `init` is pure Python — no LLM involved.
 
 Skill file locations by AI tool:
-  Claude   : .claude/skills/speckit-echelon-<cmd>/[Ss]kill.md
-  Copilot  : .github/agents/speckit.echelon.<cmd>.agent.md
-  Opencode : .opencode/command/speckit.echelon.<cmd>.md
-  Codex    : .claude/skills/speckit-echelon-<cmd>/[Ss]kill.md
+  Claude   : .claude/skills/echelon-<cmd>/[Ss]kill.md
+  Copilot  : .github/agents/echelon.<cmd>.agent.md
+  Opencode : .opencode/command/echelon.<cmd>.md
+  Codex    : .claude/skills/echelon-<cmd>/[Ss]kill.md
 Auto-detected from ECHELON_LLM (default: claude).
 """
 
@@ -9565,25 +9565,25 @@ def _skill_required_capability(command: str) -> ProviderCapability:
 def _skill_not_found_msg(skill_base: str, project_dir: Path, cli: str) -> str:
     if cli == "copilot":
         return (
-            f"echelon: skill 'speckit.{skill_base}' not found.\n"
+            f"echelon: skill '{skill_base}' not found.\n"
             f"Expected at:\n"
-            f"  {project_dir / '.github' / 'agents' / f'speckit.{skill_base}.agent.md'}\n"
-            f"Run: specify extension add echelon"
+            f"  {project_dir / '.github' / 'agents' / f'{skill_base}.agent.md'}\n"
+            "Run: echelon workspace migrate-to-prosaic"
         )
     if cli == "opencode":
         return (
-            f"echelon: skill 'speckit.{skill_base}' not found.\n"
+            f"echelon: skill '{skill_base}' not found.\n"
             f"Expected at:\n"
-            f"  {project_dir / '.opencode' / 'command' / f'speckit.{skill_base}.md'}\n"
-            f"Run: specify extension add echelon"
+            f"  {project_dir / '.opencode' / 'command' / f'{skill_base}.md'}\n"
+            "Run: echelon workspace migrate-to-prosaic"
         )
-    dash_name = "speckit-" + skill_base.replace(".", "-")
+    dash_name = skill_base.replace(".", "-")
     return (
         f"echelon: skill '{dash_name}' not found.\n"
         f"Expected at:\n"
         f"  {project_dir / '.claude' / 'skills' / dash_name / 'skill.md'}\n"
         f"  {Path.home() / '.claude' / 'skills' / dash_name / 'skill.md'}\n"
-        f"Run: specify extension add echelon"
+        "Run: echelon workspace migrate-to-prosaic"
     )
 
 

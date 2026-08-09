@@ -22,7 +22,7 @@ def test_dispatch_skill_command_routes_legacy_claude_review_through_provider(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    skill_dir = tmp_path / ".claude" / "skills" / "speckit-echelon-review"
+    skill_dir = tmp_path / ".claude" / "skills" / "echelon-review"
     skill_dir.mkdir(parents=True)
     (skill_dir / "skill.md").write_text(
         "---\nname: echelon.review\n---\nreview $ARGUMENTS\n",
@@ -64,7 +64,7 @@ def test_dispatch_skill_command_routes_legacy_build_with_canonical_execution_met
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    skill_dir = tmp_path / ".claude" / "skills" / "speckit-echelon-build"
+    skill_dir = tmp_path / ".claude" / "skills" / "echelon-build"
     skill_dir.mkdir(parents=True)
     (skill_dir / "skill.md").write_text(
         "---\nname: echelon.build\n---\nbuild $ARGUMENTS\n",
@@ -166,8 +166,8 @@ def test_dispatch_skill_command_uses_project_prosaic_command_before_native_skill
 def test_dispatch_skill_command_routes_copilot_through_ai_cli_provider(monkeypatch, tmp_path: Path) -> None:
     skill_dir = tmp_path / ".github" / "agents"
     skill_dir.mkdir(parents=True)
-    (skill_dir / "speckit.echelon.review.agent.md").write_text(
-        "---\nname: speckit.echelon.review\n---\nreview $ARGUMENTS\n",
+    (skill_dir / "echelon.review.agent.md").write_text(
+        "---\nname: echelon.review\n---\nreview $ARGUMENTS\n",
         encoding="utf-8",
     )
     config = HarnessConfig(
@@ -238,7 +238,7 @@ def test_dispatch_spec_skill_allows_artifact_only_provider(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    skill_dir = tmp_path / ".claude" / "skills" / "speckit-echelon-change"
+    skill_dir = tmp_path / ".claude" / "skills" / "echelon-change"
     skill_dir.mkdir(parents=True)
     (skill_dir / "skill.md").write_text(
         "---\nname: echelon.change\n---\nchange $ARGUMENTS\n",
