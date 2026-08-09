@@ -6557,7 +6557,7 @@ def _cmd_run(
 
     provider = SquadCliProvider(config)
     from harness.phase_graph import load_workspace_phase_graph
-    graph, ext_dir = load_workspace_phase_graph(project_root, ext_dir)
+    graph, ext_dir = load_workspace_phase_graph(project_root)
     # token_budget_k lives under analysis: in echelon-config.yml.
     # Use get_full_resolved_config so the 4-level cascade (ConfigManager →
     # echelon-config.yml → local-config.yml → env vars) is respected.
@@ -8887,7 +8887,7 @@ def _cmd_phase(
     if (ext_dir / "extension.yml").is_file():
         _print_extension_drift_warning(project_root, ext_dir)
 
-    graph, ext_dir = load_workspace_phase_graph(project_root, ext_dir)
+    graph, ext_dir = load_workspace_phase_graph(project_root)
 
     if not args or args[0] in ("-h", "--help"):
         print(
@@ -9086,7 +9086,7 @@ def _resume_v2_human_input(
         raise SystemExit(1)
 
     from harness.phase_graph import load_workspace_phase_graph
-    graph, ext_dir = load_workspace_phase_graph(project_root, ext_dir)
+    graph, ext_dir = load_workspace_phase_graph(project_root)
     config = load_config(project_root, squad_only=True)
     provider = SquadCliProvider(config)
     token_budget = 0
@@ -9269,7 +9269,7 @@ def _cmd_resume(
     )
 
     from harness.phase_graph import load_workspace_phase_graph
-    graph, ext_dir = load_workspace_phase_graph(project_root, ext_dir)
+    graph, ext_dir = load_workspace_phase_graph(project_root)
     raw_options = state.get("escalation_options")
     has_structured_options = isinstance(raw_options, list) and bool(raw_options)
     selected_option = None
@@ -10452,10 +10452,7 @@ def _cmd_workspace_migrate_to_prosaic(project_root: Path) -> None:
         raise SystemExit(1) from exc
 
     try:
-        graph, runtime_root = load_workspace_phase_graph(
-            project_root,
-            project_root / ".specify" / "extensions" / "echelon",
-        )
+        graph, runtime_root = load_workspace_phase_graph(project_root)
     except Exception as exc:
         print(f"✗ Prosaic bundle validation failed: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc

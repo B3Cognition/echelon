@@ -349,21 +349,15 @@ def test_re_refresh_cli_rejects_topology_incompatible_source_declarations(
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("provenance", ("canonical", "legacy"))
 def test_re_refresh_cli_exits_two_for_malformed_workspace_yaml(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
-    provenance: str,
 ) -> None:
     from echelon.cli import _cmd_re_refresh
     from harness.re_lifecycle import ReLifecycleController
 
-    config = (
-        tmp_path / ".echelon/config.yml"
-        if provenance == "canonical"
-        else tmp_path / ".specify/extensions/echelon/echelon-config.yml"
-    )
+    config = tmp_path / ".echelon/config.yml"
     config.parent.mkdir(parents=True)
     config.write_text("workspace:\n  sources: [api\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)

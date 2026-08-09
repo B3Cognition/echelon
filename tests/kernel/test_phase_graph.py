@@ -98,7 +98,7 @@ def test_workspace_graph_prefers_deployed_prosaic_runtime(tmp_path: Path) -> Non
     )
     (prose / "echelon.scout.md").write_text("# Scout\n", encoding="utf-8")
 
-    graph, runtime_root = load_workspace_phase_graph(tmp_path, tmp_path / "legacy")
+    graph, runtime_root = load_workspace_phase_graph(tmp_path)
 
     assert runtime_root == runtime
     assert graph.agent_file("echelon.scout") == str((prose / "echelon.scout.md").resolve())

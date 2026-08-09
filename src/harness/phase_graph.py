@@ -342,23 +342,14 @@ class PhaseGraph:
         }
 
 
-def load_workspace_phase_graph(
-    project_root: Path,
-    legacy_extension_dir: Path,
-) -> tuple[PhaseGraph, Path]:
-    """Load the deployed Prosaic graph when present, otherwise the legacy graph."""
+def load_workspace_phase_graph(project_root: Path) -> tuple[PhaseGraph, Path]:
+    """Load the deployed Prosaic graph for an initialized workspace."""
     runtime_root = project_root / ".echelon" / "runtime"
     subagents_dir = project_root / ".echelon" / "prosaic" / "subagents"
     definition_path = runtime_root / "workflow" / "definition.yaml"
-    if definition_path.is_file() and subagents_dir.is_dir():
-        return (
-            PhaseGraph(definition_path, prosaic_subagents_dir=subagents_dir),
-            runtime_root,
+    if not definition_path.is_file() or not subagents_dir.is_dir():
+        raise FileNotFoundError(
+            "Echelon Prosaic/runtime bundle is missing; run "
+            "`echelon workspace migrate-to-prosaic`"
         )
-    return (
-        PhaseGraph(
-            legacy_extension_dir / "workflow" / "definition.yaml",
-            legacy_extension_dir / "extension.yml",
-        ),
-        legacy_extension_dir,
-    )
+    return PhaseGraph(definition_path, prosaic_subagents_dir=subagents_dir), runtime_root
