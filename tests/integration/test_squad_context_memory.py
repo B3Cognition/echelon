@@ -21,8 +21,8 @@ from harness.squad import SquadController
 from harness.squad_provider import SquadAgentResult
 from harness.squad_state import SquadStateStore
 
-DEFINITION = EXT_ROOT / "extension/workflow/definition.yaml"
-EXT_YML = EXT_ROOT / "extension/extension.yml"
+DEFINITION = EXT_ROOT / "runtime/workflow/definition.yaml"
+PROSAIC_SUBAGENTS = EXT_ROOT / "prosaic/subagents"
 
 
 def _valid_plan_conformance_json() -> str:
@@ -81,7 +81,7 @@ def _controller(tmp_path: Path, provider: MagicMock | None = None) -> tuple[Squa
     squad_dir = tmp_path / "runs" / "run-test"
     squad_dir.mkdir(parents=True, exist_ok=True)
     (squad_dir / "staging").mkdir(exist_ok=True)
-    graph = PhaseGraph(DEFINITION, EXT_YML)
+    graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
     store = SquadStateStore(squad_dir)
     ctrl = SquadController(
         provider=provider or _mock_provider(),

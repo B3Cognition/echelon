@@ -50,8 +50,8 @@ from harness.state_transaction_namespace import (
     PENDING_EXTERNAL_PUBLICATION_KEY,
 )
 
-DEFINITION = EXT_ROOT / "extension/workflow/definition.yaml"
-EXT_YML = EXT_ROOT / "extension/extension.yml"
+DEFINITION = EXT_ROOT / "runtime/workflow/definition.yaml"
+PROSAIC_SUBAGENTS = EXT_ROOT / "prosaic/subagents"
 VALID_MARKER = {
     "schema_version": 1,
     "transaction_id": "a" * 32,
@@ -161,7 +161,7 @@ def _tasks_result(
     *,
     report: object = "tasks-lexicon-report.json",
 ) -> PreparedPhaseResult:
-    node = PhaseGraph(DEFINITION, EXT_YML).get("phase3-tasks-lexicon")
+    node = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS).get("phase3-tasks-lexicon")
     return prepare_phase_result(
         node,
         _raw_result(

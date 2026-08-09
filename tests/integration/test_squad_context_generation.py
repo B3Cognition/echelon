@@ -22,8 +22,8 @@ from harness.squad_executors import AgentExecutor
 from harness.squad_provider import SquadAgentResult
 from harness.squad_state import SquadStateStore
 
-DEFINITION = EXT_ROOT / "extension/workflow/definition.yaml"
-EXT_YML = EXT_ROOT / "extension/extension.yml"
+DEFINITION = EXT_ROOT / "runtime/workflow/definition.yaml"
+PROSAIC_SUBAGENTS = EXT_ROOT / "prosaic/subagents"
 
 
 def _ensure_git_repo(project_root: Path) -> None:
@@ -91,7 +91,7 @@ def _controller(
         squad_dir = tmp_path / "runs" / "run-test"
     squad_dir.mkdir(parents=True, exist_ok=True)
     (squad_dir / "staging").mkdir(exist_ok=True)
-    graph = PhaseGraph(DEFINITION, EXT_YML)
+    graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
     store = SquadStateStore(squad_dir)
     ctrl = SquadController(
         provider=provider or _mock_provider(),
@@ -313,7 +313,7 @@ phases:
     run_local_spec_dir = squad_dir / "specs" / "001-demo"
     call_count = 0
 
-    def _exec_agent(project_root: str, prompt: str) -> SquadAgentResult:
+    def _exec_agent(project_root: str, prompt: str, **_kwargs: object) -> SquadAgentResult:
         nonlocal call_count
         call_count += 1
         if call_count == 1:
