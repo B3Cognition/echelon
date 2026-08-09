@@ -12,8 +12,24 @@ from harness.runtime_surface import DELIVERY_COMMAND_FILES
 
 ExcludeLine = Callable[[str], None]
 
-RUNTIME_CLAUDE_AGENT_DIRS = (
-    Path("build"),
+DELIVERY_CLAUDE_SUBAGENTS = frozenset(
+    {
+        "echelon.change-controller.md",
+        "echelon.code-reviewer.md",
+        "echelon.debugger.md",
+        "echelon.docs-verifier.md",
+        "echelon.engineering-manager.md",
+        "echelon.implementation-mapper.md",
+        "echelon.implementer.md",
+        "echelon.integrator.md",
+        "echelon.progress-tracker.md",
+        "echelon.spec-fulfillment-auditor.md",
+        "echelon.spec-guard.md",
+        "echelon.tech-writer.md",
+        "echelon.test-guardian.md",
+        "echelon.verification.md",
+        "echelon.visual-validator.md",
+    }
 )
 class ProviderRuntimeScaffolder(Protocol):
     """Materializes AI-CLI-specific helper files for a synced runtime extension."""
@@ -21,7 +37,7 @@ class ProviderRuntimeScaffolder(Protocol):
     def sync(
         self,
         *,
-        extension_root: Path,
+        prose_root: Path,
         worktree: Path,
         exclude_line: ExcludeLine,
     ) -> None:
@@ -34,7 +50,7 @@ class NoopProviderRuntimeScaffolder:
     def sync(
         self,
         *,
-        extension_root: Path,
+        prose_root: Path,
         worktree: Path,
         exclude_line: ExcludeLine,
     ) -> None:
@@ -47,20 +63,20 @@ class ClaudeProviderRuntimeScaffolder:
     def sync(
         self,
         *,
-        extension_root: Path,
+        prose_root: Path,
         worktree: Path,
         exclude_line: ExcludeLine,
     ) -> None:
-        self._sync_command_skills(extension_root, worktree, exclude_line)
-        self._sync_agents(extension_root, worktree, exclude_line)
+        self._sync_command_skills(prose_root, worktree, exclude_line)
+        self._sync_agents(prose_root, worktree, exclude_line)
 
     @staticmethod
     def _sync_command_skills(
-        extension_root: Path,
+        prose_root: Path,
         worktree: Path,
         exclude_line: ExcludeLine,
     ) -> None:
-        commands_dir = extension_root / "commands"
+        commands_dir = prose_root / "commands"
         if not commands_dir.exists():
             return
 
@@ -79,23 +95,20 @@ class ClaudeProviderRuntimeScaffolder:
 
     @staticmethod
     def _sync_agents(
-        extension_root: Path,
+        prose_root: Path,
         worktree: Path,
         exclude_line: ExcludeLine,
     ) -> None:
-        agents_dir = extension_root / "agents"
+        agents_dir = prose_root / "subagents"
         if not agents_dir.exists():
             return
 
         target = worktree / ".claude" / "agents"
         target.mkdir(parents=True, exist_ok=True)
-        agent_files: list[Path] = []
-        for relative_dir in RUNTIME_CLAUDE_AGENT_DIRS:
-            source_dir = agents_dir / relative_dir
-            if source_dir.exists():
-                agent_files.extend(source_dir.rglob("*.md"))
-        for agent_file in sorted(agent_files):
-            agent_name = f"echelon-{agent_file.stem}"
+        for agent_file in sorted(agents_dir.glob("echelon.*.md")):
+            if agent_file.name not in DELIVERY_CLAUDE_SUBAGENTS:
+                continue
+            agent_name = agent_file.stem.replace(".", "-")
             (target / f"{agent_name}.md").write_text(
                 _claude_agent_from_runtime_agent(agent_file, agent_name),
                 encoding="utf-8",

@@ -44,11 +44,6 @@ logger = logging.getLogger(__name__)
 
 # Command timeout for git operations (seconds)
 GIT_CMD_TIMEOUT = 120
-RUNTIME_EXTENSION_REL = Path(".specify") / "extensions" / "echelon"
-RUNTIME_EXTENSION_SOURCE_REQUIRED = (
-    Path("workflow") / "definition.yaml",
-)
-RUNTIME_EXTENSION_EXCLUDE = ".specify/extensions/echelon/"
 RUNTIME_EXTENSION_EXCLUDED_PATHS = (
     Path(".extensionignore"),
     Path("config"),
@@ -90,8 +85,8 @@ PERLGRAPH_RUNTIME_REL = Path("scripts") / "node" / "perlgraph"
 PERLGRAPH_RUNTIME_TIMEOUT_SECONDS = 300
 
 
-def copy_runtime_extension(source: Path, dest: Path) -> None:
-    """Replace a generated runtime extension with a filtered source copy."""
+def copy_runtime_tree(source: Path, dest: Path) -> None:
+    """Replace a generated Echelon runtime tree with a filtered source copy."""
     if dest.is_symlink() or dest.is_file():
         dest.unlink()
     elif dest.exists():
@@ -802,38 +797,17 @@ class GitOpsManager:
         *,
         prepare_codegraph: bool = False,
     ) -> None:
-        """Make Echelon's local runtime prompts available inside a harness worktree.
-
-        Installed Spec-Kit extensions are often local, untracked project files. Git
-        worktrees only contain tracked files, so a harness worktree may otherwise
-        start without `.specify/extensions/echelon` and cause the LLM to improvise
-        broad filesystem searches. Copy the local extension into the ephemeral
-        worktree as ignored runtime support, not as product source.
-        """
+        """Deploy Echelon's Prosaic/runtime bundles into a harness worktree."""
         worktree = Path(worktree_dir)
-        if self._prosaic_runtime_source_ready():
-            self._sync_prosaic_runtime(worktree, prepare_codegraph=prepare_codegraph)
-            return
-
-        source = self._base_dir / RUNTIME_EXTENSION_REL
-        dest = worktree / RUNTIME_EXTENSION_REL
-
-        if not source.exists() or not self._runtime_extension_source_ready(source):
+        if not self._prosaic_runtime_source_ready():
             raise GitOpsError(
-                "Harness runtime extension is missing. Expected "
-                f"{source / 'workflow' / 'definition.yaml'}. "
-                "Run `echelon workspace init` from the project root before `echelon delivery run`.",
+                "Echelon Prosaic/runtime bundle is missing. Expected "
+                f"{self._base_dir / PROSAIC_PROSE_REL} and "
+                f"{self._base_dir / PROSAIC_RUNTIME_REL / 'workflow' / 'definition.yaml'}. "
+                "Run `echelon workspace migrate-to-prosaic` before `echelon delivery run`.",
                 command="sync_runtime_extension",
             )
-
-        copy_runtime_extension(source, dest)
-        prune_delivery_workflow_definition(dest / "workflow" / "definition.yaml")
-        if prepare_codegraph:
-            prepare_codegraph_runtime(dest)
-            prepare_perlgraph_runtime(dest)
-        self._sync_provider_runtime_shims(dest, worktree)
-        self._exclude_runtime_extension(worktree)
-        logger.info("Synced runtime Echelon extension into worktree at %s", dest)
+        self._sync_prosaic_runtime(worktree, prepare_codegraph=prepare_codegraph)
 
     def _prosaic_runtime_source_ready(self) -> bool:
         prose = self._base_dir / PROSAIC_PROSE_REL
@@ -852,10 +826,12 @@ class GitOpsManager:
         runtime_dest = worktree / PROSAIC_RUNTIME_REL
 
         copy_prosaic_runtime_tree(prose_source, prose_dest)
-        copy_prosaic_runtime_tree(runtime_source, runtime_dest)
+        copy_runtime_tree(runtime_source, runtime_dest)
+        prune_delivery_workflow_definition(runtime_dest / "workflow" / "definition.yaml")
         if prepare_codegraph:
             prepare_codegraph_runtime(runtime_dest)
             prepare_perlgraph_runtime(runtime_dest)
+        self._sync_provider_runtime_shims(prose_dest, worktree)
         self._exclude_prosaic_runtime(worktree)
         logger.info(
             "Synced deployed Echelon Prosaic/runtime into worktree at %s and %s",
@@ -863,18 +839,14 @@ class GitOpsManager:
             runtime_dest,
         )
 
-    def _sync_provider_runtime_shims(self, extension_root: Path, worktree: Path) -> None:
+    def _sync_provider_runtime_shims(self, prose_root: Path, worktree: Path) -> None:
         """Materialize AI-CLI-specific helper files only for their provider."""
         scaffolder = provider_runtime_scaffolder(self._config.llm.cli)
         scaffolder.sync(
-            extension_root=extension_root,
+            prose_root=prose_root,
             worktree=worktree,
             exclude_line=lambda line: self._exclude_provider_scaffold_line(worktree, line),
         )
-
-    @staticmethod
-    def _runtime_extension_source_ready(path: Path) -> bool:
-        return all((path / required).exists() for required in RUNTIME_EXTENSION_SOURCE_REQUIRED)
 
     @staticmethod
     def _append_unique_line(path: Path, line: str) -> None:
@@ -895,12 +867,6 @@ class GitOpsManager:
         if not exclude_path.is_absolute():
             exclude_path = worktree / exclude_path
         return exclude_path
-
-    def _exclude_runtime_extension(self, worktree: Path) -> None:
-        try:
-            self._append_unique_line(self._git_exclude_path(worktree), RUNTIME_EXTENSION_EXCLUDE)
-        except GitOpsError as e:
-            logger.warning("Could not exclude runtime extension from git status: %s", e)
 
     def _exclude_prosaic_runtime(self, worktree: Path) -> None:
         try:

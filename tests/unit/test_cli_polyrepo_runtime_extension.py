@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from shutil import copytree
 
+import pytest
 import yaml
 
 from echelon.cli import _sync_polyrepo_runtime_extension
@@ -16,11 +17,19 @@ from harness.runtime_surface import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _minimal_prosaic_bundle(tmp_path: Path) -> None:
+    prose = tmp_path / "workspace" / ".echelon" / "prosaic"
+    (prose / "commands").mkdir(parents=True)
+    (prose / "subagents").mkdir()
+
+
 def test_polyrepo_runtime_extension_excludes_codegraph_node_modules(
     tmp_path: Path,
 ) -> None:
     """Target harness roots retain locked CodeGraph source, not installed packages."""
-    source = tmp_path / "workspace" / ".specify" / "extensions" / "echelon"
+    source = tmp_path / "workspace" / ".echelon" / "runtime"
+    prose = tmp_path / "workspace" / ".echelon" / "prosaic"
     runtime = source / "scripts" / "node" / "codegraph"
     package = runtime / "node_modules" / "@colbymchenry" / "codegraph"
     (source / "agents" / "control").mkdir(parents=True)
@@ -30,6 +39,10 @@ def test_polyrepo_runtime_extension_excludes_codegraph_node_modules(
         "commander\n", encoding="utf-8"
     )
     (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
+    (prose / "commands" / "echelon.build.md").write_text("build\n", encoding="utf-8")
+    (prose / "subagents" / "echelon.implementer.md").write_text(
+        "implementer\n", encoding="utf-8"
+    )
     (runtime / "package.json").write_text('{"name":"codegraph"}\n', encoding="utf-8")
     (runtime / "package-lock.json").write_text("{}\n", encoding="utf-8")
     (package / "package.json").write_text(
@@ -43,9 +56,8 @@ def test_polyrepo_runtime_extension_excludes_codegraph_node_modules(
 
     deployed_runtime = (
         harness_base
-        / ".specify"
-        / "extensions"
-        / "echelon"
+        / ".echelon"
+        / "runtime"
         / "scripts"
         / "node"
         / "codegraph"
@@ -53,13 +65,15 @@ def test_polyrepo_runtime_extension_excludes_codegraph_node_modules(
     assert (deployed_runtime / "package.json").exists()
     assert (deployed_runtime / "package-lock.json").exists()
     assert not (deployed_runtime / "node_modules").exists()
+    assert (harness_base / ".echelon/prosaic/commands/echelon.build.md").is_file()
+    assert (harness_base / ".echelon/prosaic/subagents/echelon.implementer.md").is_file()
 
 
 def test_polyrepo_runtime_extension_excludes_python_migration_helpers(
     tmp_path: Path,
 ) -> None:
     """Target-specific harness roots should not expose workspace migration helpers."""
-    source = tmp_path / "workspace" / ".specify" / "extensions" / "echelon"
+    source = tmp_path / "workspace" / ".echelon" / "runtime"
     (source / "agents" / "control").mkdir(parents=True)
     (source / "workflow").mkdir()
     (source / "scripts" / "python").mkdir(parents=True)
@@ -75,7 +89,7 @@ def test_polyrepo_runtime_extension_excludes_python_migration_helpers(
 
     _sync_polyrepo_runtime_extension(tmp_path / "workspace", harness_base)
 
-    runtime = harness_base / ".specify" / "extensions" / "echelon"
+    runtime = harness_base / ".echelon" / "runtime"
     assert (runtime / "workflow" / "definition.yaml").exists()
     assert not (runtime / "agents" / "control" / "commander.md").exists()
     assert not (runtime / "scripts" / "python").exists()
@@ -85,7 +99,7 @@ def test_polyrepo_runtime_extension_excludes_reverse_engineering_bash_helpers(
     tmp_path: Path,
 ) -> None:
     """Target-specific harness roots should not expose RE shell helpers."""
-    source = tmp_path / "workspace" / ".specify" / "extensions" / "echelon"
+    source = tmp_path / "workspace" / ".echelon" / "runtime"
     (source / "agents" / "control").mkdir(parents=True)
     (source / "workflow").mkdir()
     (source / "scripts" / "bash" / "re").mkdir(parents=True)
@@ -105,7 +119,7 @@ def test_polyrepo_runtime_extension_excludes_reverse_engineering_bash_helpers(
 
     _sync_polyrepo_runtime_extension(tmp_path / "workspace", harness_base)
 
-    runtime = harness_base / ".specify" / "extensions" / "echelon"
+    runtime = harness_base / ".echelon" / "runtime"
     assert (runtime / "scripts" / "bash" / "echelon-config-get.sh").exists()
     assert not (runtime / "scripts" / "bash" / "re").exists()
 
@@ -114,7 +128,7 @@ def test_polyrepo_runtime_extension_excludes_learning_and_journal_bash_helpers(
     tmp_path: Path,
 ) -> None:
     """Target-specific harness roots should not expose learning/journal helpers."""
-    source = tmp_path / "workspace" / ".specify" / "extensions" / "echelon"
+    source = tmp_path / "workspace" / ".echelon" / "runtime"
     (source / "agents" / "control").mkdir(parents=True)
     (source / "workflow").mkdir()
     (source / "scripts" / "bash").mkdir(parents=True)
@@ -144,7 +158,7 @@ def test_polyrepo_runtime_extension_excludes_learning_and_journal_bash_helpers(
 
     _sync_polyrepo_runtime_extension(tmp_path / "workspace", harness_base)
 
-    bash_dir = harness_base / ".specify" / "extensions" / "echelon" / "scripts" / "bash"
+    bash_dir = harness_base / ".echelon" / "runtime" / "scripts" / "bash"
     assert (bash_dir / "echelon-config-get.sh").exists()
     assert not (bash_dir / "kb-write.sh").exists()
     assert not (bash_dir / "kb-read-init.sh").exists()
@@ -163,7 +177,7 @@ def test_polyrepo_runtime_extension_exposes_only_delivery_safe_bash_helpers(
     tmp_path: Path,
 ) -> None:
     """Target-specific harness roots should expose only delivery bash helpers."""
-    source = tmp_path / "workspace" / ".specify" / "extensions" / "echelon"
+    source = tmp_path / "workspace" / ".echelon" / "runtime"
     (source / "agents" / "control").mkdir(parents=True)
     (source / "workflow").mkdir()
     (source / "scripts" / "bash").mkdir(parents=True)
@@ -195,7 +209,7 @@ def test_polyrepo_runtime_extension_exposes_only_delivery_safe_bash_helpers(
 
     _sync_polyrepo_runtime_extension(tmp_path / "workspace", harness_base)
 
-    bash_dir = harness_base / ".specify" / "extensions" / "echelon" / "scripts" / "bash"
+    bash_dir = harness_base / ".echelon" / "runtime" / "scripts" / "bash"
     assert (bash_dir / "echelon-config-get.sh").exists()
     assert (bash_dir / "endocrine.sh").exists()
     assert (bash_dir / "fix-spa-base.sh").exists()
@@ -216,7 +230,7 @@ def test_polyrepo_runtime_extension_excludes_phase_a_presets(
     tmp_path: Path,
 ) -> None:
     """Target-specific harness roots should not expose preset seed material."""
-    source = tmp_path / "workspace" / ".specify" / "extensions" / "echelon"
+    source = tmp_path / "workspace" / ".echelon" / "runtime"
     (source / "agents" / "control").mkdir(parents=True)
     (source / "workflow").mkdir()
     (source / "presets" / "echelon-brownfield-cloud-native" / "templates").mkdir(
@@ -242,7 +256,7 @@ def test_polyrepo_runtime_extension_excludes_phase_a_presets(
 
     _sync_polyrepo_runtime_extension(tmp_path / "workspace", harness_base)
 
-    runtime = harness_base / ".specify" / "extensions" / "echelon"
+    runtime = harness_base / ".echelon" / "runtime"
     assert (runtime / "templates" / "tasks-template.md").exists()
     assert not (runtime / "presets").exists()
 
@@ -251,7 +265,7 @@ def test_polyrepo_runtime_extension_excludes_phase_a_config_registers(
     tmp_path: Path,
 ) -> None:
     """Target-specific harness roots should not expose config belief registers."""
-    source = tmp_path / "workspace" / ".specify" / "extensions" / "echelon"
+    source = tmp_path / "workspace" / ".echelon" / "runtime"
     (source / "agents" / "control").mkdir(parents=True)
     (source / "workflow").mkdir()
     (source / "config" / "belief-registers").mkdir(parents=True)
@@ -275,7 +289,7 @@ def test_polyrepo_runtime_extension_excludes_phase_a_config_registers(
 
     _sync_polyrepo_runtime_extension(tmp_path / "workspace", harness_base)
 
-    runtime = harness_base / ".specify" / "extensions" / "echelon"
+    runtime = harness_base / ".echelon" / "runtime"
     assert (runtime / "templates" / "tasks-template.md").exists()
     assert not (runtime / ".extensionignore").exists()
     assert not (runtime / "config").exists()
@@ -288,7 +302,7 @@ def test_polyrepo_runtime_extension_excludes_stack_playbooks(
     tmp_path: Path,
 ) -> None:
     """Target-specific harness roots should not expose stack playbook context."""
-    source = tmp_path / "workspace" / ".specify" / "extensions" / "echelon"
+    source = tmp_path / "workspace" / ".echelon" / "runtime"
     (source / "agents" / "control").mkdir(parents=True)
     (source / "workflow").mkdir()
     (source / "stacks" / "example-stack").mkdir(parents=True)
@@ -308,7 +322,7 @@ def test_polyrepo_runtime_extension_excludes_stack_playbooks(
 
     _sync_polyrepo_runtime_extension(tmp_path / "workspace", harness_base)
 
-    runtime = harness_base / ".specify" / "extensions" / "echelon"
+    runtime = harness_base / ".echelon" / "runtime"
     assert (runtime / "templates" / "tasks-template.md").exists()
     assert not (runtime / "stacks").exists()
 
@@ -317,7 +331,7 @@ def test_polyrepo_runtime_extension_exposes_only_delivery_safe_templates(
     tmp_path: Path,
 ) -> None:
     """Target-specific harness roots should not expose Phase A templates."""
-    source = tmp_path / "workspace" / ".specify" / "extensions" / "echelon"
+    source = tmp_path / "workspace" / ".echelon" / "runtime"
     (source / "agents" / "control").mkdir(parents=True)
     (source / "workflow").mkdir()
     (source / "templates").mkdir()
@@ -339,7 +353,7 @@ def test_polyrepo_runtime_extension_exposes_only_delivery_safe_templates(
 
     _sync_polyrepo_runtime_extension(tmp_path / "workspace", harness_base)
 
-    templates = harness_base / ".specify" / "extensions" / "echelon" / "templates"
+    templates = harness_base / ".echelon" / "runtime" / "templates"
     assert (templates / "tasks-template.md").exists()
     assert (templates / "schema-consolidation-template.md").exists()
     assert not (templates / "strategic-overview-template.md").exists()
@@ -349,7 +363,7 @@ def test_polyrepo_runtime_extension_excludes_non_delivery_agent_prompts(
     tmp_path: Path,
 ) -> None:
     """Target-specific harness roots should expose only delivery-safe agents."""
-    source = tmp_path / "workspace" / ".specify" / "extensions" / "echelon"
+    source = tmp_path / "workspace" / ".echelon" / "runtime"
     for agent_dir in [
         "control",
         "build",
@@ -374,7 +388,7 @@ def test_polyrepo_runtime_extension_excludes_non_delivery_agent_prompts(
 
     _sync_polyrepo_runtime_extension(tmp_path / "workspace", harness_base)
 
-    agents = harness_base / ".specify" / "extensions" / "echelon" / "agents"
+    agents = harness_base / ".echelon" / "runtime" / "agents"
     assert not (agents / "control" / "commander.md").exists()
     assert (agents / "build" / "build.md").exists()
     assert not (agents / "exploration").exists()
@@ -389,7 +403,7 @@ def test_polyrepo_runtime_extension_excludes_non_delivery_command_docs(
     tmp_path: Path,
 ) -> None:
     """Target-specific harness roots should expose only delivery command docs."""
-    source = tmp_path / "workspace" / ".specify" / "extensions" / "echelon"
+    source = tmp_path / "workspace" / ".echelon" / "runtime"
     (source / "agents" / "control").mkdir(parents=True)
     (source / "workflow").mkdir()
     (source / "commands").mkdir()
@@ -409,7 +423,7 @@ def test_polyrepo_runtime_extension_excludes_non_delivery_command_docs(
 
     _sync_polyrepo_runtime_extension(tmp_path / "workspace", harness_base)
 
-    commands = harness_base / ".specify" / "extensions" / "echelon" / "commands"
+    commands = harness_base / ".echelon" / "runtime" / "commands"
     assert (commands / "echelon.build.md").exists()
     assert (commands / "echelon.verify-spec.md").exists()
     assert not (commands / "echelon.run.md").exists()
@@ -420,7 +434,7 @@ def test_polyrepo_runtime_extension_excludes_phase_a_and_re_workflow_phase_docs(
     tmp_path: Path,
 ) -> None:
     """Target-specific harness roots should expose only delivery phase contracts."""
-    source = tmp_path / "workspace" / ".specify" / "extensions" / "echelon"
+    source = tmp_path / "workspace" / ".echelon" / "runtime"
     (source / "agents" / "control").mkdir(parents=True)
     (source / "workflow" / "phases" / "appendices").mkdir(parents=True)
     (source / "agents" / "control" / "commander.md").write_text(
@@ -458,7 +472,7 @@ def test_polyrepo_runtime_extension_excludes_phase_a_and_re_workflow_phase_docs(
 
     _sync_polyrepo_runtime_extension(tmp_path / "workspace", harness_base)
 
-    phases = harness_base / ".specify" / "extensions" / "echelon" / "workflow" / "phases"
+    phases = harness_base / ".echelon" / "runtime" / "workflow" / "phases"
     assert (phases / "build-1-init.md").exists()
     assert (phases / "verify-spec-1-init.md").exists()
     assert (phases / "appendices" / "build-8-verify-gates.md").exists()
@@ -482,7 +496,7 @@ def test_polyrepo_runtime_extension_prunes_workflow_definition_to_delivery_surfa
     tmp_path: Path,
 ) -> None:
     """Target-specific harness roots should not expose Phase A/RE graph metadata."""
-    source = tmp_path / "workspace" / ".specify" / "extensions" / "echelon"
+    source = tmp_path / "workspace" / ".echelon" / "runtime"
     (source / "agents" / "control").mkdir(parents=True)
     (source / "workflow" / "phases").mkdir(parents=True)
     (source / "agents" / "control" / "commander.md").write_text(
@@ -518,9 +532,8 @@ def test_polyrepo_runtime_extension_prunes_workflow_definition_to_delivery_surfa
     definition = yaml.safe_load(
         (
             harness_base
-            / ".specify"
-            / "extensions"
-            / "echelon"
+            / ".echelon"
+            / "runtime"
             / "workflow"
             / "definition.yaml"
         ).read_text(encoding="utf-8")
@@ -541,13 +554,13 @@ def test_polyrepo_runtime_extension_real_tree_matches_delivery_surface_policy(
     """Workspace-target harness roots must not leak non-delivery runtime surface."""
     repo_root = Path(__file__).resolve().parents[2]
     workspace = tmp_path / "workspace"
-    source = workspace / ".specify" / "extensions" / "echelon"
+    source = workspace / ".echelon" / "runtime"
     copytree(repo_root / "extension", source)
     harness_base = workspace / "runs" / "targets" / "prosaic"
 
     _sync_polyrepo_runtime_extension(workspace, harness_base)
 
-    runtime = harness_base / ".specify" / "extensions" / "echelon"
+    runtime = harness_base / ".echelon" / "runtime"
 
     commands = {p.name for p in (runtime / "commands").iterdir() if p.is_file()}
     assert commands == DELIVERY_COMMAND_FILES

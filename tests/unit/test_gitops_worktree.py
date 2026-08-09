@@ -27,6 +27,9 @@ from harness.runtime_surface import (
 
 
 def _make_gitops(tmp_path, *, llm_cli: str = "claude"):
+    prose = tmp_path / ".echelon" / "prosaic"
+    (prose / "commands").mkdir(parents=True, exist_ok=True)
+    (prose / "subagents").mkdir(exist_ok=True)
     config = HarnessConfig(
         target_repo=".",
         target_default_branch="main",
@@ -70,7 +73,7 @@ def test_get_latest_worktree_returns_none_when_empty(tmp_path):
 
 def test_sync_runtime_extension_copies_untracked_project_extension(tmp_path):
     """Harness worktrees get the local Echelon extension even when it is untracked."""
-    source = tmp_path / ".specify" / "extensions" / "echelon"
+    source = tmp_path / ".echelon" / "runtime"
     (source / "agents" / "control").mkdir(parents=True)
     (source / "workflow").mkdir()
     (source / "agents" / "control" / "commander.md").write_text("commander\n", encoding="utf-8")
@@ -85,10 +88,10 @@ def test_sync_runtime_extension_copies_untracked_project_extension(tmp_path):
         run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
         gitops.sync_runtime_extension(worktree)
 
-    runtime = worktree / ".specify" / "extensions" / "echelon"
+    runtime = worktree / ".echelon" / "runtime"
     assert (runtime / "workflow" / "definition.yaml").read_text(encoding="utf-8") == "workflow\n"
     assert not (runtime / "agents" / "control" / "commander.md").exists()
-    assert ".specify/extensions/echelon/" in exclude.read_text(encoding="utf-8")
+    assert ".echelon/runtime/" in exclude.read_text(encoding="utf-8")
 
 
 def test_sync_runtime_extension_prefers_deployed_prosaic_bundle(tmp_path):
@@ -123,14 +126,14 @@ def test_sync_runtime_extension_prefers_deployed_prosaic_bundle(tmp_path):
         encoding="utf-8"
     ) == "phases: []\n"
     assert (worktree / ".echelon/runtime/scripts/runtime-helper.sh").exists()
-    assert not (worktree / ".specify/extensions/echelon").exists()
+    assert not (worktree / ".specify" / "extensions" / "echelon").exists()
     assert ".echelon/prosaic/" in exclude.read_text(encoding="utf-8")
     assert ".echelon/runtime/" in exclude.read_text(encoding="utf-8")
 
 
 def test_prepare_codegraph_runtime_runs_locked_npm_ci(tmp_path, monkeypatch):
     """Delivery worktrees install the locked CodeGraph SDK without source copies."""
-    source = tmp_path / ".specify" / "extensions" / "echelon"
+    source = tmp_path / ".echelon" / "runtime"
     runtime = source / "scripts" / "node" / "codegraph"
     runtime.mkdir(parents=True)
     (runtime / "package-lock.json").write_text("{}\n", encoding="utf-8")
@@ -154,7 +157,7 @@ def test_prepare_codegraph_runtime_runs_locked_npm_ci(tmp_path, monkeypatch):
 
 def test_prepare_perlgraph_runtime_runs_locked_npm_ci_and_build(tmp_path, monkeypatch):
     """Delivery worktrees install and build the locked PerlGraph runtime."""
-    source = tmp_path / ".specify" / "extensions" / "echelon"
+    source = tmp_path / ".echelon" / "runtime"
     runtime = source / "scripts" / "node" / "perlgraph"
     runtime.mkdir(parents=True)
     (runtime / "package-lock.json").write_text("{}\n", encoding="utf-8")
@@ -185,7 +188,7 @@ def test_prepare_perlgraph_runtime_runs_locked_npm_ci_and_build(tmp_path, monkey
 
 def test_sync_runtime_extension_copies_codegraph_source_without_node_modules(tmp_path):
     """Delivery worktrees keep CodeGraph source but never copied dependencies."""
-    source = tmp_path / ".specify" / "extensions" / "echelon"
+    source = tmp_path / ".echelon" / "runtime"
     (source / "agents" / "control").mkdir(parents=True)
     (source / "workflow").mkdir()
     (source / "scripts" / "node" / "codegraph" / "node_modules" / "picomatch").mkdir(
@@ -231,7 +234,7 @@ def test_sync_runtime_extension_copies_codegraph_source_without_node_modules(tmp
         run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
         gitops.sync_runtime_extension(worktree)
 
-    runtime_node = worktree / ".specify" / "extensions" / "echelon" / "scripts" / "node"
+    runtime_node = worktree / ".echelon" / "runtime" / "scripts" / "node"
     assert (runtime_node / "codegraph" / "codegraph-bridge.js").exists()
     assert (runtime_node / "codegraph" / "package.json").exists()
     assert (runtime_node / "codegraph" / "package-lock.json").exists()
@@ -242,7 +245,7 @@ def test_sync_runtime_extension_copies_codegraph_source_without_node_modules(tmp
 
 def test_sync_runtime_extension_copies_perlgraph_source_without_build_artifacts(tmp_path):
     """Delivery worktrees keep PerlGraph source but never copied dependencies/build output."""
-    source = tmp_path / ".specify" / "extensions" / "echelon"
+    source = tmp_path / ".echelon" / "runtime"
     (source / "agents" / "control").mkdir(parents=True)
     (source / "workflow").mkdir()
     (source / "scripts" / "node" / "perlgraph" / "node_modules" / "commander").mkdir(
@@ -285,7 +288,7 @@ def test_sync_runtime_extension_copies_perlgraph_source_without_build_artifacts(
         run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
         gitops.sync_runtime_extension(worktree)
 
-    runtime_node = worktree / ".specify" / "extensions" / "echelon" / "scripts" / "node"
+    runtime_node = worktree / ".echelon" / "runtime" / "scripts" / "node"
     assert (runtime_node / "perlgraph" / "package.json").exists()
     assert (runtime_node / "perlgraph" / "package-lock.json").exists()
     assert (runtime_node / "perlgraph" / "src" / "index.ts").exists()
@@ -295,7 +298,7 @@ def test_sync_runtime_extension_copies_perlgraph_source_without_build_artifacts(
 
 def test_sync_runtime_extension_refreshes_codegraph_source_when_runtime_ready(tmp_path):
     """Ready worktrees still receive an updated CodeGraph bridge and lockfile."""
-    source = tmp_path / ".specify" / "extensions" / "echelon"
+    source = tmp_path / ".echelon" / "runtime"
     (source / "agents" / "control").mkdir(parents=True)
     (source / "workflow").mkdir()
     (source / "scripts" / "node" / "codegraph").mkdir(parents=True)
@@ -312,7 +315,7 @@ def test_sync_runtime_extension_refreshes_codegraph_source_when_runtime_ready(tm
     )
 
     worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
-    dest = worktree / ".specify" / "extensions" / "echelon"
+    dest = worktree / ".echelon" / "runtime"
     (dest / "agents" / "control").mkdir(parents=True)
     (dest / "workflow").mkdir(parents=True)
     (dest / "agents" / "control" / "commander.md").write_text(
@@ -345,7 +348,7 @@ def test_sync_runtime_extension_refreshes_codegraph_source_when_runtime_ready(tm
 
 def test_sync_runtime_extension_excludes_python_migration_helpers(tmp_path):
     """Delivery worktrees should not expose workspace migration helper source."""
-    source = tmp_path / ".specify" / "extensions" / "echelon"
+    source = tmp_path / ".echelon" / "runtime"
     (source / "agents" / "control").mkdir(parents=True)
     (source / "workflow").mkdir()
     (source / "scripts" / "python").mkdir(parents=True)
@@ -366,7 +369,7 @@ def test_sync_runtime_extension_excludes_python_migration_helpers(tmp_path):
         run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
         gitops.sync_runtime_extension(worktree)
 
-    runtime = worktree / ".specify" / "extensions" / "echelon"
+    runtime = worktree / ".echelon" / "runtime"
     assert (runtime / "workflow" / "definition.yaml").exists()
     assert not (runtime / "agents" / "control" / "commander.md").exists()
     assert not (runtime / "scripts" / "python").exists()
@@ -374,7 +377,7 @@ def test_sync_runtime_extension_excludes_python_migration_helpers(tmp_path):
 
 def test_sync_runtime_extension_excludes_reverse_engineering_bash_helpers(tmp_path):
     """Delivery worktrees should not expose reverse-engineering shell helpers."""
-    source = tmp_path / ".specify" / "extensions" / "echelon"
+    source = tmp_path / ".echelon" / "runtime"
     (source / "agents" / "control").mkdir(parents=True)
     (source / "workflow").mkdir()
     (source / "scripts" / "bash" / "re").mkdir(parents=True)
@@ -399,14 +402,14 @@ def test_sync_runtime_extension_excludes_reverse_engineering_bash_helpers(tmp_pa
         run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
         gitops.sync_runtime_extension(worktree)
 
-    runtime = worktree / ".specify" / "extensions" / "echelon"
+    runtime = worktree / ".echelon" / "runtime"
     assert (runtime / "scripts" / "bash" / "echelon-config-get.sh").exists()
     assert not (runtime / "scripts" / "bash" / "re").exists()
 
 
 def test_sync_runtime_extension_excludes_learning_and_journal_bash_helpers(tmp_path):
     """Delivery worktrees should not expose Phase A learning/journal helpers."""
-    source = tmp_path / ".specify" / "extensions" / "echelon"
+    source = tmp_path / ".echelon" / "runtime"
     (source / "agents" / "control").mkdir(parents=True)
     (source / "workflow").mkdir()
     (source / "scripts" / "bash").mkdir(parents=True)
@@ -441,7 +444,7 @@ def test_sync_runtime_extension_excludes_learning_and_journal_bash_helpers(tmp_p
         run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
         gitops.sync_runtime_extension(worktree)
 
-    bash_dir = worktree / ".specify" / "extensions" / "echelon" / "scripts" / "bash"
+    bash_dir = worktree / ".echelon" / "runtime" / "scripts" / "bash"
     assert (bash_dir / "echelon-config-get.sh").exists()
     assert not (bash_dir / "kb-write.sh").exists()
     assert not (bash_dir / "kb-read-init.sh").exists()
@@ -458,7 +461,7 @@ def test_sync_runtime_extension_excludes_learning_and_journal_bash_helpers(tmp_p
 
 def test_sync_runtime_extension_exposes_only_delivery_safe_bash_helpers(tmp_path):
     """Delivery worktrees should expose only bash helpers used by delivery contracts."""
-    source = tmp_path / ".specify" / "extensions" / "echelon"
+    source = tmp_path / ".echelon" / "runtime"
     (source / "agents" / "control").mkdir(parents=True)
     (source / "workflow").mkdir()
     (source / "scripts" / "bash").mkdir(parents=True)
@@ -495,7 +498,7 @@ def test_sync_runtime_extension_exposes_only_delivery_safe_bash_helpers(tmp_path
         run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
         gitops.sync_runtime_extension(worktree)
 
-    bash_dir = worktree / ".specify" / "extensions" / "echelon" / "scripts" / "bash"
+    bash_dir = worktree / ".echelon" / "runtime" / "scripts" / "bash"
     assert (bash_dir / "echelon-config-get.sh").exists()
     assert (bash_dir / "endocrine.sh").exists()
     assert (bash_dir / "fix-spa-base.sh").exists()
@@ -514,7 +517,7 @@ def test_sync_runtime_extension_exposes_only_delivery_safe_bash_helpers(tmp_path
 
 def test_sync_runtime_extension_excludes_phase_a_presets(tmp_path):
     """Delivery worktrees should not expose Phase A preset seed material."""
-    source = tmp_path / ".specify" / "extensions" / "echelon"
+    source = tmp_path / ".echelon" / "runtime"
     (source / "agents" / "control").mkdir(parents=True)
     (source / "workflow").mkdir()
     (source / "presets" / "echelon-brownfield-cloud-native" / "templates").mkdir(
@@ -545,14 +548,14 @@ def test_sync_runtime_extension_excludes_phase_a_presets(tmp_path):
         run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
         gitops.sync_runtime_extension(worktree)
 
-    runtime = worktree / ".specify" / "extensions" / "echelon"
+    runtime = worktree / ".echelon" / "runtime"
     assert (runtime / "templates" / "tasks-template.md").exists()
     assert not (runtime / "presets").exists()
 
 
 def test_sync_runtime_extension_excludes_phase_a_config_registers(tmp_path):
     """Delivery worktrees should not expose Phase A/config belief registers."""
-    source = tmp_path / ".specify" / "extensions" / "echelon"
+    source = tmp_path / ".echelon" / "runtime"
     (source / "agents" / "control").mkdir(parents=True)
     (source / "workflow").mkdir()
     (source / "config" / "belief-registers").mkdir(parents=True)
@@ -581,7 +584,7 @@ def test_sync_runtime_extension_excludes_phase_a_config_registers(tmp_path):
         run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
         gitops.sync_runtime_extension(worktree)
 
-    runtime = worktree / ".specify" / "extensions" / "echelon"
+    runtime = worktree / ".echelon" / "runtime"
     assert (runtime / "templates" / "tasks-template.md").exists()
     assert not (runtime / ".extensionignore").exists()
     assert not (runtime / "config").exists()
@@ -592,7 +595,7 @@ def test_sync_runtime_extension_excludes_phase_a_config_registers(tmp_path):
 
 def test_sync_runtime_extension_excludes_stack_playbooks(tmp_path):
     """Delivery worktrees should not expose Phase A stack playbook context."""
-    source = tmp_path / ".specify" / "extensions" / "echelon"
+    source = tmp_path / ".echelon" / "runtime"
     (source / "agents" / "control").mkdir(parents=True)
     (source / "workflow").mkdir()
     (source / "stacks" / "example-stack").mkdir(parents=True)
@@ -617,14 +620,14 @@ def test_sync_runtime_extension_excludes_stack_playbooks(tmp_path):
         run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
         gitops.sync_runtime_extension(worktree)
 
-    runtime = worktree / ".specify" / "extensions" / "echelon"
+    runtime = worktree / ".echelon" / "runtime"
     assert (runtime / "templates" / "tasks-template.md").exists()
     assert not (runtime / "stacks").exists()
 
 
 def test_sync_runtime_extension_exposes_only_delivery_safe_templates(tmp_path):
     """Delivery worktrees should not expose Phase A planning templates."""
-    source = tmp_path / ".specify" / "extensions" / "echelon"
+    source = tmp_path / ".echelon" / "runtime"
     (source / "agents" / "control").mkdir(parents=True)
     (source / "workflow").mkdir()
     (source / "templates").mkdir()
@@ -651,7 +654,7 @@ def test_sync_runtime_extension_exposes_only_delivery_safe_templates(tmp_path):
         run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
         gitops.sync_runtime_extension(worktree)
 
-    templates = worktree / ".specify" / "extensions" / "echelon" / "templates"
+    templates = worktree / ".echelon" / "runtime" / "templates"
     assert (templates / "tasks-template.md").exists()
     assert (templates / "schema-consolidation-template.md").exists()
     assert not (templates / "strategic-overview-template.md").exists()
@@ -659,7 +662,7 @@ def test_sync_runtime_extension_exposes_only_delivery_safe_templates(tmp_path):
 
 def test_sync_runtime_extension_excludes_non_delivery_agent_prompts(tmp_path):
     """Delivery worktrees should expose only delivery-safe raw agent prompts."""
-    source = tmp_path / ".specify" / "extensions" / "echelon"
+    source = tmp_path / ".echelon" / "runtime"
     for agent_dir in [
         "control",
         "build",
@@ -689,7 +692,7 @@ def test_sync_runtime_extension_excludes_non_delivery_agent_prompts(tmp_path):
         run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
         gitops.sync_runtime_extension(worktree)
 
-    agents = worktree / ".specify" / "extensions" / "echelon" / "agents"
+    agents = worktree / ".echelon" / "runtime" / "agents"
     assert not (agents / "control" / "commander.md").exists()
     assert (agents / "build" / "build.md").exists()
     assert not (agents / "exploration").exists()
@@ -702,7 +705,7 @@ def test_sync_runtime_extension_excludes_non_delivery_agent_prompts(tmp_path):
 
 def test_sync_runtime_extension_excludes_non_delivery_command_docs(tmp_path):
     """Delivery worktrees should expose only delivery-safe command contracts."""
-    source = tmp_path / ".specify" / "extensions" / "echelon"
+    source = tmp_path / ".echelon" / "runtime"
     (source / "agents" / "control").mkdir(parents=True)
     (source / "workflow").mkdir()
     (source / "commands").mkdir()
@@ -727,7 +730,7 @@ def test_sync_runtime_extension_excludes_non_delivery_command_docs(tmp_path):
         run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
         gitops.sync_runtime_extension(worktree)
 
-    commands = worktree / ".specify" / "extensions" / "echelon" / "commands"
+    commands = worktree / ".echelon" / "runtime" / "commands"
     assert (commands / "echelon.build.md").exists()
     assert (commands / "echelon.verify-spec.md").exists()
     assert not (commands / "echelon.run.md").exists()
@@ -736,7 +739,7 @@ def test_sync_runtime_extension_excludes_non_delivery_command_docs(tmp_path):
 
 def test_sync_runtime_extension_excludes_phase_a_and_re_workflow_phase_docs(tmp_path):
     """Delivery worktrees should expose only delivery workflow phase contracts."""
-    source = tmp_path / ".specify" / "extensions" / "echelon"
+    source = tmp_path / ".echelon" / "runtime"
     (source / "agents" / "control").mkdir(parents=True)
     (source / "workflow" / "phases" / "appendices").mkdir(parents=True)
     (source / "commands").mkdir()
@@ -780,7 +783,7 @@ def test_sync_runtime_extension_excludes_phase_a_and_re_workflow_phase_docs(tmp_
         run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
         gitops.sync_runtime_extension(worktree)
 
-    phases = worktree / ".specify" / "extensions" / "echelon" / "workflow" / "phases"
+    phases = worktree / ".echelon" / "runtime" / "workflow" / "phases"
     assert (phases / "build-1-init.md").exists()
     assert (phases / "verify-spec-1-init.md").exists()
     assert (phases / "appendices" / "build-8-verify-gates.md").exists()
@@ -802,7 +805,7 @@ def test_sync_runtime_extension_excludes_phase_a_and_re_workflow_phase_docs(tmp_
 
 def test_sync_runtime_extension_prunes_workflow_definition_to_delivery_surface(tmp_path):
     """Delivery worktrees should not expose Phase A/RE workflow graph metadata."""
-    source = tmp_path / ".specify" / "extensions" / "echelon"
+    source = tmp_path / ".echelon" / "runtime"
     (source / "agents" / "control").mkdir(parents=True)
     (source / "workflow" / "phases").mkdir(parents=True)
     (source / "commands").mkdir()
@@ -844,9 +847,8 @@ def test_sync_runtime_extension_prunes_workflow_definition_to_delivery_surface(t
     definition = yaml.safe_load(
         (
             worktree
-            / ".specify"
-            / "extensions"
-            / "echelon"
+            / ".echelon"
+            / "runtime"
             / "workflow"
             / "definition.yaml"
         ).read_text(encoding="utf-8")
@@ -864,7 +866,7 @@ def test_sync_runtime_extension_prunes_workflow_definition_to_delivery_surface(t
 def test_sync_runtime_extension_real_tree_matches_delivery_surface_policy(tmp_path):
     """The installed extension tree must not leak non-delivery runtime surface."""
     repo_root = Path(__file__).resolve().parents[2]
-    source = tmp_path / ".specify" / "extensions" / "echelon"
+    source = tmp_path / ".echelon" / "runtime"
     copytree(repo_root / "extension", source)
 
     worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
@@ -876,7 +878,7 @@ def test_sync_runtime_extension_real_tree_matches_delivery_surface_policy(tmp_pa
         run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
         gitops.sync_runtime_extension(worktree)
 
-    runtime = worktree / ".specify" / "extensions" / "echelon"
+    runtime = worktree / ".echelon" / "runtime"
 
     commands = {p.name for p in (runtime / "commands").iterdir() if p.is_file()}
     assert commands == DELIVERY_COMMAND_FILES
@@ -915,13 +917,14 @@ def test_sync_runtime_extension_real_tree_matches_delivery_surface_policy(tmp_pa
 
 def test_sync_runtime_extension_materializes_claude_command_skills(tmp_path):
     """Harness worktrees get ignored Claude skill wrappers from runtime commands."""
-    source = tmp_path / ".specify" / "extensions" / "echelon"
+    source = tmp_path / ".echelon" / "runtime"
     (source / "agents" / "control").mkdir(parents=True)
     (source / "workflow").mkdir()
-    (source / "commands").mkdir()
+    prose = tmp_path / ".echelon" / "prosaic"
+    (prose / "commands").mkdir(parents=True)
     (source / "agents" / "control" / "commander.md").write_text("commander\n", encoding="utf-8")
     (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
-    (source / "commands" / "echelon.verify-spec.md").write_text(
+    (prose / "commands" / "echelon.verify-spec.md").write_text(
         "---\n"
         "name: speckit.echelon.verify-spec\n"
         "description: Verify spec\n"
@@ -951,13 +954,14 @@ def test_sync_runtime_extension_materializes_claude_command_skills(tmp_path):
 
 def test_sync_runtime_extension_skips_claude_command_skills_for_codex(tmp_path):
     """Provider-specific Claude skill wrappers must not appear for Codex delivery."""
-    source = tmp_path / ".specify" / "extensions" / "echelon"
+    source = tmp_path / ".echelon" / "runtime"
     (source / "agents" / "control").mkdir(parents=True)
     (source / "workflow").mkdir()
-    (source / "commands").mkdir()
+    prose = tmp_path / ".echelon" / "prosaic"
+    (prose / "commands").mkdir(parents=True)
     (source / "agents" / "control" / "commander.md").write_text("commander\n", encoding="utf-8")
     (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
-    (source / "commands" / "echelon.verify-spec.md").write_text(
+    (prose / "commands" / "echelon.verify-spec.md").write_text(
         "---\n"
         "name: speckit.echelon.verify-spec\n"
         "description: Verify spec\n"
@@ -981,22 +985,21 @@ def test_sync_runtime_extension_skips_claude_command_skills_for_codex(tmp_path):
 
 def test_sync_runtime_extension_materializes_claude_agents(tmp_path):
     """Harness worktrees get ignored Claude agent registry files from runtime agents."""
-    source = tmp_path / ".specify" / "extensions" / "echelon"
+    source = tmp_path / ".echelon" / "runtime"
     (source / "agents" / "control").mkdir(parents=True)
-    (source / "agents" / "build").mkdir(parents=True)
-    (source / "agents" / "exploration").mkdir(parents=True)
-    (source / "agents" / "solution").mkdir(parents=True)
+    prose = tmp_path / ".echelon" / "prosaic" / "subagents"
+    prose.mkdir(parents=True)
     (source / "workflow").mkdir()
     (source / "agents" / "control" / "commander.md").write_text("commander\n", encoding="utf-8")
-    (source / "agents" / "build" / "spec-guard.md").write_text(
+    (prose / "echelon.spec-guard.md").write_text(
         "# SPEC GUARD\n\nguard\n",
         encoding="utf-8",
     )
-    (source / "agents" / "exploration" / "scout.md").write_text(
+    (prose / "echelon.scout.md").write_text(
         "# SCOUT\n\nscout\n",
         encoding="utf-8",
     )
-    (source / "agents" / "solution" / "architect.md").write_text(
+    (prose / "echelon.architect.md").write_text(
         "# ARCHITECT\n\narchitect\n",
         encoding="utf-8",
     )
@@ -1027,12 +1030,13 @@ def test_sync_runtime_extension_materializes_claude_agents(tmp_path):
 
 def test_sync_runtime_extension_skips_claude_agents_for_codex(tmp_path):
     """Provider-specific Claude agent wrappers must not appear for Codex delivery."""
-    source = tmp_path / ".specify" / "extensions" / "echelon"
+    source = tmp_path / ".echelon" / "runtime"
     (source / "agents" / "control").mkdir(parents=True)
-    (source / "agents" / "build").mkdir(parents=True)
+    prose = tmp_path / ".echelon" / "prosaic" / "subagents"
+    prose.mkdir(parents=True)
     (source / "workflow").mkdir()
     (source / "agents" / "control" / "commander.md").write_text("commander\n", encoding="utf-8")
-    (source / "agents" / "build" / "spec-guard.md").write_text(
+    (prose / "echelon.spec-guard.md").write_text(
         "# SPEC GUARD\n\nguard\n",
         encoding="utf-8",
     )
@@ -1061,8 +1065,8 @@ def test_sync_runtime_extension_fails_before_llm_when_extension_missing(tmp_path
     try:
         gitops.sync_runtime_extension(worktree)
     except Exception as exc:
-        assert ".specify/extensions/echelon" in str(exc)
-        assert "Run `echelon workspace init`" in str(exc)
+        assert ".echelon/runtime" in str(exc)
+        assert "Run `echelon workspace migrate-to-prosaic`" in str(exc)
     else:
         raise AssertionError("expected missing runtime extension to fail")
 

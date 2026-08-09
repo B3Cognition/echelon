@@ -25,20 +25,21 @@ def test_delivery_worktree_installs_and_runs_codegraph_from_locked_source(tmp_pa
         pytest.skip("CodeGraph delivery runtime requires node and npm")
 
     workspace = tmp_path / "workspace"
-    source_extension = workspace / ".specify" / "extensions" / "echelon"
+    source_runtime = workspace / ".echelon" / "runtime"
+    source_prose = workspace / ".echelon" / "prosaic"
     shutil.copytree(
-        REPO_ROOT / "extension",
-        source_extension,
+        REPO_ROOT / "runtime",
+        source_runtime,
         ignore=shutil.ignore_patterns("node_modules"),
     )
+    shutil.copytree(REPO_ROOT / "prosaic", source_prose)
     staging_root = workspace / "runs" / "targets" / "prosaic"
     _sync_polyrepo_runtime_extension(workspace, staging_root)
 
     staging_runtime = (
         staging_root
-        / ".specify"
-        / "extensions"
-        / "echelon"
+        / ".echelon"
+        / "runtime"
         / "scripts"
         / "node"
         / "codegraph"
@@ -59,7 +60,7 @@ def test_delivery_worktree_installs_and_runs_codegraph_from_locked_source(tmp_pa
         run_git.return_value = SimpleNamespace(stdout=f"{git_exclude}\n")
         gitops.sync_runtime_extension(worktree, prepare_codegraph=True)
 
-    runtime = worktree / ".specify" / "extensions" / "echelon" / "scripts" / "node" / "codegraph"
+    runtime = worktree / ".echelon" / "runtime" / "scripts" / "node" / "codegraph"
     assert (runtime / "node_modules" / "@colbymchenry" / "codegraph" / "package.json").is_file()
 
     project = tmp_path / "typescript-fixture"

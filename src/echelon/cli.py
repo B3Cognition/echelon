@@ -32,7 +32,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from harness.gitops import copy_runtime_extension
+from harness.gitops import copy_prosaic_runtime_tree, copy_runtime_tree
 from harness.recovery_instruction import (
     RecoveryInstruction,
     RecoveryInstructionError,
@@ -1669,23 +1669,27 @@ def _cmd_cicd(args: list[str]) -> None:
 
 
 def _sync_polyrepo_runtime_extension(polyrepo_root: Path, harness_base_dir: Path) -> None:
-    """Copy wrapper-owned runtime extension into a target-specific harness base."""
-    source = polyrepo_root / ".specify" / "extensions" / "echelon"
-    dest = harness_base_dir / ".specify" / "extensions" / "echelon"
+    """Copy deployed Prosaic and runtime bundles into a target harness base."""
+    prose_source = polyrepo_root / ".echelon" / "prosaic"
+    runtime_source = polyrepo_root / ".echelon" / "runtime"
+    prose_dest = harness_base_dir / ".echelon" / "prosaic"
+    runtime_dest = harness_base_dir / ".echelon" / "runtime"
     required = (
-        source / "agents" / "control" / "commander.md",
-        source / "workflow" / "definition.yaml",
+        prose_source / "commands",
+        prose_source / "subagents",
+        runtime_source / "workflow" / "definition.yaml",
     )
     if not all(path.exists() for path in required):
         print(
-            "✗ Echelon extension not installed in polyrepo root.\n"
-            f"  Expected: {source}\n"
-            "  Fix: run 'specify extension add --dev <echelon>/extension' from the polyrepo root.",
+            "✗ Echelon Prosaic/runtime bundle is not installed in polyrepo root.\n"
+            f"  Expected: {prose_source} and {runtime_source}\n"
+            "  Fix: run 'echelon workspace migrate-to-prosaic' from the polyrepo root.",
             file=sys.stderr,
         )
         sys.exit(1)
-    copy_runtime_extension(source, dest)
-    prune_delivery_workflow_definition(dest / "workflow" / "definition.yaml")
+    copy_prosaic_runtime_tree(prose_source, prose_dest)
+    copy_runtime_tree(runtime_source, runtime_dest)
+    prune_delivery_workflow_definition(runtime_dest / "workflow" / "definition.yaml")
 
 
 def _target_candidate_lines(candidates: list[object]) -> str:
