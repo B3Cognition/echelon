@@ -119,7 +119,7 @@ def test_workspace_init_with_prosaic_seeds_config_without_spec_kit(
     def deploy_bundle(project_root):
         runtime = project_root / ".echelon" / "runtime"
         runtime.mkdir(parents=True)
-        (runtime / "echelon-config.yml").write_text(
+        (runtime / "config-template.yml").write_text(
             "deploy:\n  enabled: false\n  type: cli\n",
             encoding="utf-8",
         )
@@ -143,7 +143,7 @@ def test_workspace_init_with_prosaic_bootstraps_git_without_spec_kit(
     def deploy_bundle(project_root):
         runtime = project_root / ".echelon" / "runtime"
         runtime.mkdir(parents=True)
-        (runtime / "echelon-config.yml").write_text(
+        (runtime / "config-template.yml").write_text(
             "deploy:\n  enabled: false\n  type: cli\n",
             encoding="utf-8",
         )

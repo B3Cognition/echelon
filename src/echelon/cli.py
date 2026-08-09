@@ -650,9 +650,9 @@ def _cmd_init(
         print(f"✓ Prosaic prose deployed: {project_dir / '.echelon/prosaic'}")
         print(f"✓ Prosaic runtime deployed: {runtime_dir}")
 
-    # Step 1: Confirm project config exists. The Prosaic runtime is the source
-    # for new migration workspaces; the installed extension remains the legacy fallback.
-    config_template = runtime_dir / "echelon-config.yml" if with_prosaic else legacy_cfg
+    # Step 1: Confirm project config exists. Prosaic workspaces are seeded from
+    # the generic Echelon runtime template; legacy installs retain their old source.
+    config_template = runtime_dir / "config-template.yml" if with_prosaic else legacy_cfg
     if not echelon_cfg.exists():
         if config_template.exists():
             echelon_cfg.parent.mkdir(parents=True, exist_ok=True)
@@ -662,7 +662,7 @@ def _cmd_init(
             print(
                 f"✗ Project config not found: {echelon_cfg}\n"
                 f"  Config template also missing: {config_template}\n"
-                "  Run: echelon workspace init --with-prosaic or specify extension add echelon",
+                "  Run: echelon workspace init --with-prosaic",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -678,7 +678,7 @@ def _cmd_init(
     try:
         config = yaml.safe_load(echelon_cfg.read_text())
     except Exception as e:
-        print(f"✗ Cannot parse echelon-config.yml: {e}", file=sys.stderr)
+        print(f"✗ Cannot parse .echelon/config.yml: {e}", file=sys.stderr)
         sys.exit(1)
 
     deploy = config.get("deploy", {})
@@ -690,9 +690,9 @@ def _cmd_init(
         missing = [k for k in ("blue_port", "green_port") if k not in deploy]
         if missing:
             print(
-                f"✗ deploy config incomplete in echelon-config.yml.\n"
+                f"✗ deploy config incomplete in .echelon/config.yml.\n"
                 f"  HTTP type requires: {missing}\n"
-                f"  See config-template.yml for reference.",
+                f"  See .echelon/runtime/config-template.yml for reference.",
                 file=sys.stderr,
             )
             sys.exit(1)
