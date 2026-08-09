@@ -145,6 +145,20 @@ def test_runtime_workflow_dispatches_only_neutral_prosaic_subagents() -> None:
     assert staged_agents <= prosaic_agents
 
 
+def test_runtime_architect_context_carries_commander_clarifications() -> None:
+    workflow = (
+        Path(__file__).resolve().parents[2]
+        / "runtime"
+        / "workflow"
+        / "definition.yaml"
+    ).read_text(encoding="utf-8")
+    phase3_how = workflow.split("  - id: phase3-how", 1)[1].split(
+        "  - id: phase3-specialists", 1
+    )[0]
+
+    assert "{staging_dir}/user-clarifications.md" in phase3_how
+
+
 def test_runtime_diagnostics_and_kb_validation_use_echelon_artifacts() -> None:
     echelon_root = Path(__file__).resolve().parents[2]
     workflow = (echelon_root / "runtime" / "workflow" / "definition.yaml").read_text(

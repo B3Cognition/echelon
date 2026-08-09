@@ -261,6 +261,34 @@ def test_invalid_inventory_repair_excludes_stale_investigation_context(tmp_path)
     assert "Use tools to inspect the declared inputs" in prompt
 
 
+def test_architect_retry_context_includes_commander_clarification(tmp_path) -> None:
+    squad_dir = tmp_path / "runs" / "run-test"
+    staging_dir = squad_dir / "staging"
+    staging_dir.mkdir(parents=True)
+    (staging_dir / "user-clarifications.md").write_text(
+        "## Decision dec-1\n\n**Answer:** Use direct Python execution.\n",
+        encoding="utf-8",
+    )
+    executor = _executor(tmp_path, squad_dir=squad_dir)
+    from harness.phase_graph import PhaseNode
+
+    node = PhaseNode(
+        id="phase3-how",
+        type="agent",
+        context_pack=["{staging_dir}/user-clarifications.md"],
+    )
+    prompt = executor._assemble_prompt(
+        node,
+        {
+            "squad_dir": str(squad_dir),
+            "staging_dir": str(staging_dir),
+            "spec_dir": "specs/001-demo",
+        },
+    )
+
+    assert "Use direct Python execution." in prompt
+
+
 def test_phase1_investigate_preserves_valid_evidence_result_when_grade_artifact_is_missing(tmp_path):
     squad_dir = tmp_path / "runs" / "spec-20260724-123456"
     squad_dir.mkdir(parents=True)
