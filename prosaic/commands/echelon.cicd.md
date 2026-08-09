@@ -1,6 +1,6 @@
 ---
 name: echelon.cicd
-description: Design and implement CI/CD for this project — Dockerfile, echelon-config.yml
+description: Design and implement CI/CD for this project — Dockerfile, .echelon/config.yml
   deploy block, GitHub Actions CI, and database services if detected. Re-runnable.
 execution: skill
 invocation: automatic

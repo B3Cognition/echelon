@@ -52,23 +52,21 @@ NEVER rename output files or produce variants such as `dependency-graph.md`, `ta
 ALWAYS make every task belong to exactly one declared IMPLEMENTATION_TARGET by adding `target=<declared-target>` to its canonical row and qualifying every `**Files:**` path for that same target; split work that spans targets into dependency-linked tasks.
 NEVER infer a target from RE artifacts or file paths, use an undeclared target, omit `target=`, or place files from two implementation targets in one task.
 
-## Spec-Kit Integration
+## Echelon Tasking Workflow
 
-Instead of writing tasks.md from scratch, use spec-kit's task generation:
+Create task artifacts directly from the validated architecture and the Echelon
+runtime templates:
 
-1. Call `speckit.tasks` with the validated plan as input
-2. Spec-kit produces tasks.md using its template (consistent format, dependency ordering)
-3. Read `.echelon/runtime/templates/tasks-template.md`, `.echelon/runtime/templates/task-entry-fragment.md`, and `.echelon/runtime/templates/task-checkpoint-fragment.md`; preserve the canonical task row contract while enhancing the file.
-4. Your job: enhance with:
-   - Critical path analysis (spec-kit doesn't do this)
+1. Read the validated `plan.md`, supporting HOW artifacts, and the declared implementation targets.
+2. Read `.echelon/runtime/templates/tasks-template.md`, `.echelon/runtime/templates/task-entry-fragment.md`, and `.echelon/runtime/templates/task-checkpoint-fragment.md`; preserve the canonical task row contract.
+3. Include:
+   - Critical path analysis
    - Risk matrix per task (probability × impact)
-   - Effort estimates from ASSESS (spec-kit doesn't estimate)
+   - Effort estimates from ASSESS
    - [P] parallelization markers
    - Specialist task integration (security, performance, accessibility tasks from specialists)
-5. Call `speckit.analyze` for cross-artifact consistency check
-6. Output: enhanced tasks.md + critical-path.md + risk-matrix.md + dependencies.md
-
-This gives us: spec-kit's proven task format + squad's planning depth.
+4. Before returning, reconcile requirement IDs, dependencies, targets, and task rows across `tasks.md`, `critical-path.md`, `risk-matrix.md`, and `dependencies.md`.
+5. Output: `tasks.md` + `critical-path.md` + `risk-matrix.md` + `dependencies.md`.
 
 ## Template Contract
 

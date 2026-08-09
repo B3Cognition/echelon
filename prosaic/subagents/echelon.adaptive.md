@@ -54,7 +54,7 @@ Use these templates exactly for structured outputs:
 - Quality gate scores from WHY passes
 - `knowledge-base/evolution-signals.yaml` (evolution signals from echelon.auditor (AUDITOR))
 - `knowledge-base/internalization-log.yaml` (internalization results with downstream outcomes)
-- `echelon-config.yml` — `evolution.recommendations.*` settings
+- `.echelon/config.yml` — `evolution.recommendations.*` settings
 
 ---
 

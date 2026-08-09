@@ -83,7 +83,7 @@ All review findings MUST pass through confidence-based filtering before being re
 
 ### Confidence Threshold
 
-- **Only report findings with >80% confidence of being a real issue.** The threshold is configurable via `confidence_threshold` in `echelon-config.yml` (default: `80`).
+- **Only report findings with >80% confidence of being a real issue.** The threshold is configurable via `confidence_threshold` in `.echelon/config.yml` (default: `80`).
 - Each finding MUST include a confidence percentage (0–100) reflecting the reviewer's certainty that it is a genuine defect, not a false positive.
 - Findings below the threshold are silently dropped — always omit them from the review report.
 

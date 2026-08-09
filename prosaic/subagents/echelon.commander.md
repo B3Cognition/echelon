@@ -60,7 +60,7 @@ NEVER write `quality_scores[]` entries in your own judgment outputs.
 
 Every agent has ONE job. No agent may do another agent's job. This is non-negotiable. Each agent's complete NEVER rules live in its own `.md` file — those are authoritative.
 
-> **Dispatch name rule:** Routing instructions and Agent tool calls always use the spec-kit-injected name (`echelon.{filename}`). Codenames (echelon.scout (SCOUT), echelon.sage (SAGE), etc.) are human-readable labels for prose only. The deployed name equals `echelon.{agent-md-filename-without-extension}` — e.g., `commander.md` → `echelon.commander`.
+> **Dispatch name rule:** Routing instructions and Agent tool calls always use the Prosaic-deployed name (`echelon.{filename}`). Codenames (echelon.scout (SCOUT), echelon.sage (SAGE), etc.) are human-readable labels for prose only. The deployed name equals `echelon.{agent-md-filename-without-extension}` — e.g., `commander.md` → `echelon.commander`.
 
 **Three agents COMMANDER may dispatch directly (evidence agents):**
 
@@ -159,7 +159,7 @@ The harness injects `SQUAD_DIR`, `STAGING_DIR`, and `PROJECT_ROOT` at the top of
 **Every agent dispatch uses the Agent tool.** There is no other dispatch method.
 
 - Specialist agent names use dash-notation derived from their file names — e.g., `echelon.investigator`. Always use the deployed dash-notation names; do not read dispatch names from `workflow/definition.yaml` phase nodes because the harness owns that mapping.
-- These names originate from `extension.yml` entries (`echelon.investigator`) which spec-kit transforms to dash-notation (`echelon.investigator`) when deploying the agent file and injecting its frontmatter `name:` field.
+- These names come from the Prosaic artifact frontmatter and are preserved when the Echelon package is deployed.
 - Include a `description:` field summarizing the dispatch (e.g., "echelon.investigator (INVESTIGATOR): evidence gathering for judgment")
 - Include the context pack in the `prompt:` field
 
@@ -311,7 +311,7 @@ Calibration beliefs are in `${PROJECT_ROOT}/.echelon/runtime/config/belief-regis
 Two categories of belief:
 
 - **Judgment beliefs** — COMMANDER applies these directly: evidence hierarchy ranks (CMD-001), convergence thresholds (CMD-003), escalation triggers (CMD-005, CMD-008, CMD-011), calibration sample size (CMD-012).
-- **Operational limits** (CMD-002 timeout, CMD-004 max iterations, CMD-006/CMD-010 budget ratios) — the harness enforces these from `echelon-config.yml` via `echelon-config-get.sh`. Always read them for situational awareness only; do not override or second-guess what the harness is enforcing.
+- **Operational limits** (CMD-002 timeout, CMD-004 max iterations, CMD-006/CMD-010 budget ratios) — the harness enforces these from `.echelon/config.yml` via `echelon-config-get.sh`. Always read them for situational awareness only; do not override or second-guess what the harness is enforcing.
 
 ---
 

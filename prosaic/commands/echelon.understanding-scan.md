@@ -41,7 +41,7 @@ uv tool install git+https://github.com/Testimonial/understanding.git --with "spa
 Find the spec to analyze:
 
 - If user provided a path in {{args}}, use that
-- Otherwise, find the current feature's spec.md using the spec-kit convention: `specs/NNN-feature-name/spec.md`
+- Otherwise, find the current feature's `spec.md` in Echelon's published spec layout: `specs/NNN-feature-name/spec.md`
 
 ```bash
 SPEC_PATH="${ARGUMENTS:-}"

@@ -81,13 +81,13 @@ try:
     if deploy_type == 'http':
         missing = [k for k in ['blue_port','green_port'] if k not in d]
         if missing:
-            print('✗ deploy config incomplete in echelon-config.yml.', file=sys.stderr)
+            print('✗ deploy config incomplete in .echelon/config.yml.', file=sys.stderr)
             print(f'  HTTP type requires: {missing}', file=sys.stderr)
-            print('  See config-template.yml for reference.', file=sys.stderr)
+            print('  See .echelon/runtime/config-template.yml for reference.', file=sys.stderr)
             sys.exit(1)
     print(f'✓ deploy config valid (type={deploy_type})')
 except FileNotFoundError:
-    print('✗ echelon-config.yml not found.', file=sys.stderr)
+    print('✗ .echelon/config.yml not found.', file=sys.stderr)
     sys.exit(1)
 "
 ```
@@ -130,7 +130,7 @@ If exit code is non-zero, report the full output and stop. Common failures:
 |-------|-----|
 | Traefik not healthy | `docker rm -f speckit-traefik` then re-run `echelon.init` |
 | Port already claimed by another app | Change `blue_port`/`green_port` in `${ECHELON_CONFIG}` (use 3100/3101 for app2, 3200/3201 for app3, etc.) |
-| deploy config missing | Add `deploy:` block to `${ECHELON_CONFIG}` (see `config-template.yml`) |
+| deploy config missing | Add `deploy:` block to `${ECHELON_CONFIG}` (see `.echelon/runtime/config-template.yml`) |
 | Docker not running | Start Docker Desktop, then re-run |
 
 ---

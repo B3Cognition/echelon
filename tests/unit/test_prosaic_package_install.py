@@ -105,6 +105,23 @@ def test_committed_prosaic_runtime_does_not_reference_legacy_squad_layout() -> N
     assert legacy_references == []
 
 
+def test_canonical_prosaic_does_not_instruct_providers_to_use_speckit() -> None:
+    echelon_root = Path(__file__).resolve().parents[2]
+    prose = "\n".join(
+        path.read_text(encoding="utf-8", errors="ignore")
+        for path in (echelon_root / "prosaic").rglob("*.md")
+    )
+
+    for legacy_reference in (
+        "speckit.plan",
+        "speckit.tasks",
+        "speckit.analyze",
+        "extension.yml",
+        "echelon-config.yml",
+    ):
+        assert legacy_reference not in prose
+
+
 def test_runtime_workflow_dispatches_only_neutral_prosaic_subagents() -> None:
     echelon_root = Path(__file__).resolve().parents[2]
     runtime = echelon_root / "runtime"

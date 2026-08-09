@@ -45,7 +45,7 @@ NEVER modify agent prompts.
 - Agent output artifacts (from build phase)
 - echelon.checkpoint (CHECKPOINT)'s `internalization-report.md` (current run internalization results)
 - SPEC_GUARD, CODE_REVIEWER, TEST_GUARDIAN verdict reports
-- `echelon-config.yml` `internalization.*` section
+- `.echelon/config.yml` `internalization.*` section
 - `knowledge-base/internalization-log.yaml` (prior internalization entries)
 - `knowledge-base/evolution-signals.yaml` (prior evolution signals)
 - `knowledge-base/prompt-versions.yaml` (active versions)
@@ -170,7 +170,7 @@ For each agent that produced output in this run:
    - `int_accuracy_score` = mean of non-null values among I-05, I-06, I-07, I-08
    - If ALL constituents in a category are null, category score = null
 
-2. Look up agent's tier from `echelon-config.yml → internalization.tiers`
+2. Look up agent's tier from `.echelon/config.yml → internalization.tiers`
    - Search deep.agents, moderate.agents, minimal.agents, exempt.agents
    - If agent not found in ANY tier: use `internalization.default_tier` (default: deep). Log warning: "unclassified-agent-defaulted: {agent_name}"
 
@@ -220,7 +220,7 @@ Use `agents/learning/appendices/internalizer-tier-definitions.md` for tier descr
 Before computing deferred metrics for an agent:
 
 1. Count existing entries in internalization-log.yaml for this agent (prior runs only, not current)
-2. Apply cold-start phases from `echelon-config.yml → internalization.cold_start`:
+2. Apply cold-start phases from `.echelon/config.yml → internalization.cold_start`:
 
    - **Phase 1 (runs 1-4):** Set I-09 through I-16 to null with reason "cold-start-phase-1". Skip Steps 6-7 for this agent.
    - **Phase 2 (runs 5-9):** Compute I-09 through I-16 normally, but add qualifier "low-confidence" to computation_health warnings. For I-09 (Brier Score): require >= `brier_min_pairs` confidence-outcome pairs. Below threshold: null with "insufficient-confidence-outcome-data".

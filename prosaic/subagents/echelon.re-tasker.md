@@ -103,7 +103,7 @@ Every user story in spec.md maps to at least one canonical `T-###` task. Checkpo
 
 ### Post-Completion (Optional)
 
-After all domains complete, optionally suggest `speckit.analyze` for consistency analysis across the generated spec/plan/tasks files.
+After all domains complete, reconcile requirement IDs, dependencies, and target ownership across the generated `spec.md`, `plan.md`, and `tasks.md` files before reporting completion.
 
 ## Output Block
 

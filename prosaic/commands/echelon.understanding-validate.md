@@ -72,7 +72,7 @@ The `--validate` flag enforces quality gates and exits with code 1 if any gate f
 
 ### 4. Handle Results
 
-**If all gates pass**: Confirm the spec is ready and suggest proceeding to `/speckit.plan` or `/speckit.tasks`.
+**If all gates pass**: Confirm the spec is ready and suggest continuing the Echelon workflow with `echelon spec run "<task description>"`.
 
 **If gates fail**:
 - List each failed gate with its score vs threshold

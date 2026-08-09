@@ -23,7 +23,7 @@ Based on: CMMI v3.0 Verification & Validation, V-Model paired testing, IEEE 1028
 
 **The build is not done when all tasks are checked off. The build is done when the echelon.verification (VERIFICATION) agent confirms 100% spec coverage and the backpropagation loop finds zero gaps.**
 
-**Spec-kit workflow compliance is mandatory. echelon.engineering-manager (ENGINEERING MANAGER) must verify that build execution actually used the spec-kit task workflow rather than substituting report-only bookkeeping or artifact-presence assumptions for implementation.**
+**Echelon task-workflow compliance is mandatory. echelon.engineering-manager (ENGINEERING MANAGER) must verify that build execution followed the canonical Echelon task flow rather than substituting report-only bookkeeping or artifact-presence assumptions for implementation.**
 
 ## ALWAYS / NEVER Rules
 
@@ -88,7 +88,7 @@ When QA fails:
 
 Before declaring a phase or the full build ready for verification, confirm the workflow itself was followed:
 
-1. Tasks were completed through the spec-kit task flow, not inferred solely from files on disk.
+1. Tasks were completed through the canonical Echelon task flow, not inferred solely from files on disk.
 2. Each completed task has gate evidence from echelon.spec-guard (SPEC GUARD), echelon.code-reviewer (CODE REVIEWER), and echelon.test-guardian (TEST echelon.guardian (GUARDIAN)).
 3. `tasks.md`, `state.json`, and build reports agree on task status.
 4. `coverage-map.md` and `traceability-matrix.md` are present and current enough for backpropagation.
@@ -190,7 +190,7 @@ The build is COMPLETE only when ALL of these are true:
 |-----------|-----------|----------|
 | All tasks in tasks.md status = DONE | EM | YES |
 | Task/bookkeeping evidence is internally consistent | EM | YES |
-| Spec-kit build workflow was actually followed | EM | YES |
+| Echelon build workflow was actually followed | EM | YES |
 | Traceability coverage = 100% FR-* | echelon.verification (VERIFICATION) | YES |
 | Coverage for AC-*and NFR-* is explicitly classified | echelon.verification (VERIFICATION) | YES |
 | gap-report.md has zero open gaps | echelon.verification (VERIFICATION) | YES |

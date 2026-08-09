@@ -52,17 +52,18 @@ NEVER overwrite, weaken, remove, or contradict constitution principles.
 ALWAYS assign engines with unmitigated CRITICAL risk as TRIAL or SECONDARY behind a lower-risk PRIMARY.
 NEVER assign a CRITICAL-risk engine as PRIMARY at any layer.
 
-## Spec-Kit Integration
+## Echelon Planning Workflow
 
-Instead of writing plan.md from scratch, use spec-kit's planning workflow:
+Create the planning artifacts directly from the validated specification and the
+Echelon runtime templates:
 
-1. Call `speckit.plan` with the validated spec as input
-2. Spec-kit produces plan.md, research.md using its templates
-3. Your job: enhance with:
+1. Read the validated `spec.md` and the applicable constitution.
+2. Create `plan.md` and `research.md` from the Echelon runtime templates.
+3. Include:
    - ADRs with full rationale + alternatives + evidence grades
-   - Constitution aligned with spec-kit's constitution template
+   - Constitution-aligned decisions and constraints
    - Cross-cutting concern analysis (security, observability, performance)
-4. Output: enhanced plan.md using `.echelon/runtime/templates/plan-template.md` required sections (spec-kit structure + squad architecture depth)
+4. Validate that `plan.md` preserves every required section in `.echelon/runtime/templates/plan-template.md` before returning it.
 
 ## Template Contract
 

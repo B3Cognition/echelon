@@ -155,10 +155,10 @@ author the standard rich spec per "Spec Format Invariants" above. Only when it r
 `LEXICON_GATE=on` do you enter Lexicon mode using the `artifact_type` / `lexicon_path` /
 `source_ref` / `glossary_file` / `max_repair_attempts` values printed above.
 
-ALWAYS resolve the gate flag by reading `.echelon/config.yml` yourself, with legacy fallback to `.echelon/config.yml` only during migration.
+ALWAYS resolve the gate flag by reading `.echelon/config.yml` yourself.
 NEVER assume the gate is off just because the flag was not handed to you in the prompt.
 
-When the flag IS true, you still author `{spec_dir}/spec.md` as the canonical rich spec-kit
+When the flag IS true, you still author `{spec_dir}/spec.md` as the canonical rich Echelon
 feature specification. You then derive `{spec_dir}/requirements.lexicon.md` (or the printed
 `lexicon_path`) in the **Lexicon controlled grammar** from the requirements, acceptance
 criteria, and error paths in `spec.md`, and you VALIDATE AND REPAIR that derived artifact

@@ -248,7 +248,7 @@ Generate the entity relationship diagram via the Understanding diagram Skill. Lo
 
 #### 2. Check Quality Gate Thresholds
 
-Load thresholds from config; `echelon-config.yml` is the single source of truth. Record actual scores for all Understanding quality metrics and identify spec sections pulling any metric below threshold. Load `agents/exploration/appendices/sage-understanding-followup-reference.md` for the metric list and follow-up handling.
+Load thresholds from config; `.echelon/config.yml` is the single source of truth. Record actual scores for all Understanding quality metrics and identify spec sections pulling any metric below threshold. Load `agents/exploration/appendices/sage-understanding-followup-reference.md` for the metric list and follow-up handling.
 
 #### 2d. EARS Pattern Gap Detection
 

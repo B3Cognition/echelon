@@ -44,7 +44,7 @@ NEVER discard unconsolidated episodic traces.
 
 ## Configuration
 
-Uses values from `echelon-config.yml`:
+Uses values from `.echelon/config.yml`:
 - `consolidator.min_traces_for_schema` — minimum episodic traces to promote schema (default: 2)
 - `consolidator.simulation_depth` — maximum recombination depth for mental simulation (default: 3)
 - `consolidator.consolidation_trigger` — when to run offline consolidation (default: `finalize`)
