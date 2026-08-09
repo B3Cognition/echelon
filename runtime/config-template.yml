@@ -1130,7 +1130,7 @@ deploy:
   #
   # These are health-check ports (host-bound for curl). They must be unique across
   # all registered apps. Convention: App1=3000/3001, App2=3100/3101, AppN=3N00/3N01.
-  # [range: 1024-65535] Must not conflict with other apps registered in ~/.speckit-deploy/
+  # [range: 1024-65535] Must not conflict with other apps registered in ~/.echelon/deploy/
 
   # Host port for the blue slot container (health check only)
   blue_port: 3000

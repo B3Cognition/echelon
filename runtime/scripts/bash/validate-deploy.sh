@@ -70,6 +70,8 @@ try:
         sys.exit(1)
     print(d['type'])
     print(d['app'])
+    print(d.get('traefik_name', 'speckit-traefik'))
+    print(d.get('deploy_network', 'speckit-deploy'))
 except json.JSONDecodeError as e:
     print(f"INVALID:not valid JSON: {e}", file=sys.stderr)
     sys.exit(1)
@@ -80,6 +82,8 @@ PYEOF
 )
 DEPLOY_TYPE=$(echo "${DEPLOY_INFO}" | sed -n '1p')
 APP_NAME=$(echo "${DEPLOY_INFO}" | sed -n '2p')
+TRAEFIK_NAME=$(echo "${DEPLOY_INFO}" | sed -n '3p')
+DEPLOY_NETWORK=$(echo "${DEPLOY_INFO}" | sed -n '4p')
 
 if [ -z "${DEPLOY_TYPE}" ]; then
   _fail "deploy-state.json is invalid or empty."
@@ -101,12 +105,12 @@ fi
 # ── 4. Type-specific checks ───────────────────────────────────────────────────
 if [ "${DEPLOY_TYPE}" = "http" ]; then
   # Traefik running
-  TRAEFIK_STATUS=$(docker inspect --format='{{.State.Status}}' speckit-traefik 2>/dev/null | tr -d '[:space:]' || true)
+  TRAEFIK_STATUS=$(docker inspect --format='{{.State.Status}}' "${TRAEFIK_NAME}" 2>/dev/null | tr -d '[:space:]' || true)
   [ -z "${TRAEFIK_STATUS}" ] && TRAEFIK_STATUS="missing"
   if [ "${TRAEFIK_STATUS}" != "running" ]; then
     _fail "Traefik not running (status: ${TRAEFIK_STATUS})"
     echo "     Fix:" >&2
-    echo "       docker rm -f speckit-traefik 2>/dev/null || true" >&2
+    echo "       docker rm -f ${TRAEFIK_NAME} 2>/dev/null || true" >&2
     echo "       rm ${STATE_FILE}" >&2
     echo "       re-run echelon spec run <description>" >&2
     ERRORS=$((ERRORS + 1))
@@ -114,13 +118,13 @@ if [ "${DEPLOY_TYPE}" = "http" ]; then
     echo "  ✓ Traefik running"
   fi
 
-  # speckit-deploy network exists
-  if ! docker network inspect speckit-deploy &>/dev/null; then
-    _fail "Docker network speckit-deploy missing"
-    echo "     Fix: docker network create speckit-deploy" >&2
+  # Deployment network exists
+  if ! docker network inspect "${DEPLOY_NETWORK}" &>/dev/null; then
+    _fail "Docker network ${DEPLOY_NETWORK} missing"
+    echo "     Fix: docker network create ${DEPLOY_NETWORK}" >&2
     ERRORS=$((ERRORS + 1))
   else
-    echo "  ✓ Docker network speckit-deploy exists"
+    echo "  ✓ Docker network ${DEPLOY_NETWORK} exists"
   fi
 fi
 

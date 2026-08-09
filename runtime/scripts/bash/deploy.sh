@@ -60,6 +60,9 @@ try:
     print(d.get('health_check', ''))
     print(d.get('install_path', ''))
     print(d.get('container_port', 80))
+    print(d.get('traefik_name', 'speckit-traefik'))
+    print(d.get('deploy_network', 'speckit-deploy'))
+    print(d.get('global_state_dir', os.path.expanduser('~/.speckit-deploy')))
 except Exception as e:
     sys.exit(f'Cannot read deploy state: {e}')
 PYEOF
@@ -73,6 +76,9 @@ DOCKERFILE=$(echo "${_state}"       | sed -n '6p')
 HEALTH_CHECK=$(echo "${_state}"     | sed -n '7p')
 INSTALL_PATH=$(echo "${_state}"     | sed -n '8p')
 CONTAINER_PORT=$(echo "${_state}"   | sed -n '9p')
+TRAEFIK_NAME=$(echo "${_state}"     | sed -n '10p')
+DEPLOY_NETWORK=$(echo "${_state}"   | sed -n '11p')
+GLOBAL_STATE_DIR=$(echo "${_state}" | sed -n '12p')
 CONTAINER_PORT="${CONTAINER_PORT:-80}"
 
 INACTIVE=$([ "${ACTIVE}" = "blue" ] && echo "green" || echo "blue")
@@ -287,7 +293,7 @@ if [ "${DEPLOY_TYPE}" = "cli" ]; then
   echo "deploy: tagged ${APP}:candidate → ${APP}:${INACTIVE}"
 
   # ── Update state ──────────────────────────────────────────────────────────
-  STATE_FILE="${STATE_FILE}" APP="${APP}" INACTIVE="${INACTIVE}" python3 - <<'PYEOF'
+  STATE_FILE="${STATE_FILE}" APP="${APP}" INACTIVE="${INACTIVE}" GLOBAL_STATE_DIR="${GLOBAL_STATE_DIR}" python3 - <<'PYEOF'
 import os, sys, json, datetime
 
 state_file = os.environ['STATE_FILE']
@@ -304,7 +310,7 @@ state['last_deploy'] = datetime.datetime.now(datetime.timezone.utc).isoformat().
 with open(state_file, 'w') as f:
     json.dump(state, f, indent=2)
 
-global_dir = os.path.expanduser("~/.speckit-deploy")
+global_dir = os.environ.get('GLOBAL_STATE_DIR', os.path.expanduser("~/.speckit-deploy"))
 os.makedirs(global_dir, exist_ok=True)
 global_state = os.path.join(global_dir, f"{state['app']}.json")
 with open(global_state, 'w') as f:
@@ -334,11 +340,11 @@ INACTIVE_PORT=$([ "${INACTIVE}" = "blue" ] && echo "${BLUE_PORT}" || echo "${GRE
 echo "deploy: ${APP} ${ACTIVE} → ${INACTIVE} (health-check port ${INACTIVE_PORT})"
 
 # ── Traefik health ────────────────────────────────────────────────────────────
-TRAEFIK_STATUS=$(docker inspect --format='{{.State.Status}}' speckit-traefik 2>/dev/null | tr -d '[:space:]' || true)
+TRAEFIK_STATUS=$(docker inspect --format='{{.State.Status}}' "${TRAEFIK_NAME}" 2>/dev/null | tr -d '[:space:]' || true)
 [ -z "${TRAEFIK_STATUS}" ] && TRAEFIK_STATUS="missing"
 if [ "${TRAEFIK_STATUS}" != "running" ]; then
-  echo "✗ speckit-traefik is not running (status: ${TRAEFIK_STATUS})." >&2
-  echo "  Run: docker start speckit-traefik" >&2
+  echo "✗ ${TRAEFIK_NAME} is not running (status: ${TRAEFIK_STATUS})." >&2
+  echo "  Run: docker start ${TRAEFIK_NAME}" >&2
   exit 1
 fi
 
@@ -362,7 +368,7 @@ docker build -t "${APP}:candidate" "${BUILD_ARGS[@]}" -f "${PROJECT_ROOT}/${DOCK
 echo "deploy: starting ${APP}-${INACTIVE} (Traefik: http://localhost/${APP}/, health: :${INACTIVE_PORT})..."
 docker run -d \
   --name "${APP}-${INACTIVE}" \
-  --network speckit-deploy \
+  --network "${DEPLOY_NETWORK}" \
   --label "traefik.enable=true" \
   --label "traefik.http.routers.${APP}.rule=PathPrefix(\`/${APP}\`)" \
   --label "traefik.http.routers.${APP}.entrypoints=web" \
@@ -422,7 +428,7 @@ docker stop "${APP}-${ACTIVE}" 2>/dev/null || echo "  (${APP}-${ACTIVE} was not 
 docker tag "${APP}:candidate" "${APP}:${INACTIVE}"
 echo "deploy: tagged ${APP}:candidate → ${APP}:${INACTIVE}"
 
-STATE_FILE="${STATE_FILE}" APP="${APP}" INACTIVE="${INACTIVE}" python3 - <<'PYEOF'
+STATE_FILE="${STATE_FILE}" APP="${APP}" INACTIVE="${INACTIVE}" GLOBAL_STATE_DIR="${GLOBAL_STATE_DIR}" python3 - <<'PYEOF'
 import os, sys, json, datetime
 
 state_file = os.environ['STATE_FILE']
@@ -439,7 +445,7 @@ state['last_deploy'] = datetime.datetime.now(datetime.timezone.utc).isoformat().
 with open(state_file, 'w') as f:
     json.dump(state, f, indent=2)
 
-global_dir = os.path.expanduser("~/.speckit-deploy")
+global_dir = os.environ.get('GLOBAL_STATE_DIR', os.path.expanduser("~/.speckit-deploy"))
 os.makedirs(global_dir, exist_ok=True)
 global_state = os.path.join(global_dir, f"{state['app']}.json")
 with open(global_state, 'w') as f:

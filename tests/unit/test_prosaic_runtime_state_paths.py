@@ -1,6 +1,10 @@
 """State-location contracts for the deployed Prosaic/runtime bundle."""
 
+import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -47,3 +51,68 @@ def test_prosaic_runtime_does_not_direct_agents_to_legacy_squad_storage() -> Non
     assert ".specify/squad" not in init
     assert ".specify/squad-global" not in veteran
     assert "~/.echelon/knowledge-base/" in veteran
+
+
+def _run_cli_deploy_init(project: Path, home: Path, install_path: Path | None = None) -> dict:
+    fake_bin = home / "bin"
+    fake_bin.mkdir(parents=True)
+    docker = fake_bin / "docker"
+    docker.write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
+    docker.chmod(0o755)
+
+    config = project / ".echelon" / "config.yml"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        "deploy:\n"
+        "  type: cli\n"
+        "  health_check: 'true'\n"
+        f"  install_path: '{install_path or ''}'\n",
+        encoding="utf-8",
+    )
+    environment = os.environ | {
+        "HOME": str(home),
+        "PATH": f"{fake_bin}:{Path(sys.executable).parent}:{os.environ['PATH']}",
+    }
+    subprocess.run(
+        ["bash", str(RUNTIME / "scripts" / "bash" / "deploy-init.sh"), str(project)],
+        check=True,
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads((project / "runs" / "deploy-state.json").read_text(encoding="utf-8"))
+
+
+def test_fresh_cli_deploy_init_uses_echelon_infrastructure(tmp_path: Path) -> None:
+    project = tmp_path / "fresh-project"
+    state = _run_cli_deploy_init(project, tmp_path / "home")
+
+    assert state["global_state_dir"] == str(tmp_path / "home" / ".echelon" / "deploy")
+    assert state["traefik_name"] == "echelon-traefik"
+    assert state["deploy_network"] == "echelon-deploy"
+    assert (tmp_path / "home" / ".echelon" / "deploy" / "fresh-project.json").exists()
+
+
+def test_cli_deploy_init_preserves_existing_legacy_global_state(tmp_path: Path) -> None:
+    project = tmp_path / "legacy-project"
+    home = tmp_path / "home"
+    legacy_state = home / ".speckit-deploy" / "legacy-project.json"
+    legacy_state.parent.mkdir(parents=True)
+    legacy_state.write_text("{}", encoding="utf-8")
+
+    state = _run_cli_deploy_init(project, home)
+
+    assert state["global_state_dir"] == str(home / ".speckit-deploy")
+    assert state["traefik_name"] == "speckit-traefik"
+    assert state["deploy_network"] == "speckit-deploy"
+
+
+def test_cli_deploy_wrapper_reads_the_selected_global_state_directory(tmp_path: Path) -> None:
+    project = tmp_path / "wrapper-project"
+    home = tmp_path / "home"
+    install_path = tmp_path / "bin"
+
+    state = _run_cli_deploy_init(project, home, install_path)
+
+    wrapper = (install_path / "wrapper-project").read_text(encoding="utf-8")
+    assert f'_state_file="{state["global_state_dir"]}/wrapper-project.json"' in wrapper

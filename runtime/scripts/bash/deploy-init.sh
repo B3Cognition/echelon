@@ -109,7 +109,21 @@ CONTAINER_PORT="${CONTAINER_PORT:-80}"
 
 APP_NAME=$(basename "${PROJECT_ROOT}" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')
 
-GLOBAL_STATE_DIR="${HOME}/.speckit-deploy"
+GLOBAL_STATE_DIR="${HOME}/.echelon/deploy"
+TRAEFIK_NAME="echelon-traefik"
+DEPLOY_NETWORK="echelon-deploy"
+LEGACY_GLOBAL_STATE_DIR="${HOME}/.speckit-deploy"
+
+# Existing deployments keep their established shared infrastructure. Fresh
+# workspaces use the Echelon namespace and never create Spec-Kit resources.
+if [ -f "${LEGACY_GLOBAL_STATE_DIR}/${APP_NAME}.json" ] \
+  || docker inspect "speckit-traefik" >/dev/null 2>&1 \
+  || docker network inspect "speckit-deploy" >/dev/null 2>&1; then
+  GLOBAL_STATE_DIR="${LEGACY_GLOBAL_STATE_DIR}"
+  TRAEFIK_NAME="speckit-traefik"
+  DEPLOY_NETWORK="speckit-deploy"
+  echo "deploy: using legacy deployment infrastructure for compatibility"
+fi
 mkdir -p "${GLOBAL_STATE_DIR}"
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -119,7 +133,7 @@ if [ "${DEPLOY_TYPE}" = "cli" ]; then
   echo "deploy: type=cli — skipping Traefik/network setup"
 
   # ── Global state ──────────────────────────────────────────────────────────
-  APP_NAME="${APP_NAME}" PROJECT_ROOT="${PROJECT_ROOT}" DOCKERFILE="${DOCKERFILE}" \
+  APP_NAME="${APP_NAME}" PROJECT_ROOT="${PROJECT_ROOT}" DOCKERFILE="${DOCKERFILE}" GLOBAL_STATE_DIR="${GLOBAL_STATE_DIR}" TRAEFIK_NAME="${TRAEFIK_NAME}" DEPLOY_NETWORK="${DEPLOY_NETWORK}" \
   HEALTH_CHECK="${HEALTH_CHECK}" INSTALL_PATH="${INSTALL_PATH}" CONTAINER_PORT="${CONTAINER_PORT}" python3 - <<'PYEOF'
 import json, os
 
@@ -136,9 +150,12 @@ state = {
     "container_port": int(os.environ.get('CONTAINER_PORT') or 80),
     "last_deploy": None,
     "blue_image": None,
-    "green_image": None
+    "green_image": None,
+    "global_state_dir": os.environ['GLOBAL_STATE_DIR'],
+    "traefik_name": os.environ['TRAEFIK_NAME'],
+    "deploy_network": os.environ['DEPLOY_NETWORK']
 }
-global_dir = os.path.expanduser("~/.speckit-deploy")
+global_dir = os.environ['GLOBAL_STATE_DIR']
 os.makedirs(global_dir, exist_ok=True)
 path = os.path.join(global_dir, f"{state['app']}.json")
 with open(path, 'w') as f:
@@ -154,7 +171,7 @@ PYEOF
 
   # ── Wrapper script (optional) ─────────────────────────────────────────────
   if [ -n "${INSTALL_PATH}" ]; then
-    APP_NAME="${APP_NAME}" INSTALL_PATH="${INSTALL_PATH}" python3 - <<'PYEOF'
+    APP_NAME="${APP_NAME}" INSTALL_PATH="${INSTALL_PATH}" GLOBAL_STATE_DIR="${GLOBAL_STATE_DIR}" python3 - <<'PYEOF'
 import os, stat
 
 app = os.environ['APP_NAME']
@@ -163,9 +180,9 @@ os.makedirs(install_path, exist_ok=True)
 
 content = f"""#!/usr/bin/env bash
 # {app} — wrapper installed by echelon deploy
-# Reads active image tag from ~/.speckit-deploy/{app}.json and runs via Docker.
+# Reads active image tag from the Echelon deployment state and runs via Docker.
 set -euo pipefail
-_state_file="$HOME/.speckit-deploy/{app}.json"
+_state_file="{os.environ['GLOBAL_STATE_DIR']}/{app}.json"
 if [ ! -f "$_state_file" ]; then
   echo "✗ deploy state not found: $_state_file" >&2
   exit 1
@@ -220,47 +237,47 @@ for f in "${GLOBAL_STATE_DIR}"/*.json; do
 done
 
 # ── Docker network ───────────────────────────────────────────────────────────
-echo "deploy: ensuring speckit-deploy network exists..."
-docker network create speckit-deploy 2>/dev/null || echo "deploy: network already exists"
+echo "deploy: ensuring ${DEPLOY_NETWORK} network exists..."
+docker network create "${DEPLOY_NETWORK}" 2>/dev/null || echo "deploy: network already exists"
 
 # ── Traefik: start once, never recreated for new apps ────────────────────────
 # Traefik discovers new app containers automatically via Docker labels.
-TRAEFIK_STATUS=$(docker inspect --format='{{.State.Status}}' speckit-traefik 2>/dev/null | tr -d '[:space:]' || true)
+TRAEFIK_STATUS=$(docker inspect --format='{{.State.Status}}' "${TRAEFIK_NAME}" 2>/dev/null | tr -d '[:space:]' || true)
 [ -z "${TRAEFIK_STATUS}" ] && TRAEFIK_STATUS="missing"
 
 if [ "${TRAEFIK_STATUS}" = "running" ]; then
   echo "deploy: Traefik already running — no restart needed (new apps auto-discovered via labels)"
 elif [ "${TRAEFIK_STATUS}" = "missing" ]; then
-  echo "deploy: starting speckit-traefik (single shared instance at :80)..."
+  echo "deploy: starting ${TRAEFIK_NAME} (single shared instance at :80)..."
   # Resolve the real Docker socket path (macOS Docker Desktop uses a symlink)
   _DOCKER_SOCK=$(realpath /var/run/docker.sock 2>/dev/null || echo /var/run/docker.sock)
   docker run -d \
-    --name speckit-traefik \
-    --network speckit-deploy \
+    --name "${TRAEFIK_NAME}" \
+    --network "${DEPLOY_NETWORK}" \
     -v "${_DOCKER_SOCK}:/var/run/docker.sock:ro" \
     -p 80:80 \
     --restart unless-stopped \
     traefik:latest \
       --providers.docker=true \
-      --providers.docker.network=speckit-deploy \
+      --providers.docker.network="${DEPLOY_NETWORK}" \
       --entrypoints.web.address=:80
 
   echo "deploy: waiting for Traefik health check..."
   for i in 1 2 3 4 5; do
     sleep 1
-    STATUS=$(docker inspect --format='{{.State.Status}}' speckit-traefik 2>/dev/null | tr -d '[:space:]' || true)
+    STATUS=$(docker inspect --format='{{.State.Status}}' "${TRAEFIK_NAME}" 2>/dev/null | tr -d '[:space:]' || true)
     [ "${STATUS}" = "running" ] && echo "deploy: Traefik is healthy" && break
-    [ "${i}" = "5" ] && echo "✗ Traefik failed to start. Check: docker logs speckit-traefik" >&2 && exit 1
+    [ "${i}" = "5" ] && echo "✗ Traefik failed to start. Check: docker logs ${TRAEFIK_NAME}" >&2 && exit 1
   done
 else
-  echo "✗ speckit-traefik exists but is not healthy (status: ${TRAEFIK_STATUS})." >&2
-  echo "  Run: docker rm speckit-traefik" >&2
+  echo "✗ ${TRAEFIK_NAME} exists but is not healthy (status: ${TRAEFIK_STATUS})." >&2
+  echo "  Run: docker rm ${TRAEFIK_NAME}" >&2
   echo "  Then re-run echelon.init to reinitialize." >&2
   exit 1
 fi
 
 # ── Global state registration ────────────────────────────────────────────────
-APP_NAME="${APP_NAME}" PROJECT_ROOT="${PROJECT_ROOT}" DOCKERFILE="${DOCKERFILE}" \
+APP_NAME="${APP_NAME}" PROJECT_ROOT="${PROJECT_ROOT}" DOCKERFILE="${DOCKERFILE}" GLOBAL_STATE_DIR="${GLOBAL_STATE_DIR}" TRAEFIK_NAME="${TRAEFIK_NAME}" DEPLOY_NETWORK="${DEPLOY_NETWORK}" \
 BLUE_PORT="${BLUE_PORT}" GREEN_PORT="${GREEN_PORT}" CONTAINER_PORT="${CONTAINER_PORT}" python3 - <<'PYEOF'
 import json, os
 
@@ -277,9 +294,12 @@ state = {
     "container_port": int(os.environ.get('CONTAINER_PORT') or 80),
     "last_deploy": None,
     "blue_image": None,
-    "green_image": None
+    "green_image": None,
+    "global_state_dir": os.environ['GLOBAL_STATE_DIR'],
+    "traefik_name": os.environ['TRAEFIK_NAME'],
+    "deploy_network": os.environ['DEPLOY_NETWORK']
 }
-global_dir = os.path.expanduser("~/.speckit-deploy")
+global_dir = os.environ['GLOBAL_STATE_DIR']
 os.makedirs(global_dir, exist_ok=True)
 path = os.path.join(global_dir, f"{state['app']}.json")
 with open(path, 'w') as f:

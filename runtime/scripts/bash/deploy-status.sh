@@ -48,6 +48,7 @@ try:
     print(d.get('blue_image') or '')
     print(d.get('green_image') or '')
     print(d.get('install_path') or '')
+    print(d.get('traefik_name', 'speckit-traefik'))
 except Exception as e:
     sys.exit(f'Cannot read deploy state: {e}')
 PYEOF
@@ -62,6 +63,7 @@ LAST=$(echo "${_state}"          | sed -n '7p')
 BLUE_IMAGE=$(echo "${_state}"    | sed -n '8p')
 GREEN_IMAGE=$(echo "${_state}"   | sed -n '9p')
 INSTALL_PATH=$(echo "${_state}"  | sed -n '10p')
+TRAEFIK_NAME=$(echo "${_state}"  | sed -n '11p')
 
 status_of() {
   docker inspect --format='{{.State.Status}}' "$1" 2>/dev/null || echo "not found"
@@ -96,7 +98,7 @@ fi
 # ── HTTP STATUS ───────────────────────────────────────────────────────────────
 BLUE_STATUS=$(status_of "${APP}-blue")
 GREEN_STATUS=$(status_of "${APP}-green")
-TRAEFIK_STATUS=$(status_of speckit-traefik)
+TRAEFIK_STATUS=$(status_of "${TRAEFIK_NAME}")
 
 echo "════════════════════════════════════════"
 echo "  ${APP} deploy status"
@@ -107,5 +109,5 @@ echo ""
 echo "  Containers:"
 printf "    %-20s port %-6s  %s\n" "${APP}-blue"  "${BLUE_PORT}"  "${BLUE_STATUS}"
 printf "    %-20s port %-6s  %s\n" "${APP}-green" "${GREEN_PORT}" "${GREEN_STATUS}"
-printf "    %-20s         %s\n"    "speckit-traefik"               "${TRAEFIK_STATUS}"
+printf "    %-20s         %s\n"    "${TRAEFIK_NAME}"               "${TRAEFIK_STATUS}"
 echo "════════════════════════════════════════"

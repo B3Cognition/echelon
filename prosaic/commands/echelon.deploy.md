@@ -140,7 +140,7 @@ state['last_deploy'] = datetime.datetime.now(datetime.timezone.utc).isoformat().
 with open(state_file, 'w') as f:
     json.dump(state, f, indent=2)
 
-global_dir = os.path.expanduser('~/.speckit-deploy')
+global_dir = state.get('global_state_dir', os.path.expanduser('~/.speckit-deploy'))
 os.makedirs(global_dir, exist_ok=True)
 with open(os.path.join(global_dir, f"{app}.json"), 'w') as f:
     json.dump(state, f, indent=2)
@@ -197,7 +197,7 @@ state['last_deploy'] = datetime.datetime.now(datetime.timezone.utc).isoformat().
 with open(state_file, 'w') as f:
     json.dump(state, f, indent=2)
 
-global_dir = os.path.expanduser('~/.speckit-deploy')
+global_dir = state.get('global_state_dir', os.path.expanduser('~/.speckit-deploy'))
 os.makedirs(global_dir, exist_ok=True)
 with open(os.path.join(global_dir, f"{app}.json"), 'w') as f:
     json.dump(state, f, indent=2)

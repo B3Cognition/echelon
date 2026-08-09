@@ -128,7 +128,7 @@ If exit code is non-zero, report the full output and stop. Common failures:
 
 | Error | Fix |
 |-------|-----|
-| Traefik not healthy | `docker rm -f speckit-traefik` then re-run `echelon.init` |
+| Traefik not healthy | `docker rm -f echelon-traefik` then re-run `echelon.init` |
 | Port already claimed by another app | Change `blue_port`/`green_port` in `${ECHELON_CONFIG}` (use 3100/3101 for app2, 3200/3201 for app3, etc.) |
 | deploy config missing | Add `deploy:` block to `${ECHELON_CONFIG}` (see `.echelon/runtime/config-template.yml`) |
 | Docker not running | Start Docker Desktop, then re-run |
