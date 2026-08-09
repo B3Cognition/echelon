@@ -48,13 +48,14 @@ class CodexCliBackend:
             ) as temp_file:
                 final_path = temp_file.name
 
+        model = _codex_model_for_request(request)
         cmd = build_llm_cli_command(
             "codex",
             self._bin,
             request.prompt,
             self._config.llm.tool_policy,
             codex_json=True,
-            codex_model=_codex_model_for_request(request),
+            codex_model=model,
             output_last_message=final_path or None,
         )
         proc = subprocess.Popen(
@@ -125,7 +126,12 @@ class CodexCliBackend:
             stderr="\n".join(chunk for chunk in stderr_chunks if chunk),
             token_usage=token_usage,
             timed_out=timed_out,
-            metadata={"task_complete": saw_task_complete},
+            metadata={
+                "task_complete": saw_task_complete,
+                # Codex JSON events do not reliably include a response model.
+                # Preserve the explicitly requested model for durable telemetry.
+                "request_model": model or "",
+            },
         )
 
 

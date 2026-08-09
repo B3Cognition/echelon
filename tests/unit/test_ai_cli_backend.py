@@ -3670,10 +3670,11 @@ def test_codex_backend_maps_neutral_model_tier_to_cli_model(
     )
 
     with patch("harness.ai_cli_backends.codex.subprocess.Popen", fake_popen):
-        backend.run_prompt(request)
+        result = backend.run_prompt(request)
 
     command = captured["command"]
     assert command[command.index("--model") + 1] == expected_model
+    assert result.metadata["request_model"] == expected_model
 
 
 def test_codex_backend_ignores_unknown_model_tier(tmp_path) -> None:
