@@ -71,8 +71,8 @@ from harness.understanding_gate import UnderstandingGateResult
 from echelon.telemetry.phase_timing import record_phase_start
 from echelon.telemetry.spec_adapter import analyze_spec_run
 
-DEFINITION = EXT_ROOT / "extension/workflow/definition.yaml"
-EXT_YML = EXT_ROOT / "extension/extension.yml"
+DEFINITION = EXT_ROOT / "runtime/workflow/definition.yaml"
+PROSAIC_SUBAGENTS = EXT_ROOT / "prosaic/subagents"
 
 
 _RAW_ATTESTATION_SECRET = "raw-attestation-secret"
@@ -883,7 +883,7 @@ def _controller(tmp_path: Path, provider=None, mode: str = "banzai", squad_dir: 
         squad_dir = tmp_path / "squad" / "run-test"
         squad_dir.mkdir(parents=True, exist_ok=True)
         (squad_dir / "staging").mkdir(exist_ok=True)
-    graph = PhaseGraph(DEFINITION, EXT_YML)
+    graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
     store = SquadStateStore(squad_dir)
     if provider is None:
         provider = _mock_provider()
@@ -1932,7 +1932,7 @@ class TestConsensusCannotBeSkipped:
     """
 
     def test_phase3_plan_transitions_to_consensus(self):
-        graph = PhaseGraph(DEFINITION, EXT_YML)
+        graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
         plan_node = graph.get("phase3-plan")
         assert plan_node.transitions == [
             {"to": "phase3-tasks-lexicon", "condition": "always"}
@@ -1946,12 +1946,12 @@ class TestConsensusCannotBeSkipped:
         ]
 
     def test_phase3_plan_to_consensus_condition_is_always(self):
-        graph = PhaseGraph(DEFINITION, EXT_YML)
+        graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
         plan_node = graph.get("phase3-plan")
         assert plan_node.transitions[0]["condition"] == "always"
 
     def test_staged_parallel_has_stage1_and_stage2_agents(self):
-        graph = PhaseGraph(DEFINITION, EXT_YML)
+        graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
         consensus_node = graph.get("phase3-consensus")
         stage1 = [a for a in consensus_node.agents if a.get("stage", 1) == 1]
         stage2 = [a for a in consensus_node.agents if a.get("stage", 1) == 2]
@@ -1973,7 +1973,7 @@ class TestConsensusCannotBeSkipped:
 
 class TestSolutionPhaseOrdering:
     def test_specialists_feed_architect_before_sentinel(self):
-        graph = PhaseGraph(DEFINITION, EXT_YML)
+        graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
 
         specialists_node = graph.get("phase3-specialists")
         specialist_targets = [t["to"] for t in specialists_node.transitions]
@@ -1984,7 +1984,7 @@ class TestSolutionPhaseOrdering:
         assert how_targets == ["phase3-sentinel"]
 
     def test_sentinel_runs_before_plan_so_tests_become_tasks(self):
-        graph = PhaseGraph(DEFINITION, EXT_YML)
+        graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
 
         sentinel_node = graph.get("phase3-sentinel")
         sentinel_targets = [t["to"] for t in sentinel_node.transitions]
@@ -4729,7 +4729,7 @@ class TestAgentResultIntegrity:
 
 class TestCartographerResumeGuard:
     def test_phase1_what_prompt_blocks_duplicate_specify_on_resume(self, tmp_path):
-        graph = PhaseGraph(DEFINITION, EXT_YML)
+        graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
         squad_dir = tmp_path / "runs" / "spec-test"
         staging_dir = squad_dir / "staging"
         staging_dir.mkdir(parents=True)
@@ -4967,7 +4967,7 @@ class TestSquadControllerBasics:
             duration_ms=50,
             timed_out=False,
         )
-        graph = PhaseGraph(DEFINITION, EXT_YML)
+        graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
         squad_dir = tmp_path / "squad" / "run-test"
         squad_dir.mkdir(parents=True, exist_ok=True)
         (squad_dir / "staging").mkdir(exist_ok=True)
@@ -5037,7 +5037,7 @@ class TestSquadControllerBasics:
             duration_ms=50,
             timed_out=False,
         )
-        graph = PhaseGraph(DEFINITION, EXT_YML)
+        graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
         squad_dir = tmp_path / "squad" / "run-test"
         squad_dir.mkdir(parents=True, exist_ok=True)
         (squad_dir / "staging").mkdir(exist_ok=True)
@@ -5102,7 +5102,7 @@ class TestSquadControllerBasics:
 
     def test_budget_exhausted_when_exceeded(self, tmp_path):
         provider = _mock_provider()
-        graph = PhaseGraph(DEFINITION, EXT_YML)
+        graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
         store = SquadStateStore(tmp_path / "squad" / "run-test")
         ctrl = SquadController(
             provider=provider,
@@ -7075,7 +7075,7 @@ class TestConstitutionPhase:
 
     def test_phase1_constitution_is_agent_not_commander_internal(self, tmp_path):
         """phase1-constitution must be type=agent so CHIEF gets dispatched."""
-        graph = PhaseGraph(DEFINITION, EXT_YML)
+        graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
         node = graph.get("phase1-constitution")
         assert node.type == "agent", (
             f"phase1-constitution must be type=agent (so CHIEF is dispatched by the harness). "
@@ -7084,27 +7084,26 @@ class TestConstitutionPhase:
 
     def test_phase1_constitution_agent_is_chief_not_commander(self, tmp_path):
         """phase1-constitution must dispatch CHIEF, not COMMANDER."""
-        graph = PhaseGraph(DEFINITION, EXT_YML)
+        graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
         node = graph.get("phase1-constitution")
-        assert node.agent == "echelon-chief", (
-            f"phase1-constitution must dispatch echelon-chief. "
+        assert node.agent == "echelon.chief", (
+            f"phase1-constitution must dispatch echelon.chief. "
             f"Got: {node.agent!r}. COMMANDER must not own constitution creation."
         )
 
     def test_chief_resolves_to_agent_file(self, tmp_path):
         """echelon-chief must resolve to a real agent file path."""
-        graph = PhaseGraph(DEFINITION, EXT_YML)
-        rel = graph.agent_file("echelon-chief")
-        assert rel == "agents/control/chief.md", (
-            f"echelon-chief should resolve to agents/control/chief.md. "
-            f"Got: {rel!r}. Check extension.yml provides.commands registration."
+        graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
+        rel = graph.agent_file("echelon.chief")
+        assert rel == str((PROSAIC_SUBAGENTS / "echelon.chief.md").resolve()), (
+            f"echelon.chief should resolve to its Prosaic source. Got: {rel!r}."
         )
-        agent_path = EXT_ROOT / "extension" / rel
+        agent_path = Path(rel)
         assert agent_path.exists(), f"Agent file not found: {agent_path}"
 
     def test_chief_has_constitution_context_pack(self, tmp_path):
         """phase1-constitution must include staging artifacts in context_pack."""
-        graph = PhaseGraph(DEFINITION, EXT_YML)
+        graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
         node = graph.get("phase1-constitution")
         pack = " ".join(node.context_pack)
         assert "user-intent.md" in pack
@@ -7151,7 +7150,7 @@ class TestConstitutionPhase:
         assert result.status == "done"
         assert store.load()["last_dispatch"]["phase_id"] == "phase1-constitution"
         first_prompt = provider.exec_agent.call_args.args[1]
-        assert "speckit.constitution" in first_prompt
+        assert "echelon.chief" in first_prompt
 
     def test_phase1_what_allowed_after_constitution_completion_provenance(self, tmp_path):
         ctrl, store = _controller(tmp_path)

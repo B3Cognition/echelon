@@ -4980,7 +4980,7 @@ class SquadController:
                 prepared.control_updates,
             )
             if blocked_result:
-                if self._route_agent_block_to_commander(
+                if node.type == "agent" and self._route_agent_block_to_commander(
                     node,
                     blocked_result,
                     prepared_result,
