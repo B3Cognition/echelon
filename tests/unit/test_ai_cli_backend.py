@@ -170,6 +170,7 @@ def test_openai_compatible_backend_posts_chat_completion(tmp_path, monkeypatch) 
         "total_tokens": 12,
     }
     assert result.metadata["http_status"] == 200
+    assert result.metadata["request_model"] == "local-model"
     assert result.metadata["raw_response_headers"] == {
         "content-type": "application/json",
         "x-request-id": "req_123",
@@ -452,6 +453,7 @@ def test_openai_compatible_backend_records_nonstreaming_response_metadata(
     )
 
     assert result.exit_code == 0
+    assert result.metadata["request_model"] == "local-model"
     assert result.metadata["raw_response_metadata"] == {
         "id": "chatcmpl-123",
         "object": "chat.completion",
@@ -1161,6 +1163,7 @@ def test_openai_compatible_backend_records_streaming_response_metadata(
     )
 
     assert result.exit_code == 0
+    assert result.metadata["request_model"] == "local-model"
     assert result.metadata["raw_response_metadata"] == {
         "id": "chatcmpl-stream",
         "object": "chat.completion.chunk",
