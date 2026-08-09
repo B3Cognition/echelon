@@ -9,32 +9,14 @@ from harness.role_contracts import (
 
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFINITION = ROOT / "extension/workflow/definition.yaml"
-EXT_YML = ROOT / "extension/extension.yml"
+DEFINITION = ROOT / "runtime/workflow/definition.yaml"
+PROSAIC_SUBAGENTS = ROOT / "prosaic/subagents"
 
 
-def _write_fixture_extension(root: Path, agent_text: str, outputs=None) -> tuple[Path, Path]:
-    agents_dir = root / "agents"
-    agents_dir.mkdir()
-    (agents_dir / "scout.md").write_text(agent_text, encoding="utf-8")
-
-    extension_yml = root / "extension.yml"
-    extension_yml.write_text(
-        yaml.safe_dump(
-            {
-                "provides": {
-                    "commands": [
-                        {
-                            "name": "echelon.scout",
-                            "file": "agents/scout.md",
-                            "behavior": {"execution": "agent"},
-                        }
-                    ]
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
+def _write_fixture_prosaic(root: Path, agent_text: str, outputs=None) -> tuple[Path, Path]:
+    subagents_dir = root / "subagents"
+    subagents_dir.mkdir()
+    (subagents_dir / "echelon.scout.md").write_text(agent_text, encoding="utf-8")
 
     phase = {
         "id": "phase1-discover",
@@ -50,7 +32,7 @@ def _write_fixture_extension(root: Path, agent_text: str, outputs=None) -> tuple
         yaml.safe_dump({"phases": [phase]}),
         encoding="utf-8",
     )
-    return definition, extension_yml
+    return definition, subagents_dir
 
 
 def test_agent_result_contract_accepts_complete_template() -> None:
@@ -85,7 +67,7 @@ echelon_result:
 
 
 def test_role_contract_validation_reports_missing_phase_outputs(tmp_path: Path) -> None:
-    definition, extension_yml = _write_fixture_extension(
+    definition, subagents_dir = _write_fixture_prosaic(
         tmp_path,
         """
 echelon_result:
@@ -99,8 +81,7 @@ echelon_result:
 
     report = validate_role_contracts(
         definition_path=definition,
-        extension_yml_path=extension_yml,
-        extension_root=tmp_path,
+        prosaic_subagents_dir=subagents_dir,
     )
 
     assert not report.ok
@@ -110,7 +91,7 @@ echelon_result:
 def test_role_contract_validation_reports_missing_state_update_allowlist(
     tmp_path: Path,
 ) -> None:
-    definition, extension_yml = _write_fixture_extension(
+    definition, subagents_dir = _write_fixture_prosaic(
         tmp_path,
         """
 echelon_result:
@@ -125,8 +106,7 @@ echelon_result:
 
     report = validate_role_contracts(
         definition_path=definition,
-        extension_yml_path=extension_yml,
-        extension_root=tmp_path,
+        prosaic_subagents_dir=subagents_dir,
     )
 
     assert not report.ok
@@ -136,8 +116,7 @@ echelon_result:
 def test_real_routed_roles_have_machine_readable_contracts() -> None:
     report = validate_role_contracts(
         definition_path=DEFINITION,
-        extension_yml_path=EXT_YML,
-        extension_root=ROOT / "extension",
+        prosaic_subagents_dir=PROSAIC_SUBAGENTS,
     )
 
     assert report.ok, report.format()

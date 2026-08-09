@@ -92,11 +92,10 @@ def validate_agent_result_contract(
 def validate_role_contracts(
     *,
     definition_path: Path,
-    extension_yml_path: Path,
-    extension_root: Path,
+    prosaic_subagents_dir: Path,
 ) -> RoleContractReport:
     """Validate routed agents in workflow/definition.yaml against prompt contracts."""
-    graph = PhaseGraph(definition_path, extension_yml_path)
+    graph = PhaseGraph(definition_path, prosaic_subagents_dir=prosaic_subagents_dir)
     issues: list[RoleContractIssue] = []
 
     seen: set[tuple[str, str]] = set()
@@ -137,18 +136,18 @@ def validate_role_contracts(
         if rel is None:
             issues.append(
                 RoleContractIssue(
-                    "routed agent is not registered in extension.yml",
+                    "routed agent is not registered in Prosaic subagents",
                     phase_id=phase_id,
                     agent=agent,
                 )
             )
             continue
 
-        path = extension_root / rel
+        path = Path(rel)
         if not path.exists():
             issues.append(
                 RoleContractIssue(
-                    "registered agent file does not exist",
+                    "registered Prosaic agent file does not exist",
                     phase_id=phase_id,
                     agent=agent,
                     path=str(path),
