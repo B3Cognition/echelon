@@ -242,15 +242,7 @@ def load_workspace_source_declarations(
         provenance: WorkspaceConfigProvenance = "canonical"
         config_bytes = canonical_bytes
     else:
-        legacy_bytes = _read_authenticated_config(
-            workspace_root, LEGACY_CONFIG_PATH
-        )
-        if legacy_bytes is None:
-            return None
-        config_path = workspace_root / LEGACY_CONFIG_PATH
-        relative_path = LEGACY_CONFIG_PATH.as_posix()
-        provenance = "legacy"
-        config_bytes = legacy_bytes
+        return None
 
     try:
         raw = yaml.safe_load(config_bytes.decode("utf-8"))

@@ -56,17 +56,8 @@ class InitError(Exception):
 
 
 def _harness_config_file(base: Path) -> Path:
-    """Return the project config file harness init should write.
-
-    New workspaces use the canonical committed config path. Existing legacy
-    workspaces keep their legacy file until migrated so init does not strand
-    old local configuration in an unread side path.
-    """
-    legacy = base / LEGACY_CONFIG_PATH
-    canonical = base / CANONICAL_CONFIG_PATH
-    if legacy.exists() and not canonical.exists():
-        return legacy
-    return canonical
+    """Return the canonical project config file harness init should write."""
+    return base / CANONICAL_CONFIG_PATH
 
 
 def _write_app_runtime_detection(

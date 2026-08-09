@@ -89,9 +89,8 @@ def load(config_path: Optional[Path] = None) -> DynamicsConfig:
 
     If config_path is None, looks in this priority order:
       1. ENDOCRINE_CONFIG_FILE env var (matches endocrine.sh behaviour)
-      2. <cwd>/extension/echelon-config.yml
-      3. <cwd>/.specify/extensions/echelon/echelon-config.yml
-      4. <cwd>/echelon-config.yml
+      2. <cwd>/.echelon/config.yml
+      3. <cwd>/echelon-config.yml
     Returns DEFAULT_DYNAMICS if none found or if file lacks endocrine.dynamics.
     """
     if config_path is None:
@@ -99,9 +98,7 @@ def load(config_path: Optional[Path] = None) -> DynamicsConfig:
         if env:
             config_path = Path(env)
         else:
-            for cand in ("extension/echelon-config.yml",
-                         ".specify/extensions/echelon/echelon-config.yml",
-                         "echelon-config.yml"):
+            for cand in (".echelon/config.yml", "echelon-config.yml"):
                 p = Path.cwd() / cand
                 if p.exists():
                     config_path = p

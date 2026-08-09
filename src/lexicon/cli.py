@@ -72,11 +72,12 @@ def validate(
         from .structural import structural_validate
         from .structural_score import structural_quality
 
-        # Resolve base dir that works in both dev (extension/) and deployed
-        # (.specify/extensions/echelon/) contexts — pick the first whose
+        # Resolve the deployed runtime, or the checked-out runtime during development.
+        # Pick the first whose
         # governance.artifacts mapping contains the requested artifact_key.
         _candidate_bases = [
-            Path(".specify/extensions/echelon"),
+            Path(".echelon/runtime"),
+            Path("runtime"),
             Path("extension"),
         ]
         chosen_base = None

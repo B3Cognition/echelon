@@ -1,13 +1,12 @@
 """Config loading and validation for the harness execution substrate.
 
 Reads the ``harness:`` section of the unified Echelon config file.
-Implements Echelon's migration config cascade:
+Implements Echelon's canonical config cascade:
 
-  1. Defaults   — dataclass defaults / extension defaults              (bundled)
+  1. Defaults   — dataclass defaults / runtime defaults                 (bundled)
   2. Project    — ``.echelon/config.yml``                              (committed)
-  3. Legacy     — ``.specify/extensions/echelon/echelon-config.yml``    (fallback)
-  4. Local      — ``.echelon/local.yml`` or legacy ``local-config.yml`` (gitignored)
-  5. Env vars   — ``SPECKIT_HARNESS_<SECTION>_<KEY>``                  (CI/secrets)
+  3. Local      — ``.echelon/local.yml``                               (gitignored)
+  4. Env vars   — ``SPECKIT_HARNESS_<SECTION>_<KEY>``                  (CI/secrets)
 
 Layers are deep-merged in precedence order. Implementation targets are not read
 from config; delivery commands resolve them from spec frontmatter ``targets:``
@@ -281,21 +280,13 @@ def _env_config() -> Dict[str, Any]:
 
 
 def _project_config(project_root: Path) -> Dict[str, Any]:
-    """Load the committed project config, preferring the canonical path."""
-    canonical = project_root / CANONICAL_CONFIG_PATH
-    if canonical.exists():
-        return _load_yaml_file(canonical)
-    return _load_yaml_file(project_root / LEGACY_CONFIG_PATH)
+    """Load the committed canonical project config."""
+    return _load_yaml_file(project_root / CANONICAL_CONFIG_PATH)
 
 
 def _local_config(project_root: Path) -> Dict[str, Any]:
-    """Load ignored local overrides from legacy and canonical locations."""
-    local: Dict[str, Any] = {}
-    # Preserve legacy local-config.yml as a compatibility input, but let the
-    # canonical local override win when both are present.
-    local = _merge(local, _load_yaml_file(project_root / LEGACY_LOCAL_CONFIG_PATH))
-    local = _merge(local, _load_yaml_file(project_root / CANONICAL_LOCAL_CONFIG_PATH))
-    return local
+    """Load ignored canonical local overrides."""
+    return _load_yaml_file(project_root / CANONICAL_LOCAL_CONFIG_PATH)
 
 
 def _extract_harness_config(full: Dict[str, Any]) -> Dict[str, Any]:

@@ -157,7 +157,7 @@ def test_declaration_loader_reports_canonical_config_without_reading_sources(
     ]
 
 
-def test_declaration_loader_reports_legacy_config_provenance(tmp_path: Path) -> None:
+def test_declaration_loader_ignores_legacy_config(tmp_path: Path) -> None:
     config = tmp_path / ".specify/extensions/echelon/echelon-config.yml"
     config.parent.mkdir(parents=True)
     config.write_text(
@@ -167,12 +167,7 @@ def test_declaration_loader_reports_legacy_config_provenance(tmp_path: Path) -> 
 
     declarations = load_workspace_source_declarations(tmp_path)
 
-    assert declarations is not None
-    assert declarations.provenance == "legacy"
-    assert declarations.config_relative_path == (
-        ".specify/extensions/echelon/echelon-config.yml"
-    )
-    assert declarations.mode == "explicit"
+    assert declarations is None
 
 
 @pytest.mark.parametrize(
@@ -180,8 +175,6 @@ def test_declaration_loader_reports_legacy_config_provenance(tmp_path: Path) -> 
     (
         ("canonical", "file"),
         ("canonical", "parent"),
-        ("legacy", "file"),
-        ("legacy", "parent"),
     ),
 )
 def test_declaration_loader_rejects_symlinked_config_components(
@@ -218,16 +211,8 @@ def test_declaration_loader_rejects_symlinked_config_components(
         load_workspace_source_declarations(tmp_path)
 
 
-@pytest.mark.parametrize("provenance", ("canonical", "legacy"))
-def test_ordinary_discovery_normalizes_malformed_workspace_yaml(
-    tmp_path: Path,
-    provenance: str,
-) -> None:
-    config = (
-        tmp_path / ".echelon/config.yml"
-        if provenance == "canonical"
-        else tmp_path / ".specify/extensions/echelon/echelon-config.yml"
-    )
+def test_ordinary_discovery_normalizes_malformed_workspace_yaml(tmp_path: Path) -> None:
+    config = tmp_path / ".echelon/config.yml"
     config.parent.mkdir(parents=True)
     config.write_text("workspace:\n  sources: [api\n", encoding="utf-8")
 
