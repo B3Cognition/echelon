@@ -68,6 +68,18 @@ def _result(entries=None, verdict="DONE") -> SquadAgentResult:
     )
 
 
+def test_agent_executor_uses_configured_phase_timeout(tmp_path: Path) -> None:
+    executor = _executor(tmp_path)
+    executor._resolved_config = MagicMock(
+        return_value={"execution": {"agent_timeout_seconds": 37}}
+    )
+    executor._provider.exec_agent.return_value = _result()
+
+    executor._exec_agent_with_contract("Do work.", MagicMock())
+
+    assert executor._provider.exec_agent.call_args.kwargs["timeout_ms"] == 37_000
+
+
 def test_executor_block_rejects_unknown_internal_reason_as_contract_failure() -> None:
     blocked = SquadAgentResult(
         exit_code=0,

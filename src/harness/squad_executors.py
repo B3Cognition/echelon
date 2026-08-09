@@ -1420,6 +1420,11 @@ class PhaseExecutor(ABC):
     ):
         """Use provider-side result-only repair when the provider supports it."""
         kwargs: dict[str, object] = {}
+        execution = self._resolved_config().get("execution", {})
+        if isinstance(execution, dict):
+            timeout_seconds = execution.get("agent_timeout_seconds")
+            if isinstance(timeout_seconds, (int, float)) and timeout_seconds > 0:
+                kwargs["timeout_ms"] = int(timeout_seconds * 1000)
         if getattr(self._provider, "supports_result_contract", False):
             kwargs["result_contract"] = result_contract
         try:
