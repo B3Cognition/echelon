@@ -62,11 +62,28 @@ def test_provision_wing_writes_to_echelon_yml(tmp_path):
     assert config["deploy"]["blue_port"] == 3000  # other keys preserved
 
 
-def test_provision_wing_collision_reprompts(tmp_path):
+def test_provision_wing_uses_suggestion_without_a_tty(tmp_path, monkeypatch):
+    echelon_yml = tmp_path / "echelon-config.yml"
+    echelon_yml.write_text(yaml.dump({"deploy": {"type": "http"}}))
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+
+    with patch("echelon.cli._derive_wing_suggestion", return_value="automation-wing"):
+        with patch("echelon.cli.check_wing_collision", return_value=[]):
+            from echelon.cli import _provision_wing
+
+            result = _provision_wing(tmp_path, echelon_yml)
+
+    assert result == "automation-wing"
+    config = yaml.safe_load(echelon_yml.read_text())
+    assert config["mempalace"]["wing"] == "automation-wing"
+
+
+def test_provision_wing_collision_reprompts(tmp_path, monkeypatch):
     echelon_yml = tmp_path / "echelon-config.yml"
     echelon_yml.write_text(yaml.dump({"deploy": {"type": "http", "blue_port": 3000, "green_port": 3001}}))
 
     inputs = iter(["colliding-wing", "colliding-wing"])
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
 
     with patch("echelon.cli._derive_wing_suggestion", return_value="colliding-wing"):
         with patch("echelon.cli.check_wing_collision", side_effect=[

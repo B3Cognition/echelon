@@ -8,7 +8,7 @@ For the grounded role inventory, see [Agent Role Catalog](docs/agent-role-catalo
 
 ## Quick Start
 
-### Install Spec Kit and Echelon
+### Install Echelon
 
 Install `uv` first. You also need Git and the AI coding CLI that you intend to
 use (Claude, Codex, Copilot, or Opencode) before running agent-backed commands.
@@ -17,13 +17,10 @@ optional and enables Context7, CodeGraph, and PerlGraph evidence. `pdftotext`
 (Poppler) is recommended when you need higher-fidelity PDF input extraction.
 
 ```bash
-# 1. Install spec-kit
-uv tool install specify-cli --force --from "git+git@github.com:mbachorik/spec-kit.git"
-
-# 2. Clone echelon
+# 1. Clone echelon
 git clone https://github.com/B3Cognition/echelon.git ~/echelon
 
-# 3. Install the core CLI tools and shared MemPalace support
+# 2. Install the core CLI tools, Prosaic, and shared MemPalace support
 bash ~/echelon/scripts/install.sh
 source ~/.zshrc   # or restart terminal
 ```
@@ -49,9 +46,8 @@ See [INSTALLATION.md](INSTALLATION.md) for prerequisites, upgrade, and uninstall
 
 ### First spec in a new or existing workspace
 
-Create or enter a Git-backed workspace, initialize Spec Kit there, install the
-Echelon extension into that workspace, then initialize Echelon. The extension
-belongs in your project—not in the `~/echelon` checkout.
+Create or enter a Git-backed workspace, then initialize Echelon. This deploys
+the Echelon-owned Prosaic and runtime bundles into the workspace.
 
 ```bash
 # For an existing repository
@@ -60,23 +56,17 @@ cd ~/work/my-project
 # For a new project instead:
 # mkdir -p ~/work/hello-world && cd ~/work/hello-world && git init -b main
 
-# Choose the integration you use; Claude is shown here. `--offline` keeps
-# initialization local to the installed Spec Kit templates.
-specify init --here --integration claude --offline
-specify extension add --force --dev ~/echelon/extension
-
-# Creates .echelon/config.yml and asks for local host-tool approval on a TTY.
-echelon workspace init
+# Creates .echelon/config.yml, .echelon/prosaic/, and .echelon/runtime/.
+# Choose the provider you have installed.
+echelon workspace init --llm claude
 
 # Phase A: write a specification and plan. No SOAR/codegen installation needed.
 echelon spec run "Create a sample Hello World program in Python"
 ```
 
-Use `--integration copilot`, `--integration codex`, or another supported Spec
-Kit integration in place of `--integration claude` when appropriate. Add
-`--force` to `specify init --here` only when you intentionally want it to merge
-into an existing non-empty setup. The extension command uses `--force` so it
-can safely refresh a prior development install.
+Use `--llm codex`, `--llm copilot`, `--llm opencode`, or
+`--llm openai-compatible` for the corresponding provider. Existing legacy
+workspaces can temporarily use `echelon workspace init --legacy-spec-kit`.
 
 ### Local Git hooks
 
@@ -99,21 +89,12 @@ remain available; only those optional evidence integrations are skipped.
 ```bash
 cd ~/echelon && git pull
 bash ~/echelon/scripts/install.sh   # re-run to pick up dependency updates
-specify extension add --dev --force ~/echelon/extension
 ```
 
 Knowledge-base data (calibration, feedback, patterns) is protected by `.extensionignore` — updates never overwrite your runtime learning data.
 
-Terminal `echelon spec status`, `echelon spec run`, `echelon spec continue`, and `echelon spec resume`
-warn when the installed project extension under `.specify/extensions/echelon`
-differs from a trusted source extension. In a dev checkout this is detected
-automatically; otherwise set `ECHELON_EXTENSION_SOURCE` to your Echelon repo or
-extension directory before running the command. When you see `EXTENSION DRIFT`,
-rerun:
-
-```bash
-specify extension add --dev --force ~/echelon/extension
-```
+Re-run `echelon workspace init` after upgrading when you want to refresh the
+workspace's deployed Prosaic and runtime bundles.
 
 `echelon workspace init` is pure Python—no AI session is required. Run
 `echelon delivery init` later, when you are ready to start Phase B delivery.
@@ -121,7 +102,7 @@ specify extension add --dev --force ~/echelon/extension
 ### Workspace contract
 
 Echelon expects a Git-backed workspace with a committed `.echelon/config.yml`.
-Runtime state is local: `.specify/`, `runs/`, `.claude/`, `.echelon/runtime/`,
+Runtime state is local: `runs/`, `.claude/`, `.echelon/runtime/`,
 `.echelon/cache/`, `.echelon/recovery-backups/`, and `.echelon/local.yml`
 should be ignored. Spec artifacts under `specs/<id>-*/` are the tracked
 handoff between Phase A, harness build, and land. New workspaces also include a

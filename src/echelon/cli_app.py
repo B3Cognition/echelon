@@ -1521,7 +1521,13 @@ def workspace_init(
     with_prosaic: bool = typer.Option(
         False,
         "--with-prosaic",
-        help="Install Prosaic and deploy Echelon's experimental prose and runtime bundles.",
+        hidden=True,
+        help="Deprecated: Prosaic is now installed by default.",
+    ),
+    legacy_spec_kit: bool = typer.Option(
+        False,
+        "--legacy-spec-kit",
+        help="Use the installed Spec-Kit extension instead of the default Prosaic runtime.",
     ),
 ) -> None:
     """One-time project setup."""
@@ -1539,6 +1545,8 @@ def workspace_init(
         args.append("--no-unsafe-host-execution")
     if with_prosaic:
         args.append("--with-prosaic")
+    if legacy_spec_kit:
+        args.append("--legacy-spec-kit")
     args.extend(_ctx_args(ctx))
     legacy_cli._cmd_workspace(args)
 

@@ -2,8 +2,7 @@
 
 ## Prerequisites
 
-**uv** is required. Git and Spec Kit are required to create and initialize a
-workspace. Install the AI coding CLI you plan to use before agent-backed
+**uv** and Git are required. Install the AI coding CLI you plan to use before agent-backed
 commands. Node.js with npm is optional: without it, the core CLI works but
 Context7, CodeGraph, and PerlGraph evidence integrations are unavailable.
 Docker or Podman is needed only for the default Phase B delivery sandbox.
@@ -14,8 +13,6 @@ Install uv if you don't have it:
 brew install uv          # macOS
 curl -LsSf https://astral.sh/uv/install.sh | sh  # other
 
-# Install Spec Kit once.
-uv tool install specify-cli --force --from "git+git@github.com:mbachorik/spec-kit.git"
 ```
 
 ---
@@ -32,7 +29,7 @@ bash ~/echelon/scripts/install.sh
 The default installer:
 
 1. Creates a venv at `~/.echelon/venv/` and installs the core Echelon and understanding CLIs, including delivery/harness subcommands
-2. When Node.js and npm are available, installs the pinned Context7, CodeGraph, and PerlGraph runtimes under `~/.echelon/node/`
+2. When Node.js and npm are available, installs the pinned Prosaic, Context7, CodeGraph, and PerlGraph runtimes under `~/.echelon/node/`
 3. Adds `~/.echelon/venv/bin` to your PATH
 4. Creates `~/.echelon/memory/` and caches the MemPalace embedding model (~80MB, one time)
 
@@ -54,28 +51,15 @@ directly.
 
 ---
 
-## Register the spec-kit extension in a workspace
+## Initialize a workspace
 
 ```bash
 cd ~/work/my-project
-specify init --here --integration claude --offline
-specify extension add --force --dev ~/echelon/extension
-```
-
-Use the integration you installed in place of `claude`. The extension is
-installed into the workspace, not into the Echelon checkout.
-
-### Experimental Prosaic bundle
-
-To test the Prosaic migration path alongside the existing Spec-Kit extension,
-run workspace initialization with the explicit opt-in flag:
-
-```bash
-echelon workspace init --with-prosaic
+echelon workspace init --llm claude
 ```
 
 The normal Echelon installer installs the pinned Prosaic CLI into Echelon's
-managed Node runtime. The workspace command stages the Echelon-owned package
+managed Node runtime. Workspace initialization stages the Echelon-owned package
 sources under `.echelon/packages/` and uses that CLI to deploy:
 
 ```text
@@ -83,12 +67,12 @@ sources under `.echelon/packages/` and uses that CLI to deploy:
 .echelon/runtime/   # workflow, templates, scripts, config, and stacks
 ```
 
-The workspace's existing Spec-Kit extension remains installed and continues to
-run the workflow. The flag is a non-default migration test, not a replacement
-for `specify extension add`. Echelon creates a temporary Prosaic package config
-only for deployment and removes it afterwards; a workspace that already owns a
-root `prosaic.config.yaml`, `prosaic.config.yml`, or `.prosaic.yaml` is left
-unchanged and the command stops with an actionable error.
+Echelon creates a temporary Prosaic package config only for deployment and
+removes it afterwards; a workspace that already owns a root
+`prosaic.config.yaml`, `prosaic.config.yml`, or `.prosaic.yaml` is left
+unchanged and the command stops with an actionable error. Use
+`echelon workspace init --legacy-spec-kit` only while maintaining an old
+Spec-Kit workspace.
 
 ---
 
@@ -99,6 +83,7 @@ unchanged and the command stops with an actionable error.
 echelon --help
 echelon delivery --help
 understanding version
+prosaic --version
 
 # After installing with --with-codegen, check the optional pipeline
 codegen --help
@@ -107,8 +92,8 @@ soar --version
 # Check memory stores
 codegen memory status
 
-# Validate the extension setup
-bash ~/echelon/scripts/bash/dry-run.sh
+# Validate the workspace runtime contract
+echelon workspace doctor
 ```
 
 ---
@@ -174,7 +159,6 @@ codegen requirements clean --from-wing my-app --project-dir .
 ```bash
 cd ~/echelon && git pull
 bash ~/echelon/scripts/install.sh   # re-runs installer; SOAR skipped if already present, venv rebuilt
-specify extension add --force --dev ~/echelon/extension
 ```
 
 To force a fresh SOAR download:
@@ -198,8 +182,6 @@ bash ~/echelon/scripts/uninstall.sh
 # To also delete memory stores (~/.echelon/memory/ and ~/.mempalace/)
 bash ~/echelon/scripts/uninstall.sh --purge-memory
 
-# Remove the spec-kit extension
-specify extension remove echelon
 ```
 
 ---

@@ -929,6 +929,7 @@ def test_workspace_init_help_declares_workspace_options():
     assert "--openai-model" in result.output
     assert "--openai-api-key-file" in result.output
     assert "--openai-api-key-env" in result.output
+    assert "--legacy-spec-kit" in result.output
     command = get_command(app)
     workspace_command = command.commands["workspace"]
     init_command = workspace_command.commands["init"]
@@ -938,6 +939,7 @@ def test_workspace_init_help_declares_workspace_options():
         declared_options.update(getattr(param, "secondary_opts", []))
     assert "--allow-unsafe-host-execution" in declared_options
     assert "--no-unsafe-host-execution" in declared_options
+    assert "--legacy-spec-kit" in declared_options
 
 
 @pytest.mark.unit
@@ -956,6 +958,18 @@ def test_workspace_init_typed_options_route_to_legacy_workspace(monkeypatch):
     ])
 
     assert calls == [["init", "--llm", "codex", "--allow-unsafe-host-execution"]]
+
+
+@pytest.mark.unit
+def test_workspace_init_typed_legacy_escape_hatch_routes_to_legacy_workspace(monkeypatch):
+    from echelon.cli_app import run
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr("echelon.cli._cmd_workspace", lambda args: calls.append(args))
+
+    run(["workspace", "init", "--legacy-spec-kit"])
+
+    assert calls == [["init", "--legacy-spec-kit"]]
 
 
 @pytest.mark.unit

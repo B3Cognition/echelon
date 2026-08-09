@@ -83,7 +83,7 @@ Commands:
   workspace init [--llm <provider>] [--openai-base-url <url>] [--openai-model <model>]
                     [--openai-api-key-file <path>|--openai-api-key-env <env>]
                     [--allow-unsafe-host-execution|--no-unsafe-host-execution]
-                    [--with-prosaic]
+                    [--legacy-spec-kit]
                                             One-time project setup (no LLM)
   workspace doctor                          Check workspace/source/runtime contract
   workspace sources sync [--write]          Sync discovered sources/* roots into config
@@ -401,24 +401,36 @@ def _provision_wing(project_dir: Path, echelon_yml: Path) -> str:
     suggestion = _derive_wing_suggestion(project_dir)
     last_entered: str = ""
 
-    while True:
-        raw = input(f"Wing name for MemPalace memory [{suggestion}]: ").strip()
-        chosen = raw or suggestion
-
+    if not sys.stdin.isatty():
+        chosen = suggestion
         foreign = check_wing_collision(chosen, project_dir, palace_path)
         if foreign:
-            if chosen == last_entered:
-                print(f"  ⚠  Sharing memory with other project intentionally — wing: {chosen!r}")
-                break
-            print(f"\n  ⚠  Wing {chosen!r} already has drawers from a different project:")
-            for path in foreign[:5]:
-                print(f"       {path}")
-            print("  Enter a different name, or re-enter the same name to share memory intentionally.\n")
-            last_entered = chosen
-            suggestion = chosen
-            continue
+            print(
+                f"✗ Suggested MemPalace wing {chosen!r} belongs to another project. "
+                "Re-run interactively and choose a different wing.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        print(f"✓ wing: {chosen!r} selected for non-interactive initialization")
+    else:
+        while True:
+            raw = input(f"Wing name for MemPalace memory [{suggestion}]: ").strip()
+            chosen = raw or suggestion
 
-        break
+            foreign = check_wing_collision(chosen, project_dir, palace_path)
+            if foreign:
+                if chosen == last_entered:
+                    print(f"  ⚠  Sharing memory with other project intentionally — wing: {chosen!r}")
+                    break
+                print(f"\n  ⚠  Wing {chosen!r} already has drawers from a different project:")
+                for path in foreign[:5]:
+                    print(f"       {path}")
+                print("  Enter a different name, or re-enter the same name to share memory intentionally.\n")
+                last_entered = chosen
+                suggestion = chosen
+                continue
+
+            break
 
     if "mempalace" not in config:
         config["mempalace"] = {}
@@ -652,7 +664,7 @@ def _cmd_init(
             print(
                 f"✗ Project config not found: {echelon_cfg}\n"
                 f"  Config template also missing: {config_template}\n"
-                "  Run: echelon workspace init --with-prosaic",
+                "  Run: echelon workspace init",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -10313,7 +10325,7 @@ def _installed_phase_runtime_or_exit(project_root: Path) -> Path:
     print(
         "✗ Echelon runtime not installed.\n"
         "  Run: echelon workspace migrate-to-prosaic\n"
-        "  Or, for a new workspace: echelon workspace init --with-prosaic",
+            "  Or, for a new workspace: echelon workspace init",
         file=sys.stderr,
     )
     sys.exit(1)
@@ -10328,7 +10340,7 @@ def _installed_re_runtime_or_exit(project_root: Path) -> tuple[Path, Path | None
     print(
         "✗ Echelon runtime not installed.\n"
         "  Run: echelon workspace migrate-to-prosaic\n"
-        "  Or, for a new workspace: echelon workspace init --with-prosaic",
+            "  Or, for a new workspace: echelon workspace init",
         file=sys.stderr,
     )
     sys.exit(1)
@@ -10866,9 +10878,9 @@ def _cmd_workspace(args: list[str]) -> None:
             "  init [--llm <provider>] [--openai-base-url <url>] [--openai-model <model>]\n"
             "       [--openai-api-key-file <path>|--openai-api-key-env <env>]\n"
             "       [--allow-unsafe-host-execution|--no-unsafe-host-execution]\n"
-            "       [--with-prosaic]\n"
+            "       [--legacy-spec-kit]\n"
             "                            One-time project setup (no LLM)\n"
-            "                            Prompts on an interactive TTY; use the flag to opt in non-interactively\n"
+            "                            Installs the Echelon Prosaic/runtime bundle by default\n"
             "  doctor                    Validate workspace/source/runtime contract\n"
             "  migrate-to-prosaic        Deploy and validate Prosaic runtime without deleting legacy files\n"
             "  sources sync [--write]    Sync discovered sources/* roots into config\n"
@@ -10895,7 +10907,7 @@ def _cmd_workspace(args: list[str]) -> None:
                 "[--openai-base-url <url>] [--openai-model <model>] "
                 "[--openai-api-key-file <path>|--openai-api-key-env <env>] "
                 "[--allow-unsafe-host-execution|--no-unsafe-host-execution] "
-                "[--with-prosaic]\n\n"
+                "[--legacy-spec-kit]\n\n"
                 "  --llm <provider>              Persist the workspace AI CLI provider\n"
                 "  --openai-base-url <url>       Persist OpenAI-compatible API base URL\n"
                 "  --openai-model <model>        Persist OpenAI-compatible model name\n"
@@ -10904,7 +10916,7 @@ def _cmd_workspace(args: list[str]) -> None:
                 "  --allow-unsafe-host-execution  Write local approval for AI CLI "
                 "permission-bypass flags\n"
                 "  --no-unsafe-host-execution     Do not prompt or write local approval\n"
-                "  --with-prosaic                 Install experimental Echelon Prosaic packages",
+                "  --legacy-spec-kit              Use the installed Spec-Kit extension instead of Prosaic",
                 file=sys.stderr,
             )
             sys.exit(0)
@@ -10971,7 +10983,7 @@ def _cmd_workspace(args: list[str]) -> None:
             elif arg in {"--allow-unsafe-host-execution", "--no-unsafe-host-execution"}:
                 parsed_init_args.append(arg)
                 i += 1
-            elif arg == "--with-prosaic":
+            elif arg in {"--with-prosaic", "--legacy-spec-kit"}:
                 parsed_init_args.append(arg)
                 i += 1
             else:
@@ -10982,7 +10994,7 @@ def _cmd_workspace(args: list[str]) -> None:
                     "[--openai-base-url <url>] [--openai-model <model>] "
                     "[--openai-api-key-file <path>|--openai-api-key-env <env>] "
                     "[--allow-unsafe-host-execution|--no-unsafe-host-execution] "
-                    "[--with-prosaic]",
+                    "[--legacy-spec-kit]",
                     file=sys.stderr,
                 )
                 sys.exit(1)
@@ -11004,7 +11016,13 @@ def _cmd_workspace(args: list[str]) -> None:
             )
             sys.exit(1)
         allow_unsafe = "--allow-unsafe-host-execution" in parsed_init_args
-        with_prosaic = "--with-prosaic" in parsed_init_args
+        if "--with-prosaic" in parsed_init_args and "--legacy-spec-kit" in parsed_init_args:
+            print(
+                "echelon workspace init: --with-prosaic and --legacy-spec-kit cannot be combined",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        with_prosaic = "--legacy-spec-kit" not in parsed_init_args
         if "--no-unsafe-host-execution" not in parsed_init_args and not allow_unsafe:
             allow_unsafe = _wants_unsafe_host_execution_interactively()
         project_root = Path.cwd()
@@ -11016,8 +11034,7 @@ def _cmd_workspace(args: list[str]) -> None:
             "openai_api_key_file": openai_api_key_file,
             "openai_api_key_env": openai_api_key_env,
         }
-        if with_prosaic:
-            init_kwargs["with_prosaic"] = True
+        init_kwargs["with_prosaic"] = with_prosaic
         _cmd_init(project_root, **init_kwargs)
         _maybe_bootstrap_workspace_git(project_root)
         return

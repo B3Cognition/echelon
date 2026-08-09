@@ -86,9 +86,8 @@ class TestFulfillmentRunner:
         _write_verify_skill(tmp_path)
         phase_dir = (
             tmp_path
-            / ".specify"
-            / "extensions"
-            / "echelon"
+            / ".echelon"
+            / "runtime"
             / "workflow"
             / "phases"
         )
@@ -800,9 +799,8 @@ class TestFulfillmentRunner:
         _write_verify_skill(workspace)
         phase_dir = (
             workspace
-            / ".specify"
-            / "extensions"
-            / "echelon"
+            / ".echelon"
+            / "runtime"
             / "workflow"
             / "phases"
         )

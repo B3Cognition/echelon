@@ -479,7 +479,7 @@ class FulfillmentRunner:
         if plan.base_full_verify_commit:
             arguments += f" base_full_verify_commit={plan.base_full_verify_commit}"
 
-        prompt = _build_verify_spec_prompt(worktree, skill_path, arguments)
+        prompt = _build_verify_spec_prompt(spec_dir.parent.parent, skill_path, arguments)
         with tempfile.TemporaryDirectory() as temp_dir:
             base_snapshot = Path(temp_dir) / "base-full-fulfillment-report.md"
             base_snapshot.write_text(
@@ -597,9 +597,9 @@ def _resolve_verify_spec_workflow(
     return roots[0], None
 
 
-def _build_verify_spec_prompt(worktree: Path, skill_path: Path, arguments: str) -> str:
+def _build_verify_spec_prompt(workflow_root: Path, skill_path: Path, arguments: str) -> str:
     prompt = build_skill_prompt(skill_path, arguments)
-    phase_context = _verify_spec_phase_context(worktree)
+    phase_context = _verify_spec_phase_context(workflow_root)
     if not phase_context:
         return prompt
     return f"{prompt}\n\n{_VERIFY_SPEC_DIRECT_INVOCATION_GUARD}\n\n{phase_context}"
@@ -617,14 +617,7 @@ embedded Python-owned commands.
 
 
 def _verify_spec_phase_context(worktree: Path) -> str:
-    phase_dir = (
-        worktree
-        / ".specify"
-        / "extensions"
-        / "echelon"
-        / "workflow"
-        / "phases"
-    )
+    phase_dir = worktree / ".echelon" / "runtime" / "workflow" / "phases"
     if not phase_dir.is_dir():
         return ""
     phase_files = sorted(phase_dir.glob("verify-spec-*.md"))

@@ -15,17 +15,17 @@ from dataclasses import replace
 from pathlib import Path
 
 
-def _find_current_squad_dir() -> Path:
-    """Locate the active squad run via squad/.current, falling back to legacy path."""
+def _find_current_run_dir() -> Path:
+    """Locate the active Echelon run via runs/.current."""
     cwd = Path.cwd()
     for d in [cwd, *cwd.parents]:
-        current = d / "squad" / ".current"
+        current = d / "runs" / ".current"
         if current.exists():
             run_id = current.read_text().strip()
-            squad = d / "squad" / run_id
-            if run_id and squad.is_dir():
-                return squad
-    return Path(".specify/squad")
+            run_dir = d / "runs" / run_id
+            if run_id and run_dir.is_dir():
+                return run_dir
+    return Path("runs")
 
 from hormone_calc.config import load as load_config
 from hormone_calc.observable import build_from
@@ -64,7 +64,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 def cmd_compute(args: argparse.Namespace) -> int:
     config = load_config(args.config)
 
-    squad_dir = _find_current_squad_dir()
+    squad_dir = _find_current_run_dir()
     state_path = args.state or (squad_dir / "state.json")
     journal_path = args.journal or (squad_dir / "reasoning-journal.jsonl")
 
