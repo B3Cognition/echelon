@@ -13,7 +13,7 @@ The active runtime dispatches this role with the following request:
 
   ```xml
   <context>
-  [include user-intent.md, feasibility.md, mvp-scope.md, extension/templates/intent-alignment-check-template.md, reasoning-journal.jsonl]
+  [include user-intent.md, feasibility.md, mvp-scope.md, .echelon/runtime/templates/intent-alignment-check-template.md, reasoning-journal.jsonl]
   </context>
 
   <instructions>

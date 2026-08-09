@@ -17,12 +17,12 @@ Read and include in the subagent prompt:
 - User input (the `$ARGUMENTS` from above)
 - `knowledge-base/calibration-profile.yaml`
 - Previous run's `evolution-report.md` (if re-run)
-- `extension/templates/glossary-template.md`
-- `extension/templates/mental-model-template.md`
-- `extension/templates/boundaries-template.md`
-- `extension/templates/assumptions-template.md`
-- `extension/templates/unknowns-template.md`
-- `extension/templates/reference-architectures-template.md`
+- `.echelon/runtime/templates/glossary-template.md`
+- `.echelon/runtime/templates/mental-model-template.md`
+- `.echelon/runtime/templates/boundaries-template.md`
+- `.echelon/runtime/templates/assumptions-template.md`
+- `.echelon/runtime/templates/unknowns-template.md`
+- `.echelon/runtime/templates/reference-architectures-template.md`
 - `state.json.published_re_context` and its immutable snapshot artifact paths
 
 ### Dispatch

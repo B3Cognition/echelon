@@ -6,4 +6,4 @@ Use this template for `evidence-grades.md`. Append new rows; do not remove prior
 |----|----------|--------|-------|---------|-----|-------------------|
 | E1 |          |        | A/B/C/D/E |     |     |                   |
 
-Grade evidence with `extension/templates/evidence-grades.md`.
+Grade evidence with `.echelon/runtime/templates/evidence-grades.md`.

@@ -43,11 +43,11 @@ Context pack:
 
 - Specific question(s) from `unknowns.md`
 - Relevant artifacts (always select based on the question — do not send everything)
-- `extension/templates/investigation-report-template.md`
-- `extension/templates/evidence-grades-template.md`
-- `extension/templates/recommendations-template.md`
-- `extension/templates/knowledge-gaps-template.md`
-- `extension/templates/experiment-results-template.md`
+- `.echelon/runtime/templates/investigation-report-template.md`
+- `.echelon/runtime/templates/evidence-grades-template.md`
+- `.echelon/runtime/templates/recommendations-template.md`
+- `.echelon/runtime/templates/knowledge-gaps-template.md`
+- `.echelon/runtime/templates/experiment-results-template.md`
 - `reasoning-journal.jsonl`
 
 The active runtime dispatches this role with the following request:
@@ -77,11 +77,11 @@ The active runtime dispatches this role with the following request:
 Context pack:
 
 - `spec.md` + `boundaries.md` + domain-relevant artifacts
-- `extension/templates/security-checklist-template.md`
-- `extension/templates/threat-model-template.md`
-- `extension/templates/compliance-requirements-template.md`
-- `extension/templates/risk-acceptance-log-template.md`
-- `extension/templates/security-findings-template.md`
+- `.echelon/runtime/templates/security-checklist-template.md`
+- `.echelon/runtime/templates/threat-model-template.md`
+- `.echelon/runtime/templates/compliance-requirements-template.md`
+- `.echelon/runtime/templates/risk-acceptance-log-template.md`
+- `.echelon/runtime/templates/security-findings-template.md`
 - `reasoning-journal.jsonl`
 
 The active runtime dispatches this role with the following request:
@@ -106,10 +106,10 @@ The active runtime dispatches this role with the following request:
 Context pack:
 
 - Domain-relevant artifacts from `{spec_dir}/`
-- `extension/templates/domain-patterns-template.md`
-- `extension/templates/domain-amendments-template.md`
-- `extension/templates/compliance-gaps-template.md`
-- `extension/templates/terminology-corrections-template.md`
+- `.echelon/runtime/templates/domain-patterns-template.md`
+- `.echelon/runtime/templates/domain-amendments-template.md`
+- `.echelon/runtime/templates/compliance-gaps-template.md`
+- `.echelon/runtime/templates/terminology-corrections-template.md`
 - `reasoning-journal.jsonl`
 
 The active runtime dispatches this role with the following request:
@@ -134,9 +134,9 @@ The active runtime dispatches this role with the following request:
 Context pack:
 
 - `spec.md` + `boundaries.md` + performance-relevant requirements
-- `extension/templates/performance-requirements-template.md`
-- `extension/templates/capacity-model-template.md`
-- `extension/templates/performance-amendments-template.md`
+- `.echelon/runtime/templates/performance-requirements-template.md`
+- `.echelon/runtime/templates/capacity-model-template.md`
+- `.echelon/runtime/templates/performance-amendments-template.md`
 - `reasoning-journal.jsonl`
 
 The active runtime dispatches this role with the following request:
@@ -161,9 +161,9 @@ The active runtime dispatches this role with the following request:
 Context pack:
 
 - `spec.md` + user-facing requirements
-- `extension/templates/accessibility-requirements-template.md`
-- `extension/templates/user-flow-template.md`
-- `extension/templates/ux-amendments-template.md`
+- `.echelon/runtime/templates/accessibility-requirements-template.md`
+- `.echelon/runtime/templates/user-flow-template.md`
+- `.echelon/runtime/templates/ux-amendments-template.md`
 - `reasoning-journal.jsonl`
 
 The active runtime dispatches this role with the following request:
@@ -189,9 +189,9 @@ Context pack:
 
 - All current artifacts
 - Prior run's `evolution-report.md`
-- `extension/templates/alternatives-template.md`
-- `extension/templates/risk-opportunities-template.md`
-- `extension/templates/challenge-assumptions-template.md`
+- `.echelon/runtime/templates/alternatives-template.md`
+- `.echelon/runtime/templates/risk-opportunities-template.md`
+- `.echelon/runtime/templates/challenge-assumptions-template.md`
 - `reasoning-journal.jsonl`
 
 The active runtime dispatches this role with the following request:

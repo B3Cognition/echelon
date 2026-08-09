@@ -13,9 +13,9 @@ Read and include in the subagent prompt:
 - `spec.md` (acceptance criteria)
 - `contracts/`
 - `quality-gates.md` — specifically the "Testability Sub-Metrics" section (hard_constraint_ratio, constraint_density, negative_space_coverage) for testability-informed test strategy
-- `extension/templates/test-strategy-template.md`
-- `extension/templates/test-architecture-template.md`
-- `extension/templates/coverage-map-template.md`
+- `.echelon/runtime/templates/test-strategy-template.md`
+- `.echelon/runtime/templates/test-architecture-template.md`
+- `.echelon/runtime/templates/coverage-map-template.md`
 - `reasoning-journal.jsonl`
 
 ### Dispatch

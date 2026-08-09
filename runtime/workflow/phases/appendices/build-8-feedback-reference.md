@@ -6,9 +6,9 @@ Long-form reference for `workflow/phases/build-8-finalize.md` post-build feedbac
 
 Use these templates for run-local feedback and escalation artifacts:
 
-- `extension/templates/feedback-report-template.md` for `feedback-report.md`
-- `extension/templates/drift-escalation-template.md` for `drift-escalation.md`
-- `extension/templates/constitution-amendment-candidates-template.md` for `constitution-amendment-candidates.md`
+- `.echelon/runtime/templates/feedback-report-template.md` for `feedback-report.md`
+- `.echelon/runtime/templates/drift-escalation-template.md` for `drift-escalation.md`
+- `.echelon/runtime/templates/constitution-amendment-candidates-template.md` for `constitution-amendment-candidates.md`
 
 ## Auto-Feedback Pipeline
 
@@ -25,7 +25,7 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include all build artifacts, spec artifacts, state.json, reasoning-journal.jsonl, knowledge-base/, extension/templates/feedback-report-template.md]
+  [include all build artifacts, spec artifacts, state.json, reasoning-journal.jsonl, knowledge-base/, .echelon/runtime/templates/feedback-report-template.md]
   </context>
 
   <instructions>
@@ -96,7 +96,7 @@ Dispatch echelon.tracker (TRACKER) in post-build-alignment mode using the Agent 
 
   ```xml
   <context>
-  [include user-intent.md, verification-summary.md, gap-report.md, implemented code, extension/templates/intent-alignment-final-template.md, reasoning-journal.jsonl]
+  [include user-intent.md, verification-summary.md, gap-report.md, implemented code, .echelon/runtime/templates/intent-alignment-final-template.md, reasoning-journal.jsonl]
   </context>
 
   <instructions>
@@ -121,7 +121,7 @@ Read `drift_severity` from `intent-alignment-final.md`.
   4. After rework: re-dispatch echelon.tracker (TRACKER) for a second alignment check. If still MAJOR_DRIFT after one rework pass, log as CRITICAL in `feedback-report.md` and continue. Do not enter an infinite loop.
 - **`MAJOR_DRIFT` AND `autonomy_mode == "banzai"`:**
   1. Return `requires_human_review: true` in `echelon_result.state_updates`.
-  2. Write `{spec_dir}/drift-escalation.md` using `extension/templates/drift-escalation-template.md`, populated from `intent-alignment-final.md` and `state.json`.
+  2. Write `{spec_dir}/drift-escalation.md` using `.echelon/runtime/templates/drift-escalation-template.md`, populated from `intent-alignment-final.md` and `state.json`.
 
   3. Log CRITICAL in `feedback-report.md`: `[echelon.commander (COMMANDER)] MAJOR_DRIFT detected in banzai mode - requires_human_review returned. See drift-escalation.md.`
   4. Continue to BUILD_DONE.
@@ -139,7 +139,7 @@ All writes go through `kb-write.sh append_entry` with locking.
 
 ## Final Feedback Summary
 
-Append the following data to the `## Auto-Feedback Summary` section of `feedback-report.md` from `extension/templates/feedback-report-template.md`:
+Append the following data to the `## Auto-Feedback Summary` section of `feedback-report.md` from `.echelon/runtime/templates/feedback-report-template.md`:
 
 ```markdown
 ## Auto-Feedback Summary
@@ -174,7 +174,7 @@ Dispatch echelon.mirror (MIRROR) and echelon.veteran (VETERAN) in parallel to ex
 1. Merge both candidate lists. Deduplicate by principle text, exact or near-exact match.
 2. Filter: keep only `confidence: high` or `confidence: medium` candidates.
 3. If merged list is empty: skip the remaining steps. Return `constitution_amendments_pending: 0` in `echelon_result.state_updates`.
-4. Write `{spec_dir}/constitution-amendment-candidates.md` using `extension/templates/constitution-amendment-candidates-template.md`. Preserve each `[PROPOSED: ...]` block in its candidate detail, source, confidence, category, and human decision request.
+4. Write `{spec_dir}/constitution-amendment-candidates.md` using `.echelon/runtime/templates/constitution-amendment-candidates-template.md`. Preserve each `[PROPOSED: ...]` block in its candidate detail, source, confidence, category, and human decision request.
 
 5. Do not append candidates to `.echelon/constitution.md` or otherwise modify the canonical constitution. Leave every proposal in `constitution-amendment-candidates.md` for CHIEF and human review.
 6. Return `constitution_amendments_pending: <count>` in `echelon_result.state_updates`.

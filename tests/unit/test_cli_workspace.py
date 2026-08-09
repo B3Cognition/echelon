@@ -329,6 +329,21 @@ def test_phase_runtime_guard_accepts_complete_prosaic_workspace(tmp_path: Path) 
     assert _installed_phase_runtime_or_exit(tmp_path) == workflow.parent
 
 
+def test_phase_runtime_guard_rejects_legacy_extension_only_workspace(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _installed_phase_runtime_or_exit
+
+    (tmp_path / ".specify/extensions/echelon/workflow").mkdir(parents=True)
+
+    with pytest.raises(SystemExit) as exc:
+        _installed_phase_runtime_or_exit(tmp_path)
+
+    assert exc.value.code == 1
+    assert "echelon workspace migrate-to-prosaic" in capsys.readouterr().err
+
+
 def test_workspace_migrate_to_prosaic_preserves_config_and_validates_graph(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

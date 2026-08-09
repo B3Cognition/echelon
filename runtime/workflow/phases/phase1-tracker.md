@@ -13,8 +13,8 @@ Read and include in the subagent prompt:
 
 - User input (the original request)
 - ALL DISCOVER outputs (from `${STAGING_DIR}/`)
-- `extension/templates/user-intent-template.md`
-- `extension/templates/stakeholder-model-template.md`
+- `.echelon/runtime/templates/user-intent-template.md`
+- `.echelon/runtime/templates/stakeholder-model-template.md`
 - `reasoning-journal.jsonl`
 
 ### Dispatch

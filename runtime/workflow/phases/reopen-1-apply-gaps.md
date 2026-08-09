@@ -94,7 +94,7 @@ write `reopen-{n}.md` as a no-op/manual-review summary and STOP without mutating
 `from=<path>` report or a human-selected subset.
 
 Append a `## Fulfillment Gap Tasks` section to `{spec_dir}/tasks.md` using
-`extension/templates/fulfillment-gap-task-fragment.md`. Add only deterministic
+`.echelon/runtime/templates/fulfillment-gap-task-fragment.md`. Add only deterministic
 planner-approved rows from `proposed_tasks`:
 
 ```markdown

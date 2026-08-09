@@ -41,7 +41,7 @@ Write `{spec_dir}/bugfix-{n}.md`:
 {from echelon.spec-guard (SPEC GUARD): which requirement(s) this addresses, any scope notes}
 ```
 
-Then append the bugfix tasks to `{spec_dir}/tasks.md`. Use `extension/templates/bugfix-task-fragment.md` and the canonical task row contract. Add a clearly delimited section at the end:
+Then append the bugfix tasks to `{spec_dir}/tasks.md`. Use `.echelon/runtime/templates/bugfix-task-fragment.md` and the canonical task row contract. Add a clearly delimited section at the end:
 
 ```markdown
 ---

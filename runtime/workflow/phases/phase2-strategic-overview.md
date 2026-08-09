@@ -13,7 +13,7 @@ The active runtime dispatches this role with the following request:
 
   ```xml
   <context>
-  [include spec.md, feasibility.md, estimates.md, prioritization.md, unknowns.md, extension/templates/strategic-overview-template.md]
+  [include spec.md, feasibility.md, estimates.md, prioritization.md, unknowns.md, .echelon/runtime/templates/strategic-overview-template.md]
   </context>
 
   <instructions>

@@ -154,7 +154,7 @@ def _shared_agent_contract() -> str:
         "the harness is the sole writer and will persist your returned entries.\n\n"
         "### Belief Registers\n"
         "- ALWAYS read your agent-specific belief register when present at "
-        "`${PROJECT_ROOT}/.specify/extensions/echelon/config/"
+        "`${PROJECT_ROOT}/.echelon/runtime/config/"
         "belief-registers/<agent-slug>.yaml` before threshold, scoring, "
         "quality, or confidence decisions.\n"
         "- NEVER treat calibration priors as optional when a matching belief "
@@ -1610,14 +1610,12 @@ class PhaseExecutor(ABC):
 
     def _extension_path_context(self) -> str:
         return (
-            f"EXTENSION_DIR={self._ext_dir}\n"
-            f"EXTENSION_TEMPLATES_DIR={self._ext_dir / 'templates'}\n"
-            f"EXTENSION_AGENTS_DIR={self._ext_dir / 'agents'}\n"
+            f"RUNTIME_DIR={self._ext_dir}\n"
+            f"RUNTIME_TEMPLATES_DIR={self._ext_dir / 'templates'}\n"
             "\n"
-            "## Extension Path Resolution\n"
-            "- `extension/templates/foo.md` resolves to `${EXTENSION_DIR}/templates/foo.md`.\n"
-            "- `extension/agents/foo.md` resolves to `${EXTENSION_DIR}/agents/foo.md`.\n"
-            "- NEVER resolve it as `${EXTENSION_DIR}/extension/templates/foo.md` or add an extra `extension/` path segment.\n\n"
+            "## Runtime Path Resolution\n"
+            "- `.echelon/runtime/templates/foo.md` resolves to `${RUNTIME_TEMPLATES_DIR}/foo.md`.\n"
+            "- Use only explicit `.echelon/runtime/...` paths for deployed runtime assets.\n\n"
         )
 
     def _render_context_pack_item(

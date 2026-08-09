@@ -26,6 +26,22 @@ def test_re_runtime_resolution_prefers_deployed_prosaic_bundle(tmp_path: Path) -
 
 
 @pytest.mark.unit
+def test_re_runtime_resolution_rejects_legacy_extension_only_workspace(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _installed_re_runtime_or_exit
+
+    (tmp_path / ".specify" / "extensions" / "echelon").mkdir(parents=True)
+
+    with pytest.raises(SystemExit) as exc:
+        _installed_re_runtime_or_exit(tmp_path)
+
+    assert exc.value.code == 1
+    assert "echelon workspace migrate-to-prosaic" in capsys.readouterr().err
+
+
+@pytest.mark.unit
 def test_re_run_help_exposes_clean_reconstruction_switch() -> None:
     from echelon.cli_app import app
 

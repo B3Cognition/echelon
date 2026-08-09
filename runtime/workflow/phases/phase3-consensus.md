@@ -34,8 +34,8 @@ Read these artifacts in `{spec_dir}/`:
 - `tasks.md` + `test-strategy.md` + `coverage-map.md`
 - `estimates.md` + `mvp-scope.md`
 - `.echelon/constitution.md` (read-only team constraints)
-- `extension/templates/estimates-template.md`
-- `extension/templates/implementability-report-template.md`
+- `.echelon/runtime/templates/estimates-template.md`
+- `.echelon/runtime/templates/implementability-report-template.md`
 - `reasoning-journal.jsonl`
 
 ### 11.3 PLAN2 Context Pack
@@ -80,7 +80,7 @@ This phase uses `type: staged_parallel`. **Always dispatch in the two stages bel
 
   ```xml
   <context>
-  [include spec.md, plan.md, research.md, data-model.md, contracts/, tasks.md, test-strategy.md, coverage-map.md, estimates.md, mvp-scope.md, .echelon/constitution.md, extension/templates/estimates-template.md, extension/templates/implementability-report-template.md, reasoning-journal.jsonl]
+  [include spec.md, plan.md, research.md, data-model.md, contracts/, tasks.md, test-strategy.md, coverage-map.md, estimates.md, mvp-scope.md, .echelon/constitution.md, .echelon/runtime/templates/estimates-template.md, .echelon/runtime/templates/implementability-report-template.md, reasoning-journal.jsonl]
   </context>
 
   <instructions>

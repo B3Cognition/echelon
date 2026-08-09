@@ -12,12 +12,12 @@ Read and include in the subagent prompt:
 - `spec.md` + `feasibility.md` + `prioritization.md`
 - `constitution.md` (read-only published Phase A snapshot)
 - All specialist outputs (threat-model.md, performance-requirements.md, etc.)
-- `extension/templates/plan-template.md`
-- `extension/templates/architecture-research-template.md`
-- `extension/templates/architecture-adr-template.md`
-- `extension/templates/data-model-template.md`
-- `extension/templates/contracts-template.md`
-- `extension/templates/constitution-amendment-candidates-template.md`
+- `.echelon/runtime/templates/plan-template.md`
+- `.echelon/runtime/templates/architecture-research-template.md`
+- `.echelon/runtime/templates/architecture-adr-template.md`
+- `.echelon/runtime/templates/data-model-template.md`
+- `.echelon/runtime/templates/contracts-template.md`
+- `.echelon/runtime/templates/constitution-amendment-candidates-template.md`
 - `reasoning-journal.jsonl`
 
 ### Dispatch

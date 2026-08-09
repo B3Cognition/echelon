@@ -13,9 +13,9 @@ Context pack:
 
 - All artifacts in `{spec_dir}/`
 - `calibration-profile.yaml` + `estimates-log.yaml`
-- `extension/templates/reality-check-template.md`
-- `extension/templates/cost-analysis-template.md`
-- `extension/templates/benchmark-data-template.md`
+- `.echelon/runtime/templates/reality-check-template.md`
+- `.echelon/runtime/templates/cost-analysis-template.md`
+- `.echelon/runtime/templates/benchmark-data-template.md`
 - `reasoning-journal.jsonl`
 
 The active runtime dispatches this role with the following request:
@@ -44,7 +44,7 @@ Context pack:
 - All artifacts in `{spec_dir}/`
 - `reasoning-journal.jsonl`
 - `knowledge-base/patterns.yaml` + `knowledge-base/pitfalls.yaml`
-- `extension/templates/knowledge-transfer-assessment-template.md`
+- `.echelon/runtime/templates/knowledge-transfer-assessment-template.md`
 
 The active runtime dispatches this role with the following request:
 
@@ -52,7 +52,7 @@ The active runtime dispatches this role with the following request:
 
   ```xml
   <context>
-  [include all artifacts in {spec_dir}/, reasoning-journal.jsonl, knowledge-base/patterns.yaml, knowledge-base/pitfalls.yaml, extension/templates/knowledge-transfer-assessment-template.md]
+  [include all artifacts in {spec_dir}/, reasoning-journal.jsonl, knowledge-base/patterns.yaml, knowledge-base/pitfalls.yaml, .echelon/runtime/templates/knowledge-transfer-assessment-template.md]
   </context>
 
   <instructions>
@@ -73,12 +73,12 @@ Context pack:
 - Prior run artifacts (for diffing)
 - `reasoning-journal.jsonl`
 - `knowledge-base/` files
-- `extension/templates/evolution-report-template.md`
-- `extension/templates/improvement-metrics-template.md`
-- `extension/templates/stagnation-flags-template.md`
-- `extension/templates/regression-alerts-template.md`
-- `extension/templates/bias-check-template.md`
-- `extension/templates/prompt-recommendation-template.md`
+- `.echelon/runtime/templates/evolution-report-template.md`
+- `.echelon/runtime/templates/improvement-metrics-template.md`
+- `.echelon/runtime/templates/stagnation-flags-template.md`
+- `.echelon/runtime/templates/regression-alerts-template.md`
+- `.echelon/runtime/templates/bias-check-template.md`
+- `.echelon/runtime/templates/prompt-recommendation-template.md`
 
 The active runtime dispatches this role with the following request:
 
@@ -123,11 +123,11 @@ Context pack:
 - `agents/learning/appendices/internalizer-tier-definitions.md`
 - `agents/learning/appendices/auditor-dashboard-template.md`
 - `agents/learning/appendices/auditor-output-formats.md`
-- `extension/templates/confidence-flags-template.md`
-- `extension/templates/evolution-signals-review-template.md`
-- `extension/templates/prompt-version-observations-template.md`
-- `extension/templates/calibration-analytics-template.md`
-- `extension/templates/feedback-report-template.md`
+- `.echelon/runtime/templates/confidence-flags-template.md`
+- `.echelon/runtime/templates/evolution-signals-review-template.md`
+- `.echelon/runtime/templates/prompt-version-observations-template.md`
+- `.echelon/runtime/templates/calibration-analytics-template.md`
+- `.echelon/runtime/templates/feedback-report-template.md`
 
 The active runtime dispatches this role with the following request:
 
@@ -140,7 +140,7 @@ The active runtime dispatches this role with the following request:
 
   <instructions>
   You are AUDITOR. Read agents/learning/auditor.md for your complete protocol.
-  Track AI accuracy per domain. Build the confidence profile and adjust ASSESS estimate multipliers based on historical data. Flag low-confidence domains for human input or echelon.investigator (INVESTIGATOR) investigation. Write any durable calibration observations as proposals under `${SQUAD_DIR}/kb-proposals/` using `extension/templates/kb-proposals/calibration-observation-proposal-template.yaml`; do not edit canonical KB files directly. Produce `confidence-flags.md` and `calibration-dashboard.md` in `{spec_dir}/` using the provided appendices and their supplied template contracts: use the confidence-flags template and the dashboard appendix respectively. When triggered, use the supplied standalone templates for evolution signals, prompt-version observations, and calibration analytics. Return journal entries in `echelon_result.journal_entries`.
+  Track AI accuracy per domain. Build the confidence profile and adjust ASSESS estimate multipliers based on historical data. Flag low-confidence domains for human input or echelon.investigator (INVESTIGATOR) investigation. Write any durable calibration observations as proposals under `${SQUAD_DIR}/kb-proposals/` using `.echelon/runtime/templates/kb-proposals/calibration-observation-proposal-template.yaml`; do not edit canonical KB files directly. Produce `confidence-flags.md` and `calibration-dashboard.md` in `{spec_dir}/` using the provided appendices and their supplied template contracts: use the confidence-flags template and the dashboard appendix respectively. When triggered, use the supplied standalone templates for evolution signals, prompt-version observations, and calibration analytics. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
@@ -234,9 +234,9 @@ conformance evidence:
 
 Use these prescribed artifact contracts:
 
-- `extension/templates/plan-conformance-template.md` for `plan-conformance.md`
-- `extension/templates/plan-conformance.schema.json` for `plan-conformance.json`
-- `extension/templates/00-overview-template.md` for `00-overview.md`
+- `.echelon/runtime/templates/plan-conformance-template.md` for `plan-conformance.md`
+- `.echelon/runtime/templates/plan-conformance.schema.json` for `plan-conformance.json`
+- `.echelon/runtime/templates/00-overview-template.md` for `00-overview.md`
 
 Read `spec.md`, `requirements-overview.md`, `mvp-scope.md`, `plan.md`,
 `tasks.md`, `dependencies.md`, `critical-path.md`, `risk-matrix.md`,
@@ -274,7 +274,7 @@ Read `spec.md`, `requirements-overview.md`, `mvp-scope.md`, `plan.md`,
 }
 ```
 
-It must conform to `extension/templates/plan-conformance.schema.json`.
+It must conform to `.echelon/runtime/templates/plan-conformance.schema.json`.
 
 Use `"status": "needs_repair"` when a drift finding requires artifact repair
 before build readiness. Do not hide drift by rewriting `00-overview.md` around
@@ -304,7 +304,7 @@ Context pack:
 - `knowledge-base/pitfalls.yaml`
 - `knowledge-base/calibration-profile.yaml`
 - echelon.mirror (MIRROR), echelon.adaptive (ADAPTIVE), and echelon.auditor (AUDITOR) outputs from this FINALIZE run
-- `extension/templates/schema-consolidation-template.md`
+- `.echelon/runtime/templates/schema-consolidation-template.md`
 
 The active runtime dispatches this role with the following request:
 
@@ -312,7 +312,7 @@ The active runtime dispatches this role with the following request:
 
   ```xml
   <context>
-  [include all artifacts in {spec_dir}/, reasoning-journal.jsonl, knowledge-base/patterns.yaml, knowledge-base/pitfalls.yaml, knowledge-base/calibration-profile.yaml, FINALIZE learning outputs, extension/templates/schema-consolidation-template.md]
+  [include all artifacts in {spec_dir}/, reasoning-journal.jsonl, knowledge-base/patterns.yaml, knowledge-base/pitfalls.yaml, knowledge-base/calibration-profile.yaml, FINALIZE learning outputs, .echelon/runtime/templates/schema-consolidation-template.md]
   </context>
 
   <instructions>
@@ -329,7 +329,7 @@ If echelon.consolidator (CONSOLIDATOR) is unavailable, record the skip in the fi
 
 Dispatch echelon.scorekeeper (SCOREKEEPER) to produce the final scorecard (see Section 13 for full protocol). Pass the per-agent internalization composite scores from step 12.4 so SCOREKEEPER can incorporate the internalization trend into the scorecard.
 
-Include `agents/control/appendices/scorekeeper-output-template.md` and `agents/control/appendices/scorekeeper-scoring-reference.md` in the context pack. Produce `agent-scorecard.md` using the provided template. Write durable per-agent internalization observations as proposals under `${SQUAD_DIR}/kb-proposals/` using `extension/templates/kb-proposals/internalization-observation-proposal-template.yaml`; do not edit canonical KB files directly.
+Include `agents/control/appendices/scorekeeper-output-template.md` and `agents/control/appendices/scorekeeper-scoring-reference.md` in the context pack. Produce `agent-scorecard.md` using the provided template. Write durable per-agent internalization observations as proposals under `${SQUAD_DIR}/kb-proposals/` using `.echelon/runtime/templates/kb-proposals/internalization-observation-proposal-template.yaml`; do not edit canonical KB files directly.
 
 Read the scorecard output and apply any automatic self-healing actions.
 

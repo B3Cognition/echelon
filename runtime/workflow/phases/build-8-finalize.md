@@ -202,7 +202,7 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include state.json, tasks.md, spec.md, progress-report.md, integration-report.md, verification-summary.md, gap-report.md, reasoning-journal.jsonl, knowledge-base/patterns.yaml, knowledge-base/pitfalls.yaml, knowledge-base/calibration-profile.yaml, extension/templates/schema-consolidation-template.md]
+  [include state.json, tasks.md, spec.md, progress-report.md, integration-report.md, verification-summary.md, gap-report.md, reasoning-journal.jsonl, knowledge-base/patterns.yaml, knowledge-base/pitfalls.yaml, knowledge-base/calibration-profile.yaml, .echelon/runtime/templates/schema-consolidation-template.md]
   </context>
 
   <instructions>

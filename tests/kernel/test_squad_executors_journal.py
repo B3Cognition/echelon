@@ -1292,8 +1292,8 @@ def test_why1_prompt_does_not_receive_understanding_evidence(tmp_path):
     assert "# Certified Understanding Evidence" not in prompt
 
 
-def test_assemble_prompt_injects_extension_path_resolution(tmp_path):
-    """Runtime agents get unambiguous installed-extension path mappings."""
+def test_assemble_prompt_injects_runtime_path_resolution(tmp_path):
+    """Runtime agents get unambiguous deployed-runtime path mappings."""
     squad_dir = tmp_path / "squad" / "run-test"
     squad_dir.mkdir(parents=True)
     ext_dir = tmp_path / ".specify" / "extensions" / "echelon"
@@ -1310,10 +1310,10 @@ def test_assemble_prompt_injects_extension_path_resolution(tmp_path):
     state = {"squad_dir": str(squad_dir), "staging_dir": str(squad_dir / "staging")}
     prompt = ex._assemble_prompt(node, state)
 
-    assert f"EXTENSION_DIR={ext_dir}" in prompt
-    assert f"EXTENSION_TEMPLATES_DIR={ext_dir / 'templates'}" in prompt
-    assert "`extension/templates/foo.md` resolves to `${EXTENSION_DIR}/templates/foo.md`" in prompt
-    assert "NEVER resolve it as `${EXTENSION_DIR}/extension/templates/foo.md`" in prompt
+    assert f"RUNTIME_DIR={ext_dir}" in prompt
+    assert f"RUNTIME_TEMPLATES_DIR={ext_dir / 'templates'}" in prompt
+    assert "`.echelon/runtime/templates/foo.md` resolves to `${RUNTIME_TEMPLATES_DIR}/foo.md`" in prompt
+    assert "Use only explicit `.echelon/runtime/...` paths" in prompt
 
 
 def test_assemble_prompt_injects_workspace_source_roots(tmp_path):
@@ -1373,6 +1373,8 @@ def test_assemble_prompt_injects_shared_endocrine_contract(tmp_path):
     assert "NEVER write to `reasoning-journal.jsonl` directly" in prompt
     assert "NEVER use Write, Edit, Bash redirection" in prompt
     assert "ALWAYS read your agent-specific belief register when present" in prompt
+    assert "${PROJECT_ROOT}/.echelon/runtime/config/belief-registers/" in prompt
+    assert ".specify/extensions/echelon/config/belief-registers" not in prompt
     assert "belief-registers/<agent-slug>.yaml" in prompt
     assert prompt.index("## Shared Agent Contract") < prompt.index("# Scout")
     assert prompt.index("# Scout") < prompt.index("# Squad Run Context")
@@ -1578,8 +1580,8 @@ def test_pre_dispatch_prompt_includes_parent_allowed_state_updates(tmp_path):
 
     assert "## Allowed state_updates for this dispatch" in prompt
     assert "- `guardian_status`" in prompt
-    assert f"EXTENSION_TEMPLATES_DIR={tmp_path / 'ext' / 'templates'}" in prompt
-    assert "NEVER resolve it as `${EXTENSION_DIR}/extension/templates/foo.md`" in prompt
+    assert f"RUNTIME_TEMPLATES_DIR={tmp_path / 'ext' / 'templates'}" in prompt
+    assert "Use only explicit `.echelon/runtime/...` paths" in prompt
 
 
 def test_agent_prompt_includes_authoritative_implementation_target_contract(tmp_path):

@@ -17,7 +17,7 @@ Use this template for `research.md`.
 
 ## ADR-<NNN>: <Decision Title>
 
-Paste one `extension/templates/architecture-adr-template.md` entry per decision.
+Paste one `.echelon/runtime/templates/architecture-adr-template.md` entry per decision.
 
 ## Cross-Cutting Concern Coverage
 

@@ -10377,48 +10377,42 @@ def _cmd_spec(args: list[str]) -> None:
 
 
 def _installed_extension_or_exit(project_root: Path) -> Path:
-    ext_dir = project_root / ".specify" / "extensions" / "echelon"
-    if not ext_dir.exists():
+    runtime = project_root / ".echelon" / "runtime"
+    if not (runtime / "workflow" / "definition.yaml").is_file():
         print(
-            f"✗ Echelon extension not installed: {ext_dir}\n"
-            "  Run: specify extension add echelon",
+            f"✗ Echelon runtime not installed: {runtime}\n"
+            "  Run: echelon workspace migrate-to-prosaic",
             file=sys.stderr,
         )
         sys.exit(1)
-    return ext_dir
+    return runtime
 
 
 def _installed_phase_runtime_or_exit(project_root: Path) -> Path:
-    """Return a legacy extension or a complete deployed Prosaic runtime for Phase A."""
+    """Return the complete deployed Prosaic runtime for Phase A."""
     runtime = project_root / ".echelon" / "runtime"
     prose = project_root / ".echelon" / "prosaic" / "subagents"
     if (runtime / "workflow" / "definition.yaml").is_file() and prose.is_dir():
         return runtime
-    legacy_extension = project_root / ".specify" / "extensions" / "echelon"
-    if legacy_extension.is_dir():
-        return legacy_extension
     print(
         "✗ Echelon runtime not installed.\n"
-        "  Run: echelon workspace init --with-prosaic\n"
-        "  Or:  specify extension add echelon",
+        "  Run: echelon workspace migrate-to-prosaic\n"
+        "  Or, for a new workspace: echelon workspace init --with-prosaic",
         file=sys.stderr,
     )
     sys.exit(1)
 
 
 def _installed_re_runtime_or_exit(project_root: Path) -> tuple[Path, Path | None]:
-    """Return RE runtime assets and optionally the deployed Prosaic agents."""
+    """Return deployed RE runtime assets and Prosaic agents."""
     runtime = project_root / ".echelon" / "runtime"
     prose = project_root / ".echelon" / "prosaic" / "subagents"
     if (runtime / "workflow" / "definition.yaml").is_file() and prose.is_dir():
         return runtime, prose
-    legacy_extension = project_root / ".specify" / "extensions" / "echelon"
-    if legacy_extension.is_dir():
-        return legacy_extension, None
     print(
         "✗ Echelon runtime not installed.\n"
-        "  Run: echelon workspace init --with-prosaic\n"
-        "  Or:  specify extension add echelon",
+        "  Run: echelon workspace migrate-to-prosaic\n"
+        "  Or, for a new workspace: echelon workspace init --with-prosaic",
         file=sys.stderr,
     )
     sys.exit(1)

@@ -8,9 +8,9 @@
 - `re/workspace/contracts.md`
 - `re/workspace/relationships.md`
 - `re/workspace/strategy/constitution.md`
-- `extension/templates/tasks-template.md`
-- `extension/templates/task-entry-fragment.md`
-- `extension/templates/task-checkpoint-fragment.md`
+- `.echelon/runtime/templates/tasks-template.md`
+- `.echelon/runtime/templates/task-entry-fragment.md`
+- `.echelon/runtime/templates/task-checkpoint-fragment.md`
 
 ## Dispatch Prompt
 

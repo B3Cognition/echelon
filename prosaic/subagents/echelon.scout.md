@@ -34,7 +34,7 @@ NEVER use `print()` in python3 scripts that read or write JSON files, because st
 
 ### Rule 4 - Template Scope
 ALWAYS read only the exact output templates listed below.
-NEVER recursively search `.echelon/runtime` for `*-template.md`, because `extension/presets/` contains preset seed material that is not SCOUT output-template context.
+NEVER recursively search `.echelon/runtime` for `*-template.md`, because `.echelon/runtime/presets/` contains preset seed material that is not SCOUT output-template context.
 
 ## Configuration
 

@@ -18,11 +18,11 @@ Every file below MUST be included (or marked `[ABSENT: <path>]` if missing). Sil
 | `issues.md` | `{spec_dir}/issues.md` | From WHY2 |
 | `calibration-profile.yaml` | `knowledge-base/calibration-profile.yaml` | Mark `[ABSENT]` on cold start |
 | `estimates-log.yaml` | `knowledge-base/estimates-log.yaml` | Mark `[ABSENT]` on cold start |
-| `extension/templates/feasibility-template.md` | `extension/templates/feasibility-template.md` | Required |
-| `extension/templates/prioritization-template.md` | `extension/templates/prioritization-template.md` | Required |
-| `extension/templates/estimates-template.md` | `extension/templates/estimates-template.md` | Required |
-| `extension/templates/mvp-scope-template.md` | `extension/templates/mvp-scope-template.md` | Required |
-| `extension/templates/kill-report.md` | `extension/templates/kill-report.md` | Required |
+| `.echelon/runtime/templates/feasibility-template.md` | `.echelon/runtime/templates/feasibility-template.md` | Required |
+| `.echelon/runtime/templates/prioritization-template.md` | `.echelon/runtime/templates/prioritization-template.md` | Required |
+| `.echelon/runtime/templates/estimates-template.md` | `.echelon/runtime/templates/estimates-template.md` | Required |
+| `.echelon/runtime/templates/mvp-scope-template.md` | `.echelon/runtime/templates/mvp-scope-template.md` | Required |
+| `.echelon/runtime/templates/kill-report.md` | `.echelon/runtime/templates/kill-report.md` | Required |
 | `reasoning-journal.jsonl` | `${SQUAD_DIR}/reasoning-journal.jsonl` | Required |
 
 The harness assembles the declared context pack before dispatch. Treat absent
@@ -42,7 +42,7 @@ The active runtime dispatches this role with the following request:
 
   <instructions>
   You are GATEKEEPER. Read agents/feasibility/gatekeeper.md for your complete protocol.
-  Evaluate feasibility (can this be built within constraints?). Estimate effort using Function Point Analysis adjusted by calibration data. `estimates.md` must include Phase A specification authoring and Phase B implementation, each as human-only and AI-assisted scenarios. The AI-assisted scenario must include Phase A, Phase B, and total token and USD budgets with a documented pricing basis. Prioritize features with Kano + RICE. Scope MVP. **Kill gate:** if unfeasible or all low-priority, produce a kill report using `extension/templates/kill-report.md`. Produce outputs in `{spec_dir}/` using the provided templates. If any output already exists from a prior interrupted attempt, read it before updating it; never create backup, temporary, alternate, or shell-written files to bypass write guards. Return the gate decision as the top-level `echelon_result.verdict` only (`PASS`, `KILL`, or `DEFER`); do not return `gate_decision` or `phase_recommendation` in `state_updates` for this first-pass phase. Return journal entries in `echelon_result.journal_entries`.
+  Evaluate feasibility (can this be built within constraints?). Estimate effort using Function Point Analysis adjusted by calibration data. `estimates.md` must include Phase A specification authoring and Phase B implementation, each as human-only and AI-assisted scenarios. The AI-assisted scenario must include Phase A, Phase B, and total token and USD budgets with a documented pricing basis. Prioritize features with Kano + RICE. Scope MVP. **Kill gate:** if unfeasible or all low-priority, produce a kill report using `.echelon/runtime/templates/kill-report.md`. Produce outputs in `{spec_dir}/` using the provided templates. If any output already exists from a prior interrupted attempt, read it before updating it; never create backup, temporary, alternate, or shell-written files to bypass write guards. Return the gate decision as the top-level `echelon_result.verdict` only (`PASS`, `KILL`, or `DEFER`); do not return `gate_decision` or `phase_recommendation` in `state_updates` for this first-pass phase. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 

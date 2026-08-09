@@ -14,12 +14,12 @@ Read and include in the subagent prompt:
 - `constitution.md` (read-only published Phase A governance snapshot)
 - `contracts/` + `test-strategy.md`
 - Risk data from specialists (threat-model.md, performance-requirements.md, etc.)
-- `extension/templates/tasks-template.md`
-- `extension/templates/task-entry-fragment.md`
-- `extension/templates/task-checkpoint-fragment.md`
-- `extension/templates/critical-path-template.md`
-- `extension/templates/planning-risk-matrix-template.md`
-- `extension/templates/dependencies-template.md`
+- `.echelon/runtime/templates/tasks-template.md`
+- `.echelon/runtime/templates/task-entry-fragment.md`
+- `.echelon/runtime/templates/task-checkpoint-fragment.md`
+- `.echelon/runtime/templates/critical-path-template.md`
+- `.echelon/runtime/templates/planning-risk-matrix-template.md`
+- `.echelon/runtime/templates/dependencies-template.md`
 - `reasoning-journal.jsonl`
 
 ### Dispatch

@@ -1157,7 +1157,7 @@ phases:
           - "{spec_dir}/coverage-map.md"
           - "{spec_dir}/estimates.md"
           - "{spec_dir}/mvp-scope.md"
-          - extension/templates/estimates-template.md
+          - .echelon/runtime/templates/estimates-template.md
         outputs:
           - assess2-verdict: PASS | REJECTED | BLOCKED
           - implementability-report.md     # required by PLAN2

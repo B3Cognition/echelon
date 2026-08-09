@@ -13,16 +13,16 @@ Read and include in the subagent prompt:
 
 - ALL DISCOVER outputs (every .md file produced in step 2)
 - reasoning-journal.jsonl (DISCOVER entries)
-- `extension/templates/glossary-template.md`
-- `extension/templates/mental-model-template.md`
-- `extension/templates/boundaries-template.md`
-- `extension/templates/assumptions-template.md`
-- `extension/templates/unknowns-template.md`
-- `extension/templates/contradictions-and-gaps-template.md`
-- `extension/templates/risks-template.md`
-- `extension/templates/people-and-teams-template.md`
-- `extension/templates/timeline-template.md`
-- `extension/templates/qa-test-strategy-inputs-template.md`
+- `.echelon/runtime/templates/glossary-template.md`
+- `.echelon/runtime/templates/mental-model-template.md`
+- `.echelon/runtime/templates/boundaries-template.md`
+- `.echelon/runtime/templates/assumptions-template.md`
+- `.echelon/runtime/templates/unknowns-template.md`
+- `.echelon/runtime/templates/contradictions-and-gaps-template.md`
+- `.echelon/runtime/templates/risks-template.md`
+- `.echelon/runtime/templates/people-and-teams-template.md`
+- `.echelon/runtime/templates/timeline-template.md`
+- `.echelon/runtime/templates/qa-test-strategy-inputs-template.md`
 
 ### Dispatch
 
