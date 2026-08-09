@@ -110,7 +110,7 @@ def test_workspace_init_skips_deploy_when_disabled(tmp_path, monkeypatch, capsys
     assert "skipped (deploy.enabled=false)" in captured.out
 
 
-def test_workspace_init_with_prosaic_seeds_config_without_spec_kit(
+def test_workspace_init_seeds_config_without_spec_kit(
     tmp_path,
     monkeypatch,
     capsys,
@@ -126,7 +126,7 @@ def test_workspace_init_with_prosaic_seeds_config_without_spec_kit(
     monkeypatch.setattr("echelon.prosaic_packages.install_prosaic_bundle", deploy_bundle)
     monkeypatch.setattr(cli, "_provision_wing", lambda _project_dir, _config: "test-wing")
 
-    cli._cmd_init(tmp_path, with_prosaic=True)
+    cli._cmd_init(tmp_path)
 
     captured = capsys.readouterr()
     assert "Prosaic prose deployed" in captured.out
@@ -135,7 +135,7 @@ def test_workspace_init_with_prosaic_seeds_config_without_spec_kit(
     assert not (tmp_path / ".specify").exists()
 
 
-def test_workspace_init_with_prosaic_bootstraps_git_without_spec_kit(
+def test_workspace_init_bootstraps_git_without_spec_kit(
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -152,7 +152,7 @@ def test_workspace_init_with_prosaic_bootstraps_git_without_spec_kit(
     monkeypatch.setattr(cli, "_provision_wing", lambda _project_dir, _config: "test-wing")
     monkeypatch.setattr(cli, "_wants_unsafe_host_execution_interactively", lambda: False)
 
-    cli._cmd_workspace(["init", "--with-prosaic", "--no-unsafe-host-execution"])
+    cli._cmd_workspace(["init", "--no-unsafe-host-execution"])
 
     assert (tmp_path / ".git").exists()
 
@@ -258,7 +258,7 @@ def test_workspace_init_initializes_git_for_specify_workspace(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(cli, "_provision_wing", lambda _project_dir, _config: "test-wing")
 
-    cli._cmd_workspace(["init", "--legacy-spec-kit", "--no-unsafe-host-execution"])
+    cli._cmd_workspace(["init", "--no-unsafe-host-execution"])
 
     captured = capsys.readouterr()
     assert "workspace Git initialized" in captured.out
@@ -314,7 +314,7 @@ def test_workspace_init_bootstraps_git_without_inspecting_speckit_git(
         cli, "_maybe_bootstrap_workspace_git", lambda _root: calls.append("git")
     )
 
-    cli._cmd_workspace(["init", "--legacy-spec-kit", "--no-unsafe-host-execution"])
+    cli._cmd_workspace(["init", "--no-unsafe-host-execution"])
 
     assert calls == ["config", "git"]
 
@@ -354,7 +354,7 @@ def test_workspace_init_rerun_repairs_missing_sources_scaffold(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(cli, "_provision_wing", lambda _project_dir, _config: "test-wing")
 
-    cli._cmd_workspace(["init", "--legacy-spec-kit", "--no-unsafe-host-execution"])
+    cli._cmd_workspace(["init", "--no-unsafe-host-execution"])
 
     captured = capsys.readouterr()
     assert "source roots scaffolded" in captured.out

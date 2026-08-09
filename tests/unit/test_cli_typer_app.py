@@ -929,7 +929,7 @@ def test_workspace_init_help_declares_workspace_options():
     assert "--openai-model" in result.output
     assert "--openai-api-key-file" in result.output
     assert "--openai-api-key-env" in result.output
-    assert "--legacy-spec-kit" in result.output
+    assert "--legacy-spec-kit" not in result.output
     command = get_command(app)
     workspace_command = command.commands["workspace"]
     init_command = workspace_command.commands["init"]
@@ -939,7 +939,7 @@ def test_workspace_init_help_declares_workspace_options():
         declared_options.update(getattr(param, "secondary_opts", []))
     assert "--allow-unsafe-host-execution" in declared_options
     assert "--no-unsafe-host-execution" in declared_options
-    assert "--legacy-spec-kit" in declared_options
+    assert "--legacy-spec-kit" not in declared_options
 
 
 @pytest.mark.unit

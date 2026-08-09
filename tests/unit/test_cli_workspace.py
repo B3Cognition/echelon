@@ -25,7 +25,6 @@ def test_workspace_init_accepts_openai_compatible_llm(
         openai_model=None,
         openai_api_key_file=None,
         openai_api_key_env=None,
-        with_prosaic=False,
     ):
         calls.append(
             {
@@ -36,7 +35,6 @@ def test_workspace_init_accepts_openai_compatible_llm(
                 "openai_model": openai_model,
                 "openai_api_key_file": openai_api_key_file,
                 "openai_api_key_env": openai_api_key_env,
-                "with_prosaic": with_prosaic,
             }
         )
 
@@ -55,7 +53,6 @@ def test_workspace_init_accepts_openai_compatible_llm(
             "openai_model": None,
             "openai_api_key_file": None,
             "openai_api_key_env": None,
-            "with_prosaic": True,
         }
     ]
 
@@ -86,29 +83,25 @@ def test_workspace_init_uses_prosaic_by_default(
             "openai_model": None,
             "openai_api_key_file": None,
             "openai_api_key_env": None,
-            "with_prosaic": True,
         }
     ]
 
 
-def test_workspace_init_accepts_legacy_spec_kit_escape_hatch(
+def test_workspace_init_rejects_legacy_spec_kit_escape_hatch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     from echelon.cli import _cmd_workspace
 
-    calls: list[dict[str, object]] = []
-
-    def fake_init(project_root, **kwargs):
-        calls.append({"project_root": project_root, **kwargs})
-
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("echelon.cli._cmd_init", fake_init)
     monkeypatch.setattr("echelon.cli._wants_unsafe_host_execution_interactively", lambda: False)
 
-    _cmd_workspace(["init", "--legacy-spec-kit", "--no-unsafe-host-execution"])
+    with pytest.raises(SystemExit) as raised:
+        _cmd_workspace(["init", "--legacy-spec-kit", "--no-unsafe-host-execution"])
 
-    assert calls[0]["with_prosaic"] is False
+    assert raised.value.code == 1
+    assert "unknown option '--legacy-spec-kit'" in capsys.readouterr().err
 
 
 def test_workspace_init_accepts_openai_compatible_endpoint_config(
@@ -128,7 +121,6 @@ def test_workspace_init_accepts_openai_compatible_endpoint_config(
         openai_model=None,
         openai_api_key_file=None,
         openai_api_key_env=None,
-        with_prosaic=False,
     ):
         calls.append(
             {
@@ -139,7 +131,6 @@ def test_workspace_init_accepts_openai_compatible_endpoint_config(
                 "openai_model": openai_model,
                 "openai_api_key_file": openai_api_key_file,
                 "openai_api_key_env": openai_api_key_env,
-                "with_prosaic": with_prosaic,
             }
         )
 
@@ -173,7 +164,6 @@ def test_workspace_init_accepts_openai_compatible_endpoint_config(
             "openai_model": "ThinkingCap-Qwen3.6-27B-OptiQ-4bit",
             "openai_api_key_file": "~/.omlx_token",
             "openai_api_key_env": "OMLX_API_KEY",
-            "with_prosaic": True,
         }
     ]
 

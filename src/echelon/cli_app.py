@@ -1518,17 +1518,6 @@ def workspace_init(
         "--allow-unsafe-host-execution/--no-unsafe-host-execution",
         help="Persist or deny local approval for unsafe host execution flags.",
     ),
-    with_prosaic: bool = typer.Option(
-        False,
-        "--with-prosaic",
-        hidden=True,
-        help="Deprecated: Prosaic is now installed by default.",
-    ),
-    legacy_spec_kit: bool = typer.Option(
-        False,
-        "--legacy-spec-kit",
-        help="Use the installed Spec-Kit extension instead of the default Prosaic runtime.",
-    ),
 ) -> None:
     """One-time project setup."""
     legacy_cli = _legacy_cli()
@@ -1543,10 +1532,6 @@ def workspace_init(
         args.append("--allow-unsafe-host-execution")
     elif allow_unsafe_host_execution is False:
         args.append("--no-unsafe-host-execution")
-    if with_prosaic:
-        args.append("--with-prosaic")
-    if legacy_spec_kit:
-        args.append("--legacy-spec-kit")
     args.extend(_ctx_args(ctx))
     legacy_cli._cmd_workspace(args)
 

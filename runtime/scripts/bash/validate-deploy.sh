@@ -96,7 +96,7 @@ echo "  ✓ deploy-state.json valid (app=${APP_NAME}, type=${DEPLOY_TYPE})"
 # ── 2. deploy.sh reachable ────────────────────────────────────────────────────
 if [ ! -f "${SCRIPTS_DIR}/deploy.sh" ]; then
   _fail "deploy.sh not found at ${SCRIPTS_DIR}/deploy.sh"
-  echo "     Fix: re-initialize the workspace with echelon workspace init --with-prosaic" >&2
+  echo "     Fix: re-initialize the workspace with echelon workspace init" >&2
   ERRORS=$((ERRORS + 1))
 else
   echo "  ✓ deploy.sh reachable"

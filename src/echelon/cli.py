@@ -83,8 +83,7 @@ Commands:
   workspace init [--llm <provider>] [--openai-base-url <url>] [--openai-model <model>]
                     [--openai-api-key-file <path>|--openai-api-key-env <env>]
                     [--allow-unsafe-host-execution|--no-unsafe-host-execution]
-                    [--legacy-spec-kit]
-                                            One-time project setup (no LLM)
+                    One-time project setup (no LLM)
   workspace doctor                          Check workspace/source/runtime contract
   workspace sources sync [--write]          Sync discovered sources/* roots into config
   workspace migrate [--write] [--commit] [--message <msg>]
@@ -634,27 +633,23 @@ def _cmd_init(
     openai_model: str | None = None,
     openai_api_key_file: str | None = None,
     openai_api_key_env: str | None = None,
-    with_prosaic: bool = False,
 ) -> None:
-    ext_dir = project_dir / ".specify" / "extensions" / "echelon"
-    legacy_cfg = ext_dir / "echelon-config.yml"
     echelon_cfg = project_dir / ".echelon" / "config.yml"
     runtime_dir = project_dir / ".echelon" / "runtime"
 
-    if with_prosaic:
-        from echelon.prosaic_packages import ProsaicBundleInstallError, install_prosaic_bundle
+    from echelon.prosaic_packages import ProsaicBundleInstallError, install_prosaic_bundle
 
-        try:
-            install_prosaic_bundle(project_dir)
-        except ProsaicBundleInstallError as exc:
-            print(f"✗ {exc}", file=sys.stderr)
-            raise SystemExit(1) from exc
-        print(f"✓ Prosaic prose deployed: {project_dir / '.echelon/prosaic'}")
-        print(f"✓ Prosaic runtime deployed: {runtime_dir}")
+    try:
+        install_prosaic_bundle(project_dir)
+    except ProsaicBundleInstallError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+    print(f"✓ Prosaic prose deployed: {project_dir / '.echelon/prosaic'}")
+    print(f"✓ Prosaic runtime deployed: {runtime_dir}")
+    _ensure_prosaic_workspace_ignores(project_dir)
 
-    # Step 1: Confirm project config exists. Prosaic workspaces are seeded from
-    # the generic Echelon runtime template; legacy installs retain their old source.
-    config_template = runtime_dir / "config-template.yml" if with_prosaic else legacy_cfg
+    # Step 1: Confirm project config exists, seeded from the Echelon runtime.
+    config_template = runtime_dir / "config-template.yml"
     if not echelon_cfg.exists():
         if config_template.exists():
             echelon_cfg.parent.mkdir(parents=True, exist_ok=True)
@@ -739,11 +734,7 @@ def _cmd_init(
     _provision_wing(project_dir, echelon_cfg)
 
     # Step 3: Run deploy-init.sh
-    init_script = (
-        runtime_dir / "scripts" / "bash" / "deploy-init.sh"
-        if with_prosaic
-        else ext_dir / "scripts" / "bash" / "deploy-init.sh"
-    )
+    init_script = runtime_dir / "scripts" / "bash" / "deploy-init.sh"
     deploy_state_label = str(project_dir / "runs" / "deploy-state.json")
     if not deploy_enabled:
         deploy_state_label = "skipped (deploy.enabled=false)"
@@ -10878,7 +10869,6 @@ def _cmd_workspace(args: list[str]) -> None:
             "  init [--llm <provider>] [--openai-base-url <url>] [--openai-model <model>]\n"
             "       [--openai-api-key-file <path>|--openai-api-key-env <env>]\n"
             "       [--allow-unsafe-host-execution|--no-unsafe-host-execution]\n"
-            "       [--legacy-spec-kit]\n"
             "                            One-time project setup (no LLM)\n"
             "                            Installs the Echelon Prosaic/runtime bundle by default\n"
             "  doctor                    Validate workspace/source/runtime contract\n"
@@ -10906,8 +10896,7 @@ def _cmd_workspace(args: list[str]) -> None:
                 "[--llm <provider>] "
                 "[--openai-base-url <url>] [--openai-model <model>] "
                 "[--openai-api-key-file <path>|--openai-api-key-env <env>] "
-                "[--allow-unsafe-host-execution|--no-unsafe-host-execution] "
-                "[--legacy-spec-kit]\n\n"
+                "[--allow-unsafe-host-execution|--no-unsafe-host-execution]\n\n"
                 "  --llm <provider>              Persist the workspace AI CLI provider\n"
                 "  --openai-base-url <url>       Persist OpenAI-compatible API base URL\n"
                 "  --openai-model <model>        Persist OpenAI-compatible model name\n"
@@ -10915,8 +10904,7 @@ def _cmd_workspace(args: list[str]) -> None:
                 "  --openai-api-key-env <env>    Persist API key environment variable name\n"
                 "  --allow-unsafe-host-execution  Write local approval for AI CLI "
                 "permission-bypass flags\n"
-                "  --no-unsafe-host-execution     Do not prompt or write local approval\n"
-                "  --legacy-spec-kit              Use the installed Spec-Kit extension instead of Prosaic",
+                "  --no-unsafe-host-execution     Do not prompt or write local approval",
                 file=sys.stderr,
             )
             sys.exit(0)
@@ -10983,9 +10971,6 @@ def _cmd_workspace(args: list[str]) -> None:
             elif arg in {"--allow-unsafe-host-execution", "--no-unsafe-host-execution"}:
                 parsed_init_args.append(arg)
                 i += 1
-            elif arg in {"--with-prosaic", "--legacy-spec-kit"}:
-                parsed_init_args.append(arg)
-                i += 1
             else:
                 print(f"echelon workspace init: unknown option '{arg}'\n", file=sys.stderr)
                 print(
@@ -10993,8 +10978,7 @@ def _cmd_workspace(args: list[str]) -> None:
                     "[--llm <provider>] "
                     "[--openai-base-url <url>] [--openai-model <model>] "
                     "[--openai-api-key-file <path>|--openai-api-key-env <env>] "
-                    "[--allow-unsafe-host-execution|--no-unsafe-host-execution] "
-                    "[--legacy-spec-kit]",
+                    "[--allow-unsafe-host-execution|--no-unsafe-host-execution]",
                     file=sys.stderr,
                 )
                 sys.exit(1)
@@ -11016,13 +11000,6 @@ def _cmd_workspace(args: list[str]) -> None:
             )
             sys.exit(1)
         allow_unsafe = "--allow-unsafe-host-execution" in parsed_init_args
-        if "--with-prosaic" in parsed_init_args and "--legacy-spec-kit" in parsed_init_args:
-            print(
-                "echelon workspace init: --with-prosaic and --legacy-spec-kit cannot be combined",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        with_prosaic = "--legacy-spec-kit" not in parsed_init_args
         if "--no-unsafe-host-execution" not in parsed_init_args and not allow_unsafe:
             allow_unsafe = _wants_unsafe_host_execution_interactively()
         project_root = Path.cwd()
@@ -11034,7 +11011,6 @@ def _cmd_workspace(args: list[str]) -> None:
             "openai_api_key_file": openai_api_key_file,
             "openai_api_key_env": openai_api_key_env,
         }
-        init_kwargs["with_prosaic"] = with_prosaic
         _cmd_init(project_root, **init_kwargs)
         _maybe_bootstrap_workspace_git(project_root)
         return

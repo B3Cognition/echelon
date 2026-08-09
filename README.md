@@ -65,8 +65,8 @@ echelon spec run "Create a sample Hello World program in Python"
 ```
 
 Use `--llm codex`, `--llm copilot`, `--llm opencode`, or
-`--llm openai-compatible` for the corresponding provider. Existing legacy
-workspaces can temporarily use `echelon workspace init --legacy-spec-kit`.
+`--llm openai-compatible` for the corresponding provider. Migrate an existing
+legacy workspace with `echelon workspace migrate-to-prosaic` before running it.
 
 ### Local Git hooks
 

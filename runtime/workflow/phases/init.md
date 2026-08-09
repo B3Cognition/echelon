@@ -22,7 +22,7 @@ ECHELON_EXT="${PROJECT_ROOT}/.echelon/runtime"
 ECHELON_CONFIG="${PROJECT_ROOT}/.echelon/config.yml"
 if [ ! -f "${ECHELON_CONFIG}" ]; then
   echo "✗ Echelon config not found at ${ECHELON_CONFIG}" >&2
-  echo "  Run 'echelon workspace init --with-prosaic' first." >&2
+  echo "  Run 'echelon workspace init' first." >&2
   exit 1
 fi
 echo "✓ Echelon config found at ${ECHELON_CONFIG}"
@@ -32,7 +32,7 @@ If this exits non-zero: **HARD STOP**. Always print the message below. Do not pr
 
 ```text
 ✗ Echelon config not found.
-  Run echelon workspace init --with-prosaic first, then re-run echelon spec run.
+  Run echelon workspace init first, then re-run echelon spec run.
 ```
 
 > **Note:** `validate-deploy.sh` is only relevant to `echelon delivery run` (it validates deploy infrastructure written during workspace initialization). Always leave `echelon spec run` startup deploy-neutral. Do NOT call `validate-deploy.sh` from `echelon spec run` — it will fail on fresh projects that have not yet run delivery.
