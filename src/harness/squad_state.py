@@ -1030,7 +1030,7 @@ def _validate_human_input_seal_path(
             request.source_kind in {"human_gate", "legacy_recovery"}
             or (
                 request.source_kind == "controller_safeguard"
-                and request.producer_id == "phase_dispatch_limit"
+                and request.producer_id in {"phase_dispatch_limit", "agent_blocked"}
             )
         )
     if not accepted:

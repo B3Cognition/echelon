@@ -2141,6 +2141,61 @@ class TestAgentResultIntegrity:
         )
         assert "phase1-what" not in state.get("completed_phases", [])
 
+    def test_banzai_routes_valid_agent_block_to_commander_and_retries_phase(
+        self, tmp_path
+    ) -> None:
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "DECISION_RESOLVED",
+                "state_updates": {},
+                "journal_entries": [],
+                "decision": {
+                    "selected_option_id": None,
+                    "answer_text": "Use direct Python execution without packaging.",
+                    "rationale": "The request calls for the smallest executable program.",
+                    "confidence": "high",
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "banzai", "msg", 0, "phase3-how", max_iterations=5)
+        state = store.load()
+        state["spec_dir"] = "specs/001-demo"
+        store.save(state)
+        spec_dir = tmp_path / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
+        (spec_dir / "unknowns.md").write_text("# Unknowns\n", encoding="utf-8")
+        result = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "BLOCKED",
+                "state_updates": {},
+                "journal_entries": [],
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        snapshot = store.capture_routing_snapshot(expected_phase="phase3-how")
+
+        assert ctrl._route_agent_block_to_commander(
+            ctrl._graph.get("phase3-how"), "agent_blocked", result, snapshot
+        )
+
+        state = store.load()
+        assert state["status"] == "running"
+        assert state["phase"] == "phase3-how"
+        assert state["blocked_decision"]["resolved_by"] == "COMMANDER"
+        assert "Use direct Python execution" in (
+            Path(state["staging_dir"]) / "user-clarifications.md"
+        ).read_text(encoding="utf-8")
+
     @pytest.mark.parametrize("manual_phase_run", [False, True])
     def test_executor_missing_output_uses_recovery_block(
         self,

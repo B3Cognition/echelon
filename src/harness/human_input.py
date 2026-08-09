@@ -779,4 +779,14 @@ def controller_safeguard_policies() -> tuple[HumanInputPolicy, ...]:
             context_state_keys=("phase", "why_fail_count", "why2_metric_stagnation_count"),
             context_paths=(), options=(),
         ),
+        HumanInputPolicy(
+            source_kind="controller_safeguard", producer_id="agent_blocked",
+            reason_code="agent_blocked", classification="material",
+            semi_policy="require_human", resolution_handler="clarification_resume",
+            allow_free_text=True, allowed_phase_ids=phase_a_sources,
+            allowed_target_phases=frozenset(),
+            context_state_keys=("phase", "user_message"),
+            context_paths=("{spec_dir}/unknowns.md", "{spec_dir}/spec.md"),
+            options=(),
+        ),
     )

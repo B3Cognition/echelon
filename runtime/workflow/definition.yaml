@@ -890,6 +890,7 @@ phases:
       - domain-knowledge.md         # from echelon.oracle (ORACLE) (if exists)
       - research.md                 # from echelon.investigator (INVESTIGATOR) (if exists)
       - alternatives.md             # from echelon.maverick (MAVERICK) (if exists)
+      - "{staging_dir}/user-clarifications.md" # control-plane input, if present
       - "{squad_dir}/reasoning-journal.jsonl [phase=phase2-decide, phase=phase3-specialists]"
       - calibration_map entry for echelon.architect (ARCHITECT)
     outputs:

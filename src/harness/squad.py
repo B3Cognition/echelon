@@ -4980,6 +4980,13 @@ class SquadController:
                 prepared.control_updates,
             )
             if blocked_result:
+                if self._route_agent_block_to_commander(
+                    node,
+                    blocked_result,
+                    prepared_result,
+                    snapshot,
+                ):
+                    continue
                 self._block_after_executor_failure(
                     phase,
                     blocked_result,
@@ -7821,6 +7828,37 @@ class SquadController:
                 return explicit_reason.strip()
             return "agent_blocked"
         return None
+
+    def _route_agent_block_to_commander(
+        self,
+        node: PhaseNode,
+        reason: str,
+        result: SquadAgentResult,
+        snapshot: RoutingStateSnapshot,
+    ) -> bool:
+        """Turn a valid agent BLOCKED verdict into a durable decision route."""
+        if (result.verdict or "").upper() != "BLOCKED":
+            return False
+        detail = reason.strip() or "agent_blocked"
+        request = self._human_input_registry.prepare(
+            source_kind="controller_safeguard",
+            producer_id="agent_blocked",
+            phase_id=node.id,
+            reason_code="agent_blocked",
+            question=(
+                f"{node.agent or node.type} returned BLOCKED during {node.id}. "
+                "Resolve the material ambiguity from the registered specification "
+                "context and provide concise instructions for retrying this phase. "
+                f"Reported blocker: {detail}."
+            ),
+            source_state_revision=snapshot.state_revision,
+        )
+        self._record_blocker_event(node.id, "agent_blocked")
+        print(
+            f"[squad] ! {node.id} returned BLOCKED; routing to COMMANDER",
+            flush=True,
+        )
+        return self.handle_human_input(request)
 
     def _block_after_executor_failure(
         self,
