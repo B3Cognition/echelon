@@ -16,26 +16,17 @@ def _write_minimal_repo(
     agent_verdict_line: str = "  verdict: <ALIGNED | DRIFT>",
 ) -> Path:
     root = tmp_path / "repo"
-    (root / "extension/workflow/phases").mkdir(parents=True)
-    (root / "extension/agents/control").mkdir(parents=True)
-    (root / "extension/templates").mkdir(parents=True)
+    (root / "runtime/workflow/phases").mkdir(parents=True)
+    (root / "runtime/templates").mkdir(parents=True)
+    (root / "prosaic/subagents").mkdir(parents=True)
 
-    (root / "extension/extension.yml").write_text(
-        """
-provides:
-  commands:
-    - name: "echelon.tracker"
-      file: "agents/control/tracker.md"
-""".lstrip(),
-        encoding="utf-8",
-    )
-    (root / "extension/workflow/definition.yaml").write_text(
+    (root / "runtime/workflow/definition.yaml").write_text(
         f"""
 phases:
   - id: phase2-tracker-alignment
     spec_file: workflow/phases/phase2-tracker-alignment.md
     type: agent
-    agent: echelon-tracker
+    agent: echelon.tracker
     transitions:
       - to: done
         condition: "{workflow_condition}"
@@ -44,7 +35,7 @@ phases:
 """.lstrip(),
         encoding="utf-8",
     )
-    (root / "extension/workflow/phases/phase2-tracker-alignment.md").write_text(
+    (root / "runtime/workflow/phases/phase2-tracker-alignment.md").write_text(
         f"""
 ### Routing Verdict Contract -- MANDATORY
 
@@ -57,11 +48,11 @@ TRACKER must emit one of these canonical `echelon_result.verdict` values:
 
 ### Output Filename -- MANDATORY
 
-Use `extension/templates/intent-alignment-check-template.md`.
+Use `.echelon/runtime/templates/intent-alignment-check-template.md`.
 """.lstrip(),
         encoding="utf-8",
     )
-    (root / "extension/agents/control/tracker.md").write_text(
+    (root / "prosaic/subagents/echelon.tracker.md").write_text(
         f"""
 ## Output Block
 
@@ -70,7 +61,7 @@ echelon_result:
 """.lstrip(),
         encoding="utf-8",
     )
-    (root / "extension/templates/intent-alignment-check-template.md").write_text(
+    (root / "runtime/templates/intent-alignment-check-template.md").write_text(
         "- Verdict: ALIGNED/DRIFT\n",
         encoding="utf-8",
     )

@@ -20,14 +20,11 @@ class VerdictContractFinding:
 
 def validate_verdict_contracts(repo_root: Path) -> list[VerdictContractFinding]:
     """Validate explicit routing verdict contracts against workflow and prompts."""
-    extension_root = repo_root / "extension"
+    runtime_root = repo_root / "runtime"
+    subagents_dir = repo_root / "prosaic" / "subagents"
     definition = yaml.safe_load(
-        (extension_root / "workflow/definition.yaml").read_text(encoding="utf-8")
+        (runtime_root / "workflow/definition.yaml").read_text(encoding="utf-8")
     )
-    extension_yml = yaml.safe_load(
-        (extension_root / "extension.yml").read_text(encoding="utf-8")
-    )
-    agent_registry = _agent_registry(extension_yml)
 
     findings: list[VerdictContractFinding] = []
     for phase in definition.get("phases") or []:
@@ -36,7 +33,7 @@ def validate_verdict_contracts(repo_root: Path) -> list[VerdictContractFinding]:
         spec_file = phase.get("spec_file")
         if not isinstance(spec_file, str):
             continue
-        spec_path = extension_root / spec_file
+        spec_path = runtime_root / spec_file
         contract = _phase_contract(spec_path)
         if contract is None:
             continue
@@ -55,7 +52,7 @@ def validate_verdict_contracts(repo_root: Path) -> list[VerdictContractFinding]:
         if unexpected:
             findings.append(
                 VerdictContractFinding(
-                    path=extension_root / "workflow/definition.yaml",
+                    path=runtime_root / "workflow/definition.yaml",
                     line=1,
                     phase_id=phase_id,
                     reason="workflow_unexpected_verdict",
@@ -67,7 +64,7 @@ def validate_verdict_contracts(repo_root: Path) -> list[VerdictContractFinding]:
         if missing:
             findings.append(
                 VerdictContractFinding(
-                    path=extension_root / "workflow/definition.yaml",
+                    path=runtime_root / "workflow/definition.yaml",
                     line=1,
                     phase_id=phase_id,
                     reason="workflow_missing_canonical_verdict",
@@ -75,7 +72,7 @@ def validate_verdict_contracts(repo_root: Path) -> list[VerdictContractFinding]:
                 )
             )
 
-        for prompt_path in _related_prompt_paths(extension_root, phase, spec_path, agent_registry):
+        for prompt_path in _related_prompt_paths(runtime_root, subagents_dir, phase, spec_path):
             findings.extend(_prompt_findings(prompt_path, phase_id, contract))
 
     return findings
@@ -135,41 +132,20 @@ def _condition_verdict_values(condition: str) -> set[str]:
 
 
 def _related_prompt_paths(
-    extension_root: Path,
+    runtime_root: Path,
+    subagents_dir: Path,
     phase: dict[str, Any],
     spec_path: Path,
-    agent_registry: dict[str, Path],
 ) -> list[Path]:
     paths: list[Path] = []
     agent_id = phase.get("agent")
     if isinstance(agent_id, str):
-        agent_path = agent_registry.get(_manifest_agent_name(agent_id))
-        if agent_path is not None:
-            paths.append(extension_root / agent_path)
+        paths.append(subagents_dir / f"{agent_id}.md")
 
     text = spec_path.read_text(encoding="utf-8")
-    for rel in re.findall(r"extension/(templates/[^\s`,)]+\.md)", text):
-        paths.append(extension_root / rel)
+    for rel in re.findall(r"\.echelon/runtime/(templates/[^\s`,)]+\.md)", text):
+        paths.append(runtime_root / rel)
     return [path for path in paths if path.exists()]
-
-
-def _agent_registry(extension_yml: dict[str, Any]) -> dict[str, Path]:
-    registry: dict[str, Path] = {}
-    commands = (extension_yml.get("provides") or {}).get("commands") or []
-    for command in commands:
-        if not isinstance(command, dict):
-            continue
-        name = command.get("name")
-        file_ref = command.get("file")
-        if isinstance(name, str) and isinstance(file_ref, str):
-            registry[name] = Path(file_ref)
-    return registry
-
-
-def _manifest_agent_name(agent_id: str) -> str:
-    if agent_id.startswith("echelon-"):
-        return "echelon." + agent_id.removeprefix("echelon-")
-    return agent_id.replace("-", ".")
 
 
 def _prompt_findings(
