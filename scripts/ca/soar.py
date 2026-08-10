@@ -105,7 +105,7 @@ SEED_RULES: list[dict] = [
 # ---------------------------------------------------------------------------
 
 def _repo_root() -> str:
-    """Walk up from CWD (then __file__) until .git or .specify directory is found.
+    """Walk up from CWD (then __file__) until .git or .echelon is found.
 
     CWD is checked first so that tests using monkeypatch.chdir(tmp_path) get
     isolation without environment patching.
@@ -115,7 +115,7 @@ def _repo_root() -> str:
         while path != os.path.dirname(path):
             if os.path.isdir(os.path.join(path, ".git")):
                 return path
-            if os.path.isdir(os.path.join(path, ".specify")):
+            if os.path.isdir(os.path.join(path, ".echelon")):
                 return path
             path = os.path.dirname(path)
     return os.path.dirname(os.path.abspath(__file__))
@@ -170,12 +170,12 @@ def _episodic_index_path(run_id: str) -> str:
 
 
 def _load_config() -> dict:
-    """Read ca_overlays.soar.chunking_enabled from echelon-config.yml.
+    """Read ca_overlays.soar.chunking_enabled from .echelon/config.yml.
 
     Returns {"chunking_enabled": False} when key or section absent.
     No YAML library — regex-based parsing.
     """
-    config_path = os.path.join(_repo_root(), ".specify", "extensions", "echelon", "echelon-config.yml")
+    config_path = os.path.join(_repo_root(), ".echelon", "config.yml")
     if not os.path.exists(config_path):
         return {"chunking_enabled": False}
     try:

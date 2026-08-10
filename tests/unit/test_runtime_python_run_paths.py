@@ -26,3 +26,24 @@ def test_run_id_resolvers_do_not_discover_legacy_squad_directory(tmp_path, monke
 
     assert ns003_agm._default_run_dir("spec-new") == tmp_path / "runs" / "spec-new"
     assert Path(soar._run_dir("spec-new")) == tmp_path / "runs" / "spec-new"
+
+
+def test_soar_loads_chunking_from_canonical_workspace_config(tmp_path, monkeypatch):
+    config = tmp_path / ".echelon" / "config.yml"
+    config.parent.mkdir()
+    config.write_text(
+        "ca_overlays:\n  soar:\n    chunking_enabled: true\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(soar, "_repo_root", lambda: str(tmp_path))
+
+    assert soar._load_config() == {"chunking_enabled": True}
+
+
+def test_soar_discovers_workspace_from_echelon_directory(tmp_path, monkeypatch):
+    (tmp_path / ".echelon").mkdir()
+    nested = tmp_path / "sources" / "api"
+    nested.mkdir(parents=True)
+    monkeypatch.chdir(nested)
+
+    assert Path(soar._repo_root()) == tmp_path
