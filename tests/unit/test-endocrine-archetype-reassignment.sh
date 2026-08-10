@@ -6,7 +6,7 @@
 set -uo pipefail
 
 REPO_ROOT="$(CDPATH='' cd "$(dirname "$0")/../.." && pwd)"
-ENDOCRINE="$REPO_ROOT/extension/scripts/bash/endocrine.sh"
+ENDOCRINE="$REPO_ROOT/runtime/scripts/bash/endocrine.sh"
 
 if [[ ! -f "$ENDOCRINE" ]]; then
   echo "FAIL: $ENDOCRINE not found"

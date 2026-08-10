@@ -7,14 +7,15 @@
 set -uo pipefail
 
 REPO_ROOT="$(CDPATH='' cd "$(dirname "$0")/../.." && pwd)"
-ENDOCRINE="$REPO_ROOT/extension/scripts/bash/endocrine.sh"
-CONFIG="$REPO_ROOT/extension/echelon-config.yml"
+ENDOCRINE="$REPO_ROOT/runtime/scripts/bash/endocrine.sh"
+CONFIG="$REPO_ROOT/runtime/config-template.yml"
 
 # Isolate state in a temp file so we don't clobber any live state.
 TMP_STATE=$(mktemp -t endocrine-baselines-state.XXXXXX.json)
 trap 'rm -f "$TMP_STATE"' EXIT
 echo "{}" > "$TMP_STATE"
 export ENDOCRINE_STATE_FILE="$TMP_STATE"
+export ENDOCRINE_CONFIG_FILE="$CONFIG"
 
 bash "$ENDOCRINE" init >/dev/null 2>&1 || { echo "FAIL: endocrine.sh init failed"; exit 1; }
 

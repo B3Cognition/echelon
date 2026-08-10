@@ -7,7 +7,7 @@
 set -uo pipefail
 
 REPO_ROOT="$(CDPATH='' cd "$(dirname "$0")/../.." && pwd)"
-ENDOCRINE="$REPO_ROOT/extension/scripts/bash/endocrine.sh"
+ENDOCRINE="$REPO_ROOT/runtime/scripts/bash/endocrine.sh"
 
 # Use ENDOCRINE_STATE_FILE to redirect state to a temp file — endocrine.sh
 # respects this env var (see _endocrine_find_repo_root region of the script).
@@ -15,7 +15,7 @@ TMP_STATE=$(mktemp -t endocrine-multiline-state.XXXXXX.json)
 trap 'rm -f "$TMP_STATE"' EXIT
 echo "{}" > "$TMP_STATE"
 export ENDOCRINE_STATE_FILE="$TMP_STATE"
-export ENDOCRINE_CONFIG_FILE="$REPO_ROOT/extension/echelon-config.yml"
+export ENDOCRINE_CONFIG_FILE="$REPO_ROOT/runtime/echelon-config.yml"
 
 # Seed all 41 agents' hormones from baselines.
 bash "$ENDOCRINE" init >/dev/null 2>&1 || { echo "FAIL: endocrine.sh init failed"; exit 1; }

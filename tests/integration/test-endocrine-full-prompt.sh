@@ -4,7 +4,7 @@ set -uo pipefail
 export LC_ALL=C
 
 REPO_ROOT="$(CDPATH='' cd "$(dirname "$0")/../.." && pwd)"
-SCRIPTS="$REPO_ROOT/extension/scripts/bash"
+SCRIPTS="$REPO_ROOT/runtime/scripts/bash"
 ENDOCRINE="$SCRIPTS/endocrine.sh"
 
 TMPDIR_TEST=$(mktemp -d)
@@ -14,7 +14,7 @@ echo '{}' > "$TEST_SQUAD_DIR/state.json"
 
 export ENDOCRINE_SQUAD_DIR="$TEST_SQUAD_DIR"
 export ENDOCRINE_STATE_FILE="$TEST_SQUAD_DIR/state.json"
-export ENDOCRINE_CONFIG_FILE="$REPO_ROOT/extension/echelon-config.yml"
+export ENDOCRINE_CONFIG_FILE="$REPO_ROOT/runtime/echelon-config.yml"
 
 pass=0
 fail=0
