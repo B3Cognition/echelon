@@ -25,29 +25,28 @@ set -euo pipefail
 
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 
-_resolve_squad_dir() {
-  local base current_file run_id
+_resolve_run_dir() {
+  local current_file run_id
   if [[ -n "${ECHELON_SQUAD_DIR:-}" ]]; then
     echo "$ECHELON_SQUAD_DIR"
     return 0
   fi
 
-  for base in runs squad; do
-    current_file="${REPO_ROOT}/${base}/.current"
-    if [[ -f "$current_file" ]]; then
-      run_id=$(tr -d '[:space:]' < "$current_file")
-      if [[ -n "$run_id" && -d "${REPO_ROOT}/${base}/${run_id}" ]]; then
-        echo "${REPO_ROOT}/${base}/${run_id}"
-        return 0
-      fi
+  current_file="${REPO_ROOT}/runs/.current"
+  if [[ -f "$current_file" ]]; then
+    run_id=$(tr -d '[:space:]' < "$current_file")
+    if [[ -n "$run_id" && -d "${REPO_ROOT}/runs/${run_id}" ]]; then
+      echo "${REPO_ROOT}/runs/${run_id}"
+      return 0
     fi
-  done
+  fi
 
-  echo "${REPO_ROOT}/.specify/squad"
+  echo "ERROR: No active Echelon run; expected runs/.current to name an existing run." >&2
+  return 1
 }
 
-SQUAD_DIR="$(_resolve_squad_dir)"
-PAYLOAD_FILE="${ECHELON_LIDA_PAYLOAD_FILE:-$SQUAD_DIR/lida-payload.json}"
+RUN_DIR="$(_resolve_run_dir)"
+PAYLOAD_FILE="${ECHELON_LIDA_PAYLOAD_FILE:-$RUN_DIR/lida-payload.json}"
 
 subcommand="${1:-}"
 

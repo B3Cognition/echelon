@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression tests for small runtime utilities using active squad dirs.
+# Regression tests for small runtime utilities using active run directories.
 set -uo pipefail
 
 REPO_ROOT="$(CDPATH='' cd "$(dirname "$0")/../.." && pwd)"
@@ -21,17 +21,17 @@ ok_result() { echo "OK"; }
 fail_result() { printf 'FAIL:%s' "$*"; }
 
 tmpdir="$(mktemp -d)"
-squad_dir="$tmpdir/runs/run-runtime"
-mkdir -p "$squad_dir"
+run_dir="$tmpdir/runs/run-runtime"
+mkdir -p "$run_dir"
 
-ECHELON_SQUAD_DIR="$squad_dir" bash "$REPO_ROOT/scripts/bash/lida_broadcast.sh" broadcast '{"message":"ok"}'
-assert "lida_broadcast writes payload under active squad dir" "$(
-  [[ -f "$squad_dir/lida-payload.json" ]] && grep -q '"message":"ok"' "$squad_dir/lida-payload.json" && ok_result || fail_result "payload missing"
+ECHELON_SQUAD_DIR="$run_dir" bash "$REPO_ROOT/scripts/bash/lida_broadcast.sh" broadcast '{"message":"ok"}'
+assert "lida_broadcast writes payload under active run directory" "$(
+  [[ -f "$run_dir/lida-payload.json" ]] && grep -q '"message":"ok"' "$run_dir/lida-payload.json" && ok_result || fail_result "payload missing"
 )"
 
-ECHELON_SQUAD_DIR="$squad_dir" bash "$REPO_ROOT/scripts/bash/lida_broadcast.sh" cleanup run-runtime
-assert "lida_broadcast cleanup removes active squad payload" "$(
-  [[ ! -f "$squad_dir/lida-payload.json" ]] && ok_result || fail_result "payload remains"
+ECHELON_SQUAD_DIR="$run_dir" bash "$REPO_ROOT/scripts/bash/lida_broadcast.sh" cleanup run-runtime
+assert "lida_broadcast cleanup removes active run payload" "$(
+  [[ ! -f "$run_dir/lida-payload.json" ]] && ok_result || fail_result "payload remains"
 )"
 
 rm -rf "$tmpdir"

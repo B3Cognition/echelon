@@ -16,31 +16,29 @@ export LC_ALL=C
 # ---------------------------------------------------------------------------
 # Defaults
 # ---------------------------------------------------------------------------
-SCRIPT_DIR="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(CDPATH='' cd "$SCRIPT_DIR/../.." && pwd)"
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 
-_resolve_squad_dir() {
-  local base current_file run_id
+_resolve_run_dir() {
+  local current_file run_id
   if [[ -n "${ECHELON_SQUAD_DIR:-}" ]]; then
     echo "$ECHELON_SQUAD_DIR"
     return 0
   fi
 
-  for base in runs squad; do
-    current_file="$REPO_ROOT/$base/.current"
-    if [[ -f "$current_file" ]]; then
-      run_id=$(tr -d '[:space:]' < "$current_file")
-      if [[ -n "$run_id" && -d "$REPO_ROOT/$base/$run_id" ]]; then
-        echo "$REPO_ROOT/$base/$run_id"
-        return 0
-      fi
+  current_file="$REPO_ROOT/runs/.current"
+  if [[ -f "$current_file" ]]; then
+    run_id=$(tr -d '[:space:]' < "$current_file")
+    if [[ -n "$run_id" && -d "$REPO_ROOT/runs/$run_id" ]]; then
+      echo "$REPO_ROOT/runs/$run_id"
+      return 0
     fi
-  done
+  fi
 
-  echo "$REPO_ROOT/.specify/squad"
+  echo "ERROR: No active Echelon run; pass --state-dir or create runs/.current." >&2
+  return 1
 }
 
-STATE_DIR="$(_resolve_squad_dir)"
+STATE_DIR=""
 MIN_RUNS=10
 OUTPUT_FILE=""
 VERBOSE=false
@@ -57,7 +55,7 @@ while [[ $# -gt 0 ]]; do
     -h|--help)
       echo "Usage: calibrate-endocrine.sh [--state-dir DIR] [--min-runs N] [--output FILE]"
       echo ""
-      echo "Analyzes hormone_history from completed squad runs to suggest baseline adjustments."
+      echo "Analyzes hormone_history from completed Echelon runs to suggest baseline adjustments."
       echo ""
       echo "Options:"
       echo "  --state-dir DIR    Directory containing state.json and backups/ (default: active run dir)"
@@ -70,6 +68,10 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
+
+if [[ -z "$STATE_DIR" ]]; then
+  STATE_DIR="$(_resolve_run_dir)"
+fi
 
 # ---------------------------------------------------------------------------
 # Dependency check
@@ -164,10 +166,10 @@ generate_report() {
     echo "## Insufficient Data"
     echo ""
     echo "Only $RUN_COUNT runs found with hormone data. Minimum required: $MIN_RUNS."
-    echo "Continue running squad sessions and re-run this script after $MIN_RUNS total runs."
+    echo "Continue running Echelon sessions and re-run this script after $MIN_RUNS total runs."
     echo ""
     echo "### What to do next"
-    echo "1. Run $((MIN_RUNS - RUN_COUNT)) more squad sessions with \`endocrine.enabled: true\` in echelon-config.yml"
+    echo "1. Run $((MIN_RUNS - RUN_COUNT)) more Echelon sessions with \`endocrine.enabled: true\` in .echelon/config.yml"
     echo "2. Re-run: \`scripts/bash/calibrate-endocrine.sh --state-dir $STATE_DIR\`"
     return
   fi
@@ -234,7 +236,7 @@ generate_report() {
   echo ""
   echo "### Recommended Baseline Adjustments"
   echo ""
-  echo "Apply these changes to \`echelon-config.yml\` under \`endocrine.baselines\`:"
+  echo "Apply these changes to \`.echelon/config.yml\` under \`endocrine.baselines\`:"
   echo ""
   echo "\`\`\`yaml"
   echo "endocrine:"

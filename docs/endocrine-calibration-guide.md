@@ -10,7 +10,7 @@ Phase 1 uses adrenaline only. Phases 2-4 add dopamine, cortisol, serotonin, oxyt
 
 ## How to Enable
 
-In `echelon-config.yml`, set:
+In `.echelon/config.yml`, set:
 
 ```yaml
 endocrine:
@@ -30,10 +30,10 @@ Calibration collects data across multiple runs and identifies which hormone leve
 
 ### Step 1: Collect Data (10+ runs)
 
-Run at least 10 full squad sessions with `endocrine.enabled: true`. Each run records hormone events in `state.json` under `hormone_history`. The state-backup system preserves these across phase transitions.
+Run at least 10 full Echelon sessions with `endocrine.enabled: true`. Each run records hormone events in `state.json` under `hormone_history`. The state-backup system preserves these across phase transitions.
 
 ```bash
-# Normal squad runs — just ensure endocrine is enabled
+# Normal Echelon runs - just ensure endocrine is enabled
 # The system automatically records hormone events
 ```
 
@@ -46,7 +46,7 @@ After 10+ runs:
 scripts/bash/calibrate-endocrine.sh
 
 # With custom state directory
-scripts/bash/calibrate-endocrine.sh --state-dir squad/<run-id>
+scripts/bash/calibrate-endocrine.sh --state-dir runs/<run-id>
 
 # Save report to file
 scripts/bash/calibrate-endocrine.sh --output calibration-report.md
@@ -87,11 +87,11 @@ Overall pass/fail counts and rates. If overall pass rate is below 70%, consider 
 
 #### Recommended Baseline Adjustments
 
-Copy-pasteable YAML snippet for `echelon-config.yml`. Review before applying — these are suggestions, not commands.
+Copy-pasteable YAML snippet for `.echelon/config.yml`. Review before applying - these are suggestions, not commands.
 
 ### Step 4: Update Baselines
 
-Edit `echelon-config.yml` and update the archetype baselines:
+Edit `.echelon/config.yml` and update the archetype baselines:
 
 ```yaml
 endocrine:
@@ -118,7 +118,7 @@ Run 3-5 more sessions with the new baselines and compare gate pass rates. If pas
 ## Troubleshooting
 
 **Q: The script says "No state files found"**
-A: Ensure `endocrine.enabled: true` is set and you have run at least one session. Check that the active run's `state.json` exists (`runs/.current` or `squad/.current` points to the run directory).
+A: Ensure `endocrine.enabled: true` is set and you have run at least one session. Check that the active run's `state.json` exists (`runs/.current` points to the run directory).
 
 **Q: All values show N/A**
 A: The hormone_history may not be recording events. Verify that `endocrine.sh log_hormone_event` is being called during runs (check COMMANDER dispatch logs).
