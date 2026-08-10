@@ -1457,24 +1457,17 @@ class PhaseExecutor(ABC):
         return detach_squad_agent_result(raw_result)
 
     def _project_config_path(self) -> Path:
-        canonical = self._project_root / ".echelon" / "config.yml"
-        if canonical.exists():
-            return canonical
-        return self._ext_dir / "echelon-config.yml"
+        return self._project_root / ".echelon" / "config.yml"
 
     def _quality_gate_thresholds(self) -> dict:
         return resolve_quality_gate_thresholds(
             self._project_root,
-            fallback_config_path=self._ext_dir / "echelon-config.yml",
         )
 
     def _resolved_config(self) -> dict[str, object]:
         from harness.config import get_full_resolved_config
 
-        return get_full_resolved_config(
-            self._project_root,
-            fallback_config_path=self._ext_dir / "echelon-config.yml",
-        )
+        return get_full_resolved_config(self._project_root)
 
     def _normalize_why_result_quality_scores(
         self,
@@ -2366,10 +2359,7 @@ class DeterministicLexiconExecutor(PhaseExecutor):
             )
 
         state = state_store.load()
-        config = get_full_resolved_config(
-            self._project_root,
-            fallback_config_path=self._ext_dir / "echelon-config.yml",
-        )
+        config = get_full_resolved_config(self._project_root)
         if artifact == "spec":
             gate = run_spec_lexicon_gate(
                 project_root=self._project_root,
@@ -2486,12 +2476,7 @@ class DeterministicStructuralExecutor(PhaseExecutor):
                     artifact_key=artifact,
                     spec_dir=spec_dir,
                     extension_root=self._ext_dir,
-                    governance_config=get_full_resolved_config(
-                        self._project_root,
-                        fallback_config_path=(
-                            self._ext_dir / "echelon-config.yml"
-                        ),
-                    ),
+                    governance_config=get_full_resolved_config(self._project_root),
                     previous_attempts=state.get(attempts_key, 0),
                     iteration=state.get("iteration", 0),
                     max_iterations=state.get("max_iterations", 0),

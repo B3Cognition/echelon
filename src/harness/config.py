@@ -93,8 +93,6 @@ SEMVER_RANGE_PATTERN = re.compile(
 
 CANONICAL_CONFIG_PATH = Path(".echelon/config.yml")
 CANONICAL_LOCAL_CONFIG_PATH = Path(".echelon/local.yml")
-LEGACY_CONFIG_PATH = Path(".specify/extensions/echelon/echelon-config.yml")
-LEGACY_LOCAL_CONFIG_PATH = Path(".specify/extensions/echelon/local-config.yml")
 
 
 # ---------------------------------------------------------------------------
@@ -759,8 +757,6 @@ def load_config(
 
 def get_full_resolved_config(
     project_root: Optional[Path] = None,
-    *,
-    fallback_config_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Return the full resolved config dict for all sections (not just harness:).
 
@@ -771,7 +767,4 @@ def get_full_resolved_config(
     if project_root is None:
         project_root = Path.cwd()
 
-    resolved: Dict[str, Any] = {}
-    if fallback_config_path is not None:
-        resolved = _merge(resolved, _load_yaml_file(fallback_config_path))
-    return _merge(resolved, _get_full_merged_config(project_root))
+    return _get_full_merged_config(project_root)

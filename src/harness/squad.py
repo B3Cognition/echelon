@@ -1056,15 +1056,11 @@ class SquadController:
             self._deferred_provider_usage = previous
 
     def _project_config_path(self) -> Path:
-        canonical = self._project_root / ".echelon" / "config.yml"
-        if canonical.exists():
-            return canonical
-        return self._ext_dir / "echelon-config.yml"
+        return self._project_root / ".echelon" / "config.yml"
 
     def _quality_gate_thresholds(self) -> dict:
         return resolve_quality_gate_thresholds(
             self._project_root,
-            fallback_config_path=self._ext_dir / "echelon-config.yml",
         )
 
     def _normalize_why_result_quality_scores(
@@ -8271,10 +8267,7 @@ class SquadController:
         try:
             from harness.config import get_full_resolved_config
 
-            data = get_full_resolved_config(
-                self._project_root,
-                fallback_config_path=self._ext_dir / "echelon-config.yml",
-            )
+            data = get_full_resolved_config(self._project_root)
             block = data.get("lexicon_gate")
             if isinstance(block, dict):
                 resolved_gate = dict(block)
@@ -8372,10 +8365,7 @@ class SquadController:
         try:
             from harness.config import get_full_resolved_config
 
-            data = get_full_resolved_config(
-                self._project_root,
-                fallback_config_path=self._ext_dir / "echelon-config.yml",
-            )
+            data = get_full_resolved_config(self._project_root)
             block = data.get("governance")
             if isinstance(block, dict):
                 cfg = {"governance": block}

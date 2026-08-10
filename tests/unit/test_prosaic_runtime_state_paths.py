@@ -74,6 +74,26 @@ def test_runtime_workflow_does_not_describe_spec_kit_fallbacks() -> None:
     assert not findings, "\n".join(findings)
 
 
+def test_active_harness_config_resolution_does_not_use_legacy_extension_config() -> None:
+    findings = []
+    active_modules = (
+        ROOT / "src" / "harness" / "config.py",
+        ROOT / "src" / "harness" / "quality_scores.py",
+        ROOT / "src" / "harness" / "squad.py",
+        ROOT / "src" / "harness" / "squad_executors.py",
+    )
+    for module in active_modules:
+        for line_number, line in enumerate(
+            module.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            if "echelon-config.yml" in line:
+                findings.append(
+                    f"{module.relative_to(ROOT)}:{line_number}: {line.strip()}"
+                )
+
+    assert not findings, "\n".join(findings)
+
+
 def test_runtime_uses_echelon_owned_standalone_re_state() -> None:
     config = (RUNTIME / "config-template.yml").read_text(encoding="utf-8")
     discovery = (RUNTIME / "scripts" / "bash" / "re" / "discover-repos.sh").read_text(

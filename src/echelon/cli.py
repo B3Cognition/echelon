@@ -2183,7 +2183,6 @@ def _cmd_harness_run(
         print(
             "✗ Harness not initialised for this project.\n"
             f"  Expected: {echelon_yml}\n"
-            f"  Legacy fallback: {config_root / '.specify' / 'extensions' / 'echelon' / 'echelon-config.yml'}\n"
             "  Fix: run 'echelon delivery init' first, or add 'targets:' to your spec.",
             file=sys.stderr,
         )
@@ -2751,7 +2750,6 @@ def _cmd_harness_resume(
         print(
             "✗ Harness not initialised for this project.\n"
             f"  Expected: {echelon_yml}\n"
-            f"  Legacy fallback: {config_root / '.specify' / 'extensions' / 'echelon' / 'echelon-config.yml'}\n"
             "  Fix: run 'echelon delivery init' first.",
             file=sys.stderr,
         )

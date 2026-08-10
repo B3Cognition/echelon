@@ -54,8 +54,7 @@ console = Console()
 # Quality Gates (Research-Backed Thresholds)
 # Based on ISO 29148:2018, IEEE 830-1998, ISO 25010:2023
 # These are CLI-standalone defaults. When run under an echelon project,
-# echelon-config.yml quality_gates section overrides these values — it is
-# the single source of truth. Keep these in sync with extension/echelon-config.yml.
+# .echelon/config.yml quality_gates override these values.
 DEFAULT_QUALITY_GATES = dict(SERVICE_DEFAULT_QUALITY_GATES)
 QUALITY_GATES = dict(DEFAULT_QUALITY_GATES)
 
@@ -65,8 +64,6 @@ def _quality_gate_project_root(spec_path: Path) -> Path | None:
     from harness.config import (
         CANONICAL_CONFIG_PATH,
         CANONICAL_LOCAL_CONFIG_PATH,
-        LEGACY_CONFIG_PATH,
-        LEGACY_LOCAL_CONFIG_PATH,
     )
 
     start = spec_path.resolve()
@@ -75,8 +72,6 @@ def _quality_gate_project_root(spec_path: Path) -> Path | None:
     markers = (
         CANONICAL_CONFIG_PATH,
         CANONICAL_LOCAL_CONFIG_PATH,
-        LEGACY_CONFIG_PATH,
-        LEGACY_LOCAL_CONFIG_PATH,
     )
     for candidate in (start, *start.parents):
         if any((candidate / marker).exists() for marker in markers):

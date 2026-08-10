@@ -8,9 +8,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_message
-from harness.config import CANONICAL_CONFIG_PATH, LEGACY_CONFIG_PATH
+from harness.config import CANONICAL_CONFIG_PATH
 from harness.re_registry import ensure_re_layout
 from echelon.workspace_model import discover_workspace
+
+
+LEGACY_CONFIG_PATH = Path(".specify/extensions/echelon/echelon-config.yml")
 
 
 class MigrationError(RuntimeError):

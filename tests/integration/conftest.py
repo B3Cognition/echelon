@@ -94,16 +94,18 @@ def bare_repo(tmp_path):
     return bare_dir
 
 
-def _write_minimal_runtime_extension(project_root):
-    """Create the minimum local Echelon extension GitOps worktree sync requires."""
-    source = project_root / ".specify" / "extensions" / "echelon"
-    (source / "agents" / "control").mkdir(parents=True)
-    (source / "workflow").mkdir(parents=True)
-    (source / "agents" / "control" / "commander.md").write_text(
+def _write_minimal_prosaic_runtime(project_root):
+    """Create the minimum deployed Prosaic/runtime bundle GitOps requires."""
+    prose = project_root / ".echelon" / "prosaic"
+    runtime = project_root / ".echelon" / "runtime"
+    (prose / "commands").mkdir(parents=True)
+    (prose / "subagents").mkdir(parents=True)
+    (runtime / "workflow").mkdir(parents=True)
+    (prose / "subagents" / "echelon.commander.md").write_text(
         "# Commander\n",
         encoding="utf-8",
     )
-    (source / "workflow" / "definition.yaml").write_text(
+    (runtime / "workflow" / "definition.yaml").write_text(
         "phases: {}\n",
         encoding="utf-8",
     )
@@ -114,7 +116,7 @@ def harness_config(tmp_path, bare_repo):
     """Create a minimal HarnessConfig for testing."""
     from harness.config import HarnessConfig
 
-    _write_minimal_runtime_extension(tmp_path)
+    _write_minimal_prosaic_runtime(tmp_path)
 
     return HarnessConfig(
         target_repo=str(bare_repo),

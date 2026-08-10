@@ -52,14 +52,16 @@ class TestCreateWorktree:
             text=True,
             check=True,
         )
-        source = tmp_path / ".specify" / "extensions" / "echelon"
-        (source / "agents" / "control").mkdir(parents=True)
-        (source / "workflow").mkdir()
-        (source / "agents" / "control" / "commander.md").write_text(
+        prose = tmp_path / ".echelon" / "prosaic"
+        runtime = tmp_path / ".echelon" / "runtime"
+        (prose / "commands").mkdir(parents=True)
+        (prose / "subagents").mkdir(parents=True)
+        (runtime / "workflow").mkdir(parents=True)
+        (prose / "subagents" / "echelon.commander.md").write_text(
             "# Commander\n",
             encoding="utf-8",
         )
-        (source / "workflow" / "definition.yaml").write_text(
+        (runtime / "workflow" / "definition.yaml").write_text(
             "phases: {}\n",
             encoding="utf-8",
         )

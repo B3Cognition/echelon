@@ -34,7 +34,6 @@ def resolve_quality_gate_thresholds(
     project_root: Path | None,
     *,
     defaults: dict[str, Any] | None = None,
-    fallback_config_path: Path | None = None,
 ) -> dict[str, float]:
     """Resolve numeric quality gates through the project config cascade."""
     resolved: dict[str, float] = {
@@ -42,24 +41,6 @@ def resolve_quality_gate_thresholds(
         for key, value in (defaults or {}).items()
         if key in QUALITY_GATE_SCORE_KEYS and isinstance(value, (int, float))
     }
-
-    if fallback_config_path is not None and fallback_config_path.exists():
-        try:
-            import yaml
-
-            payload = yaml.safe_load(fallback_config_path.read_text()) or {}
-            gates = payload.get("quality_gates")
-            if isinstance(gates, dict):
-                resolved.update(
-                    {
-                        key: float(value)
-                        for key, value in gates.items()
-                        if key in QUALITY_GATE_SCORE_KEYS
-                        and isinstance(value, (int, float))
-                    }
-                )
-        except Exception:
-            pass
 
     if project_root is not None:
         try:

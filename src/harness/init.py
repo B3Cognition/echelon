@@ -32,7 +32,6 @@ except ImportError:
 from harness.app_runtime_detection import AppRuntimeDetectionResult, detect_app_runtime
 from harness.config import (
     CANONICAL_CONFIG_PATH,
-    LEGACY_CONFIG_PATH,
     HarnessConfig,
     VALID_CONTAINER_CLIS,
 )
@@ -64,7 +63,7 @@ def _write_app_runtime_detection(
     config_file: Path,
     result: AppRuntimeDetectionResult,
 ) -> AppRuntimeDetectionResult:
-    """Merge harness.app detection metadata into echelon-config.yml."""
+    """Merge harness.app detection metadata into .echelon/config.yml."""
     if yaml is None:
         return result
 
@@ -115,7 +114,7 @@ def _write_verify_command_detection(
     config_file: Path,
     result: VerifyDetectionResult,
 ) -> VerifyDetectionResult:
-    """Merge verify_command detection metadata into echelon-config.yml."""
+    """Merge verify_command detection metadata into .echelon/config.yml."""
     if yaml is None:
         return result
 
@@ -169,7 +168,7 @@ def _write_sandbox_suggestion_report(
     config_file: Path,
     report: SandboxSuggestionReport,
 ) -> SandboxSuggestionReport:
-    """Merge the sandbox suggestion report into echelon-config.yml."""
+    """Merge the sandbox suggestion report into .echelon/config.yml."""
     if yaml is None:
         return report
 
@@ -475,7 +474,7 @@ def init_harness(
         confidence_score=0.0,
         suggested_strategy="Fingerprint worktree unavailable.",
         human_approval_point="Review sandbox settings manually before execution.",
-        fallback_path="Add explicit harness settings to echelon-config.yml.",
+        fallback_path="Add explicit harness settings to .echelon/config.yml.",
     )
 
     try:
@@ -584,7 +583,7 @@ def init_harness(
     }
 
     if yaml is not None:
-        # Merge into existing echelon-config.yml (preserves echelon squad settings)
+        # Merge into the canonical config while preserving squad settings.
         existing["harness"] = harness_data
         config_file.write_text(
             yaml.dump(existing, default_flow_style=False, sort_keys=False),

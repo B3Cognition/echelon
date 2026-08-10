@@ -19,7 +19,7 @@ from echelon.topology_model import (
     normalize_source_path,
     validate_source_id,
 )
-from harness.config import CANONICAL_CONFIG_PATH, LEGACY_CONFIG_PATH
+from harness.config import CANONICAL_CONFIG_PATH
 
 GitRole = Literal["orchestration", "source"]
 WorkspaceConfigProvenance = Literal["canonical", "legacy"]
