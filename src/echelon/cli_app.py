@@ -30,11 +30,6 @@ workspace_sources_app = typer.Typer(
     help="Workspace source root discovery and config sync commands.",
     no_args_is_help=True,
 )
-prosaic_app = typer.Typer(
-    add_completion=False,
-    help="Export Echelon prose as neutral Prosaic artifacts.",
-    no_args_is_help=True,
-)
 phase_app = typer.Typer(
     add_completion=False,
     help="Workflow phase inspection and manual replay commands.",
@@ -170,7 +165,6 @@ admin_app = typer.Typer(
 )
 
 app.add_typer(workspace_app, name="workspace")
-app.add_typer(prosaic_app, name="prosaic")
 app.add_typer(spec_app, name="spec")
 app.add_typer(phase_app, name="phase")
 app.add_typer(benchmark_app, name="benchmark")
@@ -809,40 +803,6 @@ def version_command() -> None:
     legacy_cli = _legacy_cli()
 
     typer.echo(f"echelon {legacy_cli.CLI_VERSION}")
-
-
-@prosaic_app.command("export")
-def prosaic_export(
-    output: Path = typer.Option(
-        Path(".echelon/prosaic"),
-        "--output",
-        help="Destination directory for canonical Prosaic source.",
-    ),
-    extension_root: Optional[Path] = typer.Option(
-        None,
-        "--extension-root",
-        help="Installed Echelon extension root; defaults to .specify/extensions/echelon.",
-    ),
-) -> None:
-    """Normalize registered agent prose into canonical Prosaic source."""
-    from harness.prosaic_export import ProsaicExportError, export_normalized_prose
-
-    project_root = Path.cwd()
-    resolved_extension = extension_root or (project_root / ".specify" / "extensions" / "echelon")
-    resolved_output = output if output.is_absolute() else project_root / output
-    resolved_extension = (
-        resolved_extension
-        if resolved_extension.is_absolute()
-        else project_root / resolved_extension
-    )
-    try:
-        result = export_normalized_prose(resolved_extension, resolved_output)
-    except ProsaicExportError as exc:
-        typer.echo(f"Prosaic export failed: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
-    typer.echo(
-        f"Prosaic export: {result.exported_count} normalized agents -> {result.destination}"
-    )
 
 
 @re_app.command("run")

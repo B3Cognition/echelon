@@ -40,31 +40,11 @@ def test_re_execute_run_routes_to_deterministic_controller(monkeypatch):
 
 
 @pytest.mark.unit
-def test_prosaic_export_routes_explicit_source_and_destination(monkeypatch, tmp_path: Path):
-    from echelon.cli_app import run
-    from harness.prosaic_export import ProsaicExportResult
+def test_cli_does_not_expose_extension_backed_prosaic_export() -> None:
+    result = invoke_help()
 
-    calls: list[tuple[Path, Path]] = []
-
-    def fake_export(extension_root: Path, destination: Path) -> ProsaicExportResult:
-        calls.append((extension_root, destination))
-        return ProsaicExportResult(destination=destination, exported_count=2)
-
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("harness.prosaic_export.export_normalized_prose", fake_export)
-
-    run([
-        "prosaic",
-        "export",
-        "--extension-root",
-        "fixture-extension",
-        "--output",
-        "generated-prosaic",
-    ])
-
-    assert calls == [
-        (tmp_path / "fixture-extension", tmp_path / "generated-prosaic"),
-    ]
+    assert result.exit_code == 0
+    assert "prosaic" not in result.output
 
 
 @pytest.mark.unit
