@@ -112,6 +112,16 @@ def test_active_prompt_assembly_does_not_rewrite_legacy_squad_paths() -> None:
     assert not findings, "\n".join(findings)
 
 
+def test_active_run_lookup_ignores_top_level_squad_storage(tmp_path: Path) -> None:
+    from echelon.cli import _find_current_run_dir
+
+    legacy_run = tmp_path / "squad" / "legacy-run"
+    legacy_run.mkdir(parents=True)
+    (legacy_run.parent / ".current").write_text("legacy-run\n", encoding="utf-8")
+
+    assert _find_current_run_dir(tmp_path) is None
+
+
 def test_runtime_uses_echelon_owned_standalone_re_state() -> None:
     config = (RUNTIME / "config-template.yml").read_text(encoding="utf-8")
     discovery = (RUNTIME / "scripts" / "bash" / "re" / "discover-repos.sh").read_text(

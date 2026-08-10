@@ -22,7 +22,7 @@ from echelon.topology_model import (
 from harness.config import CANONICAL_CONFIG_PATH
 
 GitRole = Literal["orchestration", "source"]
-WorkspaceConfigProvenance = Literal["canonical", "legacy"]
+WorkspaceConfigProvenance = Literal["canonical"]
 WorkspaceDeclarationMode = Literal["explicit", "empty", "implicit"]
 
 _SAFE_SOURCE_ID = re.compile(r"^[A-Za-z0-9._-]+$")

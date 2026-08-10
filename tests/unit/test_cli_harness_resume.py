@@ -44,14 +44,9 @@ def _make_echelon_yml(
     *,
     verify_detection: str = "",
     verify_reason: str = "",
-    canonical: bool = False,
 ) -> Path:
-    """Write a minimal echelon-config.yml."""
-    config_file = (
-        base / ".echelon" / "config.yml"
-        if canonical
-        else base / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
-    )
+    """Write a minimal canonical Echelon config."""
+    config_file = base / ".echelon" / "config.yml"
     config_file.parent.mkdir(parents=True, exist_ok=True)
     content = "autonomy:\n  mode: banzai\nprovider: docker\n"
     if verify_command:
@@ -278,7 +273,7 @@ class TestCmdHarnessResume:
         assert "echelon cicd" not in err
 
     def test_resume_accepts_canonical_workspace_config(self, tmp_path: Path, capsys) -> None:
-        _make_echelon_yml(tmp_path, canonical=True)   # no verify_command
+        _make_echelon_yml(tmp_path)   # no verify_command
         sd = _setup_build(tmp_path, "001")
         _write_state(sd, "001", "default", {
             "status": "blocked", "termination_reason": "verify_command_needed",

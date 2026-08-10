@@ -1137,7 +1137,7 @@ def _require_explicit_source_declarations(
     if declarations is None or declarations.mode != "explicit":
         raise RePublicationValidationError(
             "targeted refresh requires explicitly declared workspace sources; "
-            "declare every source in the canonical or legacy workspace config"
+            "declare every source in .echelon/config.yml"
         )
     return declarations
 

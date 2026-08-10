@@ -936,20 +936,14 @@ def test_targeted_topology_bootstrap_failure_rolls_back_semantic_and_topology(
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("provenance", ("canonical", "legacy"))
 @pytest.mark.parametrize("mutation", ("change", "remove", "replace", "malformed"))
 def test_targeted_publication_rolls_back_when_declarations_change_during_apply(
     tmp_path: Path,
-    provenance: str,
     mutation: str,
 ) -> None:
     from echelon.topology_registry import load_published_topology, load_topology_index
 
-    config = (
-        tmp_path / ".echelon/config.yml"
-        if provenance == "canonical"
-        else tmp_path / ".specify/extensions/echelon/echelon-config.yml"
-    )
+    config = tmp_path / ".echelon/config.yml"
     config.parent.mkdir(parents=True)
     original_config = (
         "workspace:\n  sources:\n    - id: api\n      path: sources/api\n"
@@ -1096,11 +1090,9 @@ def test_targeted_topology_bootstrap_rejects_unusable_sibling_baseline_atomicall
 
 
 @pytest.mark.unit
-def test_targeted_topology_bootstrap_supports_legacy_config_provenance(
+def test_targeted_topology_bootstrap_rejects_legacy_config_provenance(
     tmp_path: Path,
 ) -> None:
-    from echelon.topology_registry import load_topology_index
-
     run_1 = write_valid_re_run(tmp_path, ("api", "web"), run_id="run-1")
     publish_re_run(tmp_path, run_1)
     _finish_run(run_1)
@@ -1126,13 +1118,11 @@ def test_targeted_topology_bootstrap_supports_legacy_config_provenance(
         _topology_summary(analysis),
     )
 
-    result = publish_re_run(tmp_path, run_2, expected_generation=1)
-
-    topology = load_topology_index(tmp_path)
-    assert result.topology_generation == 1
-    assert topology is not None
-    assert set(topology.sources) == {"api", "web"}
-    assert topology.sources["web"].providers["codegraph"].status == "unavailable"
+    with pytest.raises(
+        RePublicationValidationError,
+        match="targeted refresh requires explicitly declared workspace sources",
+    ):
+        publish_re_run(tmp_path, run_2, expected_generation=1)
 
 
 @pytest.mark.unit

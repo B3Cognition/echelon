@@ -377,25 +377,24 @@ def discover_spec_runs(project_root: Path) -> tuple[SpecRun, ...]:
     root = Path(project_root).resolve()
     discovered: list[SpecRun] = []
     seen: set[Path] = set()
-    for base_name in ("runs", "squad"):
-        base = root / base_name
-        if not base.is_dir():
+    base = root / "runs"
+    if not base.is_dir():
+        return ()
+    for candidate in base.iterdir():
+        if not candidate.is_dir() or candidate.name.startswith("."):
             continue
-        for candidate in base.iterdir():
-            if not candidate.is_dir() or candidate.name.startswith("."):
-                continue
-            resolved = candidate.resolve()
-            try:
-                resolved.relative_to(root)
-            except ValueError:
-                continue
-            if resolved in seen:
-                continue
-            run = _read_spec_run(root, candidate)
-            if run is None:
-                continue
-            seen.add(resolved)
-            discovered.append(run)
+        resolved = candidate.resolve()
+        try:
+            resolved.relative_to(root)
+        except ValueError:
+            continue
+        if resolved in seen:
+            continue
+        run = _read_spec_run(root, candidate)
+        if run is None:
+            continue
+        seen.add(resolved)
+        discovered.append(run)
     return tuple(sorted(discovered, key=lambda run: (run.run_dir_name, str(run.run_dir))))
 
 

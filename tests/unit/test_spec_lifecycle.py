@@ -57,17 +57,16 @@ def _write_run(
     return run_dir
 
 
-def test_discover_spec_runs_reads_runs_and_legacy_squad_in_stable_order(
+def test_discover_spec_runs_ignores_legacy_squad_storage(
     tmp_path: Path,
 ) -> None:
-    legacy = _write_run(tmp_path, "legacy-z", base="squad", spec_id="003-legacy")
+    _write_run(tmp_path, "legacy-z", base="squad", spec_id="003-legacy")
     current = _write_run(tmp_path, "spec-a", spec_id="001-spec-a")
 
     runs = discover_spec_runs(tmp_path)
 
-    assert [run.run_dir_name for run in runs] == ["legacy-z", "spec-a"]
-    assert [run.run_dir for run in runs] == [legacy.resolve(), current.resolve()]
-    assert runs[0].spec_dir == (legacy / "specs" / "003-legacy").resolve()
+    assert [run.run_dir_name for run in runs] == ["spec-a"]
+    assert [run.run_dir for run in runs] == [current.resolve()]
 
 
 def test_resolve_spec_run_uses_each_exact_identity(tmp_path: Path) -> None:

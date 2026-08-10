@@ -3246,21 +3246,17 @@ def _setup_run_dir(project_root: Path, run_id: str) -> Path:
 def _find_current_run_dir(project_root: Path) -> Optional[Path]:
     """Return the active run dir from a .current pointer, or the newest run dir.
 
-    Checks runs/.current first (CLI-created layout), then squad/.current
-    (legacy layout).  Falls back to the newest run-* directory with a
-    state.json when no .current pointer exists — handles spec-kit-created
-    runs which don't write the pointer file.
+    Checks runs/.current first, then falls back to the newest run directory
+    with state.json when no pointer exists.
     """
-    for base_dir in [project_root / "runs", project_root / "squad"]:
-        current_file = base_dir / ".current"
-        if not current_file.exists():
-            continue
+    base_dir = project_root / "runs"
+    current_file = base_dir / ".current"
+    if current_file.exists():
         run_id = current_file.read_text().strip()
-        if not run_id:
-            continue
-        run_dir = base_dir / run_id
-        if run_dir.exists():
-            return run_dir
+        if run_id:
+            run_dir = base_dir / run_id
+            if run_dir.exists():
+                return run_dir
     # No .current pointer — fall back to newest run dir that has state.json
     all_runs = _iter_run_dirs(project_root)
     return all_runs[0] if all_runs else None
@@ -4628,7 +4624,7 @@ def _normalize_rewind_spec_dir(project_root: Path, state: dict) -> tuple[Path | 
             candidate = project_root / candidate
         try:
             rel_candidate = candidate.relative_to(project_root)
-            if rel_candidate.parts and rel_candidate.parts[0] in {"runs", "squad"}:
+            if rel_candidate.parts and rel_candidate.parts[0] == "runs":
                 if candidate.exists():
                     return candidate, str(rel_candidate)
         except ValueError:
@@ -4750,12 +4746,10 @@ def _reset_rewind_state(
 
 
 def _iter_run_dirs(project_root: Path) -> list[Path]:
-    """Return all spec run dirs under runs/ (and legacy squad/), sorted newest-first."""
+    """Return all spec run dirs under runs/, sorted newest-first."""
     dirs: list[Path] = []
-    for base_name in ("runs", "squad"):
-        base = project_root / base_name
-        if not base.exists():
-            continue
+    base = project_root / "runs"
+    if base.exists():
         for d in base.iterdir():
             if d.is_dir() and not d.name.startswith(".") and (d / "state.json").exists():
                 dirs.append(d)
@@ -10020,11 +10014,10 @@ def _cmd_re_publish(args: list[str]) -> None:
         print(f"echelon re publish: unsafe run id '{run_id}'", file=sys.stderr)
         raise SystemExit(1)
     project_root = Path.cwd().resolve()
-    candidates = [project_root / "runs" / run_id, project_root / "squad" / run_id]
-    run_dir = next((path for path in candidates if path.is_dir()), None)
-    if run_dir is None:
+    run_dir = project_root / "runs" / run_id
+    if not run_dir.is_dir():
         print(
-            f"echelon re publish: run not found under runs/ or squad/: {run_id}",
+            f"echelon re publish: run not found under runs/: {run_id}",
             file=sys.stderr,
         )
         raise SystemExit(1)
