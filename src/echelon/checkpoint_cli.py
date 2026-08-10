@@ -29,19 +29,16 @@ def _find_spec_dir(project_root: Path, spec: str) -> Path | None:
 
 
 def _active_run_dir(project_root: Path) -> Path | None:
-    for base_dir in (project_root / "runs", project_root / "squad"):
-        current_file = base_dir / ".current"
-        if current_file.exists():
-            run_id = current_file.read_text(encoding="utf-8").strip()
-            run_dir = base_dir / run_id
-            if run_id and run_dir.exists():
-                return run_dir
+    base_dir = project_root / "runs"
+    current_file = base_dir / ".current"
+    if current_file.exists():
+        run_id = current_file.read_text(encoding="utf-8").strip()
+        run_dir = base_dir / run_id
+        if run_id and run_dir.exists():
+            return run_dir
 
     candidates: list[Path] = []
-    for base_name in ("runs", "squad"):
-        base_dir = project_root / base_name
-        if not base_dir.exists():
-            continue
+    if base_dir.exists():
         candidates.extend(
             path
             for path in base_dir.iterdir()

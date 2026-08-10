@@ -687,23 +687,21 @@ def _ensure_eligible_state(state: dict) -> None:
 
 
 def _find_current_run_dir(project_root: Path) -> Path | None:
-    for base_dir in (project_root / "runs", project_root / "squad"):
-        current_file = base_dir / ".current"
-        if not current_file.exists():
-            continue
+    base_dir = project_root / "runs"
+    current_file = base_dir / ".current"
+    if current_file.exists():
         run_id = current_file.read_text(encoding="utf-8").strip()
-        if not run_id:
-            continue
-        run_dir = base_dir / run_id
-        if (run_dir / "state.json").is_file():
-            return run_dir
-    candidates = [
-        path
-        for base_dir in (project_root / "runs", project_root / "squad")
-        if base_dir.exists()
-        for path in base_dir.iterdir()
-        if path.is_dir() and (path / "state.json").is_file()
-    ]
+        if run_id:
+            run_dir = base_dir / run_id
+            if (run_dir / "state.json").is_file():
+                return run_dir
+    candidates = []
+    if base_dir.is_dir():
+        candidates = [
+            path
+            for path in base_dir.iterdir()
+            if path.is_dir() and (path / "state.json").is_file()
+        ]
     if not candidates:
         return None
     return max(candidates, key=lambda path: (path / "state.json").stat().st_mtime)
