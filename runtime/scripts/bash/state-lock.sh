@@ -11,10 +11,10 @@ set -euo pipefail
 SCRIPT_DIR="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(CDPATH='' cd "$SCRIPT_DIR/../../.." && pwd)"
 
-_resolve_squad_dir() {
+_resolve_run_dir() {
   local base current_file run_id
-  if [[ -n "${ECHELON_SQUAD_DIR:-}" ]]; then
-    echo "$ECHELON_SQUAD_DIR"
+  if [[ -n "${ECHELON_RUN_DIR:-}" ]]; then
+    echo "$ECHELON_RUN_DIR"
     return 0
   fi
 
@@ -32,9 +32,9 @@ _resolve_squad_dir() {
   echo "$REPO_ROOT/runs"
 }
 
-SQUAD_DIR="$(_resolve_squad_dir)"
-LOCK_FILE="$SQUAD_DIR/.state.lock"
-LOCK_META="$SQUAD_DIR/.state.lock.meta"
+RUN_DIR="$(_resolve_run_dir)"
+LOCK_FILE="$RUN_DIR/.state.lock"
+LOCK_META="$RUN_DIR/.state.lock.meta"
 
 DEFAULT_TIMEOUT=10  # seconds to wait for lock
 
@@ -62,7 +62,7 @@ do_acquire() {
     echo "ERROR: --run-id required" >&2; exit 1
   fi
 
-  mkdir -p "$SQUAD_DIR"
+  mkdir -p "$RUN_DIR"
 
   # Try to acquire lock with timeout
   local start=$(date +%s)

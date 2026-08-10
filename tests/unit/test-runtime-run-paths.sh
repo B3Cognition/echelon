@@ -24,12 +24,12 @@ tmpdir="$(mktemp -d)"
 run_dir="$tmpdir/runs/run-runtime"
 mkdir -p "$run_dir"
 
-ECHELON_SQUAD_DIR="$run_dir" bash "$REPO_ROOT/scripts/bash/lida_broadcast.sh" broadcast '{"message":"ok"}'
+ECHELON_RUN_DIR="$run_dir" bash "$REPO_ROOT/scripts/bash/lida_broadcast.sh" broadcast '{"message":"ok"}'
 assert "lida_broadcast writes payload under active run directory" "$(
   [[ -f "$run_dir/lida-payload.json" ]] && grep -q '"message":"ok"' "$run_dir/lida-payload.json" && ok_result || fail_result "payload missing"
 )"
 
-ECHELON_SQUAD_DIR="$run_dir" bash "$REPO_ROOT/scripts/bash/lida_broadcast.sh" cleanup run-runtime
+ECHELON_RUN_DIR="$run_dir" bash "$REPO_ROOT/scripts/bash/lida_broadcast.sh" cleanup run-runtime
 assert "lida_broadcast cleanup removes active run payload" "$(
   [[ ! -f "$run_dir/lida-payload.json" ]] && ok_result || fail_result "payload remains"
 )"

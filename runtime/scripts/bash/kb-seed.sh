@@ -7,10 +7,10 @@ REPO_ROOT="$(CDPATH='' cd "$SCRIPT_DIR/../../.." && pwd)"
 KB_DIR="$REPO_ROOT/knowledge-base"
 FIXTURES_DIR="$REPO_ROOT/tests/fixtures/kb/valid-seeds"
 
-_resolve_squad_dir() {
+_resolve_run_dir() {
   local base current_file run_id
-  if [[ -n "${ECHELON_SQUAD_DIR:-}" ]]; then
-    echo "$ECHELON_SQUAD_DIR"
+  if [[ -n "${ECHELON_RUN_DIR:-}" ]]; then
+    echo "$ECHELON_RUN_DIR"
     return 0
   fi
 
@@ -28,8 +28,8 @@ _resolve_squad_dir() {
   echo "$REPO_ROOT/runs"
 }
 
-SQUAD_DIR="$(_resolve_squad_dir)"
-ERROR_LOG="${ECHELON_ERROR_LOG:-$SQUAD_DIR/error.log}"
+RUN_DIR="$(_resolve_run_dir)"
+ERROR_LOG="${ECHELON_ERROR_LOG:-$RUN_DIR/error.log}"
 
 FILES=("calibration-profile.yaml" "estimates-log.yaml" "patterns.yaml" "pitfalls.yaml")
 

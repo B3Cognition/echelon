@@ -139,24 +139,19 @@ def _validate_run_id(run_id: str) -> None:
 
 def _run_dir(run_id: str) -> str:
     root = _repo_root()
-    override = os.environ.get("ECHELON_SQUAD_DIR")
+    override = os.environ.get("ECHELON_RUN_DIR")
     if override:
         return override
 
-    for base in ("runs", "squad"):
-        current = os.path.join(root, base, ".current")
-        if os.path.exists(current):
-            with open(current, encoding="utf-8") as f:
-                current_run_id = f.read().strip()
-            candidate = os.path.join(root, base, current_run_id)
-            if current_run_id and os.path.isdir(candidate):
-                return candidate
-
-        candidate = os.path.join(root, base, run_id)
-        if os.path.isdir(candidate):
+    current = os.path.join(root, "runs", ".current")
+    if os.path.exists(current):
+        with open(current, encoding="utf-8") as f:
+            current_run_id = f.read().strip()
+        candidate = os.path.join(root, "runs", current_run_id)
+        if current_run_id and os.path.isdir(candidate):
             return candidate
 
-    return os.path.join(root, ".specify", "squad")
+    return os.path.join(root, "runs", run_id)
 
 
 def _procedural_path(run_id: str) -> str:

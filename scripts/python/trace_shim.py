@@ -53,9 +53,9 @@ def _iso_now() -> str:
 
 
 def _auto_detect_trace_dir() -> Path:
-    """Auto-detect the squad directory for trace.jsonl."""
-    if os.environ.get("ECHELON_SQUAD_DIR"):
-        return Path(os.environ["ECHELON_SQUAD_DIR"])
+    """Auto-detect the active run directory for trace.jsonl."""
+    if os.environ.get("ECHELON_RUN_DIR"):
+        return Path(os.environ["ECHELON_RUN_DIR"])
 
     script_dir = Path(__file__).resolve().parent
     repo_root = script_dir.parent.parent
@@ -64,15 +64,14 @@ def _auto_detect_trace_dir() -> Path:
             repo_root = candidate_root
             break
 
-    for base in ("runs", "squad"):
-        current = repo_root / base / ".current"
-        if current.exists():
-            run_id = current.read_text(encoding="utf-8").strip()
-            candidate = repo_root / base / run_id
-            if run_id and candidate.is_dir():
-                return candidate
+    current = repo_root / "runs" / ".current"
+    if current.exists():
+        run_id = current.read_text(encoding="utf-8").strip()
+        candidate = repo_root / "runs" / run_id
+        if run_id and candidate.is_dir():
+            return candidate
 
-    return repo_root / ".specify" / "squad"
+    return repo_root / "runs"
 
 
 def _get_trace_path(squad_dir: Path) -> Path:

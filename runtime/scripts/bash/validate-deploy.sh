@@ -7,10 +7,10 @@ set -euo pipefail
 PROJECT_ROOT="${1:?PROJECT_ROOT required as first argument}"
 SCRIPTS_DIR="$(CDPATH='' cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-_resolve_squad_dir() {
+_resolve_run_dir() {
   local base current_file run_id
-  if [ -n "${ECHELON_SQUAD_DIR:-}" ]; then
-    echo "${ECHELON_SQUAD_DIR}"
+  if [ -n "${ECHELON_RUN_DIR:-}" ]; then
+    echo "${ECHELON_RUN_DIR}"
     return 0
   fi
 
@@ -28,8 +28,8 @@ _resolve_squad_dir() {
   echo "${PROJECT_ROOT}/runs"
 }
 
-SQUAD_DIR="$(_resolve_squad_dir)"
-STATE_FILE="${ECHELON_DEPLOY_STATE_FILE:-${SQUAD_DIR}/deploy-state.json}"
+RUN_DIR="$(_resolve_run_dir)"
+STATE_FILE="${ECHELON_DEPLOY_STATE_FILE:-${RUN_DIR}/deploy-state.json}"
 
 ERRORS=0
 

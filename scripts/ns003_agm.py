@@ -847,24 +847,19 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _default_squad_dir(run_id: str) -> Path:
-    if os.environ.get("ECHELON_SQUAD_DIR"):
-        return Path(os.environ["ECHELON_SQUAD_DIR"])
+def _default_run_dir(run_id: str) -> Path:
+    if os.environ.get("ECHELON_RUN_DIR"):
+        return Path(os.environ["ECHELON_RUN_DIR"])
 
     root = Path.cwd()
-    for base in ("runs", "squad"):
-        current = root / base / ".current"
-        if current.exists():
-            current_run_id = current.read_text(encoding="utf-8").strip()
-            candidate = root / base / current_run_id
-            if current_run_id and candidate.is_dir():
-                return candidate
-
-        candidate = root / base / run_id
-        if candidate.is_dir():
+    current = root / "runs" / ".current"
+    if current.exists():
+        current_run_id = current.read_text(encoding="utf-8").strip()
+        candidate = root / "runs" / current_run_id
+        if current_run_id and candidate.is_dir():
             return candidate
 
-    return root / ".specify" / "squad"
+    return root / "runs" / run_id
 
 
 def main() -> None:
@@ -886,7 +881,7 @@ def main() -> None:
     # Resolve belief graph path
     belief_graph_path = args.belief_graph
     if belief_graph_path is None:
-        belief_graph_path = str(_default_squad_dir(run_id) / f"belief-graph-{run_id}.json")
+        belief_graph_path = str(_default_run_dir(run_id) / f"belief-graph-{run_id}.json")
 
     artifact_dir = Path(args.artifact_dir)
     if not artifact_dir.exists():

@@ -6,10 +6,10 @@ set -euo pipefail
 SCRIPT_DIR="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(CDPATH='' cd "$SCRIPT_DIR/../../.." && pwd)"
 
-_resolve_squad_dir() {
+_resolve_run_dir() {
   local base current_file run_id
-  if [[ -n "${ECHELON_SQUAD_DIR:-}" ]]; then
-    echo "$ECHELON_SQUAD_DIR"
+  if [[ -n "${ECHELON_RUN_DIR:-}" ]]; then
+    echo "$ECHELON_RUN_DIR"
     return 0
   fi
 
@@ -27,8 +27,8 @@ _resolve_squad_dir() {
   echo "$REPO_ROOT/runs"
 }
 
-SQUAD_DIR="$(_resolve_squad_dir)"
-STATE_FILE="${1:-$SQUAD_DIR/state.json}"
+RUN_DIR="$(_resolve_run_dir)"
+STATE_FILE="${1:-$RUN_DIR/state.json}"
 MAX_BACKUPS="${2:-5}"
 
 if [[ ! -f "$STATE_FILE" ]]; then

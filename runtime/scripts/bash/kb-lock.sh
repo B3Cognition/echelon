@@ -9,10 +9,10 @@ LOCKS_DIR="$KB_DIR/.locks"
 LOCK_DIR="$LOCKS_DIR/kb-write.lock"
 METADATA_FILE="$LOCK_DIR/metadata.yaml"
 
-_resolve_squad_dir() {
+_resolve_run_dir() {
   local base current_file run_id
-  if [[ -n "${ECHELON_SQUAD_DIR:-}" ]]; then
-    echo "$ECHELON_SQUAD_DIR"
+  if [[ -n "${ECHELON_RUN_DIR:-}" ]]; then
+    echo "$ECHELON_RUN_DIR"
     return 0
   fi
 
@@ -30,8 +30,8 @@ _resolve_squad_dir() {
   echo "$REPO_ROOT/runs"
 }
 
-SQUAD_DIR="$(_resolve_squad_dir)"
-RECOVERY_DIR="${ECHELON_KB_RECOVERY_DIR:-$SQUAD_DIR/recovery}"
+RUN_DIR="$(_resolve_run_dir)"
+RECOVERY_DIR="${ECHELON_KB_RECOVERY_DIR:-$RUN_DIR/recovery}"
 
 DEFAULT_LEASE_SECONDS=30
 DEFAULT_GRACE_SECONDS=5

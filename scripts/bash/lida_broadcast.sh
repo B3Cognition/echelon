@@ -7,9 +7,9 @@
 #
 # COMMANDER integration (from T-026):
 #   Before each dispatch cycle:
-#     if [ -f "$SQUAD_DIR/lida-payload.json" ]; then
-#       LIDA_PAYLOAD=$(cat "$SQUAD_DIR/lida-payload.json")
-#       rm -f "$SQUAD_DIR/lida-payload.json"
+#     if [ -f "$RUN_DIR/lida-payload.json" ]; then
+#       LIDA_PAYLOAD=$(cat "$RUN_DIR/lida-payload.json")
+#       rm -f "$RUN_DIR/lida-payload.json"
 #       # inject LIDA_PAYLOAD into context_pack
 #     fi
 #
@@ -27,8 +27,8 @@ REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 
 _resolve_run_dir() {
   local current_file run_id
-  if [[ -n "${ECHELON_SQUAD_DIR:-}" ]]; then
-    echo "$ECHELON_SQUAD_DIR"
+  if [[ -n "${ECHELON_RUN_DIR:-}" ]]; then
+    echo "$ECHELON_RUN_DIR"
     return 0
   fi
 

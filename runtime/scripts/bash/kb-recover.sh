@@ -6,10 +6,10 @@ SCRIPT_DIR="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(CDPATH='' cd "$SCRIPT_DIR/../../.." && pwd)"
 
 # Detect the active spec run dir from runs/.current (primary); legacy squad/.current fallback.
-_kb_recover_squad_dir() {
+_kb_recover_run_dir() {
   local root="$1" base run_id current_file
-  if [[ -n "${ECHELON_SQUAD_DIR:-}" ]]; then
-    echo "$ECHELON_SQUAD_DIR"
+  if [[ -n "${ECHELON_RUN_DIR:-}" ]]; then
+    echo "$ECHELON_RUN_DIR"
     return 0
   fi
 
@@ -24,10 +24,10 @@ _kb_recover_squad_dir() {
   done
   echo "$root/runs"
 }
-_SQUAD_DIR="$(_kb_recover_squad_dir "$REPO_ROOT")"
-ERROR_LOG="${ECHELON_ERROR_LOG:-$_SQUAD_DIR/error.log}"
-RECOVERY_DIR="${ECHELON_KB_RECOVERY_DIR:-$_SQUAD_DIR/recovery}"
-STATE_FILE="${ECHELON_STATE_FILE:-$_SQUAD_DIR/state.json}"
+_RUN_DIR="$(_kb_recover_run_dir "$REPO_ROOT")"
+ERROR_LOG="${ECHELON_ERROR_LOG:-$_RUN_DIR/error.log}"
+RECOVERY_DIR="${ECHELON_KB_RECOVERY_DIR:-$_RUN_DIR/recovery}"
+STATE_FILE="${ECHELON_STATE_FILE:-$_RUN_DIR/state.json}"
 SEED_DIR="$REPO_ROOT/tests/fixtures/kb/valid-seeds"
 
 usage() {

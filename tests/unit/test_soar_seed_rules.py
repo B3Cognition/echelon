@@ -97,7 +97,8 @@ def test_soar_seed_coverage():
 def test_soar_dispatch_mode_present(tmp_path, monkeypatch):
     """dispatch_mode survives _apply_operator and appears in soar_state (Option A delivery)."""
     monkeypatch.chdir(tmp_path)
-    (tmp_path / ".specify" / "squad").mkdir(parents=True)
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "runs" / RUN_ID).mkdir(parents=True)
 
     for rule_id, pack in PACKS.items():
         result = enrich_context(pack, RUN_ID)
@@ -118,7 +119,8 @@ def test_soar_dispatch_mode_present(tmp_path, monkeypatch):
 def test_soar_guidance_non_empty(tmp_path, monkeypatch):
     """Guidance strings survive the 200-char cap and are not truncated away."""
     monkeypatch.chdir(tmp_path)
-    (tmp_path / ".specify" / "squad").mkdir(parents=True)
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "runs" / RUN_ID).mkdir(parents=True)
 
     for rule_id, pack in PACKS.items():
         result = enrich_context(pack, RUN_ID)
@@ -179,7 +181,8 @@ def test_soar_dispatch_mode_unique():
 def test_soar_impasse_no_guidance(tmp_path, monkeypatch):
     """When no rule matches (impasse), soar_state contains no dispatch_mode or guidance."""
     monkeypatch.chdir(tmp_path)
-    (tmp_path / ".specify" / "squad").mkdir(parents=True)
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "runs" / RUN_ID).mkdir(parents=True)
 
     # Empty pack — no recognized WME keys, all seed rules require active_goal
     empty_pack = {"unrelated_key": "value", "another_key": 42}
@@ -242,7 +245,8 @@ def test_soar_seed004_requires_all_four_conditions():
 def test_soar_chunking_disabled_no_chunk_appended(tmp_path, monkeypatch):
     """When chunking_enabled=false (default), update_soar_memory adds no ChunkRecord."""
     monkeypatch.chdir(tmp_path)
-    (tmp_path / ".specify" / "squad").mkdir(parents=True)
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "runs" / RUN_ID).mkdir(parents=True)
 
     # Enrich to create the procedural store
     pack = PACKS["seed-001"]
@@ -252,7 +256,7 @@ def test_soar_chunking_disabled_no_chunk_appended(tmp_path, monkeypatch):
     update_soar_memory({"status": "DONE"}, RUN_ID)
 
     # Load the store and verify no chunk was appended (chunking disabled by default)
-    store_path = tmp_path / ".specify" / "squad" / f"soar-procedural-{RUN_ID}.json"
+    store_path = tmp_path / "runs" / RUN_ID / f"soar-procedural-{RUN_ID}.json"
     with open(store_path) as f:
         store = json.load(f)
 
@@ -274,7 +278,8 @@ def test_soar_chunking_disabled_no_chunk_appended(tmp_path, monkeypatch):
 def test_soar_prior_overlay_keys_preserved(tmp_path, monkeypatch):
     """soar_state enrichment is additive — all five prior overlay keys remain intact."""
     monkeypatch.chdir(tmp_path)
-    (tmp_path / ".specify" / "squad").mkdir(parents=True)
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "runs" / RUN_ID).mkdir(parents=True)
 
     full_pack = {
         "active_goal": {"goal_text": "test goal", "priority": 1.0, "depth": 0},
