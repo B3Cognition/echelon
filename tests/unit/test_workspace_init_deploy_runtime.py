@@ -155,6 +155,9 @@ def test_workspace_init_bootstraps_git_without_spec_kit(
     cli._cmd_workspace(["init", "--no-unsafe-host-execution"])
 
     assert (tmp_path / ".git").exists()
+    gitignore = (tmp_path / ".gitignore").read_text(encoding="utf-8")
+    assert "/.specify/" not in gitignore
+    assert "/runs/" in gitignore
 
 
 def test_workspace_init_persists_selected_llm_provider(tmp_path, monkeypatch, capsys) -> None:

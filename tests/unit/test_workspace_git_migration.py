@@ -59,6 +59,20 @@ def test_migration_plan_ignores_child_source_roots(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_migration_plan_does_not_add_legacy_ignore_to_canonical_workspace(
+    tmp_path: Path,
+) -> None:
+    config = tmp_path / ".echelon" / "config.yml"
+    config.parent.mkdir(parents=True)
+    config.write_text("workspace:\n  git_role: orchestration\n", encoding="utf-8")
+
+    plan = build_migration_plan(tmp_path)
+
+    assert "/.specify/" not in plan.runtime_ignore_entries
+    assert "/runs/" in plan.runtime_ignore_entries
+
+
+@pytest.mark.unit
 def test_migration_write_initializes_git_and_stages_only_workspace_files(
     tmp_path: Path,
 ) -> None:

@@ -141,8 +141,10 @@ def build_migration_plan(workspace_root: Path) -> WorkspaceGitMigrationPlan:
         for source in manifest.sources
         if source.path != "."
     )
-    runtime_ignore_entries = (
-        "/.specify/",
+    legacy_runtime_ignore_entries = (
+        ("/.specify/",) if (root / ".specify").exists() else ()
+    )
+    runtime_ignore_entries = legacy_runtime_ignore_entries + (
         "/runs/",
         "/.claude/",
         "/.claude-work/",

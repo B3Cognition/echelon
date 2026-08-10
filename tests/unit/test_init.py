@@ -175,7 +175,7 @@ def test_init_reuses_existing_container_cli_when_env_absent(tmp_path, monkeypatc
 
     _create_minimal_git_repo(tmp_path)
     monkeypatch.delenv("ECHELON_CONTAINER_CLI", raising=False)
-    config_file = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+    config_file = tmp_path / ".echelon" / "config.yml"
     config_file.parent.mkdir(parents=True, exist_ok=True)
     config_file.write_text(
         "harness:\n  container_cli: podman\n",
