@@ -2,7 +2,7 @@
 """detect_patterns.py — Pattern detection from journal entries and issue log.
 
 Usage:
-    python detect_patterns.py --run-id <run_id> [--squad-dir <dir>] [--kb-dir <dir>] [--dry-run]
+    python detect_patterns.py --run-id <run_id> [--runs-root <dir>] [--kb-dir <dir>] [--dry-run]
 
 Walks journal entries + issues_log; looks for matches against pitfall patterns
 in patterns.yaml. Appends new patterns and increments reuse_counter for matches.
@@ -30,12 +30,7 @@ BUDGET_SECONDS = 60
 
 
 def _default_runs_root() -> Path:
-    repo_root = EXT_DIR
-    for base in ("runs", "squad"):
-        candidate = repo_root / base
-        if candidate.exists():
-            return candidate
-    return repo_root / ".specify" / "squad"
+    return EXT_DIR / "runs"
 
 
 def _iso_now() -> str:
@@ -188,15 +183,15 @@ def _match_pattern(pattern: dict, signals: list) -> bool:
 
 def detect_patterns(
     run_id: str,
-    squad_dir: Path,
+    runs_root: Path,
     kb_dir: Path,
     dry_run: bool = False,
 ) -> dict:
     """Detect patterns from a completed run. Returns a report dict.
 
     Args:
-        run_id:    The completed run ID (e.g., squad-1234)
-        squad_dir: Root directory containing run directories.
+        run_id:    The completed run ID (e.g., spec-1234)
+        runs_root: Root directory containing run directories.
         kb_dir:    Path to knowledge-base/
         dry_run:   If True, do not write to patterns.yaml
 
@@ -206,7 +201,7 @@ def detect_patterns(
     """
     t_start = time.monotonic()
 
-    run_dir = squad_dir / run_id
+    run_dir = runs_root / run_id
     if not run_dir.exists():
         return {
             "run_id": run_id,
@@ -311,8 +306,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Detect patterns from a completed Echelon run."
     )
-    parser.add_argument("--run-id", required=True, help="Run ID (e.g., squad-1234)")
-    parser.add_argument("--squad-dir", default=None,
+    parser.add_argument("--run-id", required=True, help="Run ID (e.g., spec-1234)")
+    parser.add_argument("--runs-root", default=None,
                         help="Path to the runs root directory")
     parser.add_argument("--kb-dir", default=None,
                         help="Path to knowledge-base/ directory")
@@ -320,10 +315,10 @@ def main() -> int:
                         help="Detect patterns but do not write to patterns.yaml")
     args = parser.parse_args()
 
-    if args.squad_dir:
-        squad_dir = Path(args.squad_dir)
+    if args.runs_root:
+        runs_root = Path(args.runs_root)
     else:
-        squad_dir = _default_runs_root()
+        runs_root = _default_runs_root()
 
     if args.kb_dir:
         kb_dir = Path(args.kb_dir)
@@ -334,7 +329,7 @@ def main() -> int:
 
     report = detect_patterns(
         run_id=args.run_id,
-        squad_dir=squad_dir,
+        runs_root=runs_root,
         kb_dir=kb_dir,
         dry_run=args.dry_run,
     )

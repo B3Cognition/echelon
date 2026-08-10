@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""seed_from_archive.py — Produce KB YAML files from an archived squad run.
+"""seed_from_archive.py — Produce KB YAML files from an archived Echelon run.
 
 Usage:
     python seed_from_archive.py --archive <run_id> [--kb-dir <kb_dir>] [--archive-root <root>]
@@ -41,20 +41,15 @@ def iso_now() -> str:
 
 def repo_root_from_script(script_dir: Path) -> Path:
     for candidate in (script_dir, *script_dir.parents):
-        if (candidate / ".specify").exists() or (candidate / "knowledge-base").exists():
+        if any(
+            (candidate / marker).exists()
+            for marker in (".git", ".echelon", "knowledge-base")
+        ):
             return candidate
     return script_dir.parent.parent
 
 
 def default_archive_root(repo_root: Path) -> Path:
-    for candidate in (
-        repo_root / "runs" / "archive",
-        repo_root / "squad" / "archive",
-        repo_root / ".specify" / "squad" / "archive",
-        repo_root / "archive",
-    ):
-        if candidate.exists():
-            return candidate
     return repo_root / "runs" / "archive"
 
 
@@ -370,7 +365,7 @@ def derive_confidence_thresholds(calibration: dict, agent_scores: dict, run_id: 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Produce KB YAML files from an archived squad run."
+        description="Produce KB YAML files from an archived Echelon run."
     )
     parser.add_argument("--archive", required=True, help="Run ID to read from archive")
     parser.add_argument("--kb-dir", default=None, help="Target KB directory (default: auto-detect)")

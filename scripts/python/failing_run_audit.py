@@ -2,7 +2,7 @@
 """failing_run_audit.py — Failing-run gate audit (T036).
 
 Usage:
-    python failing_run_audit.py --run-id <run_id> [--squad-dir <dir>]
+    python failing_run_audit.py --run-id <run_id> [--runs-root <dir>]
 
 On a failing run, asserts:
     (a) Every agent dispatched has a corresponding echelon_result journal entry
@@ -32,12 +32,7 @@ BUDGET_SECONDS = 60
 
 
 def _default_runs_root() -> Path:
-    repo_root = EXT_DIR
-    for base in ("runs", "squad"):
-        candidate = repo_root / base
-        if candidate.exists():
-            return candidate
-    return repo_root / ".specify" / "squad"
+    return EXT_DIR / "runs"
 
 
 def _iso_now() -> str:
@@ -183,19 +178,19 @@ def _check_no_schema_invalid(journal: list) -> dict:
     }
 
 
-def run_audit(run_id: str, squad_dir: Path) -> dict:
+def run_audit(run_id: str, runs_root: Path) -> dict:
     """Run the failing-run gate audit. Returns a report dict.
 
     Args:
-        run_id:    The run ID to audit (e.g., squad-1234)
-        squad_dir: Root directory containing run directories.
+        run_id:    The run ID to audit (e.g., spec-1234)
+        runs_root: Root directory containing run directories.
 
     Returns:
         {run_id, checked_at, overall_verdict, checks, elapsed_seconds}
     """
     t_start = time.monotonic()
 
-    run_dir = squad_dir / run_id
+    run_dir = runs_root / run_id
     if not run_dir.exists():
         return {
             "run_id": run_id,
@@ -233,17 +228,17 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Run the failing-run gate audit for an Echelon run."
     )
-    parser.add_argument("--run-id", required=True, help="Run ID (e.g., squad-1234)")
-    parser.add_argument("--squad-dir", default=None,
+    parser.add_argument("--run-id", required=True, help="Run ID (e.g., spec-1234)")
+    parser.add_argument("--runs-root", default=None,
                         help="Path to the runs root directory")
     args = parser.parse_args()
 
-    if args.squad_dir:
-        squad_dir = Path(args.squad_dir)
+    if args.runs_root:
+        runs_root = Path(args.runs_root)
     else:
-        squad_dir = _default_runs_root()
+        runs_root = _default_runs_root()
 
-    report = run_audit(args.run_id, squad_dir)
+    report = run_audit(args.run_id, runs_root)
     print(json.dumps(report, indent=2))
 
     if "error" in report:

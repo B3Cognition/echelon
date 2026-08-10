@@ -4,7 +4,7 @@
 Usage:
     python replay.py --archive <run_id> [--archive-root <root>] [--output <file>]
 
-Reads an archived squad run, walks recorded phase transitions,
+Reads an archived Echelon run, walks recorded phase transitions,
 calls evaluate_transitions at each, produces a per-transition report.
 
 Contracts:
@@ -21,6 +21,20 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
+
+
+def repo_root_from_script(script_dir: Path) -> Path:
+    for candidate in (script_dir, *script_dir.parents):
+        if any(
+            (candidate / marker).exists()
+            for marker in (".git", ".echelon", "knowledge-base")
+        ):
+            return candidate
+    return script_dir.parent.parent
+
+
+def default_archive_root(repo_root: Path) -> Path:
+    return repo_root / "runs" / "archive"
 
 # Ensure kernel is importable
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -64,14 +78,9 @@ def _load_state(archive_dir: Path) -> dict:
 
 
 def _load_config(archive_dir: Path) -> dict:
-    """Try to load echelon-config.yml from archive or parent squad dir."""
-    # Try YAML first — check both new (.specify/...) and legacy project-root paths
-    for config_path in [
-        archive_dir / ".specify" / "extensions" / "echelon" / "echelon-config.yml",
-        archive_dir.parent.parent / ".specify" / "extensions" / "echelon" / "echelon-config.yml",
-        archive_dir / "echelon-config.yml",
-        archive_dir.parent.parent / "echelon-config.yml",
-    ]:
+    """Load the nearest workspace-owned ``.echelon/config.yml`` when available."""
+    for base in (archive_dir, *archive_dir.parents):
+        config_path = base / ".echelon" / "config.yml"
         if config_path.exists():
             try:
                 import yaml  # type: ignore
@@ -207,10 +216,7 @@ def main() -> int:
         archive_root = Path(args.archive_root)
     else:
         script_dir = Path(__file__).resolve().parent
-        ext_dir = script_dir.parent.parent
-        archive_root = ext_dir.parent.parent / ".specify" / "squad" / "archive"
-        if not archive_root.exists():
-            archive_root = ext_dir.parent.parent / "archive"
+        archive_root = default_archive_root(repo_root_from_script(script_dir))
 
     print(f"Replaying archive: {archive_root / args.archive}", file=sys.stderr)
 

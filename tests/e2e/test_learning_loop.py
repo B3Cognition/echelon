@@ -45,7 +45,7 @@ SAMPLE_GLOSSARY = [
     {
         "term": "Run",
         "senses": [
-            {"sense": "single squad execution", "detect": "when used as noun", "example": "the current Run"},
+            {"sense": "single Echelon execution", "detect": "when used as noun", "example": "the current Run"},
             {"sense": "to execute", "detect": "when used as verb", "example": "run the script"},
         ],
     },
@@ -143,23 +143,23 @@ SAMPLE_PITFALLS = [
 
 class TestExtractScoreEvents:
     def test_extracts_agent_scores_entries(self):
-        events = _extract_score_events(SAMPLE_JOURNAL, "squad-001")
+        events = _extract_score_events(SAMPLE_JOURNAL, "run-001")
         assert len(events) == 2
         agents = {e["agent"] for e in events}
         assert "CARTOGRAPHER" in agents
         assert "SAGE" in agents
 
     def test_empty_journal_returns_empty_events(self):
-        events = _extract_score_events([], "squad-001")
+        events = _extract_score_events([], "run-001")
         assert events == []
 
     def test_routing_entries_not_extracted(self):
-        events = _extract_score_events(SAMPLE_JOURNAL, "squad-001")
+        events = _extract_score_events(SAMPLE_JOURNAL, "run-001")
         agents = {e["agent"] for e in events}
         assert "COMMANDER" not in agents  # routing entry ignored
 
     def test_score_values_preserved(self):
-        events = _extract_score_events(SAMPLE_JOURNAL, "squad-001")
+        events = _extract_score_events(SAMPLE_JOURNAL, "run-001")
         carto = next(e for e in events if e["agent"] == "CARTOGRAPHER")
         assert carto["score"] == 4
 
@@ -168,7 +168,7 @@ class TestApplyDeltas:
     def test_cold_start_adds_null_delta_entry(self):
         scores = {"agents": {}}
         events = [{"agent": "CARTOGRAPHER", "score": 4, "action": "spec_work", "reason": "test"}]
-        updated = _apply_deltas(scores, events, "squad-001")
+        updated = _apply_deltas(scores, events, "run-001")
         history = updated["agents"]["CARTOGRAPHER"]["history"]
         null_entry = next((h for h in history if h.get("action") == "null_delta"), None)
         assert null_entry is not None
@@ -177,7 +177,7 @@ class TestApplyDeltas:
     def test_cold_start_followed_by_actual_score(self):
         scores = {"agents": {}}
         events = [{"agent": "SAGE", "score": 3, "action": "why_pass", "reason": "test"}]
-        updated = _apply_deltas(scores, events, "squad-001")
+        updated = _apply_deltas(scores, events, "run-001")
         history = updated["agents"]["SAGE"]["history"]
         score_entry = next((h for h in history if h.get("action") != "null_delta"), None)
         assert score_entry is not None
@@ -194,7 +194,7 @@ class TestApplyDeltas:
                     "avg_score_per_dispatch": 4.0,
                     "badges": [],
                     "history": [
-                        {"run_id": "squad-000", "score": 4, "action": "prior",
+                        {"run_id": "run-000", "score": 4, "action": "prior",
                          "reason": "", "delta": None, "badges_earned": [],
                          "failure_modes": [], "peer_appreciation": []},
                     ],
@@ -202,9 +202,9 @@ class TestApplyDeltas:
             }
         }
         events = [{"agent": "CARTOGRAPHER", "score": 5, "action": "spec_improved", "reason": "better"}]
-        updated = _apply_deltas(scores, events, "squad-001")
+        updated = _apply_deltas(scores, events, "run-001")
         history = updated["agents"]["CARTOGRAPHER"]["history"]
-        new_entry = next(h for h in reversed(history) if h.get("run_id") == "squad-001")
+        new_entry = next(h for h in reversed(history) if h.get("run_id") == "run-001")
         assert new_entry["delta"] == 1.0
 
     def test_warm_case_negative_delta(self):
@@ -217,7 +217,7 @@ class TestApplyDeltas:
                     "avg_score_per_dispatch": 4.0,
                     "badges": [],
                     "history": [
-                        {"run_id": "squad-000", "score": 4, "action": "prior",
+                        {"run_id": "run-000", "score": 4, "action": "prior",
                          "reason": "", "delta": None, "badges_earned": [],
                          "failure_modes": [], "peer_appreciation": []},
                     ],
@@ -225,29 +225,29 @@ class TestApplyDeltas:
             }
         }
         events = [{"agent": "SAGE", "score": 2, "action": "regression", "reason": "bad run"}]
-        updated = _apply_deltas(scores, events, "squad-001")
+        updated = _apply_deltas(scores, events, "run-001")
         history = updated["agents"]["SAGE"]["history"]
-        new_entry = next(h for h in reversed(history) if h.get("run_id") == "squad-001")
+        new_entry = next(h for h in reversed(history) if h.get("run_id") == "run-001")
         assert new_entry["delta"] == -2.0
 
     def test_null_score_produces_null_delta(self):
         scores = {"agents": {}}
         events = [{"agent": "COMMANDER", "score": None, "action": "null_delta", "reason": "no score"}]
-        updated = _apply_deltas(scores, events, "squad-001")
+        updated = _apply_deltas(scores, events, "run-001")
         history = updated["agents"]["COMMANDER"]["history"]
         assert any(h.get("delta") is None for h in history)
 
     def test_current_run_score_updated(self):
         scores = {"agents": {}}
         events = [{"agent": "SCOUT", "score": 3, "action": "recon", "reason": ""}]
-        updated = _apply_deltas(scores, events, "squad-001")
+        updated = _apply_deltas(scores, events, "run-001")
         assert updated["agents"]["SCOUT"]["current_run_score"] == 3
 
 
 class TestEmitScoreDeltasE2E:
     def test_cold_start_emits_at_least_one_delta(self, tmp_path):
-        run_id = "squad-test-001"
-        run_dir = tmp_path / "squad" / run_id
+        run_id = "run-test-001"
+        run_dir = tmp_path / "runs" / run_id
         run_dir.mkdir(parents=True)
         kb_dir = tmp_path / "kb"
         kb_dir.mkdir()
@@ -264,7 +264,7 @@ class TestEmitScoreDeltasE2E:
 
         report = emit_score_deltas(
             run_id=run_id,
-            squad_dir=tmp_path / "squad",
+            runs_root=tmp_path / "runs",
             kb_dir=kb_dir,
             dry_run=True,
         )
@@ -272,8 +272,8 @@ class TestEmitScoreDeltasE2E:
         assert "CARTOGRAPHER" in report["agents_updated"]
 
     def test_warm_case_emits_delta_for_existing_agent(self, tmp_path):
-        run_id = "squad-test-002"
-        run_dir = tmp_path / "squad" / run_id
+        run_id = "run-test-002"
+        run_dir = tmp_path / "runs" / run_id
         run_dir.mkdir(parents=True)
         kb_dir = tmp_path / "kb"
         kb_dir.mkdir()
@@ -291,7 +291,7 @@ class TestEmitScoreDeltasE2E:
                     "avg_score_per_dispatch": 3.0,
                     "badges": [],
                     "history": [
-                        {"run_id": "squad-000", "score": 3, "action": "prior",
+                        {"run_id": "run-000", "score": 3, "action": "prior",
                          "reason": "", "delta": None, "badges_earned": [],
                          "failure_modes": [], "peer_appreciation": []},
                     ],
@@ -321,7 +321,7 @@ class TestEmitScoreDeltasE2E:
 
         report = emit_score_deltas(
             run_id=run_id,
-            squad_dir=tmp_path / "squad",
+            runs_root=tmp_path / "runs",
             kb_dir=kb_dir,
             dry_run=True,
         )
@@ -329,16 +329,16 @@ class TestEmitScoreDeltasE2E:
 
     def test_missing_run_dir_returns_error(self, tmp_path):
         report = emit_score_deltas(
-            run_id="squad-nonexistent",
-            squad_dir=tmp_path / "squad",
+            run_id="run-nonexistent",
+            runs_root=tmp_path / "runs",
             kb_dir=tmp_path / "kb",
             dry_run=True,
         )
         assert "error" in report
 
     def test_empty_journal_emits_null_delta(self, tmp_path):
-        run_id = "squad-empty-001"
-        run_dir = tmp_path / "squad" / run_id
+        run_id = "run-empty-001"
+        run_dir = tmp_path / "runs" / run_id
         run_dir.mkdir(parents=True)
         kb_dir = tmp_path / "kb"
         kb_dir.mkdir()
@@ -349,7 +349,7 @@ class TestEmitScoreDeltasE2E:
 
         report = emit_score_deltas(
             run_id=run_id,
-            squad_dir=tmp_path / "squad",
+            runs_root=tmp_path / "runs",
             kb_dir=kb_dir,
             dry_run=True,
         )
@@ -410,7 +410,7 @@ class TestNextPatternId:
 
 class TestDetectPatternsE2E:
     def _make_run(self, tmp_path, run_id, journal=None, state=None):
-        run_dir = tmp_path / "squad" / run_id
+        run_dir = tmp_path / "runs" / run_id
         run_dir.mkdir(parents=True)
         journal_text = "\n".join(json.dumps(e) for e in (journal or []))
         (run_dir / "reasoning-journal.jsonl").write_text(journal_text, encoding="utf-8")
@@ -447,12 +447,12 @@ class TestDetectPatternsE2E:
 
     def test_matches_existing_pattern_and_increments_counter(self, tmp_path):
         self._make_run(
-            tmp_path, "squad-001",
+            tmp_path, "run-001",
             journal=SAMPLE_JOURNAL_WITH_FAILURE,
         )
         kb_dir = self._make_kb(tmp_path, patterns=[p.copy() for p in SAMPLE_PATTERNS])
 
-        report = detect_patterns("squad-001", tmp_path / "squad", kb_dir, dry_run=True)
+        report = detect_patterns("run-001", tmp_path / "runs", kb_dir, dry_run=True)
 
         # Should match PAT-002 (preflight/golddigger tags)
         assert report["reuse_counters_incremented"] >= 1
@@ -460,22 +460,22 @@ class TestDetectPatternsE2E:
 
     def test_no_match_produces_zero_increments(self, tmp_path):
         self._make_run(
-            tmp_path, "squad-quiet",
+            tmp_path, "run-quiet",
             journal=[{"id": "RJ-001", "type": "routing_decision", "data": {}}],
         )
         kb_dir = self._make_kb(tmp_path, patterns=[p.copy() for p in SAMPLE_PATTERNS])
 
-        report = detect_patterns("squad-quiet", tmp_path / "squad", kb_dir, dry_run=True)
+        report = detect_patterns("run-quiet", tmp_path / "runs", kb_dir, dry_run=True)
         assert report["reuse_counters_incremented"] == 0
 
     def test_missing_run_returns_error(self, tmp_path):
         kb_dir = self._make_kb(tmp_path, patterns=[])
-        report = detect_patterns("squad-missing", tmp_path / "squad", kb_dir, dry_run=True)
+        report = detect_patterns("run-missing", tmp_path / "runs", kb_dir, dry_run=True)
         assert "error" in report
 
     def test_dry_run_does_not_write_file(self, tmp_path):
         self._make_run(
-            tmp_path, "squad-001",
+            tmp_path, "run-001",
             journal=SAMPLE_JOURNAL_WITH_FAILURE,
         )
         kb_dir = self._make_kb(tmp_path, patterns=[p.copy() for p in SAMPLE_PATTERNS])
@@ -483,7 +483,7 @@ class TestDetectPatternsE2E:
         patterns_path = kb_dir / "patterns.yaml"
         mtime_before = patterns_path.stat().st_mtime if patterns_path.exists() else None
 
-        detect_patterns("squad-001", tmp_path / "squad", kb_dir, dry_run=True)
+        detect_patterns("run-001", tmp_path / "runs", kb_dir, dry_run=True)
 
         if patterns_path.exists() and mtime_before is not None:
             mtime_after = patterns_path.stat().st_mtime
