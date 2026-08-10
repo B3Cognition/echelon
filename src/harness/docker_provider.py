@@ -268,7 +268,7 @@ class DockerWorktreeProvider(SandboxProvider):
             # Create internal Docker network
             result = _run_docker([
                 "network", "create", "--internal",
-                "--label", f"spec-kit-harness.session_id={session_id}",
+                "--label", f"echelon-harness.session_id={session_id}",
                 network_name,
             ], cli=self._container_cli)
             network_id = result.stdout.strip()
@@ -280,8 +280,8 @@ class DockerWorktreeProvider(SandboxProvider):
                     "--network", network_name,
                     "--name", f"harness-proxy-{session_id}",
                     "--volume", f"{self._squid_conf_path}:/etc/squid/squid.conf:ro",
-                    "--label", f"spec-kit-harness.session_id={session_id}",
-                    "--label", "spec-kit-harness.type=squid-proxy",
+                    "--label", f"echelon-harness.session_id={session_id}",
+                    "--label", "echelon-harness.type=squid-proxy",
                     spec.network_policy.proxy_image,
                 ], cli=self._container_cli)
                 proxy_container_id = proxy_result.stdout.strip()
@@ -295,14 +295,14 @@ class DockerWorktreeProvider(SandboxProvider):
                 "--pids-limit", str(spec.resource_limits.pids),
                 "--volume", f"{spec.worktree_mount}:{spec.container_mount}",
                 "--workdir", spec.container_mount,
-                "--label", f"spec-kit-harness.session_id={session_id}",
-                "--label", "spec-kit-harness.type=sandbox",
+                "--label", f"echelon-harness.session_id={session_id}",
+                "--label", "echelon-harness.type=sandbox",
             ]
 
             # Add spec labels
             for key, value in spec.labels.items():
                 docker_args.extend([
-                    "--label", f"spec-kit-harness.{key}={value}",
+                    "--label", f"echelon-harness.{key}={value}",
                 ])
 
             # Inject environment variables

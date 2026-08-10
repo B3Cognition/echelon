@@ -350,9 +350,9 @@ class VisualRalphController:
             post_create_command=None,
             forward_ports=[],
             labels={
-                "speckit.phase": "visual",
-                "speckit.spec_id": self._spec_id,
-                "speckit.strategy_id": self._strategy_id,
+                "phase": "visual",
+                "spec_id": self._spec_id,
+                "strategy_id": self._strategy_id,
             },
         )
 

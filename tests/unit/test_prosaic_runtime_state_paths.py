@@ -122,6 +122,19 @@ def test_active_run_lookup_ignores_top_level_squad_storage(tmp_path: Path) -> No
     assert _find_current_run_dir(tmp_path) is None
 
 
+def test_container_runtime_uses_echelon_owned_labels() -> None:
+    modules = (
+        ROOT / "src" / "harness" / "docker_provider.py",
+        ROOT / "src" / "harness" / "gc.py",
+        ROOT / "src" / "harness" / "visual_ralph.py",
+    )
+    combined = "\n".join(path.read_text(encoding="utf-8") for path in modules)
+
+    assert "spec-kit-harness" not in combined
+    assert '"speckit.' not in combined
+    assert "echelon-harness.session_id" in combined
+
+
 def test_runtime_uses_echelon_owned_standalone_re_state() -> None:
     config = (RUNTIME / "config-template.yml").read_text(encoding="utf-8")
     discovery = (RUNTIME / "scripts" / "bash" / "re" / "discover-repos.sh").read_text(

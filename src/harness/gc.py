@@ -1,4 +1,4 @@
-"""Garbage collection logic for spec-kit-harness.
+"""Garbage collection logic for Echelon delivery resources.
 
 Per FR-GC-001: removes stale containers, worktrees, and .bak files.
 
@@ -35,7 +35,7 @@ def _get_stale_containers(
         result = subprocess.run(
             [
                 container_cli, "ps", "-a",
-                "--filter", "label=spec-kit-harness.session_id",
+                "--filter", "label=echelon-harness.session_id",
                 "--format", "{{.ID}}\t{{.CreatedAt}}",
             ],
             capture_output=True,
