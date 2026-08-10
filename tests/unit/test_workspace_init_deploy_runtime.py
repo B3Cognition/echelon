@@ -135,6 +135,31 @@ def test_workspace_init_seeds_config_without_spec_kit(
     assert not (tmp_path / ".specify").exists()
 
 
+def test_workspace_init_prefers_echelon_runtime_config_over_reference_template(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    def deploy_bundle(project_root):
+        runtime = project_root / ".echelon" / "runtime"
+        runtime.mkdir(parents=True)
+        (runtime / "echelon-config.yml").write_text(
+            "deploy:\n  enabled: false\n  type: cli\nsource: echelon\n",
+            encoding="utf-8",
+        )
+        (runtime / "config-template.yml").write_text(
+            "deploy:\n  enabled: false\n  type: cli\nsource: reference\n",
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr("echelon.prosaic_packages.install_prosaic_bundle", deploy_bundle)
+    monkeypatch.setattr(cli, "_provision_wing", lambda _project_dir, _config: "test-wing")
+
+    cli._cmd_init(tmp_path)
+
+    config = yaml.safe_load((tmp_path / ".echelon" / "config.yml").read_text(encoding="utf-8"))
+    assert config["source"] == "echelon"
+
+
 def test_workspace_init_bootstraps_git_without_spec_kit(
     tmp_path,
     monkeypatch,

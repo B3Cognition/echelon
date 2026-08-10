@@ -76,10 +76,6 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line("markers", "e2e: End-to-end smoke tests")
     config.addinivalue_line("markers", "docker: Tests that require Docker daemon")
     config.addinivalue_line("markers", "docker_image(name): Tests that require a local Docker image")
-    config.addinivalue_line(
-        "markers",
-        "deployed_extension: Tests that require an installed .specify/extensions/echelon copy",
-    )
     config.addinivalue_line("markers", "slow: Tests that take > 30s")
 
 
@@ -88,9 +84,6 @@ def pytest_configure(config: pytest.Config) -> None:
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Deselect environment-dependent tests when their substrate is unavailable."""
     docker_available = docker_is_available()
-    deployed_extension_available = (
-        REPO_ROOT / ".specify" / "extensions" / "echelon" / "scripts" / "bash" / "endocrine.sh"
-    ).exists()
     selected: list[pytest.Item] = []
     deselected: list[pytest.Item] = []
 
@@ -105,9 +98,6 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
                 missing_image = True
                 break
         if missing_image:
-            deselected.append(item)
-            continue
-        if "deployed_extension" in item.keywords and not deployed_extension_available:
             deselected.append(item)
             continue
         selected.append(item)

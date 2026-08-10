@@ -25,45 +25,58 @@ the existing endocrine unit tests in tests/unit/test-endocrine-*.sh.
 import json
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-SOURCE_SCRIPT = REPO_ROOT / "extension" / "scripts" / "bash" / "endocrine.sh"
-DEPLOYED_SCRIPT = (
-    REPO_ROOT
-    / ".specify"
-    / "extensions"
-    / "echelon"
-    / "scripts"
-    / "bash"
-    / "endocrine.sh"
-)
+from echelon.prosaic_packages import install_prosaic_bundle
 
-pytestmark = [pytest.mark.integration, pytest.mark.deployed_extension]
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SOURCE_SCRIPT = REPO_ROOT / "runtime" / "scripts" / "bash" / "endocrine.sh"
+
+pytestmark = pytest.mark.integration
 
 _RESOLVER_ANTIPATTERN = re.compile(
     r'eval\s+"\$\([^)]*specify[^)]*\)"\s*(?:2>/dev/null)?\s*\\?\s*&&\s*_ECHELON_RESOLVER_OK=true'
 )
 
 
-def test_source_deployed_byte_identical():
+@pytest.fixture
+def deployed_script(tmp_path: Path) -> Path:
+    def deploy(command: list[str], *, cwd: Path, check: bool) -> None:
+        assert check is True
+        package_id = command[-1]
+        package_dir = cwd / ".echelon" / "packages" / package_id
+        destination = (
+            cwd / ".echelon" / "prosaic"
+            if package_id == "echelon-prose"
+            else cwd / ".echelon" / "runtime"
+        )
+        shutil.copytree(package_dir, destination)
+
+    install_prosaic_bundle(tmp_path, echelon_root=REPO_ROOT, run=deploy)
+    shutil.copyfile(
+        tmp_path / ".echelon" / "runtime" / "echelon-config.yml",
+        tmp_path / ".echelon" / "config.yml",
+    )
+    return tmp_path / ".echelon" / "runtime" / "scripts" / "bash" / "endocrine.sh"
+
+
+def test_source_deployed_byte_identical(deployed_script: Path):
     """FR-005, SC-002, SC-005: source and deployed copies must be byte-identical."""
     src = SOURCE_SCRIPT.read_bytes()
-    dep = DEPLOYED_SCRIPT.read_bytes()
+    dep = deployed_script.read_bytes()
     assert src == dep, (
         "endocrine.sh source/deployed divergence detected.\n"
         f"  source:   {SOURCE_SCRIPT}  ({len(src)} bytes)\n"
-        f"  deployed: {DEPLOYED_SCRIPT}  ({len(dep)} bytes)\n"
-        "Fix:\n"
-        f"  cp {SOURCE_SCRIPT} {DEPLOYED_SCRIPT}\n"
-        f"  (or:  specify extension update --dev {REPO_ROOT / 'extension'})"
+        f"  deployed: {deployed_script}  ({len(dep)} bytes)\n"
+        "Fix the runtime bundle source or Prosaic package deployment."
     )
 
 
-def test_deployed_lacks_vulnerable_resolver_pattern():
+def test_deployed_lacks_vulnerable_resolver_pattern(deployed_script: Path):
     """FR-006, SC-003: deployed copy must not contain the pre-df99b73 antipattern.
 
     The antipattern `eval "$(cmd)" && _ECHELON_RESOLVER_OK=true` sets the flag
@@ -71,11 +84,11 @@ def test_deployed_lacks_vulnerable_resolver_pattern():
     is the failure mode that caused the original DEP-FAIL-1 bug — every agent
     received 0.5 safety-default baselines instead of archetype-specific values.
     """
-    content = DEPLOYED_SCRIPT.read_text()
+    content = deployed_script.read_text()
     match = _RESOLVER_ANTIPATTERN.search(content)
     assert match is None, (
         "Deployed endocrine.sh contains the vulnerable resolver-gate antipattern.\n"
-        f"  file:  {DEPLOYED_SCRIPT}\n"
+        f"  file:  {deployed_script}\n"
         f"  match: {match.group(0) if match else ''!r}\n"
         "The `eval \"$(cmd)\" && _ECHELON_RESOLVER_OK=true` pattern sets the\n"
         "flag when cmd produces empty stdout (eval of '' returns 0). Fix:\n"
@@ -83,7 +96,10 @@ def test_deployed_lacks_vulnerable_resolver_pattern():
     )
 
 
-def test_deployed_init_produces_archetype_baselines(tmp_path):
+def test_deployed_init_produces_archetype_baselines(
+    tmp_path: Path,
+    deployed_script: Path,
+):
     """FR-002/003/004/013/014, SC-001/004: deployed init produces archetype-correct baselines.
 
     Runs `bash endocrine.sh init` against a temp state file via subprocess
@@ -97,7 +113,8 @@ def test_deployed_init_produces_archetype_baselines(tmp_path):
     env["ENDOCRINE_STATE_FILE"] = str(state_file)
 
     result = subprocess.run(
-        ["bash", str(DEPLOYED_SCRIPT), "init"],
+        ["bash", str(deployed_script), "init"],
+        cwd=tmp_path,
         env=env,
         capture_output=True,
         text=True,
@@ -167,6 +184,6 @@ def test_deployed_init_produces_archetype_baselines(tmp_path):
     )
 
 
-def test_deployed_copy_exists():
-    """FR-011: this module is only collected when the deployed copy exists."""
-    assert DEPLOYED_SCRIPT.exists()
+def test_deployed_copy_exists(deployed_script: Path):
+    """FR-011: Prosaic package deployment installs the runtime helper."""
+    assert deployed_script.exists()

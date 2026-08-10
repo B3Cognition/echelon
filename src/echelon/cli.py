@@ -643,15 +643,18 @@ def _cmd_init(
     _ensure_prosaic_workspace_ignores(project_dir)
 
     # Step 1: Confirm project config exists, seeded from the Echelon runtime.
+    runtime_config = runtime_dir / "echelon-config.yml"
     config_template = runtime_dir / "config-template.yml"
+    config_source = runtime_config if runtime_config.exists() else config_template
     if not echelon_cfg.exists():
-        if config_template.exists():
+        if config_source.exists():
             echelon_cfg.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(config_template, echelon_cfg)
+            shutil.copyfile(config_source, echelon_cfg)
             print(f"✓ Project config created: {echelon_cfg}")
         else:
             print(
                 f"✗ Project config not found: {echelon_cfg}\n"
+                f"  Runtime config also missing: {runtime_config}\n"
                 f"  Config template also missing: {config_template}\n"
                 "  Run: echelon workspace init",
                 file=sys.stderr,
