@@ -573,6 +573,13 @@ def _squad_controller(tmp_path: Path):
     provider = MagicMock()
     graph = MagicMock(spec=PhaseGraph)
     graph.all_phase_ids.return_value = ["init", "phase1-discover", "DONE"]
+    commander = tmp_path / "prosaic" / "echelon.commander.md"
+    commander.parent.mkdir(parents=True, exist_ok=True)
+    commander.write_text(
+        "---\nname: echelon.commander\n---\n\nCOMMANDER test prompt.\n",
+        encoding="utf-8",
+    )
+    graph.agent_file.return_value = str(commander)
     squad_dir = tmp_path / "squad" / "run-test"
     squad_dir.mkdir(parents=True, exist_ok=True)
     store = SquadStateStore(squad_dir)
@@ -708,6 +715,34 @@ def test_judgment_dispatch_empty_entries_writes_nothing(tmp_path):
     )
     ctrl._judgment_dispatch("test reason", _node())
     assert not (tmp_path / "squad" / "run-test" / "reasoning-journal.jsonl").exists()
+
+
+def test_judgment_dispatch_loads_commander_from_prosaic_graph(tmp_path):
+    ctrl, provider = _squad_controller(tmp_path)
+    commander = tmp_path / "prosaic" / "echelon.commander.md"
+    commander.parent.mkdir(parents=True, exist_ok=True)
+    commander.write_text(
+        "---\nname: echelon.commander\n---\n\nCANONICAL COMMANDER PROMPT\n",
+        encoding="utf-8",
+    )
+    ctrl._graph.agent_file.return_value = str(commander)
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "JUDGMENT_RESOLVED",
+            "state_updates": {},
+            "journal_entries": [],
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+
+    ctrl._judgment_dispatch("test reason", _node())
+
+    prompt = provider.exec_agent.call_args.args[1]
+    assert "CANONICAL COMMANDER PROMPT" in prompt
+    assert "name: echelon.commander" not in prompt
 
 
 def test_judgment_dispatch_continues_id_sequence_after_executor_writes(tmp_path):

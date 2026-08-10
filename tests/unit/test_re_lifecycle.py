@@ -500,18 +500,12 @@ def test_targeted_run_rejects_disappeared_declared_source_before_run_creation(
 
 @pytest.mark.unit
 @pytest.mark.parametrize(
-    ("provenance", "symlink_component"),
-    (
-        ("canonical", "file"),
-        ("canonical", "parent"),
-        ("legacy", "file"),
-        ("legacy", "parent"),
-    ),
+    "symlink_component",
+    ("file", "parent"),
 )
 def test_targeted_run_rejects_symlinked_config_before_dispatch_or_mutation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    provenance: str,
     symlink_component: str,
 ) -> None:
     target = tmp_path / "sources/api"
@@ -519,29 +513,18 @@ def test_targeted_run_rejects_symlinked_config_before_dispatch_or_mutation(
     target.mkdir(parents=True)
     forbidden.mkdir(parents=True)
     (target / "app.py").write_text("pass\n", encoding="utf-8")
-    config_name = (
-        "config.yml"
-        if provenance == "canonical"
-        else "echelon-config.yml"
-    )
+    config_name = "config.yml"
     (forbidden / config_name).write_text(
         "workspace:\n  sources:\n    - id: api\n      path: sources/api\n"
         "    - id: web\n      path: sources/web\n",
         encoding="utf-8",
     )
-    relative = (
-        Path(".echelon/config.yml")
-        if provenance == "canonical"
-        else Path(".specify/extensions/echelon/echelon-config.yml")
-    )
-    config = tmp_path / relative
+    config = tmp_path / ".echelon/config.yml"
     if symlink_component == "file":
         config.parent.mkdir(parents=True)
         config.symlink_to(forbidden / config_name)
-    elif provenance == "canonical":
-        (tmp_path / ".echelon").symlink_to(forbidden, target_is_directory=True)
     else:
-        (tmp_path / ".specify").symlink_to(forbidden, target_is_directory=True)
+        (tmp_path / ".echelon").symlink_to(forbidden, target_is_directory=True)
 
     monkeypatch.setattr(
         "harness.re_lifecycle.build_re_execution_plan",
@@ -571,16 +554,10 @@ def test_targeted_run_rejects_symlinked_config_before_dispatch_or_mutation(
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("provenance", ("canonical", "legacy"))
 def test_targeted_run_normalizes_malformed_config_before_dispatch(
     tmp_path: Path,
-    provenance: str,
 ) -> None:
-    config = (
-        tmp_path / ".echelon/config.yml"
-        if provenance == "canonical"
-        else tmp_path / ".specify/extensions/echelon/echelon-config.yml"
-    )
+    config = tmp_path / ".echelon/config.yml"
     config.parent.mkdir(parents=True)
     config.write_text("workspace:\n  sources: [api\n", encoding="utf-8")
     provider_calls: list[bool] = []

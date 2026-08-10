@@ -87,10 +87,10 @@ class ReLifecycleController:
         self._project_root = project_root.resolve()
         self._extension_root = extension_root.resolve()
         self._prosaic_subagents_dir = (
-            prosaic_subagents_dir.resolve()
+            prosaic_subagents_dir
             if prosaic_subagents_dir is not None
-            else None
-        )
+            else extension_root.parent / "prosaic" / "subagents"
+        ).resolve()
         self._provider_factory = provider_factory
 
     def run(

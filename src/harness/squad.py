@@ -9949,7 +9949,16 @@ class SquadController:
         snapshot: RoutingStateSnapshot | None = None,
     ) -> SquadAgentResult:
         """Dispatch slimmed COMMANDER for judgment calls."""
-        commander_path = self._ext_dir / "agents/control/commander.md"
+        commander_file = self._graph.agent_file("echelon.commander")
+        if not commander_file:
+            raise FileNotFoundError(
+                "Prosaic COMMANDER agent is missing from the phase graph"
+            )
+        commander_path = Path(commander_file)
+        if not commander_path.is_file():
+            raise FileNotFoundError(
+                f"Prosaic COMMANDER agent is missing: {commander_path}"
+            )
         state = (
             snapshot.state
             if snapshot is not None
@@ -9969,8 +9978,7 @@ class SquadController:
             f"{json.dumps(valid_phases, indent=2)}\n\n"
             f"**State:**\n```json\n{json.dumps(state, indent=2)}\n```\n\n"
         )
-        if commander_path.exists():
-            context = commander_path.read_text() + "\n\n" + context
+        context = read_prompt_markdown(commander_path).body + "\n\n" + context
         with self._telemetry_provider.dispatch(
             DispatchContext(node.id, "COMMANDER", "judgment", 1)
         ):

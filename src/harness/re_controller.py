@@ -173,10 +173,10 @@ class ReExtractionController:
         self._run_re_dir = self._run_dir / "re"
         self._extension_root = extension_root.resolve()
         self._prosaic_subagents_dir = (
-            prosaic_subagents_dir.resolve()
+            prosaic_subagents_dir
             if prosaic_subagents_dir is not None
-            else None
-        )
+            else extension_root.parent / "prosaic" / "subagents"
+        ).resolve()
         self._reported_source_id: str | None = None
         self._invocation_started_monotonic = 0.0
 
@@ -1849,8 +1849,6 @@ class ReExtractionController:
         )
 
     def _agent_path(self, agent: str) -> Path:
-        if self._prosaic_subagents_dir is None:
-            return self._extension_root / "agents" / "re" / f"{agent}.md"
         agent_path = self._prosaic_subagents_dir / f"echelon.re-{agent}.md"
         if not agent_path.is_file():
             raise FileNotFoundError(f"Prosaic RE agent is missing: {agent_path}")

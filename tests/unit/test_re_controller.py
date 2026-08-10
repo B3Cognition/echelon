@@ -462,6 +462,7 @@ def _initialize_re_state(run_dir: Path, *, max_repairs: int) -> None:
 
 def _extension_root(root: Path) -> Path:
     extension_root = root / "extension"
+    prosaic_subagents = root / "prosaic" / "subagents"
     for name in (
         "analyzer",
         "specifier",
@@ -471,10 +472,37 @@ def _extension_root(root: Path) -> Path:
         "checklister",
         "constituter",
     ):
-        path = extension_root / "agents" / "re" / f"{name}.md"
+        path = prosaic_subagents / f"echelon.re-{name}.md"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(f"# {name}\n", encoding="utf-8")
+        path.write_text(
+            f"---\nname: echelon.re-{name}\n---\n\n# {name}\n",
+            encoding="utf-8",
+        )
     return extension_root
+
+
+@pytest.mark.unit
+def test_controller_infers_sibling_prosaic_agents_without_legacy_fallback(
+    tmp_path: Path,
+) -> None:
+    runtime_root = tmp_path / "runtime"
+    legacy = runtime_root / "agents" / "re" / "specifier.md"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text("# Legacy specifier\n", encoding="utf-8")
+    canonical = tmp_path / "prosaic" / "subagents" / "echelon.re-specifier.md"
+    canonical.parent.mkdir(parents=True)
+    canonical.write_text(
+        "---\nname: echelon.re-specifier\n---\n\n# Canonical specifier\n",
+        encoding="utf-8",
+    )
+    controller = ReExtractionController(
+        provider=object(),
+        project_root=tmp_path,
+        run_dir=tmp_path / "runs" / "re-test",
+        extension_root=runtime_root,
+    )
+
+    assert controller._agent_path("specifier") == canonical
 
 
 @pytest.mark.unit
@@ -1801,7 +1829,9 @@ def test_re_prompt_appends_phase_and_canonical_result_contract(tmp_path: Path) -
 def test_re_prompt_uses_prosaic_agent_with_runtime_assets(tmp_path: Path) -> None:
     run_dir = write_valid_re_run(tmp_path, ("api",))
     runtime_root = _extension_root(tmp_path)
-    (runtime_root / "agents" / "re" / "analyzer.md").write_text(
+    legacy_agent = runtime_root / "agents" / "re" / "analyzer.md"
+    legacy_agent.parent.mkdir(parents=True)
+    legacy_agent.write_text(
         "LEGACY ANALYZER\n", encoding="utf-8"
     )
     phase_path = runtime_root / "workflow" / "phases" / "re-extract-1-analyze.md"
@@ -1811,7 +1841,7 @@ def test_re_prompt_uses_prosaic_agent_with_runtime_assets(tmp_path: Path) -> Non
     template_path.parent.mkdir(parents=True)
     template_path.write_text("RUNTIME CONTRACT\n", encoding="utf-8")
     prosaic_subagents = tmp_path / "prosaic" / "subagents"
-    prosaic_subagents.mkdir(parents=True)
+    prosaic_subagents.mkdir(parents=True, exist_ok=True)
     (prosaic_subagents / "echelon.re-analyzer.md").write_text(
         "---\nmodel_tier: balanced\ntools: full\ncolor: orange\n---\n"
         "PROSAIC ANALYZER\n",
