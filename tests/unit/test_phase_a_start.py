@@ -1755,6 +1755,35 @@ def test_retarget_rejects_symlink_aliased_baseline_run_before_mutation(
     assert _tree_snapshot(repo / "runs") == before
 
 
+def test_canonical_baseline_validation_rejects_legacy_squad_run(
+    tmp_path: Path,
+) -> None:
+    import echelon.phase_a_start as phase_a_start
+
+    root = tmp_path / "workspace"
+    run_dir = root / "squad" / "run-a"
+    spec_dir = run_dir / "specs" / "001-spec-a"
+    published_spec_dir = root / "specs" / "001-spec-a"
+    spec_dir.mkdir(parents=True)
+    published_spec_dir.mkdir(parents=True)
+    baseline = SpecRun(
+        run_dir=run_dir,
+        run_dir_name="run-a",
+        run_id="runtime-a",
+        spec_id="001-spec-a",
+        feature_branch="001-spec-a",
+        spec_dir=spec_dir,
+        published_spec_dir=published_spec_dir,
+    )
+    state = {
+        "spec_dir": "squad/run-a/specs/001-spec-a",
+        "published_spec_dir": "specs/001-spec-a",
+    }
+
+    with pytest.raises(PhaseAStartError, match="canonical baseline"):
+        phase_a_start._require_canonical_baseline_paths(root, baseline, state)
+
+
 @pytest.mark.parametrize("spec_number", ["001-spec", "002", "0" * 300])
 def test_retarget_requires_exact_numeric_spec_prefix_before_runs_mutation(
     tmp_path: Path,

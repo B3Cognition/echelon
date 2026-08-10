@@ -646,10 +646,9 @@ def _require_canonical_baseline_paths(
     baseline: SpecRun,
     baseline_state: Mapping[str, object],
 ) -> None:
-    base_name = baseline.run_dir.parent.name
-    if base_name not in {"runs", "squad"}:
+    if baseline.run_dir.parent.name != "runs":
         raise PhaseAStartError("canonical baseline run directory is invalid")
-    expected_run_dir = root / base_name / baseline.run_dir_name
+    expected_run_dir = root / "runs" / baseline.run_dir_name
     if (
         baseline.run_dir != expected_run_dir
         or expected_run_dir.is_symlink()
