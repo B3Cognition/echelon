@@ -1545,10 +1545,7 @@ def _copy_optional_source_artifacts(
 
 
 def _inside_run_roots(workspace_root: Path, run_dir: Path) -> bool:
-    return any(
-        run_dir.is_relative_to((workspace_root / base).resolve())
-        for base in ("runs", "squad")
-    )
+    return run_dir.is_relative_to((workspace_root / "runs").resolve())
 
 
 def _read_json(path: Path, *, required: bool = True) -> dict[str, Any]:

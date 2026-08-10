@@ -133,6 +133,19 @@ def test_active_spec_run_does_not_block_re_publication(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_legacy_squad_re_run_does_not_block_publication(tmp_path: Path) -> None:
+    legacy = tmp_path / "squad" / "re-legacy"
+    _write_json(
+        legacy / "state.json",
+        {"run_id": "re-legacy", "run_kind": "re", "status": "running"},
+    )
+
+    assert find_other_active_runs(tmp_path, None) == ()
+    with RePublishLock.acquire(tmp_path, "re-current", None):
+        pass
+
+
+@pytest.mark.unit
 def test_owner_run_may_acquire_when_it_is_the_only_active_run(tmp_path: Path) -> None:
     owner = _write_run(tmp_path, "run-a", "running")
 
@@ -168,6 +181,18 @@ def test_stale_lock_recovery_refuses_active_owner_run(tmp_path: Path) -> None:
 
     assert not recover_stale_publish_lock(tmp_path, stale_after_seconds=0)
     assert lock_dir.exists()
+
+
+@pytest.mark.unit
+def test_stale_lock_recovery_ignores_legacy_squad_owner_state(tmp_path: Path) -> None:
+    _write_json(
+        tmp_path / "squad" / "run-old" / "state.json",
+        {"run_id": "run-old", "run_kind": "re", "status": "running"},
+    )
+    lock_dir = _write_lock(tmp_path)
+
+    assert recover_stale_publish_lock(tmp_path, stale_after_seconds=0)
+    assert not lock_dir.exists()
 
 
 @pytest.mark.unit

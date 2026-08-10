@@ -239,10 +239,8 @@ def find_other_active_runs(
     excluded = owner_run_dir.resolve() if owner_run_dir else None
     active: list[Path] = []
     seen: set[Path] = set()
-    for base_name in ("runs", "squad"):
-        base = root / base_name
-        if not base.is_dir():
-            continue
+    base = root / "runs"
+    if base.is_dir():
         for candidate in sorted(base.iterdir(), key=lambda path: path.name):
             if not candidate.is_dir():
                 continue
@@ -643,13 +641,12 @@ def _owner_run_is_active(workspace_root: Path, owner: dict[str, Any]) -> bool:
             return True
 
     owner_run_id = str(owner.get("run_id") or "")
-    for base_name in ("runs", "squad"):
-        state = _read_json(
-            workspace_root / base_name / owner_run_id / "state.json",
-            required=False,
-        )
-        if state.get("status") in ACTIVE_RUN_STATUSES:
-            return True
+    state = _read_json(
+        workspace_root / "runs" / owner_run_id / "state.json",
+        required=False,
+    )
+    if state.get("status") in ACTIVE_RUN_STATUSES:
+        return True
     return False
 
 

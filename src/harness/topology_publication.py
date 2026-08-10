@@ -704,10 +704,8 @@ def _validate_owner_run_dir(
         if not owner.is_dir():
             raise TopologyPublicationValidationError("owner run directory must be a directory")
         lifecycle_roots: list[Path] = []
-        for name in ("runs", "squad"):
-            candidate = root / name
-            if not candidate.exists():
-                continue
+        candidate = root / "runs"
+        if candidate.exists():
             if candidate.is_symlink() or not candidate.is_dir():
                 raise TopologyPublicationValidationError(
                     f"workspace lifecycle root is unsafe: {candidate}"

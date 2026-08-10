@@ -340,6 +340,32 @@ def test_topology_path_evidence_must_stay_in_its_owner_run(tmp_path: Path) -> No
 
 
 @pytest.mark.unit
+def test_topology_rejects_legacy_squad_owner_run(tmp_path: Path) -> None:
+    from dataclasses import replace
+    from harness.topology_publication import TopologyProviderCandidate, TopologyPublicationValidationError, publish_topology_snapshots
+
+    _workspace(tmp_path, ("api",))
+    owner = tmp_path / "squad" / "re-legacy"
+    owner.mkdir(parents=True)
+    analysis = owner / "analysis.json"
+    summary = owner / "summary.json"
+    analysis.write_bytes(_analysis())
+    summary.write_bytes(_summary("codegraph", _analysis()))
+    candidate = replace(
+        _candidate("api"),
+        providers=(TopologyProviderCandidate("codegraph", analysis, summary),),
+    )
+
+    with pytest.raises(TopologyPublicationValidationError, match="outside workspace lifecycle roots"):
+        publish_topology_snapshots(
+            tmp_path,
+            (candidate,),
+            owner_id="re-legacy",
+            owner_run_dir=owner,
+        )
+
+
+@pytest.mark.unit
 def test_topology_rejects_symlinked_lifecycle_root(tmp_path: Path) -> None:
     from dataclasses import replace
     from harness.topology_publication import TopologyProviderCandidate, TopologyPublicationValidationError, publish_topology_snapshots

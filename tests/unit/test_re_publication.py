@@ -46,6 +46,13 @@ def _read_json(path: Path) -> dict[str, object]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def test_re_publication_containment_accepts_only_canonical_runs(tmp_path: Path) -> None:
+    assert re_publication._inside_run_roots(tmp_path, tmp_path / "runs" / "re-current")
+    assert not re_publication._inside_run_roots(
+        tmp_path, tmp_path / "squad" / "re-legacy"
+    )
+
+
 def _descriptor(manifest: dict[str, object], path: str) -> dict[str, str]:
     artifacts = manifest["artifacts"]
     assert isinstance(artifacts, list)
