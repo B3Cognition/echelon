@@ -338,7 +338,7 @@ class TestOuterLoopConvergence:
             "# Real Constitution\n\nProject-specific governance.\n",
             encoding="utf-8",
         )
-        canonical = project / ".specify" / "memory" / "constitution.md"
+        canonical = project / ".echelon" / "constitution.md"
         canonical.parent.mkdir(parents=True)
         canonical.write_text("# Real Constitution\n", encoding="utf-8")
 
@@ -349,7 +349,7 @@ class TestOuterLoopConvergence:
             "# [PROJECT_NAME] Constitution\n\n[PRINCIPLE_1_NAME]\n",
             encoding="utf-8",
         )
-        stale_canonical = worktree / ".specify" / "memory" / "constitution.md"
+        stale_canonical = worktree / ".echelon" / "constitution.md"
         stale_canonical.parent.mkdir(parents=True)
         stale_canonical.write_text("# [PROJECT_NAME] Constitution\n", encoding="utf-8")
 
@@ -403,7 +403,7 @@ class TestOuterLoopConvergence:
             "# Real Constitution\n\nProject-specific governance.\n",
             encoding="utf-8",
         )
-        canonical = project / ".specify" / "memory" / "constitution.md"
+        canonical = project / ".echelon" / "constitution.md"
         canonical.parent.mkdir(parents=True)
         canonical.write_text("# Real Constitution\n", encoding="utf-8")
 
@@ -1234,7 +1234,7 @@ class TestOuterLoopConvergence:
         spec_dir = workspace / "specs" / "001-prosaic"
         contracts_dir = spec_dir / "contracts"
         adrs_dir = spec_dir / "adrs"
-        constitution_path = workspace / ".specify" / "memory" / "constitution.md"
+        constitution_path = workspace / ".echelon" / "constitution.md"
         worktree.mkdir(parents=True)
         contracts_dir.mkdir(parents=True)
         adrs_dir.mkdir(parents=True)
@@ -1294,7 +1294,7 @@ class TestOuterLoopConvergence:
             in context
         )
         assert "  - Keep target adapters isolated." in context
-        assert f"- .specify/memory/constitution.md: `{constitution_path}`" in context
+        assert f"- .echelon/constitution.md: `{constitution_path}`" in context
         assert (
             "  - Prefer deterministic orchestration over model-owned discovery."
             in context
@@ -3954,7 +3954,7 @@ class TestOuterLoopConvergence:
             "- [ ] T-001 complexity=standard phase=base req=FR-001 depends=none target=sources/prosaic\n",
             encoding="utf-8",
         )
-        canonical = workspace / ".specify" / "memory" / "constitution.md"
+        canonical = workspace / ".echelon" / "constitution.md"
         canonical.parent.mkdir(parents=True)
         canonical.write_text("# Real Constitution\n", encoding="utf-8")
         subprocess.run(["git", "add", "."], cwd=workspace, check=True)

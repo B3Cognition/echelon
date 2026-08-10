@@ -17,14 +17,16 @@ def test_canonical_constitution_prefers_echelon_location(tmp_path: Path) -> None
     assert canonical_constitution_path(tmp_path) == canonical
 
 
-def test_canonical_constitution_falls_back_to_legacy_during_migration(
+def test_canonical_constitution_does_not_fall_back_to_legacy_storage(
     tmp_path: Path,
 ) -> None:
     legacy = tmp_path / ".specify" / "memory" / "constitution.md"
     legacy.parent.mkdir(parents=True)
     legacy.write_text("legacy", encoding="utf-8")
 
-    assert canonical_constitution_path(tmp_path) == legacy
+    assert canonical_constitution_path(tmp_path) == (
+        tmp_path / ".echelon" / "constitution.md"
+    )
 
 
 def test_migrate_legacy_constitution_copies_without_removing_source(

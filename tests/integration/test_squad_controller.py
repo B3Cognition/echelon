@@ -966,7 +966,7 @@ def _install_test_clarification_policy(
 
 
 def _mark_constitution_complete(tmp_path: Path, store: SquadStateStore) -> None:
-    const_path = tmp_path / ".specify" / "memory" / "constitution.md"
+    const_path = tmp_path / ".echelon" / "constitution.md"
     const_path.parent.mkdir(parents=True, exist_ok=True)
     const_path.write_text("# Constitution\n\nReal project rules.\n", encoding="utf-8")
     state = store.load()
@@ -2898,9 +2898,7 @@ class TestAgentResultIntegrity:
             self._phase_a_publication_staging_fixture(tmp_path)
         )
         before = self._visible_tree_bytes(published)
-        constitution = (
-            tmp_path / ".specify" / "memory" / "constitution.md"
-        )
+        constitution = tmp_path / ".echelon" / "constitution.md"
         outside = tmp_path.parent / f"{tmp_path.name}-constitution.md"
         outside.write_text("# External constitution\n", encoding="utf-8")
         constitution.unlink()
@@ -7190,15 +7188,15 @@ class TestConstitutionPhase:
         state = store.load()
         state["completed_phases"] = ["phase1-constitution"]
         store.save(state)
-        const_path = tmp_path / ".specify" / "memory" / "constitution.md"
-        const_path.parent.mkdir(parents=True)
+        const_path = tmp_path / ".echelon" / "constitution.md"
+        const_path.parent.mkdir(parents=True, exist_ok=True)
         const_path.write_text("# Constitution\n\nReal rules.\n", encoding="utf-8")
 
         assert ctrl._guard_constitution_provenance("phase1-what") == "phase1-what"
 
     def test_constitution_guard_allows_sync_impact_report_placeholder_history(self, tmp_path):
-        const_path = tmp_path / ".specify" / "memory" / "constitution.md"
-        const_path.parent.mkdir(parents=True)
+        const_path = tmp_path / ".echelon" / "constitution.md"
+        const_path.parent.mkdir(parents=True, exist_ok=True)
         const_path.write_text(
             """<!--
 Sync Impact Report
@@ -7220,8 +7218,8 @@ Ready.
         assert _constitution_artifact_is_real(tmp_path) is True
 
     def test_constitution_guard_rejects_body_placeholder_after_sync_report(self, tmp_path):
-        const_path = tmp_path / ".specify" / "memory" / "constitution.md"
-        const_path.parent.mkdir(parents=True)
+        const_path = tmp_path / ".echelon" / "constitution.md"
+        const_path.parent.mkdir(parents=True, exist_ok=True)
         const_path.write_text(
             """<!--
 Sync Impact Report

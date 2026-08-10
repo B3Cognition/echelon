@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-FINALIZE = ROOT / "extension/scripts/bash/finalize-run.sh"
+FINALIZE = ROOT / "runtime/scripts/bash/finalize-run.sh"
 
 
 def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -44,7 +44,7 @@ def test_finalize_commits_durable_re_on_feature_and_restores_main(tmp_path: Path
     spec_dir = tmp_path / "specs/001-demo"
     spec_dir.mkdir(parents=True)
     (spec_dir / "spec.md").write_text("# Demo spec\n", encoding="utf-8")
-    constitution = tmp_path / ".specify/memory/constitution.md"
+    constitution = tmp_path / ".echelon/constitution.md"
     constitution.parent.mkdir(parents=True)
     constitution.write_text("# Constitution\n\nReal rules.\n", encoding="utf-8")
     _write_index(tmp_path, 2)

@@ -11,13 +11,8 @@ _LEGACY_RELATIVE_PATH = Path(".specify") / "memory" / "constitution.md"
 
 
 def canonical_constitution_path(project_root: Path) -> Path:
-    """Resolve the Echelon constitution, falling back for legacy workspaces."""
-    root = project_root.resolve()
-    canonical = root / _CANONICAL_RELATIVE_PATH
-    if canonical.is_file():
-        return canonical
-    legacy = root / _LEGACY_RELATIVE_PATH
-    return legacy if legacy.is_file() else canonical
+    """Resolve the Echelon-owned constitution path."""
+    return project_root.resolve() / _CANONICAL_RELATIVE_PATH
 
 
 def migrate_legacy_constitution(project_root: Path) -> Path | None:
