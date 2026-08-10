@@ -12,8 +12,8 @@ Detection method: heuristic pattern matching (upper bound — over-detects hard
 contradictions, misses soft prose contradictions).
 
 Usage:
-    python3 scripts/contradiction-scanner.py \\
-        --specs-dir <path to .specify/specs/> \\
+    python3 .echelon/runtime/scripts/contradiction-scanner.py \\
+        --specs-dir <path to specs/> \\
         [--spec-ids 013 014 015] \\
         [--output <path>] \\
         [--verbose]
@@ -701,7 +701,7 @@ def main() -> None:
         "--specs-dir",
         required=True,
         metavar="DIR",
-        help="Path to the .specify/specs/ directory containing spec run subdirectories.",
+        help="Path to the specs/ directory containing spec subdirectories.",
     )
     parser.add_argument(
         "--spec-ids",

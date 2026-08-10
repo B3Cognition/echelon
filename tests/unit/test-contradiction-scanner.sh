@@ -65,6 +65,10 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "-- Test 1: --help exits 0 --"
 assert_ok "--help exits 0" "$PYTHON '$SCRIPT' --help"
+assert_ok "--help uses canonical specs directory" \
+  "$PYTHON '$SCRIPT' --help | grep -F 'specs/' >/dev/null"
+assert_ok "--help omits legacy specs directory" \
+  "! $PYTHON '$SCRIPT' --help | grep -F '.specify/specs' >/dev/null"
 echo ""
 
 # ---------------------------------------------------------------------------

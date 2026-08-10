@@ -16,7 +16,7 @@ import re
 from typing import Optional
 
 # ---------------------------------------------------------------------------
-# Regex patterns — reused from scripts/contradiction-scanner.py
+# Regex patterns — reused from runtime/scripts/contradiction-scanner.py
 # (cite: contradiction-scanner.py lines 99-101)
 # ---------------------------------------------------------------------------
 
