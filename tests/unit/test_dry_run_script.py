@@ -19,9 +19,10 @@ def _run_dry_run(*args: str) -> subprocess.CompletedProcess[str]:
 def _assert_successful_dry_run(result: subprocess.CompletedProcess[str]) -> None:
     output = result.stdout + result.stderr
     assert result.returncode == 0, output
-    assert "FAILURES detected" not in output
+    assert "Bundle validation failed" not in output
     assert "Repository root:" in output
-    assert "Extension root:" in output
+    assert "Prosaic root:" in output
+    assert "Runtime root:" in output
     assert "workflow definition contract is valid" in output
 
 
@@ -29,5 +30,19 @@ def test_dry_run_accepts_repo_root_default() -> None:
     _assert_successful_dry_run(_run_dry_run())
 
 
-def test_dry_run_accepts_extension_root_argument() -> None:
-    _assert_successful_dry_run(_run_dry_run("extension"))
+def test_dry_run_accepts_prosaic_root_argument() -> None:
+    _assert_successful_dry_run(_run_dry_run("prosaic"))
+
+
+def test_dry_run_accepts_runtime_root_argument() -> None:
+    _assert_successful_dry_run(_run_dry_run("runtime"))
+
+
+def test_dry_run_does_not_require_legacy_extension_tree(tmp_path: Path) -> None:
+    (tmp_path / "prosaic").symlink_to(REPO_ROOT / "prosaic", target_is_directory=True)
+    (tmp_path / "runtime").symlink_to(REPO_ROOT / "runtime", target_is_directory=True)
+
+    result = _run_dry_run(str(tmp_path))
+
+    _assert_successful_dry_run(result)
+    assert "extension" not in (result.stdout + result.stderr).lower()

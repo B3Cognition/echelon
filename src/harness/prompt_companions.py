@@ -14,10 +14,15 @@ _COMPANION_REFERENCE = re.compile(
 )
 
 
+def prompt_companion_references(body: str) -> tuple[str, ...]:
+    """Return package-owned Markdown references in encounter order."""
+    return tuple(_COMPANION_REFERENCE.findall(body))
+
+
 def append_prompt_companions(body: str, roots: Iterable[Path]) -> str:
     """Append each referenced package Markdown resource once."""
     resolved_roots = tuple(root.resolve() for root in roots if root.is_dir())
-    pending = list(_COMPANION_REFERENCE.findall(body))
+    pending = list(prompt_companion_references(body))
     seen_references: set[str] = set()
     companion_sections: list[str] = []
 
@@ -33,7 +38,7 @@ def append_prompt_companions(body: str, roots: Iterable[Path]) -> str:
         companion_sections.append(
             f"---\n# Companion resource: {reference}\n\n{companion_body}"
         )
-        pending.extend(_COMPANION_REFERENCE.findall(companion_body))
+        pending.extend(prompt_companion_references(companion_body))
 
     if not companion_sections:
         return body
