@@ -16,6 +16,6 @@ def test_readme_documents_fulfillment_refresh_policies() -> None:
 
 
 def test_config_template_mentions_scoped_refresh_policy() -> None:
-    text = (ROOT / "extension/config-template.yml").read_text(encoding="utf-8")
+    text = (ROOT / "runtime/config-template.yml").read_text(encoding="utf-8")
 
     assert "# - scoped: re-judge only deterministically impacted requirement rows" in text

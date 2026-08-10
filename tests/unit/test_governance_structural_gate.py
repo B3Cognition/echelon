@@ -9,7 +9,7 @@ import pytest
 from harness.governance_structural_gate import run_governance_structural_gate
 
 
-EXTENSION_ROOT = Path(__file__).resolve().parents[2] / "extension"
+EXTENSION_ROOT = Path(__file__).resolve().parents[2] / "runtime"
 
 
 def _governance(

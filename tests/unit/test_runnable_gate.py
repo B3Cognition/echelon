@@ -80,8 +80,8 @@ def test_probe_runtime_error_fails_closed():
 
 @pytest.mark.unit
 def test_runnable_phase_spec_exists_and_blocks_deliver():
-    runnable = pathlib.Path("extension/workflow/phases/codegen-6c-runnable.md")
-    deliver = pathlib.Path("extension/workflow/phases/codegen-7-deliver.md")
+    runnable = pathlib.Path("runtime/workflow/phases/codegen-6c-runnable.md")
+    deliver = pathlib.Path("runtime/workflow/phases/codegen-7-deliver.md")
     assert runnable.exists()
     rtext = runnable.read_text()
     assert "run_runnable_gate" in rtext
@@ -92,8 +92,8 @@ def test_runnable_phase_spec_exists_and_blocks_deliver():
 
 @pytest.mark.unit
 def test_runnable_phase_spec_does_not_claim_runtime_render_evidence():
-    runnable = pathlib.Path("extension/workflow/phases/codegen-6c-runnable.md")
-    deliver = pathlib.Path("extension/workflow/phases/codegen-7-deliver.md")
+    runnable = pathlib.Path("runtime/workflow/phases/codegen-6c-runnable.md")
+    deliver = pathlib.Path("runtime/workflow/phases/codegen-7-deliver.md")
     text = f"{runnable.read_text()}\n{deliver.read_text()}".lower()
 
     assert "static composition" in text

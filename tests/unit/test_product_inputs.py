@@ -1825,7 +1825,7 @@ def test_product_input_context_requires_tasks_lexicon_repair_before_completion()
 def test_plan_phase_requires_direct_product_input_task_mappings() -> None:
     phase = (
         Path(__file__).parents[2]
-        / "extension/workflow/phases/phase3-plan.md"
+        / "runtime/workflow/phases/phase3-plan.md"
     ).read_text(encoding="utf-8")
 
     assert "directly intersect that unit's `spec_ids`" in phase

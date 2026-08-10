@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-PHASE_DIR = ROOT / "extension" / "workflow" / "phases"
+PHASE_DIR = ROOT / "runtime" / "workflow" / "phases"
 
 
 def test_verify_spec_init_records_project_root_for_deterministic_commands() -> None:
@@ -133,9 +133,9 @@ def test_verify_spec_preserves_runtime_evidence_semantics() -> None:
     map_phase = (PHASE_DIR / "verify-spec-4-map.md").read_text(encoding="utf-8")
     judge_phase = (PHASE_DIR / "verify-spec-5-judge.md").read_text(encoding="utf-8")
     mapper = (
-        ROOT / "extension" / "agents" / "build" / "implementation-mapper.md"
+        ROOT / "prosaic" / "subagents" / "echelon.implementation-mapper.md"
     ).read_text(encoding="utf-8")
-    guard = (ROOT / "extension" / "agents" / "build" / "spec-guard.md").read_text(
+    guard = (ROOT / "prosaic" / "subagents" / "echelon.spec-guard.md").read_text(
         encoding="utf-8"
     )
 
@@ -156,7 +156,7 @@ def test_verify_spec_preserves_runtime_evidence_semantics() -> None:
 def test_verify_spec_stage4_states_parser_conformant_map_schema() -> None:
     phase_text = (PHASE_DIR / "verify-spec-4-map.md").read_text(encoding="utf-8")
     mapper_text = (
-        ROOT / "extension" / "agents" / "build" / "implementation-mapper.md"
+        ROOT / "prosaic" / "subagents" / "echelon.implementation-mapper.md"
     ).read_text(encoding="utf-8")
 
     for text in (phase_text, mapper_text):
@@ -187,7 +187,7 @@ def test_verify_spec_stage4_forbids_broad_source_exploration() -> None:
 def test_verify_spec_stage4_preserves_weak_codegraph_as_candidate_evidence() -> None:
     phase_text = (PHASE_DIR / "verify-spec-4-map.md").read_text(encoding="utf-8")
     mapper_text = (
-        ROOT / "extension" / "agents" / "build" / "implementation-mapper.md"
+        ROOT / "prosaic" / "subagents" / "echelon.implementation-mapper.md"
     ).read_text(encoding="utf-8")
 
     for text in (phase_text, mapper_text):
@@ -201,7 +201,7 @@ def test_verify_spec_stage4_preserves_weak_codegraph_as_candidate_evidence() -> 
 def test_verify_spec_stage4_separates_manual_evidence_from_codegraph_evidence() -> None:
     phase_text = (PHASE_DIR / "verify-spec-4-map.md").read_text(encoding="utf-8")
     mapper_text = (
-        ROOT / "extension" / "agents" / "build" / "implementation-mapper.md"
+        ROOT / "prosaic" / "subagents" / "echelon.implementation-mapper.md"
     ).read_text(encoding="utf-8")
 
     for text in (phase_text, mapper_text):
@@ -214,7 +214,7 @@ def test_verify_spec_stage4_separates_manual_evidence_from_codegraph_evidence() 
 
 def test_verify_spec_stage5_treats_codegraph_candidates_as_context_only() -> None:
     judge_text = (PHASE_DIR / "verify-spec-5-judge.md").read_text(encoding="utf-8")
-    guard_text = (ROOT / "extension" / "agents" / "build" / "spec-guard.md").read_text(
+    guard_text = (ROOT / "prosaic" / "subagents" / "echelon.spec-guard.md").read_text(
         encoding="utf-8"
     )
 
@@ -230,7 +230,7 @@ def test_verify_spec_stage5_treats_codegraph_candidates_as_context_only() -> Non
 def test_verify_spec_stage4_includes_perlgraph_structural_context() -> None:
     phase_text = (PHASE_DIR / "verify-spec-4-map.md").read_text(encoding="utf-8")
     mapper_text = (
-        ROOT / "extension" / "agents" / "build" / "implementation-mapper.md"
+        ROOT / "prosaic" / "subagents" / "echelon.implementation-mapper.md"
     ).read_text(encoding="utf-8")
 
     for text in (phase_text, mapper_text):
@@ -243,7 +243,7 @@ def test_verify_spec_stage4_includes_perlgraph_structural_context() -> None:
 
 
 def test_spec_guard_preserves_perlgraph_uncertainty_semantics() -> None:
-    guard = (ROOT / "extension" / "agents" / "build" / "spec-guard.md").read_text(
+    guard = (ROOT / "prosaic" / "subagents" / "echelon.spec-guard.md").read_text(
         encoding="utf-8"
     )
 
@@ -311,7 +311,7 @@ def test_verify_spec_stage5_validation_stamps_state() -> None:
 
 
 def test_verify_spec_final_lifecycle_owns_completion_state() -> None:
-    definition = (ROOT / "extension" / "workflow" / "definition.yaml").read_text(
+    definition = (ROOT / "runtime" / "workflow" / "definition.yaml").read_text(
         encoding="utf-8"
     )
     finalizer = (PHASE_DIR / "verify-spec-7-finalize.md").read_text(
@@ -325,7 +325,7 @@ def test_verify_spec_final_lifecycle_owns_completion_state() -> None:
 
 
 def test_verify_spec_reconciliation_routes_through_finalizer_in_prompt_and_definition() -> None:
-    definition = (ROOT / "extension" / "workflow" / "definition.yaml").read_text(
+    definition = (ROOT / "runtime" / "workflow" / "definition.yaml").read_text(
         encoding="utf-8"
     )
     phase_six_definition = definition.split(
@@ -342,8 +342,8 @@ def test_verify_spec_reconciliation_routes_through_finalizer_in_prompt_and_defin
 
 
 def test_spec_guard_prompt_forbids_restatement_of_mechanical_rows() -> None:
-    agent_dir = ROOT / "extension" / "agents" / "build"
-    text = (agent_dir / "spec-guard.md").read_text(encoding="utf-8")
+    agent_dir = ROOT / "prosaic" / "subagents"
+    text = (agent_dir / "echelon.spec-guard.md").read_text(encoding="utf-8")
 
     assert "judge only IDs listed in `fallback_ids`" in text
     assert "must not emit rows for mechanically decided IDs" in text

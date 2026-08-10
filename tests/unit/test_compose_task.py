@@ -60,6 +60,6 @@ def test_dependency_safe_order_respects_feature_deps():
 @pytest.mark.unit
 def test_decompose_phase_invokes_compose_injection():
     import pathlib
-    spec = pathlib.Path("extension/workflow/phases/codegen-2-decompose.md").read_text()
+    spec = pathlib.Path("runtime/workflow/phases/codegen-2-decompose.md").read_text()
     assert "inject_compose_task" in spec
     assert "T-999" in spec or "COMPOSE_TASK_ID" in spec

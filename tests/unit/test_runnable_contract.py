@@ -62,7 +62,7 @@ def test_re_phase_documents_a_parseable_example_contract():
     """The RE phase spec must contain a runnable_contract example that parses,
     so authors copy a valid shape."""
     import re as _re, pathlib, yaml
-    spec = pathlib.Path("extension/workflow/phases/codegen-1-re.md").read_text()
+    spec = pathlib.Path("runtime/workflow/phases/codegen-1-re.md").read_text()
     m = _re.search(r"```yaml\n(runnable_contract:.*?)\n```", spec, _re.S)
     assert m, "codegen-1-re.md must contain a ```yaml runnable_contract: ...``` example"
     data = yaml.safe_load(m.group(1))["runnable_contract"]

@@ -2049,9 +2049,9 @@ def test_retarget_marker_inventory_is_controller_owned(tmp_path: Path) -> None:
 def test_re_specifier_prose_does_not_delegate_check_domain_to_agent() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     paths = [
-        repo_root / "extension" / "agents" / "re" / "specifier.md",
+        repo_root / "prosaic" / "subagents" / "echelon.re-specifier.md",
         repo_root
-        / "extension"
+        / "runtime"
         / "workflow"
         / "phases"
         / "re-extract-2-specify.md",
@@ -2066,11 +2066,9 @@ def test_re_specifier_prose_does_not_delegate_check_domain_to_agent() -> None:
 def test_re_prose_avoids_provider_specific_cli_tool_instructions() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     paths = [
+        *(repo_root / "prosaic" / "subagents").glob("echelon.re-*.md"),
         *(
-            repo_root / "extension" / "agents" / "re"
-        ).glob("*.md"),
-        *(
-            repo_root / "extension" / "workflow" / "phases"
+            repo_root / "runtime" / "workflow" / "phases"
         ).glob("re-*.md"),
     ]
     forbidden = (

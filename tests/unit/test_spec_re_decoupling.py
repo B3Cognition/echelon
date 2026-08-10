@@ -12,10 +12,10 @@ ROOT = Path(__file__).resolve().parents[2]
 
 @pytest.mark.unit
 def test_spec_workflow_has_no_embedded_re_dispatches() -> None:
-    workflow = (ROOT / "extension/workflow/definition.yaml").read_text(
+    workflow = (ROOT / "runtime/workflow/definition.yaml").read_text(
         encoding="utf-8"
     )
-    init = (ROOT / "extension/workflow/phases/init.md").read_text(encoding="utf-8")
+    init = (ROOT / "runtime/workflow/phases/init.md").read_text(encoding="utf-8")
     executors = (ROOT / "src/harness/squad_executors.py").read_text(
         encoding="utf-8"
     )
@@ -31,10 +31,10 @@ def test_spec_workflow_has_no_embedded_re_dispatches() -> None:
 
 @pytest.mark.unit
 def test_spec_agents_use_published_re_as_read_only_context() -> None:
-    scout = (ROOT / "extension/agents/exploration/scout.md").read_text(
+    scout = (ROOT / "prosaic/subagents/echelon.scout.md").read_text(
         encoding="utf-8"
     )
-    cartographer = (ROOT / "extension/agents/exploration/cartographer.md").read_text(
+    cartographer = (ROOT / "prosaic/subagents/echelon.cartographer.md").read_text(
         encoding="utf-8"
     )
 

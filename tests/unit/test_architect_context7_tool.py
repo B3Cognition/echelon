@@ -10,12 +10,12 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-ARCHITECT = ROOT / "extension" / "agents" / "solution" / "architect.md"
-PHASE = ROOT / "extension" / "workflow" / "phases" / "phase3-how.md"
+ARCHITECT = ROOT / "prosaic" / "subagents" / "echelon.architect.md"
+PHASE = ROOT / "runtime" / "workflow" / "phases" / "phase3-how.md"
 CTX7_NODE_DIR = ROOT / "runtime" / "scripts" / "node" / "context7"
-CTX7_WRAPPER = ROOT / "extension" / "scripts" / "bash" / "context7-docs.sh"
+CTX7_WRAPPER = ROOT / "runtime" / "scripts" / "bash" / "context7-docs.sh"
 NODE_RUNTIME_RESOLVER = (
-    ROOT / "extension" / "scripts" / "bash" / "node-runtime-resolver.sh"
+    ROOT / "runtime" / "scripts" / "bash" / "node-runtime-resolver.sh"
 )
 
 

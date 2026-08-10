@@ -2,7 +2,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-COMMAND_DIR = ROOT / "extension" / "commands"
+COMMAND_DIR = ROOT / "prosaic" / "commands"
 
 
 class TestManualCommandContracts:
@@ -113,22 +113,13 @@ class TestManualCommandContracts:
         assert "git checkout" not in text
         assert "git stash" not in text
 
-    def test_harness_run_command_accepts_authoritative_spec_dir(self) -> None:
+    def test_harness_run_command_delegates_delivery_context_to_controller(self) -> None:
         text = (COMMAND_DIR / "echelon.harness-run.md").read_text(encoding="utf-8")
 
-        assert "| `spec_dir` |" in text
-        assert "Treat `spec_dir` as authoritative" in text
-        assert "Do not locate, glob, search, list, or infer" in text
-        assert "Harness run missing resolved spec_dir" in text
-        assert "`{spec_dir}/spec.md`" in text
-        assert "`{spec_dir}/tasks.md`" in text
-        assert "`{spec_dir}/coverage-map.md`" in text
-        assert 'LESSONS_FILE="{spec_dir}/lessons.md"' in text
-        assert 'SPEC_DIR_REL="${SPEC_DIR#$(pwd)/}"' in text
-        assert 'SPEC_DIR_REL="${SPEC_DIR_REL#$(pwd)/}"' in text
-        assert "`specs/{spec_id}-*/spec.md`" not in text
-        assert "`specs/{spec_id}-*/tasks.md`" not in text
-        assert "LESSONS_FILE=\"specs/{spec_id}-{spec_name}/lessons.md\"" not in text
+        assert "echelon delivery run {{args}}" in text
+        assert "controller owns target resolution" in text.lower()
+        assert "Do not reproduce those operations" in text
+        assert "without attempting manual Git or state repair" in text
 
     def test_investigate_command_uses_workspace_specs_for_standalone_runs(self) -> None:
         text = (COMMAND_DIR / "echelon.investigate.md").read_text(encoding="utf-8")

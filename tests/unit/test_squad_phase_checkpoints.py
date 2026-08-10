@@ -186,7 +186,7 @@ def test_malformed_controller_result_never_reaches_checkpoint(
             DEFINITION,
             prosaic_subagents_dir=PROSAIC_SUBAGENTS,
         ),
-        ext_dir=EXT_ROOT / "extension",
+        ext_dir=EXT_ROOT / "runtime",
         project_root=tmp_path,
         squad_dir=squad_dir,
     )
@@ -265,7 +265,7 @@ def test_routing_construction_failure_never_reaches_checkpoint(
             DEFINITION,
             prosaic_subagents_dir=PROSAIC_SUBAGENTS,
         ),
-        ext_dir=EXT_ROOT / "extension",
+        ext_dir=EXT_ROOT / "runtime",
         project_root=tmp_path,
         squad_dir=squad_dir,
     )

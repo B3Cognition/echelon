@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-RESOLVER = ROOT / "extension" / "scripts" / "bash" / "node-runtime-resolver.sh"
+RESOLVER = ROOT / "runtime" / "scripts" / "bash" / "node-runtime-resolver.sh"
 
 
 def _isolated_env(**values: str) -> dict[str, str]:

@@ -7,7 +7,7 @@ from pathlib import Path
 
 def test_commander_generic_judgment_has_no_unregistered_human_question_path() -> None:
     root = Path(__file__).resolve().parents[2]
-    text = (root / "extension" / "agents" / "control" / "commander.md").read_text(
+    text = (root / "prosaic" / "subagents" / "echelon.commander.md").read_text(
         encoding="utf-8"
     )
 
@@ -21,7 +21,7 @@ def test_commander_generic_judgment_has_no_unregistered_human_question_path() ->
 
 def test_commander_decision_resolution_has_strict_non_mutating_authority() -> None:
     root = Path(__file__).resolve().parents[2]
-    text = (root / "extension" / "agents" / "control" / "commander.md").read_text(
+    text = (root / "prosaic" / "subagents" / "echelon.commander.md").read_text(
         encoding="utf-8"
     )
 

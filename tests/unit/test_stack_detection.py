@@ -17,7 +17,7 @@ from harness.stacks.detection import (
 
 
 ROOT = Path(__file__).resolve().parents[2]
-EXTENSION_ROOT = ROOT / "extension"
+EXTENSION_ROOT = ROOT / "runtime"
 
 
 def _definitions():

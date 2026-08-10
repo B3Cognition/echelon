@@ -2,46 +2,40 @@ from pathlib import Path
 
 import yaml
 
+from harness.prompt_markdown import read_prompt_markdown
+
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def _extension() -> dict:
-    return yaml.safe_load((ROOT / "extension/extension.yml").read_text(encoding="utf-8"))
+def _agent_metadata(name: str) -> dict:
+    return read_prompt_markdown(
+        ROOT / "prosaic" / "subagents" / f"echelon.{name}.md"
+    ).metadata
 
 
 def _definition() -> dict:
     return yaml.safe_load(
-        (ROOT / "extension/workflow/definition.yaml").read_text(encoding="utf-8")
+        (ROOT / "runtime/workflow/definition.yaml").read_text(encoding="utf-8")
     )
 
 
-def test_tech_writer_agent_is_registered() -> None:
-    commands = _extension()["provides"]["commands"]
-    tech_writer = next(
-        (item for item in commands if item.get("name") == "echelon.tech-writer"),
-        None,
-    )
+def test_tech_writer_agent_has_canonical_prosaic_metadata() -> None:
+    tech_writer = _agent_metadata("tech-writer")
 
-    assert tech_writer is not None
-    assert tech_writer["file"] == "agents/build/tech-writer.md"
+    assert tech_writer["name"] == "echelon.tech-writer"
     assert "TECH WRITER" in tech_writer["description"]
-    assert tech_writer["behavior"]["execution"] == "agent"
-    assert tech_writer["behavior"]["tools"] == "write"
+    assert tech_writer["execution"] == "agent"
+    assert tech_writer["tools"] == "write"
 
 
-def test_docs_verifier_agent_is_registered() -> None:
-    commands = _extension()["provides"]["commands"]
-    verifier = next(
-        (item for item in commands if item.get("name") == "echelon.docs-verifier"),
-        None,
-    )
+def test_docs_verifier_agent_has_canonical_prosaic_metadata() -> None:
+    verifier = _agent_metadata("docs-verifier")
 
-    assert verifier is not None
-    assert verifier["file"] == "agents/build/docs-verifier.md"
+    assert verifier["name"] == "echelon.docs-verifier"
     assert "DOCS VERIFIER" in verifier["description"]
-    assert verifier["behavior"]["execution"] == "agent"
-    assert verifier["behavior"]["tools"] == "write"
+    assert verifier["execution"] == "agent"
+    assert verifier["tools"] == "write"
 
 
 def test_tech_writer_phase_is_routed_before_build_finalize() -> None:
@@ -49,14 +43,14 @@ def test_tech_writer_phase_is_routed_before_build_finalize() -> None:
 
     docs_phase = phases["build-8-documentation"]
     assert docs_phase["type"] == "agent"
-    assert docs_phase["agent"] == "echelon-tech-writer"
+    assert docs_phase["agent"] == "echelon.tech-writer"
     assert "documentation-impact-report.md" in docs_phase["outputs"]
     assert "shadow_output_recovered" in docs_phase["allowed_state_updates"]
     assert docs_phase["transitions"] == [{"to": "build-8-verify-docs", "condition": "always"}]
 
     verify_docs = phases["build-8-verify-docs"]
     assert verify_docs["type"] == "agent"
-    assert verify_docs["agent"] == "echelon-docs-verifier"
+    assert verify_docs["agent"] == "echelon.docs-verifier"
     assert "docs-verification-report.md" in verify_docs["outputs"]
     assert "documentation-impact-report.md" in verify_docs["context_pack"]
     assert "README.md" in verify_docs["context_pack"]
@@ -82,7 +76,7 @@ def test_tech_writer_phase_is_routed_before_build_finalize() -> None:
 
 
 def test_tech_writer_agent_declares_required_result_contract() -> None:
-    text = (ROOT / "extension/agents/build/tech-writer.md").read_text(encoding="utf-8")
+    text = (ROOT / "prosaic/subagents/echelon.tech-writer.md").read_text(encoding="utf-8")
 
     assert "ALWAYS" in text
     assert "NEVER" in text
@@ -103,7 +97,7 @@ def test_tech_writer_agent_declares_required_result_contract() -> None:
 
 
 def test_tech_writer_readme_contract_requires_first_run_manual() -> None:
-    text = (ROOT / "extension/agents/build/tech-writer.md").read_text(encoding="utf-8")
+    text = (ROOT / "prosaic/subagents/echelon.tech-writer.md").read_text(encoding="utf-8")
     lowered = text.lower()
 
     assert "README First-Run Manual Contract" in text
@@ -119,7 +113,7 @@ def test_tech_writer_readme_contract_requires_first_run_manual() -> None:
 
 
 def test_docs_verifier_agent_declares_convergence_contract() -> None:
-    text = (ROOT / "extension/agents/build/docs-verifier.md").read_text(
+    text = (ROOT / "prosaic/subagents/echelon.docs-verifier.md").read_text(
         encoding="utf-8"
     )
     lowered = text.lower()
@@ -150,7 +144,7 @@ def test_docs_verifier_agent_declares_convergence_contract() -> None:
 
 
 def test_docs_verifier_phase_spec_defines_repair_loop() -> None:
-    text = (ROOT / "extension/workflow/phases/build-8-verify-docs.md").read_text(
+    text = (ROOT / "runtime/workflow/phases/build-8-verify-docs.md").read_text(
         encoding="utf-8"
     )
 
@@ -163,7 +157,7 @@ def test_docs_verifier_phase_spec_defines_repair_loop() -> None:
 
 
 def test_build_finalize_consumes_documentation_gate() -> None:
-    text = (ROOT / "extension/workflow/phases/build-8-finalize.md").read_text(
+    text = (ROOT / "runtime/workflow/phases/build-8-finalize.md").read_text(
         encoding="utf-8"
     )
 

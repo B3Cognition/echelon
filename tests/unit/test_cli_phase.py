@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import shutil
 import subprocess
 
 import pytest
@@ -17,7 +18,14 @@ from harness.squad_state import SquadStateStore, StateAdvanceError
 
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-EXT_DIR = ROOT / "extension"
+EXT_DIR = ROOT / "runtime"
+
+
+@pytest.fixture(autouse=True)
+def _deploy_workspace_bundles(tmp_path: Path) -> None:
+    echelon_dir = tmp_path / ".echelon"
+    shutil.copytree(ROOT / "runtime", echelon_dir / "runtime")
+    shutil.copytree(ROOT / "prosaic", echelon_dir / "prosaic")
 
 
 def _initialize_active_run(project_root: Path) -> Path:
@@ -33,7 +41,10 @@ def _initialize_active_run(project_root: Path) -> Path:
         cwd=project_root,
         check=True,
     )
-    (project_root / ".gitignore").write_text("/runs/\n", encoding="utf-8")
+    (project_root / ".gitignore").write_text(
+        "/runs/\n/.echelon/prosaic/\n/.echelon/runtime/\n",
+        encoding="utf-8",
+    )
     subprocess.run(["git", "add", ".gitignore"], cwd=project_root, check=True)
     subprocess.run(
         ["git", "commit", "-m", "base"], cwd=project_root, check=True, capture_output=True
@@ -355,7 +366,7 @@ def test_phase_run_constitution_does_not_require_task_lexicon_config(
             timeout_ms: int | None = None,
             **_kwargs: object,
         ) -> SquadAgentResult:
-            constitution = Path(project_root) / ".specify" / "memory" / "constitution.md"
+            constitution = Path(project_root) / "specs" / "001-demo" / "constitution.md"
             constitution.parent.mkdir(parents=True, exist_ok=True)
             constitution.write_text("# Constitution\n\nReal governance.\n", encoding="utf-8")
             return SquadAgentResult(
@@ -582,7 +593,7 @@ def test_phase_run_records_manual_replay_and_targets_spec_dir(
             timeout_ms: int | None = None,
             **_kwargs: object,
         ) -> SquadAgentResult:
-            constitution = Path(project_root) / ".specify" / "memory" / "constitution.md"
+            constitution = Path(project_root) / "specs" / "001-demo" / "constitution.md"
             constitution.parent.mkdir(parents=True, exist_ok=True)
             constitution.write_text("# Constitution\n\nReal governance.\n", encoding="utf-8")
             return SquadAgentResult(
@@ -637,7 +648,7 @@ def test_phase_run_experimental_artifact_quality_phases(
 ) -> None:
     _initialize_active_run(tmp_path)
     config_path = tmp_path / ".echelon" / "config.yml"
-    config_path.parent.mkdir(parents=True)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text("lexicon_gate:\n  enabled: false\n", encoding="utf-8")
     spec_dir = tmp_path / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)

@@ -348,7 +348,7 @@ def test_current_evidence_requires_matching_controller_score(
 @pytest.mark.unit
 @pytest.mark.parametrize(
     "config_path",
-    ["extension/config-template.yml", "extension/echelon-config.yml"],
+    ["runtime/config-template.yml"],
 )
 def test_distributed_config_disables_automatic_diagrams_by_default(
     config_path: str,
@@ -365,8 +365,8 @@ def test_deterministic_executor_continues_completed_failure_without_provider(
     root = Path(__file__).resolve().parents[2]
     project, squad_dir, spec_dir = _workspace(tmp_path)
     graph = PhaseGraph(
-        root / "extension/workflow/definition.yaml",
-        root / "extension/extension.yml",
+        root / "runtime/workflow/definition.yaml",
+        prosaic_subagents_dir=root / "prosaic/subagents",
     )
     store = SquadStateStore(squad_dir)
     store.initialize("run-1", "greenfield", "demo", 0, "phase1-understanding")
@@ -376,7 +376,7 @@ def test_deterministic_executor_continues_completed_failure_without_provider(
     store.save(state)
     executor = DeterministicUnderstandingExecutor(
         graph,
-        root / "extension",
+        root / "runtime",
         project,
         squad_dir,
     )
@@ -408,8 +408,8 @@ def test_deterministic_executor_blocks_operational_error_without_provider(
     project = tmp_path / "project"
     squad_dir = project / ".specify" / "squad" / "run-1"
     graph = PhaseGraph(
-        root / "extension/workflow/definition.yaml",
-        root / "extension/extension.yml",
+        root / "runtime/workflow/definition.yaml",
+        prosaic_subagents_dir=root / "prosaic/subagents",
     )
     store = SquadStateStore(squad_dir)
     store.initialize("run-1", "greenfield", "demo", 0, "phase3-understanding")
@@ -418,7 +418,7 @@ def test_deterministic_executor_blocks_operational_error_without_provider(
     store.save(state)
     executor = DeterministicUnderstandingExecutor(
         graph,
-        root / "extension",
+        root / "runtime",
         project,
         squad_dir,
     )
@@ -447,8 +447,8 @@ def test_legacy_model_scored_resume_adds_certified_evidence(
     root = Path(__file__).resolve().parents[2]
     project, squad_dir, spec_dir = _workspace(tmp_path)
     graph = PhaseGraph(
-        root / "extension/workflow/definition.yaml",
-        root / "extension/extension.yml",
+        root / "runtime/workflow/definition.yaml",
+        prosaic_subagents_dir=root / "prosaic/subagents",
     )
     store = SquadStateStore(squad_dir)
     store.initialize("run-1", "greenfield", "demo", 0, target_phase)
@@ -465,7 +465,7 @@ def test_legacy_model_scored_resume_adds_certified_evidence(
         provider=MagicMock(),
         state_store=store,
         phase_graph=graph,
-        ext_dir=root / "extension",
+        ext_dir=root / "runtime",
         project_root=project,
         squad_dir=squad_dir,
     )

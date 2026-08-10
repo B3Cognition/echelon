@@ -75,7 +75,7 @@ def test_failed_or_absent_gate_not_reported_as_a_supporting_claim():
 @pytest.mark.unit
 def test_deliver_phase_wires_the_manifest():
     import pathlib
-    spec = pathlib.Path("extension/workflow/phases/codegen-7-deliver.md").read_text()
+    spec = pathlib.Path("runtime/workflow/phases/codegen-7-deliver.md").read_text()
     assert "verification_manifest" in spec        # calls the module
     assert "codegen-verification.md" in spec      # emits the artifact
     assert 'NEVER report the build as "complete"' in spec or "claim" in spec.lower()

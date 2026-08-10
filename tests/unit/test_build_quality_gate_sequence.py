@@ -4,10 +4,10 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFINITION = ROOT / "extension" / "workflow" / "definition.yaml"
-COMMANDER = ROOT / "extension" / "agents" / "control" / "commander.md"
-BUILD_COMMAND = ROOT / "extension" / "commands" / "echelon.build.md"
-BUILD_IMPLEMENT = ROOT / "extension" / "workflow" / "phases" / "build-2-implement.md"
+DEFINITION = ROOT / "runtime" / "workflow" / "definition.yaml"
+COMMANDER = ROOT / "prosaic" / "subagents" / "echelon.commander.md"
+BUILD_COMMAND = ROOT / "prosaic" / "commands" / "echelon.build.md"
+BUILD_IMPLEMENT = ROOT / "runtime" / "workflow" / "phases" / "build-2-implement.md"
 
 
 def _workflow_nodes() -> dict[str, dict]:

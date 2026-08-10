@@ -126,7 +126,7 @@ def test_runnable_gate_composed_app_passes():
 def test_pipeline_sequence_lists_runnable_before_deliver():
     """Guard against re-orphaning: echelon.codegen.md must list codegen-6c-runnable
     before codegen-7-deliver.md — if this fails the RUNNABLE phase is orphaned again."""
-    seq_path = pathlib.Path("extension/commands/echelon.codegen.md")
+    seq_path = pathlib.Path("prosaic/commands/echelon.codegen.md")
     seq = seq_path.read_text()
     i_runnable = seq.find("codegen-6c-runnable")
     i_deliver = seq.find("codegen-7-deliver.md")
@@ -144,7 +144,7 @@ def test_pipeline_sequence_lists_runnable_before_deliver():
 def test_deliver_phase_blocks_on_runnable_gate():
     """codegen-7-deliver.md must explicitly block on runnable_gate to prevent
     hollow-app delivery even if the wiring check above passes."""
-    deliver_path = pathlib.Path("extension/workflow/phases/codegen-7-deliver.md")
+    deliver_path = pathlib.Path("runtime/workflow/phases/codegen-7-deliver.md")
     text = deliver_path.read_text()
     assert "runnable_gate" in text, (
         f"codegen-7-deliver.md must reference 'runnable_gate' as a hard precondition; "

@@ -45,7 +45,7 @@ def _controller(tmp_path: Path) -> SquadController:
             DEFINITION,
             prosaic_subagents_dir=PROSAIC_SUBAGENTS,
         ),
-        ext_dir=ROOT / "extension",
+        ext_dir=ROOT / "runtime",
         project_root=tmp_path,
         squad_dir=run_dir,
     )

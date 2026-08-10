@@ -57,56 +57,51 @@ def test_readme_installation_and_configuration_docs_use_current_contract() -> No
 
 
 @pytest.mark.unit
-def test_harness_command_docs_document_target_preflight_and_recovery() -> None:
-    run_doc = (ROOT / "extension/commands/echelon.harness-run.md").read_text(
+def test_harness_command_docs_delegate_target_preflight_and_recovery() -> None:
+    run_doc = (ROOT / "prosaic/commands/echelon.harness-run.md").read_text(
         encoding="utf-8"
     )
-    resume_doc = (ROOT / "extension/commands/echelon.harness-resume.md").read_text(
+    resume_doc = (ROOT / "prosaic/commands/echelon.harness-resume.md").read_text(
         encoding="utf-8"
     )
 
-    assert "targets.yml` is authoritative" in run_doc
-    assert "source root" in run_doc
-    assert "echelon spec run <description> --target <source-path>" in run_doc
-    assert "never establish it" in run_doc
-    assert "recorded target repo metadata" in resume_doc
-    assert "build_incomplete" in resume_doc
+    assert "controller owns target resolution" in run_doc.lower()
+    assert "recovery" in run_doc
+    assert "Do not reproduce those operations" in run_doc
+    assert "controller owns state validation and recovery" in resume_doc.lower()
+    assert "Do not inspect or edit controller state directly" in resume_doc
 
 
 @pytest.mark.unit
 def test_harness_command_docs_do_not_expose_harness_source_dir() -> None:
-    run_doc = (ROOT / "extension/commands/echelon.harness-run.md").read_text(
+    run_doc = (ROOT / "prosaic/commands/echelon.harness-run.md").read_text(
         encoding="utf-8"
     )
 
     assert "HARNESS_SOURCE_DIR" not in run_doc
     assert "read files there" not in run_doc
-    assert "Do not inspect, read, or search for harness source" in run_doc
+    assert "Do not reproduce those operations" in run_doc
+    assert "without attempting manual Git or state repair" in run_doc
 
 
 @pytest.mark.unit
 def test_harness_compatibility_docs_point_to_delivery_commands() -> None:
     docs = {
-        "run": (ROOT / "extension/commands/echelon.harness-run.md").read_text(
+        "run": (ROOT / "prosaic/commands/echelon.harness-run.md").read_text(
             encoding="utf-8"
         ),
-        "resume": (ROOT / "extension/commands/echelon.harness-resume.md").read_text(
+        "resume": (ROOT / "prosaic/commands/echelon.harness-resume.md").read_text(
             encoding="utf-8"
         ),
-        "status": (ROOT / "extension/commands/echelon.harness-status.md").read_text(
+        "status": (ROOT / "prosaic/commands/echelon.harness-status.md").read_text(
             encoding="utf-8"
         ),
     }
 
     assert "echelon delivery init" in docs["run"]
-    assert "echelon delivery run <spec_id>" in docs["run"]
-    assert "echelon delivery resume <spec_id>" in docs["resume"]
-    assert "echelon delivery status" in docs["status"]
-    for text in docs.values():
-        assert "echelon.harness-init" not in text
-        assert "echelon.harness-run" not in text
-        assert "echelon.harness-resume" not in text
-        assert "echelon.harness-status" not in text
+    assert "echelon delivery run {{args}}" in docs["run"]
+    assert "echelon delivery resume {{args}}" in docs["resume"]
+    assert "echelon delivery status {{args}}" in docs["status"]
 
 
 @pytest.mark.unit
@@ -120,7 +115,7 @@ def test_workspace_model_docs_define_single_repo_as_one_source_root() -> None:
     assert "echelon spec run \"Describe the feature\" --target og-platform" in text
     assert "echelon spec run \"Create the new tool\" --target sources/new-tool --init" in text
 
-    assert (ROOT / "extension/scripts/python/migrate_workspace_git.py").exists()
+    assert (ROOT / "runtime/scripts/python/migrate_workspace_git.py").exists()
 
 
 @pytest.mark.unit

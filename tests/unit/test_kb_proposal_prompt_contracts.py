@@ -14,7 +14,7 @@ def _read(path: str) -> str:
 
 
 def test_sage_records_decisions_as_kb_proposals() -> None:
-    text = _read("extension/agents/exploration/sage.md")
+    text = _read("prosaic/subagents/echelon.sage.md")
     assert "sage-decision-proposal-template.yaml" in text
     assert "${SQUAD_DIR}/kb-proposals/" in text
     assert "Do not edit `knowledge-base/sage-decisions.yaml` directly" in text
@@ -22,7 +22,7 @@ def test_sage_records_decisions_as_kb_proposals() -> None:
 
 
 def test_sage_calibration_reference_uses_proposals_and_keeps_canonical_reads() -> None:
-    text = _read("extension/agents/exploration/appendices/sage-decision-calibration-reference.md")
+    text = _read("prosaic/agents/exploration/appendices/sage-decision-calibration-reference.md")
 
     assert "sage-decision-proposal-template.yaml" in text
     assert "${SQUAD_DIR}/kb-proposals/" in text
@@ -32,7 +32,7 @@ def test_sage_calibration_reference_uses_proposals_and_keeps_canonical_reads() -
 
 
 def test_internalizer_writes_review_artifacts_instead_of_canonical_kb() -> None:
-    text = _read("extension/agents/learning/internalizer.md")
+    text = _read("prosaic/subagents/echelon.internalizer.md")
 
     assert "internalization-observation-proposal-template.yaml" in text
     assert "${SQUAD_DIR}/kb-proposals/" in text
@@ -46,7 +46,7 @@ def test_internalizer_writes_review_artifacts_instead_of_canonical_kb() -> None:
 
 
 def test_mirror_records_patterns_and_pitfalls_as_kb_proposals() -> None:
-    text = _read("extension/agents/learning/mirror.md")
+    text = _read("prosaic/subagents/echelon.mirror.md")
     assert "pattern-proposal-template.yaml" in text
     assert "pitfall-proposal-template.yaml" in text
     assert "${SQUAD_DIR}/kb-proposals/" in text
@@ -59,7 +59,7 @@ def test_mirror_records_patterns_and_pitfalls_as_kb_proposals() -> None:
 
 
 def test_finalize_runs_kb_apply_non_blocking() -> None:
-    text = _read("extension/workflow/phases/phase4-document.md")
+    text = _read("runtime/workflow/phases/phase4-document.md")
     assert "echelon kb validate --run-id" in text
     assert "echelon kb apply --run-id" in text
     assert "does not stop finalization" in text
@@ -81,7 +81,7 @@ def test_finalize_runs_kb_apply_non_blocking() -> None:
 
 
 def test_finalize_delegates_kb_report_publication_to_deterministic_helper() -> None:
-    text = _read("extension/workflow/phases/phase4-document.md")
+    text = _read("runtime/workflow/phases/phase4-document.md")
     normalized = " ".join(text.split())
 
     assert "The Python controller publishes KB provenance reports best-effort" in normalized
@@ -96,7 +96,7 @@ def test_finalize_delegates_kb_report_publication_to_deterministic_helper() -> N
 
 
 def test_finalize_has_no_direct_canonical_kb_writes() -> None:
-    text = _read("extension/workflow/phases/phase4-document.md")
+    text = _read("runtime/workflow/phases/phase4-document.md")
     direct_write = re.compile(
         r"\b(?:update|append|write|modify)\s+(?:to\s+)?`?knowledge-base/",
         re.IGNORECASE,
@@ -106,7 +106,7 @@ def test_finalize_has_no_direct_canonical_kb_writes() -> None:
 
 
 def test_auditor_records_calibration_as_kb_proposals() -> None:
-    text = _read("extension/agents/learning/auditor.md")
+    text = _read("prosaic/subagents/echelon.auditor.md")
     assert "calibration-observation-proposal-template.yaml" in text
     assert "${SQUAD_DIR}/kb-proposals/" in text
     assert "Do not edit `knowledge-base/calibration-profile.yaml` directly" in text
@@ -119,7 +119,7 @@ def test_auditor_records_calibration_as_kb_proposals() -> None:
 
 
 def test_scorekeeper_records_internalization_as_kb_proposals() -> None:
-    text = _read("extension/agents/control/scorekeeper.md")
+    text = _read("prosaic/subagents/echelon.scorekeeper.md")
     assert "internalization-observation-proposal-template.yaml" in text
     assert "${SQUAD_DIR}/kb-proposals/" in text
     assert "Do not edit `knowledge-base/agent-scores.yaml` directly" in text
@@ -132,10 +132,10 @@ def test_scorekeeper_records_internalization_as_kb_proposals() -> None:
 
 
 def test_finalize_applies_kb_proposals_after_scorekeeper() -> None:
-    text = _read("extension/workflow/phases/phase4-document.md")
+    text = _read("runtime/workflow/phases/phase4-document.md")
 
     assert text.index("echelon kb apply --run-id") > text.index(
-        "Run echelon-scorekeeper"
+        "Run echelon.scorekeeper"
     )
     assert text.index("echelon kb apply --run-id") < text.index(
         "12.7b Collect Final Artifacts"
@@ -143,8 +143,8 @@ def test_finalize_applies_kb_proposals_after_scorekeeper() -> None:
 
 
 def test_auditor_and_scorekeeper_have_no_direct_canonical_kb_mutations() -> None:
-    auditor = _read("extension/agents/learning/auditor.md")
-    scorekeeper = _read("extension/agents/control/scorekeeper.md")
+    auditor = _read("prosaic/subagents/echelon.auditor.md")
+    scorekeeper = _read("prosaic/subagents/echelon.scorekeeper.md")
     direct_write = re.compile(
         r"\b(?:write|update|append|modify|add)\b[^\n]{0,160}`?knowledge-base/",
         re.IGNORECASE,
@@ -159,7 +159,7 @@ def test_auditor_and_scorekeeper_have_no_direct_canonical_kb_mutations() -> None
 
 
 def test_auditor_recommends_pattern_feedback_validation() -> None:
-    text = _read("extension/agents/learning/auditor.md")
+    text = _read("prosaic/subagents/echelon.auditor.md")
     feedback_validation = text.split("#### Step 4: Validate Knowledge Base", 1)[1].split(
         "### Mode 3:", 1
     )[0]
@@ -171,7 +171,7 @@ def test_auditor_recommends_pattern_feedback_validation() -> None:
 
 
 def test_workflow_allows_kb_status_state_updates() -> None:
-    text = _read("extension/workflow/definition.yaml")
+    text = _read("runtime/workflow/definition.yaml")
     for key in [
         "kb_usage_status",
         "kb_validation_status",
@@ -183,7 +183,7 @@ def test_workflow_allows_kb_status_state_updates() -> None:
 
 
 def test_adaptive_records_staleness_as_review_artifacts_not_canonical_mutations() -> None:
-    text = _read("extension/agents/learning/adaptive.md")
+    text = _read("prosaic/subagents/echelon.adaptive.md")
 
     assert "Do not edit canonical knowledge-base files directly" in text
     direct_write = re.compile(
@@ -196,8 +196,8 @@ def test_adaptive_records_staleness_as_review_artifacts_not_canonical_mutations(
 
 def test_learning_appendices_do_not_instruct_canonical_kb_writes() -> None:
     for path in [
-        "extension/agents/learning/appendices/internalizer-output-formats.md",
-        "extension/agents/learning/appendices/auditor-output-formats.md",
+        "prosaic/agents/learning/appendices/internalizer-output-formats.md",
+        "prosaic/agents/learning/appendices/auditor-output-formats.md",
     ]:
         text = _read(path)
         direct_write = re.compile(

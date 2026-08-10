@@ -165,7 +165,7 @@ def test_coordinator_passes_combined_stack_context_to_ralph_and_build_prompt(
 
     extension_stacks = tmp_path / "extension" / "stacks"
     for stack_id in ("statsperform-playbook", "statsperform-stark-webapp"):
-        source = ROOT / "extension" / "stacks" / stack_id
+        source = ROOT / "runtime" / "stacks" / stack_id
         target = extension_stacks / stack_id
         target.mkdir(parents=True)
         for path in source.iterdir():

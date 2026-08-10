@@ -2,20 +2,20 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-CHECKPOINT = ROOT / "extension" / "agents" / "control" / "checkpoint.md"
-PHASE2_DECIDE = ROOT / "extension" / "workflow" / "phases" / "phase2-decide.md"
-PHASE1_WHAT = ROOT / "extension" / "workflow" / "phases" / "phase1-what.md"
-PHASE1_WHY2 = ROOT / "extension" / "workflow" / "phases" / "phase1-why2.md"
-BUILD_INIT = ROOT / "extension" / "workflow" / "phases" / "build-1-init.md"
-BUILD_FINALIZE = ROOT / "extension" / "workflow" / "phases" / "build-8-finalize.md"
-BUILD_COMMAND = ROOT / "extension" / "commands" / "echelon.build.md"
-PHASE3_CONSENSUS = ROOT / "extension" / "workflow" / "phases" / "phase3-consensus.md"
-PHASE3_SPECIALISTS = ROOT / "extension" / "workflow" / "phases" / "phase3-specialists.md"
-PHASE4_DOCUMENT = ROOT / "extension" / "workflow" / "phases" / "phase4-document.md"
+CHECKPOINT = ROOT / "prosaic" / "subagents" / "echelon.checkpoint.md"
+PHASE2_DECIDE = ROOT / "runtime" / "workflow" / "phases" / "phase2-decide.md"
+PHASE1_WHAT = ROOT / "runtime" / "workflow" / "phases" / "phase1-what.md"
+PHASE1_WHY2 = ROOT / "runtime" / "workflow" / "phases" / "phase1-why2.md"
+BUILD_INIT = ROOT / "runtime" / "workflow" / "phases" / "build-1-init.md"
+BUILD_FINALIZE = ROOT / "runtime" / "workflow" / "phases" / "build-8-finalize.md"
+BUILD_COMMAND = ROOT / "prosaic" / "commands" / "echelon.build.md"
+PHASE3_CONSENSUS = ROOT / "runtime" / "workflow" / "phases" / "phase3-consensus.md"
+PHASE3_SPECIALISTS = ROOT / "runtime" / "workflow" / "phases" / "phase3-specialists.md"
+PHASE4_DOCUMENT = ROOT / "runtime" / "workflow" / "phases" / "phase4-document.md"
 BUILD_VERIFY_GATES = (
-    ROOT / "extension" / "workflow" / "phases" / "appendices" / "build-8-verify-gates.md"
+    ROOT / "runtime" / "workflow" / "phases" / "appendices" / "build-8-verify-gates.md"
 )
-CODEGEN_SECURITY = ROOT / "extension" / "workflow" / "phases" / "codegen-6b-security.md"
+CODEGEN_SECURITY = ROOT / "runtime" / "workflow" / "phases" / "codegen-6b-security.md"
 
 
 class TestPhaseOutputPaths:
@@ -158,7 +158,7 @@ class TestPhaseOutputPaths:
 
     def test_build_finalize_generates_artifact_index_deterministically(self) -> None:
         text = (
-            ROOT / "extension" / "workflow" / "phases" / "build-8-finalize.md"
+            ROOT / "runtime" / "workflow" / "phases" / "build-8-finalize.md"
         ).read_text(encoding="utf-8")
 
         assert "echelon spec artifacts" in text

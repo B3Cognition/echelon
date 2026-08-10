@@ -2,19 +2,26 @@ from pathlib import Path
 
 import yaml
 
+from harness.prompt_markdown import read_prompt_markdown
+
 
 ROOT = Path(__file__).resolve().parents[2]
-EXTENSION = ROOT / "extension" / "extension.yml"
-CONFIG_TEMPLATE = ROOT / "extension" / "config-template.yml"
+CONFIG_TEMPLATE = ROOT / "runtime" / "config-template.yml"
 
 
-def _commands_by_name() -> dict[str, dict]:
-    data = yaml.safe_load(EXTENSION.read_text(encoding="utf-8"))
-    return {entry["name"]: entry for entry in data["provides"]["commands"]}
+def _prose_by_name() -> dict[str, dict]:
+    prose: dict[str, dict] = {}
+    for directory in (ROOT / "prosaic/subagents", ROOT / "prosaic/commands"):
+        for path in directory.glob("*.md"):
+            metadata = read_prompt_markdown(path).metadata
+            name = metadata.get("name")
+            if isinstance(name, str):
+                prose[name] = metadata
+    return prose
 
 
 def test_cost_tuned_agents_do_not_request_strong_capability() -> None:
-    commands = _commands_by_name()
+    prose = _prose_by_name()
 
     expected = {
         "echelon.checkpoint": "balanced",
@@ -42,11 +49,11 @@ def test_cost_tuned_agents_do_not_request_strong_capability() -> None:
     }
 
     for name, capability in expected.items():
-        assert commands[name]["behavior"]["capability"] == capability
+        assert prose[name]["model_tier"] == capability
 
 
 def test_high_risk_agents_keep_strong_capability() -> None:
-    commands = _commands_by_name()
+    prose = _prose_by_name()
 
     for name in [
         "echelon.commander",
@@ -66,7 +73,7 @@ def test_high_risk_agents_keep_strong_capability() -> None:
         "echelon.harness-run",
         "echelon.harness-resume",
     ]:
-        assert commands[name]["behavior"]["capability"] == "strong"
+        assert prose[name]["model_tier"] == "strong"
 
 
 def test_runtime_model_config_covers_workflow_tiers() -> None:

@@ -25,8 +25,8 @@ def test_python_config_does_not_add_tool_dependencies() -> None:
 @pytest.mark.unit
 def test_journal_scripts_do_not_invoke_banned_tools() -> None:
     scripts = [
-        ROOT / "extension/scripts/bash/validate-journal-entry.sh",
-        ROOT / "extension/scripts/bash/journal-append.sh",
+        ROOT / "runtime/scripts/bash/validate-journal-entry.sh",
+        ROOT / "runtime/scripts/bash/journal-append.sh",
     ]
 
     findings = find_banned_script_invocations(scripts)

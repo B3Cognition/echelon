@@ -2,34 +2,34 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-RE_SPECIFIER = ROOT / "extension" / "agents" / "re" / "specifier.md"
-RE_VALIDATOR = ROOT / "extension" / "agents" / "re" / "validator.md"
+RE_SPECIFIER = ROOT / "prosaic" / "subagents" / "echelon.re-specifier.md"
+RE_VALIDATOR = ROOT / "prosaic" / "subagents" / "echelon.re-validator.md"
 RE_EXTRACT_2_SPECIFY = (
-    ROOT / "extension" / "workflow" / "phases" / "re-extract-2-specify.md"
+    ROOT / "runtime" / "workflow" / "phases" / "re-extract-2-specify.md"
 )
-RE_PLANNER = ROOT / "extension" / "agents" / "re" / "planner.md"
+RE_PLANNER = ROOT / "prosaic" / "subagents" / "echelon.re-planner.md"
 RE_PLANNING_1_PLAN = (
-    ROOT / "extension" / "workflow" / "phases" / "re-planning-1-plan.md"
+    ROOT / "runtime" / "workflow" / "phases" / "re-planning-1-plan.md"
 )
-RE_TASKER = ROOT / "extension" / "agents" / "re" / "tasker.md"
+RE_TASKER = ROOT / "prosaic" / "subagents" / "echelon.re-tasker.md"
 RE_PLANNING_2_TASKS = (
-    ROOT / "extension" / "workflow" / "phases" / "re-planning-2-tasks.md"
+    ROOT / "runtime" / "workflow" / "phases" / "re-planning-2-tasks.md"
 )
-RE_CHECKLISTER = ROOT / "extension" / "agents" / "re" / "checklister.md"
+RE_CHECKLISTER = ROOT / "prosaic" / "subagents" / "echelon.re-checklister.md"
 RE_EXTRACT_6_CHECKLIST = (
-    ROOT / "extension" / "workflow" / "phases" / "re-extract-6-checklist.md"
+    ROOT / "runtime" / "workflow" / "phases" / "re-extract-6-checklist.md"
 )
-RE_EXPANDER = ROOT / "extension" / "agents" / "re" / "expander.md"
+RE_EXPANDER = ROOT / "prosaic" / "subagents" / "echelon.re-expander.md"
 RE_EXTRACT_4_EXPAND = (
-    ROOT / "extension" / "workflow" / "phases" / "re-extract-4-expand.md"
+    ROOT / "runtime" / "workflow" / "phases" / "re-extract-4-expand.md"
 )
-RE_ANALYZER = ROOT / "extension" / "agents" / "re" / "analyzer.md"
+RE_ANALYZER = ROOT / "prosaic" / "subagents" / "echelon.re-analyzer.md"
 RE_EXTRACT_1_ANALYZE = (
-    ROOT / "extension" / "workflow" / "phases" / "re-extract-1-analyze.md"
+    ROOT / "runtime" / "workflow" / "phases" / "re-extract-1-analyze.md"
 )
 RE_RETARGET_PHASES = [
-    ROOT / "extension" / "workflow" / "phases" / "re-retarget-0-preflight.md",
-    ROOT / "extension" / "workflow" / "phases" / "re-retarget-1-input.md",
+    ROOT / "runtime" / "workflow" / "phases" / "re-retarget-0-preflight.md",
+    ROOT / "runtime" / "workflow" / "phases" / "re-retarget-1-input.md",
 ]
 
 
@@ -165,7 +165,7 @@ class TestRePromptOutputContracts:
         assert "backup, temporary, alternate, or scratch files" in text
 
     def test_re_verifier_rejects_specs_without_source_evidence(self) -> None:
-        text = (ROOT / "extension" / "agents" / "re" / "verifier.md").read_text(
+        text = (ROOT / "prosaic" / "subagents" / "echelon.re-verifier.md").read_text(
             encoding="utf-8"
         )
 
@@ -176,7 +176,7 @@ class TestRePromptOutputContracts:
 
     def test_re_agents_reference_the_deterministic_deep_spec_gate(self) -> None:
         specifier = RE_SPECIFIER.read_text(encoding="utf-8")
-        verifier = (ROOT / "extension" / "agents" / "re" / "verifier.md").read_text(
+        verifier = (ROOT / "prosaic" / "subagents" / "echelon.re-verifier.md").read_text(
             encoding="utf-8"
         )
 

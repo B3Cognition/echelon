@@ -9,7 +9,7 @@ from harness.stacks.errors import StackResolutionError
 
 
 ROOT = Path(__file__).resolve().parents[2]
-EXTENSION_ROOT = ROOT / "extension"
+EXTENSION_ROOT = ROOT / "runtime"
 
 
 def _definitions():

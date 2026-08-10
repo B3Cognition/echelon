@@ -38,7 +38,7 @@ from harness.config import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-CONFIG_TEMPLATE = ROOT / "extension" / "config-template.yml"
+CONFIG_TEMPLATE = ROOT / "runtime" / "config-template.yml"
 
 
 # ---------------------------------------------------------------------------

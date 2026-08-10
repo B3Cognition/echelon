@@ -33,7 +33,7 @@ def _route_tracker_verdict(tmp_path: Path, phase_id: str, verdict: str) -> str:
         provider=MagicMock(),
         state_store=store,
         phase_graph=graph,
-        ext_dir=ROOT / "extension",
+        ext_dir=ROOT / "runtime",
         project_root=tmp_path,
         token_budget=0,
         squad_dir=store.squad_dir,

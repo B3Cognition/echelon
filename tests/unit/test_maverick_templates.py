@@ -8,7 +8,6 @@ TEMPLATE_DIR = ROOT / "runtime" / "templates"
 AGENT = ROOT / "prosaic" / "subagents" / "echelon.maverick.md"
 PHASE = ROOT / "runtime" / "workflow" / "phases" / "phase3-specialists.md"
 COMMAND = ROOT / "prosaic" / "commands" / "echelon.innovate.md"
-EXTENSION = ROOT / "extension" / "extension.yml"
 
 
 class TestMaverickTemplates:
@@ -83,7 +82,7 @@ class TestMaverickTemplates:
         assert ".echelon/runtime/templates/risk-opportunities-template.md" in text
         assert ".echelon/runtime/templates/challenge-assumptions-template.md" in text
 
-    def test_extension_registry_lists_all_maverick_outputs(self) -> None:
-        text = EXTENSION.read_text(encoding="utf-8")
+    def test_innovate_command_lists_all_maverick_outputs(self) -> None:
+        text = COMMAND.read_text(encoding="utf-8")
 
         assert "alternatives.md, risk-opportunities.md, challenge-assumptions.md" in text
