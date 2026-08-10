@@ -52,7 +52,7 @@ except ImportError:
         def check_wing_collision(*a, **k):  # type: ignore[assignment]
             return []
 
-# Maps CLI command → spec-kit skill base name (used to derive file paths).
+# Maps CLI commands to deployed Prosaic command names used to derive file paths.
 # NOTE: "run" is intentionally absent — it is handled by the Python harness
 # (_cmd_run) and must never fall through to the skill-based LLM path.
 # Keeping "run" here would cause infinite recursion: skill → claude -p →

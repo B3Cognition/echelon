@@ -11,7 +11,7 @@ from echelon.kb_proposals import validate_proposal_document
 
 
 ROOT = Path(__file__).resolve().parents[2]
-TEMPLATE_DIR = ROOT / "extension" / "templates" / "kb-proposals"
+TEMPLATE_DIR = ROOT / "runtime" / "templates" / "kb-proposals"
 
 
 def test_kb_proposal_templates_parse_and_validate() -> None:

@@ -337,10 +337,10 @@ def _inherit_top_level_harness_defaults(
     """Merge compatible top-level defaults into a nested harness config.
 
     Existing projects can contain top-level ``llm`` settings from earlier
-    unified-config usage. When a ``harness:`` section is present, spec-kit's
-    ConfigManager returns that section for harness loading, so top-level LLM
-    tool policy would otherwise be silently ignored. Treat top-level ``llm`` as
-    a lower-precedence default and let ``harness.llm`` override it.
+    unified-config usage. When a ``harness:`` section is present, harness loading
+    selects that section, so top-level LLM tool policy would otherwise be silently
+    ignored. Treat top-level ``llm`` as a lower-precedence default and let
+    ``harness.llm`` override it.
     """
     merged = dict(harness)
     top_llm = raw.get("llm")
