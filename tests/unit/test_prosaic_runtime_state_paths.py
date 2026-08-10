@@ -168,6 +168,18 @@ def test_active_journal_validation_uses_runtime_schema() -> None:
     assert "extension/workflow/journal-entry-types" not in combined
 
 
+def test_deployment_scripts_have_one_runtime_source_of_truth() -> None:
+    duplicate_names = (
+        "deploy.sh",
+        "deploy-init.sh",
+        "deploy-status.sh",
+        "validate-deploy.sh",
+    )
+
+    assert all((RUNTIME / "scripts" / "bash" / name).is_file() for name in duplicate_names)
+    assert not any((ROOT / "scripts" / "bash" / name).exists() for name in duplicate_names)
+
+
 def test_land_and_recovery_do_not_special_case_legacy_storage() -> None:
     modules = (
         ROOT / "src" / "harness" / "land.py",
