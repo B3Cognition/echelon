@@ -373,7 +373,7 @@ class GitOpsManager:
     def clone_mirror(self, target_url: str) -> str:
         """Clone target repo as bare mirror.
 
-        git clone --mirror <target_url> .specify/extensions/echelon/harness/mirror.git
+        git clone --mirror <target_url> runs/_mirror/mirror.git
 
         Returns:
             Path to the mirror directory.
@@ -1202,7 +1202,7 @@ class GitOpsManager:
         title_suffix = f" — {spec_name}" if spec_name else f"/{strategy_id}"
         title = f"harness: {spec_id}{title_suffix}"
         body = (
-            f"Automated build via spec-kit harness.\n\n"
+            f"Automated build via Echelon delivery.\n\n"
             f"Spec: {spec_id}{(' — ' + spec_name) if spec_name else ''}\n"
             f"Strategy: {strategy_id}"
         )
@@ -1748,7 +1748,7 @@ class GitOpsManager:
 
     def _branch_from_worktree_path(self, worktree_path: str) -> Optional[str]:
         """Extract branch name from worktree path convention."""
-        # Path: .specify/harness/worktrees/{spec_id}/{strategy_id}/iter-{N}
+        # Path: runs/{spec_id}/strategies/{strategy_id}/worktrees/iter-{N}
         parts = Path(worktree_path).parts
         try:
             wt_idx = parts.index("worktrees")

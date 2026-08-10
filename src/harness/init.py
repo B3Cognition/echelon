@@ -1,4 +1,4 @@
-"""Init flow orchestration for spec-kit-harness.
+"""Init flow orchestration for Echelon delivery.
 
 Implements the init flow from plan.md Phase 1E:
 1. Accept target repo URL/path, validate it exists

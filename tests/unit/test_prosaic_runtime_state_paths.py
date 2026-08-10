@@ -135,6 +135,26 @@ def test_container_runtime_uses_echelon_owned_labels() -> None:
     assert "echelon-harness.session_id" in combined
 
 
+def test_active_delivery_modules_use_echelon_owned_names() -> None:
+    modules = (
+        ROOT / "src" / "echelon" / "cli.py",
+        ROOT / "src" / "echelon" / "artifact_index.py",
+        ROOT / "src" / "harness" / "config.py",
+        ROOT / "src" / "harness" / "errors.py",
+        ROOT / "src" / "harness" / "gitops.py",
+        ROOT / "src" / "harness" / "init.py",
+        ROOT / "src" / "harness" / "run_intent.py",
+        ROOT / "src" / "harness" / "skills" / "run_skill.py",
+        ROOT / "src" / "harness" / "skills" / "resume_skill.py",
+    )
+    combined = "\n".join(path.read_text(encoding="utf-8") for path in modules)
+
+    assert "spec-kit harness" not in combined.lower()
+    assert "spec-kit-harness" not in combined.lower()
+    assert "/speckit-harness" not in combined.lower()
+    assert ".specify/extensions/echelon/harness" not in combined
+
+
 def test_land_and_recovery_do_not_special_case_legacy_storage() -> None:
     modules = (
         ROOT / "src" / "harness" / "land.py",

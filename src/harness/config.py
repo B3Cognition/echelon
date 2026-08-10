@@ -737,7 +737,7 @@ def load_config(
     """Load and validate harness configuration using Echelon's config cascade.
 
     Args:
-        project_root: Root of the spec-kit project. Defaults to ``Path.cwd()``.
+        project_root: Root of the Echelon workspace. Defaults to ``Path.cwd()``.
         squad_only: When True, tolerate non-delivery config during target
             dispatch. Implementation targets still come from spec frontmatter,
             not from target_repo config.

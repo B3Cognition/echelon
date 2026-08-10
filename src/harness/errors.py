@@ -1,4 +1,4 @@
-"""Error type hierarchy for spec-kit-harness.
+"""Error type hierarchy for Echelon delivery.
 
 Error hierarchy (from contracts/sandbox-provider.md and contracts/gitops-interface.md):
 

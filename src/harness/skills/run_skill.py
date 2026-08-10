@@ -423,7 +423,7 @@ def run(
     resume_build_id: str | None = None,
     orchestration_root: str | Path | None = None,
 ) -> DeliveryRunOutcome:
-    """Execute /speckit-harness-run skill.
+    """Execute an Echelon delivery run.
 
     Args:
         user_message: Natural-language run request.

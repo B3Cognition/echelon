@@ -1,4 +1,4 @@
-"""RunIntent — parsed representation of /speckit-harness-run arguments.
+"""RunIntent: parsed representation of ``echelon delivery run`` arguments.
 
 Per data-model RunIntent entity:
   spec_id, mode, max_outer, max_inner, token_budget, auto_merge, kill_losers, strategies.

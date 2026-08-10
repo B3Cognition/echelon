@@ -24,7 +24,7 @@ def test_branchless_polyrepo_workspace_blocks_with_init_recipe(
     assert "workspace root is not a Git repo" in err
     assert "git init" in err
     assert "/og-platform/" in err
-    assert "/.specify/" in err
+    assert "/.specify/" not in err
     assert "/runs/" in err
     assert "git add .gitignore specs" in err
     assert "git add .gitignore .specify specs" not in err

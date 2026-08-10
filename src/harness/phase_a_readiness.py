@@ -299,7 +299,7 @@ def _plan_conformance_blocker(path: Path) -> str | None:
 def unresolved_constitution_template_markers(text: str) -> list[str]:
     """Return unresolved constitution template markers in executable content.
 
-    Spec-kit constitution files may keep a leading Sync Impact Report comment
+    Migrated constitution files may keep a leading Sync Impact Report comment
     that maps old placeholder slots to concrete principle names. Those historical
     mapping entries are not live template placeholders. The constitution body
     after the report remains authoritative for readiness checks.

@@ -182,7 +182,7 @@ def _workspace_git_preflight(project_root: Path, *, command_name: str) -> None:
 
     source_paths = [source.path for source in manifest.sources if source.path != "."]
     ignore_entries = [f"/{path}/" for path in source_paths] or ["/source-repo/"]
-    ignore_entries.extend(["/.specify/", "/runs/"])
+    ignore_entries.append("/runs/")
     ignore_lines = "\n".join(ignore_entries)
     print(
         "✗ Echelon workspace root is not a Git repo.\n\n"

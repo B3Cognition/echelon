@@ -227,7 +227,7 @@ _ARTIFACTS = (
         "Published read-only snapshot of `.echelon/constitution.md`.",
         "Phase A",
         "CHIEF",
-        "Republished after CHIEF/spec-kit constitution creation or amendment.",
+        "Republished after CHIEF constitution creation or amendment.",
         "Spec readers",
     ),
     ArtifactDefinition(

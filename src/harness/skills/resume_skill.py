@@ -28,7 +28,7 @@ def resume(
     base_dir: str = ".",
     orchestration_root: str | Path | None = None,
 ) -> None:
-    """Execute /speckit-harness-resume skill.
+    """Resume a blocked Echelon delivery run.
 
     Args:
         user_message: Natural-language resume request with answer.
