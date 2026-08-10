@@ -238,6 +238,11 @@ def test_legacy_startup_banner_is_not_part_of_active_runtime() -> None:
     assert not (ROOT / "scripts" / "bash" / "startup-banner.sh").exists()
 
 
+def test_build_light_gates_have_one_runtime_source_of_truth() -> None:
+    assert (RUNTIME / "scripts" / "bash" / "build-light-gates.sh").is_file()
+    assert not (ROOT / "scripts" / "bash" / "build-light-gates.sh").exists()
+
+
 def test_land_and_recovery_do_not_special_case_legacy_storage() -> None:
     modules = (
         ROOT / "src" / "harness" / "land.py",
