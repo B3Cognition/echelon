@@ -16,8 +16,8 @@ from harness.squad_state import SquadStateStore
 
 
 EXT_ROOT = Path(__file__).resolve().parent.parent.parent
-DEFINITION = EXT_ROOT / "extension" / "workflow" / "definition.yaml"
-EXT_YML = EXT_ROOT / "extension" / "extension.yml"
+DEFINITION = EXT_ROOT / "runtime" / "workflow" / "definition.yaml"
+PROSAIC_SUBAGENTS = EXT_ROOT / "prosaic" / "subagents"
 
 
 @pytest.mark.parametrize(
@@ -182,7 +182,10 @@ def test_malformed_controller_result_never_reaches_checkpoint(
     controller = SquadController(
         provider=MagicMock(),
         state_store=store,
-        phase_graph=PhaseGraph(DEFINITION, EXT_YML),
+        phase_graph=PhaseGraph(
+            DEFINITION,
+            prosaic_subagents_dir=PROSAIC_SUBAGENTS,
+        ),
         ext_dir=EXT_ROOT / "extension",
         project_root=tmp_path,
         squad_dir=squad_dir,
@@ -258,7 +261,10 @@ def test_routing_construction_failure_never_reaches_checkpoint(
     controller = SquadController(
         provider=MagicMock(),
         state_store=store,
-        phase_graph=PhaseGraph(DEFINITION, EXT_YML),
+        phase_graph=PhaseGraph(
+            DEFINITION,
+            prosaic_subagents_dir=PROSAIC_SUBAGENTS,
+        ),
         ext_dir=EXT_ROOT / "extension",
         project_root=tmp_path,
         squad_dir=squad_dir,

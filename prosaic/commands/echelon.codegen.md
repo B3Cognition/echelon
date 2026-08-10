@@ -29,11 +29,11 @@ These invariants are constitutionally mandated and CANNOT be overridden by any
 phase, LLM advisory, or commercial pressure:
 
 - **INV-001:** Always make `chunk never` the first directive in every `.soar` config file. SOAR chunking is disabled in all production deployments.
-- **INV-002:** Quality constraints MUST be enforced exclusively via SOAR CQ-ISC prohibit preferences. No LLM advisory output, guardrail, or echelon.implementer (IMPLEMENTER)-level logic may substitute.
-- **INV-003:** echelon.implementer (IMPLEMENTER) outputs inject `best` preferences ONLY. echelon.implementer (IMPLEMENTER) does NOT inject prohibit, require, or worst preferences.
+- **INV-002:** Quality constraints MUST be enforced exclusively via SOAR CQ-ISC prohibit preferences. No LLM advisory output, guardrail, or echelon-implementer (IMPLEMENTER)-level logic may substitute.
+- **INV-003:** echelon-implementer (IMPLEMENTER) outputs inject `best` preferences ONLY. echelon-implementer (IMPLEMENTER) does NOT inject prohibit, require, or worst preferences.
 - **INV-004:** Every SOAR phase transition MUST produce an EPMEM entry. EPMEM recording cannot be disabled.
 - **INV-005:** Every CQ-ISC production rule MUST have `(build ^current-phase <phase>)` as its FIRST LHS condition.
-- **INV-006:** SOAR owns the phase transition decision. echelon.implementer (IMPLEMENTER) advises. echelon.implementer (IMPLEMENTER) does NOT self-advance the pipeline.
+- **INV-006:** SOAR owns the phase transition decision. echelon-implementer (IMPLEMENTER) advises. echelon-implementer (IMPLEMENTER) does NOT self-advance the pipeline.
 - **INV-008:** Conflict impasse = correct behaviour, NOT a failure. Impasse triggers human escalation, not autonomous resolution.
 - **INV-010:** Delivery is BLOCKED until all Tier 1 (unit) tests pass via Bash tool execution.
 

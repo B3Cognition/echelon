@@ -120,7 +120,9 @@ def _normalized_artifact(
     description = entry.get("description")
     file_name = entry.get("file")
     behavior = entry.get("behavior", {})
-    if not isinstance(name, str) or not name.startswith("speckit."):
+    if not isinstance(name, str) or not (
+        name.startswith("echelon.") or name.startswith("speckit.")
+    ):
         raise ProsaicExportError(f"agent has invalid manifest name: {name!r}")
     if not isinstance(description, str) or not description:
         raise ProsaicExportError(f"agent {name} has no description")
@@ -140,8 +142,13 @@ def _normalized_artifact(
     capability = normalized_behavior.pop("capability", None)
     if capability is not None:
         normalized_behavior["model_tier"] = capability
-    frontmatter = {"name": name, "description": description, **normalized_behavior}
-    artifact_id = name.removeprefix("speckit.") if artifact_id_from_name else source_file.stem
+    normalized_name = name.removeprefix("speckit.")
+    frontmatter = {
+        "name": normalized_name,
+        "description": description,
+        **normalized_behavior,
+    }
+    artifact_id = normalized_name if artifact_id_from_name else source_file.stem
     return artifact_id, source_file, frontmatter
 
 

@@ -1,15 +1,15 @@
 ---
 name: echelon.run
-description: Full autonomous cognitive squad run — requires workspace initialization first
+description: Full autonomous cognitive squad run — requires echelon.init first
 ---
 ## Step 1: Anchor project root
 
 ```bash
 PROJECT_ROOT=$(pwd)
-ECHELON_EXT="${PROJECT_ROOT}/.echelon/runtime"
+ECHELON_RUNTIME="${PROJECT_ROOT}/.echelon/runtime"
 ECHELON_CONFIG="${PROJECT_ROOT}/.echelon/config.yml"
 echo "PROJECT_ROOT=${PROJECT_ROOT}"
-echo "ECHELON_EXT=${ECHELON_EXT}"
+echo "ECHELON_RUNTIME=${ECHELON_RUNTIME}"
 echo "ECHELON_CONFIG=${ECHELON_CONFIG}"
 ```
 
@@ -38,13 +38,13 @@ if [ -z "$ECHELON_VER" ]; then
 fi
 echo "✓ echelon CLI: $(command -v echelon) (${ECHELON_VER})"
 
-# Runtime deployed
-if [ ! -d "${ECHELON_EXT}" ]; then
-  echo "✗ Echelon runtime not installed: ${ECHELON_EXT}" >&2
-  echo "  Run: echelon workspace init --with-prosaic" >&2
+# Runtime bundle installed
+if [ ! -d "${ECHELON_RUNTIME}" ]; then
+  echo "✗ Echelon runtime bundle not installed: ${ECHELON_RUNTIME}" >&2
+  echo "  Run: echelon workspace init" >&2
   exit 1
 fi
-echo "✓ Runtime: ${ECHELON_EXT}"
+echo "✓ Runtime: ${ECHELON_RUNTIME}"
 
 # Project initialized
 if [ ! -f "${ECHELON_CONFIG}" ]; then

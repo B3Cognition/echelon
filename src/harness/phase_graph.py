@@ -140,14 +140,12 @@ class PhaseNode:
 class PhaseGraph:
     """Loads the main squad phases from definition.yaml.
 
-    Legacy graphs read extension.yml to map agent dispatch ids to files.
     Prosaic graphs resolve neutral agent ids from a subagents directory.
     """
 
     def __init__(
         self,
         definition_path: Path,
-        extension_yml_path: Path | None = None,
         *,
         prosaic_subagents_dir: Path | None = None,
     ) -> None:
@@ -293,13 +291,6 @@ class PhaseGraph:
         if prosaic_subagents_dir is not None:
             for agent_file in sorted(prosaic_subagents_dir.glob("echelon.*.md")):
                 self._agent_files[agent_file.stem] = str(agent_file.resolve())
-        elif extension_yml_path is not None:
-            ext = yaml.safe_load(extension_yml_path.read_text())
-            for cmd in ext.get("provides", {}).get("commands", []):
-                if cmd.get("behavior", {}).get("execution") == "agent":
-                    # "echelon.scout" → "echelon-scout"
-                    dispatch_id = cmd["name"].replace(".", "-")
-                    self._agent_files[dispatch_id] = cmd["file"]
         # Structural validators may load a graph without resolving prompts.
 
     def get(self, phase_id: str) -> PhaseNode:

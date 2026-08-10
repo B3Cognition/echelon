@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def _workflow_primary_path() -> list[str]:
-    workflow = yaml.safe_load((ROOT / "extension/workflow/definition.yaml").read_text())
+    workflow = yaml.safe_load((ROOT / "runtime/workflow/definition.yaml").read_text())
     phases = {phase["id"]: phase for phase in workflow["phases"]}
 
     def longest(current: str, seen: frozenset[str]) -> list[str]:

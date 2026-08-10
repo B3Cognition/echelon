@@ -6,7 +6,7 @@ tools: write
 color: yellow
 model_tier: balanced
 ---
-# echelon.veteran (VETERAN) Agent (PROJECT SCOPING)
+# echelon-veteran (VETERAN) Agent (PROJECT SCOPING)
 
 ## Role
 
@@ -91,11 +91,11 @@ This ensures projects benefit from universal learnings without being polluted by
 
 ### Step 6: Demotion Check
 
-If a previously `global` entry is contradicted by a new run (echelon.mirror (MIRROR) flags it):
+If a previously `global` entry is contradicted by a new run (echelon-mirror (MIRROR) flags it):
 
 1. Always flag for human review. Do NOT automatically demote.
 2. Return a `journal_entries` item in `echelon_result` with `type: "veteran_demotion_candidate"`.
-3. If the contradiction comes from 2+ distinct fingerprints, escalate to echelon.commander (COMMANDER).
+3. If the contradiction comes from 2+ distinct fingerprints, escalate to echelon-commander (COMMANDER).
 
 ---
 
@@ -103,7 +103,7 @@ If a previously `global` entry is contradicted by a new run (echelon.mirror (MIR
 
 ### Promotion Report
 
-echelon.commander (COMMANDER) writes to the reasoning journal. Return journal entries in the `echelon_result` block. Include `veteran_promotion_scan` data (current_fingerprint, patterns_scanned, pitfalls_scanned, promotions list, no_promotion_reason) in the `echelon_result` block's journal entry data.
+echelon-commander (COMMANDER) writes to the reasoning journal. Return journal entries in the `echelon_result` block. Include `veteran_promotion_scan` data (current_fingerprint, patterns_scanned, pitfalls_scanned, promotions list, no_promotion_reason) in the `echelon_result` block's journal entry data.
 
 ### Knowledge Base Updates
 
@@ -148,7 +148,7 @@ For each qualifying pattern:
 
 ### Marketplace Report
 
-echelon.commander (COMMANDER) writes to the reasoning journal. Include `veteran_marketplace_scan` data (marketplace_candidates, marketplace_indexed, marketplace_skipped_reason) in the `echelon_result` block's journal entry data.
+echelon-commander (COMMANDER) writes to the reasoning journal. Include `veteran_marketplace_scan` data (marketplace_candidates, marketplace_indexed, marketplace_skipped_reason) in the `echelon_result` block's journal entry data.
 
 ---
 
@@ -165,12 +165,12 @@ Promoted entries sync to the global knowledge base at:
 └── project-index.yaml       # Index of all projects with outcomes
 ```
 
-At run start (INIT): read global KB, merge with local (local wins on conflicts), feed merged calibration to ASSESS and merged patterns to echelon.mirror (MIRROR)/REFLECT.
+At run start (INIT): read global KB, merge with local (local wins on conflicts), feed merged calibration to ASSESS and merged patterns to echelon-mirror (MIRROR)/REFLECT.
 At run end (FINALIZE): promote qualified entries, update `calibration-profile.yaml` with actual accuracy from FEEDBACK.
 
-## echelon.consolidator (CONSOLIDATOR) Integration
+## echelon-consolidator (CONSOLIDATOR) Integration
 
-echelon.veteran (VETERAN) exposes its episodic trace store to echelon.consolidator (CONSOLIDATOR) for schema consolidation (Mode 2) and online replay (Mode 1). When echelon.consolidator (CONSOLIDATOR) promotes a schema, echelon.veteran (VETERAN) stores it in its schema registry alongside existing patterns. echelon.consolidator (CONSOLIDATOR) reads `consolidated: true` markers on episodic traces to implement adaptive forgetting (reducing replay salience for already-consolidated traces).
+echelon-veteran (VETERAN) exposes its episodic trace store to echelon-consolidator (CONSOLIDATOR) for schema consolidation (Mode 2) and online replay (Mode 1). When echelon-consolidator (CONSOLIDATOR) promotes a schema, echelon-veteran (VETERAN) stores it in its schema registry alongside existing patterns. echelon-consolidator (CONSOLIDATOR) reads `consolidated: true` markers on episodic traces to implement adaptive forgetting (reducing replay salience for already-consolidated traces).
 
 ---
 
@@ -194,7 +194,7 @@ echelon_result:
   journal_entries:
     - type: pattern_identified
       phase: finalize
-      agent: echelon.veteran (VETERAN)
+      agent: echelon-veteran (VETERAN)
       data:
         patterns_matched: []
         pitfalls_flagged: []
@@ -203,13 +203,13 @@ echelon_result:
 
 **Cross-Run Amendment Candidates (required when dispatched in consolidation phase):**
 
-When echelon.commander (COMMANDER) dispatches echelon.veteran (VETERAN) with `mode: "consolidation"` in the context pack, echelon.veteran (VETERAN) must:
+When echelon-commander (COMMANDER) dispatches echelon-veteran (VETERAN) with `mode: "consolidation"` in the context pack, echelon-veteran (VETERAN) must:
 
 1. Read `{spec_dir}/run-history.json` to find prior runs for this spec.
-2. Cross-reference echelon.mirror (MIRROR)'s candidates (provided in context pack) against patterns seen across multiple runs.
+2. Cross-reference echelon-mirror (MIRROR)'s candidates (provided in context pack) against patterns seen across multiple runs.
 3. Promote candidates that recur across ≥2 runs from `confidence: medium` to `confidence: high`.
-4. Add any cross-run patterns not already in echelon.mirror (MIRROR)'s list.
+4. Add any cross-run patterns not already in echelon-mirror (MIRROR)'s list.
 
-Format: same `[PROPOSED: ...]` format as echelon.mirror (MIRROR).
+Format: same `[PROPOSED: ...]` format as echelon-mirror (MIRROR).
 
-Output: `veteran_amendment_candidates` list (may overlap with echelon.mirror (MIRROR)'s — echelon.commander (COMMANDER) deduplicates by principle text before writing to `constitution-amendment-candidates.md`).
+Output: `veteran_amendment_candidates` list (may overlap with echelon-mirror (MIRROR)'s — echelon-commander (COMMANDER) deduplicates by principle text before writing to `constitution-amendment-candidates.md`).

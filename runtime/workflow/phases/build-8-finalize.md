@@ -45,7 +45,7 @@ Use the Agent tool:
 
 echelon.engineering-manager (ENGINEERING MANAGER) must confirm:
 
-1. Spec-kit task workflow was actually followed.
+1. The Echelon task workflow was actually followed.
 2. Task status, state tracking, and reports are internally consistent.
 3. The build is ready for full echelon.verification (VERIFICATION).
 4. **`verify.sh` exists and contains a smoke test** (see below).

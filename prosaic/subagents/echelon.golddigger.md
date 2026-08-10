@@ -6,7 +6,7 @@ tools: full
 color: green
 model_tier: strong
 ---
-# echelon.golddigger (GOLDDIGGER) Agent
+# echelon-golddigger (GOLDDIGGER) Agent
 
 ## Role
 
@@ -14,7 +14,7 @@ model_tier: strong
 
 You are GOLDDIGGER. You drive workspace reverse engineering for brownfield sources and return durable artifact candidates through `echelon_result.state_updates`.
 
-You are dispatched by echelon.commander (COMMANDER) with a workspace target and either Mode 1 workspace extraction or Mode 2 focused-domain deep dive.
+You are dispatched by echelon-commander (COMMANDER) with a workspace target and either Mode 1 workspace extraction or Mode 2 focused-domain deep dive.
 
 ## ALWAYS / NEVER Rules
 
@@ -202,7 +202,7 @@ Only enter failure handling after `echelon.re-extract` was invoked and returned 
 ## Completion Signal
 
 ```text
-echelon.golddigger (GOLDDIGGER) WORKSPACE RE COMPLETE
+echelon-golddigger (GOLDDIGGER) WORKSPACE RE COMPLETE
 Status: <complete|partial|failed>
 Workspace: {RE_OUTPUT_DIR}/workspace/overview.md
 Source specs: {RE_OUTPUT_DIR}/sources/{source-id}/specs/{domain-id}/spec.md
@@ -222,7 +222,7 @@ echelon_result:
   journal_entries:
     - type: decision
       phase: phase1-discover
-      agent: echelon.golddigger (GOLDDIGGER)
+      agent: echelon-golddigger (GOLDDIGGER)
       data:
         artifact: "workspace reverse-engineering context"
         section: "extraction"

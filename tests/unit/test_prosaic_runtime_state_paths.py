@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -10,6 +11,67 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = ROOT / "runtime"
 PROSAIC = ROOT / "prosaic"
+
+
+def test_prosaic_bundle_does_not_reference_legacy_extension_installation() -> None:
+    findings = []
+    for prose_file in PROSAIC.rglob("*.md"):
+        for line_number, line in enumerate(
+            prose_file.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            if ".specify/extensions/echelon" in line:
+                findings.append(
+                    f"{prose_file.relative_to(ROOT)}:{line_number}: {line.strip()}"
+                )
+
+    assert not findings, "\n".join(findings)
+
+
+def test_prosaic_bundle_does_not_invoke_spec_kit_commands() -> None:
+    legacy_command = re.compile(r"/?speckit\.[A-Za-z0-9_.-]+")
+    findings = []
+    for prose_file in PROSAIC.rglob("*.md"):
+        for line_number, line in enumerate(
+            prose_file.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            if legacy_command.search(line):
+                findings.append(
+                    f"{prose_file.relative_to(ROOT)}:{line_number}: {line.strip()}"
+                )
+
+    assert not findings, "\n".join(findings)
+
+
+def test_prosaic_bundle_does_not_describe_spec_kit_storage_or_runtime() -> None:
+    legacy_reference = re.compile(r"\.specify|speckit", re.IGNORECASE)
+    findings = []
+    for prose_file in PROSAIC.rglob("*.md"):
+        for line_number, line in enumerate(
+            prose_file.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            if legacy_reference.search(line):
+                findings.append(
+                    f"{prose_file.relative_to(ROOT)}:{line_number}: {line.strip()}"
+                )
+
+    assert not findings, "\n".join(findings)
+
+
+def test_runtime_workflow_does_not_describe_spec_kit_fallbacks() -> None:
+    legacy_reference = re.compile(r"\.specify|speckit|spec-kit", re.IGNORECASE)
+    findings = []
+    for workflow_file in (RUNTIME / "workflow").rglob("*"):
+        if workflow_file.suffix not in {".md", ".yaml", ".yml"}:
+            continue
+        for line_number, line in enumerate(
+            workflow_file.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            if legacy_reference.search(line):
+                findings.append(
+                    f"{workflow_file.relative_to(ROOT)}:{line_number}: {line.strip()}"
+                )
+
+    assert not findings, "\n".join(findings)
 
 
 def test_runtime_uses_echelon_owned_standalone_re_state() -> None:

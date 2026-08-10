@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
@@ -34,8 +35,8 @@ from echelon.spec_lifecycle import PhaseAExecutionLock, SpecRunExecutionLock
 
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFINITION = ROOT / "extension" / "workflow" / "definition.yaml"
-EXTENSION = ROOT / "extension" / "extension.yml"
+DEFINITION = ROOT / "runtime" / "workflow" / "definition.yaml"
+PROSAIC_SUBAGENTS = ROOT / "prosaic" / "subagents"
 
 
 def _choice_policy(
@@ -162,7 +163,7 @@ def _controller(
     controller = SquadController(
         provider=provider,
         state_store=store,
-        phase_graph=PhaseGraph(DEFINITION, EXTENSION),
+        phase_graph=PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS),
         ext_dir=ROOT / "extension",
         project_root=tmp_path,
         squad_dir=squad_dir,
@@ -191,7 +192,7 @@ def _workflow_gate_controller(
     autonomy_mode: str,
     provider_result: SquadAgentResult | None = None,
 ) -> tuple[SquadController, SquadStateStore, object]:
-    graph = PhaseGraph(DEFINITION, EXTENSION)
+    graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
     policy = graph.get(gate_id).human_input_policies[0]
     controller, store, provider = _controller(
         tmp_path,
@@ -353,7 +354,7 @@ def _legacy_workflow_controller(
     recovery_kind: RecoveryKind = RecoveryKind.AWAIT_HUMAN_ANSWER,
     provider_result: SquadAgentResult | None = None,
 ) -> tuple[SquadController, SquadStateStore, object]:
-    graph = PhaseGraph(DEFINITION, EXTENSION)
+    graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
     setup_policy = graph.human_input_policy_registry().lookup(
         "provider_escalation",
         "phase1-tracker",
@@ -434,7 +435,7 @@ def test_provider_request_resolved_inline_keeps_sealed_decision_id(
     tmp_path: Path,
 ) -> None:
     answer = "Use the attested public contract."
-    graph = PhaseGraph(DEFINITION, EXTENSION)
+    graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
     policy = graph.human_input_policy_registry().lookup(
         "provider_escalation",
         "phase1-tracker",
@@ -491,7 +492,7 @@ def test_provider_v2_seal_survives_process_restart_with_same_decision_id(
     tmp_path: Path,
 ) -> None:
     answer = "Use the attested public contract."
-    graph = PhaseGraph(DEFINITION, EXTENSION)
+    graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
     policy = graph.human_input_policy_registry().lookup(
         "provider_escalation",
         "phase1-tracker",
@@ -540,7 +541,10 @@ def test_provider_v2_seal_survives_process_restart_with_same_decision_id(
 def _cli_awaiting_human_controller(
     tmp_path: Path,
 ) -> tuple[SquadController, SquadStateStore, object, str]:
-    graph = PhaseGraph(DEFINITION, EXTENSION)
+    echelon_dir = tmp_path / ".echelon"
+    shutil.copytree(ROOT / "runtime", echelon_dir / "runtime")
+    shutil.copytree(ROOT / "prosaic", echelon_dir / "prosaic")
+    graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
     policy = graph.human_input_policy_registry().lookup(
         "provider_escalation",
         "phase1-investigate",
@@ -1229,7 +1233,7 @@ def test_legacy_provider_restart_reuses_decision_id_after_v2_seal(
     restarted = SquadController(
         provider=provider,
         state_store=store,
-        phase_graph=PhaseGraph(DEFINITION, EXTENSION),
+        phase_graph=PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS),
         ext_dir=ROOT / "extension",
         project_root=tmp_path,
         squad_dir=store.squad_dir,
@@ -1761,7 +1765,7 @@ def test_real_provider_and_executor_accept_each_declared_question_contract(
     reason_code: str,
     extra_updates: dict,
 ) -> None:
-    graph = PhaseGraph(DEFINITION, EXTENSION)
+    graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
     policy = graph.human_input_policy_registry().lookup(
         "provider_escalation",
         producer_id,
@@ -1832,7 +1836,7 @@ def test_real_provider_and_executor_accept_each_declared_question_contract(
 def test_controller_blocks_malformed_provider_options_before_decision_sealing(
     tmp_path: Path,
 ) -> None:
-    graph = PhaseGraph(DEFINITION, EXTENSION)
+    graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
     policy = graph.human_input_policy_registry().lookup(
         "provider_escalation",
         "phase1-tracker",
@@ -3261,7 +3265,7 @@ def test_commander_context_setup_failure_is_stable_across_restart(
     restarted = SquadController(
         provider=restarted_provider,
         state_store=store,
-        phase_graph=PhaseGraph(DEFINITION, EXTENSION),
+        phase_graph=PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS),
         ext_dir=ROOT / "extension",
         project_root=tmp_path,
         squad_dir=store.squad_dir,

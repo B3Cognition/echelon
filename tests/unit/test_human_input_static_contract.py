@@ -10,38 +10,38 @@ from harness.phase_graph import PhaseGraph
 
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFINITION = ROOT / "extension" / "workflow" / "definition.yaml"
-EXTENSION = ROOT / "extension" / "extension.yml"
+DEFINITION = ROOT / "runtime" / "workflow" / "definition.yaml"
+PROSAIC_SUBAGENTS = ROOT / "prosaic" / "subagents"
 SQUAD = ROOT / "src" / "harness" / "squad.py"
 EXECUTORS = ROOT / "src" / "harness" / "squad_executors.py"
-COMMANDER = ROOT / "extension" / "agents" / "control" / "commander.md"
+COMMANDER = ROOT / "prosaic" / "subagents" / "echelon.commander.md"
 
 PROVIDER_PROMPTS = {
     "phase1-tracker": (
-        ROOT / "extension" / "workflow" / "phases" / "phase1-tracker.md"
+        ROOT / "runtime" / "workflow" / "phases" / "phase1-tracker.md"
     ),
     "phase1-why1": (
-        ROOT / "extension" / "workflow" / "phases" / "phase1-why1.md"
+        ROOT / "runtime" / "workflow" / "phases" / "phase1-why1.md"
     ),
     "phase1-why2": (
-        ROOT / "extension" / "workflow" / "phases" / "phase1-why2.md"
+        ROOT / "runtime" / "workflow" / "phases" / "phase1-why2.md"
     ),
     "phase1-investigate": (
-        ROOT / "extension" / "workflow" / "phases" / "phase1-investigate.md"
+        ROOT / "runtime" / "workflow" / "phases" / "phase1-investigate.md"
     ),
     "phase2-tracker-alignment": (
         ROOT
-        / "extension"
+        / "runtime"
         / "workflow"
         / "phases"
         / "phase2-tracker-alignment.md"
     ),
 }
 SHARED_PROMPTS = {
-    "tracker": ROOT / "extension" / "agents" / "control" / "tracker.md",
-    "sage": ROOT / "extension" / "agents" / "exploration" / "sage.md",
+    "tracker": ROOT / "prosaic" / "subagents" / "echelon.tracker.md",
+    "sage": ROOT / "prosaic" / "subagents" / "echelon.sage.md",
     "investigator": (
-        ROOT / "extension" / "agents" / "specialists" / "investigator.md"
+        ROOT / "prosaic" / "subagents" / "echelon.investigator.md"
     ),
 }
 SHARED_REQUIRED_CLAUSES = {
@@ -184,7 +184,10 @@ def test_phase_a_has_no_terminal_human_input_executor() -> None:
 
 
 def test_compiled_registry_has_no_standing_legacy_recovery_policy() -> None:
-    registry = PhaseGraph(DEFINITION, EXTENSION).human_input_policy_registry()
+    registry = PhaseGraph(
+        DEFINITION,
+        prosaic_subagents_dir=PROSAIC_SUBAGENTS,
+    ).human_input_policy_registry()
 
     assert all(
         policy.source_kind != "legacy_recovery"

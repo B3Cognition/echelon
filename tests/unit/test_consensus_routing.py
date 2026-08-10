@@ -27,8 +27,8 @@ from harness.squad_state import SquadStateStore
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-DEFINITION = ROOT / "extension/workflow/definition.yaml"
-EXT_YML = ROOT / "extension/extension.yml"
+DEFINITION = ROOT / "runtime/workflow/definition.yaml"
+PROSAIC_SUBAGENTS = ROOT / "prosaic/subagents"
 
 
 def _consensus_node():
@@ -44,7 +44,7 @@ def _runtime_route(tmp_path, state_updates, *, iteration=0):
     config_path = tmp_path / ".echelon" / "config.yml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text("lexicon_gate:\n  enabled: false\n", encoding="utf-8")
-    graph = PhaseGraph(DEFINITION, EXT_YML)
+    graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
     store = SquadStateStore(tmp_path / "squad" / "run-test")
     store.initialize("r", "semi", "msg", 0, "phase3-consensus", max_iterations=5)
     state = store.load()
@@ -170,7 +170,7 @@ def test_certified_metric_failure_precedes_consensus_success_and_risk_acceptance
 
 @pytest.mark.unit
 def test_legacy_consensus_resume_redirects_to_deterministic_gate(tmp_path):
-    graph = PhaseGraph(DEFINITION, EXT_YML)
+    graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
     store = SquadStateStore(tmp_path / "squad" / "run-test")
     store.initialize("r", "semi", "msg", 0, "phase3-consensus", max_iterations=5)
     ctrl = SquadController(

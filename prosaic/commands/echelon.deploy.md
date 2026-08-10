@@ -39,8 +39,8 @@ Parse `{{args}}`:
 ### Step 1: CI/CD Freshness Check
 
 ```bash
-ECHELON_EXT="$(git rev-parse --show-toplevel)/.echelon/runtime"
-bash "${ECHELON_EXT}/scripts/bash/cicd-fingerprint.sh" --check
+ECHELON_RUNTIME="$(git rev-parse --show-toplevel)/.echelon/runtime"
+bash "${ECHELON_RUNTIME}/scripts/bash/cicd-fingerprint.sh" --check
 ```
 
 - Exit code `0` — CI/CD artifacts are up to date. Skip to **Step 2**.
@@ -48,13 +48,13 @@ bash "${ECHELON_EXT}/scripts/bash/cicd-fingerprint.sh" --check
 
 ### Step 1b: Regenerate CI/CD Artifacts
 
-Invoke the `echelon.cicd` skill now. This runs the full cognitive squad to regenerate the Dockerfile(s), .echelon/config.yml deploy block, db-start.sh, and CI workflow for the current project state.
+Invoke the `echelon-cicd` skill now. This runs the full cognitive squad to regenerate the Dockerfile(s), `.echelon/config.yml` deploy block, db-start.sh, and CI workflow for the current project state.
 
-After `echelon.cicd` completes successfully, update the fingerprint:
+After `echelon-cicd` completes successfully, update the fingerprint:
 
 ```bash
-ECHELON_EXT="$(git rev-parse --show-toplevel)/.echelon/runtime"
-bash "${ECHELON_EXT}/scripts/bash/cicd-fingerprint.sh" --update
+ECHELON_RUNTIME="$(git rev-parse --show-toplevel)/.echelon/runtime"
+bash "${ECHELON_RUNTIME}/scripts/bash/cicd-fingerprint.sh" --update
 ```
 
 Then proceed to **Step 2**.
@@ -62,8 +62,8 @@ Then proceed to **Step 2**.
 ### Step 2: Deploy
 
 ```bash
-ECHELON_EXT="$(git rev-parse --show-toplevel)/.echelon/runtime"
-bash "${ECHELON_EXT}/scripts/bash/deploy.sh"
+ECHELON_RUNTIME="$(git rev-parse --show-toplevel)/.echelon/runtime"
+bash "${ECHELON_RUNTIME}/scripts/bash/deploy.sh"
 ```
 
 Report the full output. If exit code is non-zero, report the error and stop.
@@ -73,8 +73,8 @@ Report the full output. If exit code is non-zero, report the error and stop.
 ## Show Status
 
 ```bash
-ECHELON_EXT="$(git rev-parse --show-toplevel)/.echelon/runtime"
-bash "${ECHELON_EXT}/scripts/bash/deploy-status.sh"
+ECHELON_RUNTIME="$(git rev-parse --show-toplevel)/.echelon/runtime"
+bash "${ECHELON_RUNTIME}/scripts/bash/deploy-status.sh"
 ```
 
 Report the full output.
@@ -90,14 +90,16 @@ export DEPLOY_STATE_FILE="$(python3 - <<'PYEOF'
 from pathlib import Path
 
 root = Path.cwd()
-current = root / "runs" / ".current"
-if not current.exists():
-    raise SystemExit("No active Echelon run. Run echelon delivery status first.")
-run_id = current.read_text().strip()
-state_file = root / "runs" / run_id / "deploy-state.json"
-if not run_id or not state_file.exists():
-    raise SystemExit("No deploy state for the active Echelon run.")
-print(state_file)
+for base in ("runs", "squad"):
+    current = root / base / ".current"
+    if current.exists():
+        run_id = current.read_text().strip()
+        candidate = root / base / run_id / "deploy-state.json"
+        if run_id and candidate.parent.is_dir():
+            print(candidate)
+            raise SystemExit(0)
+
+print(root / "runs" / "deploy-state.json")
 PYEOF
 )"
 ```
@@ -140,7 +142,7 @@ state['last_deploy'] = datetime.datetime.now(datetime.timezone.utc).isoformat().
 with open(state_file, 'w') as f:
     json.dump(state, f, indent=2)
 
-global_dir = state.get('global_state_dir', os.path.expanduser('~/.speckit-deploy'))
+global_dir = os.path.expanduser(state.get('global_state_dir', '~/.echelon/deploy'))
 os.makedirs(global_dir, exist_ok=True)
 with open(os.path.join(global_dir, f"{app}.json"), 'w') as f:
     json.dump(state, f, indent=2)
@@ -197,7 +199,7 @@ state['last_deploy'] = datetime.datetime.now(datetime.timezone.utc).isoformat().
 with open(state_file, 'w') as f:
     json.dump(state, f, indent=2)
 
-global_dir = state.get('global_state_dir', os.path.expanduser('~/.speckit-deploy'))
+global_dir = os.path.expanduser(state.get('global_state_dir', '~/.echelon/deploy'))
 os.makedirs(global_dir, exist_ok=True)
 with open(os.path.join(global_dir, f"{app}.json"), 'w') as f:
     json.dump(state, f, indent=2)

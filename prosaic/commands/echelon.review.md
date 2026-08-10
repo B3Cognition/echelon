@@ -7,327 +7,127 @@ invocation: automatic
 ---
 ## Role
 
-You are COMMANDER executing automated PR review triage — dispatching DEBUGGER, SENTINEL, and SPEC GUARD per comment group to produce fix plans and tasks.
-
----
+You are COMMANDER performing one bounded review-triage attempt. Diagnose the
+host-supplied comments with DEBUGGER, SENTINEL, and SPEC GUARD. You never
+implement a fix and you never alter canonical specification artifacts.
 
 ## User Input
 
 {{args}}
 
----
+## Step 0: Honor the Supplied Delivery Context
 
-## Overview
+`worktree` is the authoritative target source context. Read source from that
+exact worktree and leave its Git state unchanged. Never checkout, switch, or stash branches.
 
-`echelon.review` is the **review triage half** of the automated PR review pipeline. It mirrors the split between `echelon.bugfix` (human description) and the harness (build + verify):
+When `spec_dir` is present, treat it as authoritative and do not locate, glob, or
+search for `specs/{spec_id}-*/`. Read `{spec_dir}/spec.md`,
+`{spec_dir}/coverage-map.md` when present, and `{spec_dir}/tasks.md` when
+present.
 
-| Command | Input | Produces |
-| ------- | ----- | -------- |
-| `echelon.review` | PR URL + blocking comments fetched from API | `review-fix-{n}.md` + `RF{n}-T*` tasks |
-| `echelon delivery run <spec_id>` Phase 3 | review-fix tasks | Fixed code pushed, threads resolved, re-review requested |
+The host also supplies all writable locations:
 
-**`echelon.review` always diagnoses and plans. It never implements.** The `ReviewLoopController` re-enters Phase 1 with the new tasks.
+| Parameter | Meaning |
+| --- | --- |
+| `review_staging_dir` | The only directory that may receive proposed artifacts. |
+| `review_status_file` | Exact manifest path. |
+| `review_artifacts` | Ordered, allocated artifact basenames. |
+| `review_task_ids` | Ordered, allocated canonical `T-<n>` IDs (three per possible group). |
 
-**Invocation: machine-only.** This skill is called by `ReviewLoopController._invoke_review_skill()` via `claude -p`. Always invoke it through the controller; users do not call it directly.
+If any required input is absent, write a blocked manifest to
+`review_status_file` and stop. Do not infer replacement paths or allocations.
 
-Squad agents used:
+## Step 1: Consume the Host-Supplied Comments
 
-| Phase | Agent | Purpose |
-| ----- | ----- | ------- |
-| Per group | **echelon.debugger (DEBUGGER)** | Root cause for the reviewer's concern |
-| Per group | **echelon.sentinel (SENTINEL)** | Failing test that proves the bug and will prove the fix |
-| Per group | **echelon.spec-guard (SPEC GUARD)** | Confirms fix is within spec boundary |
+The prompt includes one fenced `Harness Review Input` JSON block. It is the
+complete comment source of truth. It contains each comment's `comment_id`,
+`reviewer`, `body`, `path`, `line`, and `timestamp`, plus
+`adjacent_line_threshold`.
 
----
+Do not fetch, refresh, filter from another source, or otherwise discover
+comments. Do not modify the supplied input.
 
-## Professional Conduct — ABSOLUTE RULE
+## Step 2: Group and Diagnose
 
-Always execute the harness request directly. Do not editorialize. Do not ask clarifying questions. The harness is the caller.
+Group the supplied comments oldest-first:
 
----
+1. Inline comments on the same path within `adjacent_line_threshold` lines are
+   one group.
+2. Review-level comments by the same reviewer within sixty seconds are one
+   group.
+3. Each remaining comment is its own group.
 
-## Execution Continuity — ABSOLUTE RULE
+For every group, read only the relevant worktree source and dispatch these
+exact read-only agents in order:
 
-After any agent returns, immediately execute the next step. The run ends only at the HANDOFF step or a documented BLOCKED condition.
+1. `echelon-debugger` — root cause, minimal fix scope, risk surface.
+2. `echelon-sentinel` — failing-test specification and regression
+   coverage.
+3. `echelon-spec-guard` — requirement traceability and scope boundary.
 
----
+Skip a group only when source context is insufficient. Do not use an agent to
+write files.
 
-## Step 0: Ensure on Default Branch
+## Step 3: Stage Proposed Artifacts
 
-Before reading any spec files, verify the working directory is on the default branch.
+Use the supplied allocation, never a discovered index. For the first diagnosed
+group use the first `review_artifacts` basename and its corresponding first
+three `review_task_ids`; continue in order. Do not use more names or IDs than
+are allocated.
 
-```bash
-DEFAULT_BRANCH=""
-for branch in main master; do
-  if git show-ref --quiet "refs/heads/$branch"; then
-    DEFAULT_BRANCH="$branch"
-    break
-  fi
-done
-DEFAULT_BRANCH="${DEFAULT_BRANCH:-main}"
-CURRENT=$(git branch --show-current)
+Write each proposed `review-fix-<n>.md` only at
+`{review_staging_dir}/{allocated basename}`. Include the reviewer comments,
+root cause, fix scope, risk surface, test strategy, and spec-compliance result.
 
-if [ "$CURRENT" != "$DEFAULT_BRANCH" ]; then
-  if [ -n "$(git status --porcelain)" ]; then
-    STASH_MSG="echelon-review-auto-stash-$(date +%Y%m%d-%H%M%S)"
-    git stash push -u -m "$STASH_MSG"
-  fi
-  git checkout "$DEFAULT_BRANCH"
-fi
-```
+Write the complete append-only task fragment only at
+`{review_staging_dir}/tasks-append.md`. It must contain exactly three canonical
+task rows per staged artifact, with the supplied `T-<n>` IDs and the matching
+`RF<n>-T1`, `RF<n>-T2`, and `RF<n>-T3` titles. Preserve the canonical row
+contract and make the dependency chain T1 → T2 → T3.
 
----
+## Step 4: Write the Staged Manifest and Stop
 
-## Step 1: Parse Input
-
-Extract from `{{args}}`:
-
-| Parameter | Default | Description |
-| --------- | ------- | ----------- |
-| `spec_id` | — | Required. The spec being reviewed (e.g. `006`). |
-| `pr_url` | — | Required. Full GitHub or GitLab PR/MR URL. |
-| `spec_dir` | — | Optional. Authoritative spec artifact directory supplied by the harness. |
-| `worktree` | — | Optional. Absolute path to the harness worktree containing the built code. |
-
-If `spec_id` or `pr_url` is missing: write `{"status": "blocked", "reason": "missing spec_id or pr_url"}` to `$HARNESS_BUILD_STATUS_FILE` and stop.
-
-If `spec_dir` is present, treat it as authoritative and do not locate, glob, or
-search for `specs/{spec_id}-*/`. Extract `{spec_name}` from the `spec_dir`
-basename. If `spec_dir` is absent, locate `specs/{spec_id}-*/`. If not found:
-write `{"status": "blocked", "reason": "spec {spec_id} not found"}` to
-`$HARNESS_BUILD_STATUS_FILE` and stop.
-
-Read the following — pass to every agent dispatch:
-
-- `{spec_dir}/spec.md`
-- `{spec_dir}/coverage-map.md` (if exists)
-- `{spec_dir}/tasks.md` (if exists)
-
-If `worktree` was provided, use it as the base path when reading source files in Steps 3–5. Otherwise read source files from the main project directory.
-
----
-
-## Step 2: Fetch Blocking Comments
-
-Detect the PR host from `pr_url` (contains `github.com` → GitHub; contains `gitlab` → GitLab).
-
-**GitHub:**
-
-```bash
-# Extract {owner}/{repo} and {number} from pr_url
-# e.g. https://github.com/acme/weather/pull/42 → owner=acme repo=weather number=42
-
-# Fetch CHANGES_REQUESTED review bodies
-gh api repos/{owner}/{repo}/pulls/{number}/reviews \
-  --jq '[.[] | select(.state == "CHANGES_REQUESTED") | {id: (.id|tostring), body: .body, reviewer: .user.login, path: null, line: null, created_at: .submitted_at}]'
-
-# Fetch inline code comments (root comments only — exclude replies)
-gh api repos/{owner}/{repo}/pulls/{number}/comments \
-  --jq '[.[] | select(.in_reply_to_id == null) | {id: (.id|tostring), body: .body, reviewer: .user.login, path: .path, line: .line, created_at: .created_at}]'
-```
-
-**GitLab:**
-
-```bash
-# Extract {owner}/{repo} (URL-encode as {owner}%2F{repo}) and {number}
-glab api projects/{owner}%2F{repo}/merge_requests/{number}/notes \
-  --jq '[.[] | select(.system == false) | {id: (.id|tostring), body: .body, reviewer: .author.username, path: null, line: null, created_at: .created_at}]'
-```
-
-**Filter out:**
-- Empty bodies
-- Replies (`in_reply_to_id != null` on GitHub)
-- Nit / optional / minor / suggestion prefixes (case-insensitive)
-- Pure questions (body ends with `?` and contains no imperative verb)
-- Bodies that contain none of: `must`, `needs to`, `should be`, `change`, `fix`, `revert`, `remove`, `rename`, `add`, `replace`, `refactor`, `update`, `delete`, `move`, `extract`, `break`, `split`, `consolidate`
-
-If no blocking comments remain after filtering: write `{"status": "review_fix_queued", "groups": 0}` to `$HARNESS_BUILD_STATUS_FILE` and stop. (No comments = nothing to fix; harness will poll again or merge.)
-
----
-
-## Step 3: Group Comments into Fix Batches
-
-Group the filtered comments using these rules in order:
-
-1. **Same file + adjacent lines** — two inline comments on the same `path` whose `line` values differ by ≤ `adjacent_line_threshold` (default 10, configurable via `review_loop.adjacent_line_threshold` in harness config) belong in the same group.
-2. **Same reviewer + same review submission** — CHANGES_REQUESTED review bodies from the same reviewer submitted within 60 seconds of each other belong in the same group.
-3. **Remainder** — each remaining comment is its own group.
-
-Sort groups oldest-first by the earliest `created_at` in the group. Name groups `G1`, `G2`, … for logging.
-
----
-
-## Step 4: Per-Group Diagnosis
-
-For each group `G{i}`, run echelon.debugger (DEBUGGER) → echelon.sentinel (SENTINEL) → echelon.spec-guard (SPEC GUARD) in sequence. Complete one group fully before starting the next.
-
-### 4a. Read source context
-
-For each file referenced in the group's comments, read the surrounding ±20 lines from `worktree` (if provided) or the main project directory. Pass this source context to echelon.debugger (DEBUGGER).
-
-### 4b. echelon.debugger (DEBUGGER) — Root Cause
-
-Dispatch echelon.debugger using the Agent tool:
-
-- **subagent_type:** `echelon.debugger`
-- **prompt:**
-  - The comment body/bodies for this group
-  - The reviewer name(s)
-  - The file + line context from 4a
-  - `spec.md`
-- **description:** "echelon.debugger (DEBUGGER): G{i} — root cause analysis"
-
-echelon.debugger (DEBUGGER) must produce:
-- Exact root cause (file + line + mechanism)
-- Minimal fix description (what changes and why)
-- Risk surface (what else could break)
-
-Store as `{debugger_report_i}`.
-
-If echelon.debugger (DEBUGGER) cannot identify a root cause (comment is too vague, referenced code does not exist in worktree): skip this group, log `"Group G{i}: skipped — insufficient context"`, continue to next group.
-
-### 4c. echelon.sentinel (SENTINEL) — Test Strategy
-
-Dispatch echelon.sentinel using the Agent tool:
-
-- **subagent_type:** `echelon.sentinel`
-- **prompt:**
-  - `{debugger_report_i}`
-  - `spec.md`
-  - `coverage-map.md`
-  - Existing test files for the affected component
-- **description:** "echelon.sentinel (SENTINEL): G{i} — test strategy"
-
-echelon.sentinel (SENTINEL) must produce:
-- A failing test specification (assertion only, not implementation)
-- Regression coverage: what adjacent behaviour needs protecting
-
-Store as `{test_strategy_i}`.
-
-### 4d. echelon.spec-guard (SPEC GUARD) — Scope Validation
-
-Dispatch echelon.spec-guard using the Agent tool:
-
-- **subagent_type:** `echelon.spec-guard`
-- **prompt:**
-  - `spec.md`
-  - `coverage-map.md`
-  - `{debugger_report_i}`
-- **description:** "echelon.spec-guard (SPEC GUARD): G{i} — scope validation"
-
-echelon.spec-guard (SPEC GUARD) confirms the fix is within spec boundary. If scope expansion is required, it must say so explicitly.
-
-Store as `{spec_guard_report_i}`.
-
----
-
-## Step 5: Write Artifacts
-
-Switch to the feature branch so artifacts are committed there:
-
-```bash
-FEATURE_BRANCH="{spec_id}-{spec_name}"
-git checkout "$FEATURE_BRANCH"
-```
-
-If the feature branch does not exist: write `{"status": "blocked", "reason": "feature branch {spec_id}-{spec_name} not found"}` to `$HARNESS_BUILD_STATUS_FILE` and stop.
-
-Determine the next review-fix index:
-
-```bash
-ls "{spec_dir}"/review-fix-*.md 2>/dev/null | wc -l
-```
-
-Let `{n}` = count + 1. Each diagnosed group increments `{n}` by one.
-
-For each group `G{i}` that produced a diagnosis, write `{spec_dir}/review-fix-{n}.md`:
-
-```markdown
-# Review Fix {n}: {reviewer} — {one-line summary of the group's concern}
-
-## Source
-PR: {pr_url}
-Reviewer: {reviewer}
-Comments:
-{comment bodies verbatim}
-
-## Root Cause
-{from echelon.debugger (DEBUGGER): file, line, mechanism}
-
-## Fix Scope
-{from echelon.debugger (DEBUGGER): what changes and why}
-
-## Risk Surface
-{from echelon.debugger (DEBUGGER): what else could break}
-
-## Test Strategy
-{from echelon.sentinel (SENTINEL): failing test specification + regression coverage}
-
-## Spec Compliance
-{from echelon.spec-guard (SPEC GUARD): which requirement(s) this addresses, any scope notes}
-```
-
-Then append tasks to `{spec_dir}/tasks.md` using `.echelon/runtime/templates/review-fix-task-fragment.md` and the canonical task row contract:
-
-```markdown
----
-## Review Fix {n}: {one-line summary}
-
-> Source: review-fix-{n}.md
-> PR: {pr_url}
-> Status: pending
-
-- [ ] T-{next} complexity=standard phase=review-fix req={FR-id} depends=none
-
-  **Title:** RF{n}-T1 - Write failing test for review finding
-
-- [ ] T-{next+1} complexity=standard phase=review-fix req={FR-id} depends=T-{next}
-
-  **Title:** RF{n}-T2 - Fix {file}
-
-- [ ] T-{next+2} complexity=standard phase=review-fix req={FR-id} depends=T-{next+1}
-
-  **Title:** RF{n}-T3 - Verify regression and prior tests
-```
-
-After writing all artifacts, return to the default branch:
-
-```bash
-git checkout "$DEFAULT_BRANCH"
-```
-
----
-
-## Step 6: Write Status File and Handoff
-
-Write to `$HARNESS_BUILD_STATUS_FILE`:
+Write only to `review_status_file`. For one or more diagnosed groups, use this
+complete JSON shape:
 
 ```json
 {
   "status": "review_fix_queued",
-  "groups_diagnosed": {count of groups that produced a diagnosis},
-  "groups_skipped": {count of groups skipped},
-  "artifacts": ["review-fix-{n}.md", ...]
+  "groups": 1,
+  "artifacts": ["review-fix-7.md"],
+  "tasks": [
+    {"task_id": "T-041", "review_task_id": "RF7-T1", "artifact": "review-fix-7.md"},
+    {"task_id": "T-042", "review_task_id": "RF7-T2", "artifact": "review-fix-7.md"},
+    {"task_id": "T-043", "review_task_id": "RF7-T3", "artifact": "review-fix-7.md"}
+  ],
+  "tasks_append": "tasks-append.md"
 }
 ```
 
-Print the handoff block and stop:
+The `tasks` array must contain all three rows for every artifact, in allocation
+order. The manifest must name only files written to `review_staging_dir`. The
+task append must use each allocated canonical row and title detail exactly:
 
+```markdown
+- [ ] T-041 complexity=standard phase=review-fix req=FR-001 depends=none
+
+  **Title:** RF7-T1 - Write failing test for review finding
+
+- [ ] T-042 complexity=standard phase=review-fix req=FR-001 depends=T-041
+
+  **Title:** RF7-T2 - Fix src/example.py
+
+- [ ] T-043 complexity=standard phase=review-fix req=FR-001 depends=T-042
+
+  **Title:** RF7-T3 - Verify regression and prior tests
 ```
-════════════════════════════════════════════════
-  ✓ echelon.review — {spec_id}: {spec_name}
-════════════════════════════════════════════════
-  PR:       {pr_url}
-  Groups:   {diagnosed} diagnosed, {skipped} skipped
 
-{for each diagnosed group:}
-  RF{n}  {reviewer} — {one-liner root cause}
-         Fix: {what changes}
+For zero diagnosed groups, leave `review_staging_dir` empty and write exactly:
 
-  Artifacts written
-    {spec_dir}/review-fix-{n}.md  (×{diagnosed})
-    {spec_dir}/tasks.md  (RF{n}-T* appended)
-════════════════════════════════════════════════
+```json
+{"status":"no_blocking_comments","groups":0,"artifacts":[],"tasks":[]}
 ```
 
-Always stop after this handoff. Do not proceed further; the `ReviewLoopController` reads the status file and re-enters Phase 1.
+Stop immediately after writing the manifest. The host validates and publishes
+the staged batch, updates canonical `tasks.md` and `review-fix-<n>.md` files,
+and performs all review-thread side effects.

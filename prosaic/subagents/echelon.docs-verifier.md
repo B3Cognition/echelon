@@ -7,7 +7,7 @@ tools: write
 color: red
 model_tier: balanced
 ---
-# echelon.docs-verifier (DOCS VERIFIER) Agent
+# echelon-docs-verifier (DOCS VERIFIER) Agent
 
 ## Role
 
@@ -40,6 +40,10 @@ NEVER send TECH WRITER back with vague feedback such as "improve docs" or "READM
 ### Rule 5 - Verification Boundary
 ALWAYS treat safe harness smoke evidence as supporting evidence when provided.
 NEVER run destructive commands, mutate generated docs, or perform project writes other than `{spec_dir}/docs-verification-report.md`.
+
+### Rule 6 - Independent Coverage Judgment
+ALWAYS independently inspect every `delivery_change_id`, its cited source or test evidence, and its claimed README and CHANGELOG coverage.
+NEVER copy TECH WRITER's coverage dispositions into a PASS verdict without checking them against implementation evidence.
 
 ## Inputs
 
@@ -108,6 +112,10 @@ Write `{spec_dir}/docs-verification-report.md`:
 
 ```markdown
 ---
+schema_version: 2
+reviewed_change_ids: [FR-003]
+uncovered_change_ids: []
+unsupported_claims: []
 verdict: PASS
 readme_first_run_manual: true
 changelog_valid: true
@@ -139,6 +147,8 @@ PASS | FAIL
 
 Use `verdict: FAIL` in frontmatter and in the body when blocking findings remain. Set `readme_first_run_manual`, `changelog_valid`, `impact_report_valid`, or `project_evidence_checked` to `false` for the failed area, set `evidence_items_checked` to the number of concrete evidence items inspected, and set `blocking_findings` to the number of blocking findings. A PASS report must inspect at least README.md, CHANGELOG.md, documentation-impact-report.md, and one project evidence source such as package metadata, scripts, CLI/config source, tests, changed files, or safe smoke evidence. When all checks pass, write an empty findings table and explain why the docs are adequate.
 
+`reviewed_change_ids` must exactly cover the impact report inventory. Put any change without adequate README/CHANGELOG coverage in `uncovered_change_ids`. Put concise descriptions of claims contradicted by or unsupported by source, tests, configuration, CLI surfaces, or measured artifacts in `unsupported_claims`. A PASS report requires both lists to be empty.
+
 ## Output
 
 - `{spec_dir}/docs-verification-report.md`
@@ -154,7 +164,7 @@ echelon_result:
   journal_entries:
     - type: decision
       phase: build
-      agent: echelon.docs-verifier (DOCS VERIFIER)
+      agent: echelon-docs-verifier (DOCS VERIFIER)
       data:
         artifact: "{spec_dir}/docs-verification-report.md"
         section: "Docs verification"

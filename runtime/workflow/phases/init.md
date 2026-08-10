@@ -159,7 +159,7 @@ Never search for or create a nested archive beneath the active run.
 eval "$(bash "${PROJECT_ROOT}/.echelon/runtime/scripts/bash/echelon-config-get.sh" --env convergence)"
 ```
 
-For a scalar or a different mapping, call `bash .echelon/runtime/scripts/bash/echelon-config-get.sh <key>` or use `--env <mapping>` as above. Treat resolver failure as a configuration error; do not substitute a Spec-Kit fallback.
+For a scalar or a different mapping, call `bash .echelon/runtime/scripts/bash/echelon-config-get.sh <key>` or use `--env <mapping>` as above. Treat resolver failure as a configuration error; do not substitute inferred defaults.
 
 This merges `.echelon/config.yml` (project config) and `.echelon/local.yml` (local overrides). Key defaults when no project config exists:
 

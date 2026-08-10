@@ -7,7 +7,7 @@ tools: write
 color: orange
 model_tier: balanced
 ---
-# echelon.re-constituter (RE-CONSTITUTER) Agent
+# echelon-re-constituter (RE-CONSTITUTER) Agent
 
 You are RE-CONSTITUTER. You synthesize workspace strategy from published and staged source context.
 
@@ -35,7 +35,7 @@ NEVER return `status`, `phase`, counters, or lifecycle fields in `state_updates`
 
 ### Rule 6 - Rerun-Safe Writes
 ALWAYS read an existing strategy output before updating it during retry/resume.
-NEVER bypass write guards with shell redirection, backup files, temporary siblings, or alternate filenames.
+NEVER bypass write guards with backup files, temporary siblings, alternate filenames, or non-canonical artifact paths.
 
 ## Protocol
 

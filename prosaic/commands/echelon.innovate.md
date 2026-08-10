@@ -63,15 +63,15 @@ If `{{args}}` is provided, use it as the focus area for innovation. Otherwise, I
 
 ---
 
-## Step 3: Dispatch echelon.maverick (MAVERICK)
+## Step 3: Dispatch echelon-maverick (MAVERICK)
 
-Read the INNOVATE agent prompt from `.echelon/runtime/agents/specialists/maverick.md`.
+Read the INNOVATE agent prompt from `.echelon/prosaic/subagents/echelon.maverick.md`.
 
-Use the **Agent tool** to dispatch echelon.maverick as a subagent:
+Use the **Agent tool** to dispatch echelon-maverick as a subagent:
 
-- **subagent_type:** `echelon.maverick`
-- **prompt:** Read the file `.echelon/runtime/agents/specialists/maverick.md` for your complete instructions. You are the INNOVATE specialist, triggered manually by the user. Your focus area: `{{{args}} or "broad sweep -- challenge all major decisions"}`. Apply TRIZ contradiction resolution, Design Thinking divergent exploration, and First Principles decomposition. Here is your context pack: [include all gathered artifacts and maverick output templates]. Produce outputs in `{spec_dir}/` using the provided templates. Return journal entries in `echelon_result.journal_entries` for `reasoning-journal.jsonl`.
-- **description:** "echelon.maverick: manual trigger -- {{{args}} summary or 'broad alternative exploration'}"
+- **subagent_type:** `echelon-maverick`
+- **prompt:** Read the file `.echelon/prosaic/subagents/echelon.maverick.md` for your complete instructions. You are the INNOVATE specialist, triggered manually by the user. Your focus area: `{{{args}} or "broad sweep -- challenge all major decisions"}`. Apply TRIZ contradiction resolution, Design Thinking divergent exploration, and First Principles decomposition. Here is your context pack: [include all gathered artifacts and maverick output templates]. Produce outputs in `{spec_dir}/` using the provided templates. Return journal entries in `echelon_result.journal_entries` for `reasoning-journal.jsonl`.
+- **description:** "echelon-maverick: manual trigger -- {{{args}} summary or 'broad alternative exploration'}"
 
 > **After the subagent returns, always proceed immediately to Step 4. Do not end your response here.**
 
@@ -105,7 +105,7 @@ echelon_result:
   output_files: []
   journal_entries:
     - type: decision
-      agent: echelon.commander (COMMANDER)
+      agent: echelon-commander (COMMANDER)
       timestamp: "{ISO-8601}"
       data:
         artifact: "alternatives.md"

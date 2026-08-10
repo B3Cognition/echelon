@@ -112,6 +112,20 @@ class TestUnderstandingProbe:
             timeout=5.0,
         )
 
+    def test_missing_understanding_cli_does_not_probe_extension_scripts(self, tmp_path):
+        with patch("kernel.preflight.shutil.which", return_value=None):
+            with patch("kernel.preflight._run_script") as run_script:
+                result = _probe_understanding({}, {}, tmp_path / "runtime")
+
+        assert result == (
+            "UNAVAILABLE",
+            "missing_install",
+            None,
+            "understanding CLI not found on PATH",
+            "Echelon understanding CLI is not installed",
+        )
+        run_script.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # 2. Dependency × status combinations (12 tests using mock probes)

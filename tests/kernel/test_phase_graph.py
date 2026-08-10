@@ -18,8 +18,6 @@ from harness.controller_state_contract_requirements import (
 )
 from harness.phase_graph import PhaseGraph, load_workspace_phase_graph
 
-DEFINITION = EXT_ROOT / "extension/workflow/definition.yaml"
-EXT_YML = EXT_ROOT / "extension/extension.yml"
 PROSAIC_RUNTIME_DEFINITION = EXT_ROOT / "runtime/workflow/definition.yaml"
 PROSAIC_SUBAGENTS = EXT_ROOT / "prosaic/subagents"
 REQUIRED_CONTROLLER_CONTRACTS = {
@@ -110,7 +108,7 @@ def _write_structural_graph(
     registry = tmp_path / "contracts.yaml"
     registry.write_bytes(
         (
-            EXT_ROOT / "extension/workflow/controller-state-contracts.yaml"
+            EXT_ROOT / "runtime/workflow/controller-state-contracts.yaml"
         ).read_bytes()
     )
     phase: dict[str, object] = {
@@ -168,15 +166,13 @@ def _write_structural_graph(
         ),
         encoding="utf-8",
     )
-    extension = tmp_path / "extension.yml"
-    extension.write_text("provides: {commands: []}\n", encoding="utf-8")
-    return definition, extension
+    return definition, tmp_path / "subagents"
 
 
 def test_phase_graph_parses_explicit_structural_artifact(tmp_path: Path) -> None:
-    definition, extension = _write_structural_graph(tmp_path)
+    definition, _subagents = _write_structural_graph(tmp_path)
 
-    node = PhaseGraph(definition, extension).get("custom-structural")
+    node = PhaseGraph(definition).get("custom-structural")
 
     assert node.structural_artifact == "feasibility"
 
@@ -198,14 +194,17 @@ def test_phase_graph_parses_explicit_structural_artifact(tmp_path: Path) -> None
 def test_phase_graph_rejects_malformed_structural_node(
     tmp_path: Path, mutation: str
 ) -> None:
-    definition, extension = _write_structural_graph(tmp_path, mutation)
+    definition, _subagents = _write_structural_graph(tmp_path, mutation)
 
     with pytest.raises(ControllerContractRegistryError):
-        PhaseGraph(definition, extension)
+        PhaseGraph(definition)
 
 
 class TestPhaseGraph:
-    graph = PhaseGraph(DEFINITION, EXT_YML)
+    graph = PhaseGraph(
+        PROSAIC_RUNTIME_DEFINITION,
+        prosaic_subagents_dir=PROSAIC_SUBAGENTS,
+    )
 
     def test_real_workflow_compiles_exact_initial_human_input_registry(self):
         registry = self.graph.human_input_policy_registry()
@@ -367,6 +366,12 @@ class TestPhaseGraph:
                 frozenset({"phase1-why2"}), frozenset({"phase1-why2"}),
                 ("phase", "why_fail_count", "why2_metric_stagnation_count"), (), (),
             ),
+            ("controller_safeguard", "agent_blocked", "agent_blocked"): (
+                "material", "require_human", "clarification_resume", True,
+                dispatch_phases, frozenset(),
+                ("phase", "user_message"),
+                ("{spec_dir}/unknowns.md", "{spec_dir}/spec.md"), (),
+            ),
         }
         actual = {
             (policy.source_kind, policy.producer_id, policy.reason_code): fields(policy)
@@ -417,7 +422,7 @@ class TestPhaseGraph:
     def test_phase1_discover_type_agent(self):
         node = self.graph.get("phase1-discover")
         assert node.type == "agent"
-        assert node.agent == "echelon-scout"
+        assert node.agent == "echelon.scout"
 
     def test_unknown_phase_raises(self):
         import pytest
@@ -468,7 +473,7 @@ class TestPhaseGraph:
             ),
         }
         assert derive.type == "agent"
-        assert derive.agent == "echelon-lexicon-deriver"
+        assert derive.agent == "echelon.lexicon-deriver"
         assert derive.outputs == ["requirements.lexicon.md"]
         assert derive.allowed_state_updates == []
         assert set(derive.allowed_verdicts or []) == {"DONE", "FAIL"}
@@ -556,7 +561,7 @@ class TestPhaseGraph:
 
         assert "{spec_dir}/spec.md" in context_pack
         assert "{spec_dir}/assumptions.md" in context_pack
-        assert ".specify/memory/constitution.md" in context_pack
+        assert ".echelon/constitution.md" in context_pack
         assert "spec.md" not in context_pack
         assert "constitution.md" not in context_pack
         assert "assumptions.md" not in context_pack
@@ -573,7 +578,7 @@ class TestPhaseGraph:
             why2.allowed_state_updates or []
         )
         assert investigate.type == "agent"
-        assert investigate.agent == "echelon-investigator"
+        assert investigate.agent == "echelon.investigator"
         assert investigate.transitions == [
             {
                 "to": "phase1-what",
@@ -639,8 +644,8 @@ class TestPhaseGraph:
             "{spec_dir}/coverage-map.md",
             "{spec_dir}/estimates.md",
             "{spec_dir}/mvp-scope.md",
-            ".specify/memory/constitution.md",
-            "extension/templates/estimates-template.md",
+            ".echelon/constitution.md",
+            ".echelon/runtime/templates/estimates-template.md",
         }.issubset(assess2_pack)
 
         assert {
@@ -673,7 +678,7 @@ class TestPhaseGraph:
         }.issubset(set(node.context_pack))
 
     def test_why2_does_not_require_later_test_design_artifacts(self):
-        sage = (EXT_ROOT / "extension/agents/exploration/sage.md").read_text(
+        sage = (PROSAIC_SUBAGENTS / "echelon.sage.md").read_text(
             encoding="utf-8"
         )
 
@@ -682,7 +687,7 @@ class TestPhaseGraph:
 
     def test_sentinel_does_not_require_plan_tasks_before_plan_phase(self):
         sentinel_phase = (
-            EXT_ROOT / "extension/workflow/phases/phase3-sentinel.md"
+            EXT_ROOT / "runtime/workflow/phases/phase3-sentinel.md"
         ).read_text(encoding="utf-8")
 
         assert "target-owned task" not in sentinel_phase
@@ -722,7 +727,7 @@ class TestPhaseGraph:
         assert all("condition" in t for t in node.transitions)
 
     def test_agent_file_lookup(self):
-        path = self.graph.agent_file("echelon-scout")
+        path = self.graph.agent_file("echelon.scout")
         assert path is not None
         assert "scout" in path
 
@@ -731,44 +736,36 @@ class TestPhaseGraph:
         for phase_id in self.graph.all_phase_ids():
             node = self.graph.get(phase_id)
             if node.type == "agent" and node.agent:
-                rel = self.graph.agent_file(node.agent)
-                if rel:
-                    full = EXT_ROOT / "extension" / rel
-                    if not full.exists():
-                        missing.append((phase_id, rel))
+                path = self.graph.agent_file(node.agent)
+                if path is None or not Path(path).is_file():
+                    missing.append((phase_id, path))
         assert missing == [], f"Agent files missing: {missing}"
 
 
 def test_chief_registered_in_extension():
-    """CHIEF must be registered in extension.yml so phase_graph resolves it."""
-    import yaml
-    from pathlib import Path
-    ext = yaml.safe_load(
-        (Path(__file__).parent.parent.parent / "extension/extension.yml").read_text()
-    )
-    commands = ext.get("provides", {}).get("commands", [])
-    names = [c["name"] for c in commands]
-    assert "echelon.chief" in names, "echelon.chief not in extension.yml provides.commands"
-    chief = next(c for c in commands if c["name"] == "echelon.chief")
-    assert chief["file"] == "agents/control/chief.md"
-    assert chief["behavior"]["execution"] == "agent"
+    """CHIEF is a deployed Prosaic subagent."""
+    assert (PROSAIC_SUBAGENTS / "echelon.chief.md").is_file()
 
 
 def test_phase1_constitution_uses_chief():
     """phase1-constitution must dispatch CHIEF, not COMMANDER."""
-    graph = PhaseGraph(DEFINITION, EXT_YML)
+    graph = PhaseGraph(
+        PROSAIC_RUNTIME_DEFINITION,
+        prosaic_subagents_dir=PROSAIC_SUBAGENTS,
+    )
     node = graph.get("phase1-constitution")
     assert node.type == "agent", f"Expected type=agent, got {node.type!r}"
-    assert node.agent == "echelon-chief", f"Expected echelon-chief, got {node.agent!r}"
-    # Must resolve to an actual file
-    rel = graph.agent_file("echelon-chief")
-    assert rel is not None, "echelon-chief not resolved by agent_file()"
-    assert rel == "agents/control/chief.md"
+    assert node.agent == "echelon.chief", f"Expected echelon.chief, got {node.agent!r}"
+    path = graph.agent_file("echelon.chief")
+    assert path == str((PROSAIC_SUBAGENTS / "echelon.chief.md").resolve())
 
 
 def test_phase1_constitution_context_pack_has_staging_artifacts():
     """phase1-constitution must include all 5 staging artifacts in context_pack."""
-    graph = PhaseGraph(DEFINITION, EXT_YML)
+    graph = PhaseGraph(
+        PROSAIC_RUNTIME_DEFINITION,
+        prosaic_subagents_dir=PROSAIC_SUBAGENTS,
+    )
     node = graph.get("phase1-constitution")
     pack = " ".join(node.context_pack)
     assert "glossary" in pack
@@ -779,7 +776,10 @@ def test_phase1_constitution_context_pack_has_staging_artifacts():
 
 
 def test_phase1_context_packs_include_generated_context_files():
-    graph = PhaseGraph(DEFINITION, EXT_YML)
+    graph = PhaseGraph(
+        PROSAIC_RUNTIME_DEFINITION,
+        prosaic_subagents_dir=PROSAIC_SUBAGENTS,
+    )
 
     discover_pack = set(graph.get("phase1-discover").context_pack)
     synthesizer_pack = set(graph.get("phase1-synthesizer").context_pack)
@@ -802,24 +802,24 @@ def test_phase1_context_packs_include_generated_context_files():
     specialist_packs = {
         agent["id"]: set(agent.get("context_pack", []))
         for agent in specialists.agents
-        if agent["id"] in {"echelon-guardian", "echelon-investigator"}
+        if agent["id"] in {"echelon.guardian", "echelon.investigator"}
     }
-    assert expected_full_pack.issubset(specialist_packs["echelon-guardian"])
+    assert expected_full_pack.issubset(specialist_packs["echelon.guardian"])
     assert expected_full_pack.issubset(
-        specialist_packs["echelon-investigator"]
+        specialist_packs["echelon.investigator"]
     )
 
 
 def test_phase_graph_preserves_allowed_state_updates(tmp_path: Path):
     definition = tmp_path / "definition.yaml"
-    extension_yml = tmp_path / "extension.yml"
+    subagents = tmp_path / "subagents"
 
     definition.write_text(
         """
 phases:
   - id: phase1-discover
     type: agent
-    agent: echelon-scout
+    agent: echelon.scout
     outputs:
       - spec.md
     allowed_state_updates:
@@ -838,9 +838,7 @@ phases:
 """,
         encoding="utf-8",
     )
-    extension_yml.write_text("provides: {commands: []}\n", encoding="utf-8")
-
-    graph = PhaseGraph(definition, extension_yml)
+    graph = PhaseGraph(definition, prosaic_subagents_dir=subagents)
 
     assert graph.get("phase1-discover").allowed_state_updates == [
         "quality_scores",
@@ -865,14 +863,14 @@ def _write_controller_boundary_graph(
     *,
     allowlist: object,
     nested_field: str | None,
-) -> tuple[Path, Path]:
+) -> Path:
     """Write one direct-PhaseGraph controller-boundary fixture."""
 
     registry = tmp_path / "contracts.yaml"
     registry.write_bytes(
         (
             EXT_ROOT
-            / "extension/workflow/controller-state-contracts.yaml"
+            / "runtime/workflow/controller-state-contracts.yaml"
         ).read_bytes()
     )
     phase: dict[str, object] = {
@@ -899,12 +897,7 @@ def _write_controller_boundary_graph(
         ),
         encoding="utf-8",
     )
-    extension_yml = tmp_path / "extension.yml"
-    extension_yml.write_text(
-        "provides: {commands: []}\n",
-        encoding="utf-8",
-    )
-    return definition, extension_yml
+    return definition
 
 
 @pytest.mark.parametrize("nested_field", (None, "agents", "pre_dispatch"))
@@ -912,7 +905,7 @@ def test_phase_graph_rejects_null_allowlist_for_controller_boundary(
     tmp_path: Path,
     nested_field: str | None,
 ) -> None:
-    definition, extension_yml = _write_controller_boundary_graph(
+    definition = _write_controller_boundary_graph(
         tmp_path,
         allowlist=None,
         nested_field=nested_field,
@@ -922,7 +915,7 @@ def test_phase_graph_rejects_null_allowlist_for_controller_boundary(
         ControllerContractRegistryError,
         match="allowed_state_updates.*list",
     ):
-        PhaseGraph(definition, extension_yml)
+        PhaseGraph(definition)
 
 
 @pytest.mark.parametrize("nested_field", (None, "agents", "pre_dispatch"))
@@ -935,31 +928,34 @@ def test_phase_graph_rejects_unsafe_controller_boundary_allowlist(
     nested_field: str | None,
     unsafe_allowlist: list[object],
 ) -> None:
-    definition, extension_yml = _write_controller_boundary_graph(
+    definition = _write_controller_boundary_graph(
         tmp_path,
         allowlist=unsafe_allowlist,
         nested_field=nested_field,
     )
 
     with pytest.raises(ControllerContractRegistryError):
-        PhaseGraph(definition, extension_yml)
+        PhaseGraph(definition)
 
 
 def test_phase_graph_rejects_phase_controller_boundary_overlap(
     tmp_path: Path,
 ) -> None:
-    definition, extension_yml = _write_controller_boundary_graph(
+    definition = _write_controller_boundary_graph(
         tmp_path,
         allowlist=["lexicon_pass"],
         nested_field=None,
     )
 
     with pytest.raises(ControllerContractRegistryError):
-        PhaseGraph(definition, extension_yml)
+        PhaseGraph(definition)
 
 
 def test_phase3_consensus_declares_per_agent_result_contracts():
-    graph = PhaseGraph(DEFINITION, EXT_YML)
+    graph = PhaseGraph(
+        PROSAIC_RUNTIME_DEFINITION,
+        prosaic_subagents_dir=PROSAIC_SUBAGENTS,
+    )
     node = graph.get("phase3-consensus")
     contracts = {entry["mode"]: entry for entry in node.agents}
     controller_fields = {
@@ -985,7 +981,10 @@ def test_phase3_consensus_declares_per_agent_result_contracts():
 
 
 def test_phase2_governance_verdicts_are_controller_owned():
-    graph = PhaseGraph(DEFINITION, EXT_YML)
+    graph = PhaseGraph(
+        PROSAIC_RUNTIME_DEFINITION,
+        prosaic_subagents_dir=PROSAIC_SUBAGENTS,
+    )
     gates = {
         "phase2-decide": "feasibility_verdict",
         "phase2-tracker-alignment": "intent_alignment_verdict",
@@ -999,7 +998,10 @@ def test_phase2_governance_verdicts_are_controller_owned():
 
 
 def test_phase1_lexicon_reserves_verdict_fields_for_the_controller():
-    graph = PhaseGraph(DEFINITION, EXT_YML)
+    graph = PhaseGraph(
+        PROSAIC_RUNTIME_DEFINITION,
+        prosaic_subagents_dir=PROSAIC_SUBAGENTS,
+    )
     node = graph.get("phase1-lexicon")
 
     controller_fields = {
@@ -1016,7 +1018,10 @@ def test_phase1_lexicon_reserves_verdict_fields_for_the_controller():
 
 
 def test_tasks_lexicon_runs_in_two_visible_provider_free_nodes():
-    graph = PhaseGraph(DEFINITION, EXT_YML)
+    graph = PhaseGraph(
+        PROSAIC_RUNTIME_DEFINITION,
+        prosaic_subagents_dir=PROSAIC_SUBAGENTS,
+    )
     first = graph.get("phase3-tasks-lexicon")
     second = graph.get("phase3-consensus-tasks-lexicon")
 
@@ -1042,7 +1047,10 @@ def test_tasks_lexicon_runs_in_two_visible_provider_free_nodes():
 
 
 def test_shared_controller_contracts_are_compiled_once() -> None:
-    graph = PhaseGraph(DEFINITION, EXT_YML)
+    graph = PhaseGraph(
+        PROSAIC_RUNTIME_DEFINITION,
+        prosaic_subagents_dir=PROSAIC_SUBAGENTS,
+    )
     first = graph.get("phase3-tasks-lexicon").controller_state_contract
     second = graph.get("phase3-consensus-tasks-lexicon").controller_state_contract
 
@@ -1075,7 +1083,10 @@ def test_shared_controller_contracts_are_compiled_once() -> None:
 
 
 def test_production_contracts_own_exact_existing_controller_field_inventory() -> None:
-    graph = PhaseGraph(DEFINITION, EXT_YML)
+    graph = PhaseGraph(
+        PROSAIC_RUNTIME_DEFINITION,
+        prosaic_subagents_dir=PROSAIC_SUBAGENTS,
+    )
     expected = {
         "spec_lexicon": {
             "lexicon_evaluation",
@@ -1128,7 +1139,10 @@ def test_production_contracts_own_exact_existing_controller_field_inventory() ->
 
 
 def test_production_contracts_reject_incomplete_success_results() -> None:
-    graph = PhaseGraph(DEFINITION, EXT_YML)
+    graph = PhaseGraph(
+        PROSAIC_RUNTIME_DEFINITION,
+        prosaic_subagents_dir=PROSAIC_SUBAGENTS,
+    )
 
     assert validate_controller_result(
         graph.controller_contract("spec_lexicon"),
@@ -1236,7 +1250,10 @@ def test_production_contracts_accept_valid_semantic_branches(
     verdict: str,
     updates: dict[str, object],
 ) -> None:
-    graph = PhaseGraph(DEFINITION, EXT_YML)
+    graph = PhaseGraph(
+        PROSAIC_RUNTIME_DEFINITION,
+        prosaic_subagents_dir=PROSAIC_SUBAGENTS,
+    )
 
     assert not validate_controller_result(
         graph.controller_contract(contract_name),
@@ -1329,7 +1346,10 @@ def test_production_contracts_reject_semantic_invariant_violations(
     contract_name: str,
     updates: dict[str, object],
 ) -> None:
-    graph = PhaseGraph(DEFINITION, EXT_YML)
+    graph = PhaseGraph(
+        PROSAIC_RUNTIME_DEFINITION,
+        prosaic_subagents_dir=PROSAIC_SUBAGENTS,
+    )
 
     assert validate_controller_result(
         graph.controller_contract(contract_name),
@@ -1414,7 +1434,10 @@ def test_production_contracts_fail_closed_across_discriminator_branches(
     verdict: str,
     updates: dict[str, object],
 ) -> None:
-    graph = PhaseGraph(DEFINITION, EXT_YML)
+    graph = PhaseGraph(
+        PROSAIC_RUNTIME_DEFINITION,
+        prosaic_subagents_dir=PROSAIC_SUBAGENTS,
+    )
 
     assert validate_controller_result(
         graph.controller_contract(contract_name),
@@ -1424,7 +1447,10 @@ def test_production_contracts_fail_closed_across_discriminator_branches(
 
 
 def test_controller_node_outputs_contain_artifacts_only() -> None:
-    graph = PhaseGraph(DEFINITION, EXT_YML)
+    graph = PhaseGraph(
+        PROSAIC_RUNTIME_DEFINITION,
+        prosaic_subagents_dir=PROSAIC_SUBAGENTS,
+    )
 
     assert graph.get("phase1-lexicon").outputs == [
         "spec-lexicon-report.json",
@@ -1473,14 +1499,11 @@ def test_phase_graph_rejects_unknown_controller_contract(tmp_path: Path) -> None
         }),
         encoding="utf-8",
     )
-    extension_yml = tmp_path / "extension.yml"
-    extension_yml.write_text("provides: {commands: []}\n", encoding="utf-8")
-
     with pytest.raises(
         ControllerContractRegistryError,
         match="unknown controller state contract 'missing'",
     ):
-        PhaseGraph(definition, extension_yml)
+        PhaseGraph(definition)
 
 
 @pytest.mark.parametrize(
@@ -1494,7 +1517,7 @@ def test_phase_graph_requires_exact_contract_for_controller_role(
     expected_contract: str,
     mutation: str,
 ) -> None:
-    raw = yaml.safe_load(DEFINITION.read_text(encoding="utf-8"))
+    raw = yaml.safe_load(PROSAIC_RUNTIME_DEFINITION.read_text(encoding="utf-8"))
     phase = next(item for item in raw["phases"] if item["id"] == phase_id)
     if mutation == "missing":
         phase.pop("controller_state_contract")
@@ -1509,7 +1532,7 @@ def test_phase_graph_requires_exact_contract_for_controller_role(
         yaml.safe_dump(raw, sort_keys=False),
         encoding="utf-8",
     )
-    registry = DEFINITION.parent / "controller-state-contracts.yaml"
+    registry = PROSAIC_RUNTIME_DEFINITION.parent / "controller-state-contracts.yaml"
     (tmp_path / registry.name).write_text(
         registry.read_text(encoding="utf-8"),
         encoding="utf-8",
@@ -1522,7 +1545,7 @@ def test_phase_graph_requires_exact_contract_for_controller_role(
             f"{expected_contract!r}"
         ),
     ):
-        PhaseGraph(definition, EXT_YML)
+        PhaseGraph(definition)
 
 
 def test_phase_graph_requires_registry_for_controller_producing_type(
@@ -1548,11 +1571,14 @@ def test_phase_graph_requires_registry_for_controller_producing_type(
         ControllerContractRegistryError,
         match="controller-producing phases require",
     ):
-        PhaseGraph(definition, EXT_YML)
+        PhaseGraph(definition)
 
 
 def test_provider_nodes_do_not_own_tasks_lexicon_state():
-    graph = PhaseGraph(DEFINITION, EXT_YML)
+    graph = PhaseGraph(
+        PROSAIC_RUNTIME_DEFINITION,
+        prosaic_subagents_dir=PROSAIC_SUBAGENTS,
+    )
     plan = graph.get("phase3-plan")
     consensus = graph.get("phase3-consensus")
 
@@ -1575,11 +1601,14 @@ def test_provider_nodes_do_not_own_tasks_lexicon_state():
 
 
 def test_experimental_artifact_quality_phases_are_registered():
-    graph = PhaseGraph(DEFINITION, EXT_YML)
+    graph = PhaseGraph(
+        PROSAIC_RUNTIME_DEFINITION,
+        prosaic_subagents_dir=PROSAIC_SUBAGENTS,
+    )
 
     expected = {
         "phase-exp-constitution-quality": {
-            "agent": "echelon-chief",
+            "agent": "echelon.chief",
             "updates": {
                 "constitution_quality_pass",
                 "constitution_quality_attempts",
@@ -1589,7 +1618,7 @@ def test_experimental_artifact_quality_phases_are_registered():
             },
         },
         "phase-exp-tasks-quality": {
-            "agent": "echelon-orchestrator",
+            "agent": "echelon.orchestrator",
             "updates": {
                 "tasks_quality_pass",
                 "tasks_quality_attempts",
@@ -1599,7 +1628,7 @@ def test_experimental_artifact_quality_phases_are_registered():
             },
         },
         "phase-exp-adr-quality": {
-            "agent": "echelon-architect",
+            "agent": "echelon.architect",
             "updates": {
                 "adr_quality_pass",
                 "adr_quality_attempts",

@@ -55,11 +55,7 @@ If `.echelon/config.yml` exists, reuse it and update runtime-detection fields on
 ## Step 3: Run Init
 
 ```bash
-PYTHONPATH=.echelon/runtime python3 -c "
-from harness.init import init_harness
-config = init_harness('.')
-print('provider:', config.provider)
-"
+echelon delivery init
 ```
 
 If the command exits non-zero, report the full error output and stop.

@@ -30,8 +30,8 @@ pytestmark = pytest.mark.unit
 
 ROOT = Path(__file__).parents[2]
 SCRIPT = ROOT / "extension/scripts/bash/phase-timing.sh"
-DEFINITION = ROOT / "extension/workflow/definition.yaml"
-EXTENSION = ROOT / "extension/extension.yml"
+DEFINITION = ROOT / "runtime/workflow/definition.yaml"
+PROSAIC_SUBAGENTS = ROOT / "prosaic/subagents"
 
 
 def _controller(tmp_path: Path) -> SquadController:
@@ -41,7 +41,10 @@ def _controller(tmp_path: Path) -> SquadController:
     return SquadController(
         provider=MagicMock(),
         state_store=state_store,
-        phase_graph=PhaseGraph(DEFINITION, EXTENSION),
+        phase_graph=PhaseGraph(
+            DEFINITION,
+            prosaic_subagents_dir=PROSAIC_SUBAGENTS,
+        ),
         ext_dir=ROOT / "extension",
         project_root=tmp_path,
         squad_dir=run_dir,

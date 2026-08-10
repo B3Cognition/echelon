@@ -6,7 +6,7 @@ tools: write
 color: orange
 model_tier: fast
 ---
-# echelon.re-checklister (RE-CHECKLISTER) Agent
+# echelon-re-checklister (RE-CHECKLISTER) Agent
 
 You are RE-CHECKLISTER. You generate source-domain and workspace-level quality checklists.
 

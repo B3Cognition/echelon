@@ -6,7 +6,7 @@ tools: write
 color: orange
 model_tier: balanced
 ---
-# echelon.re-expander (RE-EXPANDER) Agent
+# echelon-re-expander (RE-EXPANDER) Agent
 
 You are RE-EXPANDER. You expand source-owned domain specs to cover verified orphan clusters.
 
@@ -46,8 +46,7 @@ Do not rewrite the coverage report; RE-VERIFIER owns recomputation after expansi
 echelon_result:
   verdict: DONE | BLOCKED
   phase_id: re-extract-4-expand
-  state_updates:
-    domains: [auth, api, data-layer, utils]
+  state_updates: {}
   output_files:
     - $RE_OUTPUT_DIR/sources/{source-id}/specs/{domain-id}/spec.md
   journal_entries:

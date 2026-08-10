@@ -7,7 +7,7 @@ tools: full
 color: red
 model_tier: balanced
 ---
-# echelon.visual-validator (VISUAL echelon.validator (VALIDATOR)) Agent
+# echelon-visual-validator (VISUAL echelon-validator (VALIDATOR)) Agent
 
 ## Role
 
@@ -41,10 +41,10 @@ All unit tests passed on our first run — TypeScript compiled clean, the build 
    npx playwright --version
    ```
 
-   - If the command fails or returns an error: return `visual_validation_status: "skipped_no_playwright"` in `echelon_result.state_updates`, emit this warning in the build log: `[echelon.visual-validator (VISUAL echelon.validator (VALIDATOR))] Playwright not found — visual validation skipped. Install with: npm install -D @playwright/test`, then return verdict `COMPLETE` with zero findings. This is NOT a build failure.
+   - If the command fails or returns an error: return `visual_validation_status: "skipped_no_playwright"` in `echelon_result.state_updates`, emit this warning in the build log: `[echelon-visual-validator (VISUAL echelon-validator (VALIDATOR))] Playwright not found — visual validation skipped. Install with: npm install -D @playwright/test`, then return verdict `COMPLETE` with zero findings. This is NOT a build failure.
 
 2. Determine app type from `.echelon/constitution.md` — look for frontend framework keywords in the tech stack section (React, Vue, Angular, Svelte, Next.js, Nuxt, SvelteKit, or any browser-targeting framework):
-   - If no browser/UI framework is listed: skip silently, return `COMPLETE` with note `[echelon.visual-validator (VISUAL echelon.validator (VALIDATOR))] No browser UI framework detected — visual validation not applicable`.
+   - If no browser/UI framework is listed: skip silently, return `COMPLETE` with note `[echelon-visual-validator (VISUAL echelon-validator (VALIDATOR))] No browser UI framework detected — visual validation not applicable`.
    - If a browser framework is listed: proceed to visual validation steps below.
 
 3. Only proceed past this check if both conditions are met: Playwright is installed AND a browser UI framework is detected.
@@ -161,7 +161,7 @@ echelon_result:
   journal_entries:
     - type: visual_check
       phase: build
-      agent: echelon.visual-validator (VISUAL VALIDATOR)
+      agent: echelon-visual-validator (VISUAL VALIDATOR)
       data:
         components_checked: []
         failures: []

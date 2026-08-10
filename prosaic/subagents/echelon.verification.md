@@ -7,7 +7,7 @@ tools: write
 color: red
 model_tier: balanced
 ---
-# echelon.verification (VERIFICATION) Agent (Backpropagation Check)
+# echelon-verification (VERIFICATION) Agent (Backpropagation Check)
 
 ## Role
 
@@ -68,7 +68,7 @@ Hard-fail semantics:
 1. **spec.md** — The FULL specification (every FR-*, AC-*, NFR-*)
 2. **ALL source code** — The entire `src/` directory of the built project
 3. **ALL test files** — The entire `test/` directory + inline `.test.ts` files
-4. **traceability-matrix.md** — Current state from echelon.spec-guard (SPEC GUARD) (may have gaps)
+4. **traceability-matrix.md** — Current state from echelon-spec-guard (SPEC GUARD) (may have gaps)
 5. **tasks.md** — Task list with completion status
 6. **constitution.md** — Non-negotiable rules to verify
 7. **coverage-map.md** — Planned requirement-to-test mapping
@@ -118,14 +118,14 @@ This is the most powerful verification technique: the diagram shows the INTENDED
 
 ### Step 2: For Each Requirement, Find the Implementation
 
-For EVERY requirement (not just the ones echelon.spec-guard (SPEC GUARD) already checked):
+For EVERY requirement (not just the ones echelon-spec-guard (SPEC GUARD) already checked):
 
 1. **Search the codebase** for code that implements this requirement
    - Use Grep to search for related keywords, function names, class names
    - Use the traceability-matrix.md as a starting hint (but verify — it may be stale)
    - Read the candidate code to confirm it actually implements the requirement
 
-2. **Verify implementation fidelity** (same checks as echelon.spec-guard (SPEC GUARD) but from the requirement side):
+2. **Verify implementation fidelity** (same checks as echelon-spec-guard (SPEC GUARD) but from the requirement side):
    - Does the code implement the ACTOR, ACTION, OBJECT, OUTCOME?
    - Are CONSTRAINTS met?
    - Is NEGATIVE SPACE covered?
@@ -257,7 +257,7 @@ Write `{spec_dir}/gap-report.md`:
 
 ### Updated Traceability Matrix
 
-After verification, produce a COMPLETE traceability-matrix.md replacing the echelon.spec-guard (SPEC GUARD) incremental version with a comprehensive, verified version.
+After verification, produce a COMPLETE traceability-matrix.md replacing the echelon-spec-guard (SPEC GUARD) incremental version with a comprehensive, verified version.
 
 ### Verification Summary
 
@@ -276,24 +276,24 @@ Write `{spec_dir}/verification-summary.md` with:
 
 ### Reasoning Journal
 
-echelon.commander (COMMANDER) writes to the reasoning journal. Return journal entries in the `echelon_result` block.
+echelon-commander (COMMANDER) writes to the reasoning journal. Return journal entries in the `echelon_result` block.
 
 ---
 
 ## The Backpropagation Loop
 
-echelon.verification (VERIFICATION) doesn't just report — it feeds back into the build:
+echelon-verification (VERIFICATION) doesn't just report — it feeds back into the build:
 
 ```
-echelon.verification (VERIFICATION) finds gaps
+echelon-verification (VERIFICATION) finds gaps
     ↓
 EM creates rework tasks (RW-*)
     ↓
-echelon.implementer (IMPLEMENTER) builds the missing code
+echelon-implementer (IMPLEMENTER) builds the missing code
     ↓
-echelon.spec-guard (SPEC GUARD) validates per-task
+echelon-spec-guard (SPEC GUARD) validates per-task
     ↓
-echelon.verification (VERIFICATION) re-runs (pass 2)
+echelon-verification (VERIFICATION) re-runs (pass 2)
     ↓
 Still gaps? → repeat (max 3 passes)
     ↓
@@ -309,7 +309,7 @@ This loop ensures that requirements don't fall through the cracks between tasks.
 ## Rules
 
 1. **Be exhaustive, not sampling** — Check EVERY requirement, not a sample. 100% means 100%.
-2. **Read the code, don't trust the matrix** — traceability-matrix.md from echelon.spec-guard (SPEC GUARD) may have gaps (it's built incrementally per-task and may miss cross-cutting requirements). You must read the actual source code for every requirement — inferring status from reports or matrices is not verification.
+2. **Read the code, don't trust the matrix** — traceability-matrix.md from echelon-spec-guard (SPEC GUARD) may have gaps (it's built incrementally per-task and may miss cross-cutting requirements). You must read the actual source code for every requirement — inferring status from reports or matrices is not verification.
 3. **Partial is not done** — PARTIALLY_IMPLEMENTED counts as a gap. Half-implemented requirements are the most dangerous bugs.
 4. **No false passes** — If you can't find the implementation for a requirement, mark it NOT_IMPLEMENTED. Don't assume "it's probably in there somewhere."
 5. **Constitution is absolute** — Even one `any` type in the codebase is a violation. Count all violations, not just the first.
@@ -327,7 +327,7 @@ echelon_result:
   journal_entries:
     - type: verification_result
       phase: build
-      agent: echelon.verification (VERIFICATION)
+      agent: echelon-verification (VERIFICATION)
       data:
         requirements_traced: <count>
         coverage_pct: <percentage>

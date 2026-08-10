@@ -270,7 +270,6 @@ def test_run_context_refreshes_after_phase_updates_run_local_spec_artifacts(
 ) -> None:
     _ensure_git_repo(tmp_path)
     definition = tmp_path / "definition.yaml"
-    extension_yml = tmp_path / "extension.yml"
     definition.write_text(
         """
 phases:
@@ -289,12 +288,11 @@ phases:
 """,
         encoding="utf-8",
     )
-    extension_yml.write_text("provides: {commands: []}\n", encoding="utf-8")
 
     squad_dir = tmp_path / "runs" / "run-refresh"
     squad_dir.mkdir(parents=True, exist_ok=True)
     (squad_dir / "staging").mkdir(exist_ok=True)
-    graph = PhaseGraph(definition, extension_yml)
+    graph = PhaseGraph(definition)
     store = SquadStateStore(squad_dir)
     store.initialize(
         "run-refresh",

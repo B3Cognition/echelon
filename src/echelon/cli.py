@@ -7213,7 +7213,7 @@ def _derive_roadmap_phases(workflow_path: Path) -> list[str]:
 
 
 _ROADMAP_PHASES = _derive_roadmap_phases(
-    Path(__file__).resolve().parents[2] / "extension/workflow/definition.yaml"
+    Path(__file__).resolve().parents[2] / "runtime/workflow/definition.yaml"
 )
 
 
@@ -7424,7 +7424,7 @@ def _cmd_status(project_root: Path) -> None:
         # ── Pipeline roadmap ────────────────────────────────────────────────
         _print_roadmap(
             state,
-            project_root / ".specify" / "extensions" / "echelon" / "workflow" / "definition.yaml",
+            project_root / ".echelon" / "runtime" / "workflow" / "definition.yaml",
         )
 
     # ── Staging artifacts ───────────────────────────────────────────────────

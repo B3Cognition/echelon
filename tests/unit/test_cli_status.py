@@ -101,6 +101,23 @@ def _v2_decision(
     )
 
 
+def test_status_roadmap_reads_the_deployed_runtime_workflow(tmp_path: Path) -> None:
+    run_dir = tmp_path / "runs" / "run-status"
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps({"run_id": run_dir.name, "status": "running", "phase": "init"}),
+        encoding="utf-8",
+    )
+
+    with patch("echelon.cli._print_roadmap") as print_roadmap:
+        _cmd_status(tmp_path)
+
+    assert print_roadmap.call_args.args[1] == (
+        tmp_path / ".echelon" / "runtime" / "workflow" / "definition.yaml"
+    )
+
+
 def test_status_renders_active_v2_awaiting_human_decision_read_only(
     tmp_path: Path,
     capsys,

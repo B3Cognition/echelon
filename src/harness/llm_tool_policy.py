@@ -138,5 +138,5 @@ def build_opencode_skill_command(
     cmd = [bin_, "run"]
     if policy.allow_unsafe_host_execution:
         cmd.append("--dangerously-skip-permissions")
-    cmd += ["--command", f"speckit.{skill_base}", arguments]
+    cmd += ["--command", skill_base, arguments]
     return cmd

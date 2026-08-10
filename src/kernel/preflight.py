@@ -3,7 +3,7 @@
 Implements run_preflight() per contracts/preflight-contract.md (ADR-002).
 
 Supported dependencies:
-    understanding    — probe run-understanding.sh
+    understanding    — probe the installed understanding CLI
     brownfield       — probe echelon re-* extraction availability
     skill:GOLDDIGGER — probe subagent skill availability
     kb_schema        — verify all 5 KB files present and schema-valid
@@ -115,11 +115,7 @@ def _run_command(command: list[str], timeout: float = 5.0) -> tuple[int, str, st
 def _probe_understanding(
     state: dict, config: dict, ext_dir: Path
 ) -> tuple[str, str, Optional[int], str, str]:
-    """Probe speckit-understanding availability.
-
-    Checks for the understanding console script first, then legacy
-    run-understanding.sh locations.
-    """
+    """Probe availability of Echelon's installed understanding CLI."""
     cli = shutil.which(str(config.get("understanding_cli") or "understanding"))
     if cli:
         exit_code, stdout, stderr = _run_command([cli, "--version"], timeout=5.0)
@@ -147,50 +143,13 @@ def _probe_understanding(
             f"understanding CLI exited with {exit_code}",
         )
 
-    # Look for run-understanding.sh in known locations
-    candidate_paths = [
-        ext_dir / "scripts" / "bash" / "run-understanding.sh",
-        ext_dir.parent / "speckit-understanding" / "run-understanding.sh",
-    ]
-
-    script = None
-    for path in candidate_paths:
-        if path.exists():
-            script = path
-            break
-
-    if script is None:
-        return (
-            "UNAVAILABLE",
-            "missing_install",
-            None,
-            "run-understanding.sh not found in expected locations",
-            "speckit-understanding extension not installed",
-        )
-
-    if not os.access(str(script), os.X_OK):
-        return (
-            "DEGRADED",
-            "permission_denied",
-            None,
-            f"run-understanding.sh found at {script} but not executable",
-            "Script not executable — may need chmod +x",
-        )
-
-    # Run a smoke probe with --check flag (if supported) or just --help
-    exit_code, stdout, stderr = _run_script(script, timeout=5.0)
-    if stderr == "TIMEOUT":
-        return ("UNAVAILABLE", "timeout", -1, "TIMEOUT: script did not respond in 5s", "slow startup")
-    if exit_code not in (0, 1, 2):  # 0=ok, 1=help, 2=check-only; others are errors
-        return (
-            "DEGRADED",
-            "script_error",
-            exit_code,
-            _truncate(stderr or stdout),
-            f"exit_code={exit_code}",
-        )
-
-    return ("AVAILABLE", "n/a", exit_code, "", "smoke probe passed")
+    return (
+        "UNAVAILABLE",
+        "missing_install",
+        None,
+        "understanding CLI not found on PATH",
+        "Echelon understanding CLI is not installed",
+    )
 
 
 # ---------------------------------------------------------------------------

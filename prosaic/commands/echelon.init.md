@@ -1,6 +1,6 @@
 ---
 name: echelon.init
-description: One-time project initialization — bootstrap Echelon configuration, validate
+description: One-time project initialization — bootstrap .echelon/config.yml, validate
   deploy config, install Traefik. Run once per project before echelon.run.
 execution: command
 invocation: explicit
@@ -9,7 +9,7 @@ model_tier: balanced
 ---
 ## Role
 
-You are COMMANDER performing one-time project initialization — validating deploy config in the project config file, provisioning the MemPalace wing, and installing infrastructure. Run once per project before `echelon spec run`.
+You are COMMANDER performing one-time project initialization — validating deploy config in the project config file, provisioning the MemPalace wing, and installing infrastructure. Run once per project before `echelon.run`.
 
 ---
 
@@ -21,9 +21,8 @@ You are COMMANDER performing one-time project initialization — validating depl
 
 ## Overview
 
-One-time setup for a project. Initialize the workspace first with
-`echelon workspace init --with-prosaic`; that creates `.echelon/config.yml` and
-deploys the Echelon Prosaic and runtime bundles.
+One-time setup for a project. Must be run before `echelon.run` on any new project.
+Requires `echelon workspace init` to have been run first (creates the project config).
 
 What it does:
 
@@ -40,7 +39,7 @@ Idempotent: safe to re-run. If deploy infrastructure already exists and is valid
 
 ```bash
 PROJECT_ROOT=$(pwd)
-ECHELON_EXT="${PROJECT_ROOT}/.echelon/runtime"
+ECHELON_RUNTIME="${PROJECT_ROOT}/.echelon/runtime"
 ECHELON_CONFIG="${PROJECT_ROOT}/.echelon/config.yml"
 echo "PROJECT_ROOT=${PROJECT_ROOT}"
 echo "ECHELON_CONFIG=${ECHELON_CONFIG}"
@@ -50,13 +49,12 @@ echo "ECHELON_CONFIG=${ECHELON_CONFIG}"
 
 ## Step 2: Confirm project config exists
 
-The project config is created by `echelon workspace init --with-prosaic`. If it
-is missing, initialize the workspace before continuing.
+The project config is created automatically by `echelon workspace init`. If it is missing, the extension was not installed correctly.
 
 ```bash
 if [ ! -f "${ECHELON_CONFIG}" ]; then
   echo "✗ Project config not found: ${ECHELON_CONFIG}" >&2
-  echo "  Run: echelon workspace init --with-prosaic" >&2
+  echo "  Run: echelon workspace init" >&2
   exit 1
 fi
 echo "✓ Project config found: ${ECHELON_CONFIG}"
@@ -83,7 +81,7 @@ try:
         if missing:
             print('✗ deploy config incomplete in .echelon/config.yml.', file=sys.stderr)
             print(f'  HTTP type requires: {missing}', file=sys.stderr)
-            print('  See .echelon/runtime/config-template.yml for reference.', file=sys.stderr)
+            print('  See config-template.yml for reference.', file=sys.stderr)
             sys.exit(1)
     print(f'✓ deploy config valid (type={deploy_type})')
 except FileNotFoundError:
@@ -121,16 +119,16 @@ If the wing is already set in `${ECHELON_CONFIG}`, this is a no-op. If not, it p
 ## Step 4: Run deploy-init.sh
 
 ```bash
-bash "${ECHELON_EXT}/scripts/bash/deploy-init.sh" "${PROJECT_ROOT}" "${ECHELON_CONFIG}"
+bash "${ECHELON_RUNTIME}/scripts/bash/deploy-init.sh" "${PROJECT_ROOT}" "${ECHELON_CONFIG}"
 ```
 
 If exit code is non-zero, report the full output and stop. Common failures:
 
 | Error | Fix |
 |-------|-----|
-| Traefik not healthy | `docker rm -f echelon-traefik` then re-run `echelon.init` |
+| Traefik not healthy | Remove the container named by `deploy-state.json`, then re-run `echelon.init` |
 | Port already claimed by another app | Change `blue_port`/`green_port` in `${ECHELON_CONFIG}` (use 3100/3101 for app2, 3200/3201 for app3, etc.) |
-| deploy config missing | Add `deploy:` block to `${ECHELON_CONFIG}` (see `.echelon/runtime/config-template.yml`) |
+| deploy config missing | Add `deploy:` block to `${ECHELON_CONFIG}` (see `config-template.yml`) |
 | Docker not running | Start Docker Desktop, then re-run |
 
 ---
@@ -145,7 +143,7 @@ Print a summary:
 ╚══════════════════════════════════════════╝
 
   config       → {ECHELON_CONFIG}
-  deploy-state → active run deploy-state.json (`runs/.current`)
+  deploy-state → active run deploy-state.json (`runs/.current` or `squad/.current`)
 
 Next step:
   echelon.run — start the cognitive squad run

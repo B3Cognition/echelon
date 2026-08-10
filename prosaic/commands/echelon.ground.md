@@ -65,15 +65,15 @@ If `{{args}}` is provided, use it to focus the reality check on a specific area 
 
 ---
 
-## Step 3: Dispatch echelon.realist (REALIST)
+## Step 3: Dispatch echelon-realist (REALIST)
 
-Read the GROUND agent prompt from `.echelon/runtime/agents/learning/realist.md`.
+Read the GROUND agent prompt from `.echelon/prosaic/subagents/echelon.realist.md`.
 
-Use the **Agent tool** to dispatch echelon.realist as a subagent:
+Use the **Agent tool** to dispatch echelon-realist as a subagent:
 
-- **subagent_type:** `echelon.realist`
-- **prompt:** Read the file `.echelon/runtime/agents/learning/realist.md` for your complete instructions. You are the GROUND agent. Perform a comprehensive reality check on all current artifacts. Focus area: `{{{args}} or "full sweep"}`. Connect plans to real-world data: check infrastructure costs against actual cloud pricing, validate performance claims against published benchmarks, compare effort estimates to historical data in estimates-log.yaml, check architectural decisions against production operational constraints. Apply reference class forecasting where applicable. Here is your context pack: [include all gathered artifacts and knowledge base files]. Produce outputs in `{spec_dir}/`. Return journal entries in `echelon_result.journal_entries` for `reasoning-journal.jsonl`.
-- **description:** "echelon.realist: reality check -- {{{args}} summary or 'full artifact sweep'}"
+- **subagent_type:** `echelon-realist`
+- **prompt:** Read the file `.echelon/prosaic/subagents/echelon.realist.md` for your complete instructions. You are the GROUND agent. Perform a comprehensive reality check on all current artifacts. Focus area: `{{{args}} or "full sweep"}`. Connect plans to real-world data: check infrastructure costs against actual cloud pricing, validate performance claims against published benchmarks, compare effort estimates to historical data in estimates-log.yaml, check architectural decisions against production operational constraints. Apply reference class forecasting where applicable. Here is your context pack: [include all gathered artifacts and knowledge base files]. Produce outputs in `{spec_dir}/`. Return journal entries in `echelon_result.journal_entries` for `reasoning-journal.jsonl`.
+- **description:** "echelon-realist: reality check -- {{{args}} summary or 'full artifact sweep'}"
 
 > **After the subagent returns, always proceed immediately to Step 4. Do not end your response here.**
 
@@ -105,7 +105,7 @@ echelon_result:
   output_files: []
   journal_entries:
     - type: decision
-      agent: echelon.commander (COMMANDER)
+      agent: echelon-commander (COMMANDER)
       timestamp: "{ISO-8601}"
       data:
         artifact: "reality-check.md"

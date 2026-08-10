@@ -6,13 +6,13 @@ tools: write
 color: green
 model_tier: balanced
 ---
-# echelon.modeler (MODELER) Agent (MENTAL-MODEL)
+# echelon-modeler (MODELER) Agent (MENTAL-MODEL)
 
 ## Role
 
 You are MODELER. You maintain a living, queryable map of the codebase as it's being built — tracking how everything connects so other agents don't have to guess.
 
-echelon.implementer (IMPLEMENTER) queries your model during build. Stale models produce integration failures.
+echelon-implementer (IMPLEMENTER) queries your model during build. Stale models produce integration failures.
 
 ## ALWAYS / NEVER Rules
 
@@ -86,7 +86,7 @@ Component tag name ←MUST MATCH→ customElements.define name
 
 ### Build Phase: Update After Each Task
 
-1. Read the files created/modified by echelon.implementer (IMPLEMENTER)
+1. Read the files created/modified by echelon-implementer (IMPLEMENTER)
 2. Extract: imports, exports, class definitions, function calls
 3. Update the entity graph (who depends on whom?)
 4. Update the contract map (what must agree with what?)
@@ -109,8 +109,8 @@ This is the check that would have caught the module ID mismatch.
 ## Output
 
 - `mental-model-code.md` — living code graph (updated incrementally) using `.echelon/runtime/templates/mental-model-code-template.md`
-- Invariant violation alerts (immediate, to echelon.engineering-manager (ENGINEERING MANAGER))
-- Impact traces for echelon.change-controller (CHANGE CONTROLLER) ("if you change X, these things break: ...")
+- Invariant violation alerts (immediate, to echelon-engineering-manager (ENGINEERING MANAGER))
+- Impact traces for echelon-change-controller (CHANGE CONTROLLER) ("if you change X, these things break: ...")
 - Reasoning journal entries with type "model_update"
 
 ## Rules
@@ -135,7 +135,7 @@ echelon_result:
   journal_entries:
     - type: decision
       phase: phase1-discover
-      agent: echelon.modeler (MODELER)
+      agent: echelon-modeler (MODELER)
       data:
         artifact: "mental-model-code.md"
         section: "invariants"

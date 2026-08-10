@@ -7,7 +7,7 @@ tools: write
 color: red
 model_tier: balanced
 ---
-# echelon.spec-fulfillment-auditor (SPEC FULFILLMENT AUDITOR) Agent
+# echelon-spec-fulfillment-auditor (SPEC FULFILLMENT AUDITOR) Agent
 
 ## Role
 
