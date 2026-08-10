@@ -135,6 +135,24 @@ def test_container_runtime_uses_echelon_owned_labels() -> None:
     assert "echelon-harness.session_id" in combined
 
 
+def test_land_and_recovery_do_not_special_case_legacy_storage() -> None:
+    modules = (
+        ROOT / "src" / "harness" / "land.py",
+        ROOT / "src" / "harness" / "recovery.py",
+    )
+    findings = []
+    for module in modules:
+        for line_number, line in enumerate(
+            module.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            if ".specify/" in line:
+                findings.append(
+                    f"{module.relative_to(ROOT)}:{line_number}: {line.strip()}"
+                )
+
+    assert not findings, "\n".join(findings)
+
+
 def test_runtime_uses_echelon_owned_standalone_re_state() -> None:
     config = (RUNTIME / "config-template.yml").read_text(encoding="utf-8")
     discovery = (RUNTIME / "scripts" / "bash" / "re" / "discover-repos.sh").read_text(

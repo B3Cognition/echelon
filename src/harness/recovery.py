@@ -370,7 +370,6 @@ def _is_recovery_metadata_path(path: str) -> bool:
     return (
         path == BUILD_STATUS_FILENAME
         or path.startswith(".echelon/")
-        or path.startswith(".specify/")
         or path.startswith("runs/")
         or path.startswith("specs/")
     )

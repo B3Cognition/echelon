@@ -69,7 +69,6 @@ _IMPLEMENTATION_INPUT_FILES = {
     "Makefile",
 }
 _FRONTMATTER_RE = re.compile(r"^---\n.*?\n---(?:\n|$)", re.DOTALL)
-_RUNTIME_STATE_CONFLICT_PREFIXES = (".specify/",)
 _LAND_GENERATED_DRIFT_EXACT = {
     "docs/perf/perf-metrics.json",
     "docs/perf/perf-metrics-pty.json",
@@ -354,32 +353,7 @@ def _autoresolve_known_land_conflicts(project_dir: Path, conflicted: list[str]) 
         autoresolved.append(".gitignore")
         unresolved.discard(".gitignore")
 
-    runtime_conflicts = sorted(
-        path
-        for path in unresolved
-        if any(path.startswith(prefix) for prefix in _RUNTIME_STATE_CONFLICT_PREFIXES)
-    )
-    if runtime_conflicts and len(runtime_conflicts) == len(unresolved):
-        if _autoresolve_runtime_state_removal(project_dir, runtime_conflicts):
-            autoresolved.extend(runtime_conflicts)
-
     return autoresolved
-
-
-def _autoresolve_runtime_state_removal(project_dir: Path, paths: list[str]) -> bool:
-    if not paths:
-        return False
-
-    rm = _run_git(
-        ["rm", "-r", "-f", "--cached", "--ignore-unmatch", "--", *paths],
-        cwd=str(project_dir),
-        check=False,
-    )
-    if rm.returncode != 0:
-        return False
-
-    still_unmerged = set(_list_unmerged_files(project_dir))
-    return not any(path in still_unmerged for path in paths)
 
 
 def _autoresolve_gitignore(project_dir: Path) -> bool:

@@ -2620,7 +2620,7 @@ def test_prepare_feature_branch_autoresolves_gitignore_union(tmp_path: Path) -> 
 
 
 @pytest.mark.unit
-def test_prepare_feature_branch_autoresolves_specify_runtime_removal(
+def test_prepare_feature_branch_blocks_on_unmigrated_legacy_conflict(
     tmp_path: Path,
 ) -> None:
     from harness.land import LandOptions, prepare_feature_branch
@@ -2663,19 +2663,20 @@ def test_prepare_feature_branch_autoresolves_specify_runtime_removal(
         options=LandOptions(),
     )
 
-    assert result.status == "prepared"
+    assert result.status == "blocked"
     assert result.branch == "001-feature"
-    assert ".gitignore" in result.autoresolved_files
-    assert ".specify/memory/constitution.md" in result.autoresolved_files
-    assert _git(repo, "diff", "--name-only", "--diff-filter=U").stdout.strip() == ""
-    assert _git(repo, "ls-files", ".specify").stdout.strip() == ""
+    assert result.autoresolved_files == [".gitignore"]
+    assert result.conflicted_files == [".specify/memory/constitution.md"]
+    assert _git(repo, "diff", "--name-only", "--diff-filter=U").stdout.strip() == (
+        ".specify/memory/constitution.md"
+    )
     assert "/.specify/" in (repo / ".gitignore").read_text(encoding="utf-8")
     assert "__pycache__/" in (repo / ".gitignore").read_text(encoding="utf-8")
     gitops.push_prepared_branch.assert_not_called()
 
 
 @pytest.mark.unit
-def test_prepare_feature_branch_continue_autoresolves_specify_runtime_removal(
+def test_prepare_feature_branch_continue_still_blocks_on_unmigrated_legacy_conflict(
     tmp_path: Path,
 ) -> None:
     from harness.land import LandOptions, prepare_feature_branch
@@ -2728,11 +2729,12 @@ def test_prepare_feature_branch_continue_autoresolves_specify_runtime_removal(
             options=LandOptions(continue_existing=True),
         )
 
-    assert result.status == "prepared"
-    assert ".gitignore" in result.autoresolved_files
-    assert ".specify/memory/constitution.md" in result.autoresolved_files
-    assert _git(repo, "diff", "--name-only", "--diff-filter=U").stdout.strip() == ""
-    assert _git(repo, "ls-files", ".specify").stdout.strip() == ""
+    assert result.status == "blocked"
+    assert result.autoresolved_files == [".gitignore"]
+    assert result.conflicted_files == [".specify/memory/constitution.md"]
+    assert _git(repo, "diff", "--name-only", "--diff-filter=U").stdout.strip() == (
+        ".specify/memory/constitution.md"
+    )
 
 
 @pytest.mark.unit

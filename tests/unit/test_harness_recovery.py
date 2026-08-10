@@ -647,7 +647,7 @@ def test_recover_blocked_run_skips_dirty_checkout_when_checkpoint_already_on_tar
     _commit_file(project, "README.md", "base\n", "base")
     _commit_file(
         project,
-        ".specify/memory/constitution.md",
+        ".echelon/constitution.md",
         "constitution v1\n",
         "constitution",
     )
@@ -665,7 +665,7 @@ def test_recover_blocked_run_skips_dirty_checkout_when_checkpoint_already_on_tar
     _git(project, "clone", "--mirror", str(project), str(mirror))
 
     _git(project, "checkout", "main")
-    (project / ".specify/memory/constitution.md").write_text(
+    (project / ".echelon/constitution.md").write_text(
         "locally repaired constitution\n",
         encoding="utf-8",
     )
@@ -688,7 +688,7 @@ def test_recover_blocked_run_skips_dirty_checkout_when_checkpoint_already_on_tar
     assert _git(project, "branch", "--show-current") == "main"
     assert (
         _git(project, "status", "--porcelain", "--untracked-files=no")
-        == "M .specify/memory/constitution.md"
+        == "M .echelon/constitution.md"
     )
 
 
