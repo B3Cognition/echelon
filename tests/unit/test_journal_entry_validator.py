@@ -13,9 +13,18 @@ from harness.reasoning_journal_store import (
     REASONING_JOURNAL_LOCK_RANK,
 )
 from harness.journal_entry_validator import (
+    default_journal_schema_path,
     prepare_journal_entries_for_append,
     validate_journal_entry,
 )
+
+
+def test_default_schema_comes_from_echelon_runtime_bundle() -> None:
+    root = Path(__file__).resolve().parents[2]
+
+    assert default_journal_schema_path() == (
+        root / "runtime" / "workflow" / "journal-entry-types.yaml"
+    )
 
 
 def test_valid_registered_entry_passes() -> None:

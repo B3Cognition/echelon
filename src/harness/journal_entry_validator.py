@@ -60,7 +60,7 @@ class JournalEntryValidationVerdict:
 
 
 def default_journal_schema_path() -> Path:
-    return Path(__file__).resolve().parents[2] / "extension/workflow/journal-entry-types.yaml"
+    return Path(__file__).resolve().parents[2] / "runtime/workflow/journal-entry-types.yaml"
 
 
 def validate_journal_entry(

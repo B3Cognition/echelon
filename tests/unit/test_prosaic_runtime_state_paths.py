@@ -155,6 +155,19 @@ def test_active_delivery_modules_use_echelon_owned_names() -> None:
     assert ".specify/extensions/echelon/harness" not in combined
 
 
+def test_active_journal_validation_uses_runtime_schema() -> None:
+    modules = (
+        ROOT / "src" / "harness" / "journal_entry_validator.py",
+        ROOT / "src" / "harness" / "journal_prompt_validator.py",
+        ROOT / "src" / "harness" / "squad.py",
+        ROOT / "src" / "harness" / "squad_completion.py",
+        ROOT / "src" / "harness" / "squad_executors.py",
+    )
+    combined = "\n".join(path.read_text(encoding="utf-8") for path in modules)
+
+    assert "extension/workflow/journal-entry-types" not in combined
+
+
 def test_land_and_recovery_do_not_special_case_legacy_storage() -> None:
     modules = (
         ROOT / "src" / "harness" / "land.py",

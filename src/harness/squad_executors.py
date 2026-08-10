@@ -180,7 +180,7 @@ _FALLBACK_ECHELON_RESULT_TEMPLATE = """# Echelon result contract template.
 # - ALWAYS include state_updates; use {} when no state changes are needed.
 # - ALWAYS include journal_entries; use [] when no journal entries are needed.
 # - Registered journal-entry types require `data` with all required fields from
-#   extension/workflow/journal-entry-types.yaml.
+#   .echelon/runtime/workflow/journal-entry-types.yaml.
 # - NEVER wrap this block in markdown fences such as ```yaml or ```echelon_result.
 # - NEVER emit `<echelon_result>` XML, JSON, or prose-only summaries as the contract.
 # - NEVER put summaries, bullets, or sign-off text after the echelon_result block.
