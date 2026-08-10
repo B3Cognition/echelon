@@ -112,18 +112,6 @@ APP_NAME=$(basename "${PROJECT_ROOT}" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z
 GLOBAL_STATE_DIR="${HOME}/.echelon/deploy"
 TRAEFIK_NAME="echelon-traefik"
 DEPLOY_NETWORK="echelon-deploy"
-LEGACY_GLOBAL_STATE_DIR="${HOME}/.speckit-deploy"
-
-# Existing deployments keep their established shared infrastructure. Fresh
-# workspaces use the Echelon namespace and never create Spec-Kit resources.
-if [ -f "${LEGACY_GLOBAL_STATE_DIR}/${APP_NAME}.json" ] \
-  || docker inspect "speckit-traefik" >/dev/null 2>&1 \
-  || docker network inspect "speckit-deploy" >/dev/null 2>&1; then
-  GLOBAL_STATE_DIR="${LEGACY_GLOBAL_STATE_DIR}"
-  TRAEFIK_NAME="speckit-traefik"
-  DEPLOY_NETWORK="speckit-deploy"
-  echo "deploy: using legacy deployment infrastructure for compatibility"
-fi
 mkdir -p "${GLOBAL_STATE_DIR}"
 
 # ══════════════════════════════════════════════════════════════════════════════

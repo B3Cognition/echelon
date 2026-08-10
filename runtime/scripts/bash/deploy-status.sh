@@ -48,7 +48,7 @@ try:
     print(d.get('blue_image') or '')
     print(d.get('green_image') or '')
     print(d.get('install_path') or '')
-    print(d.get('traefik_name', 'speckit-traefik'))
+    print(d.get('traefik_name', 'echelon-traefik'))
 except Exception as e:
     sys.exit(f'Cannot read deploy state: {e}')
 PYEOF

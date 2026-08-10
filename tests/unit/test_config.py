@@ -15,7 +15,7 @@ Coverage:
   4-level config cascade (via load_config with temp project_root):
     - Layer 2 project config is applied
     - Layer 3 local config overrides project config
-    - Layer 4 env vars (SPECKIT_HARNESS_*) override local config
+    - Layer 4 env vars (ECHELON_HARNESS_*) override local config
     - Missing config files are silently skipped (only required fields needed)
 """
 
@@ -261,8 +261,8 @@ class TestConfigDefaults:
 @pytest.mark.unit
 class TestLoadConfigCascade:
     def test_project_config_applied(self, tmp_path: Path) -> None:
-        ext = _ext_dir(tmp_path)
-        _write_yaml(ext / "echelon-config.yml", {"harness": {
+        config_dir = _echelon_dir(tmp_path)
+        _write_yaml(config_dir / "config.yml", {"harness": {
             **MINIMAL,
             "resource_limits": {"memory": "8g"},
         }})
@@ -272,8 +272,8 @@ class TestLoadConfigCascade:
         assert config.resource_limits.cpu == 2.0
 
     def test_top_level_stacks_in_unified_config_inherited_by_harness(self, tmp_path: Path) -> None:
-        ext = _ext_dir(tmp_path)
-        _write_yaml(ext / "echelon-config.yml", {
+        config_dir = _echelon_dir(tmp_path)
+        _write_yaml(config_dir / "config.yml", {
             "stacks": {
                 "selected": ["statsperform-playbook"],
             },
@@ -287,8 +287,8 @@ class TestLoadConfigCascade:
         assert config.stacks.selected == ["statsperform-playbook"]
 
     def test_harness_stacks_override_top_level_stacks(self, tmp_path: Path) -> None:
-        ext = _ext_dir(tmp_path)
-        _write_yaml(ext / "echelon-config.yml", {
+        config_dir = _echelon_dir(tmp_path)
+        _write_yaml(config_dir / "config.yml", {
             "stacks": {
                 "selected": ["top-level-stack"],
             },
@@ -305,33 +305,44 @@ class TestLoadConfigCascade:
         assert config.stacks.selected == ["harness-stack"]
 
     def test_local_config_overrides_project(self, tmp_path: Path) -> None:
-        ext = _ext_dir(tmp_path)
-        _write_yaml(ext / "echelon-config.yml", {"harness": {**MINIMAL, "buffer_limit_bytes": 5_000_000}})
-        _write_yaml(ext / "local-config.yml", {"harness": {"buffer_limit_bytes": 1_000_000}})
+        config_dir = _echelon_dir(tmp_path)
+        _write_yaml(config_dir / "config.yml", {"harness": {**MINIMAL, "buffer_limit_bytes": 5_000_000}})
+        _write_yaml(config_dir / "local.yml", {"harness": {"buffer_limit_bytes": 1_000_000}})
         config = load_config(tmp_path)
         assert config.buffer_limit_bytes == 1_000_000
 
     def test_env_vars_override_local(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         # Env var parsing splits on '_' as nesting separators (same as ConfigManager),
         # so only single-word top-level keys round-trip cleanly via env vars.
-        # SPECKIT_HARNESS_PROVIDER → {"provider": "e2b"}
-        ext = _ext_dir(tmp_path)
-        _write_yaml(ext / "echelon-config.yml", {"harness": MINIMAL})
-        _write_yaml(ext / "local-config.yml", {"harness": {"provider": "docker"}})
-        monkeypatch.setenv("SPECKIT_HARNESS_PROVIDER", "e2b")
+        # ECHELON_HARNESS_PROVIDER → {"provider": "e2b"}
+        config_dir = _echelon_dir(tmp_path)
+        _write_yaml(config_dir / "config.yml", {"harness": MINIMAL})
+        _write_yaml(config_dir / "local.yml", {"harness": {"provider": "docker"}})
+        monkeypatch.setenv("ECHELON_HARNESS_PROVIDER", "e2b")
         config = load_config(tmp_path)
         assert config.provider == "e2b"
 
+    def test_legacy_env_var_reports_exact_echelon_replacement(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SPECKIT_HARNESS_PROVIDER", "e2b")
+
+        with pytest.raises(
+            ValidationError,
+            match="SPECKIT_HARNESS_PROVIDER.*ECHELON_HARNESS_PROVIDER",
+        ):
+            load_config(tmp_path)
+
     def test_missing_optional_files_are_skipped(self, tmp_path: Path) -> None:
-        ext = _ext_dir(tmp_path)
+        config_dir = _echelon_dir(tmp_path)
         # Only project config — no local, no env vars
-        _write_yaml(ext / "echelon-config.yml", {"harness": MINIMAL})
+        _write_yaml(config_dir / "config.yml", {"harness": MINIMAL})
         config = load_config(tmp_path)
         assert config.provider == "docker"
 
     def test_defaults_cwd_used_when_no_project_root(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        ext = _ext_dir(tmp_path)
-        _write_yaml(ext / "echelon-config.yml", {"harness": MINIMAL})
+        config_dir = _echelon_dir(tmp_path)
+        _write_yaml(config_dir / "config.yml", {"harness": MINIMAL})
         monkeypatch.chdir(tmp_path)
         config = load_config()  # no project_root — falls back to cwd
         assert config.target_repo == ""
@@ -613,7 +624,7 @@ def test_llm_tool_policy_config_override_accepts_approved_unsafe_mode() -> None:
 def test_load_config_inherits_top_level_llm_defaults_into_harness_section(
     tmp_path: Path,
 ) -> None:
-    config_file = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+    config_file = tmp_path / ".echelon" / "config.yml"
     config_file.parent.mkdir(parents=True)
     config_file.write_text(
         "llm:\n"
@@ -635,7 +646,7 @@ def test_load_config_inherits_top_level_llm_defaults_into_harness_section(
 
 
 def test_load_config_harness_llm_overrides_top_level_llm_defaults(tmp_path: Path) -> None:
-    config_file = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+    config_file = tmp_path / ".echelon" / "config.yml"
     config_file.parent.mkdir(parents=True)
     config_file.write_text(
         "llm:\n"

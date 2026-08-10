@@ -60,9 +60,9 @@ try:
     print(d.get('health_check', ''))
     print(d.get('install_path', ''))
     print(d.get('container_port', 80))
-    print(d.get('traefik_name', 'speckit-traefik'))
-    print(d.get('deploy_network', 'speckit-deploy'))
-    print(d.get('global_state_dir', os.path.expanduser('~/.speckit-deploy')))
+    print(d.get('traefik_name', 'echelon-traefik'))
+    print(d.get('deploy_network', 'echelon-deploy'))
+    print(d.get('global_state_dir', os.path.expanduser('~/.echelon/deploy')))
 except Exception as e:
     sys.exit(f'Cannot read deploy state: {e}')
 PYEOF
@@ -310,7 +310,7 @@ state['last_deploy'] = datetime.datetime.now(datetime.timezone.utc).isoformat().
 with open(state_file, 'w') as f:
     json.dump(state, f, indent=2)
 
-global_dir = os.environ.get('GLOBAL_STATE_DIR', os.path.expanduser("~/.speckit-deploy"))
+global_dir = os.environ.get('GLOBAL_STATE_DIR', os.path.expanduser("~/.echelon/deploy"))
 os.makedirs(global_dir, exist_ok=True)
 global_state = os.path.join(global_dir, f"{state['app']}.json")
 with open(global_state, 'w') as f:
@@ -445,7 +445,7 @@ state['last_deploy'] = datetime.datetime.now(datetime.timezone.utc).isoformat().
 with open(state_file, 'w') as f:
     json.dump(state, f, indent=2)
 
-global_dir = os.environ.get('GLOBAL_STATE_DIR', os.path.expanduser("~/.speckit-deploy"))
+global_dir = os.environ.get('GLOBAL_STATE_DIR', os.path.expanduser("~/.echelon/deploy"))
 os.makedirs(global_dir, exist_ok=True)
 global_state = os.path.join(global_dir, f"{state['app']}.json")
 with open(global_state, 'w') as f:

@@ -155,7 +155,9 @@ def test_fresh_cli_deploy_init_uses_echelon_infrastructure(tmp_path: Path) -> No
     assert (tmp_path / "home" / ".echelon" / "deploy" / "fresh-project.json").exists()
 
 
-def test_cli_deploy_init_preserves_existing_legacy_global_state(tmp_path: Path) -> None:
+def test_fresh_cli_deploy_init_ignores_unmigrated_legacy_global_state(
+    tmp_path: Path,
+) -> None:
     project = tmp_path / "legacy-project"
     home = tmp_path / "home"
     legacy_state = home / ".speckit-deploy" / "legacy-project.json"
@@ -164,9 +166,31 @@ def test_cli_deploy_init_preserves_existing_legacy_global_state(tmp_path: Path) 
 
     state = _run_cli_deploy_init(project, home)
 
-    assert state["global_state_dir"] == str(home / ".speckit-deploy")
-    assert state["traefik_name"] == "speckit-traefik"
-    assert state["deploy_network"] == "speckit-deploy"
+    assert state["global_state_dir"] == str(home / ".echelon" / "deploy")
+    assert state["traefik_name"] == "echelon-traefik"
+    assert state["deploy_network"] == "echelon-deploy"
+
+
+def test_deploy_runtime_does_not_discover_or_default_to_speckit_resources() -> None:
+    findings = []
+    for script in (RUNTIME / "scripts" / "bash").glob("deploy*.sh"):
+        for line_number, line in enumerate(
+            script.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            if "speckit" in line.lower():
+                findings.append(
+                    f"{script.relative_to(ROOT)}:{line_number}: {line.strip()}"
+                )
+    validate = RUNTIME / "scripts" / "bash" / "validate-deploy.sh"
+    for line_number, line in enumerate(
+        validate.read_text(encoding="utf-8").splitlines(), start=1
+    ):
+        if "speckit" in line.lower():
+            findings.append(
+                f"{validate.relative_to(ROOT)}:{line_number}: {line.strip()}"
+            )
+
+    assert not findings, "\n".join(findings)
 
 
 def test_cli_deploy_wrapper_reads_the_selected_global_state_directory(tmp_path: Path) -> None:

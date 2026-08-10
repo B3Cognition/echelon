@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -434,3 +435,58 @@ def test_workspace_migrate_to_prosaic_normalizes_legacy_re_default(
     text = config.read_text(encoding="utf-8")
     assert ".echelon/re" in text
     assert ".specify/echelon/re" not in text
+
+
+def test_workspace_migrate_to_prosaic_migrates_global_deploy_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    project = tmp_path / "deployed-app"
+    home = tmp_path / "home"
+    config = project / ".echelon" / "config.yml"
+    config.parent.mkdir(parents=True)
+    config.write_text("harness:\n  provider: docker\n", encoding="utf-8")
+    legacy_state = home / ".speckit-deploy" / "deployed-app.json"
+    legacy_state.parent.mkdir(parents=True)
+    legacy_state.write_text(
+        json.dumps(
+            {
+                "app": "deployed-app",
+                "type": "http",
+                "active": "blue",
+                "global_state_dir": str(legacy_state.parent),
+                "traefik_name": "speckit-traefik",
+                "deploy_network": "speckit-deploy",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def deploy_bundle(project_root: Path) -> object:
+        workflow = project_root / ".echelon/runtime/workflow"
+        subagents = project_root / ".echelon/prosaic/subagents"
+        workflow.mkdir(parents=True)
+        subagents.mkdir(parents=True)
+        (workflow / "definition.yaml").write_text(
+            "phases:\n  - id: discover\n    type: agent\n    agent: echelon.scout\n",
+            encoding="utf-8",
+        )
+        (subagents / "echelon.scout.md").write_text("# Scout\n", encoding="utf-8")
+        return object()
+
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr("echelon.prosaic_packages.install_prosaic_bundle", deploy_bundle)
+    monkeypatch.setattr(
+        "echelon.speckit_git.disable_speckit_git",
+        lambda _root: SimpleNamespace(installed=False),
+    )
+
+    from echelon.cli import _cmd_workspace_migrate_to_prosaic
+
+    _cmd_workspace_migrate_to_prosaic(project)
+
+    migrated = home / ".echelon" / "deploy" / "deployed-app.json"
+    assert migrated.is_file()
+    assert not legacy_state.exists()
+    assert f"deployment state: {migrated}" in capsys.readouterr().out

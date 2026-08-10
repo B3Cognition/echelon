@@ -70,8 +70,8 @@ try:
         sys.exit(1)
     print(d['type'])
     print(d['app'])
-    print(d.get('traefik_name', 'speckit-traefik'))
-    print(d.get('deploy_network', 'speckit-deploy'))
+    print(d.get('traefik_name', 'echelon-traefik'))
+    print(d.get('deploy_network', 'echelon-deploy'))
 except json.JSONDecodeError as e:
     print(f"INVALID:not valid JSON: {e}", file=sys.stderr)
     sys.exit(1)

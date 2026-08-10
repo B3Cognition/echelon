@@ -1186,8 +1186,8 @@ stacks:
 # =============================================================================
 #
 # Environment variables override all file settings:
-#   SPECKIT_HARNESS_<SECTION>_<KEY>=value
-#   e.g. SPECKIT_HARNESS_RESOURCE_LIMITS_MEMORY=8g
+#   ECHELON_HARNESS_<SECTION>_<KEY>=value
+#   e.g. ECHELON_HARNESS_RESOURCE_LIMITS_MEMORY=8g
 
 harness:
   # Implementation targets are declared in spec frontmatter, not here:

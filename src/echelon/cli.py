@@ -10341,6 +10341,10 @@ def _cmd_workspace_migrate_to_prosaic(project_root: Path) -> None:
     """Deploy and validate Prosaic without deleting legacy workspace state."""
     from echelon.prosaic_packages import ProsaicBundleInstallError, install_prosaic_bundle
     from echelon.constitution import migrate_legacy_constitution
+    from echelon.deploy_state_migration import (
+        DeployStateMigrationError,
+        migrate_legacy_deploy_state,
+    )
     from harness.phase_graph import load_workspace_phase_graph
 
     config_path = project_root / ".echelon" / "config.yml"
@@ -10384,6 +10388,11 @@ def _cmd_workspace_migrate_to_prosaic(project_root: Path) -> None:
         raise SystemExit(1)
     _ensure_prosaic_workspace_ignores(project_root)
     migrated_constitution = migrate_legacy_constitution(project_root)
+    try:
+        migrated_deploy_state = migrate_legacy_deploy_state(project_root)
+    except DeployStateMigrationError as exc:
+        print(f"✗ Could not migrate deployment state: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
 
     print("✓ Prosaic migration complete")
     print(f"  prose:   {project_root / '.echelon' / 'prosaic'}")
@@ -10391,6 +10400,8 @@ def _cmd_workspace_migrate_to_prosaic(project_root: Path) -> None:
     print(f"  phases:  {len(graph.all_phase_ids())}")
     if migrated_constitution is not None:
         print(f"  constitution: {migrated_constitution}")
+    if migrated_deploy_state.migrated:
+        print(f"  deployment state: {migrated_deploy_state.global_state_path}")
     if legacy_git.installed:
         print("  legacy Git integration: disabled")
     print("  legacy .specify/extensions/echelon was left unchanged")

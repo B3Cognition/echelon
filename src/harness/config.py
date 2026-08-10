@@ -6,7 +6,7 @@ Implements Echelon's canonical config cascade:
   1. Defaults   — dataclass defaults / runtime defaults                 (bundled)
   2. Project    — ``.echelon/config.yml``                              (committed)
   3. Local      — ``.echelon/local.yml``                               (gitignored)
-  4. Env vars   — ``SPECKIT_HARNESS_<SECTION>_<KEY>``                  (CI/secrets)
+  4. Env vars   — ``ECHELON_HARNESS_<SECTION>_<KEY>``                  (CI/secrets)
 
 Layers are deep-merged in precedence order. Implementation targets are not read
 from config; delivery commands resolve them from spec frontmatter ``targets:``
@@ -265,9 +265,21 @@ def _merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _env_config() -> Dict[str, Any]:
-    """Build config dict from ``SPECKIT_HARNESS_*`` environment variables."""
+    """Build config from Echelon env vars and reject the legacy namespace."""
+    legacy_prefix = "SPECKIT_HARNESS_"
+    legacy_keys = sorted(key for key in os.environ if key.startswith(legacy_prefix))
+    if legacy_keys:
+        renames = ", ".join(
+            f"{key} -> ECHELON_HARNESS_{key[len(legacy_prefix):]}"
+            for key in legacy_keys
+        )
+        raise ValidationError(
+            f"Legacy harness environment variables are not supported; rename {renames}",
+            field_path="environment",
+        )
+
     result: Dict[str, Any] = {}
-    prefix = "SPECKIT_HARNESS_"
+    prefix = "ECHELON_HARNESS_"
     for key, value in os.environ.items():
         if not key.startswith(prefix):
             continue
