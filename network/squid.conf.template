@@ -1,4 +1,4 @@
-# squid.conf.template — Squid proxy ACL configuration for spec-kit-harness.
+# squid.conf.template — Squid proxy ACL configuration for Echelon delivery.
 #
 # Per ADR-003: Squid forward proxy on internal Docker network.
 # Per FR-NETWORK-001a: default deny-all except allowlist.

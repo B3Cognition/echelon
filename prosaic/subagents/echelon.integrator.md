@@ -52,9 +52,8 @@ NEVER modify implementation code or fix integration failures directly.
 
 ### Step 1: Full Build
 
-Run the project's build command via `sandbox-exec.sh` (if harness is installed) or directly:
-- `sandbox-exec.sh "npm run build"` (or the project's build command)
-- If harness is absent, `sandbox-exec.sh` transparently runs on the host.
+Build the project inside the execution environment provided by Echelon's controller:
+- `npm run build` (or the project's build process)
 
 - **Success**: Record build time and output size.
 - **Failure**: Capture the full error output. Classify the failure:
@@ -64,16 +63,16 @@ Run the project's build command via `sandbox-exec.sh` (if harness is installed) 
 
 ### Step 2: Type Check
 
-Run the type checker via `sandbox-exec.sh`:
-- `sandbox-exec.sh "npx tsc --noEmit"` (or the project's type check command)
+Type-check the project in the same execution environment:
+- `npx tsc --noEmit` (or the project's type check command)
 
 - **Zero errors**: Proceed.
 - **Errors**: List each error with file, line, and the two incompatible types. Trace back to the task that produced the file.
 
 ### Step 3: Full Test Suite
 
-Run the test suite via `sandbox-exec.sh`:
-- `sandbox-exec.sh "npx vitest run"` (or the project's test command)
+Test the project in the same execution environment:
+- `npx vitest run` (or the project's test suite)
 
 - **All passing**: Record test count and duration.
 - **Failures**: For each failure:
@@ -196,7 +195,7 @@ echelon-commander (COMMANDER) writes to the reasoning journal. Return journal en
 
 ## Rules
 
-1. **Run real commands** — Always execute commands via `sandbox-exec.sh` when harness is installed: `sandbox-exec.sh "npm run build"`, `sandbox-exec.sh "tsc --noEmit"`, `sandbox-exec.sh "vitest run"`. Do not simulate build or test results. When harness is absent, `sandbox-exec.sh` transparently runs on the host.
+1. **Use real results** — Build, type-check, and test inside Echelon's controller-provided execution environment. Do not simulate results or bypass that boundary.
 2. **Attribute failures to tasks** — Every integration failure must trace back to the task(s) that produced the incompatible code. This enables targeted fixes.
 3. **Report, do not fix** — Always detect and report. Do not fix code yourself; the echelon-implementer (IMPLEMENTER) fixes.
 4. **Prior phase issues are not your problem** — Always note pre-existing failures as KNOWN; do not count them as new failures.

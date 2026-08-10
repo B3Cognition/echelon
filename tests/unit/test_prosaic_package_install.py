@@ -262,6 +262,26 @@ def test_runtime_light_gates_do_not_probe_legacy_harness_installations() -> None
     assert "sandbox-exec.sh" not in script
 
 
+def test_prosaic_agents_do_not_reference_removed_sandbox_shim() -> None:
+    root = Path(__file__).resolve().parents[2]
+    offenders = [
+        path
+        for path in (root / "prosaic" / "subagents").glob("*.md")
+        if "sandbox-exec.sh" in path.read_text(encoding="utf-8")
+    ]
+
+    assert offenders == []
+
+
+def test_repository_does_not_ship_legacy_shell_sandbox_helpers() -> None:
+    scripts = Path(__file__).resolve().parents[2] / "scripts"
+
+    assert not (scripts / "sandbox-exec.sh").exists()
+    assert not (scripts / "docker-sandbox.sh").exists()
+    assert not (scripts / "docker-network.sh").exists()
+    assert not (scripts / "docker-gc.sh").exists()
+
+
 def test_runtime_bundle_does_not_ship_legacy_startup_banner() -> None:
     assert not (
         Path(__file__).resolve().parents[2]

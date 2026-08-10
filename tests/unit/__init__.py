@@ -1,1 +1,1 @@
-"""Unit tests for spec-kit-harness."""
+"""Unit tests for the Echelon harness."""

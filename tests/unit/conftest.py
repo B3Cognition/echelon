@@ -1,4 +1,4 @@
-"""Unit test fixtures for spec-kit-harness."""
+"""Unit test fixtures for the Echelon harness."""
 
 from __future__ import annotations
 

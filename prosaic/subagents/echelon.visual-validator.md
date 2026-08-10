@@ -53,14 +53,12 @@ All unit tests passed on our first run — TypeScript compiled clean, the build 
 
 ### Step 1: Build and Serve
 
-Route build and serve commands through `sandbox-exec.sh` when harness is installed:
+Build and serve the application inside the execution environment provided by Echelon's controller:
 
 ```bash
-sandbox-exec.sh "npm run build"
-sandbox-exec.sh "npm run dev"  # or "npm run preview"
+npm run build
+npm run dev  # or npm run preview
 ```
-
-When harness is absent, `sandbox-exec.sh` transparently runs on the host.
 
 ### Step 2: Navigate to Test Pages
 

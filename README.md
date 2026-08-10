@@ -1463,11 +1463,7 @@ network/
 └── squid.conf.template      # Squid config template with egress allowlist
 scripts/
 ├── install.sh               # Downloads SOAR; installs CLIs and shared Node runtimes
-├── uninstall.sh             # Removes venv, SOAR, shared Node runtimes, memory, PATH entries
-├── docker-gc.sh             # Garbage-collect stale sandbox containers and worktrees
-├── docker-network.sh        # Create/teardown the Docker bridge network + Squid proxy
-├── docker-sandbox.sh        # Lifecycle helpers for the Docker sandbox container
-└── sandbox-exec.sh          # Run a command inside the active sandbox
+└── uninstall.sh             # Removes venv, SOAR, shared Node runtimes, memory, PATH entries
 docs/
 └── fallback-mode.md
 knowledge-base/

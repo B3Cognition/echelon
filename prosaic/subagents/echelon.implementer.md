@@ -206,9 +206,9 @@ Read `test-strategy.md`. If `requires_e2e_setup: true`:
    });
    ```
 
-5. **Install browser binaries** inside the sandbox (not on the host):
+5. **Install browser binaries** inside the execution environment provided by Echelon's controller:
    ```bash
-   sandbox-exec.sh "npx playwright install --with-deps chromium"
+   npx playwright install --with-deps chromium
    ```
 
 6. **Add a `test:e2e` script** to `package.json`:
@@ -267,12 +267,12 @@ Check your code against every constitution rule:
 
 ### Step 7: Verify Build
 
-Run and confirm (via `sandbox-exec.sh` when harness is installed, or directly when absent):
-- `sandbox-exec.sh "tsc --noEmit"` passes with zero errors
-- `sandbox-exec.sh "vitest run"` (or project test command) passes with all tests green
+Verify inside the execution environment provided by Echelon's controller:
+- `tsc --noEmit` passes with zero errors
+- `vitest run` (or the project test suite) passes with all tests green
 - No lint warnings introduced
 
-**Note:** When `sandbox-exec.sh` is available, ALL build, test, lint, and typecheck commands MUST route through it. The shim transparently runs on host when harness is absent.
+**Note:** Echelon's controller owns the worktree and sandbox boundary. Do not bypass or replace that boundary from agent prose.
 
 ### Step 8: Verify Acceptance Criteria
 

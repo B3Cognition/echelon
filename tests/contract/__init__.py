@@ -1,1 +1,1 @@
-"""Contract tests for spec-kit-harness."""
+"""Contract tests for the Echelon harness."""

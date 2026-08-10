@@ -1,4 +1,4 @@
-"""Root conftest for spec-kit-harness tests.
+"""Root conftest for Echelon harness tests.
 
 Registers pytest markers and provides Docker availability skip logic.
 """
