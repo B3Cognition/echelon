@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(CDPATH='' cd "$SCRIPT_DIR/../../.." && pwd)"
 
-# Detect the active spec run dir from runs/.current (primary); legacy squad/.current fallback.
+# Detect the active spec run directory from runs/.current.
 _kb_recover_run_dir() {
   local root="$1" base run_id current_file
   if [[ -n "${ECHELON_RUN_DIR:-}" ]]; then

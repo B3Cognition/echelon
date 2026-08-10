@@ -52,9 +52,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     c.add_argument("--dispatch-id", required=True)
     c.add_argument("--result-file", required=True, type=Path)
     c.add_argument("--state", type=Path, default=None,
-                   help="Path to state.json (default: auto-detected from squad/.current)")
+                   help="Path to state.json (default: auto-detected from runs/.current)")
     c.add_argument("--journal", type=Path, default=None,
-                   help="Path to reasoning-journal.jsonl (default: auto-detected from squad/.current)")
+                   help="Path to reasoning-journal.jsonl (default: auto-detected from runs/.current)")
     c.add_argument("--config", type=Path, default=None,
                    help="Override echelon-config.yml path (else uses default search)")
 
@@ -64,9 +64,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 def cmd_compute(args: argparse.Namespace) -> int:
     config = load_config(args.config)
 
-    squad_dir = _find_current_run_dir()
-    state_path = args.state or (squad_dir / "state.json")
-    journal_path = args.journal or (squad_dir / "reasoning-journal.jsonl")
+    run_dir = _find_current_run_dir()
+    state_path = args.state or (run_dir / "state.json")
+    journal_path = args.journal or (run_dir / "reasoning-journal.jsonl")
 
     obs = build_from(
         agent=args.agent,

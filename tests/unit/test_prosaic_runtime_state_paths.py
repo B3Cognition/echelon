@@ -57,6 +57,24 @@ def test_prosaic_bundle_does_not_describe_spec_kit_storage_or_runtime() -> None:
     assert not findings, "\n".join(findings)
 
 
+def test_prosaic_bundle_does_not_describe_legacy_squad_run_discovery() -> None:
+    legacy_reference = re.compile(
+        r"squad/\.current|for\s+base\s+in\s+\(\s*[\"']runs[\"']\s*,\s*[\"']squad[\"']",
+        re.IGNORECASE,
+    )
+    findings = []
+    for prose_file in PROSAIC.rglob("*.md"):
+        for line_number, line in enumerate(
+            prose_file.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            if legacy_reference.search(line):
+                findings.append(
+                    f"{prose_file.relative_to(ROOT)}:{line_number}: {line.strip()}"
+                )
+
+    assert not findings, "\n".join(findings)
+
+
 def test_runtime_workflow_does_not_describe_spec_kit_fallbacks() -> None:
     legacy_reference = re.compile(r"\.specify|speckit|spec-kit", re.IGNORECASE)
     findings = []
@@ -70,6 +88,20 @@ def test_runtime_workflow_does_not_describe_spec_kit_fallbacks() -> None:
                 findings.append(
                     f"{workflow_file.relative_to(ROOT)}:{line_number}: {line.strip()}"
                 )
+
+    assert not findings, "\n".join(findings)
+
+
+def test_runtime_scripts_do_not_describe_legacy_squad_run_fallbacks() -> None:
+    findings = []
+    for script in (RUNTIME / "scripts").rglob("*"):
+        if not script.is_file():
+            continue
+        for line_number, line in enumerate(
+            script.read_text(encoding="utf-8", errors="replace").splitlines(), start=1
+        ):
+            if "squad/.current" in line:
+                findings.append(f"{script.relative_to(ROOT)}:{line_number}: {line.strip()}")
 
     assert not findings, "\n".join(findings)
 

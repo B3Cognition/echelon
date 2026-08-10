@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from hormone_calc.cli import _find_current_run_dir
+import pytest
+
+from hormone_calc.cli import _find_current_run_dir, _parse_args
 
 
 def test_current_run_directory_uses_runs_current_pointer(tmp_path, monkeypatch) -> None:
@@ -18,3 +20,13 @@ def test_current_run_directory_falls_back_to_runs_root(tmp_path, monkeypatch) ->
     monkeypatch.chdir(tmp_path)
 
     assert _find_current_run_dir() == Path("runs")
+
+
+def test_compute_help_describes_canonical_run_discovery(capsys) -> None:
+    with pytest.raises(SystemExit) as exc:
+        _parse_args(["compute", "--help"])
+
+    assert exc.value.code == 0
+    help_text = capsys.readouterr().out
+    assert "runs/.current" in help_text
+    assert "squad/.current" not in help_text

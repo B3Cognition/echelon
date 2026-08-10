@@ -90,14 +90,13 @@ export DEPLOY_STATE_FILE="$(python3 - <<'PYEOF'
 from pathlib import Path
 
 root = Path.cwd()
-for base in ("runs", "squad"):
-    current = root / base / ".current"
-    if current.exists():
-        run_id = current.read_text().strip()
-        candidate = root / base / run_id / "deploy-state.json"
-        if run_id and candidate.parent.is_dir():
-            print(candidate)
-            raise SystemExit(0)
+current = root / "runs" / ".current"
+if current.exists():
+    run_id = current.read_text().strip()
+    candidate = root / "runs" / run_id / "deploy-state.json"
+    if run_id and candidate.parent.is_dir():
+        print(candidate)
+        raise SystemExit(0)
 
 print(root / "runs" / "deploy-state.json")
 PYEOF
