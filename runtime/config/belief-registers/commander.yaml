@@ -66,7 +66,7 @@ beliefs:
     severity: high
 
   - id: CMD-009
-    claim: "spec-kit dependency validation at install time is sufficient; no runtime preflight agent required"
+    claim: "Echelon workspace initialization validation is sufficient; no runtime preflight agent required"
     verified: "2026-04-11"
     expires: "2026-10-11"
     anchor: "Architectural decision (PROSPECTOR removed; depends on workspace initialization validation)"

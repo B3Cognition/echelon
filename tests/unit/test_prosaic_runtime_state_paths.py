@@ -474,3 +474,20 @@ def test_cli_deploy_wrapper_reads_the_selected_global_state_directory(tmp_path: 
 
     wrapper = (install_path / "wrapper-project").read_text(encoding="utf-8")
     assert f'_state_file="{state["global_state_dir"]}/wrapper-project.json"' in wrapper
+
+
+def test_runtime_metadata_does_not_require_speckit() -> None:
+    paths = [
+        RUNTIME / "echelon-config.yml",
+        RUNTIME / "config-template.yml",
+        RUNTIME / "config" / "belief-registers" / "commander.yaml",
+        *(RUNTIME / "presets").glob("*/preset.yml"),
+    ]
+    offenders = [
+        path
+        for path in paths
+        if "spec-kit" in path.read_text(encoding="utf-8").lower()
+        or "speckit" in path.read_text(encoding="utf-8").lower()
+    ]
+
+    assert offenders == []

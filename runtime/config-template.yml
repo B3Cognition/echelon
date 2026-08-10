@@ -203,7 +203,7 @@ limits:
 # =============================================================================
 
 lexicon_gate:
-  # When enabled, keep spec.md as the canonical rich spec-kit feature
+  # When enabled, keep spec.md as the canonical rich Echelon feature
   # specification and generate requirements.lexicon.md as a derived
   # machine-checkable requirements artifact. Do not replace spec.md unless a
   # future explicit replace-spec mode is added and every downstream consumer is

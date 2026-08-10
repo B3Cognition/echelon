@@ -10,10 +10,7 @@ preset:
   license: "MIT"
 
 requires:
-  speckit_version: ">=0.1.0"
-  extensions:
-    - id: "echelon"
-      version: ">=2.1.0"
+  echelon_version: ">=3.9.0"
 
 provides:
   templates:

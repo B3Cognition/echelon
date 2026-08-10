@@ -138,7 +138,7 @@ governance:
 # LEXICON GATE — deterministic derived controlled-grammar gate (Phase A)
 # =============================================================================
 # The hard-gate counterpart to quality_gates (which is a SOFT score). When
-# enabled, CARTOGRAPHER keeps spec.md as the canonical rich spec-kit feature
+# enabled, CARTOGRAPHER keeps spec.md as the canonical rich Echelon feature
 # specification. Deterministic Understanding and SAGE WHY2 certify that exact
 # spec content first. Only then does the narrow phase1-lexicon-derive node create
 # requirements.lexicon.md in the Lexicon controlled grammar. The provider-free
@@ -766,7 +766,7 @@ stacks:
 # =============================================================================
 
 deploy:
-  enabled: false         # echelon meta-repo is a Python library + CLI + spec-kit extension,
+  enabled: false         # echelon meta-repo is a Python library + CLI with Prosaic/runtime bundles,
                          # not an HTTP application — no blue/green CD applies. Setting this to
                          # false makes validate-deploy.sh skip the gate that otherwise blocks
                          # codegen/build for non-deployable repos.
