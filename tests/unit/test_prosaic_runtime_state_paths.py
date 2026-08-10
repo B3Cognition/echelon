@@ -209,6 +209,11 @@ def test_kb_helpers_have_one_runtime_source_of_truth() -> None:
     assert not any((ROOT / "scripts" / "bash" / name).exists() for name in helper_names)
 
 
+def test_phase_timing_has_one_runtime_source_of_truth() -> None:
+    assert (RUNTIME / "scripts" / "bash" / "phase-timing.sh").is_file()
+    assert not (ROOT / "scripts" / "bash" / "phase-timing.sh").exists()
+
+
 def test_land_and_recovery_do_not_special_case_legacy_storage() -> None:
     modules = (
         ROOT / "src" / "harness" / "land.py",

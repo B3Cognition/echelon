@@ -29,7 +29,7 @@ from unittest.mock import MagicMock, patch
 pytestmark = pytest.mark.unit
 
 ROOT = Path(__file__).parents[2]
-SCRIPT = ROOT / "extension/scripts/bash/phase-timing.sh"
+SCRIPT = ROOT / "runtime/scripts/bash/phase-timing.sh"
 DEFINITION = ROOT / "runtime/workflow/definition.yaml"
 PROSAIC_SUBAGENTS = ROOT / "prosaic/subagents"
 

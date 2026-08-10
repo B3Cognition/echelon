@@ -2,7 +2,7 @@
 set -eu
 
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
-SCRIPT="$ROOT_DIR/extension/scripts/bash/phase-timing.sh"
+SCRIPT="$ROOT_DIR/runtime/scripts/bash/phase-timing.sh"
 export PYTHONPATH="$ROOT_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
 
 tmpdir="$(mktemp -d)"

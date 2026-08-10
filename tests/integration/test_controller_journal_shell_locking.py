@@ -20,7 +20,6 @@ from harness.squad_completion import reasoning_journal_lock
 
 
 ROOT = Path(__file__).resolve().parents[2]
-PHASE_TIMING = ROOT / "scripts/bash/phase-timing.sh"
 HORMONE_HOOK = ROOT / "scripts/bash/post-dispatch-hormone-update.sh"
 LEGACY_APPEND = ROOT / "extension/scripts/bash/journal-append.sh"
 
@@ -37,48 +36,6 @@ def _environment() -> dict[str, str]:
         )
     )
     return environment
-
-
-def _prepare_phase_timing(
-    workspace: Path,
-) -> tuple[Path, list[str], dict[str, str], Path]:
-    squad_dir = workspace / ".specify/squad"
-    squad_dir.mkdir(parents=True)
-    state = squad_dir / "state.json"
-    journal = squad_dir / "reasoning-journal.jsonl"
-    subprocess.run(
-        [
-            "bash",
-            str(PHASE_TIMING),
-            "start_phase",
-            "phase3-plan",
-            "0.000001",
-            "--state-file",
-            str(state),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=10,
-        env=_environment(),
-    )
-    return (
-        squad_dir,
-        [
-            "bash",
-            str(PHASE_TIMING),
-            "end_phase",
-            "phase3-plan",
-            "--state-file",
-            str(state),
-            "--journal-file",
-            str(journal),
-            "--run-id",
-            "run-shell-lock",
-        ],
-        _environment(),
-        workspace,
-    )
 
 
 def _prepare_legacy_append(
@@ -174,7 +131,6 @@ def _prepare_hormone_hook(
 
 
 _SHELL_PREPARERS = {
-    "phase_timing": _prepare_phase_timing,
     "hormone_hook": _prepare_hormone_hook,
     "legacy_append": _prepare_legacy_append,
 }
@@ -383,61 +339,6 @@ def test_journal_cli_rejects_final_symlink(
         journal_before is None or journal.read_bytes() == journal_before
     )
     assert (journal if symlink_leaf == "journal" else index).is_symlink()
-
-
-@pytest.mark.integration
-def test_phase_timing_accepts_symlinked_parent_but_not_leaf(
-    tmp_path: Path,
-) -> None:
-    squad_dir = tmp_path / "real-run"
-    squad_dir.mkdir()
-    alias = tmp_path / "run-alias"
-    alias.symlink_to(squad_dir, target_is_directory=True)
-    state = squad_dir / "state.json"
-    subprocess.run(
-        [
-            "bash",
-            str(PHASE_TIMING),
-            "start_phase",
-            "phase3-plan",
-            "0.000001",
-            "--state-file",
-            str(state),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=10,
-        env=_environment(),
-    )
-
-    result = subprocess.run(
-        [
-            "bash",
-            str(PHASE_TIMING),
-            "end_phase",
-            "phase3-plan",
-            "--state-file",
-            str(state),
-            "--journal-file",
-            str(alias / "reasoning-journal.jsonl"),
-            "--run-id",
-            "run-alias",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=10,
-        env=_environment(),
-    )
-
-    assert result.returncode == 0, result.stderr
-    rows = [
-        json.loads(line)
-        for line in (
-            squad_dir / "reasoning-journal.jsonl"
-        ).read_text(encoding="utf-8").splitlines()
-    ]
-    assert [row["type"] for row in rows] == ["timing_anomaly"]
 
 
 @pytest.mark.integration

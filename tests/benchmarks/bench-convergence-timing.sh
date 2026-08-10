@@ -10,7 +10,7 @@ set -uo pipefail
 . "$(cd "$(dirname -- "$0")/.." && pwd)/utils/python-detect.sh"
 
 REPO_ROOT="$(CDPATH='' cd "$(dirname "$0")/../.." && pwd)"
-SCRIPTS="$REPO_ROOT/extension/scripts/bash"
+SCRIPTS="$REPO_ROOT/runtime/scripts/bash"
 FIXTURES="$REPO_ROOT/tests/fixtures/kb/valid-seeds"
 REPORTS_DIR="$REPO_ROOT/tests/benchmarks/reports"
 
@@ -46,12 +46,24 @@ for run_num in $(seq 1 "$RUN_COUNT"); do
   # Isolated tmpdir for this run
   run_tmpdir="$(mktemp -d)"
   run_state="$run_tmpdir/state.json"
-  run_journal="$run_tmpdir/journal.json"
   run_kb="$run_tmpdir/estimates-log.yaml"
 
   printf '{"run_id":"%s"}\n' "$run_id" > "$run_state"
-  printf '{"entries":[]}\n' > "$run_journal"
   cp "$FIXTURES/estimates-log.yaml" "$run_kb"
+
+  $PYTHON - "$run_tmpdir" "$run_id" <<'PY'
+import sys
+from pathlib import Path
+from echelon.telemetry.store import TelemetryStore
+
+TelemetryStore(
+    Path(sys.argv[1]),
+    workflow="spec",
+    run_id=sys.argv[2],
+    profile={"name": "benchmark"},
+    trace_id="a" * 32,
+).ensure_manifest()
+PY
 
   phase_results=()
   over_budget_any="false"
@@ -67,18 +79,35 @@ for run_num in $(seq 1 "$RUN_COUNT"); do
     sleep 1
 
     bash "$SCRIPTS/phase-timing.sh" end_phase "$phase_key" \
-      --state-file "$run_state" \
-      --journal-file "$run_journal" \
-      --run-id "$run_id"
+      --state-file "$run_state"
 
-    # Read result
-    elapsed="$($PYTHON -c "import json; d=json.load(open('$run_state')); print(d.get('phase_timings',{}).get('$phase_key',{}).get('elapsed_seconds',-1))")"
-    over_budget_phase="$($PYTHON -c "import json; d=json.load(open('$run_state')); print(d.get('phase_timings',{}).get('$phase_key',{}).get('over_budget',False))")"
+    # Read the append-only finish event.
+    timing_result="$($PYTHON - "$run_tmpdir/telemetry/events.jsonl" "$phase_key" <<'PY'
+import json
+import sys
+
+events = [json.loads(line) for line in open(sys.argv[1]) if line.strip()]
+finished = next(
+    (
+        event
+        for event in reversed(events)
+        if event.get("type") == "phase_timing"
+        and event.get("phase") == sys.argv[2]
+        and event.get("event") == "finished"
+    ),
+    None,
+)
+if finished is None:
+    print("-1|False")
+else:
+    print(f"{finished['elapsed_seconds']}|{finished['over_budget']}")
+PY
+)"
+    elapsed="${timing_result%%|*}"
+    over_budget_phase="${timing_result##*|}"
     [[ "$over_budget_phase" == "True" ]] && over_budget_any="true"
 
-    # Check completeness (elapsed_seconds and end_ts must be set)
-    end_ts="$($PYTHON -c "import json; d=json.load(open('$run_state')); print(d.get('phase_timings',{}).get('$phase_key',{}).get('end_ts','missing'))")"
-    if [[ "$elapsed" == "-1" || "$end_ts" == "missing" ]]; then
+    if [[ "$elapsed" == "-1" ]]; then
       run_complete="false"
     fi
 
