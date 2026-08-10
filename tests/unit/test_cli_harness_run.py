@@ -308,7 +308,7 @@ class TestHarnessRunTaskFormatErrors:
         monkeypatch,
         capsys,
     ) -> None:
-        echelon_yml = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+        echelon_yml = tmp_path / ".echelon" / "config.yml"
         echelon_yml.parent.mkdir(parents=True)
         echelon_yml.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
         (tmp_path / "package.json").write_text("{}\n", encoding="utf-8")
@@ -348,7 +348,7 @@ class TestHarnessRunTaskFormatErrors:
         monkeypatch,
         capsys,
     ) -> None:
-        echelon_yml = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+        echelon_yml = tmp_path / ".echelon" / "config.yml"
         echelon_yml.parent.mkdir(parents=True)
         echelon_yml.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
         (tmp_path / "package.json").write_text("{}\n", encoding="utf-8")
@@ -384,7 +384,7 @@ class TestHarnessRunTaskFormatErrors:
         monkeypatch,
         capsys,
     ) -> None:
-        echelon_yml = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+        echelon_yml = tmp_path / ".echelon" / "config.yml"
         echelon_yml.parent.mkdir(parents=True)
         echelon_yml.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
         (tmp_path / "package.json").write_text("{}\n", encoding="utf-8")
@@ -427,7 +427,7 @@ class TestHarnessRunTaskFormatErrors:
         monkeypatch,
         capsys,
     ) -> None:
-        echelon_yml = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+        echelon_yml = tmp_path / ".echelon" / "config.yml"
         echelon_yml.parent.mkdir(parents=True)
         echelon_yml.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
         (tmp_path / "package.json").write_text("{}\n", encoding="utf-8")
@@ -670,7 +670,7 @@ class TestHarnessRunTaskFormatErrors:
         monkeypatch,
         capsys,
     ) -> None:
-        echelon_yml = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+        echelon_yml = tmp_path / ".echelon" / "config.yml"
         echelon_yml.parent.mkdir(parents=True)
         echelon_yml.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
         (tmp_path / "package.json").write_text("{}\n", encoding="utf-8")
@@ -1055,7 +1055,7 @@ class TestHarnessTargetPreflight:
         capsys,
     ) -> None:
         root = tmp_path
-        echelon_yml = root / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+        echelon_yml = root / ".echelon" / "config.yml"
         echelon_yml.parent.mkdir(parents=True)
         echelon_yml.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
 
@@ -1105,7 +1105,7 @@ class TestHarnessTargetPreflight:
 
         target = root / "og-platform"
         (target / ".git").mkdir(parents=True)
-        yml = target / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+        yml = target / ".echelon" / "config.yml"
         yml.parent.mkdir(parents=True)
         yml.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
         (target / "package.json").write_text("{}\n", encoding="utf-8")
@@ -1196,7 +1196,7 @@ class TestHarnessTargetPreflight:
         capsys,
     ) -> None:
         root = tmp_path
-        echelon_yml = root / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+        echelon_yml = root / ".echelon" / "config.yml"
         echelon_yml.parent.mkdir(parents=True)
         echelon_yml.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
 
@@ -1233,7 +1233,7 @@ class TestHarnessTargetPreflight:
         capsys,
     ) -> None:
         root = tmp_path
-        echelon_yml = root / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+        echelon_yml = root / ".echelon" / "config.yml"
         echelon_yml.parent.mkdir(parents=True)
         echelon_yml.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
 

@@ -12,6 +12,7 @@ import pytest
 from harness.ai_cli_backend import CliRunResult
 from harness.config import HarnessConfig, LlmConfig, ReviewLoopConfig
 from harness.llm_tool_policy import LlmToolPolicy
+from harness.prosaic_prompt_loader import ProsaicCommandArtifact, ProsaicPromptLoader
 from harness.review_loop import (
     ApprovalState,
     ReviewComment,
@@ -38,6 +39,18 @@ def _scaffold_review_agents(worktree: Path) -> None:
             f"# {name}\n\nRead-only diagnostic instructions.\n",
             encoding="utf-8",
         )
+
+
+@pytest.fixture(autouse=True)
+def _inspect_review_with_prosaic(monkeypatch):
+    monkeypatch.setattr(
+        ProsaicPromptLoader,
+        "load_command",
+        lambda _self, _command_id: ProsaicCommandArtifact(
+            frontmatter={"description": "Review"},
+            body="review {{args}}",
+        ),
+    )
 
 
 def _config(cli: str = "claude", tool_policy: LlmToolPolicy | None = None) -> HarnessConfig:
@@ -174,10 +187,10 @@ class TestReviewLoopInvocation:
         workspace = tmp_path / "workspace"
         harness_root = workspace / "runs" / "targets" / "api"
         worktree = harness_root / "runs" / "build-1" / "worktrees" / "default" / "iter-0"
-        skill_dir = worktree / ".claude" / "skills" / "echelon-review"
+        skill_dir = worktree / ".echelon" / "prosaic" / "commands"
         skill_dir.mkdir(parents=True)
-        (skill_dir / "skill.md").write_text(
-            "---\nname: echelon.review\n---\nreview $ARGUMENTS\n",
+        (skill_dir / "echelon.review.md").write_text(
+            "---\nname: echelon.review\n---\nreview {{args}}\n",
             encoding="utf-8",
         )
         spec_dir = workspace / "specs" / "005-my-spec"

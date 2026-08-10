@@ -19,13 +19,8 @@ def _write_config(
     spec_ref: str,
     *,
     spec_path: str = "requirements.lexicon.md",
-    canonical: bool = False,
 ) -> Path:
-    cfg = (
-        project_root / ".echelon" / "config.yml"
-        if canonical
-        else project_root / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
-    )
+    cfg = project_root / ".echelon" / "config.yml"
     cfg.parent.mkdir(parents=True, exist_ok=True)
     cfg.write_text(
         "lexicon_gate:\n"
@@ -47,7 +42,7 @@ def _write_config(
 
 
 def test_detects_stale_lexicon_tasks_spec_ref(tmp_path: Path) -> None:
-    _write_config(tmp_path, "spec.md")
+    cfg = _write_config(tmp_path, "spec.md")
 
     issues = _project_config_compatibility_issues(tmp_path)
 
@@ -55,16 +50,7 @@ def test_detects_stale_lexicon_tasks_spec_ref(tmp_path: Path) -> None:
     assert issues[0].path == "lexicon_gate.artifacts.tasks.spec_ref"
     assert issues[0].current == "spec.md"
     assert issues[0].expected == "requirements.lexicon.md"
-
-
-def test_detects_stale_lexicon_tasks_spec_ref_in_canonical_config(tmp_path: Path) -> None:
-    cfg = _write_config(tmp_path, "spec.md", canonical=True)
-
-    issues = _project_config_compatibility_issues(tmp_path)
-
-    assert len(issues) == 1
     assert issues[0].config_file == cfg
-    assert issues[0].path == "lexicon_gate.artifacts.tasks.spec_ref"
 
 
 def test_accepts_tasks_spec_ref_matching_custom_derived_spec_path(tmp_path: Path) -> None:
@@ -92,12 +78,11 @@ def test_run_blocks_before_dispatch_when_lexicon_tasks_spec_ref_is_stale(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    ext_dir = _write_config(tmp_path, "spec.md").parent
-    (ext_dir / "workflow").mkdir()
-    (ext_dir / "extension.yml").write_text("name: echelon\n", encoding="utf-8")
+    _write_config(tmp_path, "spec.md")
+    runtime_dir = tmp_path / ".echelon" / "runtime"
 
     with pytest.raises(SystemExit) as exc:
-        _cmd_run(["build a thing"], project_root=tmp_path, ext_dir=ext_dir)
+        _cmd_run(["build a thing"], project_root=tmp_path, ext_dir=runtime_dir)
 
     assert exc.value.code == 1
     captured = capsys.readouterr()
@@ -112,7 +97,8 @@ def test_resume_blocks_before_mutating_state_when_lexicon_tasks_spec_ref_is_stal
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    ext_dir = _write_config(tmp_path, "spec.md").parent
+    _write_config(tmp_path, "spec.md")
+    runtime_dir = tmp_path / ".echelon" / "runtime"
     run_dir = tmp_path / "runs" / "spec-test"
     staging_dir = run_dir / "staging"
     run_dir.mkdir(parents=True)
@@ -131,7 +117,7 @@ def test_resume_blocks_before_mutating_state_when_lexicon_tasks_spec_ref_is_stal
     )
 
     with pytest.raises(SystemExit) as exc:
-        _cmd_resume(["yes"], project_root=tmp_path, ext_dir=ext_dir)
+        _cmd_resume(["yes"], project_root=tmp_path, ext_dir=runtime_dir)
 
     assert exc.value.code == 1
     captured = capsys.readouterr()

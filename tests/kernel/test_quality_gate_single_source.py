@@ -9,12 +9,12 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_sage_workflow_uses_runtime_resolved_quality_gates() -> None:
-    why2 = (ROOT / "extension/workflow/phases/phase1-why2.md").read_text(
+    why2 = (ROOT / "runtime/workflow/phases/phase1-why2.md").read_text(
         encoding="utf-8"
     )
-    init = (ROOT / "extension/workflow/phases/init.md").read_text(encoding="utf-8")
+    init = (ROOT / "runtime/workflow/phases/init.md").read_text(encoding="utf-8")
     command = (
-        ROOT / "extension/commands/echelon.understanding-validate.md"
+        ROOT / "prosaic/commands/echelon.understanding-validate.md"
     ).read_text(encoding="utf-8")
 
     assert "Quality gates: overall >= 0.70" not in why2
@@ -27,7 +27,7 @@ def test_sage_workflow_uses_runtime_resolved_quality_gates() -> None:
 
 
 def test_sage_belief_defers_to_authoritative_config_without_numeric_copy() -> None:
-    belief_path = ROOT / "extension/config/belief-registers/sage.yaml"
+    belief_path = ROOT / "runtime/config/belief-registers/sage.yaml"
     belief = yaml.safe_load(belief_path.read_text(encoding="utf-8"))
     sag_001 = next(item for item in belief["beliefs"] if item["id"] == "SAG-001")
 

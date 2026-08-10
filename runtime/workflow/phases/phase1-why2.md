@@ -43,7 +43,7 @@ Treat `{spec_dir}` / `ACTIVE_SPEC_DIR` as authoritative. Do not search for,
 discover, or select another specification directory. Every context artifact is
 identified by the resolved filesystem path in its injected heading.
 
-Operate in WHY2 spec-validation mode using `agents/exploration/sage.md`. Audit
+Operate in WHY2 spec-validation mode using `subagents/echelon.sage.md`. Audit
 ambiguity, completeness, consistency, testability, assumptions, error cases,
 and unknown unknowns. Interpret every failed certified gate and relevant
 per-requirement finding. Copy certified values exactly into `quality-gates.md`;

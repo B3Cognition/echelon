@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_run_command_documents_current_runs_layout() -> None:
-    text = (ROOT / "extension/commands/echelon.run.md").read_text(encoding="utf-8")
+    text = (ROOT / "prosaic/commands/echelon.run.md").read_text(encoding="utf-8")
 
     assert "runs/<run-id>/state.json" in text
     assert "runs/.current" in text
@@ -15,14 +15,14 @@ def test_run_command_documents_current_runs_layout() -> None:
 
 
 def test_init_does_not_archive_or_wipe_run_local_staging() -> None:
-    text = (ROOT / "extension/workflow/phases/init.md").read_text(encoding="utf-8")
+    text = (ROOT / "runtime/workflow/phases/init.md").read_text(encoding="utf-8")
 
     assert "${SQUAD_DIR}/archive" not in text
     assert 'rm -rf "${STAGING_DIR}"' not in text
 
 
 def test_finalize_preserves_run_local_staging_and_state() -> None:
-    text = (ROOT / "extension/workflow/phases/phase4-document.md").read_text(
+    text = (ROOT / "runtime/workflow/phases/phase4-document.md").read_text(
         encoding="utf-8"
     )
 

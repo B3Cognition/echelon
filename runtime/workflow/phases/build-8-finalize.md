@@ -36,7 +36,7 @@ Use the Agent tool:
   </context>
 
   <instructions>
-  You are ENGINEERING MANAGER. Read agents/build/engineering-manager.md for your complete protocol.
+  You are ENGINEERING MANAGER. Read subagents/echelon.engineering-manager.md for your complete protocol.
   Validate workflow compliance, report consistency, and readiness for final verification.
   </instructions>
   ```
@@ -93,7 +93,7 @@ Use the Agent tool:
   </context>
 
   <instructions>
-  You are VERIFICATION agent. Read agents/build/verification.md for your complete protocol.
+  You are VERIFICATION agent. Read subagents/echelon.verification.md for your complete protocol.
   Run full backpropagation verification against spec requirements.
   Produce `gap-report.md`, `excess-report.md`, updated `traceability-matrix.md`, and `verification-summary.md`.
   </instructions>
@@ -206,7 +206,7 @@ Use the Agent tool:
   </context>
 
   <instructions>
-  You are CONSOLIDATOR. Read agents/learning/consolidator.md for your complete protocol.
+  You are CONSOLIDATOR. Read subagents/echelon.consolidator.md for your complete protocol.
   Run offline consolidation for this build. Promote repeated implementation lessons into schemas, reinforce or decay existing schemas, mark consolidated traces, and produce `{spec_dir}/patterns/schema-consolidation.md` using the provided template. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
@@ -230,7 +230,7 @@ Use the Agent tool:
   </context>
 
   <instructions>
-  You are SCOREKEEPER. Read agents/control/scorekeeper.md for your complete protocol.
+  You are SCOREKEEPER. Read subagents/echelon.scorekeeper.md for your complete protocol.
   Score all build agents: echelon.implementer (IMPLEMENTER) (first-pass approvals vs rework), echelon.spec-guard (SPEC GUARD) (gaps caught vs missed by echelon.verification (VERIFICATION)), echelon.code-reviewer (CODE REVIEWER) (issues found), echelon.test-guardian (TEST echelon.guardian (GUARDIAN)) (coverage improvements). Collect peer appreciation from reasoning-journal.jsonl. Check badge criteria. Produce `agent-scorecard.md` using the provided template. Update `knowledge-base/agent-scores.yaml`.
   </instructions>
   ```

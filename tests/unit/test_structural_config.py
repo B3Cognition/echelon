@@ -5,7 +5,7 @@ import yaml
 
 @pytest.mark.unit
 def test_governance_artifacts_present():
-    g = yaml.safe_load(open("extension/echelon-config.yml"))["governance"]
+    g = yaml.safe_load(open("runtime/echelon-config.yml"))["governance"]
     assert g["enabled"] is True
     assert g["artifacts"]["feasibility"]["verdict"]["enum"] == ["PASS", "KILL", "DEFER"]
     assert g["artifacts"]["intent-alignment-check"]["template"] == "intent-alignment-check-template.md"

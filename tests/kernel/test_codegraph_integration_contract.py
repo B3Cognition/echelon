@@ -323,7 +323,7 @@ def test_shell_ci_uses_a_node_runtime_supported_by_codegraph_sdk():
 
 def test_run_analysis_uses_shared_runtime_resolver_without_local_npm_repair():
     run_analysis = (
-        EXT_ROOT / "extension" / "scripts" / "bash" / "re" / "run-analysis.sh"
+        EXT_ROOT / "runtime" / "scripts" / "bash" / "re" / "run-analysis.sh"
     ).read_text()
 
     assert "node-runtime-resolver.sh" in run_analysis
@@ -373,7 +373,7 @@ def test_re_state_accepts_codegraph_analysis_artifact_updates():
 
 def test_run_analysis_requests_provider_owned_schema_two_codegraph_summary():
     run_analysis = (
-        EXT_ROOT / "extension" / "scripts" / "bash" / "re" / "run-analysis.sh"
+        EXT_ROOT / "runtime" / "scripts" / "bash" / "re" / "run-analysis.sh"
     ).read_text()
 
     bridge = (CODEGRAPH_RUNTIME_DIR / "codegraph-bridge.js").read_text()
@@ -449,7 +449,7 @@ if (output.provider_status !== 'partial' || output.complete !== false) process.e
 
 def test_run_analysis_polyrepo_writes_per_repo_codegraph_artifacts():
     run_analysis = (
-        EXT_ROOT / "extension" / "scripts" / "bash" / "re" / "run-analysis.sh"
+        EXT_ROOT / "runtime" / "scripts" / "bash" / "re" / "run-analysis.sh"
     ).read_text()
 
     assert '"$REPO_OUTPUT/codegraph-analysis.json"' in run_analysis
@@ -477,7 +477,7 @@ def test_re_controller_tracks_codegraph_artifacts(tmp_path):
 
 
 def test_re_analyzer_uses_state_output_dir_instead_of_hardcoded_re_path():
-    analyzer = (EXT_ROOT / "extension" / "agents" / "re" / "analyzer.md").read_text()
+    analyzer = (EXT_ROOT / "prosaic/subagents/echelon.re-analyzer.md").read_text()
 
     assert "workspace-manifest.json" in analyzer
     assert "RE_OUTPUT_DIR" in analyzer
@@ -493,32 +493,32 @@ def test_re_analyzer_uses_state_output_dir_instead_of_hardcoded_re_path():
 
 def test_re_prompts_prefer_workspace_manifest_with_repos_fallback():
     compatibility_agents = [
-        "extension/agents/re/analyzer.md",
-        "extension/agents/exploration/scout.md",
-        "extension/agents/exploration/golddigger.md",
+        "prosaic/subagents/echelon.re-analyzer.md",
+        "prosaic/subagents/echelon.scout.md",
+        "prosaic/subagents/echelon.golddigger.md",
     ]
     for rel_path in compatibility_agents:
         text = (EXT_ROOT / rel_path).read_text()
 
         assert "workspace-manifest.json" in text, rel_path
         assert "repos-manifest.json" in text, rel_path
-        if rel_path == "extension/agents/re/analyzer.md":
+        if rel_path == "prosaic/subagents/echelon.re-analyzer.md":
             assert "prefer workspace-manifest.json for standalone extraction" in text
         else:
             assert "Prefer workspace-manifest.json" in text, rel_path
         assert "compatibility fallback" in text, rel_path
 
     for rel_path in [
-        "extension/agents/re/specifier.md",
-        "extension/agents/re/verifier.md",
-        "extension/agents/re/constituter.md",
+        "prosaic/subagents/echelon.re-specifier.md",
+        "prosaic/subagents/echelon.re-verifier.md",
+        "prosaic/subagents/echelon.re-constituter.md",
     ]:
         text = (EXT_ROOT / rel_path).read_text()
         assert "re-source-index.json" in text or "re-workspace-inputs.json" in text
 
 
 def test_golddigger_reports_workspace_manifest_as_primary_artifact():
-    text = (EXT_ROOT / "extension/agents/exploration/golddigger.md").read_text()
+    text = (EXT_ROOT / "prosaic/subagents/echelon.golddigger.md").read_text()
 
     assert 'manifest: "{RE_OUTPUT_DIR}/workspace-manifest.json"' in text
     assert 'repos_manifest: "{RE_OUTPUT_DIR}/repos-manifest.json"' in text
@@ -528,8 +528,8 @@ def test_golddigger_reports_workspace_manifest_as_primary_artifact():
 
 
 def test_workspace_prompts_describe_per_source_codegraph_shape():
-    scout = (EXT_ROOT / "extension/agents/exploration/scout.md").read_text()
-    specifier = (EXT_ROOT / "extension/agents/re/specifier.md").read_text()
+    scout = (EXT_ROOT / "prosaic/subagents/echelon.scout.md").read_text()
+    specifier = (EXT_ROOT / "prosaic/subagents/echelon.re-specifier.md").read_text()
 
     assert "aggregate index of per-source summaries" in scout
     assert "$RE_OUTPUT_DIR/sources/{source-id}/codegraph-summary.json" in specifier
@@ -539,9 +539,9 @@ def test_workspace_prompts_describe_per_source_codegraph_shape():
 def test_exploration_agents_do_not_hardcode_re_artifact_reads():
     stale = []
     for rel_path in [
-        "extension/agents/exploration/golddigger.md",
-        "extension/agents/exploration/scout.md",
-        "extension/commands/appendices/re-single-phase-command.md",
+        "prosaic/subagents/echelon.golddigger.md",
+        "prosaic/subagents/echelon.scout.md",
+        "prosaic/commands/appendices/re-single-phase-command.md",
     ]:
         text = (EXT_ROOT / rel_path).read_text()
         for line_no, line in enumerate(text.splitlines(), start=1):

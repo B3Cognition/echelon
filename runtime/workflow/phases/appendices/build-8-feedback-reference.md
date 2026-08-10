@@ -29,7 +29,7 @@ Use the Agent tool:
   </context>
 
   <instructions>
-  You are AUDITOR. Read agents/learning/auditor.md for your complete protocol. Operate in **Mode 4: Post-Build Self-Assessment**.
+  You are AUDITOR. Read subagents/echelon.auditor.md for your complete protocol. Operate in **Mode 4: Post-Build Self-Assessment**.
   Compare squad predictions against build outcomes using build artifacts as ground truth. Read: estimates.md (predicted), state.json + progress-report.md (actual), plan.md + research.md (architecture decisions), spec.md + verification-summary.md + gap-report.md (requirements), risk-matrix.md + reasoning-journal.jsonl (risks), test-strategy.md + test-quality-report.md (tests).
   Produce `auto-feedback.yaml` and `feedback-report.md` using the provided feedback report template. Flag any CRITICAL findings for echelon.commander (COMMANDER) triage.
   </instructions>
@@ -77,7 +77,7 @@ Dispatch echelon.sage (SAGE) in post-build-validation mode using the Agent tool:
   </context>
 
   <instructions>
-  You are SAGE. Read agents/exploration/sage.md for your complete protocol. Operate in **post-build-validation mode**.
+  You are SAGE. Read subagents/echelon.sage.md for your complete protocol. Operate in **post-build-validation mode**.
   Run the Echelon understanding validation phase against the final `spec.md`. Compare scores against the last WHY3 `quality-gates.md`. If any category dropped > 0.05: flag as REGRESSION. If overall improved: log as IMPROVEMENT.
   Produce `post-build-validation.md`.
   </instructions>
@@ -100,7 +100,7 @@ Dispatch echelon.tracker (TRACKER) in post-build-alignment mode using the Agent 
   </context>
 
   <instructions>
-  You are TRACKER. Read agents/control/tracker.md for your complete protocol. Operate in **post-build-alignment mode**.
+  You are TRACKER. Read subagents/echelon.tracker.md for your complete protocol. Operate in **post-build-alignment mode**.
   Read `user-intent.md` (original user request) and the build output (verification-summary.md, gap-report.md, implemented code). Answer: "Does what was built match what the user asked for?" If MISALIGNED, describe the divergence.
   Produce `intent-alignment-final.md` using the provided template.
   </instructions>

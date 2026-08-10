@@ -18,7 +18,7 @@ import yaml
 
 @pytest.mark.unit
 def test_gatekeeper_leaves_structural_validation_to_controller():
-    txt = pathlib.Path("extension/agents/feasibility/gatekeeper.md").read_text()
+    txt = pathlib.Path("prosaic/subagents/echelon.gatekeeper.md").read_text()
     assert "Controller-Owned Structural Gate" in txt
     assert "--type structural" not in txt
     assert "$LEXICON" not in txt
@@ -27,7 +27,7 @@ def test_gatekeeper_leaves_structural_validation_to_controller():
 
 @pytest.mark.unit
 def test_phase2_decide_routes_only_to_structural_node():
-    d = yaml.safe_load(pathlib.Path("extension/workflow/definition.yaml").read_text())
+    d = yaml.safe_load(pathlib.Path("runtime/workflow/definition.yaml").read_text())
     node = next(n for n in d["phases"] if n["id"] == "phase2-decide")
     assert node["transitions"] == [
         {"to": "phase2-feasibility-structural", "condition": "always"}
@@ -41,7 +41,7 @@ def test_phase2_decide_routes_only_to_structural_node():
 
 @pytest.mark.unit
 def test_tracker_leaves_structural_validation_to_controller():
-    txt = pathlib.Path("extension/agents/control/tracker.md").read_text()
+    txt = pathlib.Path("prosaic/subagents/echelon.tracker.md").read_text()
     assert "Controller-Owned Structural Gate" in txt
     assert "--type structural" not in txt
     assert "$LEXICON" not in txt
@@ -50,7 +50,7 @@ def test_tracker_leaves_structural_validation_to_controller():
 
 @pytest.mark.unit
 def test_phase2_tracker_alignment_routes_only_to_structural_node():
-    d = yaml.safe_load(pathlib.Path("extension/workflow/definition.yaml").read_text())
+    d = yaml.safe_load(pathlib.Path("runtime/workflow/definition.yaml").read_text())
     node = next(n for n in d["phases"] if n["id"] == "phase2-tracker-alignment")
     assert node["transitions"] == [
         {

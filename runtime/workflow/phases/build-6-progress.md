@@ -28,7 +28,7 @@ Use the Agent tool:
   </context>
 
   <instructions>
-  You are PROGRESS TRACKER. Read agents/build/progress-tracker.md for your complete protocol.
+  You are PROGRESS TRACKER. Read subagents/echelon.progress-tracker.md for your complete protocol.
   Record completion of task {task_id}. Update running totals and check for drift.
   Append to `{spec_dir}/progress-report.md`. Update `{spec_dir}/process-metrics.md`, `knowledge-base/estimates-log.yaml`, and `knowledge-base/calibration-profile.yaml`. Return drift or budget alerts in `echelon_result.journal_entries`; echelon.commander (COMMANDER) owns build counter state updates in Section 6.3.
   </instructions>

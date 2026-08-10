@@ -382,7 +382,7 @@ def test_accepts_negative_harness_source_boundary(tmp_path: Path) -> None:
 
 
 def test_flags_verify_spec_prompt_side_spec_dir_discovery(tmp_path: Path) -> None:
-    prompt = tmp_path / "extension" / "workflow" / "phases" / "verify-spec-1-init.md"
+    prompt = tmp_path / "runtime" / "workflow" / "phases" / "verify-spec-1-init.md"
     prompt.parent.mkdir(parents=True)
     prompt.write_text(
         "When `spec_dir=` is absent, locate `specs/{spec_id}-*/` from the current root.\n",
@@ -410,7 +410,7 @@ def test_verify_spec_dir_discovery_verbs_are_named_category() -> None:
 
 
 def test_flags_harness_run_prompt_side_spec_dir_discovery(tmp_path: Path) -> None:
-    prompt = tmp_path / "extension" / "commands" / "echelon.harness-run.md"
+    prompt = tmp_path / "prosaic" / "commands" / "echelon.harness-run.md"
     prompt.parent.mkdir(parents=True)
     prompt.write_text(
         "If `spec_dir` is absent, locate the spec directory: find `specs/{spec_id}-*/`.\n",
@@ -426,7 +426,7 @@ def test_flags_harness_run_prompt_side_spec_dir_discovery(tmp_path: Path) -> Non
 def test_flags_harness_run_mixed_negative_and_positive_spec_discovery(
     tmp_path: Path,
 ) -> None:
-    prompt = tmp_path / "extension" / "commands" / "echelon.harness-run.md"
+    prompt = tmp_path / "prosaic" / "commands" / "echelon.harness-run.md"
     prompt.parent.mkdir(parents=True)
     prompt.write_text(
         "When `spec_dir` is provided, do not locate `specs/{spec_id}-*/`. "
@@ -441,7 +441,7 @@ def test_flags_harness_run_mixed_negative_and_positive_spec_discovery(
 
 
 def test_flags_verify_spec_prompt_side_latest_run_discovery(tmp_path: Path) -> None:
-    prompt = tmp_path / "extension" / "workflow" / "phases" / "verify-spec-1-init.md"
+    prompt = tmp_path / "runtime" / "workflow" / "phases" / "verify-spec-1-init.md"
     prompt.parent.mkdir(parents=True)
     prompt.write_text(
         "List and sort `runs/` to infer the latest verification run directory.\n",
@@ -471,7 +471,7 @@ def test_verify_spec_run_discovery_verbs_are_named_category() -> None:
 
 
 def test_flags_build_prompt_git_state_discovery(tmp_path: Path) -> None:
-    prompt = tmp_path / "extension" / "agents" / "build" / "implementer.md"
+    prompt = tmp_path / "prosaic" / "subagents" / "echelon.implementer.md"
     prompt.parent.mkdir(parents=True)
     prompt.write_text(
         "Check git status and git log in the worktree before implementing.\n",
@@ -521,7 +521,7 @@ def test_build_git_state_discovery_verbs_are_named_category() -> None:
 
 
 def test_flags_build_prompt_git_state_discovery_synonyms(tmp_path: Path) -> None:
-    prompt = tmp_path / "extension" / "agents" / "build" / "implementer.md"
+    prompt = tmp_path / "prosaic" / "subagents" / "echelon.implementer.md"
     prompt.parent.mkdir(parents=True)
     prompt.write_text(
         "Get git status and rev-parse before implementing.\n",
@@ -535,7 +535,7 @@ def test_flags_build_prompt_git_state_discovery_synonyms(tmp_path: Path) -> None
 
 
 def test_flags_build_prompt_git_diff_branch_show_discovery(tmp_path: Path) -> None:
-    prompt = tmp_path / "extension" / "agents" / "build" / "implementer.md"
+    prompt = tmp_path / "prosaic" / "subagents" / "echelon.implementer.md"
     prompt.parent.mkdir(parents=True)
     prompt.write_text(
         "Inspect git diff, git branch, and git show before implementing.\n",
@@ -549,7 +549,7 @@ def test_flags_build_prompt_git_diff_branch_show_discovery(tmp_path: Path) -> No
 
 
 def test_flags_build_prompt_git_ls_files_discovery(tmp_path: Path) -> None:
-    prompt = tmp_path / "extension" / "agents" / "build" / "implementer.md"
+    prompt = tmp_path / "prosaic" / "subagents" / "echelon.implementer.md"
     prompt.parent.mkdir(parents=True)
     prompt.write_text(
         "Run git ls-files before implementing.\n",
@@ -563,7 +563,7 @@ def test_flags_build_prompt_git_ls_files_discovery(tmp_path: Path) -> None:
 
 
 def test_flags_build_prompt_git_ls_tree_discovery(tmp_path: Path) -> None:
-    prompt = tmp_path / "extension" / "agents" / "build" / "implementer.md"
+    prompt = tmp_path / "prosaic" / "subagents" / "echelon.implementer.md"
     prompt.parent.mkdir(parents=True)
     prompt.write_text(
         "Run git ls-tree to inspect repository files before implementing.\n",
@@ -577,7 +577,7 @@ def test_flags_build_prompt_git_ls_tree_discovery(tmp_path: Path) -> None:
 
 
 def test_flags_build_prompt_git_cat_file_discovery(tmp_path: Path) -> None:
-    prompt = tmp_path / "extension" / "agents" / "build" / "implementer.md"
+    prompt = tmp_path / "prosaic" / "subagents" / "echelon.implementer.md"
     prompt.parent.mkdir(parents=True)
     prompt.write_text(
         "Use git cat-file to inspect repository objects before implementing.\n",
@@ -591,7 +591,7 @@ def test_flags_build_prompt_git_cat_file_discovery(tmp_path: Path) -> None:
 
 
 def test_flags_build_prompt_git_grep_discovery(tmp_path: Path) -> None:
-    prompt = tmp_path / "extension" / "agents" / "build" / "implementer.md"
+    prompt = tmp_path / "prosaic" / "subagents" / "echelon.implementer.md"
     prompt.parent.mkdir(parents=True)
     prompt.write_text(
         "Use git grep to locate relevant requirements before implementing.\n",
@@ -605,7 +605,7 @@ def test_flags_build_prompt_git_grep_discovery(tmp_path: Path) -> None:
 
 
 def test_flags_build_prompt_spec_artifact_discovery(tmp_path: Path) -> None:
-    prompt = tmp_path / "extension" / "workflow" / "phases" / "build-1-init.md"
+    prompt = tmp_path / "runtime" / "workflow" / "phases" / "build-1-init.md"
     prompt.parent.mkdir(parents=True)
     prompt.write_text(
         "Search for state.json, runs/, tasks.md, spec.md, or specs/ before build init.\n",
@@ -663,7 +663,7 @@ def test_build_spec_artifact_discovery_verbs_are_named_category() -> None:
 
 
 def test_flags_build_prompt_spec_artifact_discovery_synonyms(tmp_path: Path) -> None:
-    prompt = tmp_path / "extension" / "workflow" / "phases" / "build-1-init.md"
+    prompt = tmp_path / "runtime" / "workflow" / "phases" / "build-1-init.md"
     prompt.parent.mkdir(parents=True)
     prompt.write_text(
         "Get state.json and task progress before build init.\n",
@@ -677,7 +677,7 @@ def test_flags_build_prompt_spec_artifact_discovery_synonyms(tmp_path: Path) -> 
 
 
 def test_flags_build_prompt_progress_artifact_discovery(tmp_path: Path) -> None:
-    prompt = tmp_path / "extension" / "workflow" / "phases" / "build-1-init.md"
+    prompt = tmp_path / "runtime" / "workflow" / "phases" / "build-1-init.md"
     prompt.parent.mkdir(parents=True)
     prompt.write_text(
         "Read progress-report.md and run-history.json before build init.\n",
@@ -691,7 +691,7 @@ def test_flags_build_prompt_progress_artifact_discovery(tmp_path: Path) -> None:
 
 
 def test_flags_soft_build_prompt_artifact_discovery_verbs(tmp_path: Path) -> None:
-    prompt = tmp_path / "extension" / "workflow" / "phases" / "build-1-init.md"
+    prompt = tmp_path / "runtime" / "workflow" / "phases" / "build-1-init.md"
     prompt.parent.mkdir(parents=True)
     prompt.write_text(
         "Inspect tasks.md and review progress-report.md before build init.\n",
@@ -705,10 +705,10 @@ def test_flags_soft_build_prompt_artifact_discovery_verbs(tmp_path: Path) -> Non
 
 
 def test_flags_delivery_command_runtime_discovery(tmp_path: Path) -> None:
-    prompt = tmp_path / "extension" / "commands" / "echelon.build.md"
+    prompt = tmp_path / "prosaic" / "commands" / "echelon.build.md"
     prompt.parent.mkdir(parents=True)
     prompt.write_text(
-        "Read `agents/control/commander.md` and `workflow/definition.yaml` before build.\n",
+        "Read `subagents/echelon.commander.md` and `workflow/definition.yaml` before build.\n",
         encoding="utf-8",
     )
 
@@ -720,7 +720,7 @@ def test_flags_delivery_command_runtime_discovery(tmp_path: Path) -> None:
 
 def test_delivery_command_runtime_discovery_targets_are_named_category() -> None:
     assert DELIVERY_COMMAND_RUNTIME_DISCOVERY_TARGETS == (
-        "agents/control/commander.md",
+        "subagents/echelon.commander.md",
         "workflow/definition.yaml",
     )
 
@@ -759,11 +759,11 @@ def test_delivery_command_runtime_discovery_verbs_are_named_category() -> None:
 
 
 def test_flags_delivery_command_runtime_discovery_synonyms(tmp_path: Path) -> None:
-    prompt = tmp_path / "extension" / "commands" / "echelon.build.md"
+    prompt = tmp_path / "prosaic" / "commands" / "echelon.build.md"
     prompt.parent.mkdir(parents=True)
     prompt.write_text(
         "Inspect `workflow/definition.yaml` before build.\n"
-        "Open `agents/control/commander.md` before build.\n",
+        "Open `subagents/echelon.commander.md` before build.\n",
         encoding="utf-8",
     )
 
@@ -778,11 +778,11 @@ def test_flags_delivery_command_runtime_discovery_synonyms(tmp_path: Path) -> No
 def test_flags_delivery_command_runtime_discovery_soft_verbs(
     tmp_path: Path,
 ) -> None:
-    prompt = tmp_path / "extension" / "commands" / "echelon.build.md"
+    prompt = tmp_path / "prosaic" / "commands" / "echelon.build.md"
     prompt.parent.mkdir(parents=True)
     prompt.write_text(
         "Check `workflow/definition.yaml` before build.\n"
-        "Review `agents/control/commander.md` before build.\n",
+        "Review `subagents/echelon.commander.md` before build.\n",
         encoding="utf-8",
     )
 
@@ -797,11 +797,11 @@ def test_flags_delivery_command_runtime_discovery_soft_verbs(
 def test_flags_delivery_command_runtime_discovery_shell_readers(
     tmp_path: Path,
 ) -> None:
-    prompt = tmp_path / "extension" / "commands" / "echelon.build.md"
+    prompt = tmp_path / "prosaic" / "commands" / "echelon.build.md"
     prompt.parent.mkdir(parents=True)
     prompt.write_text(
         "Run `cat workflow/definition.yaml` before build.\n"
-        "Use `sed -n '1,80p' agents/control/commander.md` before build.\n",
+        "Use `sed -n '1,80p' subagents/echelon.commander.md` before build.\n",
         encoding="utf-8",
     )
 
@@ -816,11 +816,11 @@ def test_flags_delivery_command_runtime_discovery_shell_readers(
 def test_flags_delivery_command_runtime_discovery_search_readers(
     tmp_path: Path,
 ) -> None:
-    prompt = tmp_path / "extension" / "commands" / "echelon.build.md"
+    prompt = tmp_path / "prosaic" / "commands" / "echelon.build.md"
     prompt.parent.mkdir(parents=True)
     prompt.write_text(
         "Run `grep -n re_extraction workflow/definition.yaml` before build.\n"
-        "List `agents/control/commander.md` before build.\n",
+        "List `subagents/echelon.commander.md` before build.\n",
         encoding="utf-8",
     )
 
@@ -835,11 +835,11 @@ def test_flags_delivery_command_runtime_discovery_search_readers(
 def test_flags_delivery_command_runtime_discovery_direct_search_commands(
     tmp_path: Path,
 ) -> None:
-    prompt = tmp_path / "extension" / "commands" / "echelon.build.md"
+    prompt = tmp_path / "prosaic" / "commands" / "echelon.build.md"
     prompt.parent.mkdir(parents=True)
     prompt.write_text(
         "Grep `workflow/definition.yaml` before build.\n"
-        "rg `agents/control/commander.md` before build.\n",
+        "rg `subagents/echelon.commander.md` before build.\n",
         encoding="utf-8",
     )
 
@@ -854,11 +854,11 @@ def test_flags_delivery_command_runtime_discovery_direct_search_commands(
 def test_flags_delivery_command_runtime_discovery_locator_commands(
     tmp_path: Path,
 ) -> None:
-    prompt = tmp_path / "extension" / "commands" / "echelon.build.md"
+    prompt = tmp_path / "prosaic" / "commands" / "echelon.build.md"
     prompt.parent.mkdir(parents=True)
     prompt.write_text(
         "Find `workflow/definition.yaml` before build.\n"
-        "Glob `agents/control/commander.md` before build.\n",
+        "Glob `subagents/echelon.commander.md` before build.\n",
         encoding="utf-8",
     )
 
@@ -871,7 +871,7 @@ def test_flags_delivery_command_runtime_discovery_locator_commands(
 
 
 def test_flags_build_phase_workflow_definition_routing(tmp_path: Path) -> None:
-    prompt = tmp_path / "extension" / "workflow" / "phases" / "build-2-implement.md"
+    prompt = tmp_path / "runtime" / "workflow" / "phases" / "build-2-implement.md"
     prompt.parent.mkdir(parents=True)
     prompt.write_text(
         "Follow `workflow/definition.yaml` transitions after each quality gate.\n",
@@ -904,14 +904,14 @@ def test_build_workflow_definition_routing_verbs_are_named_category() -> None:
 def test_flags_command_appendix_runtime_discovery(tmp_path: Path) -> None:
     prompt = (
         tmp_path
-        / "extension"
+        / "prosaic"
         / "commands"
         / "appendices"
         / "re-single-phase-command.md"
     )
     prompt.parent.mkdir(parents=True)
     prompt.write_text(
-        "ALWAYS read `agents/control/commander.md` first.\n",
+        "ALWAYS read `subagents/echelon.commander.md` first.\n",
         encoding="utf-8",
     )
 
@@ -922,7 +922,7 @@ def test_flags_command_appendix_runtime_discovery(tmp_path: Path) -> None:
 
 
 def test_flags_any_echelon_command_runtime_discovery(tmp_path: Path) -> None:
-    prompt = tmp_path / "extension" / "commands" / "echelon.re-verify.md"
+    prompt = tmp_path / "prosaic" / "commands" / "echelon.re-verify.md"
     prompt.parent.mkdir(parents=True)
     prompt.write_text(
         "Read `workflow/definition.yaml` before running the phase.\n",
@@ -937,7 +937,7 @@ def test_flags_any_echelon_command_runtime_discovery(tmp_path: Path) -> None:
 
 def test_default_prompt_paths_include_all_echelon_command_wrappers() -> None:
     root = Path(__file__).resolve().parents[2]
-    expected = set((root / "extension" / "commands").glob("echelon.*.md"))
+    expected = set((root / "prosaic" / "commands").glob("echelon.*.md"))
     actual = set(_default_prompt_paths(root))
 
     assert expected <= actual
@@ -946,7 +946,7 @@ def test_default_prompt_paths_include_all_echelon_command_wrappers() -> None:
 def test_build_phase_prompts_use_ralph_owned_context_packs() -> None:
     root = Path(__file__).resolve().parents[2]
     phase_files = [
-        root / "extension" / "workflow" / "phases" / name
+        root / "runtime" / "workflow" / "phases" / name
         for name in (
             "build-2-implement.md",
             "build-3-spec-guard.md",
@@ -997,7 +997,7 @@ def test_phase_a_provider_native_scanner_rejects_named_provider_interfaces(
     }
     paths: list[Path] = []
     for name, content in prompts.items():
-        prompt = tmp_path / "extension" / "agents" / "exploration" / name
+        prompt = tmp_path / "prosaic" / "subagents" / f"echelon.{name}"
         prompt.parent.mkdir(parents=True, exist_ok=True)
         prompt.write_text(content, encoding="utf-8")
         paths.append(prompt)
@@ -1013,7 +1013,7 @@ def test_phase_a_provider_native_scanner_rejects_named_provider_interfaces(
 def test_phase_a_provider_native_scanner_accepts_capabilities_and_ordinary_verbs(
     tmp_path: Path,
 ) -> None:
-    prompt = tmp_path / "extension" / "agents" / "exploration" / "scout.md"
+    prompt = tmp_path / "prosaic" / "subagents" / "echelon.scout.md"
     prompt.parent.mkdir(parents=True)
     prompt.write_text(
         "Use the public-web search and URL retrieval capabilities exposed for "
@@ -1031,7 +1031,7 @@ def test_default_phase_a_provider_native_scanner_includes_phase_specs(
 ) -> None:
     prompt = (
         tmp_path
-        / "extension"
+        / "runtime"
         / "workflow"
         / "phases"
         / "phase1-discover.md"
@@ -1049,7 +1049,7 @@ def test_default_phase_a_provider_native_scanner_includes_phase_specs(
 def test_phase_a_provider_native_scanner_ignores_frontmatter_metadata(
     tmp_path: Path,
 ) -> None:
-    prompt = tmp_path / "extension" / "agents" / "control" / "chief.md"
+    prompt = tmp_path / "prosaic" / "subagents" / "echelon.chief.md"
     prompt.parent.mkdir(parents=True)
     prompt.write_text(
         "---\n"
@@ -1071,7 +1071,7 @@ def test_current_phase_a_prompt_bodies_are_provider_neutral() -> None:
 def test_investigator_stops_experiment_steps_when_capability_is_unavailable() -> None:
     root = Path(__file__).resolve().parents[2]
     prompt = (
-        root / "extension" / "agents" / "specialists" / "investigator.md"
+        root / "prosaic" / "subagents" / "echelon.investigator.md"
     ).read_text(encoding="utf-8")
 
     assert "skip the remaining EXPERIMENT steps" in prompt
@@ -1080,7 +1080,7 @@ def test_investigator_stops_experiment_steps_when_capability_is_unavailable() ->
 def test_investigator_has_structured_blocked_capability_fallback() -> None:
     root = Path(__file__).resolve().parents[2]
     prompt = (
-        root / "extension" / "agents" / "specialists" / "investigator.md"
+        root / "prosaic" / "subagents" / "echelon.investigator.md"
     ).read_text(encoding="utf-8")
 
     assert "verdict: STOP_AND_ASK" in prompt

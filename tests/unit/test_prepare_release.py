@@ -24,7 +24,6 @@ def load_module():
 def write_project(root: Path, version: str) -> None:
     (root / "scripts").mkdir()
     (root / "src" / "echelon").mkdir(parents=True)
-    (root / "extension").mkdir()
     (root / "tests" / "unit").mkdir(parents=True)
 
     (root / "pyproject.toml").write_text(
@@ -37,12 +36,6 @@ def write_project(root: Path, version: str) -> None:
     )
     (root / "README.md").write_text(
         f"# Echelon\n\n**Version {version}** - release notes\n",
-        encoding="utf-8",
-    )
-    (root / "extension" / "extension.yml").write_text(
-        "extension:\n"
-        '  id: "echelon"\n'
-        f'  version: "{version}"\n',
         encoding="utf-8",
     )
     (root / "src" / "echelon" / "cli.py").write_text(
@@ -138,9 +131,7 @@ def test_prepare_release_updates_all_metadata(tmp_path: Path) -> None:
         tmp_path / "src" / "echelon" / "cli.py"
     ).read_text(encoding="utf-8")
 
-    assert '  version: "3.1.0"' in (
-        tmp_path / "extension" / "extension.yml"
-    ).read_text(encoding="utf-8")
+    assert Path("extension/extension.yml") not in result.changed_files
 
 
 def test_validate_release_metadata_rejects_mismatch(tmp_path: Path) -> None:

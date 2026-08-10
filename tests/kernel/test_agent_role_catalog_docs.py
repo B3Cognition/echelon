@@ -9,58 +9,59 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 README = ROOT / "README.md"
 CATALOG = ROOT / "docs" / "agent-role-catalog.md"
-EXTENSION_YML = ROOT / "extension" / "extension.yml"
-WORKFLOW = ROOT / "extension" / "workflow" / "definition.yaml"
-AGENTS_DIR = ROOT / "extension" / "agents"
+WORKFLOW = ROOT / "runtime" / "workflow" / "definition.yaml"
+SUBAGENTS_DIR = ROOT / "prosaic" / "subagents"
+SUPPORT_DIR = ROOT / "prosaic" / "agents"
+AGENT_ID_RE = re.compile(r"echelon\.[a-z0-9-]+")
 
 
-def _registered_agent_slugs() -> set[str]:
-    data = yaml.safe_load(EXTENSION_YML.read_text(encoding="utf-8"))
-    slugs: set[str] = set()
-    for entry in data["provides"]["commands"]:
-        file_path = entry.get("file", "")
-        if file_path.startswith("agents/") and file_path.endswith(".md"):
-            slugs.add(entry["name"].replace("echelon.", "echelon-"))
-    return slugs
+def _prosaic_agent_ids() -> set[str]:
+    return {path.stem for path in SUBAGENTS_DIR.glob("*.md")}
 
 
-def _workflow_dispatch_slugs() -> set[str]:
-    text = WORKFLOW.read_text(encoding="utf-8")
-    return set(re.findall(r"echelon-[a-z0-9-]+", text))
+def _collect_workflow_agent_ids(value: object) -> set[str]:
+    ids: set[str] = set()
+    if isinstance(value, dict):
+        for field in ("agent", "id"):
+            agent_id = value.get(field)
+            if isinstance(agent_id, str) and AGENT_ID_RE.fullmatch(agent_id):
+                ids.add(agent_id)
+        for child in value.values():
+            ids.update(_collect_workflow_agent_ids(child))
+    elif isinstance(value, list):
+        for child in value:
+            ids.update(_collect_workflow_agent_ids(child))
+    return ids
 
 
-def _agent_entrypoint_files() -> set[Path]:
-    return {
-        path for path in AGENTS_DIR.rglob("*.md")
-        if "appendices" not in path.parts and "templates" not in path.parts
-    }
+def _workflow_dispatch_ids() -> set[str]:
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    return _collect_workflow_agent_ids(workflow)
 
 
 def test_readme_and_catalog_match_agent_role_inventory() -> None:
-    registered = _registered_agent_slugs()
-    workflow = _workflow_dispatch_slugs()
-    active_manifest = registered & workflow
-    manifest_only = registered - workflow
-    workflow_only = workflow - registered
-    support_files = set(AGENTS_DIR.rglob("*.md")) - _agent_entrypoint_files()
+    available = _prosaic_agent_ids()
+    dispatched = _workflow_dispatch_ids()
+    direct_use = available - dispatched
+    missing = dispatched - available
+    support_files = set(SUPPORT_DIR.rglob("*.md"))
 
-    assert len(registered) == 56
-    assert len(active_manifest) == 46
-    assert len(manifest_only) == 10
-    assert workflow_only == {"echelon-gatekeeper-assess2"}
+    assert len(available) == 56
+    assert len(dispatched) == 38
+    assert len(direct_use) == 18
+    assert missing == set()
     assert len(support_files) == 14
 
     readme = README.read_text(encoding="utf-8")
     catalog = CATALOG.read_text(encoding="utf-8")
 
-    assert "41-agent" not in readme
-    assert "56 registered agent roles" in readme
-    assert "46 active-routed manifest roles" in readme
+    assert "56 neutral Prosaic agent roles" in readme
+    assert "38 workflow-dispatched roles" in readme
     assert "Agent Role Catalog](docs/agent-role-catalog.md)" in readme
 
-    assert "| Registered agent roles | 56 |" in catalog
-    assert "| Active-routed manifest roles | 46 |" in catalog
-    assert "| Manifest-only roles | 10 |" in catalog
-    assert "| Workflow-only dispatch aliases | 1 |" in catalog
-    assert "| Support prompt files | 14 |" in catalog
-    assert "`echelon-gatekeeper-assess2`" in catalog
+    assert "| Neutral Prosaic agent roles | 56 |" in catalog
+    assert "| Workflow-dispatched roles | 38 |" in catalog
+    assert "| Direct-use roles | 18 |" in catalog
+    assert "| Support prose files | 14 |" in catalog
+    assert "extension/extension.yml" not in catalog
+    assert "speckit-echelon" not in catalog

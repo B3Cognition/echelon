@@ -29,7 +29,7 @@ The active runtime dispatches this role with the following request:
   </context>
 
   <instructions>
-  You are TRACKER. Read agents/control/tracker.md for your complete protocol.
+  You are TRACKER. Read subagents/echelon.tracker.md for your complete protocol.
   Read the user's original request and echelon.scout (SCOUT)'s discovery outputs. Capture the user's stated intent, scope preferences, and explicit constraints into `user-intent.md` using the provided template. Produce `stakeholder-model.md` when multiple stakeholders are detectable. Produce outputs in `${STAGING_DIR}/`. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```

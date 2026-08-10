@@ -66,7 +66,7 @@ This phase uses `type: staged_parallel`. **Always dispatch in the two stages bel
   </context>
 
   <instructions>
-  You are SAGE. Read agents/exploration/sage.md for your complete protocol. Operate in **spec-validation mode** (WHY3 — consensus).
+  You are SAGE. Read subagents/echelon.sage.md for your complete protocol. Operate in **spec-validation mode** (WHY3 — consensus).
   When Product Input Contract paths are present, reject consensus while a normative unit remains `open_question` or `conflict`, and return the required structured product-input corrections.
   Read and interpret the harness-injected Certified Understanding Evidence report. Do not run validators, recalculate scores, or return controller-owned quality scores. Check cross-artifact consistency across ALL artifacts, including the read-only constitution snapshot. Explicitly check `architecture_requirement_drift`: compare validated `spec.md` against plan.md, research.md, data-model.md, contracts/, tasks.md, and test artifacts, and reject consensus if HOW/PLAN/TASKS change product behavior while agreeing with each other. This is the final qualitative quality check. Produce outputs in `{spec_dir}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
@@ -84,7 +84,7 @@ This phase uses `type: staged_parallel`. **Always dispatch in the two stages bel
   </context>
 
   <instructions>
-  You are GATEKEEPER. Read agents/feasibility/gatekeeper.md for your complete protocol. Operate as ASSESS2 — consensus-phase re-evaluation.
+  You are GATEKEEPER. Read subagents/echelon.gatekeeper.md for your complete protocol. Operate as ASSESS2 — consensus-phase re-evaluation.
   Re-evaluate feasibility against the concrete architecture. Update `estimates.md` using the provided template, reconciling Phase A, Phase B, human-only, and AI-assisted scenarios; retain or revise the AI-assisted token and USD budgets with an explicit pricing basis. Perform the **6-point IMPLEMENTABILITY CHECK**: (1) Can a developer pick up each task without unstated knowledge? (2) Do tasks reference APIs/libraries/services that actually exist? (3) Are "parallel" tasks truly independent? (4) Does the tech stack match available team skills? (5) Are task descriptions self-contained? (6) Can each task be tested independently? Produce `implementability-report.md` using the provided template (scored per task: READY / NEEDS_CLARIFICATION / BLOCKED). You can flag but NOT kill at this stage — only CRITICAL feasibility issues route back to HOW. Put ASSESS2 task-readiness and effort metrics in `echelon_result.state_updates.implementability_metrics`; certified quality scores remain controller-owned. Produce outputs in `{spec_dir}/`. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
@@ -105,7 +105,7 @@ returns `BLOCKED` with `missing_consensus_prerequisite`; PLAN2 is not dispatched
   </context>
 
   <instructions>
-  You are ORCHESTRATOR. Read agents/solution/orchestrator.md for your complete protocol. Operate as PLAN2 — consensus-phase plan revision.
+  You are ORCHESTRATOR. Read subagents/echelon.orchestrator.md for your complete protocol. Operate as PLAN2 — consensus-phase plan revision.
   When Product Input Contract paths are present, repair any requirement mapping that lacks a canonical target-owned task and return `product_input_updates` using the exact canonical fields `input_unit_id`, `disposition`, `rationale`, `spec_ids`, `task_ids`, and `targets`; do not edit the controller-owned ledger directly.
   Treat `.echelon/constitution.md` as read-only governance context. Do not edit, rewrite, append to, or output it.
   Re-evaluate task dependencies and task-to-spec coverage against spec.md, plan.md, contracts/, coverage-map.md, WHY3 issues, and ASSESS2 implementability feedback. Update critical path if sequencing changed. Validate all specialist and test-strategy outputs have corresponding tasks. Incorporate implementability feedback — split unclear tasks, add missing context, and add missing requirement/test tasks. Produce outputs in `{spec_dir}/`. Return journal entries in `echelon_result.journal_entries`.

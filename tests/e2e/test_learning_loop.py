@@ -497,7 +497,7 @@ class TestDetectPatternsE2E:
 
 
 FIXTURES_PROMPTS = REPO_ROOT / "tests" / "fixtures" / "prompts"
-DEFINITION_PATH = REPO_ROOT / "extension" / "workflow" / "definition.yaml"
+DEFINITION_PATH = REPO_ROOT / "runtime" / "workflow" / "definition.yaml"
 
 
 class TestPromptLintCLI:

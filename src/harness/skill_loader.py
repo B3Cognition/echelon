@@ -19,27 +19,13 @@ ECHELON_SKILL_MAP = {
 }
 
 def find_skill(skill_base: str, project_dir: Path, cli: str) -> Optional[Path]:
-    """Locate the skill file for the given LLM CLI and skill base name.
+    """Locate canonical command prose for any configured provider.
 
-    Claude/Codex: .claude/skills/echelon-<cmd>/[Ss]kill.md
+    Canonical: .echelon/prosaic/commands/echelon.<cmd>.md
     """
-    if cli == "copilot":
-        candidates = [project_dir / ".github" / "agents" / f"{skill_base}.agent.md"]
-    elif cli == "opencode":
-        candidates = [project_dir / ".opencode" / "command" / f"{skill_base}.md"]
-    else:
-        dash_name = skill_base.replace(".", "-")
-        candidates = [
-            project_dir / ".claude" / "skills" / dash_name / "skill.md",
-            project_dir / ".claude" / "skills" / dash_name / "SKILL.md",
-            Path.home() / ".claude" / "skills" / dash_name / "skill.md",
-            Path.home() / ".claude" / "skills" / dash_name / "SKILL.md",
-        ]
-
-    for p in candidates:
-        if p.exists():
-            return p
-    return None
+    del cli
+    canonical = project_dir / ".echelon" / "prosaic" / "commands" / f"{skill_base}.md"
+    return canonical if canonical.is_file() else None
 
 
 def strip_frontmatter(text: str) -> str:
@@ -53,7 +39,16 @@ def strip_frontmatter(text: str) -> str:
 
 
 def build_skill_prompt(skill_path: Path, arguments: str) -> str:
-    """Build a full COMMANDER prompt from a skill file, substituting $ARGUMENTS."""
+    """Build a COMMANDER prompt from neutral Prosaic or legacy provider prose."""
+    if _is_prosaic_command_path(skill_path):
+        from harness.prosaic_prompt_loader import ProsaicPromptLoader
+
+        project_dir = skill_path.parents[3]
+        artifact = ProsaicPromptLoader(project_dir).load_command(skill_path.stem)
+        if artifact is None:
+            raise FileNotFoundError(f"Prosaic command is not installed: {skill_path}")
+        return ProsaicPromptLoader.render_command(artifact, arguments).prompt
+
     raw = skill_path.read_text(encoding="utf-8")
     content = strip_frontmatter(raw)
     if "$ARGUMENTS" in content:
@@ -61,6 +56,14 @@ def build_skill_prompt(skill_path: Path, arguments: str) -> str:
     else:
         content = f"{content}\n\n## Arguments\n{arguments}"
     return COMMANDER_PREAMBLE + content
+
+
+def _is_prosaic_command_path(path: Path) -> bool:
+    return (
+        path.parent.name == "commands"
+        and path.parent.parent.name == "prosaic"
+        and path.parent.parent.parent.name == ".echelon"
+    )
 
 
 def build_command_to_skill_base(build_command: str) -> Optional[str]:

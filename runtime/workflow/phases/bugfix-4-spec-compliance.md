@@ -5,7 +5,7 @@
 
 ## Step 4: echelon.spec-guard (SPEC GUARD) — Scope Validation
 
-Dispatch `agents/build/spec-guard.md` with:
+Dispatch `subagents/echelon.spec-guard.md` with:
 
 - `spec.md`
 - `coverage-map.md`

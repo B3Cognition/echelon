@@ -6,11 +6,8 @@ and invoke the configured LLM CLI so the LLM only executes the skill.
 
 `init` is pure Python — no LLM involved.
 
-Skill file locations by AI tool:
-  Claude   : .claude/skills/echelon-<cmd>/[Ss]kill.md
-  Copilot  : .github/agents/echelon.<cmd>.agent.md
-  Opencode : .opencode/command/echelon.<cmd>.md
-  Codex    : .claude/skills/echelon-<cmd>/[Ss]kill.md
+Command prose for every AI tool:
+  .echelon/prosaic/commands/echelon.<cmd>.md
 Auto-detected from ECHELON_LLM (default: claude).
 """
 
@@ -165,11 +162,8 @@ Commands:
                     [--allow-fulfillment-gaps] [--strategy merge|rebase]
                                             Land a spec: merge PR/branch, clean up.
 
-Skill file locations (auto-detected from ECHELON_LLM env var):
-  Claude   : .claude/skills/echelon-<cmd>/[Ss]kill.md
-  Copilot  : .github/agents/echelon.<cmd>.agent.md
-  Opencode : .opencode/command/echelon.<cmd>.md
-  Codex    : .claude/skills/echelon-<cmd>/[Ss]kill.md
+Command prose for every provider:
+  .echelon/prosaic/commands/echelon.<cmd>.md
 """
 
 
@@ -9476,26 +9470,11 @@ def _skill_required_capability(command: str) -> ProviderCapability:
 
 
 def _skill_not_found_msg(skill_base: str, project_dir: Path, cli: str) -> str:
-    if cli == "copilot":
-        return (
-            f"echelon: skill '{skill_base}' not found.\n"
-            f"Expected at:\n"
-            f"  {project_dir / '.github' / 'agents' / f'{skill_base}.agent.md'}\n"
-            "Run: echelon workspace migrate-to-prosaic"
-        )
-    if cli == "opencode":
-        return (
-            f"echelon: skill '{skill_base}' not found.\n"
-            f"Expected at:\n"
-            f"  {project_dir / '.opencode' / 'command' / f'{skill_base}.md'}\n"
-            "Run: echelon workspace migrate-to-prosaic"
-        )
-    dash_name = skill_base.replace(".", "-")
+    del cli
     return (
-        f"echelon: skill '{dash_name}' not found.\n"
-        f"Expected at:\n"
-        f"  {project_dir / '.claude' / 'skills' / dash_name / 'skill.md'}\n"
-        f"  {Path.home() / '.claude' / 'skills' / dash_name / 'skill.md'}\n"
+        f"echelon: command prose '{skill_base}' not found.\n"
+        "Expected at:\n"
+        f"  {project_dir / '.echelon' / 'prosaic' / 'commands' / f'{skill_base}.md'}\n"
         "Run: echelon workspace migrate-to-prosaic"
     )
 

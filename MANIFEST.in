@@ -1,0 +1,3 @@
+recursive-include prosaic *
+recursive-include runtime *
+global-exclude .DS_Store *.py[cod]

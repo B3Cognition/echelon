@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
+import tarfile
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -91,6 +94,62 @@ def test_install_prosaic_bundle_deploys_staged_content_with_prosaic(
     assert (workspace / ".echelon/runtime/workflow/definition.yaml").read_text(
         encoding="utf-8"
     ) == "phases: []\n"
+
+
+def test_built_wheel_installs_canonical_prosaic_bundles(tmp_path: Path) -> None:
+    echelon_root = Path(__file__).resolve().parents[2]
+    wheel_dir = tmp_path / "wheel"
+    installed = tmp_path / "installed"
+    workspace = tmp_path / "workspace"
+    wheel_dir.mkdir()
+    workspace.mkdir()
+
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "build",
+            "--outdir",
+            str(wheel_dir),
+        ],
+        cwd=echelon_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    wheel = next(wheel_dir.glob("echelon-*.whl"))
+    source_distribution = next(wheel_dir.glob("echelon-*.tar.gz"))
+    with tarfile.open(source_distribution) as archive:
+        members = {member.name for member in archive.getmembers()}
+    assert any(name.endswith("/prosaic/commands/echelon.run.md") for name in members)
+    assert any(name.endswith("/runtime/workflow/definition.yaml") for name in members)
+
+    with zipfile.ZipFile(wheel) as archive:
+        wheel_members = set(archive.namelist())
+        assert "echelon/bundles/prosaic/commands/echelon.run.md" in wheel_members
+        assert "echelon/bundles/runtime/workflow/definition.yaml" in wheel_members
+        assert not any("__pycache__" in name or name.endswith(".pyc") for name in wheel_members)
+        archive.extractall(installed)
+
+    script = """
+import sys
+from pathlib import Path
+
+sys.path.insert(0, sys.argv[1])
+from echelon.prosaic_packages import install_prosaic_bundle
+
+workspace = Path(sys.argv[2])
+install_prosaic_bundle(workspace, run=lambda *_args, **_kwargs: None)
+assert (workspace / ".echelon/packages/echelon-prose/commands").is_dir()
+assert (workspace / ".echelon/packages/echelon-runtime/workflow/definition.yaml").is_file()
+"""
+    subprocess.run(
+        [sys.executable, "-c", script, str(installed), str(workspace)],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
 
 def test_committed_prosaic_runtime_does_not_reference_legacy_squad_layout() -> None:

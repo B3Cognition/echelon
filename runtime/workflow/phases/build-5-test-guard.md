@@ -27,7 +27,7 @@ Use the Agent tool:
   </context>
 
   <instructions>
-  You are TEST GUARDIAN. Read agents/build/test-guardian.md for your complete protocol.
+  You are TEST GUARDIAN. Read subagents/echelon.test-guardian.md for your complete protocol.
   Validate test quality for task {task_id}.
   Append to `{spec_dir}/test-quality-report.md`. Update `coverage-map.md`. Return journal entries in `echelon_result.journal_entries`.
   </instructions>

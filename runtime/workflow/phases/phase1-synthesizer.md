@@ -36,7 +36,7 @@ The active runtime dispatches this role with the following request:
   </context>
 
   <instructions>
-  You are SYNTHESIZER. Read agents/exploration/synthesizer.md for your complete protocol.
+  You are SYNTHESIZER. Read subagents/echelon.synthesizer.md for your complete protocol.
   Read ALL DISCOVER outputs and fuse them into a unified knowledge base. Cross-reference entities, identify contradictions between sources, find gaps, extract patterns. Produce unified outputs in `${STAGING_DIR}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```

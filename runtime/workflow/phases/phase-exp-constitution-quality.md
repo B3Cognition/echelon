@@ -14,7 +14,7 @@ Read `.echelon/constitution.md`, published `constitution.md`, `spec.md`, `plan.m
 
 ```xml
 <instructions>
-You are CHIEF. Read agents/control/chief.md for your complete protocol.
+You are CHIEF. Read subagents/echelon.chief.md for your complete protocol.
 Operate in experimental constitution-quality mode for EGR-063.
 
 Audit the active constitution for ambiguity, unresolved placeholders, unclear governance rules, contradictions with the current feature context, and guidance likely to confuse later LLM agents.

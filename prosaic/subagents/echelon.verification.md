@@ -121,7 +121,7 @@ This is the most powerful verification technique: the diagram shows the INTENDED
 For EVERY requirement (not just the ones echelon-spec-guard (SPEC GUARD) already checked):
 
 1. **Search the codebase** for code that implements this requirement
-   - Use Grep to search for related keywords, function names, class names
+   - Use the repository text-search capability for related keywords, function names, and class names
    - Use the traceability-matrix.md as a starting hint (but verify — it may be stale)
    - Read the candidate code to confirm it actually implements the requirement
 

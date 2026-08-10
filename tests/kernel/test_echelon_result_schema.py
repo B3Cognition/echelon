@@ -54,7 +54,7 @@ def test_known_routing_verdicts_are_supported():
 
 def test_workflow_condition_verdicts_are_supported_by_schema():
     definition = yaml.safe_load(
-        (EXT_ROOT / "extension" / "workflow" / "definition.yaml").read_text(
+        (EXT_ROOT / "runtime" / "workflow" / "definition.yaml").read_text(
             encoding="utf-8"
         )
     )

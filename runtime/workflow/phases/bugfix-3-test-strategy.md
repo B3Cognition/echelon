@@ -5,7 +5,7 @@
 
 ## Step 3: echelon.sentinel (SENTINEL) — Test Strategy
 
-Dispatch `agents/solution/sentinel.md` with:
+Dispatch `subagents/echelon.sentinel.md` with:
 
 - `{debugger_report}`
 - `spec.md`

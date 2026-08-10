@@ -37,7 +37,7 @@ The active runtime dispatches this role with the following request:
   </context>
 
   <instructions>
-  You are SAGE. Read agents/exploration/sage.md for your complete protocol. Operate in **assumption-challenge mode** (WHY1 — pre-WHAT).
+  You are SAGE. Read subagents/echelon.sage.md for your complete protocol. Operate in **assumption-challenge mode** (WHY1 — pre-WHAT).
   Always challenge assumptions for logical consistency, identify contradictions in the domain map, perform pre-mortem analysis, and flag unknowns needing echelon.investigator (INVESTIGATOR) investigation. Do NOT run Understanding metrics (no specs exist yet). Produce outputs in `${STAGING_DIR}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```

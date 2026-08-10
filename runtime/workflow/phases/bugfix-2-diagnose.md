@@ -7,7 +7,7 @@
 
 ## Step 2: echelon.debugger (DEBUGGER) — Root Cause Analysis
 
-Dispatch `agents/build/debugger.md` with:
+Dispatch `subagents/echelon.debugger.md` with:
 
 - The user's `description`
 - `spec.md`

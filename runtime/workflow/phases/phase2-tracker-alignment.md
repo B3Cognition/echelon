@@ -17,7 +17,7 @@ The active runtime dispatches this role with the following request:
   </context>
 
   <instructions>
-  You are TRACKER. Read agents/control/tracker.md for your complete protocol. Operate in **alignment-check mode**.
+  You are TRACKER. Read subagents/echelon.tracker.md for your complete protocol. Operate in **alignment-check mode**.
   Read `user-intent.md` and echelon.gatekeeper (GATEKEEPER)'s outputs (`feasibility.md`, `mvp-scope.md`). Check whether echelon.gatekeeper (GATEKEEPER)'s scoping decisions align with the user's stated intent. If MISALIGNED, emit an alignment alert with specific divergence points. Produce `intent-alignment-check.md` in `{spec_dir}/` using the provided template. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```

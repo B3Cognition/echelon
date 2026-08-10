@@ -12,8 +12,7 @@ from harness.workflow_validator import (
 
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFINITION = ROOT / "extension/workflow/definition.yaml"
-EXT_YML = ROOT / "extension/extension.yml"
+DEFINITION = ROOT / "runtime/workflow/definition.yaml"
 
 
 def _write_definition(
@@ -29,12 +28,6 @@ def _write_definition(
             controller_state_contracts_file
         )
     path.write_text(yaml.safe_dump(definition), encoding="utf-8")
-    return path
-
-
-def _write_extension_yml(tmp_path: Path) -> Path:
-    path = tmp_path / "extension.yml"
-    path.write_text("provides: {commands: []}\n", encoding="utf-8")
     return path
 
 

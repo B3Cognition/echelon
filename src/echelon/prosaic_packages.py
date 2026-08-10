@@ -39,7 +39,7 @@ def install_prosaic_bundle(
     """
 
     project_root = project_root.resolve()
-    source_root = (echelon_root or Path(__file__).resolve().parents[2]).resolve()
+    source_root = _bundle_source_root(echelon_root)
     _reject_workspace_config(project_root)
 
     prose_source = project_root / ".echelon" / "packages" / "echelon-prose"
@@ -58,6 +58,17 @@ def install_prosaic_bundle(
         config_path.unlink(missing_ok=True)
 
     return ProsaicBundleInstallReport(prose_source=prose_source, runtime_source=runtime_source)
+
+
+def _bundle_source_root(echelon_root: Path | None) -> Path:
+    if echelon_root is not None:
+        return echelon_root.resolve()
+
+    packaged = Path(__file__).resolve().parent / "bundles"
+    if (packaged / "prosaic").is_dir() and (packaged / "runtime").is_dir():
+        return packaged
+
+    return Path(__file__).resolve().parents[2]
 
 
 def _reject_workspace_config(project_root: Path) -> None:

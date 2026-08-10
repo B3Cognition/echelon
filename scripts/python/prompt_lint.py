@@ -10,7 +10,7 @@ Reports per-file term occurrences with line numbers.
 Exits non-zero if ambiguous usage is detected (unless --no-exit-on-ambiguous).
 
 Contracts:
-- Default scan root: .specify/extensions/echelon/agents/**/*.md
+- Default scan root: prosaic/**/*.md
 - --root override for test fixtures
 - Reports per-file term occurrences with line numbers
 - Exits non-zero if ambiguous use detected
@@ -27,10 +27,9 @@ from typing import Any
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
-EXT_DIR = REPO_ROOT / "extension"
 
-DEFAULT_AGENTS_ROOT = EXT_DIR / "agents"
-DEFAULT_DEFINITION = EXT_DIR / "workflow" / "definition.yaml"
+DEFAULT_AGENTS_ROOT = REPO_ROOT / "prosaic"
+DEFAULT_DEFINITION = REPO_ROOT / "runtime" / "workflow" / "definition.yaml"
 
 
 def _load_glossary(definition_path: Path) -> list:

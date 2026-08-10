@@ -10,15 +10,28 @@ from unittest.mock import patch
 import pytest
 
 from harness.fulfillment_runner import FULFILLMENT_VERIFIER_VERSION, FulfillmentRunner
+from harness.prosaic_prompt_loader import ProsaicCommandArtifact, ProsaicPromptLoader
 from kernel.fulfillment import read_fulfillment_metadata
 
 
 def _write_verify_skill(root):
-    skill_dir = root / ".claude" / "skills" / "echelon-verify-spec"
-    skill_dir.mkdir(parents=True)
-    (skill_dir / "skill.md").write_text(
-        "---\nname: echelon.verify-spec\n---\nverify $ARGUMENTS\n",
+    commands_dir = root / ".echelon" / "prosaic" / "commands"
+    commands_dir.mkdir(parents=True)
+    (commands_dir / "echelon.verify-spec.md").write_text(
+        "---\ndescription: Verify spec\n---\nverify {{args}}\n",
         encoding="utf-8",
+    )
+
+
+@pytest.fixture(autouse=True)
+def _inspect_verify_spec_with_prosaic(monkeypatch):
+    monkeypatch.setattr(
+        ProsaicPromptLoader,
+        "load_command",
+        lambda _self, _command_id: ProsaicCommandArtifact(
+            frontmatter={"description": "Verify spec"},
+            body="verify {{args}}",
+        ),
     )
 
 
@@ -522,10 +535,10 @@ class TestFulfillmentRunner:
         assert read_fulfillment_metadata(report) == {}
 
     def test_refresh_rejects_report_with_ids_not_in_requirement_audit(self, tmp_path):
-        skill_dir = tmp_path / ".claude" / "skills" / "echelon-verify-spec"
+        skill_dir = tmp_path / ".echelon" / "prosaic" / "commands"
         skill_dir.mkdir(parents=True)
-        (skill_dir / "skill.md").write_text(
-            "---\nname: echelon.verify-spec\n---\nverify $ARGUMENTS\n",
+        (skill_dir / "echelon.verify-spec.md").write_text(
+            "---\nname: echelon.verify-spec\n---\nverify {{args}}\n",
             encoding="utf-8",
         )
         spec_dir = tmp_path / "specs" / "spec-001-demo"
@@ -563,10 +576,10 @@ class TestFulfillmentRunner:
         assert read_fulfillment_metadata(report) == {}
 
     def test_refresh_fails_when_report_drops_canonical_inventory_row(self, tmp_path):
-        skill_dir = tmp_path / ".claude" / "skills" / "echelon-verify-spec"
+        skill_dir = tmp_path / ".echelon" / "prosaic" / "commands"
         skill_dir.mkdir(parents=True)
-        (skill_dir / "skill.md").write_text(
-            "---\nname: echelon.verify-spec\n---\nverify $ARGUMENTS\n",
+        (skill_dir / "echelon.verify-spec.md").write_text(
+            "---\nname: echelon.verify-spec\n---\nverify {{args}}\n",
             encoding="utf-8",
         )
         spec_dir = tmp_path / "specs" / "spec-001-demo"
@@ -608,10 +621,10 @@ class TestFulfillmentRunner:
         assert read_fulfillment_metadata(report) == {}
 
     def test_refresh_rejects_large_audit_scope_drop_without_scope_change(self, tmp_path):
-        skill_dir = tmp_path / ".claude" / "skills" / "echelon-verify-spec"
+        skill_dir = tmp_path / ".echelon" / "prosaic" / "commands"
         skill_dir.mkdir(parents=True)
-        (skill_dir / "skill.md").write_text(
-            "---\nname: echelon.verify-spec\n---\nverify $ARGUMENTS\n",
+        (skill_dir / "echelon.verify-spec.md").write_text(
+            "---\nname: echelon.verify-spec\n---\nverify {{args}}\n",
             encoding="utf-8",
         )
         spec_dir = tmp_path / "specs" / "spec-001-demo"
@@ -671,10 +684,10 @@ class TestFulfillmentRunner:
         assert read_fulfillment_metadata(report) == {}
 
     def test_refresh_allows_large_audit_scope_drop_after_spec_change(self, tmp_path):
-        skill_dir = tmp_path / ".claude" / "skills" / "echelon-verify-spec"
+        skill_dir = tmp_path / ".echelon" / "prosaic" / "commands"
         skill_dir.mkdir(parents=True)
-        (skill_dir / "skill.md").write_text(
-            "---\nname: echelon.verify-spec\n---\nverify $ARGUMENTS\n",
+        (skill_dir / "echelon.verify-spec.md").write_text(
+            "---\nname: echelon.verify-spec\n---\nverify {{args}}\n",
             encoding="utf-8",
         )
         spec_dir = tmp_path / "specs" / "spec-001-demo"
@@ -735,10 +748,10 @@ class TestFulfillmentRunner:
 
     def test_refresh_uses_orchestration_spec_dir_for_polyrepo_runs(self, tmp_path):
         worktree = tmp_path / "runs" / "build-1" / "worktrees" / "default" / "iter-0"
-        skill_dir = worktree / ".claude" / "skills" / "echelon-verify-spec"
+        skill_dir = worktree / ".echelon" / "prosaic" / "commands"
         skill_dir.mkdir(parents=True)
-        (skill_dir / "skill.md").write_text(
-            "---\nname: echelon.verify-spec\n---\nverify $ARGUMENTS\n",
+        (skill_dir / "echelon.verify-spec.md").write_text(
+            "---\nname: echelon.verify-spec\n---\nverify {{args}}\n",
             encoding="utf-8",
         )
         orchestration_root = tmp_path / "polyrepo"

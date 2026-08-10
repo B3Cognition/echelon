@@ -1,88 +1,72 @@
 # Echelon Agent Role Catalog
 
-This catalog reconciles the public architecture narrative with the executable
-source tree. It distinguishes agent entry points from support prompt files and
-separates roles that are actively routed by the workflow from roles that are
-registered for manual, future, or command-specific use.
+This catalog reconciles Echelon's public architecture with its canonical
+Prosaic prose and runtime workflow. It distinguishes roles dispatched by the
+structured workflow graph from roles invoked directly by controllers, commands,
+or supporting workflows.
 
 ## Source Of Truth
 
-- Agent registry: `extension/extension.yml`
-- Executable Phase A workflow: `extension/workflow/definition.yaml`
-- Agent prompt files: `extension/agents/**/*.md`
+- Neutral agent prose: `prosaic/subagents/*.md`
+- Executable workflow graph: `runtime/workflow/definition.yaml`
+- Companion prose: `prosaic/agents/**/*.md`
 
 Current grounded counts:
 
 | Surface | Count | Meaning |
 |---|---:|---|
-| Registered agent roles | 56 | `extension.yml` entries whose `file` is under `agents/` |
-| Active-routed manifest roles | 46 | Registered roles referenced by `definition.yaml` |
-| Manifest-only roles | 10 | Registered roles not currently referenced by `definition.yaml` |
-| Workflow-only dispatch aliases | 1 | Dispatch identifiers in `definition.yaml` that are not separate manifest roles |
-| Support prompt files | 14 | Markdown appendices/templates under `extension/agents/` that are not agent entry points |
+| Neutral Prosaic agent roles | 56 | Canonical subagent files with neutral `echelon.*` identities |
+| Workflow-dispatched roles | 38 | Neutral IDs used by structured `agent` or nested dispatch nodes |
+| Direct-use roles | 18 | Available roles invoked outside ordinary workflow agent nodes |
+| Support prose files | 14 | Appendices and templates that are not independent agent entry points |
 
-The previous public agent-count phrasing was stale. It does not match the
-current source tree and appears closer to the number of command entries than the
-number of agent roles.
+Every workflow-dispatched ID resolves to a canonical Prosaic subagent. Direct-use
+does not mean unused: COMMANDER, for example, is invoked by the Python controller
+for judgment and routing rather than declared as an ordinary agent phase.
 
 ## Layer Inventory
 
-| Layer | Registered roles | Active-routed | Manifest-only |
+| Layer | Prosaic roles | Workflow-dispatched | Direct-use |
 |---|---:|---:|---:|
-| Control | 6 | 5 | 1 |
+| Control | 6 | 3 | 3 |
 | Exploration | 7 | 6 | 1 |
-| Feasibility | 2 | 2 | 0 |
+| Feasibility | 2 | 1 | 1 |
 | Solution | 3 | 3 | 0 |
 | Specialists | 6 | 6 | 0 |
-| Learning | 8 | 3 | 5 |
-| Build | 15 | 12 | 3 |
+| Learning | 8 | 0 | 8 |
+| Build | 15 | 10 | 5 |
 | Reverse engineering | 9 | 9 | 0 |
 
-## Active-Routed Manifest Roles
+## Workflow-Dispatched Roles
 
-These registered roles are referenced by `extension/workflow/definition.yaml`.
+These roles occur in structured dispatch fields in
+`runtime/workflow/definition.yaml`.
 
 | Layer | Roles |
 |---|---|
-| Control | COMMANDER, CHIEF, SCOREKEEPER, STRATEGIST, TRACKER |
+| Control | CHIEF, STRATEGIST, TRACKER |
 | Exploration | SCOUT, SYNTHESIZER, CARTOGRAPHER, LEXICON DERIVER, SAGE, MODELER |
-| Feasibility | GATEKEEPER, VALIDATOR |
+| Feasibility | GATEKEEPER |
 | Solution | ARCHITECT, ORCHESTRATOR, SENTINEL |
 | Specialists | INVESTIGATOR, GUARDIAN, BENCHMARK, ADVOCATE, ORACLE, MAVERICK |
-| Learning | AUDITOR, REALIST, MIRROR |
-| Build | IMPLEMENTER, SPEC GUARD, IMPLEMENTATION MAPPER, CODE REVIEWER, TEST GUARDIAN, TECH WRITER, DOCS VERIFIER, INTEGRATOR, PROGRESS TRACKER, DEBUGGER, VERIFICATION, VISUAL VALIDATOR |
+| Build | IMPLEMENTER, SPEC GUARD, IMPLEMENTATION MAPPER, CODE REVIEWER, TEST GUARDIAN, TECH WRITER, DOCS VERIFIER, INTEGRATOR, PROGRESS TRACKER, DEBUGGER |
 | Reverse engineering | RE-ANALYZER, RE-SPECIFIER, RE-VERIFIER, RE-EXPANDER, RE-VALIDATOR, RE-CHECKLISTER, RE-CONSTITUTER, RE-PLANNER, RE-TASKER |
 
-## Manifest-Only Roles
+## Direct-Use Roles
 
-These roles are registered in `extension.yml` and have prompt files, but are not
-currently referenced by the executable workflow graph. They should be treated as
-available platform capabilities, not as guaranteed participants in every squad
-run.
+These roles have canonical Prosaic prompts but are not ordinary structured agent
+nodes in the runtime graph.
 
-| Role | File | Current interpretation |
-|---|---|---|
-| CHECKPOINT | `agents/control/checkpoint.md` | Internalization quality assessor available outside the main workflow graph |
-| GOLDDIGGER | `agents/exploration/golddigger.md` | Standalone RE lifecycle agent; no longer dispatched by Phase A |
-| INTERNALIZER | `agents/learning/internalizer.md` | Internalization metrics role; registered but not active-routed |
-| ADAPTIVE | `agents/learning/adaptive.md` | Quality trajectory analysis role; registered but not active-routed |
-| MONITOR | `agents/learning/monitor.md` | Metacognition watchdog; registered but not active-routed |
-| VETERAN | `agents/learning/veteran.md` | Cross-project knowledge curator; registered but not active-routed |
-| CONSOLIDATOR | `agents/learning/consolidator.md` | Episodic-to-schema learning role; registered but not active-routed |
-| ENGINEERING MANAGER | `agents/build/engineering-manager.md` | Build convergence coordination role; registered but not active-routed |
-| CHANGE CONTROLLER | `agents/build/change-controller.md` | Spec-change blast-radius role; registered but not active-routed |
-| SPEC FULFILLMENT AUDITOR | `agents/build/spec-fulfillment-auditor.md` | Delivery fulfillment audit role; registered but not active-routed |
+| Layer | Roles |
+|---|---|
+| Control | COMMANDER, SCOREKEEPER, CHECKPOINT |
+| Exploration | GOLDDIGGER |
+| Feasibility | VALIDATOR |
+| Learning | ADAPTIVE, AUDITOR, CONSOLIDATOR, INTERNALIZER, MIRROR, MONITOR, REALIST, VETERAN |
+| Build | CHANGE CONTROLLER, ENGINEERING MANAGER, SPEC FULFILLMENT AUDITOR, VERIFICATION, VISUAL VALIDATOR |
 
-## Workflow-Only Alias
+## Companion Prose
 
-`definition.yaml` references `speckit-echelon-gatekeeper-assess2`. This is not a
-separate role in `extension.yml`; it is a Gatekeeper ASSESS2 dispatch/mode alias.
-Do not count it as an additional registered agent unless it gets its own
-manifest entry and prompt file.
-
-## Support Prompt Files
-
-The remaining markdown files under `extension/agents/` are appendices and
-templates. They are not agent entry points and should not be counted as roles.
-Examples include `agents/control/appendices/*`,
-`agents/exploration/appendices/*`, and `agents/exploration/templates/*`.
+The files under `prosaic/agents/` are appendices and templates used by canonical
+subagents. They are deployed as companion prose and are not counted as agent
+roles.

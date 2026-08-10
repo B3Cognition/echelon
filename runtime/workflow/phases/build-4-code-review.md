@@ -27,7 +27,7 @@ Use the Agent tool:
   </context>
 
   <instructions>
-  You are CODE REVIEWER. Read agents/build/code-reviewer.md for your complete protocol.
+  You are CODE REVIEWER. Read subagents/echelon.code-reviewer.md for your complete protocol.
   Review task {task_id} implementation.
   Append to `{spec_dir}/code-review-report.md`. Return journal entries in `echelon_result.journal_entries`.
   </instructions>

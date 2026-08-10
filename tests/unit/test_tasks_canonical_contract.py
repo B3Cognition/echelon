@@ -15,7 +15,7 @@ SPEC = FX / "spec_ok.md"
 @pytest.mark.unit
 def test_template_parses_as_canonical_rows():
     """Anti-drift: the shipped template's example rows ARE canonical rows."""
-    tpl = pathlib.Path("extension/templates/tasks-template.md").read_text()
+    tpl = pathlib.Path("runtime/templates/tasks-template.md").read_text()
     assert len(parse_task_rows(tpl)) >= 1
 
 

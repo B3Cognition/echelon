@@ -1,8 +1,14 @@
 import pytest
 import pathlib
 from lexicon.manifest import required_sections, _norm_heading
+from lexicon.structural import _TEMPLATES
 
-TPL = pathlib.Path("extension/templates")
+TPL = pathlib.Path("runtime/templates")
+
+
+@pytest.mark.unit
+def test_structural_templates_are_echelon_runtime_owned():
+    assert _TEMPLATES == TPL
 
 
 @pytest.mark.unit

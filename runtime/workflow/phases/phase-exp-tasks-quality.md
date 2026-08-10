@@ -14,7 +14,7 @@ Read `spec.md`, `plan.md`, `tasks.md`, `requirements.lexicon.md` when present, `
 
 ```xml
 <instructions>
-You are ORCHESTRATOR. Read agents/solution/orchestrator.md for your complete protocol.
+You are ORCHESTRATOR. Read subagents/echelon.orchestrator.md for your complete protocol.
 Operate in experimental tasks-quality mode for EGR-063.
 
 Audit tasks for missing requirement links, vague implementation instructions, missing test obligations, hidden dependencies, impossible sequencing, and task descriptions that require unstated context.

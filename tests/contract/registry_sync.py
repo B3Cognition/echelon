@@ -1,57 +1,61 @@
-"""Extension registry sync checks migrated from shell tests."""
+"""Canonical Prosaic prose and runtime workflow sync checks."""
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from harness.prompt_markdown import read_prompt_markdown
 
-def _extension(root: Path) -> dict[str, Any]:
-    return yaml.safe_load((root / "extension/extension.yml").read_text(encoding="utf-8"))
+
+_AGENT_ID_RE = re.compile(r"echelon\.[a-z0-9-]+")
 
 
 def _definition(root: Path) -> dict[str, Any]:
     return yaml.safe_load(
-        (root / "extension/workflow/definition.yaml").read_text(encoding="utf-8")
+        (root / "runtime/workflow/definition.yaml").read_text(encoding="utf-8")
     )
 
 
-def _commands(root: Path) -> list[dict[str, Any]]:
-    return list((_extension(root).get("provides") or {}).get("commands") or [])
+def _collect_agent_ids(value: object) -> set[str]:
+    agents: set[str] = set()
+    if isinstance(value, dict):
+        for field in ("agent", "id"):
+            agent_id = value.get(field)
+            if isinstance(agent_id, str) and _AGENT_ID_RE.fullmatch(agent_id):
+                agents.add(agent_id)
+        for child in value.values():
+            agents.update(_collect_agent_ids(child))
+    elif isinstance(value, list):
+        for child in value:
+            agents.update(_collect_agent_ids(child))
+    return agents
 
 
-def registered_agent_files(root: Path) -> list[str]:
-    """Agent prompt files registered in extension.yml."""
-    files: list[str] = []
-    for command in _commands(root):
-        file_ref = str(command.get("file") or "")
-        if file_ref.startswith("agents/"):
-            files.append(f"extension/{file_ref}")
-    return sorted(files)
+def workflow_agent_ids(root: Path) -> list[str]:
+    """Neutral subagent IDs dispatched by the canonical runtime workflow."""
+    return sorted(_collect_agent_ids(_definition(root)))
 
 
-def actual_agent_prompt_files(root: Path) -> list[str]:
-    """Agent prompt files on disk, excluding reference appendices/templates."""
-    agent_root = root / "extension/agents"
-    files: list[str] = []
-    for path in agent_root.rglob("*.md"):
-        parts = set(path.relative_to(agent_root).parts)
-        if "appendices" in parts or "templates" in parts:
-            continue
-        files.append(str(path.relative_to(root)))
-    return sorted(files)
+def missing_workflow_agent_prompt_files(root: Path) -> list[str]:
+    missing: list[str] = []
+    for agent_id in workflow_agent_ids(root):
+        path = root / "prosaic/subagents" / f"{agent_id}.md"
+        if not path.is_file():
+            missing.append(str(path.relative_to(root)))
+    return missing
 
 
-def unregistered_agent_prompt_files(root: Path) -> list[str]:
-    registered = set(registered_agent_files(root))
-    return [path for path in actual_agent_prompt_files(root) if path not in registered]
-
-
-def missing_registered_agent_files(root: Path) -> list[str]:
-    actual = set(actual_agent_prompt_files(root))
-    return [path for path in registered_agent_files(root) if path not in actual]
+def invalid_subagent_frontmatter_names(root: Path) -> list[str]:
+    invalid: list[str] = []
+    for path in sorted((root / "prosaic/subagents").glob("*.md")):
+        metadata = read_prompt_markdown(path).metadata
+        if metadata.get("name") != path.stem:
+            invalid.append(str(path.relative_to(root)))
+    return invalid
 
 
 def _re_phases(root: Path) -> list[dict[str, Any]]:
@@ -68,34 +72,19 @@ def re_phase_count(root: Path) -> int:
 
 def missing_re_agent_phase_files(root: Path) -> list[str]:
     missing: list[str] = []
-    for section in ("re_extraction", "re_planning"):
-        for phase in (_definition(root).get(section) or {}).get("phases") or []:
-            if phase.get("type") != "agent":
-                continue
-            agent = str(phase.get("agent") or "")
-            if "-re-" not in agent:
-                continue
-            name = agent.split("-re-", 1)[1]
-            path = root / "extension/agents/re" / f"{name}.md"
-            if not path.exists():
-                missing.append(str(path.relative_to(root)))
+    for phase in _re_phases(root):
+        if phase.get("type") != "agent":
+            continue
+        agent = str(phase.get("agent") or "")
+        path = root / "prosaic/subagents" / f"{agent}.md"
+        if not path.is_file():
+            missing.append(str(path.relative_to(root)))
     return sorted(missing)
 
 
 def re_agent_entry_count(root: Path) -> int:
-    return sum(
-        1
-        for command in _commands(root)
-        if "re-" in str(command.get("name") or "")
-        and (command.get("behavior") or {}).get("execution") == "agent"
-    )
+    return sum(1 for phase in _re_phases(root) if phase.get("type") == "agent")
 
 
 def neutral_re_command_count(root: Path) -> int:
-    return sum(
-        1
-        for command in _commands(root)
-        if "re-" in str(command.get("name") or "")
-        and (command.get("behavior") or {}).get("execution") != "agent"
-        and "behavior" not in command
-    )
+    return len(list((root / "prosaic/commands").glob("echelon.re-*.md")))

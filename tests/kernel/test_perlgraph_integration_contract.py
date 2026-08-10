@@ -114,7 +114,7 @@ def test_re_state_accepts_perlgraph_artifact_updates() -> None:
 
 def test_run_analysis_writes_perlgraph_artifacts() -> None:
     run_analysis = (
-        EXT_ROOT / "extension" / "scripts" / "bash" / "re" / "run-analysis.sh"
+        EXT_ROOT / "runtime" / "scripts" / "bash" / "re" / "run-analysis.sh"
     ).read_text()
 
     assert "node-runtime-resolver.sh" in run_analysis
@@ -146,7 +146,7 @@ def test_re_controller_tracks_perlgraph_artifacts(tmp_path) -> None:
 
 def test_re_analyze_contract_mentions_perlgraph_outputs() -> None:
     analyze = (
-        EXT_ROOT / "extension" / "workflow" / "phases" / "re-extract-1-analyze.md"
+        EXT_ROOT / "runtime" / "workflow" / "phases" / "re-extract-1-analyze.md"
     ).read_text()
 
     assert "{state.output_dir}/perlgraph-analysis.json" in analyze
@@ -156,8 +156,8 @@ def test_re_analyze_contract_mentions_perlgraph_outputs() -> None:
 
 
 def test_workspace_prompts_describe_per_source_perlgraph_shape() -> None:
-    scout = (EXT_ROOT / "extension" / "agents" / "exploration" / "scout.md").read_text()
-    specifier = (EXT_ROOT / "extension" / "agents" / "re" / "specifier.md").read_text()
+    scout = (EXT_ROOT / "prosaic/subagents/echelon.scout.md").read_text()
+    specifier = (EXT_ROOT / "prosaic/subagents/echelon.re-specifier.md").read_text()
 
     assert "PerlGraph" in scout
     assert "$RE_OUTPUT_DIR/sources/{source-id}/perlgraph-summary.json" in specifier

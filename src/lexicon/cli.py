@@ -78,7 +78,6 @@ def validate(
         _candidate_bases = [
             Path(".echelon/runtime"),
             Path("runtime"),
-            Path("extension"),
         ]
         chosen_base = None
         governance: dict = {}

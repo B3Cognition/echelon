@@ -18,7 +18,7 @@ FX = pathlib.Path("tests/fixtures/structural")
 
 @pytest.mark.unit
 def test_fixture_feasibility_is_gate_clean():
-    entry = load_governance(pathlib.Path("extension/echelon-config.yml"))["feasibility"]
+    entry = load_governance(pathlib.Path("runtime/echelon-config.yml"))["feasibility"]
     r = structural_validate(
         (FX / "feasibility_ok.md").read_text(),
         entry,

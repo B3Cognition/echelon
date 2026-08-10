@@ -92,7 +92,7 @@ from pathlib import Path
 from .completeness import placeholder_findings
 from .manifest import required_sections
 
-_TEMPLATES = Path("extension/templates")
+_TEMPLATES = Path("runtime/templates")
 
 
 @dataclass(frozen=True)

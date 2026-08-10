@@ -17,7 +17,7 @@ The active runtime dispatches this role with the following request:
   </context>
 
   <instructions>
-  You are STRATEGIST. Read agents/control/strategist.md for your complete protocol.
+  You are STRATEGIST. Read subagents/echelon.strategist.md for your complete protocol.
   Build a risk-weighted strategic map of the project. Identify which components carry the highest business + technical risk. Flag where effort allocation should be concentrated.
   Produce `strategic-overview.md` in `{spec_dir}/` using the provided template.
   </instructions>

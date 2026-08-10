@@ -2,7 +2,7 @@ import pytest, yaml, pathlib
 
 @pytest.mark.unit
 def test_orchestrator_only_owns_tasks_lexicon_authoring():
-    txt = pathlib.Path("extension/agents/solution/orchestrator.md").read_text()
+    txt = pathlib.Path("prosaic/subagents/echelon.orchestrator.md").read_text()
     assert "Tasks Lexicon Authoring Contract" in txt
     assert "canonical row format" in txt
     assert "deterministic node validates" in txt
@@ -12,7 +12,7 @@ def test_orchestrator_only_owns_tasks_lexicon_authoring():
 
 @pytest.mark.unit
 def test_phase3_plan_redispatch_transition():
-    d = yaml.safe_load(pathlib.Path("extension/workflow/definition.yaml").read_text())
+    d = yaml.safe_load(pathlib.Path("runtime/workflow/definition.yaml").read_text())
     nodes = {node["id"]: node for node in d["phases"]}
     assert nodes["phase3-plan"]["transitions"] == [
         {"to": "phase3-tasks-lexicon", "condition": "always"}
@@ -40,7 +40,7 @@ def test_phase3_plan_redispatch_transition():
 
 @pytest.mark.unit
 def test_phase3_plan_doc_declares_controller_owned_tasks_gate():
-    txt = pathlib.Path("extension/workflow/phases/phase3-plan.md").read_text()
+    txt = pathlib.Path("runtime/workflow/phases/phase3-plan.md").read_text()
     assert "state.json.tasks_lexicon_pass" in txt
     assert "tasks_lexicon_attempts" in txt
     assert "`phase3-tasks-lexicon`" in txt
@@ -52,7 +52,7 @@ def test_phase3_plan_doc_declares_controller_owned_tasks_gate():
 
 @pytest.mark.unit
 def test_phase3_consensus_recertifies_plan2_tasks():
-    d = yaml.safe_load(pathlib.Path("extension/workflow/definition.yaml").read_text())
+    d = yaml.safe_load(pathlib.Path("runtime/workflow/definition.yaml").read_text())
     nodes = {node["id"]: node for node in d["phases"]}
     assert nodes["phase3-consensus"]["transitions"] == [
         {

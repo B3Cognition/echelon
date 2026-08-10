@@ -60,7 +60,7 @@ Use the Agent tool:
   </context>
 
   <instructions>
-  You are IMPLEMENTER. Read agents/build/implementer.md for your complete protocol.
+  You are IMPLEMENTER. Read subagents/echelon.implementer.md for your complete protocol.
   Build task {task_id}: {task_description}
   Write code and tests. Return journal entries in `echelon_result.journal_entries`.
   </instructions>

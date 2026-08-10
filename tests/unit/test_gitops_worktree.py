@@ -26,7 +26,7 @@ from harness.runtime_surface import (
 )
 
 
-def _make_gitops(tmp_path, *, llm_cli: str = "claude"):
+def _make_gitops(tmp_path, *, llm_cli: str = "codex"):
     prose = tmp_path / ".echelon" / "prosaic"
     (prose / "commands").mkdir(parents=True, exist_ok=True)
     (prose / "subagents").mkdir(exist_ok=True)
@@ -913,131 +913,46 @@ def test_sync_runtime_extension_real_tree_matches_delivery_surface_policy(tmp_pa
         assert not (runtime / forbidden).exists(), forbidden
 
 
-def test_sync_runtime_extension_materializes_claude_command_skills(tmp_path):
-    """Harness worktrees get ignored Claude skill wrappers from runtime commands."""
+def test_sync_runtime_extension_delegates_claude_prose_to_prosaic(tmp_path):
     source = tmp_path / ".echelon" / "runtime"
-    (source / "agents" / "control").mkdir(parents=True)
-    (source / "workflow").mkdir()
-    prose = tmp_path / ".echelon" / "prosaic"
-    (prose / "commands").mkdir(parents=True)
-    (source / "agents" / "control" / "commander.md").write_text("commander\n", encoding="utf-8")
-    (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
-    (prose / "commands" / "echelon.verify-spec.md").write_text(
-        "---\n"
-        "name: echelon.verify-spec\n"
-        "description: Verify spec\n"
-        "---\n\n"
-        "Read `agents/control/commander.md` and `workflow/definition.yaml`.\n\n"
-        "$ARGUMENTS\n",
-        encoding="utf-8",
-    )
-
-    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
-    worktree.mkdir(parents=True)
-    exclude = tmp_path / "git-exclude"
-
-    gitops = _make_gitops(tmp_path)
-    with patch("harness.gitops._run_git") as run_git:
-        run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
-        gitops.sync_runtime_extension(worktree)
-
-    skill = worktree / ".claude" / "skills" / "echelon-verify-spec" / "SKILL.md"
-    text = skill.read_text(encoding="utf-8")
-    assert "name: echelon-verify-spec" in text
-    assert "agents/control/commander.md" not in text
-    assert "workflow/definition.yaml" not in text
-    assert "$ARGUMENTS" in text
-    assert ".claude/skills/echelon-verify-spec/" in exclude.read_text(encoding="utf-8")
-
-
-def test_sync_runtime_extension_skips_claude_command_skills_for_codex(tmp_path):
-    """Provider-specific Claude skill wrappers must not appear for Codex delivery."""
-    source = tmp_path / ".echelon" / "runtime"
-    (source / "agents" / "control").mkdir(parents=True)
-    (source / "workflow").mkdir()
-    prose = tmp_path / ".echelon" / "prosaic"
-    (prose / "commands").mkdir(parents=True)
-    (source / "agents" / "control" / "commander.md").write_text("commander\n", encoding="utf-8")
-    (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
-    (prose / "commands" / "echelon.verify-spec.md").write_text(
-        "---\n"
-        "name: echelon.verify-spec\n"
-        "description: Verify spec\n"
-        "---\n\n"
-        "$ARGUMENTS\n",
-        encoding="utf-8",
-    )
-
-    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
-    worktree.mkdir(parents=True)
-    exclude = tmp_path / "git-exclude"
-
-    gitops = _make_gitops(tmp_path, llm_cli="codex")
-    with patch("harness.gitops._run_git") as run_git:
-        run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
-        gitops.sync_runtime_extension(worktree)
-
-    assert not (worktree / ".claude" / "skills").exists()
-    assert ".claude/skills" not in exclude.read_text(encoding="utf-8")
-
-
-def test_sync_runtime_extension_materializes_claude_agents(tmp_path):
-    """Harness worktrees get ignored Claude agent registry files from runtime agents."""
-    source = tmp_path / ".echelon" / "runtime"
-    (source / "agents" / "control").mkdir(parents=True)
-    prose = tmp_path / ".echelon" / "prosaic" / "subagents"
-    prose.mkdir(parents=True)
-    (source / "workflow").mkdir()
-    (source / "agents" / "control" / "commander.md").write_text("commander\n", encoding="utf-8")
-    (prose / "echelon.spec-guard.md").write_text(
-        "# SPEC GUARD\n\nguard\n",
-        encoding="utf-8",
-    )
-    (prose / "echelon.scout.md").write_text(
-        "# SCOUT\n\nscout\n",
-        encoding="utf-8",
-    )
-    (prose / "echelon.architect.md").write_text(
-        "# ARCHITECT\n\narchitect\n",
-        encoding="utf-8",
-    )
+    (source / "workflow").mkdir(parents=True)
     (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
 
     worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
     worktree.mkdir(parents=True)
     exclude = tmp_path / "git-exclude"
 
-    gitops = _make_gitops(tmp_path)
-    with patch("harness.gitops._run_git") as run_git:
+    gitops = _make_gitops(tmp_path, llm_cli="claude")
+    with (
+        patch("harness.gitops._run_git") as run_git,
+        patch(
+            "harness.gitops.deploy_provider_prose",
+            return_value=(
+                ".claude/commands/",
+                ".claude/agents/",
+                ".claude/skills/",
+                ".prosaic-manifest.json",
+                ".prosaic-backups/",
+                ".echelon/prosaic-provider-owner.json",
+            ),
+        ) as deploy,
+    ):
         run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
         gitops.sync_runtime_extension(worktree)
 
-    commander = worktree / ".claude" / "agents" / "echelon-commander.md"
-    spec_guard = worktree / ".claude" / "agents" / "echelon-spec-guard.md"
-    scout = worktree / ".claude" / "agents" / "echelon-scout.md"
-    architect = worktree / ".claude" / "agents" / "echelon-architect.md"
-    assert not commander.exists()
-    spec_guard_text = spec_guard.read_text(encoding="utf-8")
-    assert spec_guard_text.startswith("---\nname: echelon-spec-guard\n")
-    assert "description: SPEC GUARD" in spec_guard_text
-    assert "# SPEC GUARD\n\nguard\n" in spec_guard_text
-    assert not scout.exists()
-    assert not architect.exists()
-    assert ".claude/agents/" in exclude.read_text(encoding="utf-8")
+    deploy.assert_called_once_with("claude", worktree)
+    ignored = exclude.read_text(encoding="utf-8")
+    assert ".claude/commands/" in ignored
+    assert ".claude/agents/" in ignored
+    assert ".claude/skills/" in ignored
+    assert ".prosaic-manifest.json" in ignored
+    assert ".prosaic-backups/" in ignored
+    assert ".echelon/prosaic-provider-owner.json" in ignored
 
 
-def test_sync_runtime_extension_skips_claude_agents_for_codex(tmp_path):
-    """Provider-specific Claude agent wrappers must not appear for Codex delivery."""
+def test_sync_runtime_extension_skips_provider_prose_deployment_for_codex(tmp_path):
     source = tmp_path / ".echelon" / "runtime"
-    (source / "agents" / "control").mkdir(parents=True)
-    prose = tmp_path / ".echelon" / "prosaic" / "subagents"
-    prose.mkdir(parents=True)
-    (source / "workflow").mkdir()
-    (source / "agents" / "control" / "commander.md").write_text("commander\n", encoding="utf-8")
-    (prose / "echelon.spec-guard.md").write_text(
-        "# SPEC GUARD\n\nguard\n",
-        encoding="utf-8",
-    )
+    (source / "workflow").mkdir(parents=True)
     (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
 
     worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
@@ -1045,12 +960,15 @@ def test_sync_runtime_extension_skips_claude_agents_for_codex(tmp_path):
     exclude = tmp_path / "git-exclude"
 
     gitops = _make_gitops(tmp_path, llm_cli="codex")
-    with patch("harness.gitops._run_git") as run_git:
+    with (
+        patch("harness.gitops._run_git") as run_git,
+        patch("harness.gitops.deploy_provider_prose", return_value=()) as deploy,
+    ):
         run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
         gitops.sync_runtime_extension(worktree)
 
-    assert not (worktree / ".claude" / "agents").exists()
-    assert ".claude/agents" not in exclude.read_text(encoding="utf-8")
+    deploy.assert_called_once_with("codex", worktree)
+    assert ".claude/" not in exclude.read_text(encoding="utf-8")
 
 
 def test_sync_runtime_extension_fails_before_llm_when_extension_missing(tmp_path):

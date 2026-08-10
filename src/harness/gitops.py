@@ -15,19 +15,19 @@ Per ADR-006: Uses gh/glab CLI for PR operations.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_message
 from harness.config import HarnessConfig
 from harness.errors import GitOpsError, GitOpsEscalation, SelfTargetError
 from harness.paths import build_dir as _build_dir_fn, mirror_path as _mirror_path_fn, runs_dir as _runs_dir_fn
-from harness.provider_scaffolding import provider_runtime_scaffolder
 from harness.runtime_surface import (
     DELIVERY_COMMAND_FILES,
     DELIVERY_EXCLUDED_BASH_FILES,
@@ -77,6 +77,20 @@ PROSAIC_RUNTIME_EXCLUDES = (
     ".echelon/prosaic/",
     ".echelon/runtime/",
 )
+PROSAIC_PROVIDER_TARGETS = {
+    "claude": "claude-code",
+}
+PROSAIC_PROVIDER_EXCLUDES = {
+    "claude-code": (
+        ".claude/commands/",
+        ".claude/agents/",
+        ".claude/skills/",
+        ".prosaic-manifest.json",
+        ".prosaic-backups/",
+        ".echelon/prosaic-provider-owner.json",
+    ),
+}
+PROSAIC_PROVIDER_OWNER_REL = Path(".echelon/prosaic-provider-owner.json")
 
 
 CODEGRAPH_RUNTIME_REL = Path("scripts") / "node" / "codegraph"
@@ -302,6 +316,70 @@ def _run_git(
             f"Git command failed: {' '.join(cmd)}: {e.stderr.strip()}",
             command=" ".join(cmd),
         )
+
+
+def deploy_provider_prose(
+    llm_cli: str,
+    worktree: Path,
+    *,
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> tuple[str, ...]:
+    """Ask Prosaic to render provider-native prose inside a delivery worktree."""
+    target = PROSAIC_PROVIDER_TARGETS.get(llm_cli)
+    if target is None:
+        return ()
+
+    manifest = worktree / ".prosaic-manifest.json"
+    owner_path = worktree / PROSAIC_PROVIDER_OWNER_REL
+    expected_owner = {"owner": "echelon", "target": target}
+    if manifest.exists():
+        try:
+            owner = json.loads(owner_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            owner = None
+        if owner != expected_owner:
+            raise GitOpsError(
+                "Delivery worktree already has a Prosaic manifest not owned by Echelon; "
+                "refusing to reinterpret its managed provider files.",
+                command="prosaic apply",
+            )
+
+    command = [
+        "prosaic",
+        "apply",
+        "--source",
+        ".echelon/prosaic",
+        "--targets",
+        target,
+        "--types",
+        "command",
+        "subagent",
+        "--no-color",
+    ]
+    try:
+        completed = run(
+            command,
+            cwd=worktree,
+            capture_output=True,
+            text=True,
+            timeout=GIT_CMD_TIMEOUT,
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        detail = getattr(exc, "stderr", None) or str(exc)
+        raise GitOpsError(
+            f"Prosaic provider deployment failed for {target}: {str(detail).strip()}",
+            command=" ".join(command),
+        ) from exc
+
+    if completed.stdout.strip():
+        logger.info("Prosaic %s deployment:\n%s", target, completed.stdout.strip())
+    owner_path.parent.mkdir(parents=True, exist_ok=True)
+    owner_path.write_text(
+        json.dumps(expected_owner, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return PROSAIC_PROVIDER_EXCLUDES[target]
 
 
 def _check_tool_available(tool: str) -> bool:
@@ -831,7 +909,7 @@ class GitOpsManager:
         if prepare_codegraph:
             prepare_codegraph_runtime(runtime_dest)
             prepare_perlgraph_runtime(runtime_dest)
-        self._sync_provider_runtime_shims(prose_dest, worktree)
+        self._deploy_provider_prose(worktree)
         self._exclude_prosaic_runtime(worktree)
         logger.info(
             "Synced deployed Echelon Prosaic/runtime into worktree at %s and %s",
@@ -839,14 +917,10 @@ class GitOpsManager:
             runtime_dest,
         )
 
-    def _sync_provider_runtime_shims(self, prose_root: Path, worktree: Path) -> None:
-        """Materialize AI-CLI-specific helper files only for their provider."""
-        scaffolder = provider_runtime_scaffolder(self._config.llm.cli)
-        scaffolder.sync(
-            prose_root=prose_root,
-            worktree=worktree,
-            exclude_line=lambda line: self._exclude_provider_scaffold_line(worktree, line),
-        )
+    def _deploy_provider_prose(self, worktree: Path) -> None:
+        """Delegate provider-native delivery-worktree prose to Prosaic."""
+        for line in deploy_provider_prose(self._config.llm.cli, worktree):
+            self._exclude_provider_prose_line(worktree, line)
 
     @staticmethod
     def _append_unique_line(path: Path, line: str) -> None:
@@ -876,11 +950,11 @@ class GitOpsManager:
         except GitOpsError as e:
             logger.warning("Could not exclude Prosaic runtime from git status: %s", e)
 
-    def _exclude_provider_scaffold_line(self, worktree: Path, line: str) -> None:
+    def _exclude_provider_prose_line(self, worktree: Path, line: str) -> None:
         try:
             self._append_unique_line(self._git_exclude_path(worktree), line)
         except GitOpsError as e:
-            logger.warning("Could not exclude generated provider scaffold from git status: %s", e)
+            logger.warning("Could not exclude Prosaic provider output from git status: %s", e)
 
     def destroy_worktree(
         self,

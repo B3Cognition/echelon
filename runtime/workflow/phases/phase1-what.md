@@ -46,7 +46,7 @@ The active runtime dispatches this role with the following request:
   </context>
 
   <instructions>
-  You are CARTOGRAPHER. Read agents/exploration/cartographer.md for your complete protocol.
+  You are CARTOGRAPHER. Read subagents/echelon.cartographer.md for your complete protocol.
   Phase A identity is controller-owned. If this is a first WHAT pass with no existing `{spec_dir}/spec.md`, create it from the supplied template in `{spec_dir}`, move discovery artifacts there, then enhance it with echelon.scout (SCOUT)'s domain insights. If this is a resumed/amendment pass, enhance the existing file in place. Never create, switch, rename, or discover a branch or another spec directory.
   Treat `.echelon/constitution.md` as read-only governance context. Apply its principles while authoring `spec.md`; do not edit, patch, append to, or regenerate the constitution from this phase.
   If `evidence-resolution.md` is present, apply its observed facts and confidence limits to the amendment. Do not re-investigate the same source, discard evidence because it conflicts with the prior draft, or invent facts beyond its stated gaps.

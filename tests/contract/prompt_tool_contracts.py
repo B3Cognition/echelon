@@ -8,19 +8,21 @@ from harness.prompt_markdown import parse_prompt_markdown
 
 
 PROMPT_GLOBS = (
-    "extension/agents/**/*.md",
-    "extension/commands/appendices/*.md",
-    "extension/commands/echelon.*.md",
-    "extension/workflow/phases/**/*.md",
+    "prosaic/subagents/*.md",
+    "prosaic/commands/appendices/*.md",
+    "prosaic/commands/echelon.*.md",
+    "runtime/workflow/phases/**/*.md",
 )
 
-PHASE_A_AGENT_DIRS = (
-    "control",
-    "exploration",
-    "feasibility",
-    "learning",
-    "solution",
-    "specialists",
+BUILD_SUBAGENT_NAMES = (
+    "echelon.code-reviewer.md",
+    "echelon.docs-verifier.md",
+    "echelon.implementer.md",
+    "echelon.integrator.md",
+    "echelon.progress-tracker.md",
+    "echelon.spec-guard.md",
+    "echelon.tech-writer.md",
+    "echelon.test-guardian.md",
 )
 
 PHASE_A_PHASE_GLOBS = (
@@ -59,6 +61,7 @@ EXECUTABLE_REFERENCE_RE = re.compile(
 EXACT_INVOCATION_RE = re.compile(
     r"`[^`\n]*(?:"
     r"speckit\.[\w.-]+|"
+    r"echelon\.[\w.-]+|"
     r"understanding(?:\s+scan|\s+diagram|\s+\"\$|\s+\$|\s+<|\s+[\w{/])|"
     r"lexicon\s+validate|"
     r"echelon\s+[\w.-]+|"
@@ -320,7 +323,7 @@ VERIFY_SPEC_RUN_DISCOVERY_RE = re.compile(
 )
 
 DELIVERY_COMMAND_RUNTIME_DISCOVERY_TARGETS = (
-    "agents/control/commander.md",
+    "subagents/echelon.commander.md",
     "workflow/definition.yaml",
 )
 
@@ -449,10 +452,8 @@ def _default_prompt_paths(root: Path) -> list[Path]:
 
 
 def _default_phase_a_prompt_paths(root: Path) -> list[Path]:
-    paths: list[Path] = []
-    for directory in PHASE_A_AGENT_DIRS:
-        paths.extend((root / "extension" / "agents" / directory).glob("**/*.md"))
-    phase_dir = root / "extension" / "workflow" / "phases"
+    paths = list((root / "prosaic" / "subagents").glob("*.md"))
+    phase_dir = root / "runtime" / "workflow" / "phases"
     for pattern in PHASE_A_PHASE_GLOBS:
         paths.extend(phase_dir.glob(pattern))
     return sorted(path for path in paths if path.is_file())
@@ -533,39 +534,44 @@ def _is_negative_boundary(line: str) -> bool:
 def _is_build_prompt(path: Path) -> bool:
     normalized = path.as_posix()
     return (
-        "/extension/agents/build/" in normalized
-        or normalized.startswith("extension/agents/build/")
-        or "/extension/workflow/phases/build-" in normalized
-        or normalized.startswith("extension/workflow/phases/build-")
+        (
+            path.name in BUILD_SUBAGENT_NAMES
+            and (
+                "/prosaic/subagents/" in normalized
+                or normalized.startswith("prosaic/subagents/")
+            )
+        )
+        or "/runtime/workflow/phases/build-" in normalized
+        or normalized.startswith("runtime/workflow/phases/build-")
     )
 
 
 def _is_verify_spec_phase(path: Path) -> bool:
     normalized = path.as_posix()
     return (
-        "/extension/workflow/phases/verify-spec-" in normalized
-        or normalized.startswith("extension/workflow/phases/verify-spec-")
+        "/runtime/workflow/phases/verify-spec-" in normalized
+        or normalized.startswith("runtime/workflow/phases/verify-spec-")
     )
 
 
 def _is_echelon_command_wrapper(path: Path) -> bool:
     normalized = path.as_posix()
     return (
-        "/extension/commands/echelon." in normalized
-        or normalized.startswith("extension/commands/echelon.")
+        "/prosaic/commands/echelon." in normalized
+        or normalized.startswith("prosaic/commands/echelon.")
     ) and path.name.endswith(".md")
 
 
 def _is_command_appendix(path: Path) -> bool:
     normalized = path.as_posix()
-    return "/extension/commands/appendices/" in normalized or normalized.startswith(
-        "extension/commands/appendices/"
+    return "/prosaic/commands/appendices/" in normalized or normalized.startswith(
+        "prosaic/commands/appendices/"
     )
 
 
 def _is_harness_run_command(path: Path) -> bool:
     normalized = path.as_posix()
-    return normalized.endswith("extension/commands/echelon.harness-run.md")
+    return normalized.endswith("prosaic/commands/echelon.harness-run.md")
 
 
 def scan_prompt_tool_contracts(

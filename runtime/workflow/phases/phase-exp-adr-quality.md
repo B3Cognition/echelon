@@ -14,7 +14,7 @@ Read `plan.md`, `architecture.md` when present, `adr/ADR-*.md`, `tasks.md`, and 
 
 ```xml
 <instructions>
-You are ARCHITECT. Read agents/solution/architect.md for your complete protocol.
+You are ARCHITECT. Read subagents/echelon.architect.md for your complete protocol.
 Operate in experimental ADR-quality mode for EGR-063.
 
 Audit ADRs for unclear decisions, missing status, missing consequences, contradictions between ADRs, drift from `plan.md`, and missing links from important task or architecture choices.

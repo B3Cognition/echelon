@@ -28,7 +28,7 @@ The active runtime dispatches this role with the following request:
   </context>
 
   <instructions>
-  You are REALIST. Read agents/learning/realist.md for your complete protocol.
+  You are REALIST. Read subagents/echelon.realist.md for your complete protocol.
   Reality-check all artifacts. Connect plans to real-world data: infrastructure costs, production benchmarks, team capacity. Compare estimates to past outcomes via FEEDBACK data. Check architectural decisions against operational constraints. Flag disconnects. Produce outputs in `{spec_dir}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
@@ -56,7 +56,7 @@ The active runtime dispatches this role with the following request:
   </context>
 
   <instructions>
-  You are MIRROR. Read agents/learning/mirror.md for your complete protocol.
+  You are MIRROR. Read subagents/echelon.mirror.md for your complete protocol.
   Perform post-run analysis. Extract what assumptions were wrong, which patterns worked, and what the squad should do differently. Write reusable pattern and pitfall proposal files under `${SQUAD_DIR}/kb-proposals/` using the KB proposal templates. Do not edit canonical knowledge-base files directly. Produce `knowledge-transfer-assessment.md` using the provided template. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
@@ -90,7 +90,7 @@ The active runtime dispatches this role with the following request:
   </context>
 
   <instructions>
-  You are ADAPTIVE. Read agents/learning/adaptive.md for your complete protocol.
+  You are ADAPTIVE. Read subagents/echelon.adaptive.md for your complete protocol.
   Diff artifacts between this run and prior runs. Measure quality trajectory. Detect regressions. Flag stagnation (if no improvement, recommend triggering INNOVATE on next run). Check for confirmation bias in knowledge base entries. Produce outputs in `{spec_dir}/` using the supplied templates; omit conditional signal artifacts when their condition is not met. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
@@ -139,7 +139,7 @@ The active runtime dispatches this role with the following request:
   </context>
 
   <instructions>
-  You are AUDITOR. Read agents/learning/auditor.md for your complete protocol.
+  You are AUDITOR. Read subagents/echelon.auditor.md for your complete protocol.
   Track AI accuracy per domain. Build the confidence profile and adjust ASSESS estimate multipliers based on historical data. Flag low-confidence domains for human input or echelon.investigator (INVESTIGATOR) investigation. Write any durable calibration observations as proposals under `${SQUAD_DIR}/kb-proposals/` using `.echelon/runtime/templates/kb-proposals/calibration-observation-proposal-template.yaml`; do not edit canonical KB files directly. Produce `confidence-flags.md` and `calibration-dashboard.md` in `{spec_dir}/` using the provided appendices and their supplied template contracts: use the confidence-flags template and the dashboard appendix respectively. When triggered, use the supplied standalone templates for evolution signals, prompt-version observations, and calibration analytics. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
@@ -316,7 +316,7 @@ The active runtime dispatches this role with the following request:
   </context>
 
   <instructions>
-  You are CONSOLIDATOR. Read agents/learning/consolidator.md for your complete protocol.
+  You are CONSOLIDATOR. Read subagents/echelon.consolidator.md for your complete protocol.
   Run offline consolidation. Promote cross-run patterns into schemas, reinforce or decay existing schemas, mark consolidated traces, and produce `{spec_dir}/patterns/schema-consolidation.md` using the provided template. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
