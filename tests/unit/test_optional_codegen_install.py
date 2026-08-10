@@ -200,3 +200,13 @@ def test_readme_describes_prosaic_first_provider_dispatch() -> None:
     assert "AICodingCliProvider" in execution
     assert "specify extension add" not in execution
     assert "speckit.echelon" not in execution
+
+
+def test_readme_command_catalog_lists_only_echelon_cli_commands() -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    commands = readme.split("## Commands", 1)[1].split("## Codegen Pipeline", 1)[0]
+
+    assert "Spec-kit skill" not in commands
+    assert "speckit.echelon" not in commands
+    assert "*(spec-kit only)*" not in commands
+    assert "| Terminal | Purpose |" in commands

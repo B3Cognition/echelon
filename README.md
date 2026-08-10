@@ -1073,7 +1073,7 @@ analysis.
 
 ## Commands
 
-Each command is available two ways: as a terminal CLI tool (no Claude session needed) and as a spec-kit skill inside a Claude Code session.
+Commands use the Echelon terminal CLI; Prosaic supplies provider-neutral prose behind the interface.
 
 ### Command architecture
 
@@ -1088,75 +1088,67 @@ This keeps commands readable and makes individual phases independently editable 
 
 ### echelon — spec authoring
 
-| Terminal | Spec-kit skill | Purpose |
-| -------- | -------------- | ------- |
-| `echelon workspace init [--allow-unsafe-host-execution]` | `speckit.echelon.init` | One-time project setup — `.echelon/config.yml`, local tool-policy approval, deploy infra, git hook |
-| `echelon spec run "<description>" [--mode <semi\|banzai\|guided>] [--target <source-path>]... [--input <role:path>]... [--init] [--ignore-re]` | `speckit.echelon.run` | Phase A: snapshot optional published RE and immutable product evidence, then run the squad → spec.md, plan.md, tasks.md, targets.yml, feature branch |
-| `echelon re run [--re-policy <policy>] [--re-max-inner <n>] [--profile <fast\|balanced\|high>] [--reset]` | — | Start or resume the independent workspace RE lifecycle; publish a validated completed run explicitly |
-| `echelon re continue [--re-max-inner <n>]` | — | Continue the active RE run without supplying a new answer |
-| `echelon re resume "<answer>" [--re-max-inner <n>]` | — | Resolve a structured RE human-input block and continue |
-| `echelon re publish <run-id> [--allow-partial] [--commit]` | — | Publish a validated RE run into `re/`; optionally commit only durable published RE artifacts |
-| `echelon spec bugfix <id> "<desc>"` | `speckit.echelon.bugfix` | DEBUGGER + SENTINEL + SPEC GUARD → bugfix plan + tasks |
-| `echelon build <id>` | `speckit.echelon.build` | Build phase (agent-driven) |
-| `echelon codegen <id>` | `speckit.echelon.codegen` | Build phase via SOAR pipeline (alternative to build) |
-| `echelon review <id> [--pr-url <url>]` | `speckit.echelon.review` | PR review triage — groups blocking comments, runs DEBUGGER → SENTINEL → SPEC GUARD per group, writes `review-fix-{n}.md` + tasks, signals `review_fix_queued` to harness |
-| `echelon spec verify <id> [--reconcile] [--dry-run]` | `speckit.echelon.verify-spec` | Run the complete fulfillment audit against the spec's single declared target checkout, stamp current-commit provenance, and write the verified ledger; `--reconcile` applies deterministic bookkeeping fixes and `--reconcile --dry-run` previews them |
-| `echelon spec defer <id> <ID...> --reason <reason> [--dry-run]` | — | Commit an auditable owner deferral for direct tasks or canonical FR/NFR/AC/SC requirements; displays mapped tasks and requirements that remain active |
-| `echelon spec plan <id> <ID...> [--dry-run]` | — | Restore matching deferred work to the planned scope, preserving the deferral ledger history |
-| `echelon spec reopen <id> [from=<report>]` | `speckit.echelon.reopen` | Reopen a spec from fulfillment gaps and append harness-ready `FG-T*` tasks |
-| `echelon spec change <id> "<desc>"` | `speckit.echelon.change` | Handle spec change during build |
-| `echelon spec amend <id> "<desc>" [--input <role:path>]... [--dry-run]` | — | Prepare an isolated product-input amendment for an unbuilt spec |
-| `echelon spec retarget <id> --target <source-path>... [--confirm]` | — | Preview or confirm a destructive complete target-set replacement for an unimplemented spec; confirmation creates the mandatory recovery checkpoint and rebuilds Phase A on the same branch |
-| `echelon spec repair-traceability [--confirm]` | — | Preview or apply a safe repair that removes only contextual task references, then resumes finalization |
-| `echelon cicd` | — | Retired; re-run `echelon delivery init` to auto-detect high-confidence `verify_command` |
-| `echelon spec status` | `speckit.echelon.status` | Re-orient summary — run state, staging artifacts, open issues, cost, next step |
-| `echelon spec publish <numeric-id>` | — | Copy the matching committed `specs/<id>/` snapshot from its unique canonical local branch to the local default branch and commit it; source branches are retained and nothing is pushed |
-| `echelon spec publish <canonical-branch>` | — | Publish one exact canonical local spec branch by full name without merging implementation history |
-| `echelon spec publish --all` | — | Atomically publish every unambiguous canonical local spec branch in one local default-branch commit |
-| `echelon spec memory refresh <id> [--write]` | — | Mine canonical spec artifacts into MemPalace and immediately audit reconciliation; optionally persist the audit reports |
-| `echelon re memory refresh` | — | Mine published RE artifacts into MemPalace and immediately audit reconciliation |
-| `echelon spec evidence publish <id>` | — | Publish the canonical verification-evidence package for a landed spec |
-| `echelon spec evidence memory refresh <id>` | — | Mine published spec evidence into MemPalace and immediately audit reconciliation |
-| `echelon graph refresh <id> --write` | — | Build and audit the persisted artifact graph from current canonical artifacts and MemPalace receipts without mining memory |
-| `echelon graph view <id> [--lens <lens>] [--no-open]` | — | Generate an offline interactive graph viewer with live audit findings |
-| `echelon graph export <id> --format dot [--output <path>]` | — | Export the persisted graph as deterministic DOT without rebuilding or mining |
-| `echelon spec targets <id>` | — | Read-only task ownership report: display every canonical task grouped by explicit `target=` ownership, including `UNOWNED`, `CROSS-TARGET`, and target/path mismatch diagnostics; exits nonzero when ownership is invalid |
-| `echelon spec artifacts <id>` | — | Generate or refresh `specs/<id>-*/ARTIFACTS.md`, the deterministic human map of spec-folder outputs |
-| `echelon wiki build` | — | Build the local, read-only human-navigation vault from canonical `specs/` and published `re/` artifacts |
-| `echelon wiki status` | — | Report vault freshness and added, changed, or removed canonical inputs |
-| `echelon wiki clean` | — | Safely remove only the manifest-owned generated vault under `.echelon/runtime/wiki/` |
-| `echelon spec continue` | — | Run the next no-input recovery action: resume an active/interrupted run, retry recoverable failed dispatches, or advance incomplete Phase A work |
-| `echelon spec resume "<answer>"` | `speckit.echelon.resume` | Provide an answer only when the squad asked for human input; after recording it, Echelon delegates back to continuation |
-| `echelon spec rewind <phase-id> [--commit <sha>] [--confirm]` | — | Preview or rewind the active squad run. Phase-only selection uses the last matching ledger row; `--commit` selects an explicit historical occurrence by full or unique abbreviated commit |
-| `echelon spec switch <spec-or-run-id> [--stash \| --discard --confirm]` | — | Select a checkpointed Phase A spec run while preserving or explicitly discarding outgoing dirty state |
-| `echelon spec checkpoint list\|accept\|commit ...` | — | Inspect checkpoints in authoritative oldest-to-newest ledger order with UTC creation time and latest-per-phase markers, or accept/commit a named Phase A checkpoint |
-| `echelon phase list` | — | List deterministic workflow phase IDs available for targeted repair/replay |
-| `echelon phase run <phase-id> [--spec <id>]` | — | Run exactly one workflow phase through the normal COMMANDER/state/journal contracts, publish artifacts to the target spec directory when resolvable, then stop |
-| `echelon benchmark list` / `echelon benchmark run <fixture> --variant <id> --baseline-ref <ref>` | — | Experimental EGR-063 artifact-quality benchmark runner. Variants compare baseline Phase A/build behavior against opt-in constitution, tasks, and ADR cleanse phases; each real run resets to the supplied committed Phase A baseline before and after execution |
-| `echelon delivery land <id>` | — | Merge PR, delete remote branch, clean worktrees, mark spec landed; uses `targets:` to land the target repo branch and blocks on unresolved fulfillment gaps |
-| `echelon delivery land <id> --allow-fulfillment-gaps` | — | Emergency override for knowingly landing despite fulfillment gaps |
-| *(spec-kit only)* | `speckit.echelon.verify` | Check 100% spec coverage |
-| *(spec-kit only)* | `speckit.echelon.health` | Periodic health check (drift, KB freshness) |
-| *(spec-kit only)* | `speckit.echelon.investigate` | Trigger INVESTIGATOR |
-| *(spec-kit only)* | `speckit.echelon.innovate` | Trigger MAVERICK |
-| *(spec-kit only)* | `speckit.echelon.ground` | Trigger REALIST |
-| *(spec-kit only)* | `speckit.echelon.feedback` | Post-implementation feedback |
-| *(spec-kit only)* | `speckit.echelon.deploy` | Trigger deploy, check status, or rollback |
+| Terminal | Purpose |
+| -------- | ------- |
+| `echelon workspace init [--allow-unsafe-host-execution]` | One-time project setup — `.echelon/config.yml`, local tool-policy approval, deploy infra, git hook |
+| `echelon spec run "<description>" [--mode <semi\|banzai\|guided>] [--target <source-path>]... [--input <role:path>]... [--init] [--ignore-re]` | Phase A: snapshot optional published RE and immutable product evidence, then run the squad → spec.md, plan.md, tasks.md, targets.yml, feature branch |
+| `echelon re run [--re-policy <policy>] [--re-max-inner <n>] [--profile <fast\|balanced\|high>] [--reset]` | Start or resume the independent workspace RE lifecycle; publish a validated completed run explicitly |
+| `echelon re continue [--re-max-inner <n>]` | Continue the active RE run without supplying a new answer |
+| `echelon re resume "<answer>" [--re-max-inner <n>]` | Resolve a structured RE human-input block and continue |
+| `echelon re publish <run-id> [--allow-partial] [--commit]` | Publish a validated RE run into `re/`; optionally commit only durable published RE artifacts |
+| `echelon spec bugfix <id> "<desc>"` | DEBUGGER + SENTINEL + SPEC GUARD → bugfix plan + tasks |
+| `echelon build <id>` | Build phase (agent-driven) |
+| `echelon codegen <id>` | Build phase via SOAR pipeline (alternative to build) |
+| `echelon review <id> [--pr-url <url>]` | PR review triage — groups blocking comments, runs DEBUGGER → SENTINEL → SPEC GUARD per group, writes `review-fix-{n}.md` + tasks, signals `review_fix_queued` to harness |
+| `echelon spec verify <id> [--reconcile] [--dry-run]` | Run the complete fulfillment audit against the spec's single declared target checkout, stamp current-commit provenance, and write the verified ledger; `--reconcile` applies deterministic bookkeeping fixes and `--reconcile --dry-run` previews them |
+| `echelon spec defer <id> <ID...> --reason <reason> [--dry-run]` | Commit an auditable owner deferral for direct tasks or canonical FR/NFR/AC/SC requirements; displays mapped tasks and requirements that remain active |
+| `echelon spec plan <id> <ID...> [--dry-run]` | Restore matching deferred work to the planned scope, preserving the deferral ledger history |
+| `echelon spec reopen <id> [from=<report>]` | Reopen a spec from fulfillment gaps and append harness-ready `FG-T*` tasks |
+| `echelon spec change <id> "<desc>"` | Handle spec change during build |
+| `echelon spec amend <id> "<desc>" [--input <role:path>]... [--dry-run]` | Prepare an isolated product-input amendment for an unbuilt spec |
+| `echelon spec retarget <id> --target <source-path>... [--confirm]` | Preview or confirm a destructive complete target-set replacement for an unimplemented spec; confirmation creates the mandatory recovery checkpoint and rebuilds Phase A on the same branch |
+| `echelon spec repair-traceability [--confirm]` | Preview or apply a safe repair that removes only contextual task references, then resumes finalization |
+| `echelon cicd` | Retired; re-run `echelon delivery init` to auto-detect high-confidence `verify_command` |
+| `echelon spec status` | Re-orient summary — run state, staging artifacts, open issues, cost, next step |
+| `echelon spec publish <numeric-id>` | Copy the matching committed `specs/<id>/` snapshot from its unique canonical local branch to the local default branch and commit it; source branches are retained and nothing is pushed |
+| `echelon spec publish <canonical-branch>` | Publish one exact canonical local spec branch by full name without merging implementation history |
+| `echelon spec publish --all` | Atomically publish every unambiguous canonical local spec branch in one local default-branch commit |
+| `echelon spec memory refresh <id> [--write]` | Mine canonical spec artifacts into MemPalace and immediately audit reconciliation; optionally persist the audit reports |
+| `echelon re memory refresh` | Mine published RE artifacts into MemPalace and immediately audit reconciliation |
+| `echelon spec evidence publish <id>` | Publish the canonical verification-evidence package for a landed spec |
+| `echelon spec evidence memory refresh <id>` | Mine published spec evidence into MemPalace and immediately audit reconciliation |
+| `echelon graph refresh <id> --write` | Build and audit the persisted artifact graph from current canonical artifacts and MemPalace receipts without mining memory |
+| `echelon graph view <id> [--lens <lens>] [--no-open]` | Generate an offline interactive graph viewer with live audit findings |
+| `echelon graph export <id> --format dot [--output <path>]` | Export the persisted graph as deterministic DOT without rebuilding or mining |
+| `echelon spec targets <id>` | Read-only task ownership report: display every canonical task grouped by explicit `target=` ownership, including `UNOWNED`, `CROSS-TARGET`, and target/path mismatch diagnostics; exits nonzero when ownership is invalid |
+| `echelon spec artifacts <id>` | Generate or refresh `specs/<id>-*/ARTIFACTS.md`, the deterministic human map of spec-folder outputs |
+| `echelon wiki build` | Build the local, read-only human-navigation vault from canonical `specs/` and published `re/` artifacts |
+| `echelon wiki status` | Report vault freshness and added, changed, or removed canonical inputs |
+| `echelon wiki clean` | Safely remove only the manifest-owned generated vault under `.echelon/runtime/wiki/` |
+| `echelon spec continue` | Run the next no-input recovery action: resume an active/interrupted run, retry recoverable failed dispatches, or advance incomplete Phase A work |
+| `echelon spec resume "<answer>"` | Provide an answer only when the squad asked for human input; after recording it, Echelon delegates back to continuation |
+| `echelon spec rewind <phase-id> [--commit <sha>] [--confirm]` | Preview or rewind the active squad run. Phase-only selection uses the last matching ledger row; `--commit` selects an explicit historical occurrence by full or unique abbreviated commit |
+| `echelon spec switch <spec-or-run-id> [--stash \| --discard --confirm]` | Select a checkpointed Phase A spec run while preserving or explicitly discarding outgoing dirty state |
+| `echelon spec checkpoint list\|accept\|commit ...` | Inspect checkpoints in authoritative oldest-to-newest ledger order with UTC creation time and latest-per-phase markers, or accept/commit a named Phase A checkpoint |
+| `echelon phase list` | List deterministic workflow phase IDs available for targeted repair/replay |
+| `echelon phase run <phase-id> [--spec <id>]` | Run exactly one workflow phase through the normal COMMANDER/state/journal contracts, publish artifacts to the target spec directory when resolvable, then stop |
+| `echelon benchmark list` / `echelon benchmark run <fixture> --variant <id> --baseline-ref <ref>` | Experimental EGR-063 artifact-quality benchmark runner. Variants compare baseline Phase A/build behavior against opt-in constitution, tasks, and ADR cleanse phases; each real run resets to the supplied committed Phase A baseline before and after execution |
+| `echelon delivery land <id>` | Merge PR, delete remote branch, clean worktrees, mark spec landed; uses `targets:` to land the target repo branch and blocks on unresolved fulfillment gaps |
+| `echelon delivery land <id> --allow-fulfillment-gaps` | Emergency override for knowingly landing despite fulfillment gaps |
 
 ### delivery — build, verify, PR
 
-| Terminal | Spec-kit skill | Purpose |
-| -------- | -------------- | ------- |
-| `echelon delivery init` | `speckit.echelon.harness-init` | One-time workspace delivery setup — provider, sandbox, config defaults |
-| `echelon delivery target <id>` | — | Prepare target-scoped delivery metadata in `specs/<id>/targets.yml`, including high-confidence `verify_command` detection |
-| `echelon delivery run <id>` | `speckit.echelon.harness-run <id>` | Build → Docker verify → PR (echelon squad strategy); validates persisted Phase A targets and target-owned task slices without inferring or rewriting them; prints `HARNESS HISTORY` |
-| `echelon delivery run <id> --strategy codegen` | `speckit.echelon.harness-run <id> strategy=codegen` | Build → Docker verify → PR (SOAR pipeline strategy) |
-| `echelon delivery continue <id>` | `speckit.echelon.harness-resume <id>` | Continue a blocked/checkpointed delivery loop when no new human answer is needed, including missing `verify_command`, Docker/Podman outage recovery, checkpoint recovery, provider reset, or repaired harness errors; prints `HARNESS HISTORY` |
-| `echelon delivery resume <id> "<answer>"` | `speckit.echelon.harness-resume <id> <answer>` | Resume a blocked delivery loop by recording the human answer to a pending escalation, then continuing the loop |
-| `echelon delivery status [<id>] [--strategy <strategy>]` | `speckit.echelon.harness-status [<id>]` | Show the active or selected delivery state, iterations, cost, and PR context |
-| `echelon delivery checkpoint list <id>` | — | List delivery checkpoints and recovery commits for a spec |
-| `echelon delivery land <id> [--continue] [--prepare-only]` | — | Merge or prepare the target feature branch, then clean up after fulfillment gates pass |
-| *(spec-kit only)* | `speckit.echelon.harness-status [<id>]` | Show active loop status, iterations, token usage, PR URL |
+| Terminal | Purpose |
+| -------- | ------- |
+| `echelon delivery init` | One-time workspace delivery setup — provider, sandbox, config defaults |
+| `echelon delivery target <id>` | Prepare target-scoped delivery metadata in `specs/<id>/targets.yml`, including high-confidence `verify_command` detection |
+| `echelon delivery run <id>` | Build → Docker verify → PR (echelon squad strategy); validates persisted Phase A targets and target-owned task slices without inferring or rewriting them; prints `HARNESS HISTORY` |
+| `echelon delivery run <id> --strategy codegen` | Build → Docker verify → PR (SOAR pipeline strategy) |
+| `echelon delivery continue <id>` | Continue a blocked/checkpointed delivery loop when no new human answer is needed, including missing `verify_command`, Docker/Podman outage recovery, checkpoint recovery, provider reset, or repaired harness errors; prints `HARNESS HISTORY` |
+| `echelon delivery resume <id> "<answer>"` | Resume a blocked delivery loop by recording the human answer to a pending escalation, then continuing the loop |
+| `echelon delivery status [<id>] [--strategy <strategy>]` | Show the active or selected delivery state, iterations, cost, and PR context |
+| `echelon delivery checkpoint list <id>` | List delivery checkpoints and recovery commits for a spec |
+| `echelon delivery land <id> [--continue] [--prepare-only]` | Merge or prepare the target feature branch, then clean up after fulfillment gates pass |
 
 Legacy aliases may still exist for older scripts, but current docs and operator
 guidance use the `spec` and `delivery` namespaces.
