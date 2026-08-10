@@ -5,11 +5,11 @@ set -uo pipefail
 . "$(cd "$(dirname -- "$0")/.." && pwd)/utils/python-detect.sh"
 
 REPO_ROOT="$(CDPATH='' cd "$(dirname "$0")/../.." && pwd)"
-SCRIPTS="$REPO_ROOT/extension/scripts/bash"
+SCRIPTS="$REPO_ROOT/runtime/scripts/bash"
 KB_DIR="$REPO_ROOT/knowledge-base"
 LOCK_DIR="$KB_DIR/.locks/kb-write.lock"
 METADATA_FILE="$LOCK_DIR/metadata.yaml"
-RECOVERY_DIR="$REPO_ROOT/.specify/squad/recovery"
+RECOVERY_DIR="$REPO_ROOT/runs/recovery"
 
 pass=0
 fail=0

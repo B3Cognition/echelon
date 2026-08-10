@@ -4,7 +4,7 @@
 set -uo pipefail
 
 REPO_ROOT="$(CDPATH='' cd "$(dirname "$0")/../.." && pwd)"
-SCRIPTS="$REPO_ROOT/extension/scripts/bash"
+SCRIPTS="$REPO_ROOT/runtime/scripts/bash"
 FIXTURES="$REPO_ROOT/tests/fixtures/kb"
 VALID_SEEDS="$FIXTURES/valid-seeds"
 CORRUPTED="$FIXTURES/corrupted"
@@ -45,7 +45,7 @@ done
 # TEST-002a-1 (negative): schema gate with schema-invalid.yaml exits 1 with KB_SCHEMA_INVALID
 
 tmpdir="$(mktemp -d)"
-ERROR_LOG_BACKUP="${REPO_ROOT}/.specify/squad/error.log"
+ERROR_LOG_BACKUP="${REPO_ROOT}/runs/error.log"
 [[ -f "$ERROR_LOG_BACKUP" ]] && cp "$ERROR_LOG_BACKUP" "$tmpdir/error.log.bak"
 : > "$ERROR_LOG_BACKUP" 2>/dev/null || true
 
@@ -56,7 +56,7 @@ assert "TEST-002a-1(neg): schema-invalid.yaml exits 1" "$(
   [[ "$rc" == "1" ]] && ok_result || fail_result "exit $rc"
 )"
 assert "TEST-002a-1(neg): KB_SCHEMA_INVALID in stderr/error.log" "$(
-  grep -q 'KB_SCHEMA_INVALID' "${REPO_ROOT}/.specify/squad/error.log" 2>/dev/null \
+  grep -q 'KB_SCHEMA_INVALID' "${REPO_ROOT}/runs/error.log" 2>/dev/null \
     && ok_result || fail_result "KB_SCHEMA_INVALID not found in error.log"
 )"
 

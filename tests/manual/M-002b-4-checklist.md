@@ -10,7 +10,7 @@
 ## Pre-requisites
 
 - A valid KB snapshot (baseline A) must exist in the `knowledge-base/` directory **before** the test.
-- The `kb-recover.sh` and `kb-write.sh` scripts must be available in `scripts/bash/`.
+- The `kb-recover.sh` and `kb-write.sh` scripts must be available in `runtime/scripts/bash/`.
 - The `tests/fixtures/kb/valid-seeds/` directory must have the seed fixtures.
 
 ---
@@ -24,7 +24,7 @@
 
 ### Step 2 — Backup Baseline A
 
-- [ ] Run: `bash scripts/bash/kb-recover.sh backup --file knowledge-base/estimates-log.yaml`
+- [ ] Run: `bash runtime/scripts/bash/kb-recover.sh backup --file knowledge-base/estimates-log.yaml`
 - [ ] Confirm the backup file appears in the active run's `recovery/` directory with an ISO-8601 timestamp in the filename.
 - [ ] Record the backup path: `backup_path = ___`
 
@@ -33,7 +33,7 @@
 - [ ] Run one `append_entry` write via `kb-write.sh` to represent the current-run delta:
 
   ```
-  bash scripts/bash/kb-write.sh append_entry \
+  bash runtime/scripts/bash/kb-write.sh append_entry \
     --file knowledge-base/estimates-log.yaml \
     --payload 'id: m002b4-test\nagent: REVIEWER\ndomain: manual-test\nestimate_hours: 0.5\nconfidence: 1.0' \
     --run-id m002b4-run \
@@ -54,17 +54,17 @@
 - [ ] Confirm `kb-recover.sh detect` reports corruption (exits 1):
 
   ```
-  bash scripts/bash/kb-recover.sh detect --file knowledge-base/estimates-log.yaml
+  bash runtime/scripts/bash/kb-recover.sh detect --file knowledge-base/estimates-log.yaml
   ```
 
 - [ ] Record: detection exited `___` (should be 1)
 
 ### Step 5 — Trigger Recovery
 
-- [ ] Run backup of corrupted file: `bash scripts/bash/kb-recover.sh backup --file knowledge-base/estimates-log.yaml`
-- [ ] Run restore: `bash scripts/bash/kb-recover.sh restore --file knowledge-base/estimates-log.yaml`
+- [ ] Run backup of corrupted file: `bash runtime/scripts/bash/kb-recover.sh backup --file knowledge-base/estimates-log.yaml`
+- [ ] Run restore: `bash runtime/scripts/bash/kb-recover.sh restore --file knowledge-base/estimates-log.yaml`
 - [ ] Confirm `recovery_mode=true` in the active run's `state.json`.
-- [ ] Confirm restored file passes detect: `bash scripts/bash/kb-recover.sh detect --file knowledge-base/estimates-log.yaml` → exit 0.
+- [ ] Confirm restored file passes detect: `bash runtime/scripts/bash/kb-recover.sh detect --file knowledge-base/estimates-log.yaml` → exit 0.
 
 ### Step 6 — Verify "One Run Interval" Interpretation
 

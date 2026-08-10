@@ -195,6 +195,20 @@ def test_shared_runtime_helpers_are_not_duplicated_at_repository_root() -> None:
     assert not any((ROOT / "scripts" / "bash" / name).exists() for name in helper_names)
 
 
+def test_kb_helpers_have_one_runtime_source_of_truth() -> None:
+    helper_names = (
+        "kb-lock.sh",
+        "kb-pending-merge.sh",
+        "kb-pending-write.sh",
+        "kb-recover.sh",
+        "kb-validate-evolution.sh",
+        "kb-write.sh",
+    )
+
+    assert all((RUNTIME / "scripts" / "bash" / name).is_file() for name in helper_names)
+    assert not any((ROOT / "scripts" / "bash" / name).exists() for name in helper_names)
+
+
 def test_land_and_recovery_do_not_special_case_legacy_storage() -> None:
     modules = (
         ROOT / "src" / "harness" / "land.py",

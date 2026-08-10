@@ -7,14 +7,14 @@ set -uo pipefail
 . "$(cd "$(dirname -- "$0")/.." && pwd)/utils/python-detect.sh"
 
 REPO_ROOT="$(CDPATH='' cd "$(dirname "$0")/../.." && pwd)"
-SCRIPTS="$REPO_ROOT/extension/scripts/bash"
+SCRIPTS="$REPO_ROOT/runtime/scripts/bash"
 FIXTURES="$REPO_ROOT/tests/fixtures/kb"
 VALID_SEEDS="$FIXTURES/valid-seeds"
 CORRUPTED="$FIXTURES/corrupted"
 KB_DIR="$REPO_ROOT/knowledge-base"
 LOCK_DIR="$KB_DIR/.locks/kb-write.lock"
-STATE_FILE="$REPO_ROOT/.specify/squad/state.json"
-ERROR_LOG="$REPO_ROOT/.specify/squad/error.log"
+STATE_FILE="$REPO_ROOT/runs/state.json"
+ERROR_LOG="$REPO_ROOT/runs/error.log"
 
 pass=0
 fail=0
