@@ -233,6 +233,11 @@ def test_runtime_init_uses_controller_owned_project_mode() -> None:
     assert "startup-banner.sh" not in prose
 
 
+def test_legacy_startup_banner_is_not_part_of_active_runtime() -> None:
+    assert not (RUNTIME / "scripts" / "bash" / "startup-banner.sh").exists()
+    assert not (ROOT / "scripts" / "bash" / "startup-banner.sh").exists()
+
+
 def test_land_and_recovery_do_not_special_case_legacy_storage() -> None:
     modules = (
         ROOT / "src" / "harness" / "land.py",

@@ -48,7 +48,6 @@ DELIVERY_BASH_FILES = frozenset(
         "endocrine.sh",
         "fix-spa-base.sh",
         "setup-worktree.sh",
-        "startup-banner.sh",
         "validate-deploy.sh",
     }
 )

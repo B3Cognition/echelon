@@ -502,7 +502,7 @@ def test_sync_runtime_extension_exposes_only_delivery_safe_bash_helpers(tmp_path
     assert (bash_dir / "endocrine.sh").exists()
     assert (bash_dir / "fix-spa-base.sh").exists()
     assert (bash_dir / "setup-worktree.sh").exists()
-    assert (bash_dir / "startup-banner.sh").exists()
+    assert not (bash_dir / "startup-banner.sh").exists()
     assert (bash_dir / "validate-deploy.sh").exists()
     assert not (bash_dir / "build-light-gates.sh").exists()
     assert not (bash_dir / "cicd-fingerprint.sh").exists()

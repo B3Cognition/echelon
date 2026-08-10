@@ -187,14 +187,11 @@ def test_runtime_light_gates_do_not_probe_legacy_harness_installations() -> None
     assert "sandbox-exec.sh" not in script
 
 
-def test_runtime_startup_banner_reads_the_installed_echelon_version() -> None:
-    script = (
+def test_runtime_bundle_does_not_ship_legacy_startup_banner() -> None:
+    assert not (
         Path(__file__).resolve().parents[2]
         / "runtime"
         / "scripts"
         / "bash"
         / "startup-banner.sh"
-    ).read_text(encoding="utf-8")
-
-    assert "echelon version" in script
-    assert "extension.yml" not in script
+    ).exists()
