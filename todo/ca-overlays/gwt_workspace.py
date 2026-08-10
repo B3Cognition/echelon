@@ -1,5 +1,5 @@
 """
-T-024 — GWT Bounded Workspace Overlay (CA overlay, ADR-005)
+Quarantined prototype: T-024 GWT Bounded Workspace Overlay (CA overlay, ADR-005).
 
 Exposes:
   enrich_context(context_pack, run_id) -> dict

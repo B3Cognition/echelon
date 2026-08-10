@@ -108,7 +108,6 @@ _POWER_LIMITATION_DISCLOSURE = (
 _AUTHORIZED_OVERLAYS = [
     "scripts/ca/actr_buffer.py",
     "scripts/bash/lida_broadcast.sh",
-    "scripts/ca/gwt_workspace.py",
 ]
 
 # Score extraction regex (ADR-004)

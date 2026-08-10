@@ -3,6 +3,12 @@
 These files are retained for possible future review but are not part of the Echelon runtime.
 They are also excluded from the installation bundle, Prosaic source, and provider execution.
 
+Retained prototypes:
+
+- `goal_stack.py`
+- `episodic_memory.py`
+- `gwt_workspace.py`
+
 They were originally created for the U-CA-004 experiment. Repository audit on
 2026-08-10 found no runtime imports or callers. The experiment runner only
 listed their former paths as metadata and did not execute them.
