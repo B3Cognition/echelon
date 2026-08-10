@@ -243,6 +243,11 @@ def test_build_light_gates_have_one_runtime_source_of_truth() -> None:
     assert not (ROOT / "scripts" / "bash" / "build-light-gates.sh").exists()
 
 
+def test_belief_freshness_gate_has_one_runtime_source_of_truth() -> None:
+    assert (RUNTIME / "scripts" / "bash" / "belief-freshness-check.sh").is_file()
+    assert not (ROOT / "scripts" / "bash" / "belief-freshness-check.sh").exists()
+
+
 def test_land_and_recovery_do_not_special_case_legacy_storage() -> None:
     modules = (
         ROOT / "src" / "harness" / "land.py",

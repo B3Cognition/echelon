@@ -1,12 +1,12 @@
 #!/usr/bin/env sh
-# Unit tests for scripts/bash/belief-freshness-check.sh
+# Unit tests for runtime/scripts/bash/belief-freshness-check.sh
 # Tests: expired beliefs, low_confidence beliefs, critical banners, missing graph, exit code
 
 set -eu
 . "$(cd "$(dirname -- "$0")/.." && pwd)/utils/python-detect.sh"
 
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
-SCRIPT="$ROOT_DIR/extension/scripts/bash/belief-freshness-check.sh"
+SCRIPT="$ROOT_DIR/runtime/scripts/bash/belief-freshness-check.sh"
 TMP_DIR="$(mktemp -d)"
 
 cleanup() {
