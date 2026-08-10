@@ -388,10 +388,7 @@ else
 fi
 echo "  Memory        → $MEMORY_DIR"
 echo ""
-echo "  Register the spec-kit extension:"
-echo "    specify extension add --dev $ECHELON_DIR/extension"
-echo ""
-echo "  Per-project setup:"
+echo "  Per-project setup (deploys Prosaic and runtime bundles):"
 echo "    echelon workspace init    # workspace config, local approvals, git hook"
 echo "    echelon delivery init     # delivery config, mirror clone, image fingerprint"
 echo ""

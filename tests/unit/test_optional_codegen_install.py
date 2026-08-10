@@ -39,6 +39,15 @@ def test_installer_provisions_pinned_prosaic_runtime_and_launcher() -> None:
     assert 'exec node "$PROSAIC_NODE_DIR/node_modules/prosaic/dist/cli/index.js" "\\$@"' in script
 
 
+def test_installer_finishes_with_prosaic_first_workspace_setup() -> None:
+    script = _installer()
+
+    assert "specify extension add" not in script
+    assert "Register the spec-kit extension" not in script
+    assert "echelon workspace init" in script
+    assert "Prosaic and runtime bundles" in script
+
+
 @pytest.mark.parametrize(
     ("argument", "expected_code", "expected_text"),
     [
@@ -171,3 +180,10 @@ def test_installation_docs_describe_codegen_as_opt_in() -> None:
     assert "SOAR binary are bundled" not in readme
     assert "all four CLIs" not in installation
     assert "Reinstall the four CLIs" not in guidance
+
+
+def test_installation_guide_does_not_recommend_rejected_legacy_init_flag() -> None:
+    installation = (ROOT / "INSTALLATION.md").read_text(encoding="utf-8")
+
+    assert "--legacy-spec-kit" not in installation
+    assert "echelon workspace migrate-to-prosaic" in installation

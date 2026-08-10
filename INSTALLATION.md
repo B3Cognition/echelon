@@ -70,9 +70,9 @@ sources under `.echelon/packages/` and uses that CLI to deploy:
 Echelon creates a temporary Prosaic package config only for deployment and
 removes it afterwards; a workspace that already owns a root
 `prosaic.config.yaml`, `prosaic.config.yml`, or `.prosaic.yaml` is left
-unchanged and the command stops with an actionable error. Use
-`echelon workspace init --legacy-spec-kit` only while maintaining an old
-Spec-Kit workspace.
+unchanged and the command stops with an actionable error. For an old Spec-Kit
+workspace, run `echelon workspace migrate-to-prosaic` before the normal
+`echelon workspace init` command.
 
 ---
 
