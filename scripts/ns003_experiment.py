@@ -112,8 +112,8 @@ def find_calibration_set(calibration_set: Optional[str]) -> tuple[Optional[Path]
             return p, "provided"
         return None, "not_found"
 
-    # Search for spec runs 015 and 016 in .specify/specs/
-    specs_dir = Path(".specify/specs")
+    # Search for spec runs 015 and 016 in the canonical specs directory.
+    specs_dir = Path("specs")
     if specs_dir.exists():
         for prefix in ["015", "016"]:
             for d in sorted(specs_dir.iterdir()):
@@ -122,7 +122,7 @@ def find_calibration_set(calibration_set: Optional[str]) -> tuple[Optional[Path]
                     if mds:
                         return d, "runs_015_016"
 
-    # Fallback: look for any .specify/specs/ directory with artifacts
+    # Fallback: look for any canonical spec directory with artifacts.
     if specs_dir.exists():
         for d in sorted(specs_dir.iterdir()):
             if d.is_dir():
