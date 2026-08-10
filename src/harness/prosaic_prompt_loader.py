@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 from typing import Any
 
+from harness.prompt_companions import append_prompt_companions
 from harness.prompt_framing import COMMANDER_PREAMBLE
 
 
@@ -70,7 +71,11 @@ class ProsaicPromptLoader:
                 f"Prosaic could not inspect {artifact_id}: {detail}"
             )
 
-        return _parse_command_artifact(artifact_id, result.stdout)
+        artifact = _parse_command_artifact(artifact_id, result.stdout)
+        return ProsaicCommandArtifact(
+            frontmatter=artifact.frontmatter,
+            body=append_prompt_companions(artifact.body, (self._source_dir,)),
+        )
 
     @staticmethod
     def render_command(

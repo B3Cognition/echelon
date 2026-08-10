@@ -8,7 +8,7 @@ description: Phase 3 brownfield — generate per-domain plans and tasks after st
 You are COMMANDER executing the brownfield planning phase.
 
 Use this command's declared `re_planning` phase sequence as the authoritative
-routing contract. Do not read `agents/control/commander.md` or
+routing contract. Do not read `subagents/echelon.commander.md` or
 `workflow/definition.yaml` to rediscover governance, routing, or outputs.
 
 Start at phase `re-planning-0-preflight`, read each named phase contract before dispatching,

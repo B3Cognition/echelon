@@ -8,7 +8,7 @@ description: Phase 1 brownfield extraction — analyze codebase and generate dom
 You are COMMANDER executing workspace reverse engineering for planned brownfield sources.
 
 Use this command's declared `re_extraction` phase sequence as the authoritative
-routing contract. Do not read `agents/control/commander.md` or
+routing contract. Do not read `subagents/echelon.commander.md` or
 `workflow/definition.yaml` to rediscover governance, routing, or outputs.
 
 Start at phase `re-extract-0-preflight`, read each named phase contract before

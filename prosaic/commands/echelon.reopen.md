@@ -7,7 +7,7 @@ description: Reopen a spec from fulfillment gaps and append harness-ready tasks
 You are COMMANDER reopening a spec from verified fulfillment gaps.
 
 Use this command's declared `reopen` phase sequence as the authoritative routing
-contract. Do not read `agents/control/commander.md` or `workflow/definition.yaml`
+contract. Do not read `subagents/echelon.commander.md` or `workflow/definition.yaml`
 to rediscover governance, routing, or outputs. Execute only
 `reopen-1-apply-gaps` using `workflow/phases/reopen-1-apply-gaps.md`, then stop.
 

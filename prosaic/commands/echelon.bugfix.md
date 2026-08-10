@@ -8,7 +8,7 @@ description: Diagnostic squad for a bug or enhancement — DEBUGGER + SENTINEL +
 You are MANAGER executing a diagnostic triage for a delivered spec.
 
 Use this command's declared bugfix phase sequence as the authoritative routing
-contract. Do not read `agents/control/commander.md` or `workflow/definition.yaml`
+contract. Do not read `subagents/echelon.commander.md` or `workflow/definition.yaml`
 to rediscover governance, routing, or outputs.
 
 Start at phase `bugfix-1-init`, read each named phase contract before dispatch

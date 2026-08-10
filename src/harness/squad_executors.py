@@ -16,6 +16,7 @@ from harness.governance_structural_gate import (
     GovernanceStructuralGateResult,
     run_governance_structural_gate,
 )
+from harness.prompt_companions import append_prompt_companions, prompt_package_roots
 from harness.prompt_markdown import read_prompt_markdown
 from harness.quality_scores import (
     normalize_why_quality_scores,
@@ -164,7 +165,10 @@ def _shared_agent_contract() -> str:
 
 def _read_prompt_body(path: Path) -> str:
     """Read a prompt markdown file and strip runtime frontmatter metadata."""
-    return read_prompt_markdown(path).body
+    return append_prompt_companions(
+        read_prompt_markdown(path).body,
+        prompt_package_roots(path),
+    )
 
 
 def _read_prompt_metadata(path: Path) -> dict[str, object]:
@@ -2533,7 +2537,7 @@ class StagedParallelExecutor(PhaseExecutor):
         if rel:
             agent_path = self._ext_dir / rel
             if agent_path.exists():
-                static_parts.append(agent_path.read_text())
+                static_parts.append(_read_prompt_body(agent_path))
 
         # 2. Per-agent context_pack files.
         # state.spec_dir is authoritative for spec artifacts. Do not scan every

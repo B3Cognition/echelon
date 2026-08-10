@@ -249,7 +249,7 @@ def test_invalid_inventory_repair_excludes_stale_investigation_context(tmp_path)
             "{spec_dir}/evidence-resolution.md",
             "{spec_dir}/investigation/",
             "{spec_dir}/evidence-inventory.json",
-            ".specify/squad/reasoning-journal.jsonl [phase=phase1-why2]",
+            "{squad_dir}/reasoning-journal.jsonl [phase=phase1-why2]",
         ],
     )
     prompt = executor._assemble_prompt(
@@ -299,6 +299,40 @@ def test_architect_retry_context_includes_commander_clarification(tmp_path) -> N
     )
 
     assert "Use direct Python execution." in prompt
+
+
+def test_agent_prompt_inlines_referenced_prosaic_companion(tmp_path: Path) -> None:
+    squad_dir = tmp_path / "runs" / "run-test"
+    squad_dir.mkdir(parents=True)
+    prosaic_root = tmp_path / ".echelon" / "prosaic"
+    agent_path = prosaic_root / "subagents" / "echelon.sage.md"
+    companion = (
+        prosaic_root
+        / "agents"
+        / "exploration"
+        / "appendices"
+        / "sage-reference.md"
+    )
+    agent_path.parent.mkdir(parents=True)
+    companion.parent.mkdir(parents=True)
+    agent_path.write_text(
+        "# SAGE\n\nLoad `agents/exploration/appendices/sage-reference.md`.\n",
+        encoding="utf-8",
+    )
+    companion.write_text("# SAGE reference\n\nCOMPANION_SENTINEL\n", encoding="utf-8")
+    executor = _executor(tmp_path, squad_dir=squad_dir)
+    executor._graph.agent_file.return_value = str(agent_path)
+
+    prompt = executor._assemble_prompt(
+        PhaseNode(id="phase1-why2", type="agent", agent="echelon.sage"),
+        {
+            "squad_dir": str(squad_dir),
+            "spec_dir": "specs/001-demo",
+        },
+    )
+
+    assert "COMPANION_SENTINEL" in prompt
+    assert prompt.count("COMPANION_SENTINEL") == 1
 
 
 def test_phase1_investigate_preserves_valid_evidence_result_when_grade_artifact_is_missing(tmp_path):
@@ -743,8 +777,8 @@ _DIRECT_JOURNAL_INSTRUCTION_RE = re.compile(
     r"\bAppend entries to `reasoning-journal\.jsonl`"
     r"|\bThen append .* to `reasoning-journal\.jsonl`"
 )
-_PHASES_DIR = EXT_ROOT / "extension/workflow/phases"
-_AGENTS_DIR = EXT_ROOT / "extension/agents"
+_PHASES_DIR = EXT_ROOT / "runtime/workflow/phases"
+_AGENTS_DIR = EXT_ROOT / "prosaic/subagents"
 
 
 def test_no_direct_journal_appends_in_phase_specs():
@@ -811,7 +845,7 @@ def test_agent_files_do_not_instruct_direct_reasoning_journal_writes():
 def test_agent_output_blocks_do_not_request_null_journal_metadata():
     """Harness owns journal IDs/timestamps; agent examples should not show nulls."""
     violations = []
-    for md_file in (EXT_ROOT / "extension" / "agents").rglob("*.md"):
+    for md_file in _AGENTS_DIR.rglob("*.md"):
         text = md_file.read_text(encoding="utf-8")
         for marker in ("id: null", "timestamp: null"):
             if marker in text:
@@ -827,7 +861,7 @@ def test_agent_output_blocks_do_not_put_list_directly_under_echelon_result():
     """Examples must name journal_entries/output_files instead of raw YAML lists."""
     pattern = re.compile(r"^echelon_result:\n\s+-\s+", re.M)
     violations = []
-    for md_file in (EXT_ROOT / "extension" / "agents").rglob("*.md"):
+    for md_file in _AGENTS_DIR.rglob("*.md"):
         if pattern.search(md_file.read_text(encoding="utf-8")):
             violations.append(str(md_file.relative_to(EXT_ROOT)))
 
@@ -840,12 +874,13 @@ def test_agent_output_blocks_do_not_put_list_directly_under_echelon_result():
 def test_markdown_prose_does_not_teach_xml_echelon_result_blocks():
     """The canonical output contract is YAML; XML examples train the wrong shape."""
     violations = []
-    for md_file in (EXT_ROOT / "extension").rglob("*.md"):
-        if "node_modules" in md_file.parts:
-            continue
-        text = md_file.read_text(encoding="utf-8", errors="ignore")
-        if "<echelon_result>" in text or "</echelon_result>" in text:
-            violations.append(str(md_file.relative_to(EXT_ROOT)))
+    for prompt_root in (EXT_ROOT / "prosaic", EXT_ROOT / "runtime"):
+        for md_file in prompt_root.rglob("*.md"):
+            if "node_modules" in md_file.parts:
+                continue
+            text = md_file.read_text(encoding="utf-8", errors="ignore")
+            if "<echelon_result>" in text or "</echelon_result>" in text:
+                violations.append(str(md_file.relative_to(EXT_ROOT)))
 
     assert not violations, (
         "Markdown prompts must not teach XML-style echelon_result blocks:\n"
@@ -854,7 +889,7 @@ def test_markdown_prose_does_not_teach_xml_echelon_result_blocks():
 
 
 def test_production_echelon_result_template_exists_and_is_canonical():
-    template = EXT_ROOT / "extension" / "templates" / "echelon-result-template.yaml"
+    template = EXT_ROOT / "runtime" / "templates" / "echelon-result-template.yaml"
 
     text = template.read_text(encoding="utf-8")
 
@@ -892,8 +927,8 @@ def test_spec_lexicon_routing_contract_requires_certificate_fields():
 
     root = Path(__file__).resolve().parents[2]
     node = PhaseGraph(
-        root / "extension/workflow/definition.yaml",
-        root / "extension/extension.yml",
+        root / "runtime/workflow/definition.yaml",
+        prosaic_subagents_dir=root / "prosaic/subagents",
     ).get("phase1-lexicon-derive")
 
     contract = _routing_contract(node)
@@ -904,7 +939,7 @@ def test_spec_lexicon_routing_contract_requires_certificate_fields():
 
     phase_text = (
         Path(__file__).resolve().parents[2]
-        / "extension/workflow/phases/phase1-lexicon-derive.md"
+        / "runtime/workflow/phases/phase1-lexicon-derive.md"
     ).read_text()
     assert (
         "provider-free `phase1-lexicon` node performs structural certification"
@@ -1224,7 +1259,7 @@ def test_assemble_prompt_bounded_journal_applies_declared_filter(tmp_path):
             id="phase1-why2",
             type="agent",
             context_pack=[
-                ".specify/squad/reasoning-journal.jsonl [type=routing_decision, phase=phase1-what]"
+                "{squad_dir}/reasoning-journal.jsonl [type=routing_decision, phase=phase1-what]"
             ],
         ),
         {"squad_dir": str(squad_dir), "staging_dir": str(squad_dir / "staging")},
@@ -1336,7 +1371,7 @@ def test_assemble_prompt_injects_runtime_path_resolution(tmp_path):
     """Runtime agents get unambiguous deployed-runtime path mappings."""
     squad_dir = tmp_path / "squad" / "run-test"
     squad_dir.mkdir(parents=True)
-    ext_dir = tmp_path / ".specify" / "extensions" / "echelon"
+    ext_dir = tmp_path / ".echelon" / "runtime"
     ext_dir.mkdir(parents=True)
 
     from harness.phase_graph import PhaseNode
@@ -1534,7 +1569,7 @@ def test_execute_passes_agent_frontmatter_metadata_to_provider(tmp_path):
 
 
 def test_assemble_prompt_uses_echelon_result_template(tmp_path):
-    """The canonical final result block is owned by extension/templates."""
+    """The canonical final result block is owned by runtime/templates."""
     squad_dir = tmp_path / "squad" / "run-test"
     squad_dir.mkdir(parents=True)
     ext_dir = tmp_path / "ext"
@@ -2556,8 +2591,8 @@ def test_staged_prompt_bounded_contracts_preserves_manifest(tmp_path):
     assert "INDEX CONTRACT" not in serialized_report
 
 
-def test_assemble_prompt_translates_legacy_paths(tmp_path):
-    """Legacy .specify/squad/staging/ references in spec content are replaced."""
+def test_assemble_prompt_translates_runtime_placeholders(tmp_path):
+    """Runtime placeholders in phase content resolve to the active run paths."""
     squad_dir = tmp_path / "squad" / "run-test"
     squad_dir.mkdir(parents=True)
     (squad_dir / "staging").mkdir()
@@ -2565,7 +2600,7 @@ def test_assemble_prompt_translates_legacy_paths(tmp_path):
     ext_dir.mkdir()
     spec_dir = ext_dir / "workflow" / "phases"
     spec_dir.mkdir(parents=True)
-    (spec_dir / "test.md").write_text("Write outputs to .specify/squad/staging/")
+    (spec_dir / "test.md").write_text("Write outputs to {staging_dir}/")
     from harness.phase_graph import PhaseNode
     node = PhaseNode(id="test", type="agent", spec_file="workflow/phases/test.md")
     from harness.squad_executors import AgentExecutor
@@ -2577,7 +2612,7 @@ def test_assemble_prompt_translates_legacy_paths(tmp_path):
     ex = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
     state = {"squad_dir": str(squad_dir), "staging_dir": str(squad_dir / "staging")}
     prompt = ex._assemble_prompt(node, state)
-    assert ".specify/squad/staging/" not in prompt
+    assert "{staging_dir}" not in prompt
     assert str(squad_dir / "staging") in prompt
 
 

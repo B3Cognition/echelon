@@ -47,11 +47,11 @@ def _section_between(text: str, start: str, end: str) -> str:
 
 
 def validate_commander_loading_contract(root: Path) -> list[str]:
-    run = root / "extension/commands/echelon.run.md"
-    build = root / "extension/commands/echelon.build.md"
-    commander = root / "extension/agents/control/commander.md"
-    finalize = root / "extension/workflow/phases/build-8-finalize.md"
-    definition = root / "extension/workflow/definition.yaml"
+    run = root / "prosaic/commands/echelon.run.md"
+    build = root / "prosaic/commands/echelon.build.md"
+    commander = root / "prosaic/subagents/echelon.commander.md"
+    finalize = root / "runtime/workflow/phases/build-8-finalize.md"
+    definition = root / "runtime/workflow/definition.yaml"
     return _run_checks(
         [
             PatternCheck("run delegates to Python squad harness", run, r"squad.py|squad harness"),
@@ -80,9 +80,9 @@ def validate_commander_loading_contract(root: Path) -> list[str]:
 
 
 def validate_commander_routing_mandate_contract(root: Path) -> list[str]:
-    commander = root / "extension/agents/control/commander.md"
-    journal_types = root / "extension/workflow/journal-entry-types.yaml"
-    why2 = root / "extension/workflow/phases/phase1-why2.md"
+    commander = root / "prosaic/subagents/echelon.commander.md"
+    journal_types = root / "runtime/workflow/journal-entry-types.yaml"
+    why2 = root / "runtime/workflow/phases/phase1-why2.md"
     accessors = root / "src/kernel/accessors.py"
     flags = re.IGNORECASE
     return _run_checks(
@@ -107,9 +107,9 @@ def validate_commander_routing_mandate_contract(root: Path) -> list[str]:
 
 
 def validate_guardian_always_on_contract(root: Path) -> list[str]:
-    commander = root / "extension/agents/control/commander.md"
-    guardian = root / "extension/agents/specialists/guardian.md"
-    phase = root / "extension/workflow/phases/phase3-specialists.md"
+    commander = root / "prosaic/subagents/echelon.commander.md"
+    guardian = root / "prosaic/subagents/echelon.guardian.md"
+    phase = root / "runtime/workflow/phases/phase3-specialists.md"
     return _run_checks(
         [
             PatternCheck("commander references guardian mode", commander, r"specialists\.guardian_mode"),
@@ -130,9 +130,9 @@ def validate_guardian_always_on_contract(root: Path) -> list[str]:
 def validate_guardian_mode_config_naming_contract(root: Path) -> list[str]:
     public_sources = [
         root / "README.md",
-        root / "extension/workflow/phases/phase3-specialists.md",
-        root / "extension/agents/specialists/guardian.md",
-        root / "extension/agents/control/commander.md",
+        root / "runtime/workflow/phases/phase3-specialists.md",
+        root / "prosaic/subagents/echelon.guardian.md",
+        root / "prosaic/subagents/echelon.commander.md",
     ]
     failures = _run_checks(
         [
@@ -155,12 +155,12 @@ def validate_guardian_mode_config_naming_contract(root: Path) -> list[str]:
             ],
             PatternCheck(
                 "config template keeps nested guardian_mode",
-                root / "extension/config-template.yml",
+                root / "runtime/config-template.yml",
                 r"specialists:[\s\S]*guardian_mode:\s*always_on",
             ),
             PatternCheck(
                 "extension config keeps nested guardian_mode",
-                root / "extension/echelon-config.yml",
+                root / "runtime/echelon-config.yml",
                 r"specialists:[\s\S]*guardian_mode:\s*always_on",
             ),
         ]
@@ -171,13 +171,13 @@ def validate_guardian_mode_config_naming_contract(root: Path) -> list[str]:
 def validate_lexicon_derived_spec_contract(root: Path) -> list[str]:
     """Lexicon must not replace the canonical rich spec.md artifact."""
 
-    config = root / "extension/echelon-config.yml"
-    config_template = root / "extension/config-template.yml"
-    cartographer = root / "extension/agents/exploration/cartographer.md"
-    phase1_what = root / "extension/workflow/phases/phase1-what.md"
-    deriver = root / "extension/agents/exploration/lexicon-deriver.md"
-    derive_phase = root / "extension/workflow/phases/phase1-lexicon-derive.md"
-    orchestrator = root / "extension/agents/solution/orchestrator.md"
+    config = root / "runtime/echelon-config.yml"
+    config_template = root / "runtime/config-template.yml"
+    cartographer = root / "prosaic/subagents/echelon.cartographer.md"
+    phase1_what = root / "runtime/workflow/phases/phase1-what.md"
+    deriver = root / "prosaic/subagents/echelon.lexicon-deriver.md"
+    derive_phase = root / "runtime/workflow/phases/phase1-lexicon-derive.md"
+    orchestrator = root / "prosaic/subagents/echelon.orchestrator.md"
     pipeline_matrix = root / "docs/pipeline-matrix.md"
     flags = re.IGNORECASE
 
@@ -263,7 +263,7 @@ def validate_lexicon_derived_spec_contract(root: Path) -> list[str]:
         ),
         PatternCheck(
             "phase3 plan prose includes canonical spec context",
-            root / "extension/workflow/phases/phase3-plan.md",
+            root / "runtime/workflow/phases/phase3-plan.md",
             r"spec\.md",
         ),
         PatternCheck(
@@ -279,9 +279,9 @@ def validate_lexicon_derived_spec_contract(root: Path) -> list[str]:
 def validate_cartographer_tool_usage_contract(root: Path) -> list[str]:
     """CARTOGRAPHER must consume controller evidence without invoking CLIs."""
 
-    cartographer = root / "extension/agents/exploration/cartographer.md"
-    phase1_what = root / "extension/workflow/phases/phase1-what.md"
-    deriver = root / "extension/agents/exploration/lexicon-deriver.md"
+    cartographer = root / "prosaic/subagents/echelon.cartographer.md"
+    phase1_what = root / "runtime/workflow/phases/phase1-what.md"
+    deriver = root / "prosaic/subagents/echelon.lexicon-deriver.md"
     flags = re.IGNORECASE
 
     return _run_checks(
@@ -355,8 +355,8 @@ def validate_cartographer_tool_usage_contract(root: Path) -> list[str]:
 def validate_sage_understanding_followup_contract(root: Path) -> list[str]:
     """SAGE must interpret certified evidence without executing Understanding."""
 
-    sage = root / "extension/agents/exploration/sage.md"
-    appendix = root / "extension/agents/exploration/appendices/sage-understanding-followup-reference.md"
+    sage = root / "prosaic/subagents/echelon.sage.md"
+    appendix = root / "prosaic/agents/exploration/appendices/sage-understanding-followup-reference.md"
 
     return _run_checks(
         [
@@ -394,7 +394,7 @@ def validate_sage_understanding_followup_contract(root: Path) -> list[str]:
 
 
 def validate_code_reviewer_confidence_filter_contract(root: Path) -> list[str]:
-    target = root / "extension/agents/build/code-reviewer.md"
+    target = root / "prosaic/subagents/echelon.code-reviewer.md"
     flags = re.IGNORECASE | re.MULTILINE
     return _run_checks(
         [
@@ -425,12 +425,12 @@ def validate_code_reviewer_confidence_filter_contract(root: Path) -> list[str]:
 
 def validate_commander_token_tracking_contract(root: Path) -> list[str]:
     observable = root / "src/hormone_calc/observable.py"
-    progress = root / "extension/agents/build/progress-tracker.md"
-    token_logger = root / "extension/scripts/token-logger.py"
-    config = root / "extension/config-template.yml"
+    progress = root / "prosaic/subagents/echelon.progress-tracker.md"
+    token_logger = root / "runtime/scripts/token-logger.py"
+    config = root / "runtime/config-template.yml"
     cli = root / "src/echelon/cli.py"
-    journal_types = root / "extension/workflow/journal-entry-types.yaml"
-    commander = root / "extension/agents/control/commander.md"
+    journal_types = root / "runtime/workflow/journal-entry-types.yaml"
+    commander = root / "prosaic/subagents/echelon.commander.md"
     return _run_checks(
         [
             PatternCheck("token_ledger in observable", observable, r"token_ledger"),
@@ -448,7 +448,7 @@ def validate_commander_token_tracking_contract(root: Path) -> list[str]:
 
 
 def validate_implementer_eval_protocol_contract(root: Path) -> list[str]:
-    implementer = root / "extension/agents/build/implementer.md"
+    implementer = root / "prosaic/subagents/echelon.implementer.md"
     return _run_checks(
         [
             PatternCheck("capability eval", implementer, r"capability eval", re.IGNORECASE),
@@ -461,7 +461,7 @@ def validate_implementer_eval_protocol_contract(root: Path) -> list[str]:
 
 
 def validate_sentinel_flakiness_contract(root: Path) -> list[str]:
-    sentinel = root / "extension/agents/solution/sentinel.md"
+    sentinel = root / "prosaic/subagents/echelon.sentinel.md"
     return _run_checks(
         [
             PatternCheck("Flakiness Management heading", sentinel, r"Flakiness Management"),
@@ -475,8 +475,8 @@ def validate_sentinel_flakiness_contract(root: Path) -> list[str]:
 
 
 def validate_sage_contradiction_types_contract(root: Path) -> list[str]:
-    appendix = root / "extension/agents/exploration/appendices/sage-contradiction-detection-reference.md"
-    sage = root / "extension/agents/exploration/sage.md"
+    appendix = root / "prosaic/agents/exploration/appendices/sage-contradiction-detection-reference.md"
+    sage = root / "prosaic/subagents/echelon.sage.md"
     flags = re.IGNORECASE | re.MULTILINE
     return _run_checks(
         [
@@ -533,8 +533,8 @@ def validate_veteran_project_scoping_contract(root: Path) -> list[str]:
     schema = kb / "kb-schema.md"
     patterns = kb / "patterns.yaml"
     pitfalls = kb / "pitfalls.yaml"
-    veteran = root / "extension/agents/learning/veteran.md"
-    mirror = root / "extension/agents/learning/mirror.md"
+    veteran = root / "prosaic/subagents/echelon.veteran.md"
+    mirror = root / "prosaic/subagents/echelon.mirror.md"
     failures = _run_checks(
         [
             PatternCheck("schema documents project_fingerprint", schema, r"project_fingerprint"),
@@ -584,18 +584,18 @@ def validate_veteran_project_scoping_contract(root: Path) -> list[str]:
 
 def validate_re_source_ownership_contract(root: Path) -> list[str]:
     """RE extraction stages source-owned artifacts and workspace synthesis."""
-    specifier = root / "extension/agents/re/specifier.md"
-    verifier = root / "extension/agents/re/verifier.md"
-    expander = root / "extension/agents/re/expander.md"
-    validator = root / "extension/agents/re/validator.md"
-    checklister = root / "extension/agents/re/checklister.md"
-    constituter = root / "extension/agents/re/constituter.md"
-    golddigger = root / "extension/agents/exploration/golddigger.md"
-    preflight = root / "extension/workflow/phases/re-extract-0-preflight.md"
-    finalize = root / "extension/scripts/bash/finalize-run.sh"
-    planner = root / "extension/agents/re/planner.md"
-    tasker = root / "extension/agents/re/tasker.md"
-    retarget = root / "extension/workflow/phases/re-retarget-1-input.md"
+    specifier = root / "prosaic/subagents/echelon.re-specifier.md"
+    verifier = root / "prosaic/subagents/echelon.re-verifier.md"
+    expander = root / "prosaic/subagents/echelon.re-expander.md"
+    validator = root / "prosaic/subagents/echelon.re-validator.md"
+    checklister = root / "prosaic/subagents/echelon.re-checklister.md"
+    constituter = root / "prosaic/subagents/echelon.re-constituter.md"
+    golddigger = root / "prosaic/subagents/echelon.golddigger.md"
+    preflight = root / "runtime/workflow/phases/re-extract-0-preflight.md"
+    finalize = root / "runtime/scripts/bash/finalize-run.sh"
+    planner = root / "prosaic/subagents/echelon.re-planner.md"
+    tasker = root / "prosaic/subagents/echelon.re-tasker.md"
+    retarget = root / "runtime/workflow/phases/re-retarget-1-input.md"
     checks = [
         PatternCheck("specifier source overview", specifier, r"\$RE_OUTPUT_DIR/sources/\{source-id\}/overview\.md"),
         PatternCheck("specifier source spec", specifier, r"\$RE_OUTPUT_DIR/sources/\{source-id\}/specs/\{domain-id\}/spec\.md"),
@@ -634,11 +634,10 @@ def validate_re_source_ownership_contract(root: Path) -> list[str]:
 
 
 def validate_auditor_internalizer_split_contract(root: Path) -> list[str]:
-    auditor = root / "extension/agents/learning/auditor.md"
-    internalizer = root / "extension/agents/learning/internalizer.md"
-    extension_yml = root / "extension/extension.yml"
-    endocrine = root / "extension/scripts/bash/endocrine.sh"
-    phase4 = root / "extension/workflow/phases/phase4-document.md"
+    auditor = root / "prosaic/subagents/echelon.auditor.md"
+    internalizer = root / "prosaic/subagents/echelon.internalizer.md"
+    endocrine = root / "runtime/scripts/bash/endocrine.sh"
+    phase4 = root / "runtime/workflow/phases/phase4-document.md"
     failures: list[str] = []
     for path in [auditor, internalizer]:
         if not path.exists():
@@ -695,7 +694,7 @@ def validate_auditor_internalizer_split_contract(root: Path) -> list[str]:
         ],
         PatternCheck("internalizer never modifies calibration profile", internalizer, r"NEVER modify .?calibration-profile\.yaml"),
         PatternCheck("internalizer never modifies agent prompts", internalizer, r"NEVER modify agent prompts"),
-        PatternCheck("internalizer registered", extension_yml, r"speckit\.echelon\.internalizer"),
+        PatternCheck("internalizer registered", internalizer, r"^name:\s+echelon\.internalizer$", re.MULTILINE),
         PatternCheck("internalizer in endocrine", endocrine, r"INTERNALIZER"),
         PatternCheck("phase4 references internalizer", phase4, r"INTERNALIZER"),
         PatternCheck("phase4 finalizes internalizer", phase4, r"INTERNALIZER.*FINALIZE|FINALIZE.*INTERNALIZER", re.DOTALL),
@@ -708,8 +707,8 @@ def validate_auditor_internalizer_split_contract(root: Path) -> list[str]:
 
 
 def validate_auditor_internalization_contract(root: Path) -> list[str]:
-    target = root / "extension/agents/learning/internalizer.md"
-    appendix = root / "extension/agents/learning/appendices/internalizer-output-formats.md"
+    target = root / "prosaic/subagents/echelon.internalizer.md"
+    appendix = root / "prosaic/agents/learning/appendices/internalizer-output-formats.md"
     flags = re.IGNORECASE | re.MULTILINE
     return _run_checks(
         [
@@ -738,8 +737,8 @@ def validate_auditor_internalization_contract(root: Path) -> list[str]:
 
 
 def validate_auditor_calibration_dashboard_contract(root: Path) -> list[str]:
-    auditor = root / "extension/agents/learning/auditor.md"
-    internalizer = root / "extension/agents/learning/internalizer.md"
+    auditor = root / "prosaic/subagents/echelon.auditor.md"
+    internalizer = root / "prosaic/subagents/echelon.internalizer.md"
     flags = re.IGNORECASE | re.MULTILINE
     failures = _run_checks(
         [
@@ -858,7 +857,7 @@ def validate_spec_retarget_contract(root: Path) -> list[str]:
 def validate_build_phase_constitution_preflight_contract(root: Path) -> list[str]:
     """Build prompts must consume only preflight-validated constitution snapshots."""
 
-    build_init = root / "extension/workflow/phases/build-1-init.md"
+    build_init = root / "runtime/workflow/phases/build-1-init.md"
     cli = root / "src/echelon/cli.py"
     flags = re.IGNORECASE | re.DOTALL
 
@@ -896,27 +895,28 @@ def validate_build_phase_constitution_preflight_contract(root: Path) -> list[str
 
 
 def validate_constitution_source_of_truth_contract(root: Path) -> list[str]:
-    """Constitution is canonical in spec-kit memory and published as read-only snapshots."""
+    """Constitution is Echelon-owned and published as read-only spec snapshots."""
 
-    chief = root / "extension/agents/control/chief.md"
-    phase1_what = root / "extension/workflow/phases/phase1-what.md"
-    codegen_preamble = root / "extension/workflow/phases/codegen-A-preamble.md"
-    phase3_how = root / "extension/workflow/phases/phase3-how.md"
+    chief = root / "prosaic/subagents/echelon.chief.md"
+    phase1_what = root / "runtime/workflow/phases/phase1-what.md"
+    codegen_preamble = root / "runtime/workflow/phases/codegen-A-preamble.md"
+    phase3_how = root / "runtime/workflow/phases/phase3-how.md"
     artifact_index = root / "src/echelon/artifact_index.py"
-    finalize = root / "extension/scripts/bash/finalize-run.sh"
-    journal_types = root / "extension/workflow/journal-entry-types.yaml"
+    finalize = root / "runtime/scripts/bash/finalize-run.sh"
+    journal_types = root / "runtime/workflow/journal-entry-types.yaml"
     flags = re.IGNORECASE | re.DOTALL
 
     checks = [
         PatternCheck(
-            "CHIEF forbids direct constitution edits",
+            "CHIEF owns the canonical constitution",
             chief,
-            r"NEVER write, edit, patch, or shell-substitute `constitution\.md` directly",
+            r"sole author of the project constitution.*create and amend `\.echelon/constitution\.md`",
+            flags,
         ),
         PatternCheck(
-            "CHIEF retries through speckit constitution",
+            "CHIEF repairs against the Echelon template",
             chief,
-            r"Invoke `speckit\.constitution` again",
+            r"Re-read the Echelon constitution template and the incomplete output",
         ),
         PatternCheck(
             "CHIEF no longer uses sed fallback",
@@ -926,9 +926,9 @@ def validate_constitution_source_of_truth_contract(root: Path) -> list[str]:
             should_match=False,
         ),
         PatternCheck(
-            "CHIEF journal data uses skill retry",
+            "CHIEF journal data records repair attempts",
             chief,
-            r"skill_retry_used",
+            r"repair_attempted",
         ),
         PatternCheck(
             "CHIEF no longer emits placeholder_fix_applied",
@@ -945,7 +945,7 @@ def validate_constitution_source_of_truth_contract(root: Path) -> list[str]:
         PatternCheck(
             "phase1 what treats constitution as read-only",
             phase1_what,
-            r"Treat `\.specify/memory/constitution\.md` as read-only.*do not edit, patch, append to, or regenerate",
+            r"Treat `\.echelon/constitution\.md` as read-only.*do not edit, patch, append to, or regenerate",
             flags,
         ),
         PatternCheck(
@@ -1001,13 +1001,13 @@ def validate_constitution_source_of_truth_contract(root: Path) -> list[str]:
         PatternCheck(
             "finalize validates canonical constitution before publishing",
             finalize,
-            r"grep -qE .*CONSTITUTION_VERSION.*CONSTITUTION_SRC",
+            r"grep -qE .*CONSTITUTION_SRC",
             flags,
         ),
         PatternCheck(
-            "finalize publishes snapshot from canonical memory",
+            "finalize publishes snapshot from canonical Echelon state",
             finalize,
-            r"constitution\.md snapshot published from \.specify/memory",
+            r"constitution\.md snapshot published from \.echelon/",
         ),
         PatternCheck(
             "journal registry no longer allows COMMANDER placeholder fix",
@@ -1016,9 +1016,9 @@ def validate_constitution_source_of_truth_contract(root: Path) -> list[str]:
             should_match=False,
         ),
         PatternCheck(
-            "journal registry uses skill retry field",
+            "journal registry uses repair attempt field",
             journal_types,
-            r"required_data_fields: \[mode, constitution_path, skill_retry_used\]",
+            r"required_data_fields: \[mode, constitution_path, repair_attempted\]",
         ),
     ]
     return _run_checks(checks)
@@ -1027,18 +1027,18 @@ def validate_constitution_source_of_truth_contract(root: Path) -> list[str]:
 def validate_constitution_context_pack_contract(root: Path) -> list[str]:
     """Spec and planning agents that must honor governance receive read-only constitution context."""
 
-    workflow = root / "extension/workflow/definition.yaml"
-    phase1_what = root / "extension/workflow/phases/phase1-what.md"
-    phase3_plan = root / "extension/workflow/phases/phase3-plan.md"
-    phase3_consensus = root / "extension/workflow/phases/phase3-consensus.md"
-    architect = root / "extension/agents/solution/architect.md"
+    workflow = root / "runtime/workflow/definition.yaml"
+    phase1_what = root / "runtime/workflow/phases/phase1-what.md"
+    phase3_plan = root / "runtime/workflow/phases/phase3-plan.md"
+    phase3_consensus = root / "runtime/workflow/phases/phase3-consensus.md"
+    architect = root / "prosaic/subagents/echelon.architect.md"
     flags = re.IGNORECASE | re.DOTALL
 
     checks = [
         PatternCheck(
-            "workflow phase1-what includes canonical constitution memory",
+            "workflow phase1-what includes canonical Echelon constitution",
             workflow,
-            r"id:\s+phase1-what[\s\S]*?context_pack:[\s\S]*?\.specify/memory/constitution\.md",
+            r"id:\s+phase1-what[\s\S]*?context_pack:[\s\S]*?\.echelon/constitution\.md",
         ),
         PatternCheck(
             "workflow phase3-plan includes constitution snapshot",
@@ -1046,19 +1046,19 @@ def validate_constitution_context_pack_contract(root: Path) -> list[str]:
             r"id:\s+phase3-plan[\s\S]*?context_pack:[\s\S]*?- constitution\.md",
         ),
         PatternCheck(
-            "workflow WHY3 includes canonical constitution memory",
+            "workflow WHY3 includes canonical Echelon constitution",
             workflow,
-            r"id:\s+echelon-sage[\s\S]*?mode:\s+WHY3[\s\S]*?context_pack:[\s\S]*?- \.specify/memory/constitution\.md",
+            r"id:\s+echelon\.sage[\s\S]*?mode:\s+WHY3[\s\S]*?context_pack:[\s\S]*?- \.echelon/constitution\.md",
         ),
         PatternCheck(
-            "workflow PLAN2 includes canonical constitution memory",
+            "workflow PLAN2 includes canonical Echelon constitution",
             workflow,
-            r"id:\s+echelon-orchestrator[\s\S]*?mode:\s+PLAN2[\s\S]*?context_pack:[\s\S]*?- \.specify/memory/constitution\.md",
+            r"id:\s+echelon\.orchestrator[\s\S]*?mode:\s+PLAN2[\s\S]*?context_pack:[\s\S]*?- \.echelon/constitution\.md",
         ),
         PatternCheck(
             "phase1 what prompt includes read-only constitution",
             phase1_what,
-            r"read-only \.specify/memory/constitution\.md",
+            r"`\.echelon/constitution\.md` \(read-only governance source",
         ),
         PatternCheck(
             "phase1 what prompt forbids CARTOGRAPHER constitution mutation",
@@ -1084,13 +1084,13 @@ def validate_constitution_context_pack_contract(root: Path) -> list[str]:
         PatternCheck(
             "phase3 consensus PLAN2 includes read-only constitution",
             phase3_consensus,
-            r"PLAN2 Context Pack[\s\S]*?`\.specify/memory/constitution\.md` \(read-only governance\)",
+            r"PLAN2 Context Pack[\s\S]*?`\.echelon/constitution\.md` \(read-only governance\)",
             flags,
         ),
         PatternCheck(
             "phase3 consensus PLAN2 forbids constitution mutation",
             phase3_consensus,
-            r"Treat `\.specify/memory/constitution\.md` as read-only governance context\. Do not edit, rewrite, append to, or output it\.",
+            r"Treat `\.echelon/constitution\.md` as read-only governance context\. Do not edit, rewrite, append to, or output it\.",
         ),
         PatternCheck(
             "ARCHITECT consumes published constitution snapshot",
@@ -1098,9 +1098,9 @@ def validate_constitution_context_pack_contract(root: Path) -> list[str]:
             r"read-only `constitution\.md` snapshot",
         ),
         PatternCheck(
-            "ARCHITECT forbids speckit constitution invocation",
+            "ARCHITECT forbids canonical constitution mutation",
             architect,
-            r"NEVER invoke `speckit\.constitution`",
+            r"NEVER create a constitution, edit `\.echelon/constitution\.md`, or append directly to `constitution\.md`",
         ),
         PatternCheck(
             "ARCHITECT stale fallback removed",

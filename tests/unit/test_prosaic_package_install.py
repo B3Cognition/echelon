@@ -122,6 +122,22 @@ def test_canonical_prosaic_does_not_instruct_providers_to_use_speckit() -> None:
         assert legacy_reference not in prose
 
 
+def test_canonical_prosaic_companion_markdown_references_resolve() -> None:
+    prosaic_root = Path(__file__).resolve().parents[2] / "prosaic"
+    missing: set[str] = set()
+
+    for artifact in prosaic_root.rglob("*.md"):
+        text = artifact.read_text(encoding="utf-8")
+        for reference in re.findall(
+            r"`((?:agents|commands|subagents)/[^`\s]+\.md)`",
+            text,
+        ):
+            if not (prosaic_root / reference).is_file():
+                missing.add(reference)
+
+    assert missing == set()
+
+
 def test_runtime_workflow_dispatches_only_neutral_prosaic_subagents() -> None:
     echelon_root = Path(__file__).resolve().parents[2]
     runtime = echelon_root / "runtime"

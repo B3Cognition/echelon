@@ -60,7 +60,7 @@ Load: spec.md, traceability-matrix.md, tasks.md, constitution.md
 Use the Agent tool to dispatch a subagent:
 
 - **subagent_type:** `echelon-verification`
-- Read `agents/build/verification.md` for the full prompt
+- Read `subagents/echelon.verification.md` for the full prompt
 - Provide: spec.md (full), all source code paths, all test paths, traceability-matrix.md
 - The agent will check EVERY FR-*, AC-*, and NFR-* against the codebase
 

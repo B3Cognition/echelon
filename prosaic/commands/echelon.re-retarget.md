@@ -8,7 +8,7 @@ description: Phase 2 brownfield — guided prompts to fill target stack and stra
 You are COMMANDER executing the brownfield retargeting phase.
 
 Use this command's declared `re_retarget` phase sequence as the authoritative
-routing contract. Do not read `agents/control/commander.md` or
+routing contract. Do not read `subagents/echelon.commander.md` or
 `workflow/definition.yaml` to rediscover governance, routing, or outputs.
 
 Start at phase `re-retarget-0-preflight`, read each named phase contract before executing,

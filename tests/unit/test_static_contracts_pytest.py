@@ -29,6 +29,46 @@ from tests.contract.static_contracts import (
 
 ROOT = Path(__file__).resolve().parents[2]
 
+VALIDATORS = (
+    validate_commander_loading_contract,
+    validate_commander_routing_mandate_contract,
+    validate_guardian_always_on_contract,
+    validate_guardian_mode_config_naming_contract,
+    validate_lexicon_derived_spec_contract,
+    validate_build_phase_constitution_preflight_contract,
+    validate_constitution_source_of_truth_contract,
+    validate_constitution_context_pack_contract,
+    validate_cartographer_tool_usage_contract,
+    validate_code_reviewer_confidence_filter_contract,
+    validate_commander_token_tracking_contract,
+    validate_implementer_eval_protocol_contract,
+    validate_sentinel_flakiness_contract,
+    validate_sage_contradiction_types_contract,
+    validate_sage_decisions_schema_contract,
+    validate_sage_understanding_followup_contract,
+    validate_veteran_project_scoping_contract,
+    validate_re_source_ownership_contract,
+    validate_auditor_internalizer_split_contract,
+    validate_auditor_internalization_contract,
+    validate_auditor_calibration_dashboard_contract,
+    validate_state_schema_build_qa_split_contract,
+    validate_spec_retarget_contract,
+)
+
+
+def test_static_contracts_do_not_require_legacy_extension_tree(tmp_path: Path) -> None:
+    for source in ROOT.iterdir():
+        if source.name != "extension":
+            (tmp_path / source.name).symlink_to(source, target_is_directory=source.is_dir())
+
+    failures = {
+        validator.__name__: result
+        for validator in VALIDATORS
+        if (result := validator(tmp_path))
+    }
+
+    assert failures == {}
+
 
 def test_commander_loading_contract() -> None:
     assert validate_commander_loading_contract(ROOT) == []

@@ -71,6 +71,40 @@ def test_load_command_returns_none_for_an_agent_only_prosaic_bundle(tmp_path: Pa
 
 
 @pytest.mark.unit
+def test_load_command_inlines_referenced_companion_markdown(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / ".echelon" / "prosaic"
+    companion = source / "commands" / "appendices" / "shared.md"
+    companion.parent.mkdir(parents=True)
+    companion.write_text("# Shared protocol\n\nCOMPANION_SENTINEL\n", encoding="utf-8")
+
+    def fake_run(command, **_kwargs):
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps(
+                {
+                    "id": "commands/echelon.demo.md",
+                    "type": "command",
+                    "frontmatter": {"name": "echelon.demo"},
+                    "body": "Load `commands/appendices/shared.md` before acting.",
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr("harness.prosaic_prompt_loader.subprocess.run", fake_run)
+
+    artifact = ProsaicPromptLoader(tmp_path).load_command("echelon.demo")
+
+    assert artifact is not None
+    assert "COMPANION_SENTINEL" in artifact.body
+    assert artifact.body.count("COMPANION_SENTINEL") == 1
+
+
+@pytest.mark.unit
 def test_render_command_substitutes_neutral_arguments() -> None:
     prompt = ProsaicPromptLoader.render_command(
         ProsaicCommandArtifact(frontmatter={}, body="Fix {{args}}."),
