@@ -11,7 +11,7 @@ export LC_ALL=C
 
 SCRIPT_DIR="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="${PROMPT_BUDGET_REPO_ROOT:-$(CDPATH='' cd "$SCRIPT_DIR/../../.." && pwd)}"
-AGENTS_DIR="$REPO_ROOT/extension/agents"
+AGENTS_DIR="$REPO_ROOT/prosaic/subagents"
 DEFAULT_MAX=500
 
 cmd="${1:-report}"

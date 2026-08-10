@@ -214,6 +214,15 @@ def test_phase_timing_has_one_runtime_source_of_truth() -> None:
     assert not (ROOT / "scripts" / "bash" / "phase-timing.sh").exists()
 
 
+def test_prompt_budget_reads_prosaic_subagents_from_runtime_bundle() -> None:
+    script = RUNTIME / "scripts" / "bash" / "prompt-budget.sh"
+    text = script.read_text(encoding="utf-8")
+
+    assert 'AGENTS_DIR="$REPO_ROOT/prosaic/subagents"' in text
+    assert "extension/agents" not in text
+    assert not (ROOT / "scripts" / "bash" / "prompt-budget.sh").exists()
+
+
 def test_land_and_recovery_do_not_special_case_legacy_storage() -> None:
     modules = (
         ROOT / "src" / "harness" / "land.py",
