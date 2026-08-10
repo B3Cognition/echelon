@@ -3,7 +3,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-SCRIPT="$REPO_ROOT/extension/scripts/bash/state-backup.sh"
+SCRIPT="$REPO_ROOT/runtime/scripts/bash/state-backup.sh"
 PASS=0
 FAIL=0
 

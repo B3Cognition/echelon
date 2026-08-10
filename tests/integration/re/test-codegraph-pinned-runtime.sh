@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-CODEGRAPH_NODE_DIR="$ROOT/extension/scripts/node/codegraph"
+CODEGRAPH_NODE_DIR="$ROOT/runtime/scripts/node/codegraph"
 PACKAGE_NAME='@colbymchenry/codegraph'
 EXPECTED_VERSION='1.4.1'
 

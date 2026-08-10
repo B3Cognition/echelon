@@ -3,7 +3,7 @@ set -eu
 
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
 SCHEMA="$ROOT_DIR/templates/state-schema.json"
-CHANGE_CMD="$ROOT_DIR/extension/commands/echelon.change.md"
+CHANGE_CMD="$ROOT_DIR/prosaic/commands/echelon.change.md"
 
 [ -f "$SCHEMA" ]
 [ -f "$CHANGE_CMD" ]

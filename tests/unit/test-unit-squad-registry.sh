@@ -26,19 +26,19 @@ assert_le() {
 }
 
 # 1. echelon.run.md is ≤ 100 lines
-RUNMD_LINES=$(wc -l < "$ROOT/extension/commands/echelon.run.md")
+RUNMD_LINES=$(wc -l < "$ROOT/prosaic/commands/echelon.run.md")
 assert_le "$RUNMD_LINES" 100 "echelon.run.md ≤ 100 lines"
 
 # 2. commander.md is ≤ 350 lines (was ~1200 before slimming to ~320 in ws3-cifix;
 #    harness now owns routing/token/budget so commander.md only carries judgment rules)
-CMD_LINES=$(wc -l < "$ROOT/extension/agents/control/commander.md")
+CMD_LINES=$(wc -l < "$ROOT/prosaic/subagents/echelon.commander.md")
 assert_le "$CMD_LINES" 350 "commander.md ≤ 350 lines"
 
 # 3. All phase types in definition.yaml have a registered executor
 TYPES=$("$PYTHON" -c "
 import yaml, sys
 sys.path.insert(0, '$ROOT/src')
-d = yaml.safe_load(open('$ROOT/extension/workflow/definition.yaml'))
+d = yaml.safe_load(open('$ROOT/runtime/workflow/definition.yaml'))
 types = {p.get('type','agent') for p in d.get('phases',[])}
 print(' '.join(sorted(types)))
 " 2>/dev/null || echo "ERROR")

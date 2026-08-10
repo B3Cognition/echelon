@@ -5,7 +5,7 @@ set -uo pipefail
 . "$(cd "$(dirname -- "$0")/.." && pwd)/utils/python-detect.sh"
 
 REPO_ROOT="$(CDPATH='' cd "$(dirname "$0")/../.." && pwd)"
-SCRIPTS="$REPO_ROOT/extension/scripts/bash"
+SCRIPTS="$REPO_ROOT/runtime/scripts/bash"
 FIXTURES="$REPO_ROOT/tests/fixtures/kb/valid-seeds"
 
 pass=0

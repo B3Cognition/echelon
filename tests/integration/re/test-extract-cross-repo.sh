@@ -3,7 +3,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SCRIPTS_ROOT="$(cd "$SCRIPT_DIR/../../../extension/scripts/bash/re" && pwd)"
+SCRIPTS_ROOT="$(cd "$SCRIPT_DIR/../../../runtime/scripts/bash/re" && pwd)"
 EXTRACT_CROSS_REPO="$SCRIPTS_ROOT/extract-cross-repo.sh"
 
 PASS_COUNT=0

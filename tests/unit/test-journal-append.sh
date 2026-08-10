@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Unit tests for extension/scripts/bash/journal-append.sh
+# Unit tests for runtime/scripts/bash/journal-append.sh
 # Tests: APP-01 through APP-06 per test-strategy.md
 # Run: bash tests/unit/test-journal-append.sh
 
 set -eu
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-SCRIPT="$ROOT_DIR/extension/scripts/bash/journal-append.sh"
+SCRIPT="$ROOT_DIR/runtime/scripts/bash/journal-append.sh"
 FIXTURES="$ROOT_DIR/tests/fixtures/journal-entries"
 TMP_DIR="$(mktemp -d)"
 

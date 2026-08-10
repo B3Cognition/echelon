@@ -27,7 +27,7 @@ check() {
 # ---------------------------------------------------------------------------
 # A-REQ-01: SENTINEL flakiness management (agents/solution/sentinel.md)
 # ---------------------------------------------------------------------------
-SENTINEL="extension/agents/solution/sentinel.md"
+SENTINEL="prosaic/subagents/echelon.sentinel.md"
 
 printf "\n=== A-REQ-01: SENTINEL Flakiness Management ===\n"
 check "Detection Protocol heading"      "$SENTINEL" "Detection Protocol"
@@ -39,7 +39,7 @@ check "Review Cadence heading"           "$SENTINEL" "Review Cadence"
 # ---------------------------------------------------------------------------
 # A-REQ-02: CODE_REVIEWER confidence filtering (agents/build/code-reviewer.md)
 # ---------------------------------------------------------------------------
-REVIEWER="extension/agents/build/code-reviewer.md"
+REVIEWER="prosaic/subagents/echelon.code-reviewer.md"
 
 printf "\n=== A-REQ-02: CODE_REVIEWER Confidence Filtering ===\n"
 check "80% confidence threshold"         "$REVIEWER" "80%"
@@ -55,7 +55,7 @@ check "Stylistic Suppression section"    "$REVIEWER" "Stylistic Suppression"
 # Detailed contradiction-type content was extracted into the appendix file;
 # re-point checks to where the content now lives.
 # ---------------------------------------------------------------------------
-SAGE="extension/agents/exploration/appendices/sage-contradiction-detection-reference.md"
+SAGE="prosaic/agents/exploration/appendices/sage-contradiction-detection-reference.md"
 
 printf "\n=== B-REQ-05: SAGE Contradiction Detection ===\n"
 check "Requirement conflicts type"               "$SAGE" "requirement_conflict"

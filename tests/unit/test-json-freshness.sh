@@ -7,8 +7,8 @@
 set -eu
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-YAML_FILE="$ROOT_DIR/extension/workflow/journal-entry-types.yaml"
-JSON_FILE="$ROOT_DIR/extension/workflow/journal-entry-types.json"
+YAML_FILE="$ROOT_DIR/runtime/workflow/journal-entry-types.yaml"
+JSON_FILE="$ROOT_DIR/runtime/workflow/journal-entry-types.json"
 TMP_DIR="$(mktemp -d)"
 
 cleanup() {

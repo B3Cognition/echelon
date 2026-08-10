@@ -221,7 +221,7 @@ fi
 # --- Test 8: VETERAN prompt documents the 3-fingerprint threshold ---
 echo ""
 echo "--- T8: VETERAN prompt specifies 3-fingerprint promotion threshold ---"
-VETERAN_FILE="$REPO_ROOT/extension/agents/learning/veteran.md"
+VETERAN_FILE="$REPO_ROOT/prosaic/subagents/echelon.veteran.md"
 if grep -q '3 distinct project fingerprints' "$VETERAN_FILE" || \
    grep -q 'distinct fingerprint count >= 3' "$VETERAN_FILE"; then
   pass "veteran.md specifies 3-fingerprint threshold"

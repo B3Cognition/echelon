@@ -3,7 +3,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SCRIPTS_ROOT="$(cd "$SCRIPT_DIR/../../../extension/scripts/bash/re" && pwd)"
+SCRIPTS_ROOT="$(cd "$SCRIPT_DIR/../../../runtime/scripts/bash/re" && pwd)"
 DISCOVER_SCRIPT="$SCRIPTS_ROOT/discover-repos.sh"
 FIXTURES_DIR="$SCRIPT_DIR/fixtures"
 

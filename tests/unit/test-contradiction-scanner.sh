@@ -4,7 +4,7 @@ set -eu
 . "$(cd "$(dirname -- "$0")/.." && pwd)/utils/python-detect.sh"
 
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
-SCRIPT="$ROOT_DIR/extension/scripts/contradiction-scanner.py"
+SCRIPT="$ROOT_DIR/runtime/scripts/contradiction-scanner.py"
 FIXTURES="$ROOT_DIR/tests/fixtures/contradiction-scanner"
 TMP_DIR="$(mktemp -d)"
 

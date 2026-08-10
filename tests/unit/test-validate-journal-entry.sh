@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Unit tests for extension/scripts/bash/validate-journal-entry.sh
+# Unit tests for runtime/scripts/bash/validate-journal-entry.sh
 # Tests: VLD-01 through VLD-10 per test-strategy.md
 # Run: bash tests/unit/test-validate-journal-entry.sh
 
 set -eu
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-SCRIPT="$ROOT_DIR/extension/scripts/bash/validate-journal-entry.sh"
+SCRIPT="$ROOT_DIR/runtime/scripts/bash/validate-journal-entry.sh"
 FIXTURES="$ROOT_DIR/tests/fixtures/journal-entries"
 TMP_DIR="$(mktemp -d)"
 
