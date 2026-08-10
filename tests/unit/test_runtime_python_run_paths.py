@@ -47,3 +47,22 @@ def test_soar_discovers_workspace_from_echelon_directory(tmp_path, monkeypatch):
     monkeypatch.chdir(nested)
 
     assert Path(soar._repo_root()) == tmp_path
+
+
+def test_trace_shim_discovers_active_run_from_echelon_workspace(
+    tmp_path,
+    monkeypatch,
+):
+    (tmp_path / ".echelon").mkdir()
+    active_run = tmp_path / "runs" / "spec-current"
+    active_run.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(
+        "spec-current\n",
+        encoding="utf-8",
+    )
+    nested = tmp_path / "sources" / "api"
+    nested.mkdir(parents=True)
+    monkeypatch.chdir(nested)
+    monkeypatch.delenv("ECHELON_RUN_DIR", raising=False)
+
+    assert trace_shim._auto_detect_trace_dir() == active_run

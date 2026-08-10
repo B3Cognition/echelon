@@ -59,10 +59,16 @@ def _auto_detect_trace_dir() -> Path:
 
     script_dir = Path(__file__).resolve().parent
     repo_root = script_dir.parent.parent
-    for candidate_root in (script_dir, *script_dir.parents):
-        if (candidate_root / ".specify").exists() or (candidate_root / "knowledge-base").exists():
-            repo_root = candidate_root
-            break
+    for search_start in (Path.cwd().resolve(), script_dir):
+        for candidate_root in (search_start, *search_start.parents):
+            if (candidate_root / ".echelon").exists() or (
+                candidate_root / "knowledge-base"
+            ).exists():
+                repo_root = candidate_root
+                break
+        else:
+            continue
+        break
 
     current = repo_root / "runs" / ".current"
     if current.exists():
