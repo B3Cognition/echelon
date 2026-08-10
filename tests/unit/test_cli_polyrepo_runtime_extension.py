@@ -9,9 +9,7 @@ import yaml
 
 from echelon.cli import _sync_polyrepo_runtime_extension
 from harness.runtime_surface import (
-    DELIVERY_AGENT_DIRS,
     DELIVERY_BASH_FILES,
-    DELIVERY_COMMAND_FILES,
     DELIVERY_TEMPLATE_FILES,
     is_delivery_workflow_phase_path,
 )
@@ -357,10 +355,10 @@ def test_polyrepo_runtime_extension_exposes_only_delivery_safe_templates(
     assert not (templates / "strategic-overview-template.md").exists()
 
 
-def test_polyrepo_runtime_extension_excludes_non_delivery_agent_prompts(
+def test_polyrepo_runtime_extension_excludes_all_runtime_agent_prompts(
     tmp_path: Path,
 ) -> None:
-    """Target-specific harness roots should expose only delivery-safe agents."""
+    """Agent prose belongs only to the deployed Prosaic bundle."""
     source = tmp_path / "workspace" / ".echelon" / "runtime"
     for agent_dir in [
         "control",
@@ -387,20 +385,13 @@ def test_polyrepo_runtime_extension_excludes_non_delivery_agent_prompts(
     _sync_polyrepo_runtime_extension(tmp_path / "workspace", harness_base)
 
     agents = harness_base / ".echelon" / "runtime" / "agents"
-    assert not (agents / "control" / "commander.md").exists()
-    assert (agents / "build" / "build.md").exists()
-    assert not (agents / "exploration").exists()
-    assert not (agents / "solution").exists()
-    assert not (agents / "re").exists()
-    assert not (agents / "learning").exists()
-    assert not (agents / "feasibility").exists()
-    assert not (agents / "specialists").exists()
+    assert not agents.exists()
 
 
-def test_polyrepo_runtime_extension_excludes_non_delivery_command_docs(
+def test_polyrepo_runtime_extension_excludes_all_runtime_command_docs(
     tmp_path: Path,
 ) -> None:
-    """Target-specific harness roots should expose only delivery command docs."""
+    """Command prose belongs only to the deployed Prosaic bundle."""
     source = tmp_path / "workspace" / ".echelon" / "runtime"
     (source / "agents" / "control").mkdir(parents=True)
     (source / "workflow").mkdir()
@@ -422,10 +413,7 @@ def test_polyrepo_runtime_extension_excludes_non_delivery_command_docs(
     _sync_polyrepo_runtime_extension(tmp_path / "workspace", harness_base)
 
     commands = harness_base / ".echelon" / "runtime" / "commands"
-    assert (commands / "echelon.build.md").exists()
-    assert (commands / "echelon.verify-spec.md").exists()
-    assert not (commands / "echelon.run.md").exists()
-    assert not (commands / "echelon.re-extract.md").exists()
+    assert not commands.exists()
 
 
 def test_polyrepo_runtime_extension_excludes_phase_a_and_re_workflow_phase_docs(
@@ -549,22 +537,28 @@ def test_polyrepo_runtime_extension_prunes_workflow_definition_to_delivery_surfa
 def test_polyrepo_runtime_extension_real_tree_matches_delivery_surface_policy(
     tmp_path: Path,
 ) -> None:
-    """Workspace-target harness roots must not leak non-delivery runtime surface."""
+    """Workspace targets retain the canonical runtime/prose ownership boundary."""
     repo_root = Path(__file__).resolve().parents[2]
     workspace = tmp_path / "workspace"
     source = workspace / ".echelon" / "runtime"
-    copytree(repo_root / "extension", source)
+    copytree(repo_root / "runtime", source)
+    copytree(
+        repo_root / "prosaic",
+        workspace / ".echelon" / "prosaic",
+        dirs_exist_ok=True,
+    )
     harness_base = workspace / "runs" / "targets" / "prosaic"
 
     _sync_polyrepo_runtime_extension(workspace, harness_base)
 
     runtime = harness_base / ".echelon" / "runtime"
+    prose = harness_base / ".echelon" / "prosaic"
 
-    commands = {p.name for p in (runtime / "commands").iterdir() if p.is_file()}
-    assert commands == DELIVERY_COMMAND_FILES
-
-    agent_dirs = {p.name for p in (runtime / "agents").iterdir() if p.is_dir()}
-    assert agent_dirs == DELIVERY_AGENT_DIRS
+    assert not (runtime / "commands").exists()
+    assert not (runtime / "agents").exists()
+    assert (prose / "commands" / "echelon.build.md").is_file()
+    assert (prose / "commands" / "echelon.verify-spec.md").is_file()
+    assert (prose / "subagents" / "echelon.implementer.md").is_file()
 
     bash_files = {p.name for p in (runtime / "scripts" / "bash").iterdir() if p.is_file()}
     assert bash_files <= DELIVERY_BASH_FILES

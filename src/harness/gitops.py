@@ -29,9 +29,7 @@ from harness.config import HarnessConfig
 from harness.errors import GitOpsError, GitOpsEscalation, SelfTargetError
 from harness.paths import build_dir as _build_dir_fn, mirror_path as _mirror_path_fn, runs_dir as _runs_dir_fn
 from harness.runtime_surface import (
-    DELIVERY_COMMAND_FILES,
     DELIVERY_EXCLUDED_BASH_FILES,
-    is_delivery_agent_path,
     is_delivery_bash_path,
     is_delivery_template_path,
     is_delivery_workflow_phase_path,
@@ -46,6 +44,8 @@ logger = logging.getLogger(__name__)
 GIT_CMD_TIMEOUT = 120
 RUNTIME_EXTENSION_EXCLUDED_PATHS = (
     Path(".extensionignore"),
+    Path("agents"),
+    Path("commands"),
     Path("config"),
     Path("config-template.yml"),
     Path("echelon-config.yml"),
@@ -263,16 +263,9 @@ def runtime_extension_copy_ignore(source_root: Path):
             ):
                 ignored.add(name)
             if (
-                relative.parent == Path("commands")
-                and name not in DELIVERY_COMMAND_FILES
-            ):
-                ignored.add(name)
-            if (
                 relative.parent == Path("scripts") / "bash"
                 and name in DELIVERY_EXCLUDED_BASH_FILES
             ):
-                ignored.add(name)
-            if not is_delivery_agent_path(relative):
                 ignored.add(name)
             if not is_delivery_bash_path(relative):
                 ignored.add(name)

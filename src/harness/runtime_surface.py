@@ -7,13 +7,6 @@ from pathlib import Path
 import yaml
 
 
-DELIVERY_COMMAND_FILES = frozenset(
-    {
-        "echelon.build.md",
-        "echelon.verify-spec.md",
-    }
-)
-
 DELIVERY_EXCLUDED_BASH_FILES = frozenset(
     {
         "belief-freshness-check.sh",
@@ -33,12 +26,6 @@ DELIVERY_EXCLUDED_BASH_FILES = frozenset(
         "prompt-budget.sh",
         "state-backup.sh",
         "validate-journal-entry.sh",
-    }
-)
-
-DELIVERY_AGENT_DIRS = frozenset(
-    {
-        "build",
     }
 )
 
@@ -83,14 +70,6 @@ DELIVERY_WORKFLOW_DEFINITION_KEYS = frozenset(
         "reopen",
     }
 )
-
-
-def is_delivery_agent_path(relative_path: Path) -> bool:
-    """Return True when an agent prompt path is safe to expose to delivery agents."""
-    parts = tuple(relative_path.parts)
-    if len(parts) < 2 or parts[0] != "agents":
-        return True
-    return parts[1] in DELIVERY_AGENT_DIRS
 
 
 def is_delivery_bash_path(relative_path: Path) -> bool:
