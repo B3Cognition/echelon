@@ -20,7 +20,6 @@ set -euo pipefail
 
 HOOK_DIR="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
 HOOK_REPO_ROOT="$(CDPATH='' cd "$HOOK_DIR/../.." && pwd)"
-. "$HOOK_REPO_ROOT/extension/scripts/bash/python-detect.sh"
 
 # --- arg parsing ---
 AGENT=""; DISPATCH_ID=""; RESULT_FILE=""
@@ -40,33 +39,37 @@ fi
 
 # --- locate paths ---
 ROOT="$(pwd)"
-while [ "$ROOT" != "/" ] && [ ! -d "$ROOT/.specify" ]; do
+while [ "$ROOT" != "/" ] && [ ! -d "$ROOT/.echelon" ]; do
   ROOT=$(dirname "$ROOT")
 done
 if [ "$ROOT" = "/" ]; then
-  echo "post-dispatch-hormone-update: no .specify/ in CWD or parents" >&2
+  echo "post-dispatch-hormone-update: no .echelon/ in CWD or parents" >&2
   exit 2
 fi
 cd "$ROOT"
 
+RUNTIME_SCRIPTS="$ROOT/.echelon/runtime/scripts/bash"
+if [[ ! -d "$RUNTIME_SCRIPTS" ]]; then
+  RUNTIME_SCRIPTS="$HOOK_REPO_ROOT/runtime/scripts/bash"
+fi
+. "$RUNTIME_SCRIPTS/python-detect.sh"
+
 find_squad_dir() {
-  local root="$1" base run_id current_file
-  for base in runs squad; do
-    current_file="$root/$base/.current"
-    if [[ -f "$current_file" ]]; then
-      run_id=$(tr -d '[:space:]' < "$current_file")
-      if [[ -n "$run_id" && -d "$root/$base/$run_id" ]]; then
-        echo "$root/$base/$run_id"
-        return 0
-      fi
+  local root="$1" run_id current_file
+  current_file="$root/runs/.current"
+  if [[ -f "$current_file" ]]; then
+    run_id=$(tr -d '[:space:]' < "$current_file")
+    if [[ -n "$run_id" && -d "$root/runs/$run_id" ]]; then
+      echo "$root/runs/$run_id"
+      return 0
     fi
-  done
-  echo "$root/.specify/squad"
+  fi
+  echo "$root/runs"
 }
 
 SQUAD_DIR="${ENDOCRINE_SQUAD_DIR:-$(find_squad_dir "$ROOT")}"
 STATE_FILE="${ENDOCRINE_STATE_FILE:-$SQUAD_DIR/state.json}"
-ENDOCRINE_SH="$ROOT/extension/scripts/bash/endocrine.sh"
+ENDOCRINE_SH="$RUNTIME_SCRIPTS/endocrine.sh"
 if [[ ! -f "$ENDOCRINE_SH" ]]; then
   echo "post-dispatch-hormone-update: endocrine.sh not found at $ENDOCRINE_SH" >&2
   exit 2
@@ -87,7 +90,7 @@ mark_dispatch_applied() {
 }
 
 # --- graceful skip when endocrine disabled ---
-ENABLED=$(bash "$ROOT/extension/scripts/bash/echelon-config-get.sh" endocrine.enabled 2>/dev/null || echo "true")
+ENABLED=$(bash "$RUNTIME_SCRIPTS/echelon-config-get.sh" endocrine.enabled 2>/dev/null || echo "true")
 if [[ "$ENABLED" == "false" ]]; then
   exit 0
 fi

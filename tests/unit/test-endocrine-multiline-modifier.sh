@@ -15,9 +15,9 @@ TMP_STATE=$(mktemp -t endocrine-multiline-state.XXXXXX.json)
 trap 'rm -f "$TMP_STATE"' EXIT
 echo "{}" > "$TMP_STATE"
 export ENDOCRINE_STATE_FILE="$TMP_STATE"
-export ENDOCRINE_CONFIG_FILE="$REPO_ROOT/runtime/echelon-config.yml"
+export ENDOCRINE_CONFIG_FILE="$REPO_ROOT/runtime/config-template.yml"
 
-# Seed all 41 agents' hormones from baselines.
+# Seed all 56 agents' hormones from baselines.
 bash "$ENDOCRINE" init >/dev/null 2>&1 || { echo "FAIL: endocrine.sh init failed"; exit 1; }
 
 # Force GOLDDIGGER (post-T2 exploration archetype) into a state that triggers

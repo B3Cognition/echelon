@@ -5,19 +5,19 @@
 #   1. ALL_AGENTS → agent_to_archetype (no silent default-control fall-through)
 #   2. agent_to_archetype outputs → baselines (every archetype has a baseline)
 #   3. baselines → interpretations (every baseline has an interpretation)
-#   4. ALL_AGENTS → disk (every roster entry has a .md file)
-#   5. disk → ALL_AGENTS (every .md file is in the roster)
-#   6. disk → marker (every .md file has the endocrine-awareness blockquote)
+#   4. ALL_AGENTS → Prosaic (every roster entry has a neutral subagent)
+#   5. Prosaic → ALL_AGENTS (every neutral subagent is in the roster)
+#   6. endocrine.sh exposes the centralized prompt-modifier contract
 #
-# Designed to catch BUG-3-shape drift and Section-4 marker drift in CI.
+# Designed to catch archetype, config, and Prosaic roster drift in CI.
 
 set -uo pipefail
 
 REPO_ROOT="$(CDPATH='' cd "$(dirname "$0")/../.." && pwd)"
-ENDOCRINE="$REPO_ROOT/extension/scripts/bash/endocrine.sh"
-CONFIG="$REPO_ROOT/extension/echelon-config.yml"
-AGENTS_DIR="$REPO_ROOT/extension/agents"
-MARKER='**Endocrine awareness.**'
+ENDOCRINE="$REPO_ROOT/runtime/scripts/bash/endocrine.sh"
+CONFIG="$REPO_ROOT/runtime/config-template.yml"
+INTERPRETATIONS_CONFIG="$REPO_ROOT/runtime/echelon-config.yml"
+AGENTS_DIR="$REPO_ROOT/prosaic/subagents"
 
 # Extract ALL_AGENTS from endocrine.sh source (parse the ALL_AGENTS=(…) block).
 ALL_AGENTS=()
@@ -118,7 +118,7 @@ check "every archetype has a baseline" "[ $missing_baseline -eq 0 ]"
 # ---------------- Assertion 3 -------------------------------------------------
 section 3 "baselines → interpretations"
 
-INTERP_ARCHS=$(python3 - "$CONFIG" <<'PY'
+INTERP_ARCHS=$(python3 - "$INTERPRETATIONS_CONFIG" <<'PY'
 import yaml, sys
 d = yaml.safe_load(open(sys.argv[1])) or {}
 for k in sorted((d.get('endocrine', {}).get('interpretations', {}) or {}).keys()):
@@ -136,13 +136,14 @@ done
 check "every baseline has an interpretation" "[ $missing_interp -eq 0 ]"
 
 # ---------------- Assertion 4 -------------------------------------------------
-section 4 "ALL_AGENTS → disk"
+section 4 "ALL_AGENTS → Prosaic"
 
-# Map disk filenames to ALL_AGENTS codename form: foo-bar.md → FOO_BAR.
+# Map neutral filenames to ALL_AGENTS codename form:
+# echelon.re-analyzer.md → RE_ANALYZER.
 DISK_AGENTS=$(
   find "$AGENTS_DIR" -type f -name '*.md' \
-    -not -path '*/appendices/*' -not -path '*/templates/*' \
     -exec basename {} .md \; \
+  | sed 's/^echelon\.//' \
   | tr '[:lower:]-' '[:upper:]_' \
   | sort -u
 )
@@ -157,7 +158,7 @@ done
 check "every ALL_AGENTS entry has an agent file" "[ $missing_disk -eq 0 ]"
 
 # ---------------- Assertion 5 -------------------------------------------------
-section 5 "disk → ALL_AGENTS"
+section 5 "Prosaic → ALL_AGENTS"
 
 ALL_AGENTS_SORTED=$(printf '%s\n' "${ALL_AGENTS[@]}" | sort -u)
 

@@ -71,15 +71,13 @@ def _prepare_legacy_append(
 def _prepare_hormone_hook(
     workspace: Path,
 ) -> tuple[Path, list[str], dict[str, str], Path]:
-    squad_dir = workspace / ".specify/squad"
-    scripts = workspace / "extension/scripts/bash"
+    squad_dir = workspace / "runs/run-shell-lock"
     squad_dir.mkdir(parents=True)
-    scripts.mkdir(parents=True)
-    for source in (ROOT / "extension/scripts/bash").iterdir():
-        (scripts / source.name).symlink_to(source)
+    (workspace / "runs/.current").write_text("run-shell-lock\n", encoding="utf-8")
+    (workspace / ".echelon").mkdir()
     shutil.copy(
-        ROOT / "extension/echelon-config.yml",
-        workspace / "extension/echelon-config.yml",
+        ROOT / "runtime/config-template.yml",
+        workspace / ".echelon/config.yml",
     )
     state = squad_dir / "state.json"
     state.write_text(
@@ -102,8 +100,9 @@ def _prepare_hormone_hook(
     environment = _environment()
     environment["ENDOCRINE_STATE_FILE"] = str(state)
     environment["ENDOCRINE_SQUAD_DIR"] = str(squad_dir)
+    environment["ENDOCRINE_CONFIG_FILE"] = str(workspace / ".echelon/config.yml")
     subprocess.run(
-        ["bash", str(scripts / "endocrine.sh"), "init"],
+        ["bash", str(ROOT / "runtime/scripts/bash/endocrine.sh"), "init"],
         cwd=workspace,
         env=environment,
         check=True,

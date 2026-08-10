@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+import hormone_calc.observable as observable
 from hormone_calc.observable import ObservableState, build_from, normalize_agent_name, _strip_echelon_result_fence
 
 
@@ -147,6 +148,23 @@ def test_normalize_agent_name_canonical_form_idempotent():
 
 def test_normalize_agent_name_empty_string():
     assert normalize_agent_name("") == ""
+
+
+def test_default_archetype_uses_deployed_runtime_script(tmp_path, monkeypatch):
+    script = tmp_path / ".echelon/runtime/scripts/bash/endocrine.sh"
+    script.parent.mkdir(parents=True)
+    script.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    observed = {}
+
+    def fake_run(command, **kwargs):
+        observed["command"] = command
+        return type("Result", (), {"stdout": "build\n"})()
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(observable.subprocess, "run", fake_run)
+
+    assert observable._default_archetype_fn("IMPLEMENTER") == "build"
+    assert Path(observed["command"][1]) == script
 
 
 def test_strip_fence_raw_yaml_unchanged():

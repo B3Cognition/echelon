@@ -16,8 +16,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent.parent
-ENDOCRINE_SH = REPO_ROOT / "scripts" / "bash" / "endocrine.sh"
-COMMANDER_MD = REPO_ROOT / "extension" / "agents" / "control" / "commander.md"
+ENDOCRINE_SH = REPO_ROOT / "runtime" / "scripts" / "bash" / "endocrine.sh"
 
 _HORMONES = ("adrenaline", "dopamine", "cortisol", "serotonin", "oxytocin", "norepinephrine")
 

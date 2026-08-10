@@ -254,13 +254,13 @@ get_hormone_baseline() {
 agent_to_archetype() {
   local agent="$1"
   case "$agent" in
-    SCOUT|SYNTHESIZER|CARTOGRAPHER|LEXICON_DERIVER|MODELER|GOLDDIGGER|ANALYZER|SPECIFIER|EXPANDER)
+    SCOUT|SYNTHESIZER|CARTOGRAPHER|LEXICON_DERIVER|MODELER|GOLDDIGGER|RE_ANALYZER|RE_SPECIFIER|RE_EXPANDER)
       echo "exploration" ;;
-    SAGE|VALIDATOR|CHECKPOINT|GUARDIAN|CHECKLISTER|VERIFIER)
+    SAGE|VALIDATOR|CHECKPOINT|GUARDIAN|RE_CHECKLISTER|RE_VALIDATOR|RE_VERIFIER)
       echo "validation" ;;
     GATEKEEPER)
       echo "feasibility" ;;
-    ARCHITECT|ORCHESTRATOR|SENTINEL|ORACLE|BENCHMARK|PLANNER|TASKER)
+    ARCHITECT|ORCHESTRATOR|SENTINEL|ORACLE|BENCHMARK|RE_PLANNER|RE_TASKER)
       echo "solution" ;;
     IMPLEMENTER|SPEC_GUARD|CODE_REVIEWER|TEST_GUARDIAN|DEBUGGER|INTEGRATOR|CHANGE_CONTROLLER|VISUAL_VALIDATOR|VERIFICATION|ENGINEERING_MANAGER|IMPLEMENTATION_MAPPER|SPEC_FULFILLMENT_AUDITOR|TECH_WRITER|DOCS_VERIFIER)
       echo "build" ;;
@@ -268,7 +268,7 @@ agent_to_archetype() {
       echo "innovation" ;;
     MIRROR|ADAPTIVE|AUDITOR|INTERNALIZER|REALIST|CONSOLIDATOR|VETERAN|MONITOR)
       echo "learning" ;;
-    COMMANDER|SCOREKEEPER|TRACKER|STRATEGIST|PROGRESS_TRACKER|CHIEF|CONSTITUTER)
+    COMMANDER|SCOREKEEPER|TRACKER|STRATEGIST|PROGRESS_TRACKER|CHIEF|RE_CONSTITUTER)
       echo "control" ;;
     *)
       echo "control" ;;  # default fallback
@@ -287,7 +287,8 @@ ALL_AGENTS=(
   SCOREKEEPER TRACKER STRATEGIST PROGRESS_TRACKER VETERAN
   GUARDIAN ORACLE BENCHMARK ADVOCATE GOLDDIGGER MONITOR
   CHIEF IMPLEMENTATION_MAPPER SPEC_FULFILLMENT_AUDITOR TECH_WRITER DOCS_VERIFIER
-  ANALYZER SPECIFIER EXPANDER CONSTITUTER PLANNER TASKER CHECKLISTER VERIFIER
+  RE_ANALYZER RE_SPECIFIER RE_EXPANDER RE_CONSTITUTER RE_PLANNER RE_TASKER
+  RE_CHECKLISTER RE_VALIDATOR RE_VERIFIER
 )
 
 # ---------------------------------------------------------------------------
@@ -937,15 +938,22 @@ cmd_get_full_prompt_modifier() {
   fi
 
   local INTERP_RAW=""
-  if [[ -n "$CFG_PATH" ]] && command -v "$PYTHON" &>/dev/null; then
-    INTERP_RAW=$("$PYTHON" - "$CFG_PATH" "$archetype" 2>/dev/null <<'PY'
+  local BUNDLED_INTERP_CONFIG="$SCRIPT_DIR/../../echelon-config.yml"
+  if command -v "$PYTHON" &>/dev/null; then
+    INTERP_RAW=$("$PYTHON" - "$CFG_PATH" "$BUNDLED_INTERP_CONFIG" "$archetype" 2>/dev/null <<'PY'
 import yaml, sys
-cfg_path, archetype = sys.argv[1], sys.argv[2]
-try:
-    cfg = yaml.safe_load(open(cfg_path)) or {}
-except Exception:
-    sys.exit(0)
-arch = cfg.get('endocrine', {}).get('interpretations', {}).get(archetype, {})
+workspace_path, bundled_path, archetype = sys.argv[1:]
+arch = {}
+for cfg_path in (workspace_path, bundled_path):
+    if not cfg_path:
+        continue
+    try:
+        cfg = yaml.safe_load(open(cfg_path)) or {}
+    except Exception:
+        continue
+    arch = cfg.get('endocrine', {}).get('interpretations', {}).get(archetype, {})
+    if arch:
+        break
 if not arch:
     sys.exit(0)
 summary = (arch.get('summary') or '').strip()

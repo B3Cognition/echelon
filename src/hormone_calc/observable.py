@@ -7,6 +7,7 @@ state.json + reasoning-journal.jsonl + the echelon_result YAML file.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -179,9 +180,20 @@ def _default_archetype_fn(agent: str) -> str:
     Falls back to "control" if the call fails (consistent with endocrine.sh's
     own fallback for unknown agents).
     """
+    override = os.environ.get("ENDOCRINE_SCRIPT")
+    candidates = [
+        Path(override) if override else None,
+        Path.cwd() / ".echelon/runtime/scripts/bash/endocrine.sh",
+        Path(__file__).resolve().parents[2]
+        / "runtime/scripts/bash/endocrine.sh",
+    ]
+    script = next(
+        (candidate for candidate in candidates if candidate and candidate.is_file()),
+        candidates[1],
+    )
     try:
         result = subprocess.run(
-            ["bash", "extension/scripts/bash/endocrine.sh", "get_archetype", agent],
+            ["bash", str(script), "get_archetype", agent],
             capture_output=True, text=True, timeout=5,
         )
         out = result.stdout.strip()

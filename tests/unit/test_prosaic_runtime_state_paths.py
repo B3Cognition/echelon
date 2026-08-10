@@ -253,6 +253,17 @@ def test_spa_base_helper_has_one_runtime_source_of_truth() -> None:
     assert not (ROOT / "scripts" / "bash" / "fix-spa-base.sh").exists()
 
 
+def test_active_endocrine_callers_use_deployed_runtime() -> None:
+    modules = (
+        ROOT / "src" / "hormone_calc" / "observable.py",
+        ROOT / "scripts" / "bash" / "post-dispatch-hormone-update.sh",
+    )
+    combined = "\n".join(path.read_text(encoding="utf-8") for path in modules)
+
+    assert "extension/scripts" not in combined
+    assert not (ROOT / "scripts" / "bash" / "endocrine.sh").exists()
+
+
 def test_land_and_recovery_do_not_special_case_legacy_storage() -> None:
     modules = (
         ROOT / "src" / "harness" / "land.py",
