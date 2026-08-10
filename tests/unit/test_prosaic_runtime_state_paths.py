@@ -180,6 +180,10 @@ def test_deployment_scripts_have_one_runtime_source_of_truth() -> None:
     assert not any((ROOT / "scripts" / "bash" / name).exists() for name in duplicate_names)
 
 
+def test_obsolete_speckit_integration_smoke_script_is_absent() -> None:
+    assert not (ROOT / "scripts" / "bash" / "integration-smoke-test.sh").exists()
+
+
 def test_land_and_recovery_do_not_special_case_legacy_storage() -> None:
     modules = (
         ROOT / "src" / "harness" / "land.py",
