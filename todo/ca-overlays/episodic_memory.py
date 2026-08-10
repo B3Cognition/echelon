@@ -1,5 +1,5 @@
 """
-T-025 — Episodic Memory Overlay (CA overlay, ADR-005)
+Quarantined prototype: T-025 Episodic Memory Overlay (CA overlay, ADR-005).
 
 Exposes:
   enrich_context(context_pack, run_id, agent_type) -> dict

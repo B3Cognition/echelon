@@ -1,5 +1,5 @@
 """
-T-021 — Goal Stack Overlay (CA overlay, ADR-005)
+Quarantined prototype: T-021 Goal Stack Overlay (CA overlay, ADR-005).
 
 Exposes:
   enrich_context(context_pack, run_id) -> dict
