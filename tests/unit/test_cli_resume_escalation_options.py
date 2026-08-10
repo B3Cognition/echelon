@@ -63,6 +63,10 @@ def _patch_resume_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
                 "DONE",
             ]
 
+    phase_graph_mod.load_workspace_phase_graph = lambda project_root: (
+        FakePhaseGraph(),
+        project_root / ".echelon" / "runtime",
+    )
     phase_graph_mod.PhaseNode = FakePhaseNode
     phase_graph_mod.PhaseGraph = FakePhaseGraph
 
@@ -165,7 +169,7 @@ def test_resume_submits_a_valid_v2_answer_only_through_controller(
     controller = sys.modules["harness.squad"].SquadController
     controller.resume_with_human_input = lambda self, answer: answers.append(answer) or True
 
-    _cmd_resume(["approve"], project_root=tmp_path, ext_dir=Path.cwd() / "extension")
+    _cmd_resume(["approve"], project_root=tmp_path, ext_dir=tmp_path / ".echelon/runtime")
 
     assert answers == ["approve"]
     persisted = json.loads(state_path.read_text(encoding="utf-8"))
@@ -215,7 +219,7 @@ def test_resume_rejects_stale_v2_reason_before_controller_construction(
     _patch_resume_dependencies(monkeypatch)
 
     with pytest.raises(SystemExit) as exc:
-        _cmd_resume(["Use the public boundary"], project_root=tmp_path, ext_dir=Path.cwd() / "extension")
+        _cmd_resume(["Use the public boundary"], project_root=tmp_path, ext_dir=tmp_path / ".echelon/runtime")
 
     assert exc.value.code == 1
 
@@ -240,7 +244,7 @@ def test_resume_option_a_routes_to_offered_next_phase(tmp_path: Path, monkeypatc
     )
     _patch_resume_dependencies(monkeypatch)
 
-    _cmd_resume(["A"], project_root=tmp_path, ext_dir=Path.cwd() / "extension")
+    _cmd_resume(["A"], project_root=tmp_path, ext_dir=tmp_path / ".echelon/runtime")
 
     state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
     assert state["status"] == "running"
@@ -276,7 +280,7 @@ def test_resume_rejects_option_with_invalid_next_phase(
     _patch_resume_dependencies(monkeypatch)
 
     with pytest.raises(SystemExit) as exc:
-        _cmd_resume(["A"], project_root=tmp_path, ext_dir=Path.cwd() / "extension")
+        _cmd_resume(["A"], project_root=tmp_path, ext_dir=tmp_path / ".echelon/runtime")
 
     assert exc.value.code == 1
     state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
@@ -312,7 +316,7 @@ def test_resume_rejects_unmatched_answer_when_structured_options_exist(
     _patch_resume_dependencies(monkeypatch)
 
     with pytest.raises(SystemExit) as exc:
-        _cmd_resume(["surprise third path"], project_root=tmp_path, ext_dir=Path.cwd() / "extension")
+        _cmd_resume(["surprise third path"], project_root=tmp_path, ext_dir=tmp_path / ".echelon/runtime")
 
     assert exc.value.code == 1
     state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
@@ -335,7 +339,7 @@ def test_resume_accepts_free_text_decision_without_options(
     _cmd_resume(
         ["Use a narrower audience and keep missions under 10 minutes."],
         project_root=tmp_path,
-        ext_dir=Path.cwd() / "extension",
+        ext_dir=tmp_path / ".echelon/runtime",
     )
 
     state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
@@ -383,7 +387,7 @@ def test_resume_uses_existing_blocked_decision_after_process_restart(
     state_path.write_text(json.dumps(state), encoding="utf-8")
     _patch_resume_dependencies(monkeypatch)
 
-    _cmd_resume(["proceed_anyway"], project_root=tmp_path, ext_dir=Path.cwd() / "extension")
+    _cmd_resume(["proceed_anyway"], project_root=tmp_path, ext_dir=tmp_path / ".echelon/runtime")
 
     resumed = json.loads(state_path.read_text(encoding="utf-8"))
     assert resumed["phase"] == "phase2-decide"
@@ -422,14 +426,14 @@ def test_resume_terminal_block_delegates_to_continue(
 
     monkeypatch.setattr("echelon.cli._cmd_continue", fake_continue)
 
-    _cmd_resume(["retry with narrower scope"], project_root=tmp_path, ext_dir=Path.cwd() / "extension")
+    _cmd_resume(["retry with narrower scope"], project_root=tmp_path, ext_dir=tmp_path / ".echelon/runtime")
 
     resumed = json.loads(state_path.read_text(encoding="utf-8"))
     assert resumed["status"] == "running"
     assert resumed["phase"] == "terminal-blocked"
     assert resumed["blocked_reason"] is None
     assert resumed["blocked_decision"]["status"] == "resolved"
-    assert calls == [([], tmp_path, Path.cwd() / "extension")]
+    assert calls == [([], tmp_path, tmp_path / ".echelon/runtime")]
 
 
 def test_resume_phase_dispatch_limit_requires_issue_resolution(
@@ -466,7 +470,7 @@ def test_resume_phase_dispatch_limit_requires_issue_resolution(
         _cmd_resume(
             ["Authorize one targeted retry of phase1-what using the latest issues.md findings."],
             project_root=tmp_path,
-            ext_dir=Path.cwd() / "extension",
+            ext_dir=tmp_path / ".echelon/runtime",
         )
 
     resumed = json.loads(state_path.read_text(encoding="utf-8"))
@@ -523,7 +527,7 @@ def test_resolve_records_one_issue_and_starts_targeted_repair(
     _cmd_spec_resolve(
         ["ISS-002", "Use exponential backoff with a documented cap."],
         project_root=tmp_path,
-        ext_dir=Path.cwd() / "extension",
+        ext_dir=tmp_path / ".echelon/runtime",
     )
 
     resolved = json.loads(state_path.read_text(encoding="utf-8"))
@@ -592,7 +596,7 @@ def test_resolve_same_selected_decision_is_idempotent(
     _cmd_spec_resolve(
         ["ISS-001", "Use exponential backoff."],
         project_root=tmp_path,
-        ext_dir=Path.cwd() / "extension",
+        ext_dir=tmp_path / ".echelon/runtime",
     )
 
     unchanged = json.loads(state_path.read_text(encoding="utf-8"))
@@ -627,7 +631,7 @@ def test_resolve_requires_sage_order(tmp_path: Path, monkeypatch: pytest.MonkeyP
         _cmd_spec_resolve(
             ["ISS-002", "Second value"],
             project_root=tmp_path,
-            ext_dir=Path.cwd() / "extension",
+            ext_dir=tmp_path / ".echelon/runtime",
         )
 
     assert exc.value.code == 1

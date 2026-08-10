@@ -34,16 +34,13 @@ Thumbs.db
 !/specs/004-run-finalize-hardening/plan.md
 .github/*
 !.github/workflows/
-.specify/squad/
 config-belief-graph.json
 .specify/
 .pytest_cache/
 tests/benchmarks/reports/
-extension/scripts/node/re/node_modules/
 
-# Claude Code's auto-deployed agent + skill definitions (derivatives of
-# extension/agents/*.md and extension/commands/*.md). Regenerated on every
-# `specify extension update --dev`.
+# Provider-specific agent and command projections generated from the canonical
+# Prosaic bundle during workspace initialization.
 .claude/agents/
 .claude/skills/
 .worktrees/

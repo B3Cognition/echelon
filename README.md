@@ -1418,53 +1418,30 @@ characteristics. Ralph enforces this report before publish.
 
 ## Validation
 
-Validate the extension setup without running agents:
+Validate the canonical Prosaic prose and runtime bundles without running agents:
 
 ```bash
 ./scripts/bash/dry-run.sh
 ```
 
-Checks: agent files, commands, config, templates, state machine flow, role separation rules.
+Checks: subagent prose, commands, config, templates, workflow phases, and role separation rules.
 
 ## Directory Structure
 
 ```text
-extension/
-├── extension.yml        # Single merged extension manifest (covers echelon + harness skills)
-├── agents/
-│   ├── control/         # COMMANDER, CHECKPOINT, TRACKER, STRATEGIST, SCOREKEEPER
-│   ├── exploration/     # SCOUT, GOLDDIGGER, SYNTHESIZER, CARTOGRAPHER, SAGE, MODELER
-│   ├── feasibility/     # GATEKEEPER, VALIDATOR
-│   ├── solution/        # ARCHITECT, ORCHESTRATOR, SENTINEL
-│   ├── specialists/     # INVESTIGATOR, GUARDIAN, BENCHMARK, ADVOCATE, ORACLE, MAVERICK
-│   ├── learning/        # AUDITOR, INTERNALIZER, ADAPTIVE, REALIST, MIRROR, MONITOR, VETERAN, CONSOLIDATOR
-│   └── build/           # IMPLEMENTER, SPEC GUARD, CODE REVIEWER, TEST GUARDIAN, EM, INTEGRATOR,
-│                        # PROGRESS TRACKER, CHANGE CONTROLLER, DEBUGGER, VERIFICATION, VISUAL VALIDATOR
-├── commands/            # Thin wrappers (~35–75 lines each) — delegate to workflow/phases/
-│   ├── echelon.run.md          # Squad run: reads commander.md + workflow/definition.yaml, starts at init
-│   ├── echelon.bugfix.md       # Bugfix: reads commander.md + phases[], starts at bugfix-1-init
-│   ├── echelon.build.md        # Build phase (agent-driven): starts at build-1-init
-│   ├── echelon.codegen.md      # Build phase (SOAR pipeline): reads workflow/phases/codegen-*.md
-│   ├── echelon.codegenlight.md # Build phase (SOAR, brownfield/greenfield): reads codegenlight-*.md
-│   ├── echelon.*.md            # Other echelon commands (10 more)
-│   ├── echelon.harness-init.md   # Delivery initialization
-│   ├── echelon.harness-run.md    # Build → verify → PR loop
-│   ├── echelon.harness-status.md # Loop status
-│   ├── echelon.harness-resume.md # Resume blocked loop
-│   ├── understanding.scan.md   # 34-metric spec quality scan
-│   ├── understanding.validate.md
-│   ├── understanding.energy.md
-│   ├── understanding.diagram.md
-│   └── understanding.batch.md
-└── workflow/            # Externalized workflow logic (deployed with the extension)
-    ├── definition.yaml          # Phase graph, routing rules, convergence thresholds, build state machine
-    ├── journal-entry-types.yaml # Canonical registry of valid reasoning-journal entry types
-    └── phases/                  # Per-phase spec files — context pack assembly, dispatch prompts, outputs
-        ├── init.md / phase1-*.md / phase2-*.md / phase3-*.md / phase4-document.md
-        ├── bugfix-1-init.md … bugfix-5-finalize.md
-        ├── build-1-init.md … build-8-finalize.md
-        ├── codegen-A-preamble.md … codegen-7-deliver.md / codegen-resume.md
-        └── codegenlight-0-preflight.md … codegenlight-7-deliver.md / codegenlight-resume.md
+prosaic/                    # Provider-neutral Markdown source of truth
+├── commands/               # Echelon command prose
+└── subagents/              # Specialized agent prose and neutral metadata
+runtime/                    # Non-prose execution bundle
+├── echelon-config.yml      # Echelon-owned workspace defaults
+├── config-template.yml     # Documented configuration reference
+├── workflow/
+│   ├── definition.yaml     # Phase graph and routing rules
+│   └── phases/             # Per-phase context, dispatch, and output contracts
+├── templates/              # Generated-artifact templates
+├── scripts/                # Runtime helpers
+├── presets/                # Brownfield presets
+└── stacks/                 # Stack configuration
 src/
 ├── echelon/             # echelon CLI (entry point: echelon) — terminal-invokable skills
 ├── codegen/             # SOAR build pipeline CLI (entry point: codegen)
