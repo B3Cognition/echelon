@@ -51,7 +51,7 @@ def test_codegraph_uses_shared_runtime_when_deployed_copy_is_source_only(
     project_root = tmp_path / "project"
     local = (
         project_root
-        / ".specify/extensions/echelon/scripts/node/codegraph"
+        / ".echelon/runtime/scripts/node/codegraph"
     )
     local.mkdir(parents=True)
     (local / "codegraph-bridge.js").write_text("source only\n", encoding="utf-8")
@@ -70,7 +70,7 @@ def test_codegraph_rejects_contract_stale_complete_local_runtime(
     tmp_path: Path,
 ) -> None:
     project_root = tmp_path / "project"
-    local = project_root / ".specify/extensions/echelon/scripts/node/codegraph"
+    local = project_root / ".echelon/runtime/scripts/node/codegraph"
     shared = tmp_path / "echelon-home" / "node" / "codegraph"
     _write_complete_codegraph(local)
     _write_complete_codegraph(shared)
@@ -88,7 +88,7 @@ def test_codegraph_rejects_wrong_sdk_version_and_uses_shared_runtime(
     tmp_path: Path,
 ) -> None:
     project_root = tmp_path / "project"
-    local = project_root / ".specify/extensions/echelon/scripts/node/codegraph"
+    local = project_root / ".echelon/runtime/scripts/node/codegraph"
     shared = tmp_path / "echelon-home/node/codegraph"
     _write_complete_codegraph(local)
     _write_complete_codegraph(shared)
@@ -140,7 +140,7 @@ def test_re_analysis_delegates_missing_codegraph_to_provider_independent_shell(
 
 def test_perlgraph_complete_deployed_runtime_wins_over_shared(tmp_path: Path) -> None:
     project_root = tmp_path / "project"
-    local = project_root / ".specify/extensions/echelon/scripts/node/perlgraph"
+    local = project_root / ".echelon/runtime/scripts/node/perlgraph"
     shared = tmp_path / "echelon-home" / "node" / "perlgraph"
     _write_complete_perlgraph(local)
     _write_complete_perlgraph(shared)
@@ -186,6 +186,6 @@ def test_missing_perlgraph_runtime_reports_local_and_shared_paths(
         )
 
     message = str(exc_info.value)
-    assert str(project_root / ".specify/extensions/echelon/scripts/node/perlgraph") in message
+    assert str(project_root / ".echelon/runtime/scripts/node/perlgraph") in message
     assert str(echelon_home / "node/perlgraph") in message
     assert "scripts/install.sh" in message

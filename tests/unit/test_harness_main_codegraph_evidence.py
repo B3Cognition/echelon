@@ -38,9 +38,8 @@ def _run(
 def _write_fake_bridge(project_root: Path) -> Path:
     runtime_dir = (
         project_root
-        / ".specify"
-        / "extensions"
-        / "echelon"
+        / ".echelon"
+        / "runtime"
         / "scripts"
         / "node"
         / "codegraph"
@@ -511,7 +510,7 @@ def test_write_codegraph_evidence_reports_missing_resolved_runtime(
 
     assert result.returncode != 0
     error = (verify_run_dir / "codegraph-error.txt").read_text(encoding="utf-8")
-    assert ".specify/extensions/echelon/scripts/node/codegraph" in error
+    assert ".echelon/runtime/scripts/node/codegraph" in error
     assert "empty-echelon-home/node/codegraph" in error
     assert "CodeGraph runtime is unavailable" in error
     summary = json.loads((verify_run_dir / "codegraph-summary.json").read_text())

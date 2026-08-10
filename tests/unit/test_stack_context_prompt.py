@@ -11,6 +11,7 @@ from harness.coordinator import StrategyCoordinator
 from harness.delivery_results import ImplementationResult
 from harness.run_intent import RunIntent
 from harness.stacks.errors import StackResolutionError
+from harness.stacks.paths import find_stack_extension_root
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -82,10 +83,10 @@ def test_selected_stark_stack_context_resolves_playbook_dependency_first() -> No
 
 
 @pytest.mark.unit
-def test_installed_extension_stack_layout_is_supported(tmp_path: Path) -> None:
-    installed_stacks = tmp_path / ".specify" / "extensions" / "echelon" / "stacks"
+def test_deployed_runtime_stack_layout_is_supported(tmp_path: Path) -> None:
+    installed_stacks = tmp_path / ".echelon" / "runtime" / "stacks"
     for stack_id in ("statsperform-playbook", "statsperform-stark-webapp"):
-        source = ROOT / "extension" / "stacks" / stack_id
+        source = ROOT / "runtime" / "stacks" / stack_id
         target = installed_stacks / stack_id
         target.mkdir(parents=True)
         for path in source.iterdir():
@@ -99,6 +100,7 @@ def test_installed_extension_stack_layout_is_supported(tmp_path: Path) -> None:
 
     stack_context = coord._build_stack_context()
 
+    assert find_stack_extension_root(tmp_path) == tmp_path / ".echelon" / "runtime"
     assert "statsperform-playbook" in stack_context
     assert "statsperform-stark-webapp" in stack_context
     assert "Use the Opta Stark Nx/Next.js archetype" in stack_context

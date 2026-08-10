@@ -111,9 +111,8 @@ def _resolve_entrypoint(
 
     local_runtime = (
         project_root.resolve()
-        / ".specify"
-        / "extensions"
-        / "echelon"
+        / ".echelon"
+        / "runtime"
         / "scripts"
         / "node"
         / spec.directory_name
