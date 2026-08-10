@@ -43,7 +43,7 @@ class TestLlmBuildRunner:
 
         extra_env = executor.exec_prompt.call_args.kwargs["extra_env"]
         assert extra_env["PROJECT_ROOT"] == str(tmp_path)
-        assert extra_env["SPEC_KIT_ROOT"] == str(tmp_path)
+        assert "SPEC_KIT_ROOT" not in extra_env
         assert extra_env["HARNESS_WORKTREE"] == str(tmp_path)
 
     def test_exec_build_does_not_expose_harness_source_dir(self, tmp_path):

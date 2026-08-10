@@ -45,7 +45,6 @@ class LlmBuildRunner:
             "HARNESS_BUILD_STATUS_FILE": str(status_file),
             "HARNESS_WORKTREE": worktree_path,
             "PROJECT_ROOT": worktree_path,
-            "SPEC_KIT_ROOT": worktree_path,
         }
         if containment_policy_file:
             extra_env["ECHELON_CONTAINMENT_POLICY_FILE"] = containment_policy_file

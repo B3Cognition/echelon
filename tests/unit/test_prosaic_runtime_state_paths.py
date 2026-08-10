@@ -153,6 +153,19 @@ def test_land_and_recovery_do_not_special_case_legacy_storage() -> None:
     assert not findings, "\n".join(findings)
 
 
+def test_build_runtime_does_not_inject_or_ignore_speckit_state() -> None:
+    from harness.ralph import _has_target_delivery_changes
+
+    modules = (
+        ROOT / "src" / "harness" / "llm_build_runner.py",
+        ROOT / "src" / "harness" / "ralph.py",
+    )
+    combined = "\n".join(path.read_text(encoding="utf-8") for path in modules)
+
+    assert "SPEC_KIT_ROOT" not in combined
+    assert _has_target_delivery_changes([".specify/legacy-file.md"]) is True
+
+
 def test_runtime_uses_echelon_owned_standalone_re_state() -> None:
     config = (RUNTIME / "config-template.yml").read_text(encoding="utf-8")
     discovery = (RUNTIME / "scripts" / "bash" / "re" / "discover-repos.sh").read_text(

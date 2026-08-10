@@ -3090,7 +3090,6 @@ class RalphController:
         ignored = {
             ".git",
             ".echelon",
-            ".specify",
             ".claude",
             ".venv",
             "__pycache__",
@@ -4522,11 +4521,6 @@ class RalphController:
                 proxy_image=self._config.network.proxy_image,
             ),
             env={
-                # SPEC_KIT_ROOT lets common.sh find .specify/ when walking up from /workspace
-                # is blocked by the container boundary (e.g. Docker).
-                # ECHELON_HARNESS_RUN tells spec-kit scripts to skip branch-name validation
-                # since branch management is the harness's responsibility.
-                "SPEC_KIT_ROOT": str(self._gitops.base_dir),
                 "ECHELON_HARNESS_RUN": "1",
             },
             secrets_env={},
@@ -5194,7 +5188,7 @@ def _is_harness_or_spec_artifact(path: str) -> bool:
     posix = path.replace("\\", "/").strip()
     if _is_markerless_recovery_ignored_artifact(posix):
         return True
-    return posix.startswith(("specs/", ".specify/", "runs/"))
+    return posix.startswith(("specs/", "runs/"))
 
 
 def _has_target_delivery_changes(paths: Iterable[str]) -> bool:
