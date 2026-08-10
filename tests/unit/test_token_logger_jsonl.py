@@ -3,7 +3,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-TOKEN_LOGGER_PATH = REPO_ROOT / "extension" / "scripts" / "token-logger.py"
+TOKEN_LOGGER_PATH = REPO_ROOT / "runtime" / "scripts" / "token-logger.py"
 
 
 def _load_token_logger():
@@ -35,14 +35,19 @@ def test_token_logger_prefers_runs_current(tmp_path):
     run_dir = tmp_path / "runs" / "run-123"
     run_dir.mkdir(parents=True)
     (tmp_path / "runs" / ".current").write_text("run-123\n", encoding="utf-8")
-    (tmp_path / ".specify" / "squad").mkdir(parents=True)
-
-    assert token_logger.find_active_squad_dir(tmp_path) == run_dir
+    assert token_logger.find_active_run_dir(tmp_path) == run_dir
 
 
-def test_token_logger_falls_back_to_legacy_specify_squad(tmp_path):
+def test_token_logger_defaults_to_runs_without_an_active_run(tmp_path):
     token_logger = _load_token_logger()
     legacy = tmp_path / ".specify" / "squad"
     legacy.mkdir(parents=True)
 
-    assert token_logger.find_active_squad_dir(tmp_path) == legacy
+    assert token_logger.find_active_run_dir(tmp_path) == tmp_path / "runs"
+
+
+def test_runtime_token_logger_is_the_only_source_copy():
+    assert not (REPO_ROOT / "scripts" / "token-logger.py").exists()
+    assert ".echelon/runtime/scripts/token-logger.py" in TOKEN_LOGGER_PATH.read_text(
+        encoding="utf-8"
+    )

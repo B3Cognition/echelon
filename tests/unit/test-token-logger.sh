@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test-token-logger.sh — Unit tests for scripts/token-logger.py
+# test-token-logger.sh — Unit tests for runtime/scripts/token-logger.py
 #
 # Tests:
 #   T1: --help exits 0
@@ -20,7 +20,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-SCRIPT="$ROOT/extension/scripts/token-logger.py"
+SCRIPT="$ROOT/runtime/scripts/token-logger.py"
 FIXTURE="$ROOT/tests/fixtures/token-logger/sample-journal.json"
 TMP_DIR="$(mktemp -d)"
 OUTPUT="$TMP_DIR/token-baseline.json"

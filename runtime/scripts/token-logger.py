@@ -2,8 +2,8 @@
 """
 token-logger.py — Echelon Pipeline Token Usage Logger
 
-Reads a reasoning-journal.jsonl (and optionally state.json) produced by a
-spec-kit / Echelon squad run, extracts per-invocation token counts, computes
+Reads a reasoning-journal.jsonl (and optionally state.json) produced by an
+Echelon run, extracts per-invocation token counts, computes
 per-agent-type summary statistics, and writes a machine-readable
 token-baseline.json artifact plus a human-readable Markdown summary.
 
@@ -14,7 +14,7 @@ to a word-count × 1.3 heuristic and marks each affected invocation as
 otherwise ``post_hoc_estimation``.
 
 Usage:
-    python3 scripts/token-logger.py \\
+    python3 .echelon/runtime/scripts/token-logger.py \\
         --journal runs/<run-id>/reasoning-journal.jsonl \\
         [--state   runs/<run-id>/state.json] \\
         [--output  runs/<run-id>/token-baseline.json] \\
@@ -458,7 +458,7 @@ def read_run_id(state_path: Path) -> str:
         return "unknown-run"
 
 
-def find_active_squad_dir(start: Path | None = None) -> Path:
+def find_active_run_dir(start: Path | None = None) -> Path:
     """
     Resolve the current run directory.
 
@@ -530,10 +530,10 @@ def main() -> None:
     args = parser.parse_args()
 
     # ── Resolve paths ──────────────────────────────────────────────────────
-    active_squad_dir = find_active_squad_dir()
-    default_journal = active_squad_dir / "reasoning-journal.jsonl"
-    default_state = active_squad_dir / "state.json"
-    default_output = active_squad_dir / "token-baseline.json"
+    active_run_dir = find_active_run_dir()
+    default_journal = active_run_dir / "reasoning-journal.jsonl"
+    default_state = active_run_dir / "state.json"
+    default_output = active_run_dir / "token-baseline.json"
 
     journal_path: Path | None = Path(args.journal) if args.journal else None
     state_path: Path = Path(args.state) if args.state else default_state
