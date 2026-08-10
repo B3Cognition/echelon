@@ -209,15 +209,7 @@ def _digest_ids(drawer_ids: tuple[str, ...]) -> str:
 
 def _configured_mempalace_wing(project_root: Path) -> str | None:
     root = project_root.resolve()
-    canonical = root / ".echelon" / "config.yml"
-    legacy = (
-        root
-        / ".specify"
-        / "extensions"
-        / "echelon"
-        / "echelon-config.yml"
-    )
-    config_path = canonical if os.path.lexists(canonical) else legacy
+    config_path = root / ".echelon" / "config.yml"
     if not os.path.lexists(config_path):
         return None
     if config_path.is_symlink() or not config_path.is_file():

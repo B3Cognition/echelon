@@ -166,6 +166,25 @@ def test_build_runtime_does_not_inject_or_ignore_speckit_state() -> None:
     assert _has_target_delivery_changes([".specify/legacy-file.md"]) is True
 
 
+def test_mempalace_runtime_reads_only_canonical_echelon_config() -> None:
+    modules = (
+        ROOT / "src" / "codegen" / "memory" / "context.py",
+        ROOT / "src" / "echelon" / "mempalace_requirements.py",
+        ROOT / "src" / "echelon" / "mempalace_retarget.py",
+    )
+    findings = []
+    for module in modules:
+        for line_number, line in enumerate(
+            module.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            if ".specify" in line or "specify extension" in line:
+                findings.append(
+                    f"{module.relative_to(ROOT)}:{line_number}: {line.strip()}"
+                )
+
+    assert not findings, "\n".join(findings)
+
+
 def test_runtime_uses_echelon_owned_standalone_re_state() -> None:
     config = (RUNTIME / "config-template.yml").read_text(encoding="utf-8")
     discovery = (RUNTIME / "scripts" / "bash" / "re" / "discover-repos.sh").read_text(

@@ -10,12 +10,6 @@ def write_workspace(tmp_path: Path) -> Path:
         "mempalace:\n  wing: demo-wing\n",
         encoding="utf-8",
     )
-    config_dir = tmp_path / ".specify" / "extensions" / "echelon"
-    config_dir.mkdir(parents=True)
-    config_dir.joinpath("echelon-config.yml").write_text(
-        "mempalace:\n  wing: demo-wing\n",
-        encoding="utf-8",
-    )
     spec_dir = tmp_path / "specs" / "003-demo"
     spec_dir.mkdir(parents=True)
     spec_dir.joinpath("spec.md").write_text(
@@ -109,9 +103,10 @@ def test_adapter_plan_matches_existing_canonical_miner(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
-def test_adapter_prefers_canonical_echelon_config(tmp_path: Path) -> None:
+def test_adapter_ignores_conflicting_legacy_echelon_config(tmp_path: Path) -> None:
     write_workspace(tmp_path)
     legacy_config = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+    legacy_config.parent.mkdir(parents=True)
     legacy_config.write_text("mempalace:\n  wing: legacy-wing\n", encoding="utf-8")
     from echelon.mempalace_requirements import create_requirement_memory_adapter
 
@@ -185,7 +180,6 @@ def test_mine_spec_requirements_uses_canonical_config_without_legacy_config(
     tmp_path: Path, monkeypatch
 ) -> None:
     spec_dir = write_workspace(tmp_path)
-    (tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml").unlink()
     monkeypatch.setattr(
         "echelon.spec_memory_miner.SpecMemoryMiner.mine_canonical_bytes",
         lambda self, content, *, source, artifact_metadata: SimpleNamespace(

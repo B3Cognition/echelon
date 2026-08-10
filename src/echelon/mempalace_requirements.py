@@ -197,15 +197,7 @@ def load_supporting_artifact_snapshots(
 
 
 def _read_mempalace_wing(project_root: Path) -> str:
-    canonical = project_root / ".echelon" / "config.yml"
-    legacy = (
-        project_root
-        / ".specify"
-        / "extensions"
-        / "echelon"
-        / "echelon-config.yml"
-    )
-    config_path = canonical if canonical.exists() else legacy
+    config_path = project_root / ".echelon" / "config.yml"
     if not config_path.exists():
         raise SpecMemoryError(
             "Echelon config is missing; run 'echelon workspace init'"

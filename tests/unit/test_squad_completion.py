@@ -3834,10 +3834,8 @@ def _prepare_mining_completion(
     )
     config = (
         project_root
-        / ".specify"
-        / "extensions"
-        / "echelon"
-        / "echelon-config.yml"
+        / ".echelon"
+        / "config.yml"
     )
     config.parent.mkdir(parents=True)
     config.write_text(

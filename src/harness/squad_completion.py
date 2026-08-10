@@ -3318,13 +3318,13 @@ def _completion_local_mining_plan(
     """Compute deterministic IDs from local config/spec without a backend."""
     try:
         from codegen.memory.context import (
-            _read_wing_from_echelon_yml,
+            _read_wing_from_echelon_config,
         )
         from echelon.spec_memory_miner import (
             plan_canonical_requirement_drawer_ids,
         )
 
-        wing = _read_wing_from_echelon_yml(project_root)
+        wing = _read_wing_from_echelon_config(project_root)
         planned = plan_canonical_requirement_drawer_ids(
             content,
             source=source,
