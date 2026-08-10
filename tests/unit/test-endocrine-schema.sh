@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Unit tests — Endocrine system config schema validation in config-template.yml
+# Unit tests — Endocrine system schema validation in the canonical runtime config
 set -uo pipefail
 
 REPO_ROOT="$(CDPATH='' cd "$(dirname "$0")/../.." && pwd)"
-CONFIG="$REPO_ROOT/extension/config-template.yml"
+CONFIG="$REPO_ROOT/runtime/echelon-config.yml"
 
 pass=0
 fail=0

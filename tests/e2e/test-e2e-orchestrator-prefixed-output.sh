@@ -22,7 +22,7 @@ fail_result() { printf 'FAIL:%s' "$*"; }
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
-ECHELON_YML=".specify/extensions/echelon/echelon-config.yml"
+ECHELON_YML=".echelon/config.yml"
 
 # ── Setup: polyrepo P with spec and two initialised sub-repos ─────────────────
 git -C "$tmpdir" init -q  # workspace root must be a git repo for harness run

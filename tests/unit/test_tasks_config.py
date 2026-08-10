@@ -1,9 +1,14 @@
+from pathlib import Path
+
 import pytest
 import yaml
 
+
+RUNTIME_CONFIG = Path(__file__).resolve().parents[2] / "runtime" / "echelon-config.yml"
+
 @pytest.mark.unit
 def test_lexicon_gate_has_tasks_artifact():
-    cfg = yaml.safe_load(open("extension/echelon-config.yml"))
+    cfg = yaml.safe_load(RUNTIME_CONFIG.read_text(encoding="utf-8"))
     g = cfg["lexicon_gate"]
     assert g["artifacts"]["tasks"]["enabled"] is True
     assert g["artifacts"]["tasks"]["type"] == "tasks"
