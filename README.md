@@ -569,9 +569,9 @@ Harness fulfillment refreshes are controlled from the repo config under
 `harness.fulfillment.refresh_policy`. Set this in
 `.echelon/config.yml` for a committed project default, or in
 `.echelon/local.yml` for a local override.
-For normal generated projects, `.specify/` is local spec-kit/Echelon runtime
-state and should be gitignored; the tracked governance handoff is the published
-`specs/<id>-*/constitution.md` snapshot.
+For initialized projects, generated runtime state under `runs/`,
+`.echelon/runtime/`, and `.echelon/prosaic/` should be gitignored; the tracked
+governance handoff is the published `specs/<id>-*/constitution.md` snapshot.
 
 ```yaml
 harness:
@@ -747,7 +747,7 @@ my-project/
     001-feature/           ← echelon Phase A artifacts
       spec.md
       tasks.md
-      constitution.md      ← published snapshot from spec-kit memory
+      constitution.md      ← published snapshot from `.echelon/constitution.md`
   runs/                    ← mirrors, worktrees, and run state
 ```
 
@@ -1005,7 +1005,7 @@ File: agents/exploration/scout.md
 | **SCOUT** | DISCOVER | Maps domain, glossary, boundaries |
 | **GOLDDIGGER** | BROWNFIELD-EXTRACT | Drives native brownfield RE (Mode 1: full workspace reverse engineering, Mode 2: focused-domain deep dive) |
 | **SYNTHESIZER** | FUSE | Fuses discovery outputs into unified knowledge base |
-| **CARTOGRAPHER** | WHAT | Writes testable requirements via spec-kit |
+| **CARTOGRAPHER** | WHAT | Writes testable requirements through the Echelon workflow |
 | **SAGE** | WHY | Adversarial critic, quality gates via Understanding CLI |
 | **MODELER** | MENTAL-MODEL | Maintains code graph with invariants |
 
@@ -1041,7 +1041,7 @@ File: agents/exploration/scout.md
 | **REALIST** | GROUND | Reality-checks estimates with real-world data |
 | **MIRROR** | REFLECT | Extracts patterns and pitfalls |
 | **MONITOR** | METACOGNITION-MONITOR | "Are we still doing the right thing?" |
-| **VETERAN** | GLOBAL-MEMORY | Cross-project knowledge — promotes validated patterns to ~/.specify/squad-global/ |
+| **VETERAN** | GLOBAL-MEMORY | Curates and promotes validated cross-project patterns |
 | **CONSOLIDATOR** | CONSOLIDATE | Transforms episodic experience into generalized schemas across projects |
 
 #### Build Layer (14 agents, Phase 4)
@@ -1277,8 +1277,8 @@ EXPOSE 80
 > **SPA base path:** `echelon workspace init` automatically sets `base` (Vite), `basePath` (Next.js), or `homepage` (CRA) to `/{app-name}/` in your framework config so assets load correctly under the path prefix. This is auto-corrected even if the value is wrong or computed — no manual step needed.
 
 **What happens on `echelon workspace init`:**
-- Docker network `speckit-deploy` created (shared across all apps on this machine)
-- `speckit-traefik` container started at `:80` — one per machine, started once, never recreated
+- Docker network `echelon-deploy` created (shared across all apps on this machine)
+- `echelon-traefik` container started at `:80` — one per machine, started once, never recreated
 - SPA framework config auto-corrected for path-prefix routing (Vite/Next.js/CRA)
 
 **Deploy flow (automatic after merge to main):**
@@ -1289,7 +1289,9 @@ EXPOSE 80
 4. On success: stop old slot, tag image, update state
 5. On failure: stop new slot, old slot unchanged (automatic rollback)
 
-**Rollback:** `speckit.echelon.deploy rollback` restarts the stopped inactive container and flips Traefik routing.
+Rollback is implemented by the deployed runtime scripts, which restart the
+stopped inactive container and flip Traefik routing. A public manual rollback
+CLI is not currently exposed.
 
 ---
 
@@ -1336,21 +1338,16 @@ myapp --help
 docker run --rm myapp:blue --help
 ```
 
-**Rollback:** `speckit.echelon.deploy rollback` flips the active pointer — the wrapper picks it up on next invocation, no reinstall needed.
+Rollback flips the active pointer, which the wrapper reads on its next
+invocation. A public manual rollback CLI is not currently exposed.
 
 ---
 
-### Deploy Commands
-
-| Command | Purpose |
-|---------|---------|
-| `speckit.echelon.deploy` | Trigger a deploy manually |
-| `speckit.echelon.deploy status` | Show active slot, image, ports, last deploy time |
-| `speckit.echelon.deploy rollback` | Roll back to the previous slot |
-
 Deploy state lives in two locations (kept in sync on every deploy and rollback):
-- Active run `deploy-state.json` — project-local copy (`runs/.current`, `squad/.current`, with legacy fallback for older workspaces)
-- `~/.speckit-deploy/{app}.json` — global registry (used for port conflict detection and CLI wrapper scripts)
+- Active run `deploy-state.json` under the selected `runs/<run-id>/` directory,
+  or `runs/deploy-state.json` for workspace-level initialization
+- `~/.echelon/deploy/{app}.json` — global registry used for port conflict
+  detection and CLI wrapper scripts
 
 ## Innovation Templates
 
@@ -1365,13 +1362,14 @@ Innovation process: Design Thinking (find right problem) → AutoTRIZ (resolve c
 
 ## Fallback Mode
 
-When spec-kit skill invocations fail at runtime, the system degrades gracefully:
+When an AI provider invocation fails at runtime, the system degrades explicitly:
 
-- spec-kit dependencies are validated at install time via `specify extension add echelon` (declared in `extension.yml requires.skills[]`)
-- If a skill invocation fails during the run, COMMANDER sets `fallback_mode=true` and continues with manual specification
-- All fallback artifacts are marked with `FALLBACK STATUS: UNVALIDATED_DEPENDENCY`
+- Provider availability and capability are validated by Echelon before dispatch.
+- If invocation fails during the run, COMMANDER records `fallback_mode=true` and
+  `execution_mode=manual_specification`, then continues routing.
+- Dependency failures and recovery are recorded in the reasoning journal.
 - Quality gates remain active — no phase skipping allowed
-- Recovery runs reconciliation checklist when skills become available
+- Recovery runs the reconciliation checklist when the provider becomes available
 
 See [docs/fallback-mode.md](docs/fallback-mode.md) for details.
 

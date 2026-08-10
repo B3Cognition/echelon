@@ -210,3 +210,14 @@ def test_readme_command_catalog_lists_only_echelon_cli_commands() -> None:
     assert "speckit.echelon" not in commands
     assert "*(spec-kit only)*" not in commands
     assert "| Terminal | Purpose |" in commands
+
+
+def test_current_user_docs_do_not_describe_speckit_runtime() -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    fallback = (ROOT / "docs" / "fallback-mode.md").read_text(encoding="utf-8")
+
+    assert "speckit" not in readme.lower()
+    assert "spec-kit" not in readme.lower()
+    assert "speckit" not in fallback.lower()
+    assert "spec-kit" not in fallback.lower()
+    assert "provider invocation" in fallback.lower()

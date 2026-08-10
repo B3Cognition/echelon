@@ -2,18 +2,19 @@
 
 ## Purpose
 
-Document mandatory degraded behavior when external dependencies are unavailable, with immediate focus on spec-kit for Tier 1 stories 001a-001c.
+Document mandatory degraded behavior when an AI provider invocation becomes
+unavailable during an Echelon run.
 
 ## Detection Policy
 
-1. COMMANDER runs dependency preflight before WHAT dispatch.
-2. spec-kit probe executes availability and version checks with 2-second timeout.
-3. Failures are classified as unavailable, timeout, or incompatible.
+1. Echelon validates provider availability and required capability before dispatch.
+2. COMMANDER starts each run with `fallback_mode=false`.
+3. Invocation failures are recorded when they occur during the run.
 
 ## Runtime Behavior
 
 1. System sets fallback_mode=true and execution_mode=manual_specification.
-2. CARTOGRAPHER still produces required artifacts without spec-kit automation.
+2. CARTOGRAPHER still produces required artifacts through manual specification.
 3. No phase skipping is allowed; quality gates still execute.
 
 ## Artifact Marking
@@ -40,7 +41,7 @@ All fallback artifacts include:
 
 ## Remediation Steps
 
-1. Re-run preflight to confirm spec-kit is available.
+1. Re-run preflight to confirm the configured provider is available.
 2. Execute normal CARTOGRAPHER path to regenerate authoritative artifacts.
 3. Use `templates/recovery-checklist.md` to compare and reconcile prior fallback outputs.
 4. Confirm `fallback_recovery` entry exists and references both run IDs.
