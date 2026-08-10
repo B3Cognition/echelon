@@ -184,6 +184,17 @@ def test_obsolete_speckit_integration_smoke_script_is_absent() -> None:
     assert not (ROOT / "scripts" / "bash" / "integration-smoke-test.sh").exists()
 
 
+def test_shared_runtime_helpers_are_not_duplicated_at_repository_root() -> None:
+    helper_names = (
+        "post-execution-audit.sh",
+        "pre-dispatch-gate.sh",
+        "setup-worktree.sh",
+    )
+
+    assert all((RUNTIME / "scripts" / "bash" / name).is_file() for name in helper_names)
+    assert not any((ROOT / "scripts" / "bash" / name).exists() for name in helper_names)
+
+
 def test_land_and_recovery_do_not_special_case_legacy_storage() -> None:
     modules = (
         ROOT / "src" / "harness" / "land.py",
