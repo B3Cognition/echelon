@@ -70,6 +70,6 @@ critical_findings: []
 ## Feedback Report Sections
 
 Write `{spec_dir}/feedback-report.md` using the complete
-`extension/templates/feedback-report-template.md`. This appendix retains only
+`.echelon/runtime/templates/feedback-report-template.md`. This appendix retains only
 the auto-feedback YAML schema above; the template is the canonical Markdown
 format for the report.

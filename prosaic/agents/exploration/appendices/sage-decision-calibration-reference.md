@@ -6,7 +6,7 @@ Load this appendix before SAGE records a blocking decision, applies internalizat
 
 After every blocking decision (PASS or FAIL verdict), write a decision proposal under
 `${SQUAD_DIR}/kb-proposals/` using
-`extension/templates/kb-proposals/sage-decision-proposal-template.yaml`. This is
+`.echelon/runtime/templates/kb-proposals/sage-decision-proposal-template.yaml`. This is
 mandatory; no decision may go unrecorded.
 
 Do not edit `knowledge-base/sage-decisions.yaml` directly. The deterministic KB
