@@ -8,7 +8,7 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = ROOT / "extension" / "scripts" / "bash" / "echelon-config-get.sh"
+SCRIPT = ROOT / "runtime" / "scripts" / "bash" / "echelon-config-get.sh"
 
 
 def _write_yaml(path: Path, data: dict) -> None:
@@ -58,7 +58,7 @@ def test_config_get_layers_canonical_local_over_project_config(tmp_path: Path) -
     assert _run_get(project, "re.workflow.coverage_threshold", tmp_path) == "80"
 
 
-def test_config_get_layers_legacy_local_config_for_migration_compatibility(tmp_path: Path) -> None:
+def test_config_get_ignores_retired_speckit_local_config(tmp_path: Path) -> None:
     project = tmp_path / "workspace"
     (project / ".specify").mkdir(parents=True)
     _write_yaml(project / ".echelon" / "config.yml", {
@@ -74,5 +74,5 @@ def test_config_get_layers_legacy_local_config_for_migration_compatibility(tmp_p
         },
     })
 
-    assert _run_get(project, "re.analysis.max_files", tmp_path) == "25"
-    assert _run_get(project, "re.output.directory", tmp_path) == "runs/spec-002/re"
+    assert _run_get(project, "re.analysis.max_files", tmp_path) == "80"
+    assert _run_get(project, "re.output.directory", tmp_path) == ".specify/echelon/re"

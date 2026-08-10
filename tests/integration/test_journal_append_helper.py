@@ -16,10 +16,10 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).parent.parent.parent
-APPEND_SCRIPT = ROOT / "extension" / "scripts" / "bash" / "journal-append.sh"
-VALIDATOR_SCRIPT = ROOT / "extension" / "scripts" / "bash" / "validate-journal-entry.sh"
-YAML_PATH = ROOT / "extension" / "workflow" / "journal-entry-types.yaml"
-JSON_PATH = ROOT / "extension" / "workflow" / "journal-entry-types.json"
+APPEND_SCRIPT = ROOT / "runtime" / "scripts" / "bash" / "journal-append.sh"
+VALIDATOR_SCRIPT = ROOT / "runtime" / "scripts" / "bash" / "validate-journal-entry.sh"
+YAML_PATH = ROOT / "runtime" / "workflow" / "journal-entry-types.yaml"
+JSON_PATH = ROOT / "runtime" / "workflow" / "journal-entry-types.json"
 FIXTURES = ROOT / "tests" / "fixtures" / "journal-entries"
 
 

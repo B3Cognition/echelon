@@ -87,7 +87,7 @@ def _controller(tmp_path: Path, provider: MagicMock | None = None) -> tuple[Squa
         provider=provider or _mock_provider(),
         state_store=store,
         phase_graph=graph,
-        ext_dir=EXT_ROOT / "extension",
+        ext_dir=EXT_ROOT / "runtime",
         project_root=tmp_path,
         token_budget=0,
         squad_dir=squad_dir,
@@ -96,7 +96,7 @@ def _controller(tmp_path: Path, provider: MagicMock | None = None) -> tuple[Squa
 
 
 def _mark_constitution_complete(project_root: Path, store: SquadStateStore) -> None:
-    const_path = project_root / ".specify" / "memory" / "constitution.md"
+    const_path = project_root / ".echelon" / "constitution.md"
     const_path.parent.mkdir(parents=True, exist_ok=True)
     const_path.write_text("# Constitution\n\nReal project rules.\n", encoding="utf-8")
     state = store.load()
@@ -136,14 +136,12 @@ def test_phase4_publish_creates_canonical_metadata_and_mines_canonical_spec(tmp_
     _disable_lexicon_gate(tmp_path)
     memory_config = (
         tmp_path
-        / ".specify"
-        / "extensions"
-        / "echelon"
-        / "echelon-config.yml"
+        / ".echelon"
+        / "config.yml"
     )
-    memory_config.parent.mkdir(parents=True)
+    memory_config.parent.mkdir(parents=True, exist_ok=True)
     memory_config.write_text(
-        "mempalace:\n  wing: photo-album\n",
+        "lexicon_gate:\n  enabled: false\nmempalace:\n  wing: photo-album\n",
         encoding="utf-8",
     )
     provider = _mock_provider()

@@ -21,7 +21,7 @@ from harness.squad_completion import reasoning_journal_lock
 
 ROOT = Path(__file__).resolve().parents[2]
 HORMONE_HOOK = ROOT / "scripts/bash/post-dispatch-hormone-update.sh"
-LEGACY_APPEND = ROOT / "extension/scripts/bash/journal-append.sh"
+LEGACY_APPEND = ROOT / "runtime/scripts/bash/journal-append.sh"
 
 
 def _environment() -> dict[str, str]:
@@ -344,7 +344,7 @@ def test_journal_cli_rejects_final_symlink(
 def test_copied_extension_writer_uses_installed_echelon_interpreter(
     tmp_path: Path,
 ) -> None:
-    runtime_scripts = tmp_path / "runtime/extension/scripts/bash"
+    runtime_scripts = tmp_path / "runtime/scripts/bash"
     runtime_scripts.mkdir(parents=True)
     for name in (
         "journal-append.sh",
@@ -352,13 +352,13 @@ def test_copied_extension_writer_uses_installed_echelon_interpreter(
         "python-detect.sh",
     ):
         shutil.copy(
-            ROOT / "extension/scripts/bash" / name,
+            ROOT / "runtime/scripts/bash" / name,
             runtime_scripts / name,
         )
-    runtime_workflow = tmp_path / "runtime/extension/workflow"
+    runtime_workflow = tmp_path / "runtime/workflow"
     runtime_workflow.mkdir(parents=True)
     shutil.copy(
-        ROOT / "extension/workflow/journal-entry-types.json",
+        ROOT / "runtime/workflow/journal-entry-types.json",
         runtime_workflow / "journal-entry-types.json",
     )
     installed_packages = tmp_path / "installed/site-packages"
@@ -434,10 +434,10 @@ def test_python_detector_uses_its_own_checkout_when_sourced(
     tmp_path: Path,
 ) -> None:
     checkout = tmp_path / "checkout"
-    detector = checkout / "extension/scripts/bash/python-detect.sh"
+    detector = checkout / "runtime/scripts/bash/python-detect.sh"
     detector.parent.mkdir(parents=True)
     shutil.copy(
-        ROOT / "extension/scripts/bash/python-detect.sh",
+        ROOT / "runtime/scripts/bash/python-detect.sh",
         detector,
     )
     fake_python = checkout / ".venv/bin/python"

@@ -4769,7 +4769,7 @@ class TestCartographerResumeGuard:
         executor = AgentExecutor(
             _mock_provider(),
             graph,
-            EXT_ROOT / "extension",
+            EXT_ROOT / "runtime",
             tmp_path,
             squad_dir,
         )
@@ -5006,7 +5006,7 @@ class TestSquadControllerBasics:
         executor = AgentExecutor(
             provider,
             graph,
-            EXT_ROOT / "extension",
+            EXT_ROOT / "runtime",
             tmp_path,
             squad_dir,
         )
@@ -5076,7 +5076,7 @@ class TestSquadControllerBasics:
         executor = AgentExecutor(
             provider,
             graph,
-            EXT_ROOT / "extension",
+            EXT_ROOT / "runtime",
             tmp_path,
             squad_dir,
         )
@@ -5138,7 +5138,7 @@ class TestSquadControllerBasics:
             provider=provider,
             state_store=store,
             phase_graph=graph,
-            ext_dir=EXT_ROOT / "extension",
+            ext_dir=EXT_ROOT / "runtime",
             project_root=tmp_path,
             token_budget=100,   # very low
         )

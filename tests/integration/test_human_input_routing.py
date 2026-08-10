@@ -139,12 +139,12 @@ def _controller(
     provider_result: object | None = None,
     provider: object | None = None,
 ) -> tuple[SquadController, SquadStateStore, object]:
-    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir = tmp_path / "runs" / "spec-test"
     squad_dir.mkdir(parents=True)
     (squad_dir / "staging").mkdir()
     store = SquadStateStore(squad_dir)
     store.initialize(
-        "run-test",
+        "spec-test",
         "greenfield",
         "registered user message",
         0,
@@ -164,7 +164,7 @@ def _controller(
         provider=provider,
         state_store=store,
         phase_graph=PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS),
-        ext_dir=ROOT / "extension",
+        ext_dir=ROOT / "runtime",
         project_root=tmp_path,
         squad_dir=squad_dir,
     )
@@ -525,7 +525,7 @@ def test_provider_v2_seal_survives_process_restart_with_same_decision_id(
         provider=provider,
         state_store=store,
         phase_graph=graph,
-        ext_dir=ROOT / "extension",
+        ext_dir=ROOT / "runtime",
         project_root=tmp_path,
         squad_dir=store.squad_dir,
     )
@@ -565,7 +565,7 @@ def _cli_awaiting_human_controller(
         human_input_initial_status="awaiting_human",
     )
     (tmp_path / ".git").mkdir(exist_ok=True)
-    (tmp_path / "squad" / ".current").write_text(
+    (tmp_path / "runs" / ".current").write_text(
         store.squad_dir.name,
         encoding="utf-8",
     )
@@ -594,7 +594,7 @@ def test_status_continue_and_resume_commands_observe_one_durable_decision_id(
     _cmd_continue(
         [],
         project_root=tmp_path,
-        ext_dir=ROOT / "extension",
+        ext_dir=ROOT / "runtime",
     )
     assert decision_id in capsys.readouterr().out
     assert store.load()["blocked_decision"]["id"] == decision_id
@@ -603,7 +603,7 @@ def test_status_continue_and_resume_commands_observe_one_durable_decision_id(
     _cmd_resume(
         [answer],
         project_root=tmp_path,
-        ext_dir=ROOT / "extension",
+        ext_dir=ROOT / "runtime",
     )
     assert decision_id in capsys.readouterr().out
     resumed_state = store.load()
@@ -679,7 +679,7 @@ def test_cli_resume_refuses_external_execution_owner_without_mutation(
             _cmd_resume(
                 ["Lease-blocked answer"],
                 project_root=tmp_path,
-                ext_dir=ROOT / "extension",
+                ext_dir=ROOT / "runtime",
             )
 
     assert exc.value.code == 1
@@ -723,7 +723,7 @@ def test_concurrent_cli_resume_keeps_decision_and_file_answer_identical(
             _cmd_resume(
                 ["Answer B"],
                 project_root=tmp_path,
-                ext_dir=ROOT / "extension",
+                ext_dir=ROOT / "runtime",
             )
         except BaseException as error:
             outcomes["second"] = error
@@ -737,7 +737,7 @@ def test_concurrent_cli_resume_keeps_decision_and_file_answer_identical(
     _cmd_resume(
         ["Answer A"],
         project_root=tmp_path,
-        ext_dir=ROOT / "extension",
+        ext_dir=ROOT / "runtime",
     )
     second.join(timeout=5)
 
@@ -1234,7 +1234,7 @@ def test_legacy_provider_restart_reuses_decision_id_after_v2_seal(
         provider=provider,
         state_store=store,
         phase_graph=PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS),
-        ext_dir=ROOT / "extension",
+        ext_dir=ROOT / "runtime",
         project_root=tmp_path,
         squad_dir=store.squad_dir,
     )
@@ -3266,7 +3266,7 @@ def test_commander_context_setup_failure_is_stable_across_restart(
         provider=restarted_provider,
         state_store=store,
         phase_graph=PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS),
-        ext_dir=ROOT / "extension",
+        ext_dir=ROOT / "runtime",
         project_root=tmp_path,
         squad_dir=store.squad_dir,
     )
