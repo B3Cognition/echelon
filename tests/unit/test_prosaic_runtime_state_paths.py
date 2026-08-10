@@ -223,6 +223,16 @@ def test_prompt_budget_reads_prosaic_subagents_from_runtime_bundle() -> None:
     assert not (ROOT / "scripts" / "bash" / "prompt-budget.sh").exists()
 
 
+def test_runtime_init_uses_controller_owned_project_mode() -> None:
+    prose = (RUNTIME / "workflow" / "phases" / "init.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "controller initializes `state.json.mode`" in prose
+    assert "$SH_OUTPUT" not in prose
+    assert "startup-banner.sh" not in prose
+
+
 def test_land_and_recovery_do_not_special_case_legacy_storage() -> None:
     modules = (
         ROOT / "src" / "harness" / "land.py",

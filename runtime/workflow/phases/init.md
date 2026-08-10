@@ -39,18 +39,13 @@ If this exits non-zero: **HARD STOP**. Always print the message below. Do not pr
 
 ### 1.1 Detect Greenfield vs Brownfield
 
-The `startup-banner.sh` frontmatter script chains to `detect-project.sh` and its output (`"greenfield"` or `"brownfield"`) is available as `$SH_OUTPUT`.
+The Echelon controller initializes `state.json.mode` before phase dispatch. It
+uses the deployed `.echelon/runtime/scripts/bash/detect-project.sh` helper for
+automatic detection, preserves an explicit project-mode override, and falls
+back to `greenfield` if detection is unavailable or invalid.
 
-**MANDATORY — always use `$SH_OUTPUT` as the authoritative mode signal. Do NOT detect mode ad hoc by examining file counts or directory structure yourself.**
-
-```bash
-mode = $SH_OUTPUT        # "greenfield" | "brownfield"
-```
-
-Override rules:
-
-- If the user explicitly provided a repo path as an argument: re-run `detect-project.sh` against that path and use its output instead.
-- If `$SH_OUTPUT` is empty or unavailable (script failed): default to `greenfield` and log a `cold_start_warning` journal entry noting that mode detection was skipped.
+**MANDATORY:** Treat `state.json.mode` as authoritative. Do not run a second
+model-side detection or infer mode ad hoc from file counts.
 
 ### 1.2 Create Staging Area
 
