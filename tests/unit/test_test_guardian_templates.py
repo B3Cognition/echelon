@@ -2,8 +2,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-AGENT = ROOT / "extension" / "agents" / "build" / "test-guardian.md"
-PHASE = ROOT / "extension" / "workflow" / "phases" / "build-5-test-guard.md"
+AGENT = ROOT / "prosaic" / "subagents" / "echelon.test-guardian.md"
+PHASE = ROOT / "runtime" / "workflow" / "phases" / "build-5-test-guard.md"
 
 
 class TestTestGuardianTemplates:

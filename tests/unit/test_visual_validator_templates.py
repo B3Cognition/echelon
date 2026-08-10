@@ -2,8 +2,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-AGENT = ROOT / "extension" / "agents" / "build" / "visual-validator.md"
-PHASE = ROOT / "extension" / "workflow" / "phases" / "build-7-integration.md"
+AGENT = ROOT / "prosaic" / "subagents" / "echelon.visual-validator.md"
+PHASE = ROOT / "runtime" / "workflow" / "phases" / "build-7-integration.md"
 
 
 class TestVisualValidatorTemplates:

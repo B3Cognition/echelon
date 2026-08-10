@@ -4,9 +4,9 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-TEMPLATE_DIR = ROOT / "extension" / "templates"
-AGENT = ROOT / "extension" / "agents" / "specialists" / "guardian.md"
-PHASE = ROOT / "extension" / "workflow" / "phases" / "phase3-specialists.md"
+TEMPLATE_DIR = ROOT / "runtime" / "templates"
+AGENT = ROOT / "prosaic" / "subagents" / "echelon.guardian.md"
+PHASE = ROOT / "runtime" / "workflow" / "phases" / "phase3-specialists.md"
 
 
 class TestGuardianTemplates:
@@ -74,7 +74,7 @@ class TestGuardianTemplates:
             "risk-acceptance-log-template.md",
             "security-findings-template.md",
         ]:
-            assert f"extension/templates/{filename}" in text
+            assert f".echelon/runtime/templates/{filename}" in text
 
         assert ".specify/..." not in text
         assert "security-checklist.md` in `specs/{NNN}-{feature}/`" not in text
@@ -92,8 +92,8 @@ class TestGuardianTemplates:
     def test_phase3_specialist_dispatch_includes_guardian_templates(self) -> None:
         text = PHASE.read_text(encoding="utf-8")
 
-        assert "extension/templates/security-checklist-template.md" in text
-        assert "extension/templates/threat-model-template.md" in text
-        assert "extension/templates/compliance-requirements-template.md" in text
-        assert "extension/templates/risk-acceptance-log-template.md" in text
-        assert "extension/templates/security-findings-template.md" in text
+        assert ".echelon/runtime/templates/security-checklist-template.md" in text
+        assert ".echelon/runtime/templates/threat-model-template.md" in text
+        assert ".echelon/runtime/templates/compliance-requirements-template.md" in text
+        assert ".echelon/runtime/templates/risk-acceptance-log-template.md" in text
+        assert ".echelon/runtime/templates/security-findings-template.md" in text

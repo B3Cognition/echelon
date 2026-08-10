@@ -4,10 +4,10 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-TEMPLATE_DIR = ROOT / "extension" / "templates"
-AGENT = ROOT / "extension" / "agents" / "exploration" / "scout.md"
-PHASE = ROOT / "extension" / "workflow" / "phases" / "phase1-discover.md"
-DEFINITION = ROOT / "extension" / "workflow" / "definition.yaml"
+TEMPLATE_DIR = ROOT / "runtime" / "templates"
+AGENT = ROOT / "prosaic" / "subagents" / "echelon.scout.md"
+PHASE = ROOT / "runtime" / "workflow" / "phases" / "phase1-discover.md"
+DEFINITION = ROOT / "runtime" / "workflow" / "definition.yaml"
 
 
 class TestScoutTemplates:
@@ -59,7 +59,7 @@ class TestScoutTemplates:
             "unknowns-template.md",
             "reference-architectures-template.md",
         ]:
-            assert f"extension/templates/{filename}" in text
+            assert f".echelon/runtime/templates/{filename}" in text
 
         assert "```markdown\n# Domain Glossary" not in text
         assert ".specify/..." not in text
@@ -70,8 +70,8 @@ class TestScoutTemplates:
         text = AGENT.read_text(encoding="utf-8")
 
         assert "ALWAYS read only the exact output templates listed below" in text
-        assert "NEVER recursively search `.specify/extensions/echelon` for `*-template.md`" in text
-        assert "`extension/presets/` contains preset seed material" in text
+        assert "NEVER recursively search `.echelon/runtime` for `*-template.md`" in text
+        assert "`.echelon/runtime/presets/` contains preset seed material" in text
 
     def test_scout_prefers_explicit_published_reverse_engineering_paths(self) -> None:
         text = AGENT.read_text(encoding="utf-8")
@@ -86,12 +86,12 @@ class TestScoutTemplates:
     def test_phase1_discover_dispatch_includes_scout_templates(self) -> None:
         text = PHASE.read_text(encoding="utf-8")
 
-        assert "extension/templates/glossary-template.md" in text
-        assert "extension/templates/mental-model-template.md" in text
-        assert "extension/templates/boundaries-template.md" in text
-        assert "extension/templates/assumptions-template.md" in text
-        assert "extension/templates/unknowns-template.md" in text
-        assert "extension/templates/reference-architectures-template.md" in text
+        assert ".echelon/runtime/templates/glossary-template.md" in text
+        assert ".echelon/runtime/templates/mental-model-template.md" in text
+        assert ".echelon/runtime/templates/boundaries-template.md" in text
+        assert ".echelon/runtime/templates/assumptions-template.md" in text
+        assert ".echelon/runtime/templates/unknowns-template.md" in text
+        assert ".echelon/runtime/templates/reference-architectures-template.md" in text
         assert "Never return `product_input_updates` from DISCOVER." in text
 
     def test_workflow_definition_lists_discovery_outputs_without_placeholders(

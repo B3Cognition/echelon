@@ -4,10 +4,10 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-APPENDIX_DIR = ROOT / "extension" / "agents" / "control" / "appendices"
-AGENT = ROOT / "extension" / "agents" / "control" / "scorekeeper.md"
-BUILD_FINALIZE = ROOT / "extension" / "workflow" / "phases" / "build-8-finalize.md"
-PHASE4_DOCUMENT = ROOT / "extension" / "workflow" / "phases" / "phase4-document.md"
+APPENDIX_DIR = ROOT / "prosaic" / "agents" / "control" / "appendices"
+AGENT = ROOT / "prosaic" / "subagents" / "echelon.scorekeeper.md"
+BUILD_FINALIZE = ROOT / "runtime" / "workflow" / "phases" / "build-8-finalize.md"
+PHASE4_DOCUMENT = ROOT / "runtime" / "workflow" / "phases" / "phase4-document.md"
 
 
 class TestScorekeeperTemplates:

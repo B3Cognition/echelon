@@ -8,10 +8,10 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-TEMPLATE_DIR = ROOT / "extension" / "templates"
-AGENT = ROOT / "extension" / "agents" / "specialists" / "investigator.md"
-PHASE1 = ROOT / "extension" / "workflow" / "phases" / "phase1-investigate.md"
-PHASE = ROOT / "extension" / "workflow" / "phases" / "phase3-specialists.md"
+TEMPLATE_DIR = ROOT / "runtime" / "templates"
+AGENT = ROOT / "prosaic" / "subagents" / "echelon.investigator.md"
+PHASE1 = ROOT / "runtime" / "workflow" / "phases" / "phase1-investigate.md"
+PHASE = ROOT / "runtime" / "workflow" / "phases" / "phase3-specialists.md"
 
 
 @pytest.mark.unit
@@ -63,7 +63,7 @@ class TestInvestigatorTemplates:
             "recommendations-template.md",
             "knowledge-gaps-template.md",
         ]:
-            assert f"extension/templates/{filename}" in text
+            assert f".echelon/runtime/templates/{filename}" in text
 
         assert ".specify/..." not in text
         assert (
@@ -78,10 +78,10 @@ class TestInvestigatorTemplates:
     def test_phase3_specialist_dispatch_includes_templates(self) -> None:
         text = PHASE.read_text(encoding="utf-8")
 
-        assert "extension/templates/investigation-report-template.md" in text
-        assert "extension/templates/evidence-grades-template.md" in text
-        assert "extension/templates/recommendations-template.md" in text
-        assert "extension/templates/knowledge-gaps-template.md" in text
+        assert ".echelon/runtime/templates/investigation-report-template.md" in text
+        assert ".echelon/runtime/templates/evidence-grades-template.md" in text
+        assert ".echelon/runtime/templates/recommendations-template.md" in text
+        assert ".echelon/runtime/templates/knowledge-gaps-template.md" in text
 
     def test_phase1_reference_acquisition_precedes_endpoint_discovery(self) -> None:
         phase_text = PHASE1.read_text(encoding="utf-8")

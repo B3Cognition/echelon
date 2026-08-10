@@ -6,8 +6,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-TEMPLATE_DIR = ROOT / "extension" / "templates"
-PHASE4 = ROOT / "extension" / "workflow" / "phases" / "phase4-document.md"
+TEMPLATE_DIR = ROOT / "runtime" / "templates"
+PHASE4 = ROOT / "runtime" / "workflow" / "phases" / "phase4-document.md"
 
 
 def test_final_overview_template_exists_with_required_sections() -> None:
@@ -55,6 +55,6 @@ def test_plan_conformance_schema_requires_status_findings_and_sources() -> None:
 def test_phase4_document_references_final_artifact_templates_and_schema() -> None:
     text = PHASE4.read_text(encoding="utf-8")
 
-    assert "extension/templates/00-overview-template.md" in text
-    assert "extension/templates/plan-conformance-template.md" in text
-    assert "extension/templates/plan-conformance.schema.json" in text
+    assert ".echelon/runtime/templates/00-overview-template.md" in text
+    assert ".echelon/runtime/templates/plan-conformance-template.md" in text
+    assert ".echelon/runtime/templates/plan-conformance.schema.json" in text

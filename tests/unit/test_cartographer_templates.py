@@ -4,14 +4,14 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-TEMPLATE_DIR = ROOT / "extension" / "agents" / "exploration" / "templates"
-AGENT = ROOT / "extension" / "agents" / "exploration" / "cartographer.md"
-PHASE = ROOT / "extension" / "workflow" / "phases" / "phase1-what.md"
-DERIVER = ROOT / "extension" / "agents" / "exploration" / "lexicon-deriver.md"
+TEMPLATE_DIR = ROOT / "prosaic" / "agents" / "exploration" / "templates"
+AGENT = ROOT / "prosaic" / "subagents" / "echelon.cartographer.md"
+PHASE = ROOT / "runtime" / "workflow" / "phases" / "phase1-what.md"
+DERIVER = ROOT / "prosaic" / "subagents" / "echelon.lexicon-deriver.md"
 DERIVE_PHASE = (
-    ROOT / "extension" / "workflow" / "phases" / "phase1-lexicon-derive.md"
+    ROOT / "runtime" / "workflow" / "phases" / "phase1-lexicon-derive.md"
 )
-DEFINITION = ROOT / "extension" / "workflow" / "definition.yaml"
+DEFINITION = ROOT / "runtime" / "workflow" / "definition.yaml"
 
 
 class TestCartographerTemplates:

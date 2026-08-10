@@ -10,7 +10,7 @@ from kernel.plan_contract import validate_plan_markdown
 
 
 ROOT = Path(__file__).resolve().parents[2]
-TEMPLATE_DIR = ROOT / "extension" / "templates"
+TEMPLATE_DIR = ROOT / "runtime" / "templates"
 
 
 @pytest.mark.unit

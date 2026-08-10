@@ -2,8 +2,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-AGENT = ROOT / "extension" / "agents" / "build" / "progress-tracker.md"
-PHASE = ROOT / "extension" / "workflow" / "phases" / "build-6-progress.md"
+AGENT = ROOT / "prosaic" / "subagents" / "echelon.progress-tracker.md"
+PHASE = ROOT / "runtime" / "workflow" / "phases" / "build-6-progress.md"
 
 
 class TestProgressTrackerTemplates:

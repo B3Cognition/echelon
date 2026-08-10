@@ -5,12 +5,12 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-VERIFY_COMMAND = ROOT / "extension" / "commands" / "echelon.verify-spec.md"
-VERIFY_INIT = ROOT / "extension" / "workflow" / "phases" / "verify-spec-1-init.md"
+VERIFY_COMMAND = ROOT / "prosaic" / "commands" / "echelon.verify-spec.md"
+VERIFY_INIT = ROOT / "runtime" / "workflow" / "phases" / "verify-spec-1-init.md"
 VERIFY_RECONCILE = (
-    ROOT / "extension" / "workflow" / "phases" / "verify-spec-6-reconcile.md"
+    ROOT / "runtime" / "workflow" / "phases" / "verify-spec-6-reconcile.md"
 )
-WORKFLOW = ROOT / "extension" / "workflow" / "definition.yaml"
+WORKFLOW = ROOT / "runtime" / "workflow" / "definition.yaml"
 
 
 def test_verify_spec_command_documents_reconcile_exception() -> None:

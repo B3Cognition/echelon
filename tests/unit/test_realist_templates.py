@@ -4,9 +4,9 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-TEMPLATE_DIR = ROOT / "extension" / "templates"
-AGENT = ROOT / "extension" / "agents" / "learning" / "realist.md"
-PHASE = ROOT / "extension" / "workflow" / "phases" / "phase4-document.md"
+TEMPLATE_DIR = ROOT / "runtime" / "templates"
+AGENT = ROOT / "prosaic" / "subagents" / "echelon.realist.md"
+PHASE = ROOT / "runtime" / "workflow" / "phases" / "phase4-document.md"
 
 
 class TestRealistTemplates:
@@ -58,7 +58,7 @@ class TestRealistTemplates:
             "cost-analysis-template.md",
             "benchmark-data-template.md",
         ]:
-            assert f"extension/templates/{filename}" in text
+            assert f".echelon/runtime/templates/{filename}" in text
 
         assert ".specify/specs/{feature}/constitution.md" not in text
         assert "{spec_dir}/constitution.md" in text
@@ -71,7 +71,7 @@ class TestRealistTemplates:
     def test_finalize_dispatch_includes_realist_templates(self) -> None:
         text = PHASE.read_text(encoding="utf-8")
 
-        assert "extension/templates/reality-check-template.md" in text
-        assert "extension/templates/cost-analysis-template.md" in text
-        assert "extension/templates/benchmark-data-template.md" in text
+        assert ".echelon/runtime/templates/reality-check-template.md" in text
+        assert ".echelon/runtime/templates/cost-analysis-template.md" in text
+        assert ".echelon/runtime/templates/benchmark-data-template.md" in text
         assert "using the provided templates" in text

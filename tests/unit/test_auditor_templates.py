@@ -4,9 +4,9 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-APPENDIX_DIR = ROOT / "extension" / "agents" / "learning" / "appendices"
-AGENT = ROOT / "extension" / "agents" / "learning" / "auditor.md"
-PHASE = ROOT / "extension" / "workflow" / "phases" / "phase4-document.md"
+APPENDIX_DIR = ROOT / "prosaic" / "agents" / "learning" / "appendices"
+AGENT = ROOT / "prosaic" / "subagents" / "echelon.auditor.md"
+PHASE = ROOT / "runtime" / "workflow" / "phases" / "phase4-document.md"
 
 
 class TestAuditorTemplates:

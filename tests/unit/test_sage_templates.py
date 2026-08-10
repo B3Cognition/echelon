@@ -4,19 +4,19 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-TEMPLATE_DIR = ROOT / "extension" / "agents" / "exploration" / "templates"
-AGENT = ROOT / "extension" / "agents" / "exploration" / "sage.md"
+TEMPLATE_DIR = ROOT / "prosaic" / "agents" / "exploration" / "templates"
+AGENT = ROOT / "prosaic" / "subagents" / "echelon.sage.md"
 CONTRADICTION_REFERENCE = (
     ROOT
-    / "extension"
+    / "prosaic"
     / "agents"
     / "exploration"
     / "appendices"
     / "sage-contradiction-detection-reference.md"
 )
-WHY1_PHASE = ROOT / "extension" / "workflow" / "phases" / "phase1-why1.md"
-WHY2_PHASE = ROOT / "extension" / "workflow" / "phases" / "phase1-why2.md"
-WHY3_PHASE = ROOT / "extension" / "workflow" / "phases" / "phase3-consensus.md"
+WHY1_PHASE = ROOT / "runtime" / "workflow" / "phases" / "phase1-why1.md"
+WHY2_PHASE = ROOT / "runtime" / "workflow" / "phases" / "phase1-why2.md"
+WHY3_PHASE = ROOT / "runtime" / "workflow" / "phases" / "phase3-consensus.md"
 
 
 class TestSageTemplates:
@@ -75,7 +75,7 @@ class TestSageTemplates:
         assert "agents/exploration/templates/sage-assumption-review-template.md" in text
         assert "agents/exploration/templates/sage-quality-gates-template.md" in text
         assert "agents/exploration/templates/sage-issues-template.md" in text
-        assert "extension/templates/kb-proposals/sage-decision-proposal-template.yaml" in text
+        assert ".echelon/runtime/templates/kb-proposals/sage-decision-proposal-template.yaml" in text
         assert "agents/exploration/templates/sage-decision-entry-template.yaml" not in text
         assert ".specify/..." not in text
         assert "${STAGING_DIR}/assumption-review.md" in text
@@ -143,7 +143,7 @@ class TestSageTemplates:
         assert text.index("<instructions>") < text.index("<outputs>")
         assert "`{spec_dir}/spec.md`" in text
         assert "`{spec_dir}/assumptions.md`" in text
-        assert "`.specify/memory/constitution.md`" in text
+        assert "`.echelon/constitution.md`" in text
         assert "Treat `{spec_dir}` / `ACTIVE_SPEC_DIR` as authoritative" in text
 
     def test_why2_dispatch_blocks_required_amendments_even_without_critical(self) -> None:

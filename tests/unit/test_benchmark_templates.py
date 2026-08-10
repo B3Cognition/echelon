@@ -4,9 +4,9 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-TEMPLATE_DIR = ROOT / "extension" / "templates"
-AGENT = ROOT / "extension" / "agents" / "specialists" / "benchmark.md"
-PHASE = ROOT / "extension" / "workflow" / "phases" / "phase3-specialists.md"
+TEMPLATE_DIR = ROOT / "runtime" / "templates"
+AGENT = ROOT / "prosaic" / "subagents" / "echelon.benchmark.md"
+PHASE = ROOT / "runtime" / "workflow" / "phases" / "phase3-specialists.md"
 
 
 class TestBenchmarkTemplates:
@@ -58,7 +58,7 @@ class TestBenchmarkTemplates:
             "capacity-model-template.md",
             "performance-amendments-template.md",
         ]:
-            assert f"extension/templates/{filename}" in text
+            assert f".echelon/runtime/templates/{filename}" in text
 
         assert "performance-model.md" not in text
         assert ".specify/..." not in text
@@ -75,6 +75,6 @@ class TestBenchmarkTemplates:
     def test_phase3_specialist_dispatch_includes_benchmark_templates(self) -> None:
         text = PHASE.read_text(encoding="utf-8")
 
-        assert "extension/templates/performance-requirements-template.md" in text
-        assert "extension/templates/capacity-model-template.md" in text
-        assert "extension/templates/performance-amendments-template.md" in text
+        assert ".echelon/runtime/templates/performance-requirements-template.md" in text
+        assert ".echelon/runtime/templates/capacity-model-template.md" in text
+        assert ".echelon/runtime/templates/performance-amendments-template.md" in text

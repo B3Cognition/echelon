@@ -4,7 +4,7 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-TEMPLATE_DIR = ROOT / "extension" / "templates"
+TEMPLATE_DIR = ROOT / "runtime" / "templates"
 
 
 @pytest.mark.parametrize(
@@ -37,19 +37,19 @@ def test_learning_artifact_templates_have_required_structure(
 @pytest.mark.parametrize(
     ("source", "template"),
     [
-        ("extension/agents/learning/auditor.md", "confidence-flags-template.md"),
-        ("extension/agents/specialists/investigator.md", "experiment-results-template.md"),
-        ("extension/agents/learning/adaptive.md", "evolution-report-template.md"),
-        ("extension/agents/learning/adaptive.md", "improvement-metrics-template.md"),
-        ("extension/agents/learning/adaptive.md", "stagnation-flags-template.md"),
-        ("extension/agents/learning/adaptive.md", "regression-alerts-template.md"),
-        ("extension/agents/learning/adaptive.md", "bias-check-template.md"),
-        ("extension/agents/solution/architect.md", "constitution-amendment-candidates-template.md"),
-        ("extension/agents/learning/auditor.md", "feedback-report-template.md"),
-        ("extension/workflow/phases/appendices/build-8-feedback-reference.md", "drift-escalation-template.md"),
-        ("extension/agents/learning/auditor.md", "evolution-signals-review-template.md"),
-        ("extension/agents/learning/auditor.md", "prompt-version-observations-template.md"),
-        ("extension/agents/learning/auditor.md", "calibration-analytics-template.md"),
+        ("prosaic/subagents/echelon.auditor.md", "confidence-flags-template.md"),
+        ("prosaic/subagents/echelon.investigator.md", "experiment-results-template.md"),
+        ("prosaic/subagents/echelon.adaptive.md", "evolution-report-template.md"),
+        ("prosaic/subagents/echelon.adaptive.md", "improvement-metrics-template.md"),
+        ("prosaic/subagents/echelon.adaptive.md", "stagnation-flags-template.md"),
+        ("prosaic/subagents/echelon.adaptive.md", "regression-alerts-template.md"),
+        ("prosaic/subagents/echelon.adaptive.md", "bias-check-template.md"),
+        ("prosaic/subagents/echelon.architect.md", "constitution-amendment-candidates-template.md"),
+        ("prosaic/subagents/echelon.auditor.md", "feedback-report-template.md"),
+        ("runtime/workflow/phases/appendices/build-8-feedback-reference.md", "drift-escalation-template.md"),
+        ("prosaic/subagents/echelon.auditor.md", "evolution-signals-review-template.md"),
+        ("prosaic/subagents/echelon.auditor.md", "prompt-version-observations-template.md"),
+        ("prosaic/subagents/echelon.auditor.md", "calibration-analytics-template.md"),
     ],
 )
 def test_each_learning_artifact_producer_references_its_template(
@@ -59,10 +59,10 @@ def test_each_learning_artifact_producer_references_its_template(
 
 
 def test_experiment_results_reference_is_consistently_markdown() -> None:
-    investigator = (ROOT / "extension/agents/specialists/investigator.md").read_text(
+    investigator = (ROOT / "prosaic/subagents/echelon.investigator.md").read_text(
         encoding="utf-8"
     )
-    workflow = (ROOT / "extension/workflow/definition.yaml").read_text(encoding="utf-8")
+    workflow = (ROOT / "runtime/workflow/definition.yaml").read_text(encoding="utf-8")
 
     assert 'artifact: "experiment-results.md"' in investigator
     assert "experiment-results.json" not in investigator

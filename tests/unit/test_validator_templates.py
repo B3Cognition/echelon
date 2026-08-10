@@ -2,8 +2,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-AGENT = ROOT / "extension" / "agents" / "feasibility" / "validator.md"
-WORKFLOW = ROOT / "extension" / "workflow" / "definition.yaml"
+AGENT = ROOT / "prosaic" / "subagents" / "echelon.validator.md"
+WORKFLOW = ROOT / "runtime" / "workflow" / "definition.yaml"
 
 
 class TestValidatorTemplates:
@@ -18,4 +18,4 @@ class TestValidatorTemplates:
     def test_workflow_dispatches_validator_with_canonical_agent_label(self) -> None:
         text = WORKFLOW.read_text(encoding="utf-8")
 
-        assert "agent: echelon-validator (VALIDATOR)" in text
+        assert "agent: echelon.validator (VALIDATOR)" in text

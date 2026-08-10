@@ -2,7 +2,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-AGENT = ROOT / "extension" / "agents" / "build" / "implementer.md"
+AGENT = ROOT / "prosaic" / "subagents" / "echelon.implementer.md"
 
 
 class TestImplementerTemplates:

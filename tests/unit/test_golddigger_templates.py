@@ -2,9 +2,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-AGENT = ROOT / "extension" / "agents" / "exploration" / "golddigger.md"
+AGENT = ROOT / "prosaic" / "subagents" / "echelon.golddigger.md"
 RE_AGENTS = {
-    name: ROOT / "extension" / "agents" / "re" / f"{name}.md"
+    name: ROOT / "prosaic" / "subagents" / f"echelon.re-{name}.md"
     for name in (
         "specifier",
         "verifier",
@@ -15,7 +15,7 @@ RE_AGENTS = {
     )
 }
 RE_PHASES = {
-    name: ROOT / "extension" / "workflow" / "phases" / f"re-extract-{name}.md"
+    name: ROOT / "runtime" / "workflow" / "phases" / f"re-extract-{name}.md"
     for name in (
         "2-specify",
         "3-verify",

@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-REOPEN_PHASE = ROOT / "extension" / "workflow" / "phases" / "reopen-1-apply-gaps.md"
+REOPEN_PHASE = ROOT / "runtime" / "workflow" / "phases" / "reopen-1-apply-gaps.md"
 
 
 def test_reopen_phase_forbids_per_row_gap_expansion() -> None:

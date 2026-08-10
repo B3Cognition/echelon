@@ -2,8 +2,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-AGENT = ROOT / "extension" / "agents" / "build" / "code-reviewer.md"
-PHASE = ROOT / "extension" / "workflow" / "phases" / "build-4-code-review.md"
+AGENT = ROOT / "prosaic" / "subagents" / "echelon.code-reviewer.md"
+PHASE = ROOT / "runtime" / "workflow" / "phases" / "build-4-code-review.md"
 PYTHON_RULES = ROOT / "knowledge-base" / "language-rules" / "python.md"
 
 

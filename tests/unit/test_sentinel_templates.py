@@ -4,9 +4,9 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-TEMPLATE_DIR = ROOT / "extension" / "templates"
-AGENT = ROOT / "extension" / "agents" / "solution" / "sentinel.md"
-PHASE = ROOT / "extension" / "workflow" / "phases" / "phase3-sentinel.md"
+TEMPLATE_DIR = ROOT / "runtime" / "templates"
+AGENT = ROOT / "prosaic" / "subagents" / "echelon.sentinel.md"
+PHASE = ROOT / "runtime" / "workflow" / "phases" / "phase3-sentinel.md"
 
 
 class TestSentinelTemplates:
@@ -60,7 +60,7 @@ class TestSentinelTemplates:
             "test-architecture-template.md",
             "coverage-map-template.md",
         ]:
-            assert f"extension/templates/{filename}" in text
+            assert f".echelon/runtime/templates/{filename}" in text
 
         assert ".specify/..." not in text
         assert "produced in `specs/{NNN}-{feature}/`" not in text
@@ -79,9 +79,9 @@ class TestSentinelTemplates:
     def test_phase3_sentinel_dispatch_includes_templates(self) -> None:
         text = PHASE.read_text(encoding="utf-8")
 
-        assert "extension/templates/test-strategy-template.md" in text
-        assert "extension/templates/test-architecture-template.md" in text
-        assert "extension/templates/coverage-map-template.md" in text
+        assert ".echelon/runtime/templates/test-strategy-template.md" in text
+        assert ".echelon/runtime/templates/test-architecture-template.md" in text
+        assert ".echelon/runtime/templates/coverage-map-template.md" in text
         assert "Produce outputs in `specs/{NNN}-{feature}/`" not in text
         assert "Produce outputs in `{spec_dir}/`" in text
         assert "three files in `specs/{NNN}-{feature}/`" not in text

@@ -4,10 +4,10 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-TEMPLATE_DIR = ROOT / "extension" / "templates"
-AGENT = ROOT / "extension" / "agents" / "specialists" / "maverick.md"
-PHASE = ROOT / "extension" / "workflow" / "phases" / "phase3-specialists.md"
-COMMAND = ROOT / "extension" / "commands" / "echelon.innovate.md"
+TEMPLATE_DIR = ROOT / "runtime" / "templates"
+AGENT = ROOT / "prosaic" / "subagents" / "echelon.maverick.md"
+PHASE = ROOT / "runtime" / "workflow" / "phases" / "phase3-specialists.md"
+COMMAND = ROOT / "prosaic" / "commands" / "echelon.innovate.md"
 EXTENSION = ROOT / "extension" / "extension.yml"
 
 
@@ -58,7 +58,7 @@ class TestMaverickTemplates:
             "risk-opportunities-template.md",
             "challenge-assumptions-template.md",
         ]:
-            assert f"extension/templates/{filename}" in text
+            assert f".echelon/runtime/templates/{filename}" in text
 
         assert ".specify/.../alternatives.md" not in text
         assert "specs/..." not in text
@@ -72,16 +72,16 @@ class TestMaverickTemplates:
     def test_phase3_specialist_dispatch_includes_maverick_templates(self) -> None:
         text = PHASE.read_text(encoding="utf-8")
 
-        assert "extension/templates/alternatives-template.md" in text
-        assert "extension/templates/risk-opportunities-template.md" in text
-        assert "extension/templates/challenge-assumptions-template.md" in text
+        assert ".echelon/runtime/templates/alternatives-template.md" in text
+        assert ".echelon/runtime/templates/risk-opportunities-template.md" in text
+        assert ".echelon/runtime/templates/challenge-assumptions-template.md" in text
 
     def test_manual_innovate_command_includes_maverick_templates(self) -> None:
         text = COMMAND.read_text(encoding="utf-8")
 
-        assert "extension/templates/alternatives-template.md" in text
-        assert "extension/templates/risk-opportunities-template.md" in text
-        assert "extension/templates/challenge-assumptions-template.md" in text
+        assert ".echelon/runtime/templates/alternatives-template.md" in text
+        assert ".echelon/runtime/templates/risk-opportunities-template.md" in text
+        assert ".echelon/runtime/templates/challenge-assumptions-template.md" in text
 
     def test_extension_registry_lists_all_maverick_outputs(self) -> None:
         text = EXTENSION.read_text(encoding="utf-8")

@@ -10,7 +10,7 @@ from kernel.task_contract import parse_task_rows, validate_tasks_markdown
 
 
 ROOT = Path(__file__).resolve().parents[2]
-TEMPLATE_DIR = ROOT / "extension" / "templates"
+TEMPLATE_DIR = ROOT / "runtime" / "templates"
 
 
 @pytest.mark.unit

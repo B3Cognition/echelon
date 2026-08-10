@@ -4,11 +4,11 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-TEMPLATE_DIR = ROOT / "extension" / "templates"
-AGENT = ROOT / "extension" / "agents" / "exploration" / "synthesizer.md"
-PHASE = ROOT / "extension" / "workflow" / "phases" / "phase1-synthesizer.md"
-MODELER_PHASE = ROOT / "extension" / "workflow" / "phases" / "phase1-modeler.md"
-DEFINITION = ROOT / "extension" / "workflow" / "definition.yaml"
+TEMPLATE_DIR = ROOT / "runtime" / "templates"
+AGENT = ROOT / "prosaic" / "subagents" / "echelon.synthesizer.md"
+PHASE = ROOT / "runtime" / "workflow" / "phases" / "phase1-synthesizer.md"
+MODELER_PHASE = ROOT / "runtime" / "workflow" / "phases" / "phase1-modeler.md"
+DEFINITION = ROOT / "runtime" / "workflow" / "definition.yaml"
 
 
 class TestSynthesizerTemplates:
@@ -78,7 +78,7 @@ class TestSynthesizerTemplates:
             "timeline-template.md",
             "qa-test-strategy-inputs-template.md",
         ]:
-            assert f"extension/templates/{filename}" in text
+            assert f".echelon/runtime/templates/{filename}" in text
 
         assert ".specify/..." not in text
         assert "agent: echelon-synthesizer (SYNTHESIZER)" in text
@@ -87,16 +87,16 @@ class TestSynthesizerTemplates:
     def test_phase1_synthesizer_dispatch_includes_templates(self) -> None:
         text = PHASE.read_text(encoding="utf-8")
 
-        assert "extension/templates/glossary-template.md" in text
-        assert "extension/templates/mental-model-template.md" in text
-        assert "extension/templates/boundaries-template.md" in text
-        assert "extension/templates/assumptions-template.md" in text
-        assert "extension/templates/unknowns-template.md" in text
-        assert "extension/templates/contradictions-and-gaps-template.md" in text
-        assert "extension/templates/risks-template.md" in text
-        assert "extension/templates/people-and-teams-template.md" in text
-        assert "extension/templates/timeline-template.md" in text
-        assert "extension/templates/qa-test-strategy-inputs-template.md" in text
+        assert ".echelon/runtime/templates/glossary-template.md" in text
+        assert ".echelon/runtime/templates/mental-model-template.md" in text
+        assert ".echelon/runtime/templates/boundaries-template.md" in text
+        assert ".echelon/runtime/templates/assumptions-template.md" in text
+        assert ".echelon/runtime/templates/unknowns-template.md" in text
+        assert ".echelon/runtime/templates/contradictions-and-gaps-template.md" in text
+        assert ".echelon/runtime/templates/risks-template.md" in text
+        assert ".echelon/runtime/templates/people-and-teams-template.md" in text
+        assert ".echelon/runtime/templates/timeline-template.md" in text
+        assert ".echelon/runtime/templates/qa-test-strategy-inputs-template.md" in text
 
     def test_modeler_phase_consumes_actual_synthesizer_outputs(self) -> None:
         text = MODELER_PHASE.read_text(encoding="utf-8")

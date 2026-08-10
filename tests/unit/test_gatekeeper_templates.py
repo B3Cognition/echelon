@@ -4,10 +4,10 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-TEMPLATE_DIR = ROOT / "extension" / "templates"
-AGENT = ROOT / "extension" / "agents" / "feasibility" / "gatekeeper.md"
-PHASE2 = ROOT / "extension" / "workflow" / "phases" / "phase2-decide.md"
-PHASE3 = ROOT / "extension" / "workflow" / "phases" / "phase3-consensus.md"
+TEMPLATE_DIR = ROOT / "runtime" / "templates"
+AGENT = ROOT / "prosaic" / "subagents" / "echelon.gatekeeper.md"
+PHASE2 = ROOT / "runtime" / "workflow" / "phases" / "phase2-decide.md"
+PHASE3 = ROOT / "runtime" / "workflow" / "phases" / "phase3-consensus.md"
 
 
 class TestGatekeeperTemplates:
@@ -83,7 +83,7 @@ class TestGatekeeperTemplates:
             "implementability-report-template.md",
             "kill-report.md",
         ]:
-            assert f"extension/templates/{filename}" in text
+            assert f".echelon/runtime/templates/{filename}" in text
 
         assert ".specify/..." not in text
         assert "verdict: PASS | KILL | DEFER" in text
@@ -98,21 +98,21 @@ class TestGatekeeperTemplates:
 
         assert "verdict: <PASS | KILL | DEFER>" not in text
         assert "Use the mode-specific result block above" in text
-        assert "`.specify/memory/constitution.md`" in text
+        assert "`.echelon/constitution.md`" in text
 
     def test_phase2_decide_dispatch_includes_first_pass_templates(self) -> None:
         text = PHASE2.read_text(encoding="utf-8")
 
-        assert "extension/templates/feasibility-template.md" in text
-        assert "extension/templates/prioritization-template.md" in text
-        assert "extension/templates/estimates-template.md" in text
-        assert "extension/templates/mvp-scope-template.md" in text
-        assert "extension/templates/kill-report.md" in text
+        assert ".echelon/runtime/templates/feasibility-template.md" in text
+        assert ".echelon/runtime/templates/prioritization-template.md" in text
+        assert ".echelon/runtime/templates/estimates-template.md" in text
+        assert ".echelon/runtime/templates/mvp-scope-template.md" in text
+        assert ".echelon/runtime/templates/kill-report.md" in text
 
     def test_phase3_consensus_dispatch_includes_implementability_template(self) -> None:
         text = PHASE3.read_text(encoding="utf-8")
 
-        assert "extension/templates/implementability-report-template.md" in text
+        assert ".echelon/runtime/templates/implementability-report-template.md" in text
 
     def test_gatekeeper_requires_phase_a_human_and_ai_estimates(self) -> None:
         text = AGENT.read_text(encoding="utf-8")
@@ -130,7 +130,7 @@ class TestGatekeeperTemplates:
     def test_assess2_uses_dedicated_implementability_metrics_state_update(self) -> None:
         agent_text = AGENT.read_text(encoding="utf-8")
         phase_text = PHASE3.read_text(encoding="utf-8")
-        definition_text = (ROOT / "extension" / "workflow" / "definition.yaml").read_text(
+        definition_text = (ROOT / "runtime" / "workflow" / "definition.yaml").read_text(
             encoding="utf-8"
         )
 

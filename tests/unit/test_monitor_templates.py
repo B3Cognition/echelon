@@ -2,7 +2,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-AGENT = ROOT / "extension" / "agents" / "learning" / "monitor.md"
+AGENT = ROOT / "prosaic" / "subagents" / "echelon.monitor.md"
 
 
 class TestMonitorTemplates:

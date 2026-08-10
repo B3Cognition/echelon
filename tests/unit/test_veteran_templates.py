@@ -2,8 +2,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-TEMPLATE_DIR = ROOT / "extension" / "templates"
-AGENT = ROOT / "extension" / "agents" / "learning" / "veteran.md"
+TEMPLATE_DIR = ROOT / "runtime" / "templates"
+AGENT = ROOT / "prosaic" / "subagents" / "echelon.veteran.md"
 
 
 class TestVeteranTemplates:
@@ -23,7 +23,7 @@ class TestVeteranTemplates:
     def test_veteran_prompt_references_template_and_canonical_outputs(self) -> None:
         text = AGENT.read_text(encoding="utf-8")
 
-        assert "extension/templates/marketplace-index-entry-template.yaml" in text
+        assert ".echelon/runtime/templates/marketplace-index-entry-template.yaml" in text
         assert "knowledge-base/patterns.yaml" in text
         assert "knowledge-base/pitfalls.yaml" in text
         assert "knowledge-base/marketplace-index.yaml" in text
