@@ -20,6 +20,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
 
 EXT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(EXT_ROOT) not in sys.path:
@@ -860,6 +861,36 @@ def _mock_quality_first_flow_provider() -> MagicMock:
     return provider
 
 
+def _merge_test_config(base: dict, override: dict) -> dict:
+    merged = deepcopy(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge_test_config(merged[key], value)
+        else:
+            merged[key] = deepcopy(value)
+    return merged
+
+
+def _materialize_canonical_test_config(project_root: Path) -> None:
+    config_path = project_root / ".echelon" / "config.yml"
+    defaults = yaml.safe_load(
+        (EXT_ROOT / "runtime" / "config-template.yml").read_text(encoding="utf-8")
+    ) or {}
+    overrides = (
+        yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        if config_path.is_file()
+        else {}
+    )
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        yaml.safe_dump(
+            _merge_test_config(defaults, overrides),
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+
 def _controller(tmp_path: Path, provider=None, mode: str = "banzai", squad_dir: Path = None):
     if not (tmp_path / ".git").exists():
         subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, check=True, capture_output=True)
@@ -883,6 +914,7 @@ def _controller(tmp_path: Path, provider=None, mode: str = "banzai", squad_dir: 
         squad_dir = tmp_path / "squad" / "run-test"
         squad_dir.mkdir(parents=True, exist_ok=True)
         (squad_dir / "staging").mkdir(exist_ok=True)
+    _materialize_canonical_test_config(tmp_path)
     graph = PhaseGraph(DEFINITION, prosaic_subagents_dir=PROSAIC_SUBAGENTS)
     store = SquadStateStore(squad_dir)
     if provider is None:
@@ -891,7 +923,7 @@ def _controller(tmp_path: Path, provider=None, mode: str = "banzai", squad_dir: 
         provider=provider,
         state_store=store,
         phase_graph=graph,
-        ext_dir=EXT_ROOT / "extension",
+        ext_dir=EXT_ROOT / "runtime",
         project_root=tmp_path,
         token_budget=0,
         squad_dir=squad_dir,

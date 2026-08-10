@@ -1673,16 +1673,8 @@ class PhaseExecutor(ABC):
         staging_dir_str = state.get("staging_dir", str(self._squad_dir / "staging"))
         context_dir_str = state.get("context_dir", str(self._squad_dir / "context"))
 
-        def _translate_squad_path(ref: str) -> str:
-            """Rewrite legacy .specify/squad/ prefixes to the actual run dir."""
-            r = ref.replace(".specify/squad/staging/", f"{staging_dir_str}/")
-            r = r.replace(".specify/squad/staging", staging_dir_str)
-            r = r.replace(".specify/squad/", f"{squad_dir_str}/")
-            r = r.replace(".specify/squad", squad_dir_str)
-            return r
-
         def _translate_context_ref(ref: str) -> str:
-            return _translate_squad_path(
+            return (
                 ref.replace("{spec_dir}", spec_dir_ref)
                 .replace("{squad_dir}", squad_dir_str)
                 .replace("{context_dir}", context_dir_str)
@@ -1704,8 +1696,6 @@ class PhaseExecutor(ABC):
                 static_parts.append(_read_prompt_body(spec_path))
 
         # 3. Context pack files (read each that exists on disk).
-        # Translate .specify/squad/ paths before resolving — definition.yaml context_pack
-        # items may reference these legacy paths (e.g. .specify/squad/staging/glossary.md).
         spec_dir_ref = _normalize_spec_dir_ref(
             str(state.get("spec_dir") or "").strip(),
             self._project_root,
@@ -1716,7 +1706,7 @@ class PhaseExecutor(ABC):
                 item.startswith("{spec_dir}/evidence-resolution.md")
                 or item.startswith("{spec_dir}/investigation/")
                 or item.startswith("{spec_dir}/evidence-inventory.json")
-                or item.startswith(".specify/squad/reasoning-journal.jsonl")
+                or item.startswith("{squad_dir}/reasoning-journal.jsonl")
             ):
                 continue
             selector = parse_context_pack_item(item)
@@ -1852,12 +1842,6 @@ class PhaseExecutor(ABC):
         prompt = prompt.replace("{squad_dir}", squad_dir_str)
         prompt = prompt.replace("{context_dir}", context_dir_str)
         prompt = prompt.replace("{staging_dir}", staging_dir_str)
-
-        # Translate legacy .specify/squad paths in agent + spec file text
-        prompt = prompt.replace(".specify/squad/staging/", f"{staging_dir_str}/")
-        prompt = prompt.replace(".specify/squad/staging", staging_dir_str)
-        prompt = prompt.replace(".specify/squad/", f"{squad_dir_str}/")
-        prompt = prompt.replace(".specify/squad", squad_dir_str)
 
         # Append harness routing contract so agents know exactly what
         # state_updates fields the harness needs for transition evaluation.
@@ -2561,16 +2545,10 @@ class StagedParallelExecutor(PhaseExecutor):
         spec_dir_ref = _normalize_spec_dir_ref(str(state.get("spec_dir") or "").strip(), self._project_root)
         search_bases = _spec_search_bases(spec_dir_ref, self._project_root, staging_dir_str)
 
-        def _translate_squad_path(ref: str) -> str:
-            r = ref.replace(".specify/squad/staging/", f"{staging_dir_str}/")
-            r = r.replace(".specify/squad/staging", staging_dir_str)
-            r = r.replace(".specify/squad/", f"{squad_dir_str}/")
-            r = r.replace(".specify/squad", squad_dir_str)
-            return r
-
         def _translate_context_ref(ref: str) -> str:
-            return _translate_squad_path(
+            return (
                 ref.replace("{spec_dir}", spec_dir_ref)
+                .replace("{squad_dir}", squad_dir_str)
                 .replace("{context_dir}", context_dir_str)
                 .replace("{staging_dir}", staging_dir_str)
             )

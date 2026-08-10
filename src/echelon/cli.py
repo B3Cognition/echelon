@@ -6817,8 +6817,7 @@ def _phase_context_resolution_rows(
             continue
         resolved_ref = file_ref
         if staging is not None:
-            resolved_ref = resolved_ref.replace(".specify/squad/staging/", f"{staging}/")
-            resolved_ref = resolved_ref.replace(".specify/squad/staging", str(staging))
+            resolved_ref = resolved_ref.replace("{staging_dir}", str(staging))
         if target_spec_dir is not None:
             resolved_ref = resolved_ref.replace("{spec_dir}", str(target_spec_dir))
         if resolved_ref.startswith("/"):

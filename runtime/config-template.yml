@@ -228,6 +228,31 @@ lexicon_gate:
   on_exhausted: block
 
 # =============================================================================
+# GOVERNANCE — deterministic structural gates
+# =============================================================================
+
+governance:
+  enabled: true
+  max_repair_attempts: 3
+  on_exhausted: warn
+  artifacts:
+    feasibility:
+      tier: structural
+      template: feasibility-template.md
+      verdict:
+        section: "Kill / Defer / Pass Decision"
+        enum: [PASS, KILL, DEFER]
+    intent-alignment-check:
+      tier: structural
+      template: intent-alignment-check-template.md
+      verdict:
+        section: "Alignment Verdict"
+        enum: [ALIGNED, DRIFT]
+      cross_refs:
+        - ids: "REQ|FR|NFR"
+          against: spec.md
+
+# =============================================================================
 # QUALITY GATES (SAGE, Understanding thresholds)
 # =============================================================================
 
