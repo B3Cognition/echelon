@@ -187,3 +187,16 @@ def test_installation_guide_does_not_recommend_rejected_legacy_init_flag() -> No
 
     assert "--legacy-spec-kit" not in installation
     assert "echelon workspace migrate-to-prosaic" in installation
+
+
+def test_readme_describes_prosaic_first_provider_dispatch() -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    execution = readme.split("## Execution Paths", 1)[1].split(
+        "## Delivery Harness", 1
+    )[0]
+
+    assert ".echelon/prosaic" in execution
+    assert "prosaic inspect" in execution
+    assert "AICodingCliProvider" in execution
+    assert "specify extension add" not in execution
+    assert "speckit.echelon" not in execution

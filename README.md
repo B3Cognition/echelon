@@ -642,56 +642,39 @@ Safe rewind targets are intentionally narrow. They reset the active run state an
 clean downstream generated artifacts, but they do not ask you to manually copy
 `state.json` or `reasoning-journal.jsonl` into `specs/<id>`.
 
-### Spec-kit skills (Claude session)
-
-All of the above are also available as spec-kit slash commands inside a Claude Code session:
-
-```bash
-speckit.echelon.init
-speckit.echelon.run "Build a photo album app"
-speckit.echelon.bugfix 001 "upload button does nothing"
-speckit.echelon.harness-run 001
-speckit.echelon.harness-run 001 strategy=codegen
-speckit.echelon.verify
-speckit.echelon.feedback 001
-./scripts/bash/dry-run.sh    # validate extension setup without running agents
-```
-
 ## Execution Paths
 
-Echelon commands can be invoked two ways. Both paths are fully supported and run independently of each other.
+Echelon commands run through the terminal CLI. `echelon workspace init` deploys
+provider-neutral command and subagent prose under `.echelon/prosaic/` and the
+workflow, templates, and scripts under `.echelon/runtime/`.
 
-### Interactive Claude Code session (spec-kit skill system)
+For command-backed operations, Echelon:
 
-When you type a slash command inside a Claude Code session (e.g. `speckit.echelon.run`), spec-kit reads the skill file directly and injects its content into the current conversation context. The `disable-model-invocation: true` frontmatter in each skill file is honoured — Claude executes the instructions in-context rather than spawning a subprocess.
+1. Calls `prosaic inspect` against `.echelon/prosaic` to load the neutral command body and frontmatter.
+2. Renders command arguments and adds the Echelon execution and tool-policy preambles.
+3. Passes the rendered prompt and neutral metadata to `AICodingCliProvider`.
+4. Lets the configured concrete provider invoke Claude, Codex, Copilot, Opencode, or an OpenAI-compatible endpoint.
 
-This path has no dependency on the `echelon` CLI tool or the `ECHELON_LLM` env var. It always uses the Claude instance already running your session.
-
-### Terminal CLI (`echelon` / `harness` commands)
-
-When you run `echelon spec run "..."` from the terminal, the `echelon` CLI:
-
-1. Locates the skill file for the selected provider (Claude, Copilot, or Opencode)
-2. Strips the YAML frontmatter (which is meaningful only to spec-kit, not to the LLM)
-3. Prepends an execution preamble ("You are COMMANDER running non-interactively…") so the model acts on the instructions rather than narrating them
-4. Injects the effective host tool-policy preamble and invokes the LLM CLI subprocess (`claude -p <prompt>`, `codex exec <prompt>`, `copilot -p <prompt>`, or `opencode run <prompt>`)
-
-This path requires the `echelon` CLI to be installed (`scripts/install.sh`) and the target LLM CLI to be on your PATH. The `ECHELON_LLM` env var (or `harness.llm.cli` in `.echelon/config.yml`) selects the provider.
+The selected AI CLI must be on `PATH`; OpenAI-compatible providers use the
+configured HTTP endpoint. `ECHELON_LLM` or `harness.llm.cli` in
+`.echelon/config.yml` selects the provider. Old provider-native skill files are
+recognized only as migration compatibility; initialize or migrate the workspace
+so normal execution uses the Prosaic bundle.
 
 By default, terminal CLI runs do **not** add dangerous permission-bypass flags to the underlying AI CLI. Unsafe host execution is fail-closed and must be explicitly configured under `harness.llm.tool_policy` with both `allow_unsafe_host_execution: true` and an `approval_reason`. `echelon workspace init` prompts for this local approval on an interactive TTY, and `echelon workspace init --allow-unsafe-host-execution` writes the same approval non-interactively to `.echelon/local.yml`. When approved, Echelon re-enables the selected provider's equivalent bypass flag, such as Claude/Opencode `--dangerously-skip-permissions` or Codex `--dangerously-bypass-approvals-and-sandbox`. File, network, and individual tool-call isolation beyond those CLI flags still depends on the selected AI CLI runtime.
 
-The two paths share the same skill content but are otherwise fully independent — changes to one do not affect the other.
-
 ## AI Provider Support
 
-All `echelon` and `harness` CLI commands are provider-agnostic. Set the `ECHELON_LLM` environment variable to select which AI tool runs the skills:
+All `echelon` and delivery commands are provider-neutral. Set `ECHELON_LLM` or
+configure `harness.llm.cli` to select the concrete adapter:
 
-| Value | AI tool | Skill location |
-| ----- | ------- | -------------- |
-| `claude` | Claude CLI (default) | `.claude/skills/speckit-echelon-<cmd>/skill.md` |
-| `codex` | Codex CLI | `.claude/skills/speckit-echelon-<cmd>/skill.md` |
-| `copilot` | GitHub Copilot CLI | `.github/agents/speckit.echelon.<cmd>.agent.md` |
-| `opencode` | Opencode | `.opencode/command/speckit.echelon.<cmd>.md` |
+| Value | Provider |
+| ----- | -------- |
+| `claude` | Claude CLI (default) |
+| `codex` | Codex CLI |
+| `copilot` | GitHub Copilot CLI |
+| `opencode` | Opencode CLI |
+| `openai-compatible` | Configured OpenAI-compatible HTTP endpoint |
 
 ```bash
 # Use Copilot for all echelon commands
@@ -702,9 +685,8 @@ echelon spec run "Build a photo album app"
 ECHELON_LLM=opencode echelon spec bugfix 001 "upload button broken on Safari"
 ```
 
-Skill files are placed in the right location automatically by `specify extension add` after `specify init --integration <tool>`. Each provider's skill files are rewritten for that tool's conventions — do not copy them between providers manually.
-
-The delivery build loop (`echelon delivery run`) also respects `ECHELON_LLM` — LLM-driven build steps, feedback loops, and the PR review skill all use the same provider. Set it in your CI environment or `.echelon/config.yml` (`harness.llm.cli`).
+The delivery build loop (`echelon delivery run`) uses the same configured
+provider for LLM-driven build steps, feedback loops, and review.
 
 ## Delivery Harness
 
