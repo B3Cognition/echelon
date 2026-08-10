@@ -13,23 +13,25 @@ from pathlib import Path
 
 import pytest
 
-ECHELON = Path(__file__).parent.parent.parent / "extension"
+ROOT = Path(__file__).parent.parent.parent
+PROSAIC_SUBAGENTS = ROOT / "prosaic" / "subagents"
+RUNTIME = ROOT / "runtime"
 
 
 @pytest.mark.unit
 class TestVisualValidation:
     def test_config_has_visual_validation_enabled(self) -> None:
-        raw = (ECHELON / "echelon-config.yml").read_text()
+        raw = (RUNTIME / "echelon-config.yml").read_text()
         assert re.search(r"visual_validation:\s*\n\s*enabled:\s*true", raw)
 
     def test_visual_validator_has_capability_check(self) -> None:
-        content = (ECHELON / "agents/build/visual-validator.md").read_text()
+        content = (PROSAIC_SUBAGENTS / "echelon.visual-validator.md").read_text()
         assert re.search(r"Capability Check", content, re.IGNORECASE)
         assert re.search(r"playwright.*version|npx playwright", content, re.IGNORECASE)
         assert "skipped_no_playwright" in content
 
     def test_visual_validator_degrades_gracefully_without_ui_framework(self) -> None:
-        content = (ECHELON / "agents/build/visual-validator.md").read_text()
+        content = (PROSAIC_SUBAGENTS / "echelon.visual-validator.md").read_text()
         assert re.search(r"no.*browser|no.*ui.*framework|not.*browser", content, re.IGNORECASE)
         assert re.search(r"skip.*silently", content, re.IGNORECASE)
         assert re.search(r"return\s+`?COMPLETE`?", content, re.IGNORECASE)

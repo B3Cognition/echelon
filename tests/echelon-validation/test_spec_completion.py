@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-ECHELON = Path(__file__).parent.parent.parent / "extension"
+RUNTIME = Path(__file__).parent.parent.parent / "runtime"
 SCHEMA_DIR = Path(__file__).parent.parent.parent / "templates"
 SRC = Path(__file__).parent.parent.parent / "src"
 
@@ -42,7 +42,7 @@ class TestSpecCompletion:
 
     def test_run_md_sets_spec_status_planned_after_cartographer(self) -> None:
         # phase1-what.md remains LLM-owned (squad phase, not harness)
-        content = (ECHELON / "workflow/phases/phase1-what.md").read_text()
+        content = (RUNTIME / "workflow/phases/phase1-what.md").read_text()
         assert re.search(r"spec_status.*planned", content)
         assert re.search(r"Status.*Planned", content)
 

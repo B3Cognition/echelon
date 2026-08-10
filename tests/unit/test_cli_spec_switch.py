@@ -85,9 +85,9 @@ def test_ready_spec_can_be_preserved_while_a_different_spec_run_starts(
     (old_run / "state.json").write_text(json.dumps(old_state), encoding="utf-8")
 
     constitution = "# Constitution\n\nReal project rules.\n"
-    memory_dir = tmp_path / ".specify" / "memory"
-    memory_dir.mkdir(parents=True)
-    (memory_dir / "constitution.md").write_text(constitution, encoding="utf-8")
+    constitution_path = tmp_path / ".echelon" / "constitution.md"
+    constitution_path.parent.mkdir(parents=True)
+    constitution_path.write_text(constitution, encoding="utf-8")
 
     spec_dir = tmp_path / "specs" / "001-first-spec"
     spec_dir.mkdir(parents=True)

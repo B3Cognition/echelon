@@ -81,7 +81,7 @@ class TestHarnessInitVerifyCommand:
 
 @pytest.mark.unit
 def test_load_config_reads_top_level_verify_command_with_harness_section(tmp_path: Path) -> None:
-    config_file = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+    config_file = tmp_path / ".echelon" / "config.yml"
     config_file.parent.mkdir(parents=True)
     config_file.write_text(
         "verify_command: pytest\n"
@@ -103,7 +103,7 @@ def test_harness_init_uses_canonical_config_for_new_workspace(tmp_path: Path) ->
 
 
 @pytest.mark.unit
-def test_harness_init_preserves_legacy_config_for_legacy_workspace(tmp_path: Path) -> None:
+def test_harness_init_uses_canonical_config_for_legacy_workspace(tmp_path: Path) -> None:
     legacy = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
     legacy.parent.mkdir(parents=True)
     legacy.write_text(
@@ -113,7 +113,7 @@ def test_harness_init_preserves_legacy_config_for_legacy_workspace(tmp_path: Pat
 
     config_file = _harness_config_file(tmp_path)
 
-    assert config_file == legacy
+    assert config_file == tmp_path / ".echelon" / "config.yml"
 
 
 @pytest.mark.unit

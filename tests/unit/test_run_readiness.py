@@ -44,9 +44,9 @@ def _scaffold(tmp_path: Path, *, state: dict, constitution: bool) -> None:
     (run_dir / "state.json").write_text(json.dumps(state))
     (tmp_path / "runs" / ".current").write_text("run-1")
     if constitution:
-        mem = tmp_path / ".specify" / "memory"
-        mem.mkdir(parents=True)
-        (mem / "constitution.md").write_text("# Constitution\n\nReal project rules.\n")
+        constitution_path = tmp_path / ".echelon" / "constitution.md"
+        constitution_path.parent.mkdir(parents=True)
+        constitution_path.write_text("# Constitution\n\nReal project rules.\n")
 
 def test_constitution_only_run_is_not_ready(tmp_path):
     # constitution complete, but no spec dir / spec.md → not ready.

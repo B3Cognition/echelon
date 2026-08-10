@@ -101,7 +101,7 @@ def test_blocked_squad_escalation_prioritizes_resume(
     tmp_path: Path,
     capsys,
 ) -> None:
-    constitution = tmp_path / ".specify" / "memory" / "constitution.md"
+    constitution = tmp_path / ".echelon" / "constitution.md"
     constitution.parent.mkdir(parents=True)
     constitution.write_text("# Constitution\n\nReady.\n", encoding="utf-8")
 
@@ -347,7 +347,7 @@ def test_ready_next_step_has_clear_subtitle_and_next_command(
     tmp_path: Path,
     capsys,
 ) -> None:
-    constitution = tmp_path / ".specify" / "memory" / "constitution.md"
+    constitution = tmp_path / ".echelon" / "constitution.md"
     constitution.parent.mkdir(parents=True)
     constitution.write_text("# Constitution\n\nReady.\n", encoding="utf-8")
 
@@ -391,7 +391,7 @@ def test_done_run_without_spec_md_is_not_ready_to_build(
     tmp_path: Path,
     capsys,
 ) -> None:
-    constitution = tmp_path / ".specify" / "memory" / "constitution.md"
+    constitution = tmp_path / ".echelon" / "constitution.md"
     constitution.parent.mkdir(parents=True)
     constitution.write_text("# Constitution\n\nReady.\n", encoding="utf-8")
 
@@ -433,7 +433,7 @@ def test_partial_constitution_placeholders_are_reported_precisely(
     tmp_path: Path,
     capsys,
 ) -> None:
-    constitution = tmp_path / ".specify" / "memory" / "constitution.md"
+    constitution = tmp_path / ".echelon" / "constitution.md"
     constitution.parent.mkdir(parents=True)
     constitution.write_text(
         "# Constitution\n\n[PRINCIPLE_1_NAME] -> I. Real Principle\n",
@@ -465,7 +465,7 @@ def test_blocked_non_escalation_run_does_not_claim_ready_to_build(
     tmp_path: Path,
     capsys,
 ) -> None:
-    constitution = tmp_path / ".specify" / "memory" / "constitution.md"
+    constitution = tmp_path / ".echelon" / "constitution.md"
     constitution.parent.mkdir(parents=True)
     constitution.write_text("# Constitution\n\nReady.\n", encoding="utf-8")
 
@@ -651,7 +651,7 @@ def test_done_run_uses_published_artifacts_instead_of_stale_staging_why2(
     tmp_path: Path,
     capsys,
 ) -> None:
-    constitution = tmp_path / ".specify" / "memory" / "constitution.md"
+    constitution = tmp_path / ".echelon" / "constitution.md"
     constitution.parent.mkdir(parents=True)
     constitution.write_text("# Constitution\n\nReady.\n", encoding="utf-8")
 
@@ -725,7 +725,7 @@ def test_done_run_uses_published_artifacts_instead_of_stale_staging_why2(
 def test_continue_phase_treats_done_published_artifacts_as_build_ready(
     tmp_path: Path,
 ) -> None:
-    constitution = tmp_path / ".specify" / "memory" / "constitution.md"
+    constitution = tmp_path / ".echelon" / "constitution.md"
     constitution.parent.mkdir(parents=True)
     constitution.write_text("# Constitution\n\nReady.\n", encoding="utf-8")
 

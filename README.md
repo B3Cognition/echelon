@@ -1434,7 +1434,6 @@ prosaic/                    # Provider-neutral Markdown source of truth
 └── subagents/              # Specialized agent prose and neutral metadata
 runtime/                    # Non-prose execution bundle
 ├── echelon-config.yml      # Echelon-owned workspace defaults
-├── config-template.yml     # Documented configuration reference
 ├── workflow/
 │   ├── definition.yaml     # Phase graph and routing rules
 │   └── phases/             # Per-phase context, dispatch, and output contracts

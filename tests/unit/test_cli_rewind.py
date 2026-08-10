@@ -36,7 +36,7 @@ def _git(repo: Path, *args: str) -> str:
 
 
 def _write_real_constitution(project_root: Path) -> None:
-    const = project_root / ".specify" / "memory" / "constitution.md"
+    const = project_root / ".echelon" / "constitution.md"
     const.parent.mkdir(parents=True)
     const.write_text("# Constitution\n\nReal project rules.\n", encoding="utf-8")
 

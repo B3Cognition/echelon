@@ -358,25 +358,6 @@ def test_switch_to_already_active_run_is_idempotent_even_when_dirty(
     assert (repo / "runs" / ".current").read_text(encoding="utf-8") == "run-b\n"
 
 
-def test_switch_requires_speckit_git_to_be_disabled(
-    switch_repo: dict[str, object],
-) -> None:
-    repo = switch_repo["repo"]
-    assert isinstance(repo, Path)
-    registry = repo / ".specify" / "extensions" / ".registry"
-    registry.parent.mkdir(parents=True)
-    registry.write_text(
-        json.dumps({"extensions": {"git": {"enabled": True}}}),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(SpecSwitchError, match="sole Git authority"):
-        switch_spec(repo, "run-b")
-
-    assert _git(repo, "branch", "--show-current").stdout.strip() == "001-spec-a"
-    assert (repo / "runs" / ".current").read_text(encoding="utf-8") == "run-a\n"
-
-
 def test_switch_rejects_detached_head_without_pointer_mutation(
     switch_repo: dict[str, object],
 ) -> None:

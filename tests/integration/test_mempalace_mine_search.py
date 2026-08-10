@@ -222,7 +222,9 @@ def test_provision_wing_full_lifecycle(tmp_path, isolated_palace):
     }))
 
     with patch("echelon.cli.check_wing_collision", return_value=[]):
-        with patch("builtins.input", return_value="my-project"):
+        with patch("sys.stdin.isatty", return_value=True), patch(
+            "builtins.input", return_value="my-project"
+        ):
             wing1 = _provision_wing(tmp_path, echelon_yml)
 
     assert wing1 == "my-project"

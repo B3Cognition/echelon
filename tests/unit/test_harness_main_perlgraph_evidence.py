@@ -39,9 +39,8 @@ def _write_verify_state(verify_run_dir: Path) -> None:
 def _write_fake_perlgraph_cli(project_root: Path, *, stale_repo: Path | None = None) -> Path:
     runtime_dir = (
         project_root
-        / ".specify"
-        / "extensions"
-        / "echelon"
+        / ".echelon"
+        / "runtime"
         / "scripts"
         / "node"
         / "perlgraph"

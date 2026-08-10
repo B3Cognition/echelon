@@ -15,31 +15,33 @@ from pathlib import Path
 
 import pytest
 
-ECHELON = Path(__file__).parent.parent.parent / "extension"
+ROOT = Path(__file__).parent.parent.parent
+PROSAIC_SUBAGENTS = ROOT / "prosaic" / "subagents"
+RUNTIME = ROOT / "runtime"
 
 
 @pytest.mark.unit
 class TestTrackerDrift:
     def test_tracker_md_defines_drift_severity_field(self) -> None:
-        content = (ECHELON / "agents/control/tracker.md").read_text()
+        content = (PROSAIC_SUBAGENTS / "echelon.tracker.md").read_text()
         assert "drift_severity" in content
         assert "ALIGNED" in content
         assert "MINOR_DRIFT" in content
         assert "MAJOR_DRIFT" in content
 
     def test_tracker_md_defines_20_percent_threshold(self) -> None:
-        content = (ECHELON / "agents/control/tracker.md").read_text()
+        content = (PROSAIC_SUBAGENTS / "echelon.tracker.md").read_text()
         assert re.search(r"20%|0\.20", content)
 
     def test_build_md_has_severity_tiered_drift_gate(self) -> None:
         # Content moved to workflow/phases/build-8-finalize.md (echelon.build.md is now a thin wrapper)
-        content = (ECHELON / "workflow/phases/build-8-finalize.md").read_text()
+        content = (RUNTIME / "workflow/phases/build-8-finalize.md").read_text()
         assert "MAJOR_DRIFT" in content
         assert "MINOR_DRIFT" in content
 
     def test_build_md_dispatches_change_controller_on_major_drift(self) -> None:
         # Content moved to workflow/phases/build-8-finalize.md (echelon.build.md is now a thin wrapper)
-        content = (ECHELON / "workflow/phases/build-8-finalize.md").read_text()
+        content = (RUNTIME / "workflow/phases/build-8-finalize.md").read_text()
         assert re.search(
             r"MAJOR_DRIFT[\s\S]{0,500}CHANGE CONTROLLER|CHANGE CONTROLLER[\s\S]{0,200}MAJOR_DRIFT",
             content,
@@ -48,6 +50,6 @@ class TestTrackerDrift:
 
     def test_build_md_sets_requires_human_review_in_banzai_mode(self) -> None:
         # Content moved to workflow/phases/build-8-finalize.md (echelon.build.md is now a thin wrapper)
-        content = (ECHELON / "workflow/phases/build-8-finalize.md").read_text()
+        content = (RUNTIME / "workflow/phases/build-8-finalize.md").read_text()
         assert "requires_human_review" in content
         assert "drift-escalation.md" in content

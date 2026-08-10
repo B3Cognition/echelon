@@ -73,6 +73,14 @@ def _write_phase_a_build_inputs(spec_dir: Path) -> None:
         (spec_dir / name).write_text(content, encoding="utf-8")
 
 
+def _write_deployed_runtime(workspace: Path) -> None:
+    (workspace / ".echelon" / "prosaic" / "commands").mkdir(parents=True)
+    (workspace / ".echelon" / "prosaic" / "subagents").mkdir(parents=True)
+    workflow = workspace / ".echelon" / "runtime" / "workflow"
+    workflow.mkdir(parents=True)
+    (workflow / "definition.yaml").write_text("phases: []\n", encoding="utf-8")
+
+
 @pytest.mark.unit
 class TestSingleRepoPathUnchanged:
     def test_single_repo_resolver_uses_project_root(self, tmp_path: Path) -> None:
@@ -91,7 +99,7 @@ class TestSingleRepoPathUnchanged:
 
     def test_no_targets_in_spec_uses_single_repo_path(self, tmp_path: Path) -> None:
         """Spec with no targets and local echelon-config.yml: run_multi_target never called."""
-        echelon_yml = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+        echelon_yml = tmp_path / ".echelon" / "config.yml"
         echelon_yml.parent.mkdir(parents=True)
         echelon_yml.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
 
@@ -127,7 +135,7 @@ class TestSingleRepoPathUnchanged:
         (e.g. for deploy) must not silently run the harness against itself.
         """
         (tmp_path / ".git").mkdir()
-        echelon_yml = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+        echelon_yml = tmp_path / ".echelon" / "config.yml"
         echelon_yml.parent.mkdir(parents=True)
         echelon_yml.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
 
@@ -162,22 +170,13 @@ class TestSingleRepoPathUnchanged:
         target = polyrepo / "repo-a"
         target.mkdir(parents=True)
         (target / ".git").mkdir()
-        echelon_yml = polyrepo / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+        echelon_yml = polyrepo / ".echelon" / "config.yml"
         echelon_yml.parent.mkdir(parents=True)
         echelon_yml.write_text(
             "harness:\n  target_repo: .\n  target_default_branch: main\n  provider: docker\n",
             encoding="utf-8",
         )
-        (echelon_yml.parent / "agents" / "control").mkdir(parents=True)
-        (echelon_yml.parent / "agents" / "control" / "commander.md").write_text(
-            "# Commander\n",
-            encoding="utf-8",
-        )
-        (echelon_yml.parent / "workflow").mkdir(parents=True)
-        (echelon_yml.parent / "workflow" / "definition.yaml").write_text(
-            "phases: []\n",
-            encoding="utf-8",
-        )
+        _write_deployed_runtime(polyrepo)
 
         spec_dir = polyrepo / "specs" / "024-test"
         _write_phase_a_build_inputs(spec_dir)
@@ -242,17 +241,7 @@ class TestSingleRepoPathUnchanged:
         config_file = polyrepo / ".echelon" / "config.yml"
         config_file.parent.mkdir(parents=True)
         config_file.write_text("llm:\n  cli: claude\n", encoding="utf-8")
-        ext = polyrepo / ".specify" / "extensions" / "echelon"
-        (ext / "agents" / "control").mkdir(parents=True)
-        (ext / "workflow").mkdir(parents=True)
-        (ext / "agents" / "control" / "commander.md").write_text(
-            "# Commander\n",
-            encoding="utf-8",
-        )
-        (ext / "workflow" / "definition.yaml").write_text(
-            "phases: []\n",
-            encoding="utf-8",
-        )
+        _write_deployed_runtime(polyrepo)
 
         spec_dir = polyrepo / "specs" / "001-prose-distribution-engine"
         _write_phase_a_build_inputs(spec_dir)
@@ -357,17 +346,7 @@ class TestSingleRepoPathUnchanged:
         config_file = polyrepo / ".echelon" / "config.yml"
         config_file.parent.mkdir(parents=True)
         config_file.write_text("llm:\n  cli: claude\n", encoding="utf-8")
-        ext = polyrepo / ".specify" / "extensions" / "echelon"
-        (ext / "agents" / "control").mkdir(parents=True)
-        (ext / "workflow").mkdir(parents=True)
-        (ext / "agents" / "control" / "commander.md").write_text(
-            "# Commander\n",
-            encoding="utf-8",
-        )
-        (ext / "workflow" / "definition.yaml").write_text(
-            "phases: []\n",
-            encoding="utf-8",
-        )
+        _write_deployed_runtime(polyrepo)
 
         spec_dir = polyrepo / "specs" / "001-prose-distribution-engine"
         _write_phase_a_build_inputs(spec_dir)

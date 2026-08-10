@@ -1,9 +1,0 @@
-- id: "<PAT-NNN>"
-  name: "<pattern name>"
-  description: "<project-agnostic description>"
-  confidence: <value>
-  promoted_at: "<ISO-8601>"
-  source_fingerprints: ["<fp1>", "<fp2>", "<fp3>"]
-  reuse_count: 0
-  tags: [<from pattern tags>]
-  last_seen: "<ISO-8601>"

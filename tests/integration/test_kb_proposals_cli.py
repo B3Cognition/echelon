@@ -47,7 +47,7 @@ def test_kb_apply_reports_degraded_for_mixed_apply_outcomes(tmp_path, monkeypatc
 proposal_id: kb-prop-0001
 proposal_type: pattern
 run_id: squad-001
-agent: echelon-mirror
+agent: echelon.mirror
 created_at: \"2026-07-17T12:00:00Z\"
 targets: [knowledge-base/patterns.yaml]
 confidence: 0.72
@@ -86,7 +86,7 @@ def test_kb_validate_reports_missing_source_artifact(tmp_path, monkeypatch) -> N
 proposal_id: kb-prop-0001
 proposal_type: pattern
 run_id: squad-001
-agent: echelon-mirror
+agent: echelon.mirror
 created_at: "2026-07-17T12:00:00Z"
 targets: [knowledge-base/patterns.yaml]
 source_artifacts: [runs/squad-001/reasoning-journal.jsonl]

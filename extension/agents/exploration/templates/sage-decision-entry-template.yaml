@@ -1,9 +1,0 @@
-- run_id: squad-003-1742652000
-  artifact: specs/001-echelon-improvements/spec.md
-  challenge_type: quality_threshold
-  challenge_summary: |
-    Testability score 0.58 below 0.70 threshold.
-  outcome: blocked
-  resolution: |
-    WHAT agent improved acceptance criteria; re-validation scored 0.74.
-  was_correct: true

@@ -17,17 +17,29 @@ from harness.provider_capability import (
 from harness.prosaic_prompt_loader import ProsaicCommandArtifact
 
 
+def _install_prosaic_command(
+    monkeypatch: pytest.MonkeyPatch,
+    project_root: Path,
+    *,
+    body: str,
+    frontmatter: dict[str, object] | None = None,
+) -> None:
+    (project_root / ".echelon" / "prosaic" / "commands").mkdir(parents=True)
+    monkeypatch.setattr(
+        "echelon.cli.ProsaicPromptLoader.load_command",
+        lambda self, command_id: ProsaicCommandArtifact(
+            frontmatter=frontmatter or {},
+            body=body,
+        ),
+    )
+
+
 @pytest.mark.unit
-def test_dispatch_skill_command_routes_legacy_claude_review_through_provider(
+def test_dispatch_skill_command_routes_prosaic_review_through_claude_provider(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    skill_dir = tmp_path / ".claude" / "skills" / "echelon-review"
-    skill_dir.mkdir(parents=True)
-    (skill_dir / "skill.md").write_text(
-        "---\nname: echelon.review\n---\nreview $ARGUMENTS\n",
-        encoding="utf-8",
-    )
+    _install_prosaic_command(monkeypatch, tmp_path, body="review {{args}}")
     config = HarnessConfig(
         target_repo=".",
         target_default_branch="main",
@@ -56,19 +68,19 @@ def test_dispatch_skill_command_routes_legacy_claude_review_through_provider(
     assert calls
     assert calls[0][0] == str(tmp_path)
     assert "review 005" in calls[0][1]
-    assert calls[0][2] is None
+    assert calls[0][2] == {"prompt_metadata": {}}
 
 
 @pytest.mark.unit
-def test_dispatch_skill_command_routes_legacy_build_with_canonical_execution_metadata(
+def test_dispatch_skill_command_routes_prosaic_build_with_execution_metadata(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    skill_dir = tmp_path / ".claude" / "skills" / "echelon-build"
-    skill_dir.mkdir(parents=True)
-    (skill_dir / "skill.md").write_text(
-        "---\nname: echelon.build\n---\nbuild $ARGUMENTS\n",
-        encoding="utf-8",
+    _install_prosaic_command(
+        monkeypatch,
+        tmp_path,
+        body="build {{args}}",
+        frontmatter={"tools": "full"},
     )
     config = HarnessConfig(
         target_repo=".",
@@ -96,11 +108,11 @@ def test_dispatch_skill_command_routes_legacy_build_with_canonical_execution_met
         cli._dispatch_skill_command("build", ["001-demo"])
 
     assert exc.value.code == 0
-    assert not (tmp_path / ".echelon" / "prosaic" / "commands").exists()
+    assert (tmp_path / ".echelon" / "prosaic" / "commands").is_dir()
     assert calls
     assert calls[0][0] == str(tmp_path)
     assert "build 001-demo" in calls[0][1]
-    assert calls[0][2] == {"canonical_task_execution": True}
+    assert calls[0][2] == {"prompt_metadata": {"tools": "full"}}
 
 
 @pytest.mark.unit
@@ -164,12 +176,7 @@ def test_dispatch_skill_command_uses_project_prosaic_command_before_native_skill
 
 @pytest.mark.unit
 def test_dispatch_skill_command_routes_copilot_through_ai_cli_provider(monkeypatch, tmp_path: Path) -> None:
-    skill_dir = tmp_path / ".github" / "agents"
-    skill_dir.mkdir(parents=True)
-    (skill_dir / "echelon.review.agent.md").write_text(
-        "---\nname: echelon.review\n---\nreview $ARGUMENTS\n",
-        encoding="utf-8",
-    )
+    _install_prosaic_command(monkeypatch, tmp_path, body="review {{args}}")
     config = HarnessConfig(
         target_repo=".",
         target_default_branch="main",
@@ -199,7 +206,7 @@ def test_dispatch_skill_command_routes_copilot_through_ai_cli_provider(monkeypat
     assert calls
     assert calls[0][0] == str(tmp_path)
     assert "review 005 pr_url=https://github.com/org/repo/pull/1" in calls[0][1]
-    assert calls[0][2] is None
+    assert calls[0][2] == {"prompt_metadata": {}}
 
 
 @pytest.mark.unit
@@ -238,12 +245,7 @@ def test_dispatch_spec_skill_allows_artifact_only_provider(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    skill_dir = tmp_path / ".claude" / "skills" / "echelon-change"
-    skill_dir.mkdir(parents=True)
-    (skill_dir / "skill.md").write_text(
-        "---\nname: echelon.change\n---\nchange $ARGUMENTS\n",
-        encoding="utf-8",
-    )
+    _install_prosaic_command(monkeypatch, tmp_path, body="change {{args}}")
     config = HarnessConfig(
         target_repo=".",
         target_default_branch="main",

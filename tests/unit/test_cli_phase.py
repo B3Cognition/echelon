@@ -67,7 +67,7 @@ def _seal_pending_v2_decision(
     completed_phases = []
     if seed_constitution:
         project_root = run_dir.parents[1]
-        constitution = project_root / ".specify" / "memory" / "constitution.md"
+        constitution = project_root / ".echelon" / "constitution.md"
         constitution.parent.mkdir(parents=True, exist_ok=True)
         constitution.write_text(
             "# Constitution\n\nTest governance.\n",
