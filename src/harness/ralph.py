@@ -455,7 +455,7 @@ class RalphController:
                                 "containment_violation": containment_violation,
                             },
                         )
-                    tokens_used += build_result.get("tokens", 0)
+                    tokens_used += _known_token_count(build_result.get("tokens"))
                     self._enforce_completed_task_ids(build_result, worktree_path)
 
                     # Log build iteration
@@ -464,7 +464,8 @@ class RalphController:
                         build_result.get("exit_code", 0),
                         build_result.get("passed", True),
                         build_result.get("duration_s", 0.0),
-                        build_result.get("tokens", 0),
+                        build_result.get("tokens"),
+                        provider_invocation=build_result.get("provider_invocation"),
                     )
                     scoped_completed_task_ids = _clean_task_ids(
                         build_result.get("task_ids")
@@ -1237,7 +1238,7 @@ class RalphController:
                 worktree_path=worktree_path,
                 prompt=feedback_prompt,
             )
-            tokens_used += fix_result.get("tokens", 0)
+            tokens_used += _known_token_count(fix_result.get("tokens"))
             self._enforce_completed_task_ids(fix_result, worktree_path)
             scoped_completed_task_ids = _clean_task_ids(fix_result.get("task_ids"))
             applied_task_ids = self._apply_build_task_progress(
@@ -1276,7 +1277,8 @@ class RalphController:
                 fix_result.get("exit_code", 0),
                 fix_result.get("passed", True),
                 fix_result.get("duration_s", 0.0),
-                fix_result.get("tokens", 0),
+                fix_result.get("tokens"),
+                provider_invocation=fix_result.get("provider_invocation"),
             )
             self._try_checkpoint_progress_commit(
                 worktree_path=worktree_path,
@@ -1536,6 +1538,7 @@ class RalphController:
                 "build_reason": result.reason,
                 "duration_s": result.duration_ms / 1000.0,
                 "tokens": result.token_usage,
+                "provider_invocation": result.provider_invocation,
                 "impasse": result.is_impasse,
                 "impasse_file": result.impasse_file,
                 "task_ids": result.task_ids or [],
@@ -2691,7 +2694,8 @@ class RalphController:
                 "completion_marker_explicit": True,
                 "build_reason": result.reason,
                 "duration_s": result.duration_ms / 1000.0,
-                "tokens": 0,
+                "tokens": result.token_usage,
+                "provider_invocation": result.provider_invocation,
                 "impasse": result.is_impasse,
                 "impasse_file": result.impasse_file,
                 "task_ids": result.task_ids or [],
@@ -4635,8 +4639,9 @@ class RalphController:
         exit_code: int,
         passed: bool,
         duration_s: float,
-        tokens: int,
+        tokens: int | None,
         failure_signatures: Optional[List[str]] = None,
+        provider_invocation: object = None,
     ) -> None:
         """Append entry to iteration_log in state."""
         fresh_state = self._state_store.read()
@@ -4653,6 +4658,19 @@ class RalphController:
         }
         if failure_signatures:
             entry["failure_signatures"] = failure_signatures
+        invocation = (
+            dict(provider_invocation)
+            if type(provider_invocation) is dict
+            else None
+        )
+        if invocation is not None:
+            entry["provider_invocation"] = invocation
+            invocation_count = int(fresh_state.get("provider_invocation_count", 0)) + 1
+            fresh_state["provider_invocation_count"] = invocation_count
+            if invocation.get("token_usage") is None:
+                fresh_state["provider_token_usage_unknown_count"] = (
+                    int(fresh_state.get("provider_token_usage_unknown_count", 0)) + 1
+                )
         log.append(entry)
         fresh_state["iteration_log"] = log
         # Only update counters if they increase (monotonic invariant)
@@ -4661,6 +4679,48 @@ class RalphController:
         if inner_iter > fresh_state.get("inner_iter", 0):
             fresh_state["inner_iter"] = inner_iter
         self._state_store.write(fresh_state)
+        if invocation is not None:
+            self._append_delivery_provider_telemetry(
+                invocation,
+                phase=phase,
+                invocation_index=invocation_count,
+                state=fresh_state,
+            )
+
+    def _append_delivery_provider_telemetry(
+        self,
+        invocation: dict[str, object],
+        *,
+        phase: str,
+        invocation_index: int,
+        state: dict[str, Any],
+    ) -> None:
+        """Best-effort append of one content-free delivery provider invocation."""
+        try:
+            run_dir = self._state_store.state_dir.parent
+            telemetry_dir = run_dir / "telemetry"
+            telemetry_dir.mkdir(parents=True, exist_ok=True)
+            event = {
+                "schema_version": 1,
+                "type": "delivery.provider_invocation",
+                "event_time": datetime.now(timezone.utc).isoformat(),
+                "run_id": state.get("run_id") or self._build_id,
+                "spec_id": self._spec_id,
+                "strategy_id": self._strategy_id,
+                "phase": phase,
+                "invocation_index": invocation_index,
+                **invocation,
+            }
+            trace_id = state.get("telemetry_trace_id") or state.get("trace_id")
+            if isinstance(trace_id, str) and trace_id:
+                event["trace_id"] = trace_id
+            with (telemetry_dir / "events.jsonl").open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(event, sort_keys=True, separators=(",", ":")))
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+        except Exception as exc:
+            logger.warning("Could not append delivery provider telemetry: %s", exc)
 
     def _finalize(
         self,
@@ -6409,6 +6469,13 @@ def _estimate_tokens(result: ExecResult) -> int:
     """Rough token estimate from ExecResult output length."""
     text_len = len(result.stdout) + len(result.stderr)
     return text_len // 4  # ~4 chars per token
+
+
+def _known_token_count(value: object) -> int:
+    """Return reported positive usage for budget arithmetic, else zero."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return 0
+    return value if value > 0 else 0
 
 
 def _verify_to_dict(verify: VerifyResult) -> Dict[str, Any]:

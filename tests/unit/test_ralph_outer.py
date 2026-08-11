@@ -72,6 +72,12 @@ def test_tool_access_classifier_uses_categorized_filesystem_commands() -> None:
         assert ralph._looks_like_tool_access_line(f"  {command} src/harness/ralph.py")
 
 
+def test_provider_budget_arithmetic_counts_only_reported_positive_usage() -> None:
+    assert ralph._known_token_count(4321) == 4321
+    assert ralph._known_token_count(None) == 0
+    assert ralph._known_token_count(0) == 0
+
+
 # === Mock SandboxProvider ===
 
 
@@ -3782,6 +3788,49 @@ class TestOuterLoopConvergence:
         )
 
         assert result.tokens_used == 4321
+
+    def test_delivery_records_unknown_provider_usage_without_counting_zero(
+        self, tmp_path: Path
+    ) -> None:
+        controller, _provider, _gitops, state_store = _make_controller(tmp_path)
+        invocation = {
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "profile": None,
+            "effort": None,
+            "duration_ms": 1250,
+            "status": "done",
+            "exit_code": 0,
+            "token_usage": None,
+        }
+
+        controller._append_iteration_log(
+            state_store.read(),
+            0,
+            0,
+            "build",
+            0,
+            True,
+            1.25,
+            None,
+            provider_invocation=invocation,
+        )
+
+        state = state_store.read()
+        assert state["tokens_used"] == 0
+        assert state["provider_invocation_count"] == 1
+        assert state["provider_token_usage_unknown_count"] == 1
+        assert state["iteration_log"][-1]["tokens"] is None
+        assert state["iteration_log"][-1]["provider_invocation"] == invocation
+        events = [
+            json.loads(line)
+            for line in (tmp_path.parent / "telemetry" / "events.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        assert events[-1]["type"] == "delivery.provider_invocation"
+        assert events[-1]["provider"] == "codex"
+        assert events[-1]["token_usage"] is None
 
     def test_allows_empty_completed_task_ids_for_zero_change_slice(
         self, tmp_path: Path

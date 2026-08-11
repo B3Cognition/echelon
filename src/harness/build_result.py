@@ -61,9 +61,10 @@ class BuildResult:
     stdout: str
     stderr: str
     duration_ms: int
-    token_usage: int = 0
+    token_usage: int | None = None
     reason: Optional[str] = None
     task_ids: list[str] | None = None
+    provider_invocation: dict[str, object] | None = None
 
     def __post_init__(self) -> None:
         self.status = _normalize_status(self.status)
@@ -108,7 +109,7 @@ class BuildResult:
                 stdout=stdout,
                 stderr=stderr,
                 duration_ms=duration_ms,
-                token_usage=0,
+                token_usage=None,
             )
 
     @classmethod
@@ -146,7 +147,7 @@ class BuildResult:
                 stdout=stdout,
                 stderr=stderr,
                 duration_ms=duration_ms,
-                token_usage=0,
+                token_usage=None,
             )
 
     @classmethod
@@ -180,7 +181,7 @@ class BuildResult:
             stdout=stdout,
             stderr=stderr,
             duration_ms=duration_ms,
-            token_usage=0,
+            token_usage=None,
         )
 
 
@@ -231,7 +232,7 @@ def recover_done_result_from_output(
                 stdout=stdout,
                 stderr=stderr,
                 duration_ms=duration_ms,
-                token_usage=0,
+                token_usage=None,
             )
     return None
 

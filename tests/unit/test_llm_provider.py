@@ -60,6 +60,35 @@ def _patch_claude_popen(lines: list[dict] | None = None, returncode: int = 0):
 @pytest.mark.unit
 class TestAICodingCliProvider:
 
+    def test_provider_retains_normalized_invocation_metadata(self, tmp_path):
+        provider = AICodingCliProvider(_config(cli="codex"))
+        backend_result = CliRunResult(
+            exit_code=0,
+            stdout="done",
+            stderr="",
+            token_usage=0,
+            metadata={"request_model": "gpt-5.6-luna"},
+        )
+
+        with patch.object(provider._backend, "run_prompt", return_value=backend_result):
+            provider.run_prompt_result(
+                str(tmp_path),
+                "build this",
+                request_metadata={
+                    "prompt_metadata": {
+                        "model_tier": "fast",
+                        "effort": "low",
+                    }
+                },
+            )
+
+        assert provider.last_invocation_metadata == {
+            "provider": "codex",
+            "model": "gpt-5.6-luna",
+            "profile": "fast",
+            "effort": "low",
+        }
+
     @pytest.mark.parametrize(
         "cli",
         ("codex", "copilot", "opencode", "openai-compatible", "plain-cli"),

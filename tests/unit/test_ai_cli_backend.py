@@ -70,9 +70,17 @@ def test_cli_run_result_defaults() -> None:
     assert result.exit_code == 0
     assert result.stdout == "ok"
     assert result.stderr == ""
-    assert result.token_usage == 0
+    assert result.token_usage is None
     assert result.cost_usd == 0.0
     assert result.timed_out is False
+
+
+def test_codex_event_without_usage_keeps_usage_unavailable() -> None:
+    from harness.ai_cli_backends.codex import _codex_event
+
+    event = _codex_event(json.dumps({"type": "turn.completed"}))
+
+    assert event.token_usage is None
 
 
 def test_cli_run_request_carries_prompt_and_timeout(tmp_path) -> None:

@@ -70,7 +70,7 @@ class CodexCliBackend:
         stderr_chunks: list[str] = []
         timed_out = False
         saw_task_complete = False
-        token_usage = 0
+        token_usage: int | None = None
 
         def kill() -> None:
             nonlocal timed_out
@@ -93,7 +93,7 @@ class CodexCliBackend:
                 if not line:
                     continue
                 event = _codex_event(line)
-                if event.token_usage:
+                if event.token_usage is not None:
                     token_usage = event.token_usage
                 if event.text:
                     stdout_chunks.append(event.text)
@@ -149,7 +149,7 @@ def _codex_model_for_request(request: CliRunRequest) -> str | None:
 class _CodexEvent:
     text: str
     task_complete: bool = False
-    token_usage: int = 0
+    token_usage: int | None = None
 
 
 def _codex_event(line: str) -> _CodexEvent:

@@ -22,7 +22,7 @@ class CliRunResult:
     exit_code: int
     stdout: str
     stderr: str
-    token_usage: int = 0
+    token_usage: int | None = None
     cost_usd: float = 0.0
     timed_out: bool = False
     metadata: dict[str, object] = field(default_factory=dict)

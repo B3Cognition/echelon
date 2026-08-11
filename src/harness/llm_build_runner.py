@@ -67,10 +67,12 @@ class LlmBuildRunner:
         duration_ms = int((time.monotonic() - start) * 1000)
         stdout = str(getattr(self._prompt_executor, "last_stdout", "") or "")
         stderr = str(getattr(self._prompt_executor, "last_stderr", "") or "")
-        token_usage = int(getattr(self._prompt_executor, "last_token_usage", 0) or 0)
+        token_usage = _reported_token_usage(
+            getattr(self._prompt_executor, "last_token_usage", None)
+        )
 
         if exit_code == -1:
-            return BuildResult(
+            result = BuildResult(
                 exit_code=-1,
                 status="timeout",
                 impasse_file=None,
@@ -80,6 +82,14 @@ class LlmBuildRunner:
                 duration_ms=duration_ms,
                 token_usage=token_usage,
             )
+            result.provider_invocation = _provider_invocation(
+                self._prompt_executor,
+                duration_ms=duration_ms,
+                status=result.status,
+                exit_code=exit_code,
+                token_usage=token_usage,
+            )
+            return result
 
         result = BuildResult.from_status_file(
             status_file,
@@ -108,6 +118,13 @@ class LlmBuildRunner:
                 if recovered is not None:
                     result = recovered
         result.token_usage = token_usage
+        result.provider_invocation = _provider_invocation(
+            self._prompt_executor,
+            duration_ms=duration_ms,
+            status=result.status,
+            exit_code=exit_code,
+            token_usage=token_usage,
+        )
         return result
 
     def exec_feedback(
@@ -183,8 +200,47 @@ def _containment_policy_error_result(
         stdout="",
         stderr=message,
         duration_ms=duration_ms,
-        token_usage=0,
+        token_usage=None,
     )
+
+
+def _reported_token_usage(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if value > 0 else None
+
+
+def _provider_invocation(
+    prompt_executor: PromptExecutor,
+    *,
+    duration_ms: int,
+    status: str,
+    exit_code: int,
+    token_usage: int | None,
+) -> dict[str, object] | None:
+    raw = getattr(prompt_executor, "last_invocation_metadata", None)
+    if type(raw) is not dict or not isinstance(raw.get("provider"), str):
+        return None
+    provider = str(raw["provider"]).strip()
+    if not provider:
+        return None
+    return {
+        "provider": provider,
+        "model": _optional_invocation_text(raw.get("model")),
+        "profile": _optional_invocation_text(raw.get("profile")),
+        "effort": _optional_invocation_text(raw.get("effort")),
+        "duration_ms": max(0, duration_ms),
+        "status": status,
+        "exit_code": exit_code,
+        "token_usage": token_usage,
+    }
+
+
+def _optional_invocation_text(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
 
 
 def _string_list(value: object) -> list[str]:

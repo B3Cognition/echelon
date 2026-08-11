@@ -59,6 +59,12 @@ class AICodingCliProvider:
         self.last_stdout = ""
         self.last_stderr = ""
         self.last_token_usage = 0
+        self.last_invocation_metadata: dict[str, object] = {
+            "provider": self._cli,
+            "model": None,
+            "profile": None,
+            "effort": None,
+        }
 
     @property
     def cli(self) -> str:
@@ -122,11 +128,11 @@ class AICodingCliProvider:
         metadata = _request_metadata(extra_env, request_metadata)
         profile_violation = _execution_profile_violation(self._cli, metadata)
         if profile_violation is not None:
-            self._record_result(profile_violation)
+            self._record_result(profile_violation, metadata)
             return profile_violation
         containment_violation = _containment_cwd_violation(worktree_path, metadata)
         if containment_violation is not None:
-            self._record_result(containment_violation)
+            self._record_result(containment_violation, metadata)
             return containment_violation
         result = self._backend.run_prompt(
             CliRunRequest(
@@ -137,7 +143,7 @@ class AICodingCliProvider:
                 metadata=metadata,
             )
         )
-        self._record_result(result)
+        self._record_result(result, metadata)
         return result
 
     def run_agent_result(
@@ -156,11 +162,11 @@ class AICodingCliProvider:
         metadata = _request_metadata(extra_env, request_metadata)
         profile_violation = _execution_profile_violation(self._cli, metadata)
         if profile_violation is not None:
-            self._record_result(profile_violation)
+            self._record_result(profile_violation, metadata)
             return profile_violation
         containment_violation = _containment_cwd_violation(project_root, metadata)
         if containment_violation is not None:
-            self._record_result(containment_violation)
+            self._record_result(containment_violation, metadata)
             return containment_violation
         result = self._backend.run_agent(
             CliRunRequest(
@@ -171,13 +177,23 @@ class AICodingCliProvider:
                 metadata=metadata,
             )
         )
-        self._record_result(result)
+        self._record_result(result, metadata)
         return result
 
-    def _record_result(self, result: CliRunResult) -> None:
+    def _record_result(
+        self,
+        result: CliRunResult,
+        request_metadata: Mapping[str, object],
+    ) -> None:
         self.last_stdout = result.stdout
         self.last_stderr = result.stderr
         self.last_token_usage = result.token_usage
+        self.last_invocation_metadata = _normalized_invocation_metadata(
+            provider=self._cli,
+            config=self._config,
+            request_metadata=request_metadata,
+            result_metadata=result.metadata,
+        )
 
     def _build_env(self, extra_env: Mapping[str, str] | None = None) -> dict[str, str]:
         env = {**os.environ}
@@ -191,6 +207,49 @@ class AICodingCliProvider:
 def _debug_llm_enabled() -> bool:
     value = os.environ.get("ECHELON_DEBUG_LLM", "").strip().lower()
     return value in {"1", "true", "yes", "on"}
+
+
+def _normalized_invocation_metadata(
+    *,
+    provider: str,
+    config: HarnessConfig,
+    request_metadata: Mapping[str, object],
+    result_metadata: Mapping[str, object],
+) -> dict[str, object]:
+    raw_prompt_metadata = request_metadata.get("prompt_metadata")
+    prompt_metadata = (
+        raw_prompt_metadata if isinstance(raw_prompt_metadata, Mapping) else {}
+    )
+    model = (
+        _metadata_text(result_metadata, "response_model")
+        or _metadata_text(result_metadata, "request_model")
+        or _metadata_text(prompt_metadata, "model")
+        or _optional_text(config.llm.model)
+    )
+    profile = _metadata_text(prompt_metadata, "model_tier")
+    effort = (
+        _metadata_text(prompt_metadata, "reasoning_effort")
+        or _metadata_text(prompt_metadata, "effort")
+        or _metadata_text(config.llm.features, "reasoning_effort")
+        or _metadata_text(config.llm.features, "effort")
+    )
+    return {
+        "provider": provider,
+        "model": model,
+        "profile": profile,
+        "effort": effort,
+    }
+
+
+def _metadata_text(metadata: Mapping[str, object], key: str) -> str | None:
+    return _optional_text(metadata.get(key))
+
+
+def _optional_text(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
 
 
 def _request_metadata(

@@ -320,11 +320,19 @@ class TestLlmBuildRunner:
 
     def test_exec_build_returns_timeout_result_on_timeout(self, tmp_path):
         executor = _executor(returncode=-1)
+        executor.last_invocation_metadata = {
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "profile": None,
+            "effort": None,
+        }
 
         result = LlmBuildRunner(executor).exec_build(str(tmp_path), "build this")
 
         assert result.status == "timeout"
         assert result.exit_code == -1
+        assert result.provider_invocation is not None
+        assert result.provider_invocation["status"] == "timeout"
 
     def test_exec_build_preserves_prompt_executor_token_usage(self, tmp_path):
         executor = _executor(status={"status": "done"})
@@ -333,3 +341,27 @@ class TestLlmBuildRunner:
         result = LlmBuildRunner(executor).exec_build(str(tmp_path), "build this")
 
         assert result.token_usage == 4321
+
+    def test_exec_build_preserves_unavailable_usage_and_provider_identity(self, tmp_path):
+        executor = _executor(status={"status": "done"})
+        executor.last_token_usage = 0
+        executor.last_invocation_metadata = {
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "profile": None,
+            "effort": None,
+        }
+
+        result = LlmBuildRunner(executor).exec_build(str(tmp_path), "build this")
+
+        assert result.token_usage is None
+        assert result.provider_invocation == {
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "profile": None,
+            "effort": None,
+            "duration_ms": result.duration_ms,
+            "status": "done",
+            "exit_code": 0,
+            "token_usage": None,
+        }

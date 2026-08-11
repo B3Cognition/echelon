@@ -252,7 +252,7 @@ fed the schema-exact finding to COMMANDER, changed the field to
 ## EGR-157: Provider Usage Telemetry Reports Misleading Zeroes
 
 **Priority:** P2
-**Status:** open
+**Status:** fixed
 
 All 18 Codex calls recorded `tokens: 0` despite approximately 91 minutes of
 provider execution. A numeric zero implies measured zero consumption, while the
@@ -265,6 +265,23 @@ actual state is that token usage was unavailable from this provider path.
   invocation count.
 - Record token/input/output usage when the provider exposes it; otherwise emit
   an explicit availability/status field rather than fabricated zeroes.
+
+### Implementation evidence
+
+Delivery now treats non-positive or absent provider usage as unavailable. Build
+and fix iteration rows persist `tokens: null`; Ralph's budget counter sums only
+reported positive usage. Every provider-backed build/fix also writes a
+content-free `delivery.provider_invocation` telemetry event and retains the same
+invocation record in the iteration log. The record always contains provider,
+model, profile, effort, duration, status, exit code, and token usage; unavailable
+values are explicit `null`. State maintains total invocation count and unknown
+token-usage count.
+
+Codex starts usage as unavailable and changes it only after a real token-count
+event. Its requested model is retained from backend metadata. OpenAI-compatible
+configuration supplies its explicit model; profile and effort remain `null`
+when the delivery command did not request them. The focused provider, backend,
+build-runner, and Ralph suite passes 357 tests.
 
 ## EGR-158: Repository Test Runner Can Select Unsupported Python
 
