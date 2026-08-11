@@ -221,3 +221,20 @@ def test_current_user_docs_do_not_describe_speckit_runtime() -> None:
     assert "speckit" not in fallback.lower()
     assert "spec-kit" not in fallback.lower()
     assert "provider invocation" in fallback.lower()
+
+
+def test_active_repository_guidance_and_root_templates_are_speckit_free() -> None:
+    active_text_surfaces = [
+        ROOT / "AGENTS.md",
+        ROOT / "CLAUDE.md",
+        ROOT / "knowledge-base" / "confidence-thresholds.yaml",
+    ]
+    root_templates = sorted((ROOT / "templates").glob("*.md"))
+
+    offenders = []
+    for path in [*active_text_surfaces, *root_templates]:
+        text = path.read_text(encoding="utf-8").lower()
+        if "speckit" in text or "spec-kit" in text or ".specify" in text:
+            offenders.append(path.relative_to(ROOT).as_posix())
+
+    assert offenders == []

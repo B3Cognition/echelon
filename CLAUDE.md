@@ -163,8 +163,8 @@ NEVER  [its violation — what must not happen]
 
 Example (from CHIEF):
 ```
-ALWAYS invoke `speckit.constitution` to write or update the constitution.
-NEVER write `constitution.md` via Write or Edit without first invoking `speckit.constitution`.
+ALWAYS route constitution creation and amendments through the Echelon CHIEF constitution protocol.
+NEVER write `.echelon/constitution.md` outside CHIEF stewardship.
 ```
 
 Existing agents only have NEVER rules. New agents must have paired rules.

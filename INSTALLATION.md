@@ -71,8 +71,10 @@ Echelon creates a temporary Prosaic package config only for deployment and
 removes it afterwards; a workspace that already owns a root
 `prosaic.config.yaml`, `prosaic.config.yml`, or `.prosaic.yaml` is left
 unchanged and the command stops with an actionable error. For an old Spec-Kit
-workspace, run `echelon workspace migrate-to-prosaic` before the normal
-`echelon workspace init` command.
+workspace, run the one-shot `echelon workspace migrate-to-prosaic` importer
+before the normal `echelon workspace init` command. After migration, normal
+Echelon operation uses canonical `.echelon`, `runs/`, and `specs/` surfaces; it
+does not fall back to the legacy tree.
 
 ---
 
