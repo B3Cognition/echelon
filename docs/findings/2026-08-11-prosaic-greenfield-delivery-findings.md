@@ -1,0 +1,231 @@
+# EGR-153 Through EGR-159 Prosaic-First Greenfield Delivery Findings
+
+**Review date:** 2026-08-11
+**Source incident:** Greenfield `Hello, World!` specification and delivery
+**Workspace:** `/Users/michalbachorik/work/echelon-greenfield-hello`
+**Provider:** Codex CLI
+**Migration mode:** Prosaic-first; no `.specify` directory was present
+
+## Summary
+
+A full greenfield run proved that Echelon can create a specification and build a
+working product from deployed `.echelon/prosaic` and `.echelon/runtime` bundles.
+The resulting program, unit test, and measured runtime verifier pass. The
+delivery nevertheless exhausted its outer-iteration cap because three
+repository-wide cardinality claims remained unverified.
+
+The run also exposed independent opportunities in delivery diagnostics,
+specification proportionality, documentation convergence, provider telemetry,
+test-runner interpreter selection, and generated-artifact retention. They are
+tracked separately below so migration correctness is not confused with later
+prompt-quality or operational-efficiency work.
+
+## Reproduction Evidence
+
+Canonical retained evidence:
+
+- run: `runs/targets/hello-world/runs/build-20260811-094606-389227`
+- state: `state/default.json`
+- specification: `specs/001-create-minimal-python-hello/spec.md`
+- plan: `specs/001-create-minimal-python-hello/plan.md`
+- tasks: `specs/001-create-minimal-python-hello/tasks.md`
+- fulfillment gaps: `specs/001-create-minimal-python-hello/fulfillment-gaps.md`
+- final delivery worktree: `worktrees/default/iter-4`
+
+Observed successful product checks:
+
+- `python hello.py` wrote exactly `Hello, World!` followed by a newline.
+- `python -m unittest discover` passed one test.
+- `python verify_runtime.py` recorded 10 of 10 conforming invocations,
+  dependency-isolated execution, no prohibited network or protected-data
+  instructions, and zero durable product changes.
+- `find ... -name .specify` returned no paths.
+
+Observed delivery cost and terminal state:
+
+- 18 build/fix provider calls;
+- 5,472.361 seconds of recorded provider duration, approximately 91 minutes;
+- longest provider call: 1,311.235 seconds;
+- all provider calls recorded `tokens: 0`;
+- terminal status: `blocked`, reason `outer_cap`;
+- all 24 canonical tasks were complete;
+- three fulfillment rows remained `UNVERIFIED`: AC-016, FR-001, and FR-022.
+
+## EGR-153: Product Evidence Boundary Includes Deployed Runtime
+
+**Priority:** P0
+**Status:** open
+
+The target delivery worktree contains deployed `.echelon/prosaic` and
+`.echelon/runtime` alongside product files. Fulfillment evidence did not
+establish repository-wide cardinality for exactly one `README` and exactly one
+executable `hello.py`, even though the intended product artifacts were present
+and directly verified.
+
+The verifier needs an explicit product evidence boundary. Echelon-owned runtime
+and prose deployment is orchestration infrastructure, not product inventory.
+Cardinality and product-source evidence must exclude it without excluding
+legitimate hidden product files generally.
+
+### Acceptance direction
+
+- Product inventory excludes deployed `.echelon/prosaic` and
+  `.echelon/runtime` paths.
+- Direct source, test, and measured-evidence changes at the product root still
+  invalidate fulfillment caches.
+- The retained greenfield run reaches a verified cardinality judgment without
+  weakening AC-016, FR-001, or FR-022.
+
+## EGR-154: Fulfillment Feedback Hides Actionable Gaps
+
+**Priority:** P1
+**Status:** open
+
+Most failed verification entries contained only the generic message that the
+fulfillment report had unresolved statuses. The actual three requirement IDs,
+their statuses, and the recommended deterministic inventory evidence remained
+inside `fulfillment-gaps.md`. Consequently, repair agents repeatedly spent time
+rediscovering the same terminal condition.
+
+No-progress detection also operated on the generic failure signature rather
+than the concrete gap set. The run consumed every available inner and outer
+iteration despite all tasks being complete and the final unresolved set being
+stable.
+
+### Acceptance direction
+
+- Verify results include each unresolved requirement ID, status, summary, and
+  recommended action.
+- Failure fingerprints use the normalized concrete gap set.
+- An unchanged gap set with no product/evidence delta routes to COMMANDER or a
+  deterministic blocker before exhausting every configured repair iteration.
+- A changed gap set remains eligible for repair even when the wrapper failure
+  category is still `fulfillment-gaps`.
+
+## EGR-155: CARTOGRAPHER Output Is Disproportionate To Feature Scope
+
+**Priority:** P1
+**Status:** open
+
+The request was to create a minimal Python Hello World program. First-pass
+artifacts expanded it into:
+
+- a 245-line specification;
+- 42 requirements: 22 FRs, 7 NFRs, and 13 ACs;
+- a 182-line plan;
+- a 528-line task document containing 24 tasks.
+
+The requirements are individually rigorous, but many restate the same observable
+contract across FR, AC, test-oracle, documentation, and measured-evidence forms.
+That multiplication materially increased implementation, fulfillment, and
+repair cost and introduced repository-cardinality obligations unrelated to the
+user's minimal outcome.
+
+This is a prompt-quality improvement, not a Prosaic migration blocker. Preserve
+the exact artifacts and metrics above as the regression fixture when changing
+CARTOGRAPHER.
+
+### Acceptance direction
+
+- CARTOGRAPHER classifies feature complexity before authoring.
+- Small deterministic features use a bounded, evidence-backed requirement set
+  without quotas that force redundant FR/NFR/AC rows.
+- Acceptance criteria verify requirements rather than restating every
+  implementation and observation detail as another requirement.
+- Quality gates retain atomicity, testability, negative behavior, and explicit
+  uncertainty without rewarding document volume.
+- A repeated Hello World benchmark demonstrates materially smaller artifacts
+  while preserving the exact output, exit-status, and no-input contract.
+
+## EGR-156: Documentation Repair Does Not Converge Reliably
+
+**Priority:** P1
+**Status:** open
+
+The documentation phase successively produced three deterministic gate
+failures:
+
+1. `documentation-impact-report.md` did not set `docs_required`;
+2. `docs_required: true` did not establish both expected documentation updates;
+3. `docs_required: false` did not include the required reason.
+
+The Prosaic TECH WRITER prose already contains the report schema. The follow-up
+must therefore trace rendered prose, companion availability, dispatch context,
+and repair feedback before changing prose. Do not assume that the neutral source
+is missing the contract.
+
+### Acceptance direction
+
+- Capture the rendered TECH WRITER and DOCS VERIFIER instructions used by the
+  failing provider dispatch.
+- Make the exact deterministic schema finding mandatory repair context.
+- Add a greenfield no-doc-change regression that converges in one documentation
+  repair cycle at most.
+
+## EGR-157: Provider Usage Telemetry Reports Misleading Zeroes
+
+**Priority:** P2
+**Status:** open
+
+All 18 Codex calls recorded `tokens: 0` despite approximately 91 minutes of
+provider execution. A numeric zero implies measured zero consumption, while the
+actual state is that token usage was unavailable from this provider path.
+
+### Acceptance direction
+
+- Distinguish measured zero from unavailable usage.
+- Always retain provider, model/profile, effort, duration, exit status, and
+  invocation count.
+- Record token/input/output usage when the provider exposes it; otherwise emit
+  an explicit availability/status field rather than fabricated zeroes.
+
+## EGR-158: Repository Test Runner Can Select Unsupported Python
+
+**Priority:** P2
+**Status:** open
+
+`bash tests/run-all.sh` selected a system Python that does not support
+`dataclass(slots=True)`, causing two Integration/RE scripts to fail. Both scripts
+passed unchanged when rerun with the repository's Python 3.11 virtual
+environment: 31 checks in `test-discover-repos.sh` and 60 checks in
+`test-run-analysis-polyrepo.sh`.
+
+The same runner also labels an empty shim suite as `FAIL`, even though the shim
+tests were intentionally removed during Spec-Kit cleanup.
+
+### Acceptance direction
+
+- Prefer the active project virtual environment or validate the selected
+  interpreter against Echelon's minimum Python version before running tests.
+- Print the resolved interpreter and version.
+- Treat an intentionally absent test group as skipped or remove the obsolete
+  group from the runner; do not report `FAIL` with zero failed tests.
+
+## EGR-159: Greenfield Runs Retain Excess Generated State
+
+**Priority:** P3
+**Status:** open
+
+The test retained multiple spec snapshots and delivery iteration worktrees, and
+worktrees accumulated `.pytest_cache` and `__pycache__`. Retention was valuable
+for this investigation, but normal runs need explicit cleanup and preservation
+semantics.
+
+### Acceptance direction
+
+- Seed or adjudicate common generated Python cache paths deterministically.
+- Define retention separately for successful, failed, blocked, and explicitly
+  preserved runs.
+- Keep enough evidence to reproduce failures without retaining every equivalent
+  snapshot or disposable worktree indefinitely.
+
+## Recommended Order
+
+1. EGR-153 product evidence boundary.
+2. EGR-154 concrete fulfillment feedback and no-progress routing.
+3. Repeat the same greenfield delivery until it reaches `verified`.
+4. Finish the remaining Spec-Kit removal audit.
+5. EGR-156 documentation convergence.
+6. EGR-155 CARTOGRAPHER proportionality benchmark.
+7. EGR-157 through EGR-159 operational improvements.
+
