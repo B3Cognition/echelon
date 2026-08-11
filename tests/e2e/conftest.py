@@ -90,6 +90,7 @@ class MockGitOps:
         self, spec_id: str, strategy_id: str, outer_iter: int,
         base_branch: str | None = None, build_id: str = "",
         prepare_codegraph: bool = False,
+        fresh_branch: bool = False,
     ) -> str:
         """Create a fake worktree directory with a real git repo so that
         _has_file_changes works correctly (avoids false no-progress escalation).
