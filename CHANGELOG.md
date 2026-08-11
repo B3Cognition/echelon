@@ -23,7 +23,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   calibration, feedback, drift, and constitution-candidate outputs now have
   dedicated templates and producer wiring. `experiment-results.md` is now
   referenced consistently as Markdown, and constitution candidates remain
-  proposal-only until human review through `speckit.constitution`.
+  proposal-only until human approval and CHIEF-owned Phase A amendment.
 
 - **Complete delivery estimates** — `estimates.md` now has one standard
   contract for Phase A specification authoring and Phase B implementation,
