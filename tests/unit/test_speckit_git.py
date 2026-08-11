@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import subprocess
 
 import pytest
 import yaml
@@ -116,51 +115,44 @@ def test_malformed_speckit_extension_state_fails_closed(
 
 
 def test_disable_is_idempotent_when_git_extension_is_absent(tmp_path: Path) -> None:
-    def unexpected_run(*_args, **_kwargs):
-        raise AssertionError("specify must not run when the Git extension is absent")
-
-    state = disable_speckit_git(tmp_path, run=unexpected_run)
+    state = disable_speckit_git(tmp_path)
 
     assert state.safe is True
     assert state.installed is False
 
 
-def test_disable_invokes_specify_and_verifies_postcondition(tmp_path: Path) -> None:
+def test_disable_updates_legacy_files_without_external_specify(tmp_path: Path) -> None:
     _write_registry(tmp_path, enabled=True)
     _write_hooks(tmp_path, enabled=True)
-    calls: list[tuple[list[str], Path]] = []
+    hooks_path = tmp_path / ".specify" / "extensions.yml"
+    hooks = yaml.safe_load(hooks_path.read_text(encoding="utf-8"))
+    hooks["hooks"]["before_specify"].append(
+        {
+            "extension": "unrelated",
+            "command": "unrelated.command",
+            "enabled": True,
+        }
+    )
+    hooks_path.write_text(yaml.safe_dump(hooks, sort_keys=False), encoding="utf-8")
 
-    def fake_run(command, *, cwd, capture_output, text, check):
-        calls.append((command, cwd))
-        assert capture_output is True
-        assert text is True
-        assert check is False
-        _write_registry(tmp_path, enabled=False)
-        _write_hooks(tmp_path, enabled=False)
-        return subprocess.CompletedProcess(command, 0, stdout="disabled", stderr="")
+    state = disable_speckit_git(tmp_path)
 
-    state = disable_speckit_git(tmp_path, run=fake_run)
-
-    assert calls == [(["specify", "extension", "disable", "git"], tmp_path)]
     assert state.safe is True
     assert state.registry_enabled is False
+    registry = json.loads(
+        (tmp_path / ".specify/extensions/.registry").read_text(encoding="utf-8")
+    )
+    assert registry["extensions"]["git"]["enabled"] is False
+    rewritten_hooks = yaml.safe_load(hooks_path.read_text(encoding="utf-8"))
+    git_hook, unrelated_hook = rewritten_hooks["hooks"]["before_specify"]
+    assert git_hook["enabled"] is False
+    assert unrelated_hook["enabled"] is True
 
 
-def test_disable_reports_specify_failure(tmp_path: Path) -> None:
-    _write_registry(tmp_path, enabled=True)
+def test_legacy_git_migration_has_no_external_specify_command() -> None:
+    source = (
+        Path(__file__).resolve().parents[2] / "src/echelon/speckit_git.py"
+    ).read_text(encoding="utf-8")
 
-    def fake_run(command, **_kwargs):
-        return subprocess.CompletedProcess(command, 2, stdout="", stderr="registry locked")
-
-    with pytest.raises(SpecKitGitOwnershipError, match="registry locked"):
-        disable_speckit_git(tmp_path, run=fake_run)
-
-
-def test_disable_rejects_false_success_that_leaves_git_enabled(tmp_path: Path) -> None:
-    _write_registry(tmp_path, enabled=True)
-
-    def fake_run(command, **_kwargs):
-        return subprocess.CompletedProcess(command, 0, stdout="disabled", stderr="")
-
-    with pytest.raises(SpecKitGitOwnershipError, match="remains enabled"):
-        disable_speckit_git(tmp_path, run=fake_run)
+    assert "SPEC_KIT_GIT_DISABLE_COMMAND" not in source
+    assert "subprocess" not in source

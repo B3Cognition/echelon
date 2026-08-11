@@ -34,6 +34,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Standalone legacy workspace import** — `workspace migrate-to-prosaic` now
+  neutralizes old Spec-Kit Git registry and hook state atomically without
+  invoking `specify`, while preserving unrelated extension data and failing
+  closed on malformed input. Workspace Git migration also tracks the canonical
+  Echelon constitution and normalizes its obsolete generated amendment
+  instruction to CHIEF ownership without changing governance principles.
+
 - **EGR-150 testability authoring compatibility** — CARTOGRAPHER now writes
   evidence-backed quantitative constraints with symbolic comparators and
   grounded negative behavior as atomic requirements on analyzer-visible ID

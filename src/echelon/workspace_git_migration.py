@@ -113,7 +113,11 @@ def _is_echelon_workspace(root: Path) -> bool:
 
 def _existing_stage_paths(root: Path) -> tuple[str, ...]:
     paths = [".gitignore"]
-    paths.extend(path for path in (".echelon/config.yml",) if (root / path).exists())
+    paths.extend(
+        path
+        for path in (".echelon/config.yml", ".echelon/constitution.md")
+        if (root / path).exists()
+    )
     paths.extend(path for path in ("sources/README.md",) if (root / path).exists())
     paths.extend(path for path in ("re/.gitignore",) if (root / path).exists())
     paths.extend(path for path in ("specs",) if (root / path).exists())
@@ -150,6 +154,7 @@ def build_migration_plan(workspace_root: Path) -> WorkspaceGitMigrationPlan:
         "/.claude-work/",
         "!/.echelon/",
         "!/.echelon/config.yml",
+        "!/.echelon/constitution.md",
         "/.echelon/local.yml",
         "/.echelon/re/",
         "/.echelon/runtime/",
@@ -536,6 +541,12 @@ def migrate_workspace(
             and (gitignore_updated or not _is_tracked(plan.workspace_root, ".echelon/config.yml"))
         ):
             stage_paths_list.append(".echelon/config.yml")
+        canonical_constitution = plan.workspace_root / ".echelon" / "constitution.md"
+        if canonical_constitution.exists() and (
+            gitignore_updated
+            or not _is_tracked(plan.workspace_root, ".echelon/constitution.md")
+        ):
+            stage_paths_list.append(".echelon/constitution.md")
         stage_paths = tuple(stage_paths_list)
     else:
         stage_paths = _existing_stage_paths(plan.workspace_root)

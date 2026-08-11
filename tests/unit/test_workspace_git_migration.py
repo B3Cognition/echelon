@@ -40,6 +40,7 @@ def test_migration_plan_ignores_child_source_roots(tmp_path: Path) -> None:
         "/.claude-work/",
         "!/.echelon/",
         "!/.echelon/config.yml",
+        "!/.echelon/constitution.md",
         "/.echelon/local.yml",
         "/.echelon/re/",
         "/.echelon/runtime/",
@@ -234,6 +235,34 @@ def test_migration_stages_existing_canonical_config_after_ignore_repair(
 
 
 @pytest.mark.unit
+def test_migration_stages_existing_canonical_constitution_after_ignore_repair(
+    tmp_path: Path,
+) -> None:
+    _write_workspace(tmp_path)
+    (tmp_path / ".gitignore").write_text(
+        "/.specify/\n/runs/\n/.echelon/\n/.claude/\n",
+        encoding="utf-8",
+    )
+    constitution = tmp_path / ".echelon" / "constitution.md"
+    constitution.parent.mkdir(parents=True)
+    constitution.write_text("# Project Constitution\n", encoding="utf-8")
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+
+    result = migrate_workspace(tmp_path, write=True, commit=False)
+
+    assert result.gitignore_updated is True
+    assert ".echelon/constitution.md" in result.staged_paths
+    staged = subprocess.run(
+        ["git", "diff", "--cached", "--name-only"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    assert ".echelon/constitution.md" in staged
+
+
+@pytest.mark.unit
 def test_migration_untracks_legacy_runtime_state(tmp_path: Path) -> None:
     _write_workspace(tmp_path)
     legacy = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
@@ -262,7 +291,7 @@ def test_migration_untracks_legacy_runtime_state(tmp_path: Path) -> None:
 def test_existing_gitignore_runtime_entries_satisfy_runtime_ignore(tmp_path: Path) -> None:
     _write_workspace(tmp_path)
     (tmp_path / ".gitignore").write_text(
-        ".specify\nruns\n.claude\n.claude-work\n!/.echelon/\n!/.echelon/config.yml\n.echelon/local.yml\n.echelon/re\n.echelon/runtime\n.echelon/packages\n.echelon/prosaic\n.prosaic-manifest.json\n.prosaic-backups\n.echelon/cache\n.echelon/recovery-backups\n.DS_Store\nnode_modules/\n/sources/*\n!/sources/README.md\n",
+        ".specify\nruns\n.claude\n.claude-work\n!/.echelon/\n!/.echelon/config.yml\n!/.echelon/constitution.md\n.echelon/local.yml\n.echelon/re\n.echelon/runtime\n.echelon/packages\n.echelon/prosaic\n.prosaic-manifest.json\n.prosaic-backups\n.echelon/cache\n.echelon/recovery-backups\n.DS_Store\nnode_modules/\n/sources/*\n!/sources/README.md\n",
         encoding="utf-8",
     )
     subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
@@ -272,7 +301,7 @@ def test_existing_gitignore_runtime_entries_satisfy_runtime_ignore(tmp_path: Pat
     assert result.gitignore_updated is False
     assert result.staged_paths == ("sources/README.md", "re/.gitignore")
     assert (tmp_path / ".gitignore").read_text(encoding="utf-8") == (
-        ".specify\nruns\n.claude\n.claude-work\n!/.echelon/\n!/.echelon/config.yml\n.echelon/local.yml\n.echelon/re\n.echelon/runtime\n.echelon/packages\n.echelon/prosaic\n.prosaic-manifest.json\n.prosaic-backups\n.echelon/cache\n.echelon/recovery-backups\n.DS_Store\nnode_modules/\n/sources/*\n!/sources/README.md\n"
+        ".specify\nruns\n.claude\n.claude-work\n!/.echelon/\n!/.echelon/config.yml\n!/.echelon/constitution.md\n.echelon/local.yml\n.echelon/re\n.echelon/runtime\n.echelon/packages\n.echelon/prosaic\n.prosaic-manifest.json\n.prosaic-backups\n.echelon/cache\n.echelon/recovery-backups\n.DS_Store\nnode_modules/\n/sources/*\n!/sources/README.md\n"
     )
 
 

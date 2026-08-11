@@ -19,6 +19,11 @@ The command leaves the old tree untouched except for disabling legacy Git
 mutation and moving legacy global deployment state. Normal commands do not use
 that tree after migration.
 
+The importer is standalone: it does not execute `specify`. When an old
+Spec-Kit Git extension is present, Echelon atomically disables only its registry
+entry and Git-owned hooks, preserves unrelated extension state, and verifies
+the postcondition itself. Malformed legacy state still fails closed.
+
 ## Packaging
 
 `setup.py` and `MANIFEST.in` include only the canonical `prosaic/` and `runtime/`
@@ -59,6 +64,23 @@ Existing repositories should be migrated with `echelon workspace
 migrate-to-prosaic`, verified to contain `.echelon/prosaic` and
 `.echelon/runtime`, and then operated only through Echelon commands. No runtime
 fallback to Spec-Kit should be reintroduced.
+
+The workspace Git migration must also track both canonical ownership files,
+`.echelon/config.yml` and `.echelon/constitution.md`, while untracking and
+ignoring the retained legacy runtime tree. A known obsolete generated
+`/speckit.constitution` comment is normalized to the CHIEF-owned Phase A
+amendment contract during constitution import; governance principles and the
+legacy source remain unchanged.
+
+## Live Migration Validation
+
+`/Users/michalbachorik/work/localcodingllm` was migrated non-destructively from
+its partial legacy state. The deployed graph loads 52 phases from
+`.echelon/runtime`, canonical config and constitution are staged for ownership,
+and tracked `.specify`/`.claude` runtime files are retained locally but removed
+from workspace Git ownership. `echelon workspace doctor` reports no migration
+errors; the workspace remains intentionally planning-only until implementation
+source roots are configured.
 
 The legacy import modules can be removed after the supported repository set has
 been migrated and a deliberate compatibility-support decision is made. Their

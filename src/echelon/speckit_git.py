@@ -4,14 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import os
 from pathlib import Path
-import subprocess
-from typing import Callable
+import tempfile
 
 import yaml
-
-
-SPEC_KIT_GIT_DISABLE_COMMAND = ("specify", "extension", "disable", "git")
 
 
 class SpecKitGitOwnershipError(RuntimeError):
@@ -207,19 +204,31 @@ def require_speckit_git_disabled(project_root: Path) -> SpecKitGitState:
         return state
     raise SpecKitGitOwnershipError(
         f"{state.reason}. Echelon must be the sole Git authority. "
-        "Run: specify extension disable git"
+        "Repair the malformed legacy extension state before migration."
     )
 
 
-RunCommand = Callable[..., subprocess.CompletedProcess[str]]
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Replace one legacy state file without exposing a partial write."""
+
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+    )
+    os.close(descriptor)
+    temporary = Path(temporary_name)
+    try:
+        temporary.write_text(text, encoding="utf-8")
+        temporary.chmod(path.stat().st_mode)
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def disable_speckit_git(
     project_root: Path,
-    *,
-    run: RunCommand = subprocess.run,
 ) -> SpecKitGitState:
-    """Idempotently disable installed spec-kit Git integration and verify it."""
+    """Idempotently neutralize legacy Git integration and verify it."""
 
     root = Path(project_root).resolve()
     before = inspect_speckit_git(root)
@@ -228,27 +237,39 @@ def disable_speckit_git(
     if not before.installed or before.reason.startswith("malformed"):
         return require_speckit_git_disabled(root)
 
+    registry_path = root / ".specify" / "extensions" / ".registry"
+    hooks_path = root / ".specify" / "extensions.yml"
     try:
-        result = run(
-            list(SPEC_KIT_GIT_DISABLE_COMMAND),
-            cwd=root,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except OSError as exc:
+        registry = json.loads(registry_path.read_text(encoding="utf-8"))
+        git_entry = registry["extensions"]["git"]
+        if git_entry.get("enabled", True):
+            git_entry["enabled"] = False
+            _atomic_write_text(
+                registry_path,
+                json.dumps(registry, indent=2) + "\n",
+            )
+
+        if hooks_path.exists():
+            hooks_config = yaml.safe_load(hooks_path.read_text(encoding="utf-8")) or {}
+            hooks_changed = False
+            for entries in (hooks_config.get("hooks", {}) or {}).values():
+                for hook in entries:
+                    if hook.get("extension") == "git" and hook.get("enabled", True):
+                        hook["enabled"] = False
+                        hooks_changed = True
+            if hooks_changed:
+                _atomic_write_text(
+                    hooks_path,
+                    yaml.safe_dump(hooks_config, sort_keys=False),
+                )
+    except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError, yaml.YAMLError) as exc:
         raise SpecKitGitOwnershipError(
-            f"could not run {' '.join(SPEC_KIT_GIT_DISABLE_COMMAND)}: {exc}"
+            f"legacy Git integration could not be neutralized: {exc}"
         ) from exc
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "unknown error").strip()
-        raise SpecKitGitOwnershipError(
-            f"spec-kit Git extension could not be disabled: {detail}"
-        )
 
     after = inspect_speckit_git(root)
     if not after.safe:
         raise SpecKitGitOwnershipError(
-            f"spec-kit Git integration remains enabled or unsafe after disablement: {after.reason}"
+            f"legacy Git integration remains enabled or unsafe after neutralization: {after.reason}"
         )
     return after
