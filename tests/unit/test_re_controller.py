@@ -3415,6 +3415,101 @@ def test_invalid_semantic_review_blocks_only_after_validation_budget_exhausts(
 
 
 @pytest.mark.unit
+def test_missing_semantic_result_after_failed_result_repair_is_redispatched_once(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    _initialize_re_state(run_dir, max_repairs=1)
+
+    class MissingThenValidResultProvider(_ShallowSpecifierProvider):
+        supports_result_contract = True
+
+        def exec_agent(
+            self, project_root: str, prompt: str, **kwargs: object
+        ) -> SquadAgentResult:
+            result = super().exec_agent(project_root, prompt)
+            if (
+                self.phases[-1] == "re-extract-5-validate"
+                and self.phases.count("re-extract-5-validate") == 1
+            ):
+                result.echelon_result = None
+                result.echelon_result_repair_attempted = True
+                result.echelon_result_repair_succeeded = False
+                result.echelon_result_repair_outcome = "INVALID"
+                result.echelon_result_validation_reason = "missing echelon_result"
+                result.echelon_result_debug_path = "/tmp/echelon-raw-test.txt"
+            return result
+
+    provider = MissingThenValidResultProvider()
+    result = ReExtractionController(
+        provider=provider,
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert result.completed
+    assert provider.phases.count("re-extract-5-validate") == 2
+    state = json.loads((run_dir / "re/state.json").read_text(encoding="utf-8"))
+    assert state["re_semantic_result_contract_retries"] == {
+        "api/001-re-domain": 1
+    }
+    spans = [
+        json.loads(line)
+        for line in (run_dir / "telemetry/spans.jsonl").read_text().splitlines()
+    ]
+    first_validation = next(
+        span
+        for span in spans
+        if span["attributes"]["echelon.workflow.phase"]
+        == "re-extract-5-validate"
+    )
+    assert first_validation["attributes"]["echelon.result.repair_attempted"] is True
+    assert first_validation["attributes"]["echelon.result.repair_succeeded"] is False
+    assert first_validation["attributes"]["echelon.result.repair_outcome"] == "INVALID"
+
+
+@pytest.mark.unit
+def test_repeated_missing_semantic_result_blocks_with_repair_diagnostics(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    _initialize_re_state(run_dir, max_repairs=1)
+
+    class AlwaysMissingResultProvider(_ShallowSpecifierProvider):
+        supports_result_contract = True
+
+        def exec_agent(
+            self, project_root: str, prompt: str, **kwargs: object
+        ) -> SquadAgentResult:
+            result = super().exec_agent(project_root, prompt)
+            if self.phases[-1] == "re-extract-5-validate":
+                result.echelon_result = None
+                result.echelon_result_repair_attempted = True
+                result.echelon_result_repair_succeeded = False
+                result.echelon_result_repair_outcome = "INVALID"
+                result.echelon_result_validation_reason = "missing echelon_result"
+                result.echelon_result_debug_path = "/tmp/echelon-raw-test.txt"
+            return result
+
+    provider = AlwaysMissingResultProvider()
+    result = ReExtractionController(
+        provider=provider,
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert not result.completed
+    assert result.blocked_reason == "re_agent_result_invalid"
+    assert provider.phases.count("re-extract-5-validate") == 2
+    assert result.blocked_detail is not None
+    assert "result-only repair failed" in result.blocked_detail
+    assert "missing echelon_result" in result.blocked_detail
+    assert "/tmp/echelon-raw-test.txt" in result.blocked_detail
+
+
+@pytest.mark.unit
 def test_quality_repair_cannot_modify_source_analysis(tmp_path: Path) -> None:
     run_dir = write_valid_re_run(tmp_path, ("api",))
     _initialize_re_state(run_dir, max_repairs=1)

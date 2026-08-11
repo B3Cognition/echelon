@@ -84,6 +84,8 @@ class SquadAgentResult:
     echelon_result_repair_outcome: str = ""
     echelon_result_repair_started_at: str = ""
     echelon_result_repair_ended_at: str = ""
+    echelon_result_validation_reason: str = ""
+    echelon_result_debug_path: str = ""
     provider_limit_message: str = ""
     quarantined_state_updates: dict = field(default_factory=dict)
     stderr: str = ""
@@ -450,7 +452,11 @@ class SquadCliProvider(AICodingCliProvider):
             repair_duration_ms = int((time.monotonic() - repair_started) * 1000)
             repair_ended_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
             repair_model_name = _provider_model_name(repair_result.metadata)
-            repair_outcome = "OK" if repair_result.exit_code == 0 and not repair_result.timed_out else "ERROR"
+            repair_outcome = (
+                "OK"
+                if repair_result.exit_code == 0 and not repair_result.timed_out
+                else "ERROR"
+            )
             _verify_git_boundary(project_root, repair_git_before)
             cost_usd += repair_result.cost_usd
             token_usage += int(repair_result.token_usage or 0)
@@ -473,8 +479,10 @@ class SquadCliProvider(AICodingCliProvider):
                     echelon_result = repaired
                     quarantined_state_updates = repair_quarantined
                     repair_succeeded = True
+                    validation_reason = ""
                 else:
                     validation_reason = repair_reason or validation_reason
+                    repair_outcome = "INVALID"
 
         if echelon_result is None and parsed_result is not None:
             echelon_result = _validation_block_result(validation_reason or "invalid")
@@ -482,8 +490,11 @@ class SquadCliProvider(AICodingCliProvider):
         # Debug capture: write raw + parse result to /tmp/echelon-raw-<pid>.txt
         # when the parse returns None or missing state_updates so we can inspect
         # what the harness actually received vs what the terminal shows.
+        debug_path = ""
         if echelon_result is None or not (echelon_result or {}).get("state_updates"):
-            _write_debug_capture(raw, echelon_result, exit_code, duration_ms)
+            debug_path = (
+                _write_debug_capture(raw, echelon_result, exit_code, duration_ms) or ""
+            )
 
         return SquadAgentResult(
             exit_code=exit_code if exit_code is not None else -1,
@@ -503,6 +514,8 @@ class SquadCliProvider(AICodingCliProvider):
             echelon_result_repair_outcome=repair_outcome,
             echelon_result_repair_started_at=repair_started_at,
             echelon_result_repair_ended_at=repair_ended_at,
+            echelon_result_validation_reason=validation_reason or "",
+            echelon_result_debug_path=debug_path,
             provider_limit_message=provider_limit_message,
             quarantined_state_updates=quarantined_state_updates,
             stderr=backend_result.stderr,

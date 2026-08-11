@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -241,6 +242,7 @@ def test_squad_provider_does_not_accept_failed_repair_invocation(monkeypatch, tm
         llm=LlmConfig(cli="codex"),
     )
     provider = SquadCliProvider(config)
+    monkeypatch.setenv("ECHELON_DEBUG_RAW_DIR", str(tmp_path))
     prompts: list[str] = []
 
     def fake_run_agent_result(project_root, prompt, timeout_ms=None):
@@ -265,6 +267,9 @@ def test_squad_provider_does_not_accept_failed_repair_invocation(monkeypatch, tm
     assert result.echelon_result is None
     assert result.echelon_result_repair_attempted is True
     assert result.echelon_result_repair_succeeded is False
+    assert result.echelon_result_validation_reason == "missing echelon_result"
+    assert result.echelon_result_debug_path
+    assert Path(result.echelon_result_debug_path).is_file()
 
 
 def test_squad_provider_repairs_missing_required_dispatch_state(monkeypatch, tmp_path) -> None:

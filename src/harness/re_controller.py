@@ -106,6 +106,7 @@ _ARCHITECTURE_OVERLAY_OUTPUTS = frozenset(
 _TARGET_QUALITY_PROTOCOL_VERSION = 1
 _SEMANTIC_QUALITY_REVIEW_PROTOCOL_VERSION = 2
 _SEMANTIC_DOMAIN_AUDIT_PROTOCOL_VERSION = 1
+_SEMANTIC_RESULT_CONTRACT_RETRY_LIMIT = 1
 _WORKSPACE_SYNTHESIS_SCOPE_PROTOCOL_VERSION = 1
 _WORKSPACE_SYNTHESIS_REPAIR_LIMIT = 1
 _RETARGET_MARKER = "[REQUIRES INPUT]"
@@ -382,6 +383,7 @@ class ReExtractionController:
 
             state = write_last_dispatch(state, phase, _PHASES[phase])
             self._save_state(state)
+            result: object | None = None
             if phase == "re-extract-1-analyze":
                 analysis_error = self._run_analysis_script(plan)
                 if analysis_error is not None:
@@ -432,8 +434,39 @@ class ReExtractionController:
                     return self._block(state, "re_agent_dispatch_failed")
                 payload = result.echelon_result
             if not isinstance(payload, dict):
-                state["re_agent_result_detail"] = "missing result object"
+                detail = self._result_contract_failure_detail(result)
+                try:
+                    # The provider invocation itself completed cleanly. Mark
+                    # the dispatch complete even though its control payload
+                    # did not, so continuation never mistakes this for a
+                    # mid-dispatch interruption.
+                    state = complete_dispatch(state, {"state_updates": {}})
+                except (KeyError, ValueError) as exc:
+                    state["re_agent_result_detail"] = str(exc)
+                    return self._block(state, "re_agent_result_invalid")
+                retry = self._schedule_semantic_result_contract_retry(
+                    state,
+                    phase=phase,
+                    semantic_target=semantic_target,
+                    result=result,
+                )
+                state["re_agent_result_detail"] = detail
+                if retry is not None:
+                    key, attempt = retry
+                    print(
+                        "[re] semantic result contract failed after provider "
+                        f"repair; automatic redispatch {attempt}/"
+                        f"{_SEMANTIC_RESULT_CONTRACT_RETRY_LIMIT}: {key}",
+                        flush=True,
+                    )
+                    self._save_state(state)
+                    continue
                 return self._block(state, "re_agent_result_invalid")
+            self._clear_semantic_result_contract_retry(
+                state,
+                phase=phase,
+                semantic_target=semantic_target,
+            )
             if payload.get("verdict") == "BLOCKED":
                 agent_block_detail = self._agent_block_detail(payload)
                 state["re_agent_result_detail"] = agent_block_detail
@@ -2449,6 +2482,83 @@ class ReExtractionController:
         return "; ".join(details) or "agent dispatch failed"
 
     @staticmethod
+    def _result_contract_failure_detail(result: object) -> str:
+        details = ["missing result object"]
+        if getattr(result, "echelon_result_repair_attempted", False):
+            details.append("result-only repair failed")
+        reason = getattr(result, "echelon_result_validation_reason", "")
+        if isinstance(reason, str) and reason.strip():
+            details.append(f"validation: {' '.join(reason.split())[:500]}")
+        outcome = getattr(result, "echelon_result_repair_outcome", "")
+        if isinstance(outcome, str) and outcome.strip():
+            details.append(f"repair outcome: {' '.join(outcome.split())[:100]}")
+        debug_path = getattr(result, "echelon_result_debug_path", "")
+        if isinstance(debug_path, str) and debug_path.strip():
+            details.append(f"debug capture: {' '.join(debug_path.split())[:500]}")
+        return "; ".join(details)
+
+    @staticmethod
+    def _semantic_result_contract_target_key(
+        semantic_target: dict[str, str] | None,
+    ) -> str | None:
+        if not isinstance(semantic_target, dict):
+            return None
+        source_id = semantic_target.get("source_id")
+        domain_id = semantic_target.get("domain_id")
+        if not source_id or not domain_id:
+            return None
+        return f"{source_id}/{domain_id}"
+
+    def _schedule_semantic_result_contract_retry(
+        self,
+        state: dict,
+        *,
+        phase: str,
+        semantic_target: dict[str, str] | None,
+        result: object,
+    ) -> tuple[str, int] | None:
+        if (
+            phase != "re-extract-5-validate"
+            or not getattr(result, "echelon_result_repair_attempted", False)
+            or getattr(result, "echelon_result_repair_succeeded", False)
+        ):
+            return None
+        key = self._semantic_result_contract_target_key(semantic_target)
+        if key is None:
+            return None
+        if state.get("re_semantic_result_contract_retry_pending") == key:
+            return None
+        retries = state.get("re_semantic_result_contract_retries")
+        if not isinstance(retries, dict):
+            retries = {}
+            state["re_semantic_result_contract_retries"] = retries
+        raw_attempts = retries.get(key, 0)
+        attempts = (
+            int(raw_attempts)
+            if isinstance(raw_attempts, (int, float))
+            and not isinstance(raw_attempts, bool)
+            else 0
+        )
+        retries[key] = attempts + 1
+        state["re_semantic_result_contract_retry_pending"] = key
+        return key, _SEMANTIC_RESULT_CONTRACT_RETRY_LIMIT
+
+    def _clear_semantic_result_contract_retry(
+        self,
+        state: dict,
+        *,
+        phase: str,
+        semantic_target: dict[str, str] | None,
+    ) -> None:
+        if phase != "re-extract-5-validate":
+            return
+        key = self._semantic_result_contract_target_key(semantic_target)
+        if key is not None and state.get(
+            "re_semantic_result_contract_retry_pending"
+        ) == key:
+            state.pop("re_semantic_result_contract_retry_pending", None)
+
+    @staticmethod
     def _agent_block_detail(payload: dict) -> str:
         candidates = (
             payload.get("blocked_reason"),
@@ -3386,6 +3496,14 @@ class ReExtractionController:
             attributes["gen_ai.provider.name"] = str(provider)
         if model:
             attributes["gen_ai.response.model"] = str(model)
+        if getattr(result, "echelon_result_repair_attempted", False):
+            attributes["echelon.result.repair_attempted"] = True
+            attributes["echelon.result.repair_succeeded"] = bool(
+                getattr(result, "echelon_result_repair_succeeded", False)
+            )
+            repair_outcome = getattr(result, "echelon_result_repair_outcome", "")
+            if isinstance(repair_outcome, str) and repair_outcome:
+                attributes["echelon.result.repair_outcome"] = repair_outcome[:100]
         for field, attribute in (
             ("input_tokens", "gen_ai.usage.input_tokens"),
             ("output_tokens", "gen_ai.usage.output_tokens"),
