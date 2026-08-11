@@ -64,6 +64,84 @@ def test_re_refresh_help_requires_one_source_selector() -> None:
 
 
 @pytest.mark.unit
+def test_re_status_reports_live_state_and_source_quality_debt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.cli_app import app
+
+    run_dir = tmp_path / "runs" / "re-20260808-100000-000001"
+    re_dir = run_dir / "re"
+    quality_dir = re_dir / "quality" / "sources"
+    quality_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current-re").write_text(
+        run_dir.name + "\n", encoding="utf-8"
+    )
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "blocked_reason": "re_workspace_synthesis_incomplete",
+                "re_policy": "refresh-all",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (re_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "in_progress",
+                "phase": "re-extract-5-validate",
+                "coverage_threshold": 99,
+                "resolution_threshold": 99,
+                "re_token_usage": 172_000_000,
+                "re_execution_profile": {"hard_token_limit": 210_000_000},
+                "re_workspace_synthesis_complete": True,
+                "re_source_order": ["api", "web"],
+                "re_source_states": {
+                    "api": {"status": "passed", "coverage_pct": 100.0},
+                    "web": {
+                        "status": "partial_quality_debt",
+                        "coverage_pct": 12.0,
+                    },
+                },
+                "re_source_budgets": {"max_source_cycles": 10},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (quality_dir / "web.json").write_text(
+        json.dumps(
+            {
+                "source_id": "web",
+                "passed": False,
+                "coverage_pct": 46.2,
+                "orphan_paths": ["src/a.ts", "src/b.ts"],
+                "domain_failures": [{"domain_id": "001-re-src"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(app, ["re", "status"])
+
+    assert result.exit_code == 0
+    assert "RE STATUS" in result.output
+    assert "in_progress" in result.output
+    assert "outer lifecycle state is blocked" in result.output
+    assert "api" in result.output
+    assert "passed" in result.output
+    assert "100.0%" in result.output
+    assert "web" in result.output
+    assert "partial quality debt" in result.output
+    assert "46.2%" in result.output
+    assert "2 uncovered" in result.output
+    assert "1 incomplete domain" in result.output
+    assert "Do not start another continuation" in result.output
+
+
+@pytest.mark.unit
 def test_re_continue_prints_controller_summary_before_provider_dispatch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -190,8 +268,43 @@ def test_re_lifecycle_block_prints_precise_controller_detail(
 
     assert exc.value.code == 1
     error = capsys.readouterr().err
+    assert "RE FINAL STATE — BLOCKED" in error
     assert "re_agent_result_invalid" in error
     assert "state_updates key was rejected" in error
+
+
+@pytest.mark.unit
+def test_re_lifecycle_banner_explains_workspace_synthesis_contradiction(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _print_re_lifecycle_result
+
+    missing = [
+        "workspace/domains/002-re-src.md",
+        "workspace/domains/004-re-scripts.md",
+        "workspace/domains/006-re-tests.md",
+        "workspace/domains/007-re-typings.md",
+        "workspace/domains/010-re-src-models-types.md",
+    ]
+    with pytest.raises(SystemExit):
+        _print_re_lifecycle_result(
+            SimpleNamespace(
+                status="blocked",
+                run_id="re-1",
+                blocked_reason="re_workspace_synthesis_incomplete",
+                blocked_detail=(
+                    "workspace synthesis has missing or empty artifacts: "
+                    + ", ".join(missing)
+                ),
+            )
+        )
+
+    error = capsys.readouterr().err
+    assert "Agent reported DONE, but deterministic artifact validation failed." in error
+    assert "5 required artifacts are absent." in error
+    for path in missing:
+        assert path in error
+    assert "echelon re continue" in error
 
 
 @pytest.mark.unit

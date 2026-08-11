@@ -107,6 +107,7 @@ _TARGET_QUALITY_PROTOCOL_VERSION = 1
 _SEMANTIC_QUALITY_REVIEW_PROTOCOL_VERSION = 2
 _SEMANTIC_DOMAIN_AUDIT_PROTOCOL_VERSION = 1
 _WORKSPACE_SYNTHESIS_SCOPE_PROTOCOL_VERSION = 1
+_WORKSPACE_SYNTHESIS_REPAIR_LIMIT = 1
 _RETARGET_MARKER = "[REQUIRES INPUT]"
 _RETARGET_STRATEGY_FILES = (
     "constitution.md",
@@ -356,7 +357,7 @@ class ReExtractionController:
                     try:
                         self._clean_workspace_synthesis_sources(state, plan)
                         prompt_metadata.update(
-                            self._prompt_metadata_for_target(plan, target)
+                            self._prompt_metadata_for_target(plan, target, state)
                         )
                     except (OSError, ValueError, json.JSONDecodeError) as exc:
                         state["re_agent_result_detail"] = (
@@ -367,7 +368,7 @@ class ReExtractionController:
                         )
                 elif getattr(self._provider, "supports_prompt_metadata", False):
                     prompt_metadata.update(
-                        self._prompt_metadata_for_target(plan, target)
+                        self._prompt_metadata_for_target(plan, target, state)
                     )
                 if (
                     prompt_metadata
@@ -1804,7 +1805,7 @@ class ReExtractionController:
                 f"{state.get('re_quality_gate_report', '')}. Do not re-analyze sources.\n"
             )
         if phase == "re-extract-2-specify" and target is not None:
-            prompt += self._specification_target_prompt(target)
+            prompt += self._specification_target_prompt(target, state)
             synthesis_feedback = state.get("re_agent_result_detail")
             if (
                 target.get("kind") == "workspace-synthesis"
@@ -2063,13 +2064,17 @@ class ReExtractionController:
         self,
         plan: ReExecutionPlan,
         target: dict[str, object] | None,
+        state: dict | None = None,
     ) -> dict[str, object]:
         """Restrict API-provider tools to controller-owned target boundaries."""
         if not isinstance(target, dict):
             return {}
         kind = target.get("kind")
         if kind == "workspace-synthesis":
-            return self._workspace_synthesis_prompt_metadata(plan)
+            return self._workspace_synthesis_prompt_metadata(
+                plan,
+                retry_outputs=self._workspace_synthesis_retry_outputs(plan, state),
+            )
         source_id = target.get("source_id")
         if kind not in {"source-domain", "source-support"} or not isinstance(
             source_id, str
@@ -2116,7 +2121,10 @@ class ReExtractionController:
         }
 
     def _workspace_synthesis_prompt_metadata(
-        self, plan: ReExecutionPlan
+        self,
+        plan: ReExecutionPlan,
+        *,
+        retry_outputs: tuple[Path, ...] = (),
     ) -> dict[str, object]:
         published, canonical_source_ids = self._validated_workspace_inputs(plan)
         read_roots = [self._run_re_dir.resolve()]
@@ -2155,7 +2163,7 @@ class ReExtractionController:
                 raise ValueError("canonical workspace root is unsafe")
             read_roots.append(workspace_root)
 
-        write_paths = self._workspace_synthesis_output_paths(plan)
+        write_paths = retry_outputs or self._workspace_synthesis_output_paths(plan)
         return {
             "tool_read_roots": [str(path) for path in read_roots],
             "tool_write_paths": [str(path) for path in write_paths],
@@ -2197,6 +2205,28 @@ class ReExtractionController:
             for domain_id in {domain.domain_id for domain in architecture.domains}
         )
         return tuple(sorted(write_paths))
+
+    def _workspace_synthesis_retry_outputs(
+        self,
+        plan: ReExecutionPlan,
+        state: dict | None,
+    ) -> tuple[Path, ...]:
+        """Return validated missing outputs for a bounded synthesis repair pass."""
+        if not isinstance(state, dict):
+            return ()
+        detail = state.get("re_agent_result_detail")
+        prefix = "workspace synthesis has missing or empty artifacts: "
+        if not isinstance(detail, str) or not detail.startswith(prefix):
+            return ()
+        expected = {
+            path.relative_to(self._run_re_dir).as_posix(): path
+            for path in self._workspace_synthesis_output_paths(plan)
+        }
+        requested = [
+            item.strip() for item in detail.removeprefix(prefix).split(",") if item.strip()
+        ]
+        outputs = [expected[item] for item in requested if item in expected]
+        return tuple(sorted(set(outputs)))
 
     def _validated_workspace_inputs(
         self, plan: ReExecutionPlan
@@ -2327,6 +2357,10 @@ class ReExtractionController:
             synthesis_error = self._workspace_synthesis_error(plan)
             if synthesis_error is not None:
                 state["re_agent_result_detail"] = synthesis_error
+                if self._schedule_workspace_synthesis_repair(
+                    state, plan, synthesis_error
+                ):
+                    return None
                 return self._block(state, "re_workspace_synthesis_incomplete")
 
         target_report = self._target_quality_report(plan, target)
@@ -2591,7 +2625,11 @@ class ReExtractionController:
             "absolute owned domain root. The controller report remains authoritative.\n"
         )
 
-    def _specification_target_prompt(self, target: dict[str, object]) -> str:
+    def _specification_target_prompt(
+        self,
+        target: dict[str, object],
+        state: dict | None = None,
+    ) -> str:
         kind = target.get("kind")
         if kind == "workspace-synthesis":
             plan = self._load_plan()
@@ -2610,9 +2648,17 @@ class ReExtractionController:
                 if source.action in {"missing", "exclude"}
             )
             removed = self._workspace_synthesis_id_list(plan.removed_sources)
+            retry_outputs = self._workspace_synthesis_retry_outputs(plan, state)
+            output_paths = retry_outputs or self._workspace_synthesis_output_paths(plan)
             required_outputs = "\n".join(
                 f"- `{path}`"
-                for path in self._workspace_synthesis_output_paths(plan)
+                for path in output_paths
+            )
+            output_instruction = (
+                "Repair only these missing workspace-synthesis output files. "
+                "Do not rewrite already-valid synthesis artifacts:\n"
+                if retry_outputs
+                else "Required workspace-synthesis output files (write every file exactly once):\n"
             )
             return (
                 "\n## Controller-Owned Specification Target\n"
@@ -2624,8 +2670,8 @@ class ReExtractionController:
                 f"Empty source IDs: {empty}\n"
                 f"Missing/excluded source IDs: {unavailable}\n"
                 f"Removed source IDs: {removed}\n"
-                "Required workspace-synthesis output files (write every file exactly once):\n"
-                f"{required_outputs}\n"
+                + output_instruction
+                + f"{required_outputs}\n"
                 "Read source semantics only from the current run RE output directory and "
                 "canonical published RE artifacts referenced by `re-workspace-inputs.json`. "
                 "Do not inspect, search, count, summarize, or cite any configured live source root, "
@@ -3399,6 +3445,31 @@ class ReExtractionController:
             blocked_reason=reason,
             blocked_detail=detail if isinstance(detail, str) and detail.strip() else None,
         )
+
+    def _schedule_workspace_synthesis_repair(
+        self,
+        state: dict,
+        plan: ReExecutionPlan,
+        detail: str,
+    ) -> bool:
+        """Schedule one scoped retry when file validation finds only missing outputs."""
+        retry_outputs = self._workspace_synthesis_retry_outputs(
+            plan, {"re_agent_result_detail": detail}
+        )
+        if not retry_outputs:
+            return False
+        attempts = self._metric(state, "re_workspace_synthesis_repair_attempts")
+        if attempts >= _WORKSPACE_SYNTHESIS_REPAIR_LIMIT:
+            return False
+        attempts += 1
+        state["re_workspace_synthesis_repair_attempts"] = attempts
+        print(
+            "[re] workspace synthesis incomplete; automatic repair attempt "
+            f"{attempts}/{_WORKSPACE_SYNTHESIS_REPAIR_LIMIT} for "
+            f"{len(retry_outputs)} missing artifact(s)",
+            flush=True,
+        )
+        return True
 
     def _workspace_synthesis_error(self, plan: ReExecutionPlan) -> str | None:
         """Return a deterministic error for an incomplete staged synthesis."""

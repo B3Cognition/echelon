@@ -122,6 +122,7 @@ Commands:
                     [--re-max-inner <n>] [--reset]
                                             Run or reuse workspace reverse engineering.
   re refresh --source <source-id>           Refresh and publish one declared source.
+  re status                                 Show live RE state, source quality, debt, and next action.
   re continue [--re-max-inner <n>] [--re-token-limit <n>] [--re-time-limit-minutes <n>]
                                             Continue the active RE run.
   re resume <answer> [--re-max-inner <n>] [--re-token-limit <n>] [--re-time-limit-minutes <n>]
@@ -9619,6 +9620,119 @@ def _re_domain_count(run_re_dir: Path) -> str:
     return str(len(domains))
 
 
+def _re_status_source_rows(run_re_dir: Path, state: dict) -> list[str]:
+    """Render source-quality evidence without requiring callers to inspect JSON."""
+    raw_states = state.get("re_source_states")
+    source_states = raw_states if isinstance(raw_states, dict) else {}
+    raw_order = state.get("re_source_order")
+    ordered = (
+        [source_id for source_id in raw_order if isinstance(source_id, str)]
+        if isinstance(raw_order, list)
+        else []
+    )
+    source_ids = list(
+        dict.fromkeys([*ordered, *(key for key in source_states if isinstance(key, str))])
+    )
+    rows: list[str] = []
+    for source_id in source_ids:
+        raw_source_state = source_states.get(source_id)
+        source_state = raw_source_state if isinstance(raw_source_state, dict) else {}
+        report = _read_re_summary_state(
+            run_re_dir / "quality" / "sources" / f"{source_id}.json"
+        )
+        status = str(source_state.get("status") or "pending").replace(
+            "_", " "
+        )
+        coverage = report.get("coverage_pct", source_state.get("coverage_pct"))
+        coverage_text = f"{coverage:.1f}%" if isinstance(coverage, (int, float)) else "—"
+        details = [coverage_text]
+        orphan_paths = report.get("orphan_paths")
+        if isinstance(orphan_paths, list) and orphan_paths:
+            details.append(f"{len(orphan_paths)} uncovered")
+        domain_failures = report.get("domain_failures")
+        if isinstance(domain_failures, list) and domain_failures:
+            count = len(domain_failures)
+            details.append(f"{count} incomplete domain" + ("s" if count != 1 else ""))
+        rows.append(f"  {source_id:<38} {status:<22} {' · '.join(details)}")
+    return rows
+
+
+def _format_re_token_budget(state: dict, outer: dict) -> str:
+    usage = state.get("re_token_usage")
+    profile = state.get("re_execution_profile")
+    if not isinstance(profile, dict):
+        profile = outer.get("re_execution_profile")
+    limit = profile.get("hard_token_limit") if isinstance(profile, dict) else None
+    if not isinstance(usage, int) or not isinstance(limit, int) or limit <= 0:
+        return "not available"
+    return f"{usage / 1_000_000:.1f}M / {limit / 1_000_000:.1f}M ({usage / limit:.0%})"
+
+
+def _cmd_re_status(args: list[str]) -> None:
+    """Show the active RE controller state and every source's quality outcome."""
+    from harness.re_lifecycle import resolve_current_re_run
+
+    if args:
+        print("Usage: echelon re status", file=sys.stderr)
+        raise SystemExit(2)
+    run_dir = resolve_current_re_run(Path.cwd())
+    if run_dir is None:
+        print("echelon re status: no active RE run", file=sys.stderr)
+        raise SystemExit(2)
+    run_re_dir = run_dir / "re"
+    outer = _read_re_summary_state(run_dir / "state.json")
+    inner = _read_re_summary_state(run_re_dir / "state.json")
+    if not inner:
+        print(f"echelon re status: missing controller state for {run_dir.name}", file=sys.stderr)
+        raise SystemExit(2)
+    controller_status = str(inner.get("status") or "unknown")
+    lifecycle_status = str(outer.get("status") or "unknown")
+    phase = str(inner.get("phase") or outer.get("phase") or "unknown")
+    phase_label = _RE_PHASE_LABELS.get(phase, "current controller phase")
+    source_rows = _re_status_source_rows(run_re_dir, inner)
+    raw_source_states = inner.get("re_source_states")
+    source_states = raw_source_states if isinstance(raw_source_states, dict) else {}
+    partial_count = sum(
+        isinstance(value, dict) and value.get("status") == "partial_quality_debt"
+        for value in source_states.values()
+    )
+    fields = [
+        ("run", run_dir.name),
+        ("controller", controller_status),
+        ("lifecycle", lifecycle_status),
+        ("phase", f"{phase} — {phase_label}"),
+        ("policy", str(outer.get("re_policy") or "unknown")),
+        ("sources", _re_source_progress(inner)),
+        ("synthesis", "complete" if inner.get("re_workspace_synthesis_complete") is True else "pending"),
+        ("token budget", _format_re_token_budget(inner, outer)),
+    ]
+    _banner(
+        "RE STATUS",
+        fields,
+        subtitle="Live controller state and deterministic source-quality outcomes.",
+    )
+    if lifecycle_status != controller_status:
+        print(
+            "\nNote: outer lifecycle state is "
+            f"{lifecycle_status} while the live controller state is {controller_status}."
+        )
+    if source_rows:
+        print("\nSource quality")
+        print("  source                                 status                 coverage / debt")
+        print("  ─────────────────────────────────────  ─────────────────────  ─────────────────")
+        print("\n".join(source_rows))
+    if controller_status == "in_progress":
+        action = "Do not start another continuation while the controller is active."
+    elif partial_count:
+        action = (
+            f"{partial_count} source(s) have partial quality debt; this is not a full-quality outcome. "
+            "Raise --re-max-inner above the current budget, then continue."
+        )
+    else:
+        action = "All sources have passed the controller's source-quality gate."
+    print(f"\nNext action: {action}")
+
+
 def _print_re_continue_summary(
     project_root: Path,
     *,
@@ -9811,18 +9925,88 @@ def _print_re_lifecycle_result(result: object) -> None:
     if status == "done":
         if no_work:
             print(f"RE publication is current (generation {generation}); no agent work required.")
+            _banner(
+                "RE FINAL STATE — CURRENT",
+                [("run", run_id or "(not created)"), ("generation", str(generation))],
+                subtitle="No reverse-engineering work was required.",
+            )
         else:
             print(
                 f"RE run {run_id} complete; publication is pending. "
                 f"Publish explicitly with: echelon re publish {run_id}"
             )
+            _banner(
+                "RE FINAL STATE — COMPLETE",
+                [
+                    ("run", run_id),
+                    ("generation", str(generation)),
+                    ("next step", f"echelon re publish {run_id}"),
+                ],
+                subtitle="Reverse engineering completed; publication is pending.",
+            )
         return
     reason = str(getattr(result, "blocked_reason", "RE lifecycle failed"))
     print(f"RE run {run_id or '(not created)'} blocked: {reason}", file=sys.stderr)
     detail = str(getattr(result, "blocked_detail", "")).strip()
-    if detail:
-        print(f"  detail: {detail}", file=sys.stderr)
+    fields = [
+        ("run", run_id or "(not created)"),
+        ("status", "blocked"),
+        ("reason", reason),
+    ]
+    phase = str(getattr(result, "phase", "")).strip()
+    if phase:
+        fields.append(("phase", phase))
+    missing_workspace_artifacts = _workspace_synthesis_missing_artifacts(detail)
+    if missing_workspace_artifacts:
+        fields.extend(
+            [
+                (
+                    "validation",
+                    "Agent reported DONE, but deterministic artifact validation failed.",
+                ),
+                (
+                    "missing artifacts",
+                    _format_missing_workspace_artifacts(missing_workspace_artifacts),
+                ),
+                ("retry", "echelon re continue"),
+            ]
+        )
+    else:
+        if detail:
+            fields.append(("detail", _summarize_re_lifecycle_detail(detail)))
+        fields.append(("action", "Resolve the blocker, then continue or resume the run."))
+    _banner(
+        "RE FINAL STATE — BLOCKED",
+        fields,
+        subtitle="No further provider work was run after the controller gate failed.",
+        file=sys.stderr,
+    )
     raise SystemExit(1)
+
+
+def _summarize_re_lifecycle_detail(detail: str) -> str:
+    """Keep the terminal's final RE state legible when a gate reports many paths."""
+    compact = " ".join(detail.split())
+    return compact if len(compact) <= 300 else compact[:297] + "…"
+
+
+def _workspace_synthesis_missing_artifacts(detail: str) -> list[str]:
+    prefix = "workspace synthesis has missing or empty artifacts: "
+    if not detail.startswith(prefix):
+        return []
+    return [
+        path.strip()
+        for path in detail.removeprefix(prefix).split(",")
+        if path.strip()
+    ]
+
+
+def _format_missing_workspace_artifacts(paths: list[str]) -> str:
+    displayed = paths[:10]
+    heading = f"{len(paths)} required artifacts are absent."
+    remainder = len(paths) - len(displayed)
+    suffix = f"… and {remainder} more" if remainder else ""
+    return "\n".join([heading, *displayed, suffix]).strip()
 
 
 def _cmd_re_run(args: list[str]) -> None:
