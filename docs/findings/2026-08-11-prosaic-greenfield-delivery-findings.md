@@ -87,7 +87,7 @@ refresh reported 42 reused rows and zero unresolved rows.
 ## EGR-154: Fulfillment Feedback Hides Actionable Gaps
 
 **Priority:** P1
-**Status:** open
+**Status:** fixed
 
 Most failed verification entries contained only the generic message that the
 fulfillment report had unresolved statuses. The actual three requirement IDs,
@@ -112,10 +112,11 @@ stable.
 
 ### Implementation status
 
-Implemented locally: verification failures now carry normalized structured gap
+Implemented: verification failures now carry normalized structured gap
 rows, repair text names every concrete row, and an unchanged gap/evidence pair
-blocks after one COMMANDER attempt. A redeployed greenfield run remains before
-the finding is closed.
+blocks after one COMMANDER attempt. Focused Ralph and fulfillment regressions
+exercise both the deterministic blocker and evidence/gap changes that remain
+eligible for repair.
 
 ## EGR-155: CARTOGRAPHER Output Is Disproportionate To Feature Scope
 
@@ -155,7 +156,7 @@ CARTOGRAPHER.
 ## EGR-156: Documentation Repair Does Not Converge Reliably
 
 **Priority:** P1
-**Status:** open
+**Status:** fixed
 
 The documentation phase successively produced three deterministic gate
 failures:
@@ -190,7 +191,9 @@ Ralph's deterministic documentation failures now name the exact required YAML
 keys and values. In particular, no-impact repair requires a non-empty
 `not_applicable_reason` and explicitly rejects narrative prose or `reason` as a
 schema substitute. A focused inner-loop regression converges in one repair
-cycle. Live redeployment proof remains before closing EGR-156.
+cycle. Fresh run `build-20260811-163139-773440` reproduced the alias failure,
+fed the schema-exact finding to COMMANDER, changed the field to
+`not_applicable_reason`, and passed the immediate verify.
 
 ## EGR-157: Provider Usage Telemetry Reports Misleading Zeroes
 
@@ -249,11 +252,48 @@ semantics.
 - Keep enough evidence to reproduce failures without retaining every equivalent
   snapshot or disposable worktree indefinitely.
 
+### Implemented cache-hygiene slice
+
+Tracked Python caches no longer route to an LLM `leave` decision that blocks a
+verified publish. Dirty adjudication deterministically removes tracked
+`__pycache__`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, and `.pyc` entries,
+adds their exact ignore paths, and commits the deletion. The real greenfield
+`iter-0` branch removed the tracked bytecode and landed successfully. Run and
+worktree retention policy remains open under EGR-159.
+
+## EGR-160: Legacy Delivery Branches Cross Run Boundaries
+
+**Priority:** P1
+**Status:** fixed
+
+Two verified reruns failed after verification because deterministic legacy
+branch names referred to older build ancestry. Fresh `iter-0` first pushed a
+branch based on stale mirror state; a later resume reused an old `iter-1` even
+though the log named the current run's `iter-0` as its base.
+
+Fresh iteration zero now fetches current target `main` into a ref that preserved
+worktrees cannot own. Existing iteration branches are preserved only when their
+intended current base is an ancestor; divergent branches are reset before
+checkout. Landing independently fetches current target `main` and merges from a
+detached landing worktree. A production call landed the verified greenfield
+`iter-0` and synchronized the local target.
+
+## EGR-161: Verified Publish Recovery Rebuilds
+
+**Priority:** P2
+**Status:** open
+
+After `publish_failed`, `echelon delivery continue` recovered the preserved
+verified commit but still dispatched another full build and fulfillment pass.
+Recovery should retry adjudication, push, and merge directly when the preserved
+commit still matches durable verification evidence. Re-entry to implementation
+should require an explicit evidence mismatch.
+
 ## Recommended Order
 
 1. EGR-153 product evidence boundary.
 2. EGR-154 concrete fulfillment feedback and no-progress routing.
-3. Repeat the same greenfield delivery until it reaches `verified`.
+3. Repeat the same greenfield delivery through verification and landing.
 4. Finish the remaining Spec-Kit removal audit.
 5. EGR-156 documentation convergence.
 6. EGR-155 CARTOGRAPHER proportionality benchmark.

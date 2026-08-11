@@ -7,4 +7,5 @@
   `reason` alias.
 - [x] Make deterministic gate failures name exact YAML keys and values.
 - [x] Add a one-cycle no-documentation-change repair regression.
-- [ ] Redeploy and prove the retained greenfield delivery reaches `verified`.
+- [x] Redeploy and prove the retained greenfield delivery passes verification in
+  one schema repair cycle; later landing failures were isolated as EGR-160.

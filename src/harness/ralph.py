@@ -169,6 +169,7 @@ class RalphController:
         llm_build_runner: Optional[LlmBuildRunner] = None,
         fulfillment_runner: Optional[FulfillmentRunner] = None,
         build_id: str = "",
+        fresh_delivery: bool = False,
     ) -> None:
         self._provider = provider
         self._gitops = gitops
@@ -190,6 +191,7 @@ class RalphController:
             else FulfillmentRunner(llm_provider) if llm_provider is not None else None
         )
         self._build_id = build_id
+        self._fresh_delivery = fresh_delivery
 
         self._interrupted = False
         self._original_sigterm: Any = None
@@ -331,6 +333,7 @@ class RalphController:
                 base_branch=feature_branch,
                 build_id=self._build_id,
                 prepare_codegraph=True,
+                fresh_branch=self._fresh_delivery and outer_iter == start_outer,
             )
             preserve_worktree = False
 

@@ -60,6 +60,13 @@ DISPOSABLE_PATTERNS = (
     re.compile(r"\.tmp$"),
     re.compile(r"\.log$"),
 )
+GENERATED_CACHE_PATTERNS = (
+    re.compile(r"(^|/)\.pytest_cache/"),
+    re.compile(r"(^|/)__pycache__/"),
+    re.compile(r"(^|/)\.mypy_cache/"),
+    re.compile(r"(^|/)\.ruff_cache/"),
+    re.compile(r"\.pyc$"),
+)
 LLM_CONFIDENCE_THRESHOLD = 0.75
 
 
@@ -135,7 +142,14 @@ def adjudicate_dirty_worktree(
     if not paths:
         return _result("clean", (), llm_used=False)
 
-    llm_decisions = _ask_llm(worktree, paths, llm_provider)
+    llm_paths = tuple(
+        path
+        for path in paths
+        if not (path.tracked and _is_generated_cache(path.path))
+    )
+    llm_decisions = (
+        _ask_llm(worktree, llm_paths, llm_provider) if llm_paths else {}
+    )
     refreshed = _dirty_paths(worktree)
     if refreshed is not None and _path_signature(refreshed) != _path_signature(paths):
         paths = refreshed
@@ -208,6 +222,15 @@ def _decision_for_path(
     path: DirtyPath,
     llm_decision: Mapping[str, object] | None,
 ) -> DirtyPathDecision:
+    if path.tracked and _is_generated_cache(path.path):
+        return DirtyPathDecision(
+            path=path.path,
+            git_status=path.git_status,
+            classification="commit",
+            reason="tracked generated cache is removed from product history",
+            confidence=1.0,
+            action="remove_pending",
+        )
     if llm_decision:
         parsed = _parse_llm_decision(path, llm_decision)
         if parsed is not None:
@@ -289,12 +312,20 @@ def _apply_decisions(
     ignore_patterns = [
         _ignore_pattern(decision.path)
         for decision in decisions
-        if decision.classification == "ignore"
+        if decision.classification == "ignore" or decision.action == "remove_pending"
     ]
     if ignore_patterns:
         _append_gitignore_patterns(worktree / ".gitignore", ignore_patterns)
     for decision in decisions:
-        if decision.classification == "ignore":
+        if decision.action == "remove_pending":
+            _remove_generated_cache(worktree, decision.path)
+            yield DirtyPathDecision(
+                **{
+                    **decision.to_state_dict(),
+                    "action": "removed_tracked_cache",
+                }  # type: ignore[arg-type]
+            )
+        elif decision.classification == "ignore":
             yield DirtyPathDecision(
                 **{**decision.to_state_dict(), "action": "gitignore_updated"}  # type: ignore[arg-type]
             )
@@ -317,6 +348,17 @@ def _ignore_pattern(path: str) -> str:
     if "/" in path:
         return f"/{path}"
     return path
+
+
+def _remove_generated_cache(worktree: Path, relative_path: str) -> None:
+    root = worktree.resolve()
+    candidate = worktree / relative_path
+    try:
+        candidate.resolve(strict=False).relative_to(root)
+    except (OSError, ValueError):
+        return
+    if candidate.is_file() or candidate.is_symlink():
+        candidate.unlink()
 
 
 def _ask_llm(
@@ -385,6 +427,10 @@ def _extract_json_object(text: str) -> Mapping[str, object] | None:
 
 def _is_disposable(path: str) -> bool:
     return any(pattern.search(path) for pattern in DISPOSABLE_PATTERNS)
+
+
+def _is_generated_cache(path: str) -> bool:
+    return any(pattern.search(path) for pattern in GENERATED_CACHE_PATTERNS)
 
 
 def _is_source_like(path: str) -> bool:

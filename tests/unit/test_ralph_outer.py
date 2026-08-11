@@ -244,6 +244,7 @@ def _make_controller(
     llm_build_runner: Optional[Any] = None,
     fulfillment_runner: Optional[Any] = None,
     config: Optional[HarnessConfig] = None,
+    fresh_delivery: bool = False,
 ) -> tuple:
     config = config or _make_config()
     provider = MockProvider(verify_results=verify_results)
@@ -267,6 +268,7 @@ def _make_controller(
         llm_provider=llm_provider,
         llm_build_runner=llm_build_runner,
         fulfillment_runner=fulfillment_runner,
+        fresh_delivery=fresh_delivery,
     )
     return controller, provider, gitops, state_store
 
@@ -2159,6 +2161,19 @@ class TestOuterLoopConvergence:
             "spec-001",
         )
         gitops.destroy_worktree.assert_not_called()
+
+    def test_fresh_delivery_requests_fresh_legacy_iteration_branch(
+        self, tmp_path: Path
+    ) -> None:
+        controller, _, gitops, _ = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+            fresh_delivery=True,
+        )
+
+        controller.run_loop(max_outer=1, max_inner=0)
+
+        assert gitops.create_worktree.call_args.kwargs["fresh_branch"] is True
 
     def test_merge_failure_blocks_convergence(self, tmp_path: Path) -> None:
         """Verified branch cannot be reported converged until it lands on default."""

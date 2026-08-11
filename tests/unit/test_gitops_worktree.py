@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from shutil import copytree
+import subprocess
 import time
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -1076,6 +1077,116 @@ def test_create_worktree_removes_stale_legacy_runs_checkout_before_retry(tmp_pat
     ) in calls
     assert calls.count((["worktree", "add", str(expected), branch_name], str(mirror))) == 2
     sync_runtime.assert_called_once_with(expected, prepare_codegraph=False)
+
+
+def test_fresh_legacy_worktree_restarts_from_current_target_default(tmp_path):
+    """A fresh delivery must not continue an iteration branch from an older run."""
+    target = tmp_path / "target"
+    target.mkdir()
+    for args in (
+        ["git", "init", "-b", "main"],
+        ["git", "config", "user.email", "test@example.com"],
+        ["git", "config", "user.name", "Test User"],
+    ):
+        subprocess.run(args, cwd=target, check=True)
+    (target / "README.md").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=target, check=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=target, check=True)
+
+    config = HarnessConfig(
+        target_repo=str(target),
+        target_default_branch="main",
+        provider="docker",
+    )
+    gitops = GitOpsManager(config=config, base_dir=str(tmp_path / "harness"))
+    gitops.clone_mirror(str(target))
+    branch = "harness/905-import-prose/default/iter-0"
+    stale = tmp_path / "harness" / "runs" / "build-old" / "worktrees" / "default" / "iter-0"
+    subprocess.run(
+        ["git", "worktree", "add", "-b", branch, str(stale), "main"],
+        cwd=gitops.mirror_path,
+        check=True,
+    )
+    (stale / "stale.txt").write_text("old run\n", encoding="utf-8")
+    subprocess.run(["git", "add", "stale.txt"], cwd=stale, check=True)
+    subprocess.run(["git", "commit", "-m", "old delivery"], cwd=stale, check=True)
+
+    (target / "current.txt").write_text("current main\n", encoding="utf-8")
+    subprocess.run(["git", "add", "current.txt"], cwd=target, check=True)
+    subprocess.run(["git", "commit", "-m", "advance main"], cwd=target, check=True)
+
+    with patch.object(gitops, "sync_runtime_extension"):
+        worktree = Path(
+            gitops.create_worktree(
+                "905-import-prose",
+                "default",
+                0,
+                build_id="build-new",
+                fresh_branch=True,
+            )
+        )
+
+    assert (worktree / "current.txt").read_text(encoding="utf-8") == "current main\n"
+    assert not (worktree / "stale.txt").exists()
+
+
+def test_legacy_iteration_resets_when_existing_branch_diverged_from_current_base(
+    tmp_path,
+):
+    """Resume must not attach a prior build's iter-N to the current run."""
+    target = tmp_path / "target"
+    target.mkdir()
+    for args in (
+        ["git", "init", "-b", "main"],
+        ["git", "config", "user.email", "test@example.com"],
+        ["git", "config", "user.name", "Test User"],
+    ):
+        subprocess.run(args, cwd=target, check=True)
+    (target / "README.md").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=target, check=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=target, check=True)
+
+    config = HarnessConfig(
+        target_repo=str(target),
+        target_default_branch="main",
+        provider="docker",
+    )
+    gitops = GitOpsManager(config=config, base_dir=str(tmp_path / "harness"))
+    gitops.clone_mirror(str(target))
+    iter0 = "harness/905-import-prose/default/iter-0"
+    current = tmp_path / "current-iter-0"
+    subprocess.run(
+        ["git", "worktree", "add", "-b", iter0, str(current), "main"],
+        cwd=gitops.mirror_path,
+        check=True,
+    )
+    (current / "current.txt").write_text("current run\n", encoding="utf-8")
+    subprocess.run(["git", "add", "current.txt"], cwd=current, check=True)
+    subprocess.run(["git", "commit", "-m", "current iteration zero"], cwd=current, check=True)
+
+    iter1 = "harness/905-import-prose/default/iter-1"
+    stale = tmp_path / "harness" / "runs" / "build-old" / "worktrees" / "default" / "iter-1"
+    subprocess.run(
+        ["git", "worktree", "add", "-b", iter1, str(stale), "main"],
+        cwd=gitops.mirror_path,
+        check=True,
+    )
+    (stale / "stale.txt").write_text("old run\n", encoding="utf-8")
+    subprocess.run(["git", "add", "stale.txt"], cwd=stale, check=True)
+    subprocess.run(["git", "commit", "-m", "old iteration one"], cwd=stale, check=True)
+
+    with patch.object(gitops, "sync_runtime_extension"):
+        worktree = Path(
+            gitops.create_worktree(
+                "905-import-prose",
+                "default",
+                1,
+                build_id="build-new",
+            )
+        )
+
+    assert (worktree / "current.txt").read_text(encoding="utf-8") == "current run\n"
+    assert not (worktree / "stale.txt").exists()
 
 
 def test_create_worktree_bases_legacy_iteration_on_previous_iteration_branch(tmp_path):

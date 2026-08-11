@@ -41,6 +41,9 @@ def _make_local_merge_gitops(tmp_path, default_branch: str = "main") -> MagicMoc
     m._mirror_path = tmp_path / "mirror.git"
     m._base_dir = tmp_path
     m._config = HarnessConfig(target_repo=".", target_default_branch=default_branch)
+    m._fetch_upstream_branch = GitOpsManager._fetch_upstream_branch.__get__(
+        m, GitOpsManager
+    )
     m.local_merge = GitOpsManager.local_merge.__get__(m, GitOpsManager)
     return m
 
@@ -300,7 +303,13 @@ class TestLocalMerge:
         )
         landing_cwd = str(landing_dir)
         run_git.assert_any_call(
-            ["worktree", "add", landing_cwd, "main"],
+            [
+                "worktree",
+                "add",
+                "--detach",
+                landing_cwd,
+                "refs/echelon/upstream/main",
+            ],
             cwd=mirror_cwd,
         )
         run_git.assert_any_call(
@@ -318,11 +327,13 @@ class TestLocalMerge:
                 "merge-base",
                 "--is-ancestor",
                 "harness/909/default/iter-1",
-                "main",
+                "HEAD",
             ],
             cwd=landing_cwd,
         )
-        run_git.assert_any_call(["push", "upstream", "main"], cwd=landing_cwd)
+        run_git.assert_any_call(
+            ["push", "upstream", "HEAD:refs/heads/main"], cwd=landing_cwd
+        )
 
     @pytest.mark.integration
     def test_updates_local_target_default_branch_from_mirror_branch(self, tmp_path) -> None:
@@ -395,6 +406,80 @@ class TestLocalMerge:
         assert (target / "built.txt").read_text(encoding="utf-8") == "spec 909\n"
         assert result["mirror_landed"] is True
         assert result["pushed"] is True
+        assert result["target_synced"] is True
+
+    @pytest.mark.integration
+    def test_merges_against_current_target_default_when_mirror_default_is_stale(
+        self, tmp_path
+    ) -> None:
+        """Landing must preserve target-main commits made after the mirror clone."""
+        target = tmp_path / "target"
+        target.mkdir()
+        subprocess.run(["git", "init", "-b", "main"], cwd=target, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=target,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"],
+            cwd=target,
+            check=True,
+        )
+        (target / "README.md").write_text("base\n", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=target, check=True)
+        subprocess.run(["git", "commit", "-m", "base"], cwd=target, check=True)
+        subprocess.run(
+            ["git", "config", "receive.denyCurrentBranch", "updateInstead"],
+            cwd=target,
+            check=True,
+        )
+
+        config = HarnessConfig(
+            target_repo=str(target),
+            target_default_branch="main",
+            provider="docker",
+        )
+        gitops = GitOpsManager(config=config, base_dir=str(tmp_path / "harness"))
+        gitops.clone_mirror(str(target))
+
+        feature_worktree = tmp_path / "feature-worktree"
+        subprocess.run(
+            [
+                "git",
+                "worktree",
+                "add",
+                "-b",
+                "harness/909/default/iter-1",
+                str(feature_worktree),
+                "main",
+            ],
+            cwd=gitops.mirror_path,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=feature_worktree,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"],
+            cwd=feature_worktree,
+            check=True,
+        )
+        (feature_worktree / "built.txt").write_text("delivery\n", encoding="utf-8")
+        subprocess.run(["git", "add", "built.txt"], cwd=feature_worktree, check=True)
+        subprocess.run(["git", "commit", "-m", "delivery"], cwd=feature_worktree, check=True)
+
+        (target / "target.txt").write_text("current main\n", encoding="utf-8")
+        subprocess.run(["git", "add", "target.txt"], cwd=target, check=True)
+        subprocess.run(["git", "commit", "-m", "advance main"], cwd=target, check=True)
+
+        result = gitops.local_merge("harness/909/default/iter-1", "909")
+
+        assert (target / "built.txt").read_text(encoding="utf-8") == "delivery\n"
+        assert (target / "target.txt").read_text(encoding="utf-8") == "current main\n"
+        assert result["mirror_landed"] is True
         assert result["target_synced"] is True
 
     @pytest.mark.integration

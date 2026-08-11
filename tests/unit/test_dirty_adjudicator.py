@@ -97,6 +97,49 @@ class _FakeLlm:
 
 
 @pytest.mark.unit
+def test_tracked_python_cache_is_removed_even_when_llm_says_leave(
+    tmp_path: Path,
+) -> None:
+    """Generated tracked bytecode must not block a verified delivery publish."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    cache = repo / "__pycache__"
+    cache.mkdir()
+    pyc = cache / "test_demo.cpython-311.pyc"
+    pyc.write_bytes(b"old bytecode")
+    _git(repo, "add", str(pyc.relative_to(repo)))
+    _git(repo, "commit", "-m", "track generated cache")
+    pyc.write_bytes(b"new bytecode")
+    llm = _FakeLlm(
+        {
+            "decisions": [
+                {
+                    "path": "__pycache__/test_demo.cpython-311.pyc",
+                    "classification": "leave",
+                    "confidence": 0.99,
+                    "reason": "tracked cache cannot be ignored",
+                }
+            ]
+        }
+    )
+
+    result = adjudicate_dirty_worktree(repo, llm_provider=llm)
+
+    assert result.status == "applied"
+    assert result.blocked is False
+    assert result.decisions[0].classification == "commit"
+    assert result.decisions[0].action == "removed_tracked_cache"
+    assert result.decisions[0].source == "deterministic"
+    assert not pyc.exists()
+    assert "/__pycache__/test_demo.cpython-311.pyc" in (
+        repo / ".gitignore"
+    ).read_text(encoding="utf-8")
+    assert _git(repo, "status", "--short", "--", str(pyc.relative_to(repo))) == (
+        "D __pycache__/test_demo.cpython-311.pyc"
+    )
+
+
+@pytest.mark.unit
 def test_llm_can_classify_untracked_evidence_for_commit(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo)

@@ -982,6 +982,11 @@ class StrategyCoordinator:
                 config=self._config,
                 llm_provider=llm_provider,
                 build_id=self._build_id,
+                fresh_delivery=not (
+                    should_resume_running
+                    or should_resume_blocked
+                    or pending_effects_only_resume
+                ),
             )
 
             pending_reentry = _pending_review_reentry(

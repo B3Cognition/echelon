@@ -571,6 +571,7 @@ class GitOpsManager:
         base_branch: Optional[str] = None,
         build_id: str = "",
         prepare_codegraph: bool = False,
+        fresh_branch: bool = False,
     ) -> str:
         """Create ephemeral worktree from mirror.
 
@@ -583,7 +584,9 @@ class GitOpsManager:
         When base_branch is None (legacy / no-echelon mode): a new branch named
         'harness/{spec_id}/{strategy_id}/iter-{outer_iter}' is created from the
         prior iteration branch when available, otherwise from the default branch
-        HEAD.
+        HEAD. A fresh delivery resets iteration zero to the target's current
+        default branch instead of reusing an identically named branch from an
+        older run.
 
         Returns:
             Absolute path to the worktree directory.
@@ -698,12 +701,18 @@ class GitOpsManager:
             # prior iteration branch when one exists.
             default_branch = self.get_default_branch()
             branch_name = f"harness/{spec_id}/{strategy_id}/iter-{outer_iter}"
-            branch_base = self._legacy_iteration_base(
-                spec_id=spec_id,
-                strategy_id=strategy_id,
-                outer_iter=outer_iter,
-                default_branch=default_branch,
-            )
+            if fresh_branch and outer_iter == 0:
+                try:
+                    branch_base, _ = self._fetch_upstream_branch(default_branch)
+                except GitOpsError:
+                    branch_base = default_branch
+            else:
+                branch_base = self._legacy_iteration_base(
+                    spec_id=spec_id,
+                    strategy_id=strategy_id,
+                    outer_iter=outer_iter,
+                    default_branch=default_branch,
+                )
             worktree_created = False
             existing_branch = _run_git(
                 ["rev-parse", "--verify", f"refs/heads/{branch_name}"],
@@ -711,7 +720,32 @@ class GitOpsManager:
                 check=False,
             )
             if existing_branch.returncode == 0:
-                logger.warning("Branch %s may already exist, continuing", branch_name)
+                reset_existing = fresh_branch and outer_iter == 0
+                if not reset_existing:
+                    ancestry = _run_git(
+                        [
+                            "merge-base",
+                            "--is-ancestor",
+                            branch_base,
+                            branch_name,
+                        ],
+                        cwd=str(self._mirror_path),
+                        check=False,
+                    )
+                    reset_existing = ancestry.returncode != 0
+                if reset_existing:
+                    self._remove_stale_runs_worktree_for_branch(branch_name)
+                    _run_git(
+                        ["branch", "-f", branch_name, branch_base],
+                        cwd=str(self._mirror_path),
+                    )
+                    logger.info(
+                        "Reset fresh delivery branch %s to %s",
+                        branch_name,
+                        branch_base,
+                    )
+                else:
+                    logger.warning("Branch %s may already exist, continuing", branch_name)
             else:
                 try:
                     _run_git(
@@ -811,6 +845,32 @@ class GitOpsManager:
                 shutil.rmtree(str(path))
                 logger.info("Force-removed stale worktree directory %s from disk", path)
         _run_git(["worktree", "prune"], cwd=str(self._mirror_path))
+
+    def _remove_stale_runs_worktree_for_branch(self, branch_name: str) -> None:
+        result = _run_git(
+            ["worktree", "list", "--porcelain"],
+            cwd=str(self._mirror_path),
+            check=False,
+        )
+        worktree_path = ""
+        for block in result.stdout.split("\n\n"):
+            fields = dict(
+                line.split(" ", 1)
+                for line in block.splitlines()
+                if " " in line
+            )
+            if fields.get("branch") == f"refs/heads/{branch_name}":
+                worktree_path = fields.get("worktree", "")
+                break
+        if not worktree_path:
+            return
+        if not self._is_harness_runs_worktree(worktree_path):
+            raise GitOpsError(
+                f"Refusing to reset branch {branch_name!r}; it is checked out at "
+                f"non-harness path {worktree_path}",
+                command="reset fresh delivery branch",
+            )
+        self._remove_registered_worktree(worktree_path)
 
     def _add_worktree_removing_stale_harness_checkout(
         self,
@@ -1642,15 +1702,7 @@ class GitOpsManager:
         default_branch = self.get_default_branch()
         label = f"{spec_id} — {spec_name}" if spec_name else spec_id
 
-        target_url = self._config.target_repo
-        if target_url == ".":
-            target_url = str(self._base_dir)
-        else:
-            candidate = Path(target_url)
-            if not candidate.is_absolute():
-                resolved = (self._base_dir / candidate).resolve()
-                if resolved.exists():
-                    target_url = str(resolved)
+        current_default_ref, target_url = self._fetch_upstream_branch(default_branch)
         local_worktree_target: Path | None = None
         skip_target_push = False
         target_path = Path(target_url)
@@ -1679,17 +1731,6 @@ class GitOpsManager:
                         "will land in the harness mirror and skip checkout sync",
                         target_path,
                     )
-        try:
-            _run_git(
-                ["remote", "add", "upstream", target_url],
-                cwd=str(self._mirror_path),
-            )
-        except GitOpsError:
-            _run_git(
-                ["remote", "set-url", "upstream", target_url],
-                cwd=str(self._mirror_path),
-            )
-
         landing_parent = _runs_dir_fn(self._base_dir) / "worktrees"
         landing_parent.mkdir(parents=True, exist_ok=True)
         safe_label = re.sub(r"[^A-Za-z0-9._-]+", "-", f"{spec_id}-{push_branch}")
@@ -1705,7 +1746,7 @@ class GitOpsManager:
             if landing_dir.exists():
                 shutil.rmtree(landing_dir)
             _run_git(
-                ["worktree", "add", str(landing_dir), default_branch],
+                ["worktree", "add", "--detach", str(landing_dir), current_default_ref],
                 cwd=str(self._mirror_path),
             )
             landing_created = True
@@ -1714,8 +1755,16 @@ class GitOpsManager:
                 cwd=str(landing_dir),
             )
             _run_git(
-                ["merge-base", "--is-ancestor", push_branch, default_branch],
+                ["merge-base", "--is-ancestor", push_branch, "HEAD"],
                 cwd=str(landing_dir),
+            )
+            landed_commit = _run_git(
+                ["rev-parse", "HEAD"],
+                cwd=str(landing_dir),
+            ).stdout.strip()
+            _run_git(
+                ["update-ref", default_ref, landed_commit],
+                cwd=str(self._mirror_path),
             )
             if skip_target_push:
                 logger.info(
@@ -1733,7 +1782,10 @@ class GitOpsManager:
                     "target_repo": str(target_path),
                 }
             else:
-                _run_git(["push", "upstream", default_branch], cwd=str(landing_dir))
+                _run_git(
+                    ["push", "upstream", f"HEAD:refs/heads/{default_branch}"],
+                    cwd=str(landing_dir),
+                )
                 if local_worktree_target is not None:
                     logger.info(
                         "Local merge: %s → %s and synced clean local target %s",
@@ -1771,6 +1823,39 @@ class GitOpsManager:
                     check=False,
                 )
             _run_git(["worktree", "prune"], cwd=str(self._mirror_path), check=False)
+
+    def _fetch_upstream_branch(self, branch: str) -> tuple[str, str]:
+        """Fetch one target branch into a ref that no worktree can own."""
+        target_url = self._config.target_repo
+        if target_url == ".":
+            target_url = str(self._base_dir)
+        else:
+            candidate = Path(target_url)
+            if not candidate.is_absolute():
+                resolved = (self._base_dir / candidate).resolve()
+                if resolved.exists():
+                    target_url = str(resolved)
+        try:
+            _run_git(
+                ["remote", "add", "upstream", target_url],
+                cwd=str(self._mirror_path),
+            )
+        except GitOpsError:
+            _run_git(
+                ["remote", "set-url", "upstream", target_url],
+                cwd=str(self._mirror_path),
+            )
+        ref = f"refs/echelon/upstream/{branch}"
+        _run_git(
+            [
+                "fetch",
+                "--no-tags",
+                "upstream",
+                f"+refs/heads/{branch}:{ref}",
+            ],
+            cwd=str(self._mirror_path),
+        )
+        return ref, target_url
 
     # === Safety ===
 
