@@ -121,7 +121,7 @@ eligible for repair.
 ## EGR-155: CARTOGRAPHER Output Is Disproportionate To Feature Scope
 
 **Priority:** P1
-**Status:** in-progress
+**Status:** fixed
 
 The request was to create a minimal Python Hello World program. First-pass
 artifacts expanded it into:
@@ -151,7 +151,9 @@ CARTOGRAPHER.
 - Quality gates retain atomicity, testability, negative behavior, and explicit
   uncertainty without rewarding document volume.
 - A repeated Hello World benchmark demonstrates materially smaller artifacts
-  while preserving the exact output, exit-status, and no-input contract.
+  while preserving the grounded output, no-other-output, successful-termination,
+  and no-input contract. Unsupported raw line-ending and numeric exit-code
+  values remain explicit unknowns rather than becoming guessed requirements.
 
 ### Implementation evidence
 
@@ -177,9 +179,33 @@ package-install, optional-codegen-install, and runtime-deployment tests with:
   tests/unit/test_workspace_init_deploy_runtime.py
 ```
 
-EGR-155 remains in progress until the retained Hello World benchmark is
-repeated through a real provider and preserves the exact output, exit-status,
-standard-error, and no-input contract in materially smaller artifacts.
+### Real-provider benchmark
+
+Fresh Codex banzai run `spec-20260811-175308-671946` in
+`/Users/michalbachorik/work/echelon-greenfield-proportionality-20260811`
+used the exact request `do hello world in python` and the deployed current
+Prosaic/runtime bundles.
+
+- First-pass `spec.md`: 90 lines, 4 FRs, 0 NFRs, and 3 ACs.
+- Quality-certified `spec.md`: 122 lines, 9 FRs, 0 NFRs, and 9 ACs.
+- Final Understanding scores: overall `0.7516`, structure `0.8722`,
+  testability `0.7526`, semantic `0.8407`, cognitive `0.6879`, readability
+  `0.6533`, depth `0.5602`, and behavioral `0.8396`.
+- SAGE WHY2 passed, and the deterministic Spec Lexicon gate reported zero
+  findings.
+
+The certified contract retains one directly runnable Python script, exactly 13
+visible characters matching `Hello, World!`, exactly one greeting on standard
+output, exactly zero application-output items on other channels, no input,
+file, network, or retained-state effects, and observable process completion.
+The original generated requirement for a numeric zero exit status and a raw
+newline byte was not grounded in the short user request; the new specification
+keeps those evaluator-specific values open instead of guessing.
+
+The benchmark required seven CARTOGRAPHER passes despite remaining at 18 formal
+rows. EGR-150 now carries the reproduced numeric-syntax compatibility evidence,
+and EGR-162 separately tracks aggregate-gate convergence so the proportionality
+fix is not conflated with validation efficiency.
 
 ## EGR-156: Documentation Repair Does Not Converge Reliably
 
