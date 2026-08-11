@@ -77,7 +77,8 @@ def evaluate_documentation_gate(
     if docs_required is not True and docs_required is not False:
         return _fail(
             "documentation-impact-report-invalid",
-            f"{report} must set docs_required true or false",
+            f"{report} must set exactly `docs_required: true` or "
+            "`docs_required: false` in YAML frontmatter",
         )
 
     if docs_required is False:
@@ -85,7 +86,9 @@ def evaluate_documentation_gate(
         if not reason:
             return _fail(
                 "documentation-not-applicable-without-reason",
-                f"{report} must explain why docs are not applicable",
+                f"{report} must set a non-empty YAML frontmatter field "
+                "`not_applicable_reason`. Narrative prose and aliases such as "
+                "`reason` do not satisfy the report schema.",
             )
         return DocumentationGateResult(passed=True)
 
@@ -94,7 +97,8 @@ def evaluate_documentation_gate(
     if not readme_updated or not changelog_updated:
         return _fail(
             "documentation-required-report-incomplete",
-            f"{report} says docs are required but README/CHANGELOG updates are not both true",
+            f"{report} sets `docs_required: true`, so YAML frontmatter must also "
+            "set both `readme_updated: true` and `changelog_updated: true`",
         )
 
     readme = worktree / "README.md"

@@ -7553,6 +7553,31 @@ class TestPromptHelpers:
         assert "spec 001" in result
         assert "re-running" in result
 
+    def test_make_feedback_prompt_carries_exact_documentation_schema_repair(
+        self, tmp_path: Path
+    ) -> None:
+        controller, *_ = _make_controller(tmp_path)
+        verify = VerifyResult(
+            passed=False,
+            failures=[
+                FailureEntry(
+                    category=FailureCategory.OTHER,
+                    id="documentation-not-applicable-without-reason",
+                    error=(
+                        "documentation-impact-report.md must set a non-empty "
+                        "`not_applicable_reason`; narrative prose or `reason` does "
+                        "not satisfy the schema"
+                    ),
+                )
+            ],
+        )
+
+        result = controller._make_feedback_prompt("spec 001", verify, inner_iter=1)
+
+        assert "`not_applicable_reason`" in result
+        assert "`reason`" in result
+        assert "does not satisfy the schema" in result
+
     def test_make_feedback_prompt_overrides_manual_verify_spec_repair(
         self, tmp_path: Path
     ) -> None:

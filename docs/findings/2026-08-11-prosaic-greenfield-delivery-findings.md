@@ -177,6 +177,21 @@ is missing the contract.
 - Add a greenfield no-doc-change regression that converges in one documentation
   repair cycle at most.
 
+### Confirmed root cause and implementation
+
+The deployed `echelon.tech-writer` prose already contained the canonical
+`not_applicable_reason` field and both required version-2 examples. The retained
+repair invocation did not read that prose; it consumed Ralph's context packs,
+the existing reports, and the generic deterministic error "must explain why".
+It therefore added a narrative section while retaining the invented `reason`
+alias, and the gate rejected the same report again.
+
+Ralph's deterministic documentation failures now name the exact required YAML
+keys and values. In particular, no-impact repair requires a non-empty
+`not_applicable_reason` and explicitly rejects narrative prose or `reason` as a
+schema substitute. A focused inner-loop regression converges in one repair
+cycle. Live redeployment proof remains before closing EGR-156.
+
 ## EGR-157: Provider Usage Telemetry Reports Misleading Zeroes
 
 **Priority:** P2

@@ -270,6 +270,56 @@ def test_gate_accepts_not_applicable_report_with_reason(tmp_path: Path) -> None:
     assert result.passed
 
 
+def test_gate_rejects_ambiguous_reason_alias_with_exact_schema_repair(
+    tmp_path: Path,
+) -> None:
+    _git_repo(tmp_path)
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "documentation-impact-report.md").write_text(
+        "---\n"
+        "docs_required: false\n"
+        'reason: "The README already covers the behavior."\n'
+        "---\n"
+        "# Documentation Impact Report\n\n"
+        "The narrative also explains why no update is needed.\n",
+        encoding="utf-8",
+    )
+    _commit_all(tmp_path)
+
+    result = evaluate_documentation_gate(tmp_path, spec_dir)
+
+    assert not result.passed
+    assert result.failure is not None
+    assert result.failure.id == "documentation-not-applicable-without-reason"
+    assert "`not_applicable_reason`" in result.failure.error
+    assert "`reason`" in result.failure.error
+    assert "do not satisfy the report schema" in result.failure.error
+
+
+def test_gate_names_exact_required_update_fields(tmp_path: Path) -> None:
+    _git_repo(tmp_path)
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "documentation-impact-report.md").write_text(
+        "---\n"
+        "docs_required: true\n"
+        "readme_updated: false\n"
+        "changelog_updated: false\n"
+        "---\n",
+        encoding="utf-8",
+    )
+    _commit_all(tmp_path)
+
+    result = evaluate_documentation_gate(tmp_path, spec_dir)
+
+    assert not result.passed
+    assert result.failure is not None
+    assert result.failure.id == "documentation-required-report-incomplete"
+    assert "`readme_updated: true`" in result.failure.error
+    assert "`changelog_updated: true`" in result.failure.error
+
+
 def test_gate_blocks_required_docs_without_readme_and_changelog_changes(
     tmp_path: Path,
 ) -> None:

@@ -213,6 +213,72 @@ class TestInnerLoopConvergence:
         assert result["inner_count"] == 1
         assert ctrl._state_store.read().get("escalation_file") is None
 
+    def test_not_applicable_documentation_schema_repairs_in_one_cycle(
+        self, tmp_path: Path
+    ) -> None:
+        worktree = tmp_path / "worktree"
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        report = spec_dir / "documentation-impact-report.md"
+        report.write_text(
+            "---\n"
+            "docs_required: false\n"
+            'reason: "README already covers the behavior."\n'
+            "---\n",
+            encoding="utf-8",
+        )
+        ctrl = _make_controller(tmp_path, [])
+        state = ctrl._state_store.read()
+        state["spec_dir"] = str(spec_dir)
+        ctrl._state_store.write(state)
+        initial = ctrl._apply_documentation_gate(
+            VerifyResult(passed=True), str(worktree)
+        )
+        assert initial.failures[0].id == "documentation-not-applicable-without-reason"
+
+        def repair(*_args: object, **_kwargs: object) -> dict[str, object]:
+            report.write_text(
+                "---\n"
+                "docs_required: false\n"
+                'not_applicable_reason: "README already covers the behavior."\n'
+                "---\n",
+                encoding="utf-8",
+            )
+            return {
+                "exit_code": 0,
+                "passed": True,
+                "build_status": "done",
+                "build_reason": "wrote exact report field",
+                "duration_s": 0.0,
+                "tokens": 0,
+                "task_ids": [],
+            }
+
+        ctrl._exec_feedback = MagicMock(side_effect=repair)
+        ctrl._try_checkpoint_progress_commit = MagicMock(return_value=None)
+        ctrl._exec_verify = MagicMock(return_value=VerifyResult(passed=True))
+        ctrl._refresh_fulfillment_report = MagicMock(
+            side_effect=lambda verify, *_args, **_kwargs: verify
+        )
+
+        result = ctrl._run_inner_loop(
+            handle=ctrl._provider.create(None),
+            verify_result=initial,
+            outer_iter=0,
+            max_inner=3,
+            tokens_used=0,
+            token_budget=None,
+            state=ctrl._state_store.read(),
+            build_command="echelon build",
+            strategy_context="",
+            worktree_path=str(worktree),
+            build_prompt="repair documentation schema",
+        )
+
+        assert result["converged"] is True
+        assert result["inner_count"] == 1
+        assert ctrl._exec_feedback.call_count == 1
+
 
 @pytest.mark.unit
 class TestSameFailureEscalation:
