@@ -453,6 +453,32 @@ class TestCmdHarnessResume:
         user_message = mock_run.call_args.args[0]
         assert "mode=banzai" in user_message
 
+    def test_target_merge_failure_retries_without_git_recovery(
+        self, tmp_path: Path
+    ) -> None:
+        _make_echelon_yml(tmp_path, verify_command="pytest")
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked",
+            "termination_reason": "target_merge_failed",
+            "verified_publish_checkpoint": {
+                "schema_version": 1,
+                "stage": "target_merge",
+            },
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.recovery.recover_blocked_run") as mock_recover, \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.cli import _cmd_harness_resume
+            _cmd_harness_resume(["001", "mode=banzai"])
+
+        mock_recover.assert_not_called()
+        mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
+
     def test_delivery_continue_resumes_no_progress_without_answer(self, tmp_path: Path) -> None:
         _make_echelon_yml(tmp_path, verify_command="pytest")
         sd = _setup_build(tmp_path, "001")

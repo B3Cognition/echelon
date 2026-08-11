@@ -3225,7 +3225,12 @@ class TestOuterLoopConvergence:
         )
         gitops.push.side_effect = Exception("network error")
 
-        result = controller.run_loop(max_outer=5, max_inner=3)
+        with patch.object(controller, "_current_head", return_value="verified-head"), \
+             patch(
+                 "harness.ralph._safe_product_evidence_fingerprint",
+                 return_value="product-fingerprint",
+             ):
+            result = controller.run_loop(max_outer=5, max_inner=3)
 
         assert result.status == "blocked"
         assert result.termination_reason == "publish_failed"
@@ -3237,6 +3242,92 @@ class TestOuterLoopConvergence:
         assert state["status"] == "running"
         assert state["termination_reason"] == "publish_failed"
         assert state["branch"] == "harness/spec-001-default-iter-0"
+        assert state["verified_publish_checkpoint"]["stage"] == "push"
+        assert state["verified_publish_checkpoint"]["commit"] == "verified-head"
+
+    def test_verified_publish_resume_retries_effects_without_provider_build(
+        self, tmp_path: Path
+    ) -> None:
+        controller, provider, gitops, state_store = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        state = state_store.read()
+        state.update(
+            {
+                "termination_reason": "publish_failed",
+                "last_verify_result": {
+                    "passed": True,
+                    "failures": [],
+                    "duration_s": 1.0,
+                    "token_usage": 0,
+                },
+                "verified_publish_checkpoint": {
+                    "schema_version": 1,
+                    "stage": "push",
+                    "worktree_path": str(worktree),
+                    "branch": "harness/spec-001-default-iter-0",
+                    "commit": "verified-head",
+                    "product_evidence_fingerprint": "product-fingerprint",
+                },
+            }
+        )
+        state_store.write(state)
+
+        with patch.object(controller, "_current_head", return_value="verified-head"), \
+             patch(
+                 "harness.ralph._safe_product_evidence_fingerprint",
+                 return_value="product-fingerprint",
+             ):
+            result = controller.resume_verified_publication()
+
+        assert result is not None
+        assert result.status == "verified"
+        assert result.termination_reason == "converged"
+        gitops.push.assert_called_once_with(
+            str(worktree), "harness/spec-001-default-iter-0"
+        )
+        gitops.local_merge.assert_called_once()
+        assert provider._exec_count == 0
+        recovered_state = state_store.read()
+        assert "verified_publish_checkpoint" not in recovered_state
+        assert recovered_state["verified_publish_recovery"]["status"] == "completed"
+
+    def test_verified_publish_resume_invalidates_changed_product_before_build(
+        self, tmp_path: Path
+    ) -> None:
+        controller, provider, gitops, state_store = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        state = state_store.read()
+        state.update(
+            {
+                "termination_reason": "publish_failed",
+                "last_verify_result": {"passed": True, "failures": []},
+                "verified_publish_checkpoint": {
+                    "schema_version": 1,
+                    "stage": "push",
+                    "worktree_path": str(worktree),
+                    "branch": "feature",
+                    "commit": "verified-head",
+                    "product_evidence_fingerprint": "verified-product",
+                },
+            }
+        )
+        state_store.write(state)
+
+        with patch.object(controller, "_current_head", return_value="verified-head"), \
+             patch(
+                 "harness.ralph._safe_product_evidence_fingerprint",
+                 return_value="changed-product",
+             ):
+            result = controller.resume_verified_publication()
+
+        assert result is None
+        gitops.push.assert_not_called()
+        assert provider._exec_count == 0
+        invalidation = state_store.read()["verified_publish_recovery"]
+        assert invalidation["status"] == "invalidated"
+        assert invalidation["reason"] == "product_evidence_changed"
 
     def test_llm_build_incomplete_returns_blocked_result(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

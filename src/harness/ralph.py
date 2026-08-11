@@ -142,10 +142,18 @@ def _normalized_path_list(value: object, *, base_path: object | None = None) -> 
 class CommitPushError(RuntimeError):
     """Raised when verified work cannot be committed or pushed."""
 
-    def __init__(self, message: str, *, branch: str, worktree_path: str) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        branch: str,
+        worktree_path: str,
+        stage: str = "commit",
+    ) -> None:
         super().__init__(message)
         self.branch = branch
         self.worktree_path = worktree_path
+        self.stage = stage
 
 
 class RalphController:
@@ -816,6 +824,12 @@ class RalphController:
                                 tokens_used=tokens_used,
                                 final_verify=verify_result,
                                 branch=e.branch,
+                                extra_state=self._publish_checkpoint_state(
+                                    worktree_path=worktree_path,
+                                    branch=e.branch,
+                                    stage=e.stage,
+                                    verify_result=verify_result,
+                                ),
                             )
                         if not self._merge_verified_branch(worktree_path, branch, verify_result):
                             preserve_worktree = True
@@ -828,6 +842,12 @@ class RalphController:
                                 tokens_used=tokens_used,
                                 final_verify=verify_result,
                                 branch=branch,
+                                extra_state=self._publish_checkpoint_state(
+                                    worktree_path=worktree_path,
+                                    branch=branch,
+                                    stage="target_merge",
+                                    verify_result=verify_result,
+                                ),
                             )
                         try:
                             self._commit_orchestration_spec_artifacts(
@@ -844,8 +864,34 @@ class RalphController:
                                 tokens_used=tokens_used,
                                 final_verify=verify_result,
                                 branch=e.branch,
+                                extra_state=self._publish_checkpoint_state(
+                                    worktree_path=worktree_path,
+                                    branch=e.branch,
+                                    stage=e.stage,
+                                    verify_result=verify_result,
+                                ),
                             )
-                        pr_url = self._manage_pr(pr_url, branch, converged=True)
+                        try:
+                            pr_url = self._manage_pr(pr_url, branch, converged=True)
+                        except Exception as exc:
+                            preserve_worktree = True
+                            logger.warning("Verified PR publication failed: %s", exc)
+                            return self._finalize(
+                                status="blocked",
+                                reason="publish_failed",
+                                outer_iterations=outer_iter + 1,
+                                inner_iterations=total_inner_iterations,
+                                pr_url=pr_url,
+                                tokens_used=tokens_used,
+                                final_verify=verify_result,
+                                branch=branch,
+                                extra_state=self._publish_checkpoint_state(
+                                    worktree_path=worktree_path,
+                                    branch=branch,
+                                    stage="pr",
+                                    verify_result=verify_result,
+                                ),
+                            )
                         # Phase 2/3 and landing consume the converged delivery
                         # worktree after Ralph returns, even on an early outer
                         # iteration.
@@ -925,6 +971,12 @@ class RalphController:
                                 tokens_used=tokens_used,
                                 final_verify=inner_result.get("final_verify"),
                                 branch=e.branch,
+                                extra_state=self._publish_checkpoint_state(
+                                    worktree_path=worktree_path,
+                                    branch=e.branch,
+                                    stage=e.stage,
+                                    verify_result=inner_result.get("final_verify"),
+                                ),
                             )
                         if not self._merge_verified_branch(
                             worktree_path, branch, inner_result.get("final_verify")
@@ -939,6 +991,12 @@ class RalphController:
                                 tokens_used=tokens_used,
                                 final_verify=inner_result.get("final_verify"),
                                 branch=branch,
+                                extra_state=self._publish_checkpoint_state(
+                                    worktree_path=worktree_path,
+                                    branch=branch,
+                                    stage="target_merge",
+                                    verify_result=inner_result.get("final_verify"),
+                                ),
                             )
                         try:
                             self._commit_orchestration_spec_artifacts(
@@ -955,8 +1013,34 @@ class RalphController:
                                 tokens_used=tokens_used,
                                 final_verify=inner_result.get("final_verify"),
                                 branch=e.branch,
+                                extra_state=self._publish_checkpoint_state(
+                                    worktree_path=worktree_path,
+                                    branch=e.branch,
+                                    stage=e.stage,
+                                    verify_result=inner_result.get("final_verify"),
+                                ),
                             )
-                        pr_url = self._manage_pr(pr_url, branch, converged=True)
+                        try:
+                            pr_url = self._manage_pr(pr_url, branch, converged=True)
+                        except Exception as exc:
+                            preserve_worktree = True
+                            logger.warning("Verified PR publication failed: %s", exc)
+                            return self._finalize(
+                                status="blocked",
+                                reason="publish_failed",
+                                outer_iterations=outer_iter + 1,
+                                inner_iterations=total_inner_iterations,
+                                pr_url=pr_url,
+                                tokens_used=tokens_used,
+                                final_verify=inner_result.get("final_verify"),
+                                branch=branch,
+                                extra_state=self._publish_checkpoint_state(
+                                    worktree_path=worktree_path,
+                                    branch=branch,
+                                    stage="pr",
+                                    verify_result=inner_result.get("final_verify"),
+                                ),
+                            )
                         # Phase 2/3 and landing consume the converged delivery
                         # worktree after Ralph returns, even on an early outer
                         # iteration.
@@ -4403,6 +4487,7 @@ class RalphController:
                 f"Push failed: {e}",
                 branch=branch,
                 worktree_path=worktree_path,
+                stage="push",
             ) from e
 
     def _append_dirty_adjudication_telemetry(
@@ -4510,6 +4595,7 @@ class RalphController:
                 f"Spec dir {spec_dir} is outside orchestration root {root}",
                 branch=branch,
                 worktree_path=str(root),
+                stage="orchestration_spec_artifacts",
             ) from exc
 
         status = subprocess.run(
@@ -4525,6 +4611,7 @@ class RalphController:
                 f"Could not inspect orchestration spec artifacts: {status.stderr.strip()}",
                 branch=branch,
                 worktree_path=str(root),
+                stage="orchestration_spec_artifacts",
             )
         if not status.stdout.strip():
             return None
@@ -4594,6 +4681,7 @@ class RalphController:
                 f"Could not commit orchestration spec artifacts: {exc}",
                 branch=branch,
                 worktree_path=str(root),
+                stage="orchestration_spec_artifacts",
             ) from exc
 
     def _manage_pr(self, pr_url: Optional[str], branch: str, converged: bool) -> Optional[str]:
@@ -4809,6 +4897,224 @@ class RalphController:
             tokens_used=tokens_used,
             final_verify=verify_result,
         )
+
+    def _verified_publish_checkpoint(
+        self,
+        *,
+        worktree_path: str,
+        branch: str,
+        stage: str,
+        verify_result: Optional[VerifyResult],
+    ) -> Optional[Dict[str, Any]]:
+        """Capture the immutable evidence required for provider-free publication retry."""
+        if (
+            verify_result is None
+            or not verify_result.passed
+            or stage
+            not in {
+                "push",
+                "target_merge",
+                "orchestration_spec_artifacts",
+                "pr",
+            }
+        ):
+            return None
+        commit = self._current_head(worktree_path)
+        fingerprint = _safe_product_evidence_fingerprint(worktree_path)
+        if not commit or not fingerprint:
+            return None
+        return {
+            "schema_version": 1,
+            "stage": stage,
+            "worktree_path": worktree_path,
+            "branch": branch,
+            "commit": commit,
+            "product_evidence_fingerprint": fingerprint,
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def _publish_checkpoint_state(
+        self,
+        *,
+        worktree_path: str,
+        branch: str,
+        stage: str,
+        verify_result: Optional[VerifyResult],
+    ) -> Optional[Dict[str, Any]]:
+        checkpoint = self._verified_publish_checkpoint(
+            worktree_path=worktree_path,
+            branch=branch,
+            stage=stage,
+            verify_result=verify_result,
+        )
+        return {"verified_publish_checkpoint": checkpoint} if checkpoint else None
+
+    def resume_verified_publication(self) -> Optional[ImplementationResult]:
+        """Retry verified publication effects without dispatching another build."""
+        state = self._state_store.read()
+        checkpoint = state.get("verified_publish_checkpoint")
+        if not isinstance(checkpoint, dict):
+            return None
+
+        verify_data = state.get("last_verify_result")
+        try:
+            verify_result = VerifyResult.from_dict(verify_data)
+        except Exception:
+            self._invalidate_verified_publish_checkpoint(
+                state, "verified_result_missing_or_invalid"
+            )
+            return None
+        if not verify_result.passed:
+            self._invalidate_verified_publish_checkpoint(
+                state, "prior_verification_did_not_pass"
+            )
+            return None
+
+        stage = str(checkpoint.get("stage") or "")
+        worktree_path = str(checkpoint.get("worktree_path") or "")
+        branch = str(checkpoint.get("branch") or "")
+        commit = str(checkpoint.get("commit") or "")
+        fingerprint = str(checkpoint.get("product_evidence_fingerprint") or "")
+        if checkpoint.get("schema_version") != 1 or stage not in {
+            "push",
+            "target_merge",
+            "orchestration_spec_artifacts",
+            "pr",
+        }:
+            self._invalidate_verified_publish_checkpoint(state, "checkpoint_invalid")
+            return None
+        if not worktree_path or not Path(worktree_path).is_dir():
+            self._invalidate_verified_publish_checkpoint(state, "worktree_missing")
+            return None
+        if not commit or self._current_head(worktree_path) != commit:
+            self._invalidate_verified_publish_checkpoint(state, "verified_commit_changed")
+            return None
+        if (
+            not fingerprint
+            or _safe_product_evidence_fingerprint(worktree_path) != fingerprint
+        ):
+            self._invalidate_verified_publish_checkpoint(state, "product_evidence_changed")
+            return None
+        if not branch:
+            self._invalidate_verified_publish_checkpoint(state, "branch_missing")
+            return None
+
+        outer_iterations = int(state.get("outer_iter") or 0)
+        inner_iterations = int(state.get("inner_iter") or 0)
+        tokens_used = int(state.get("tokens_used") or 0)
+        pr_url = state.get("pr_url")
+
+        if stage == "push":
+            try:
+                self._gitops.push(worktree_path, branch)
+            except Exception as exc:
+                logger.warning("Verified publication push retry failed: %s", exc)
+                return self._finalize(
+                    status="blocked",
+                    reason="publish_failed",
+                    outer_iterations=outer_iterations,
+                    inner_iterations=inner_iterations,
+                    pr_url=pr_url,
+                    tokens_used=tokens_used,
+                    final_verify=verify_result,
+                    branch=branch,
+                    extra_state={"verified_publish_checkpoint": checkpoint},
+                )
+            stage = "target_merge"
+
+        if stage == "target_merge":
+            if not self._merge_verified_branch(worktree_path, branch, verify_result):
+                checkpoint["stage"] = "target_merge"
+                return self._finalize(
+                    status="blocked",
+                    reason="target_merge_failed",
+                    outer_iterations=outer_iterations,
+                    inner_iterations=inner_iterations,
+                    pr_url=pr_url,
+                    tokens_used=tokens_used,
+                    final_verify=verify_result,
+                    branch=branch,
+                    extra_state={"verified_publish_checkpoint": checkpoint},
+                )
+            stage = "orchestration_spec_artifacts"
+
+        if stage == "orchestration_spec_artifacts":
+            try:
+                self._commit_orchestration_spec_artifacts(
+                    worktree_path,
+                    max(outer_iterations - 1, 0),
+                    branch=branch,
+                )
+            except CommitPushError as exc:
+                checkpoint["stage"] = "orchestration_spec_artifacts"
+                logger.warning("Verified orchestration publication retry failed: %s", exc)
+                return self._finalize(
+                    status="blocked",
+                    reason="publish_failed",
+                    outer_iterations=outer_iterations,
+                    inner_iterations=inner_iterations,
+                    pr_url=pr_url,
+                    tokens_used=tokens_used,
+                    final_verify=verify_result,
+                    branch=branch,
+                    extra_state={"verified_publish_checkpoint": checkpoint},
+                )
+            stage = "pr"
+
+        try:
+            pr_url = self._manage_pr(pr_url, branch, converged=True)
+        except Exception as exc:
+            checkpoint["stage"] = "pr"
+            logger.warning("Verified PR publication retry failed: %s", exc)
+            return self._finalize(
+                status="blocked",
+                reason="publish_failed",
+                outer_iterations=outer_iterations,
+                inner_iterations=inner_iterations,
+                pr_url=pr_url,
+                tokens_used=tokens_used,
+                final_verify=verify_result,
+                branch=branch,
+                extra_state={"verified_publish_checkpoint": checkpoint},
+            )
+
+        state = self._state_store.read()
+        state.pop("verified_publish_checkpoint", None)
+        state["verified_publish_recovery"] = {
+            "status": "completed",
+            "commit": commit,
+            "branch": branch,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        state["termination_reason"] = "converged"
+        state["pr_url"] = pr_url
+        state["branch"] = branch
+        state["registered_worktree"] = worktree_path
+        state["verified_commit"] = commit
+        state["last_completed_phase"] = "implementation"
+        self._state_store.write(state)
+        return ImplementationResult(
+            status="verified",
+            termination_reason="converged",
+            outer_iterations=outer_iterations,
+            inner_iterations=inner_iterations,
+            pr_url=pr_url,
+            tokens_used=tokens_used,
+            final_verify=verify_result,
+            branch=branch,
+        )
+
+    def _invalidate_verified_publish_checkpoint(
+        self, state: Dict[str, Any], reason: str
+    ) -> None:
+        checkpoint = state.pop("verified_publish_checkpoint", None)
+        state["verified_publish_recovery"] = {
+            "status": "invalidated",
+            "reason": reason,
+            "checkpoint": checkpoint,
+            "invalidated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self._state_store.write(state)
 
     def _handle_blocked_resume(
         self,

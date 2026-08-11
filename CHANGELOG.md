@@ -34,6 +34,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Verified publication recovery** — delivery now records the exact worktree
+  HEAD, branch, bounded product fingerprint, and failed publication stage after
+  verification succeeds. `delivery continue` can retry push, target merge,
+  orchestration-spec publication, and PR effects from that checkpoint without
+  another provider build. Missing or changed evidence invalidates the shortcut
+  explicitly and returns to implementation.
+
 - **Delivery worktree retention** — Ralph now removes every normally completed
   disposable iteration, including the final outer-cap checkout, while retaining
   verified checkouts needed by downstream phases and checkouts needed by

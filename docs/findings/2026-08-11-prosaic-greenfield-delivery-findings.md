@@ -378,13 +378,31 @@ detached landing worktree. A production call landed the verified greenfield
 ## EGR-161: Verified Publish Recovery Rebuilds
 
 **Priority:** P2
-**Status:** open
+**Status:** fixed
 
 After `publish_failed`, `echelon delivery continue` recovered the preserved
 verified commit but still dispatched another full build and fulfillment pass.
 Recovery should retry adjudication, push, and merge directly when the preserved
 commit still matches durable verification evidence. Re-entry to implementation
 should require an explicit evidence mismatch.
+
+### Resolution
+
+Verified publication failures now persist a versioned checkpoint containing the
+exact retained worktree, commit, branch, bounded product fingerprint, and next
+publication stage. Checkpoints begin only after dirty-worktree adjudication and
+the verified commit have completed. Continuation validates the prior passing `VerifyResult`,
+worktree existence, unchanged HEAD, and unchanged product evidence before it
+retries push, target merge, orchestration-spec publication, and PR effects.
+The coordinator consumes the resulting verified checkpoint without calling
+Ralph's provider build loop and registers that exact worktree for downstream
+phases.
+
+Legacy states without this evidence continue through the existing recovery and
+implementation path. A missing worktree, changed commit, changed product
+fingerprint, malformed checkpoint, or invalid prior result records an explicit
+`verified_publish_recovery` invalidation before implementation re-entry. The
+focused CLI, recovery, coordinator, and Ralph matrix passes 312 tests.
 
 ## Recommended Order
 

@@ -533,11 +533,31 @@ class StrategyCoordinator:
         tokens_used: int,
     ) -> DeliveryResult | None:
         """Persist a verified checkpoint or return its durable implementation block."""
-        checkpoint_updates = self._verified_checkpoint_updates(
-            spec_id=spec_id,
-            strategy_id=strategy_id,
-            implementation=implementation,
-        )
+        state = state_store.read()
+        recovery = state.get("verified_publish_recovery")
+        registered = state.get("registered_worktree")
+        recovered_commit = str(state.get("verified_commit") or "")
+        if (
+            isinstance(recovery, dict)
+            and recovery.get("status") == "completed"
+            and isinstance(registered, str)
+            and registered
+            and recovered_commit
+            and Path(registered).is_dir()
+            and self._worktree_head(Path(registered)) == recovered_commit
+        ):
+            checkpoint_updates = {
+                "last_completed_phase": "implementation",
+                "pr_url": implementation.pr_url,
+                "registered_worktree": registered,
+                "verified_commit": recovered_commit,
+            }
+        else:
+            checkpoint_updates = self._verified_checkpoint_updates(
+                spec_id=spec_id,
+                strategy_id=strategy_id,
+                implementation=implementation,
+            )
         if checkpoint_updates is None:
             return self._persist_phase_block(
                 state_store,
@@ -799,6 +819,12 @@ class StrategyCoordinator:
                 and existing_status == "blocked"
                 and not pending_effects_only_resume
             )
+            should_resume_verified_publication = (
+                should_resume_blocked
+                and existing.get("termination_reason")
+                in {"publish_failed", "target_merge_failed"}
+                and isinstance(existing.get("verified_publish_checkpoint"), dict)
+            )
             if should_resume_running or should_resume_blocked or pending_effects_only_resume:
                 persisted_target = existing.get("implementation_target")
                 if (
@@ -1047,14 +1073,20 @@ class StrategyCoordinator:
                     ),
                 )
             if current_phase == "implementation":
-                implementation_result = controller.run_loop(
-                    max_outer=intent.max_outer,
-                    max_inner=intent.max_inner,
-                    token_budget=budget,
-                    build_command=spec.build_command,
-                    strategy_context=strategy_context,
-                    build_prompt=build_prompt,
+                implementation_result = (
+                    controller.resume_verified_publication()
+                    if should_resume_verified_publication
+                    else None
                 )
+                if implementation_result is None:
+                    implementation_result = controller.run_loop(
+                        max_outer=intent.max_outer,
+                        max_inner=intent.max_inner,
+                        token_budget=budget,
+                        build_command=spec.build_command,
+                        strategy_context=strategy_context,
+                        build_prompt=build_prompt,
+                    )
             else:
                 resumed = state_store.read()
                 implementation_result = ImplementationResult(

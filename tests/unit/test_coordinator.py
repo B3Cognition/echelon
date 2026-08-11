@@ -150,6 +150,50 @@ class TestSingleStrategy:
         assert results[0].status == "blocked"
         assert results[0].blocked_phase == "implementation"
 
+    def test_verified_publish_resume_skips_ralph_build_dispatch(
+        self, tmp_path: Path
+    ) -> None:
+        coord = _make_coordinator(tmp_path)
+        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store.initialize("run-1", "semi")
+        store.transition("running")
+        store.transition(
+            "blocked",
+            updates={
+                "blocked_phase": "implementation",
+                "termination_reason": "publish_failed",
+                "verified_publish_checkpoint": {
+                    "schema_version": 1,
+                    "stage": "push",
+                },
+            },
+        )
+        verified = ImplementationResult(
+            "verified",
+            "converged",
+            1,
+            0,
+            None,
+            0,
+            VerifyResult(passed=True),
+            branch="feature",
+        )
+
+        with patch("harness.coordinator.RalphController") as ralph:
+            ralph.return_value.resume_verified_publication.return_value = verified
+            result = coord.start(
+                RunIntent(
+                    spec_id="spec-001",
+                    max_outer=2,
+                    max_inner=1,
+                    resume=True,
+                )
+            )[0]
+
+        ralph.return_value.resume_verified_publication.assert_called_once_with()
+        ralph.return_value.run_loop.assert_not_called()
+        assert result.status == "converged"
+
     def test_worktree_head_reads_the_registered_worktree(self, tmp_path: Path) -> None:
         """Finalization provenance is read from the delivery worktree, not harness cwd."""
         worktree = tmp_path / "worktree"
@@ -554,6 +598,42 @@ class TestDeliveryStateMigration:
 
         state = StateStore(tmp_path / "runs" / "state", "spec-001", "default").read()
         assert state["registered_worktree"] == str(tmp_path)
+        assert state["verified_commit"] == "verified-head"
+
+    def test_publish_recovery_keeps_its_exact_registered_worktree(
+        self, tmp_path: Path
+    ) -> None:
+        coordinator = _make_coordinator(tmp_path)
+        recovered_worktree = tmp_path / "recovered-worktree"
+        recovered_worktree.mkdir()
+        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store.initialize("run-1", "semi")
+        store.transition(
+            "running",
+            updates={
+                "registered_worktree": str(recovered_worktree),
+                "verified_commit": "verified-head",
+                "verified_publish_recovery": {"status": "completed"},
+            },
+        )
+        implementation = ImplementationResult(
+            "verified", "converged", 1, 0, None, 0, VerifyResult(passed=True)
+        )
+
+        with patch.object(coordinator, "_worktree_head", return_value="verified-head"):
+            blocked = coordinator._checkpoint_verified_result(
+                store,
+                spec_id="spec-001",
+                strategy_id="default",
+                implementation=implementation,
+                outer_iterations=1,
+                tokens_used=0,
+            )
+
+        assert blocked is None
+        coordinator._gitops.get_latest_worktree.assert_not_called()
+        state = store.read()
+        assert state["registered_worktree"] == str(recovered_worktree)
         assert state["verified_commit"] == "verified-head"
 
     def test_bad_review_resume_does_not_recreate_phase_one_or_rediscover_worktree(

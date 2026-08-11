@@ -2833,6 +2833,7 @@ def _cmd_harness_resume(
         "docker_unavailable",
         "no_progress",
         "provider_session_limit",
+        "target_merge_failed",
     }
     if _is_docs_report_only_containment_violation(state):
         continuation_reasons.add("containment_violation")
