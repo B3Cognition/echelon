@@ -902,6 +902,7 @@ def _render_certified_understanding_context(state: dict, dispatch: str) -> str:
     rendered_failing = ", ".join(f"`{gate}`" for gate in failing_gates) or "none"
     certified_pass = str(bool(evidence.get("pass"))).lower()
     scores_line = ""
+    overall_basis_line = ""
     report_ref = str(evidence.get("path") or "").strip()
     if report_ref:
         try:
@@ -913,6 +914,12 @@ def _render_certified_understanding_context(state: dict, dispatch: str) -> str:
                     for name, value in sorted(scores.items())
                     if isinstance(value, (int, float))
                 ) + "\n"
+            gates = payload.get("gates")
+            overall = gates.get("overall") if isinstance(gates, dict) else None
+            if isinstance(overall, dict):
+                basis = str(overall.get("pass_basis") or "").strip()
+                if basis:
+                    overall_basis_line = f"- Overall pass basis: `{basis}`\n"
         except (OSError, ValueError, TypeError):
             pass
     return (
@@ -926,7 +933,7 @@ def _render_certified_understanding_context(state: dict, dispatch: str) -> str:
         f"- Iteration: `{evidence.get('iteration')}`\n"
         f"- Certified pass: `{certified_pass}`\n"
         f"- Failing gates: {rendered_failing}\n\n"
-        f"{scores_line}\n"
+        f"{scores_line}{overall_basis_line}\n"
     )
 
 

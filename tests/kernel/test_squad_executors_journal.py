@@ -1358,6 +1358,22 @@ def test_why2_prompt_injects_certified_understanding_evidence_once(tmp_path):
     from harness.phase_graph import PhaseNode
 
     report = squad_dir / "evidence" / "understanding" / "phase1-why2-iter-2.json"
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_text(
+        json.dumps(
+            {
+                "scores": {"overall": 0.7354, "structure": 0.75},
+                "gates": {
+                    "overall": {
+                        "pass": True,
+                        "numeric_pass": False,
+                        "pass_basis": "all_configured_categories_pass",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     state = {
         "squad_dir": str(squad_dir),
         "understanding_evidence": {
@@ -1379,6 +1395,7 @@ def test_why2_prompt_injects_certified_understanding_evidence_once(tmp_path):
     assert "Digest: `abc123`" in prompt
     assert "Certified pass: `false`" in prompt
     assert "Failing gates: `testability`, `behavioral`" in prompt
+    assert "Overall pass basis: `all_configured_categories_pass`" in prompt
 
 
 def test_why1_prompt_does_not_receive_understanding_evidence(tmp_path):

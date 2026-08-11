@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
+from kernel.quality_gates import evaluate_quality_thresholds
+
 from .constraint_metrics import ConstraintAnalyzer
 from .semantic_metrics import SemanticAnalyzer, classify_ears_pattern
 
@@ -239,7 +241,6 @@ def evaluate_quality_gates(
     if not isinstance(categories, Mapping):
         categories = {}
     scores: dict[str, float] = {}
-    gates: dict[str, dict[str, object]] = {}
     for name, threshold in thresholds.items():
         raw_score = (
             metrics.get("overall_weighted_average", 0.0)
@@ -247,14 +248,20 @@ def evaluate_quality_gates(
             else categories.get(name, 0.0)
         )
         score = float(raw_score or 0.0)
-        required = float(threshold)
         scores[name] = score
+    decision = evaluate_quality_thresholds(scores, thresholds)
+    gates: dict[str, dict[str, object]] = {}
+    for name, threshold in decision.thresholds.items():
+        score = scores[name]
         gates[name] = {
             "score": score,
-            "threshold": required,
-            "pass": score >= required,
+            "threshold": threshold,
+            "pass": decision.effective_passes[name],
         }
-    return scores, gates, all(bool(gate["pass"]) for gate in gates.values())
+        if name == "overall":
+            gates[name]["numeric_pass"] = decision.numeric_passes[name]
+            gates[name]["pass_basis"] = decision.overall_pass_basis
+    return scores, gates, decision.passed
 
 
 def analyze_spec_bundle(

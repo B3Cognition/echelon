@@ -39,6 +39,7 @@ from kernel.accessors import (
     get_quality_scores_window,
     is_grounded,
 )
+from kernel.quality_gates import evaluate_quality_thresholds
 
 
 # ---------------------------------------------------------------------------
@@ -103,18 +104,22 @@ def _eval_quality_gates_pass(
     if last is None or gates is None:
         return False, fields_read, observed
 
-    # Check each gate dimension
-    spec_gates = gates.get("spec", {}) if isinstance(gates, dict) else {}
-    for dim, threshold in spec_gates.items():
-        if isinstance(threshold, (int, float)):
-            score = last.get(dim)
-            if score is None or score < threshold:
-                observed["failed_dim"] = dim
-                observed["score"] = score
-                observed["threshold"] = threshold
-                return False, fields_read, observed
+    nested = gates.get("spec") if isinstance(gates, dict) else None
+    spec_gates = nested if isinstance(nested, dict) else gates
+    decision = evaluate_quality_thresholds(last, spec_gates)
+    observed["numeric_passes"] = decision.numeric_passes
+    observed["effective_passes"] = decision.effective_passes
+    observed["overall_pass_basis"] = decision.overall_pass_basis
+    if decision.passed:
+        return True, fields_read, observed
 
-    return True, fields_read, observed
+    for dim, passed in decision.effective_passes.items():
+        if not passed:
+            observed["failed_dim"] = dim
+            observed["score"] = last.get(dim)
+            observed["threshold"] = decision.thresholds[dim]
+            break
+    return False, fields_read, observed
 
 
 def _eval_quality_gates_fail(

@@ -6,6 +6,8 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from kernel.quality_gates import evaluate_quality_thresholds
+
 
 QUALITY_GATE_SCORE_KEYS = (
     "overall",
@@ -96,19 +98,10 @@ def derive_quality_pass_from_thresholds(
     """
     if not isinstance(score, dict) or not isinstance(gates, dict):
         return None
-    gate_values = gates.get("spec") if isinstance(gates.get("spec"), dict) else gates
-    comparable = [
-        (key, gate_values.get(key))
-        for key in QUALITY_GATE_SCORE_KEYS
-        if isinstance(gate_values.get(key), (int, float))
-    ]
-    if not comparable:
+    decision = evaluate_quality_thresholds(score, gates)
+    if not decision.thresholds:
         return None
-    for key, threshold in comparable:
-        value = score.get(key)
-        if not isinstance(value, (int, float)) or value < threshold:
-            return False
-    return True
+    return decision.passed
 
 
 def derive_quality_pass_from_verdict(verdict: str | None) -> bool | None:

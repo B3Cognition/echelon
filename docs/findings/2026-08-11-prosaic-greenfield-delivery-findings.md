@@ -391,9 +391,10 @@ should require an explicit evidence mismatch.
 Verified publication failures now persist a versioned checkpoint containing the
 exact retained worktree, commit, branch, bounded product fingerprint, and next
 publication stage. Checkpoints begin only after dirty-worktree adjudication and
-the verified commit have completed. Continuation validates the prior passing `VerifyResult`,
-worktree existence, unchanged HEAD, and unchanged product evidence before it
-retries push, target merge, orchestration-spec publication, and PR effects.
+the verified commit have completed. Continuation validates the prior passing
+`VerifyResult`, worktree existence, unchanged HEAD, and unchanged product
+evidence before it retries push, target merge, orchestration-spec publication,
+and PR effects.
 The coordinator consumes the resulting verified checkpoint without calling
 Ralph's provider build loop and registers that exact worktree for downstream
 phases.
@@ -403,6 +404,30 @@ implementation path. A missing worktree, changed commit, changed product
 fingerprint, malformed checkpoint, or invalid prior result records an explicit
 `verified_publish_recovery` invalidation before implementation re-entry. The
 focused CLI, recovery, coordinator, and Ralph matrix passes 312 tests.
+
+## EGR-162: Aggregate Gate Repeats Passing Category Decisions
+
+**Priority:** P1
+**Status:** fixed
+
+The proportionality benchmark reached a 122-line specification with 9 FRs,
+0 NFRs, and 9 ACs. At iteration 3, all seven category gates passed, but the
+weighted aggregate remained `0.7354 < 0.75`; the run therefore continued through
+four more CARTOGRAPHER passes even though the formal-row count did not change.
+
+Quality-threshold evaluation is now centralized for Understanding reports,
+workflow routing, and quality-score normalization. Every configured category
+floor remains blocking. When at least one category is configured and all such
+categories pass, the overall gate is effectively certified rather than
+enforced a second time; its score, threshold, `numeric_pass`, and
+`all_configured_categories_pass` basis remain explicit. An overall-only
+configuration still uses the numeric threshold.
+
+Re-evaluating the immutable iteration-3 report with the new rule changes only
+the aggregate verdict: the old failing gate list was `[overall]`; the new result
+passes with `overall_numeric_pass=false` and all category decisions unchanged.
+The related Understanding, evaluator, prompt-evidence, template, and squad
+controller matrix passes 597 tests.
 
 ## Recommended Order
 

@@ -34,6 +34,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Proportional specification quality gates** — the weighted `overall` score
+  no longer blocks a specification a second time after every configured
+  category floor passes. Reports retain the numeric aggregate result and record
+  `all_configured_categories_pass` as the effective basis; configurations with
+  only an `overall` threshold remain numerically enforced.
+
 - **Verified publication recovery** — delivery now records the exact worktree
   HEAD, branch, bounded product fingerprint, and failed publication stage after
   verification succeeds. `delivery continue` can retry push, target merge,

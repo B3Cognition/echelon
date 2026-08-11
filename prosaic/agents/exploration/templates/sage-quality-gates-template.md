@@ -7,7 +7,7 @@
 
 | Metric | Score | Threshold | Status | Notes |
 |--------|-------|-----------|--------|-------|
-| Overall | <score> | <load: quality_gates.overall> | PASS or FAIL | |
+| Overall | <score> | <load: quality_gates.overall> | PASS or FAIL | Copy the certified overall pass basis when supplied. |
 | Structure | <score> | <load: quality_gates.structure> | PASS or FAIL | |
 | Testability | <score> | <load: quality_gates.testability> | PASS or FAIL | |
 | Semantic | <score> | <load: quality_gates.semantic> | PASS or FAIL | |
@@ -17,6 +17,7 @@
 | Behavioral | <score> | <load: quality_gates.behavioral> | PASS or FAIL | |
 
 <!-- STATUS COLUMN: write the literal word PASS or FAIL only. No bold, no asterisks, no markdown. -->
+<!-- Overall may be certified PASS below its numeric threshold when every configured category gate passes. Record `all_configured_categories_pass` in Notes; never recalculate or override the controller verdict. -->
 
 ## Metric Improvement Recommendations
 <!-- For each failing metric, specific changes to improve the score -->

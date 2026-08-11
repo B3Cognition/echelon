@@ -11,6 +11,7 @@ from understanding.service import (
     parse_requirements,
 )
 import understanding.service as service
+from harness.quality_scores import derive_quality_pass_from_thresholds
 
 
 ALL_GATES = {
@@ -47,6 +48,47 @@ def test_evaluate_quality_gates_covers_every_configured_gate() -> None:
     assert gates["depth"] == {"score": 0.39, "threshold": 0.40, "pass": False}
     assert gates["behavioral"]["pass"] is False
     assert passed is False
+
+
+@pytest.mark.unit
+def test_all_category_gates_certify_borderline_aggregate() -> None:
+    metrics = {
+        "overall_weighted_average": 0.7354,
+        "category_averages": {
+            "structure": 0.75,
+            "testability": 0.75,
+            "semantic": 0.65,
+            "cognitive": 0.65,
+            "readability": 0.55,
+            "depth": 0.40,
+            "behavioral": 0.55,
+        },
+    }
+
+    scores, gates, passed = evaluate_quality_gates(metrics, ALL_GATES)
+
+    assert scores["overall"] == 0.7354
+    assert gates["overall"]["numeric_pass"] is False
+    assert gates["overall"]["pass"] is True
+    assert gates["overall"]["pass_basis"] == "all_configured_categories_pass"
+    assert passed is True
+    assert derive_quality_pass_from_thresholds(scores, ALL_GATES) is True
+
+
+@pytest.mark.unit
+def test_overall_only_gate_remains_numerically_enforced() -> None:
+    metrics = {
+        "overall_weighted_average": 0.7354,
+        "category_averages": {"structure": 1.0},
+    }
+
+    _scores, gates, passed = evaluate_quality_gates(metrics, {"overall": 0.75})
+
+    assert gates["overall"]["pass"] is False
+    assert passed is False
+    assert derive_quality_pass_from_thresholds(
+        {"overall": 0.7354}, {"overall": 0.75}
+    ) is False
 
 
 @pytest.mark.unit

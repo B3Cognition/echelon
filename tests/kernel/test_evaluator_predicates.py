@@ -133,6 +133,49 @@ class TestPredicateQualityGatesPass:
         result = _eval("quality_gates.pass")
         assert any("quality_scores" in f for entry in result["trace"] for f in entry["fields_read"])
 
+    def test_all_configured_categories_certify_borderline_aggregate(self):
+        state = _state({"quality_scores": [{
+            "overall": 0.7354,
+            "structure": 0.75,
+            "testability": 0.75,
+            "semantic": 0.65,
+            "cognitive": 0.65,
+            "readability": 0.55,
+            "depth": 0.40,
+            "behavioral": 0.55,
+        }]})
+        config = _config({"quality_gates": {"spec": {
+            "overall": 0.75,
+            "structure": 0.75,
+            "testability": 0.75,
+            "semantic": 0.65,
+            "cognitive": 0.65,
+            "readability": 0.55,
+            "depth": 0.40,
+            "behavioral": 0.55,
+        }}})
+
+        result = _eval("quality_gates.pass", state=state, config=config)
+
+        assert result["guard_result"] == "PASS"
+        assert result["trace"][0]["observed_values"]["overall_pass_basis"] == (
+            "all_configured_categories_pass"
+        )
+
+    def test_category_failure_still_blocks_high_aggregate(self):
+        state = _state({"quality_scores": [{
+            "overall": 0.90,
+            "structure": 0.74,
+            "testability": 0.90,
+        }]})
+        config = _config({"quality_gates": {"spec": {
+            "overall": 0.75,
+            "structure": 0.75,
+            "testability": 0.75,
+        }}})
+
+        assert not _matched("quality_gates.pass", state=state, config=config)
+
 
 # ---------------------------------------------------------------------------
 # Predicate 3: quality_gates.fail
