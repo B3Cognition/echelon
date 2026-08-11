@@ -14,6 +14,7 @@ import subprocess
 
 SCHEMA_VERSION = 1
 CONTROL_ROOTS = frozenset({".echelon", ".git"})
+CONTROL_PATHS = frozenset({".harness-build-status.json"})
 
 
 @dataclass(frozen=True)
@@ -41,6 +42,7 @@ def write_product_inventory(
         "project_root": str(root),
         "inventory_source": inventory_source,
         "excluded_control_roots": sorted(CONTROL_ROOTS),
+        "excluded_control_paths": sorted(CONTROL_PATHS),
         "summary": {
             "entry_count": len(entries),
             "regular_file_count": sum(entry["kind"] == "file" for entry in entries),
@@ -113,7 +115,11 @@ def _bounded_paths(paths: list[PurePosixPath]) -> list[PurePosixPath]:
     for path in paths:
         if path.is_absolute() or ".." in path.parts:
             raise ValueError(f"product inventory path escapes project root: {path}")
-        if not path.parts or path.parts[0] in CONTROL_ROOTS:
+        if (
+            not path.parts
+            or path.parts[0] in CONTROL_ROOTS
+            or path.as_posix() in CONTROL_PATHS
+        ):
             continue
         bounded.add(path)
     return sorted(bounded, key=lambda item: item.as_posix())
@@ -167,6 +173,8 @@ def _render_markdown(payload: dict[str, object]) -> str:
         f"- Product root: `{payload['project_root']}`",
         "- Excluded control roots: "
         + ", ".join(f"`{root}`" for root in payload["excluded_control_roots"]),
+        "- Excluded control paths: "
+        + ", ".join(f"`{path}`" for path in payload["excluded_control_paths"]),
         f"- Entry count: {summary['entry_count']}",
         "",
         "| Path | Kind | Bytes | Executable | SHA-256 |",

@@ -48,6 +48,10 @@ def test_product_inventory_uses_git_deliverable_boundary(tmp_path: Path) -> None
     (project / "README.md").write_text("# Product\n", encoding="utf-8")
     (project / "hello.py").write_text("print('hello')\n", encoding="utf-8")
     (project / ".product-policy").write_text("strict\n", encoding="utf-8")
+    (project / ".harness-build-status.json").write_text(
+        '{"status":"done"}\n',
+        encoding="utf-8",
+    )
     (project / "notes.txt").write_text("untracked evidence\n", encoding="utf-8")
     (project / "ignored.txt").write_text("generated\n", encoding="utf-8")
     (project / "__pycache__").mkdir()
@@ -68,6 +72,7 @@ def test_product_inventory_uses_git_deliverable_boundary(tmp_path: Path) -> None
         "README.md",
         "hello.py",
         ".product-policy",
+        ".harness-build-status.json",
         ".echelon",
     )
 
@@ -77,6 +82,7 @@ def test_product_inventory_uses_git_deliverable_boundary(tmp_path: Path) -> None
     payload = json.loads(result.json_path.read_text(encoding="utf-8"))
     assert payload["inventory_source"] == "git-deliverable"
     assert payload["excluded_control_roots"] == [".echelon", ".git"]
+    assert payload["excluded_control_paths"] == [".harness-build-status.json"]
     assert [entry["path"] for entry in payload["entries"]] == [
         ".gitignore",
         ".product-policy",

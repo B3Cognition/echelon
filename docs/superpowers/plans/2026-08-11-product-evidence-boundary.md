@@ -10,7 +10,8 @@
 
 ## Global Constraints
 
-- Exclude the complete `.echelon/` and `.git/` control roots.
+- Exclude the complete `.echelon/` and `.git/` control roots plus the root
+  `.harness-build-status.json` marker.
 - Preserve other hidden product files.
 - Use Git tracked plus non-ignored untracked files when Git is available.
 - Do not treat inventory membership as behavioral fulfillment proof.

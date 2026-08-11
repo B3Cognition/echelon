@@ -27,10 +27,10 @@ python -m harness write-product-inventory "{worktree}" "{verify_run_dir}"
 
 This writes `{verify_run_dir}/product-inventory.json` and
 `{verify_run_dir}/product-inventory.md` from Git-tracked and non-ignored
-untracked files. The complete `.echelon/` control plane and `.git/` metadata are
-excluded; other hidden product files remain eligible evidence. If the command
-exits non-zero, hard stop with BLOCKED. Do not hand-write or repair either
-inventory artifact.
+untracked files. The complete `.echelon/` control plane, `.git/` metadata, and
+root `.harness-build-status.json` control marker are excluded; other hidden
+product files remain eligible evidence. If the command exits non-zero, hard stop
+with BLOCKED. Do not hand-write or repair either inventory artifact.
 
 Then run:
 

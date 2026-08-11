@@ -15,9 +15,9 @@ content.
 
 Add a Python-owned `product-inventory.json` and `product-inventory.md` artifact
 to the verify-spec run. Build the inventory from Git's tracked and non-ignored
-untracked file set, then exclude the complete `.echelon/` control root and
-`.git/`. Preserve all other hidden files; Echelon must not equate hidden with
-non-product.
+untracked file set, then exclude the complete `.echelon/` control root, `.git/`,
+and the root `.harness-build-status.json` control marker. Preserve all other
+hidden files; Echelon must not equate hidden with non-product.
 
 The verify-spec audit phase writes the inventory before IMPLEMENTATION MAPPER
 runs. The mapper receives both forms, treats them as the authoritative bounded
@@ -75,4 +75,3 @@ stamps inventory readiness and file count only after both artifacts are written.
   language.
 - Focused fulfillment and prompt-reference suites must pass before rerunning the
   retained greenfield delivery.
-

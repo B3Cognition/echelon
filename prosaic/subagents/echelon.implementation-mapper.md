@@ -57,7 +57,7 @@ NEVER add extra implementation-map rows for non-inventory IDs; record them separ
 
 ### Rule 8 - Product Evidence Boundary
 ALWAYS use `{verify_run_dir}/product-inventory.json` for repository-wide existence and cardinality claims and cite its bounded entry or basename count with direct file inspection.
-NEVER count `.echelon` control-plane files as product files or treat inventory membership alone as behavioral fulfillment proof.
+NEVER count `.echelon`, `.git`, or `.harness-build-status.json` control-plane files as product files or treat inventory membership alone as behavioral fulfillment proof.
 
 ## Inputs
 
@@ -79,7 +79,7 @@ NEVER count `.echelon` control-plane files as product files or treat inventory m
 
 1. Read `{verify_run_dir}/canonical-requirements.json`; this is the authoritative row set.
 2. Read every checklist item and verify its ID is present in the canonical inventory.
-3. Read `{verify_run_dir}/product-inventory.json`. For repository-wide existence and cardinality requirements, use its Python-owned product boundary and exclude its declared `.echelon` and `.git` control roots. Inventory membership is not behavioral fulfillment proof; inspect the cited source, executable tests, or measured runtime evidence for behavior.
+3. Read `{verify_run_dir}/product-inventory.json`. For repository-wide existence and cardinality requirements, use its Python-owned product boundary and preserve every declared control-root and control-path exclusion, including `.echelon`, `.git`, and `.harness-build-status.json`. Inventory membership is not behavioral fulfillment proof; inspect the cited source, executable tests, or measured runtime evidence for behavior.
 4. If `{verify_run_dir}/codegraph-evidence-map.json` exists, copy each row's `codegraph_candidates` into the implementation map as candidate evidence only; also preserve `evidence_kind`, `evidence_strength`, `runtime_threshold`, and `confidence`.
 5. For rows listed in `summary.fallback_requirement_ids` (or, if absent, rows with deterministic confidence `low`, `none`, or `ambiguous`), rows with empty CodeGraph candidates, and cited high/medium candidate rows that appear contradictory, inspect source and tests for behavior, public routes, UI flows, configuration, data models, and migration evidence.
    CodeGraph rows are candidate structural leads, not fulfillment proof. Fallback inspection refines CodeGraph candidates and does not replace or ignore them.
