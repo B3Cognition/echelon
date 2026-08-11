@@ -41,6 +41,38 @@ else
   FAIL=$((FAIL + 1))
 fi
 
+if grep -q 'PATH="$(dirname "$PYTHON"):$PATH"' "$ROOT/tests/run-all.sh"; then
+  echo "PASS: run-all routes child python3 calls through selected Python"
+  PASS=$((PASS + 1))
+else
+  echo "FAIL: run-all routes child python3 calls through selected Python"
+  FAIL=$((FAIL + 1))
+fi
+
+if grep -q 'sys.version_info >= (3, 11)' "$ROOT/tests/run-all.sh"; then
+  echo "PASS: run-all enforces the project minimum Python version"
+  PASS=$((PASS + 1))
+else
+  echo "FAIL: run-all enforces the project minimum Python version"
+  FAIL=$((FAIL + 1))
+fi
+
+if grep -q 'Python: %s (%s)' "$ROOT/tests/run-all.sh"; then
+  echo "PASS: run-all reports the selected interpreter and version"
+  PASS=$((PASS + 1))
+else
+  echo "FAIL: run-all reports the selected interpreter and version"
+  FAIL=$((FAIL + 1))
+fi
+
+if ! grep -q 'run_pytest_suite "Shim Tests"' "$ROOT/tests/run-all.sh"; then
+  echo "PASS: run-all omits the retired empty shim suite"
+  PASS=$((PASS + 1))
+else
+  echo "FAIL: run-all omits the retired empty shim suite"
+  FAIL=$((FAIL + 1))
+fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]

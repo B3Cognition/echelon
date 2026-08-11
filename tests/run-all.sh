@@ -27,24 +27,41 @@ TOTAL_FAIL=0
 TOTAL_SKIP=0
 SUITE_RESULTS=()
 
-# Detect the Python interpreter that has pytest available.
-# Prefer project venv first, then try absolute Homebrew paths.
-PYTHON=""
-if [[ -x "$ROOT/.venv/bin/python" ]] && "$ROOT/.venv/bin/python" -m pytest --version >/dev/null 2>&1; then
-  PYTHON="$ROOT/.venv/bin/python"
-elif [[ -x "$HOME/.echelon/venv/bin/python" ]] && "$HOME/.echelon/venv/bin/python" -m pytest --version >/dev/null 2>&1; then
-  PYTHON="$HOME/.echelon/venv/bin/python"
-else
+# Resolve one interpreter that satisfies pyproject.toml and can run pytest.
+python_supports_tests() {
+  "$1" -c 'import sys, pytest; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' \
+    >/dev/null 2>&1
+}
+
+selected_python=""
+if [[ -n "${PYTHON:-}" ]] && python_supports_tests "$PYTHON"; then
+  selected_python="$PYTHON"
+fi
+if [[ -z "$selected_python" ]] && [[ -x "$ROOT/.venv/bin/python" ]] && \
+   python_supports_tests "$ROOT/.venv/bin/python"; then
+  selected_python="$ROOT/.venv/bin/python"
+fi
+if [[ -z "$selected_python" ]] && [[ -x "$HOME/.echelon/venv/bin/python" ]] && \
+   python_supports_tests "$HOME/.echelon/venv/bin/python"; then
+  selected_python="$HOME/.echelon/venv/bin/python"
+fi
+if [[ -z "$selected_python" ]]; then
   for candidate in /opt/homebrew/bin/python3.12 /opt/homebrew/bin/python3 python3.12 python3 python; do
-    if [[ -x "$candidate" ]] || command -v "$candidate" >/dev/null 2>&1; then
-      if "$candidate" -m pytest --version >/dev/null 2>&1; then
-        PYTHON="$candidate"
-        break
-      fi
+    if { [[ -x "$candidate" ]] || command -v "$candidate" >/dev/null 2>&1; } && \
+       python_supports_tests "$candidate"; then
+      selected_python="$candidate"
+      break
     fi
   done
 fi
+if [[ -z "$selected_python" ]]; then
+  echo "ERROR: Python 3.11+ with pytest is required to run the Echelon test suite." >&2
+  exit 1
+fi
+PYTHON="$selected_python"
 export PYTHON
+PATH="$(dirname "$PYTHON"):$PATH"
+export PATH
 
 run_suite() {
   local suite_name="$1"
@@ -125,6 +142,15 @@ run_pytest_suite() {
     printf "${YELLOW}SKIP: No Python interpreter with pytest found${RESET}\n"
     TOTAL_SKIP=$((TOTAL_SKIP + 1))
     SUITE_RESULTS+=("$suite_name|0|0|1|SKIPPED (no pytest)")
+    return
+  fi
+
+  local python_test_file
+  python_test_file=$(find "$suite_dir" -type f \( -name 'test_*.py' -o -name '*_test.py' \) -print -quit)
+  if [[ -z "$python_test_file" ]]; then
+    printf "${YELLOW}SKIP: No Python test files found in %s${RESET}\n" "$suite_dir"
+    TOTAL_SKIP=$((TOTAL_SKIP + 1))
+    SUITE_RESULTS+=("$suite_name|0|0|1|SKIPPED (no tests)")
     return
   fi
 
@@ -282,6 +308,7 @@ run_single_test() {
 printf "${BOLD}Echelon — Test Runner${RESET}\n"
 printf "Root: %s\n" "$ROOT"
 printf "Time: %s\n" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+printf "Python: %s (%s)\n" "$PYTHON" "$("$PYTHON" -c 'import platform; print(platform.python_version())')"
 
 # Bash suites
 run_suite "Unit Tests" "$SCRIPT_DIR/unit"
@@ -299,7 +326,6 @@ run_pytest_target "EGR-022 Static Contracts" \
 # Pytest suites
 run_pytest_suite "Kernel Tests" "$SCRIPT_DIR/kernel"
 run_pytest_suite "Contract Tests" "$SCRIPT_DIR/contract"
-run_pytest_suite "Shim Tests" "$SCRIPT_DIR/shim"
 run_pytest_suite "Echelon Validation" "$SCRIPT_DIR/echelon-validation"
 
 # Benchmarks

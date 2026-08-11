@@ -286,7 +286,7 @@ build-runner, and Ralph suite passes 357 tests.
 ## EGR-158: Repository Test Runner Can Select Unsupported Python
 
 **Priority:** P2
-**Status:** open
+**Status:** fixed
 
 `bash tests/run-all.sh` selected a system Python that does not support
 `dataclass(slots=True)`, causing two Integration/RE scripts to fail. Both scripts
@@ -304,6 +304,21 @@ tests were intentionally removed during Spec-Kit cleanup.
 - Print the resolved interpreter and version.
 - Treat an intentionally absent test group as skipped or remove the obsolete
   group from the runner; do not report `FAIL` with zero failed tests.
+
+### Implementation evidence
+
+`tests/run-all.sh` now honors an inherited supported interpreter, otherwise
+prefers the repository venv and installed Echelon venv before system candidates.
+Every candidate must provide pytest and satisfy Python 3.11+, matching
+`pyproject.toml`; no valid candidate is a fail-fast error. The runner prints the
+resolved executable and version and prepends its directory to `PATH`, so child
+shell scripts that invoke `python3` cannot silently switch runtimes. Empty pytest
+directories are skipped, and the retired Shim suite is no longer registered.
+
+With `PYTHON=/usr/bin/python3` supplied deliberately, the runner rejected that
+unsupported interpreter, selected `.venv/bin/python` 3.11.15, passed the two
+previously failing RE scripts with 31 and 63 checks, and completed with 1,620
+passed, 0 failed, and 0 skipped.
 
 ## EGR-159: Greenfield Runs Retain Excess Generated State
 
