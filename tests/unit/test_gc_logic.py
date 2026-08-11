@@ -5,13 +5,18 @@ Tests the logic of identifying stale resources without actual deletion.
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from pathlib import Path
 
 import pytest
 
-from harness.gc import _get_stale_worktrees, _get_stale_backups
+from harness.gc import (
+    _get_protected_worktrees,
+    _get_stale_backups,
+    _get_stale_worktrees,
+)
 
 
 class TestStaleWorktreeDetection:
@@ -42,6 +47,46 @@ class TestStaleWorktreeDetection:
         # Fresh worktree (just created) should not be stale at 24h threshold
         stale = _get_stale_worktrees(wt_base, max_age_hours=24)
         assert len(stale) == 0
+
+    def test_latest_blocked_worktree_is_protected_from_age_gc(self, tmp_path):
+        build_dir = tmp_path / "runs" / "build-1"
+        older = build_dir / "worktrees" / "default" / "iter-0"
+        latest = build_dir / "worktrees" / "default" / "iter-1"
+        older.mkdir(parents=True)
+        latest.mkdir(parents=True)
+        state_dir = build_dir / "state"
+        state_dir.mkdir()
+        (state_dir / "default.json").write_text(
+            json.dumps({"status": "blocked", "strategy_id": "default"}),
+            encoding="utf-8",
+        )
+        old_time = time.time() - (25 * 3600)
+        os.utime(older, (old_time, old_time))
+        os.utime(latest, (old_time, old_time))
+
+        protected = _get_protected_worktrees(build_dir)
+        stale = _get_stale_worktrees(
+            build_dir / "worktrees",
+            max_age_hours=24,
+            protected=protected,
+        )
+
+        assert protected == {latest.resolve()}
+        assert stale == [older]
+
+    @pytest.mark.parametrize("status", ["converged", "failed", "cancelled_by_coordinator"])
+    def test_terminal_worktrees_are_not_protected(self, tmp_path, status):
+        build_dir = tmp_path / "runs" / "build-1"
+        worktree = build_dir / "worktrees" / "default" / "iter-0"
+        worktree.mkdir(parents=True)
+        state_dir = build_dir / "state"
+        state_dir.mkdir()
+        (state_dir / "default.json").write_text(
+            json.dumps({"status": status, "strategy_id": "default"}),
+            encoding="utf-8",
+        )
+
+        assert _get_protected_worktrees(build_dir) == set()
 
 
 class TestStaleBackupDetection:

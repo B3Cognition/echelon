@@ -7300,6 +7300,7 @@ class TestOuterLoopCap:
         assert result.status == "blocked"
         assert result.termination_reason == "outer_cap"
         assert result.outer_iterations == 2
+        assert gitops.destroy_worktree.call_count == 2
 
 
 @pytest.mark.unit
@@ -7749,6 +7750,7 @@ class TestSignalDuringBuild:
         assert result.termination_reason == "user_cancel"
         # Verify must not have run — an interrupted build has no verified output
         assert result.final_verify is None
+        gitops.destroy_worktree.assert_not_called()
 
 
 @pytest.mark.unit

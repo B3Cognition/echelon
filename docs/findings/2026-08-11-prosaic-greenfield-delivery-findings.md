@@ -323,7 +323,7 @@ passed, 0 failed, and 0 skipped.
 ## EGR-159: Greenfield Runs Retain Excess Generated State
 
 **Priority:** P3
-**Status:** open
+**Status:** fixed
 
 The test retained multiple spec snapshots and delivery iteration worktrees, and
 worktrees accumulated `.pytest_cache` and `__pycache__`. Retention was valuable
@@ -338,14 +338,25 @@ semantics.
 - Keep enough evidence to reproduce failures without retaining every equivalent
   snapshot or disposable worktree indefinitely.
 
-### Implemented cache-hygiene slice
+### Resolution
 
 Tracked Python caches no longer route to an LLM `leave` decision that blocks a
 verified publish. Dirty adjudication deterministically removes tracked
 `__pycache__`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, and `.pyc` entries,
 adds their exact ignore paths, and commits the deletion. The real greenfield
-`iter-0` branch removed the tracked bytecode and landed successfully. Run and
-worktree retention policy remains open under EGR-159.
+`iter-0` branch removed the tracked bytecode and landed successfully.
+
+Ralph now removes every normally completed disposable iteration, including the
+last outer-cap checkout. It retains a checkout only when verified downstream
+phases, a guided pause, a recoverable blocker, an interruption, a publication
+failure, or unexpected exception still needs it. Successful landing removes all
+matching delivery worktrees immediately. Age-based GC protects only the latest
+checkout for each active or resumable strategy; converged, failed, and
+coordinator-cancelled checkouts remain eligible for configured age cleanup.
+
+Run state, telemetry, reports, Git checkpoint commits, and `runs/spec-*` Phase A
+snapshots remain durable evidence. Those snapshots are provenance records, not
+mutable delivery worktrees, so EGR-159 does not collapse or delete them.
 
 ## EGR-160: Legacy Delivery Branches Cross Run Boundaries
 

@@ -1019,7 +1019,6 @@ class GitOpsManager:
     ) -> None:
         """Remove worktree. On failure: log warning, continue.
 
-        Per FR-REPO-003b: final iteration worktree is kept.
         If keep_branch=True, branch is preserved on mirror for inspection.
 
         Args:

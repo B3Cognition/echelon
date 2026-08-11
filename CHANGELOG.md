@@ -34,6 +34,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Delivery worktree retention** — Ralph now removes every normally completed
+  disposable iteration, including the final outer-cap checkout, while retaining
+  verified checkouts needed by downstream phases and checkouts needed by
+  pauses, blockers, interruptions, publication recovery, or exception
+  diagnosis. Age-based GC protects only the latest checkout for each resumable
+  strategy; terminal worktrees remain eligible for cleanup, and successful
+  landing still removes matching worktrees immediately.
+
 - Clarified delivery phase checkpoints and recovery, kept landing failures separate from convergence, and restricted automated Claude review triage to validated build-scoped staging before canonical task publication.
 
 - Fixed target-side polyrepo auto-land to discover canonical specs from the orchestration workspace rather than the target harness directory, and distinguished an unfound spec directory from a spec whose lifecycle status is missing.

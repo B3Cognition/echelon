@@ -500,6 +500,7 @@ class RalphController:
 
                     # Check mode boundary
                     if self._mode.should_pause_at_boundary("after_build"):
+                        preserve_worktree = True
                         return self._pause_at_boundary(
                             "after_build", outer_iter, total_inner_iterations,
                             pr_url, tokens_used,
@@ -517,6 +518,7 @@ class RalphController:
                             term_status = "blocked"
                         else:
                             term_status = "failed"
+                        preserve_worktree = term_status in {"blocked", "interrupted"}
                         return self._finalize(
                             status=term_status,
                             reason=termination,
@@ -742,6 +744,7 @@ class RalphController:
                     tokens_used += verify_result.token_usage
 
                     if _is_provider_session_limit_verify_result(verify_result):
+                        preserve_worktree = True
                         _print_verify_spec_provider_session_limit_banner(
                             self._spec_id,
                             self._strategy_id,
@@ -767,6 +770,7 @@ class RalphController:
                     # Hard-stop: unknown project type cannot be fixed by the LLM.
                     # Block immediately and ask the human to configure verify_command.
                     if any(f.id == "local-verify-skipped" for f in verify_result.failures):
+                        preserve_worktree = True
                         _print_verify_command_needed_banner(self._spec_id, self._strategy_id)
                         return self._finalize(
                             status="blocked",
@@ -792,6 +796,7 @@ class RalphController:
                     )
 
                     if self._mode.should_pause_at_boundary("after_verify"):
+                        preserve_worktree = True
                         return self._pause_at_boundary(
                             "after_verify", outer_iter, total_inner_iterations,
                             pr_url, tokens_used, verify_result,
@@ -875,6 +880,7 @@ class RalphController:
 
                     final_verify = inner_result.get("final_verify")
                     if final_verify and _is_provider_session_limit_verify_result(final_verify):
+                        preserve_worktree = True
                         _print_verify_spec_provider_session_limit_banner(
                             self._spec_id,
                             self._strategy_id,
@@ -1003,6 +1009,7 @@ class RalphController:
                             outer_iter, no_progress_count, _NO_PROGRESS_THRESHOLD,
                         )
                         if no_progress_count >= _NO_PROGRESS_THRESHOLD:
+                            preserve_worktree = True
                             escalation_file = self._escalation.escalate(
                                 spec_id=self._spec_id,
                                 strategy_id=self._strategy_id,
@@ -1061,9 +1068,15 @@ class RalphController:
                         self._record_cleanup_warning("sandbox_destroy", exc)
                         logger.warning("Sandbox cleanup failed after build iteration: %s", exc)
 
+            except BaseException:
+                # An unexpected interruption may leave uncommitted evidence that
+                # cannot be reconstructed from the mirror.
+                preserve_worktree = True
+                raise
             finally:
-                # Keep last worktree (FR-REPO-003b)
-                if not preserve_worktree and outer_iter < max_outer - 1:
+                # Checkpoint commits and run records are durable; keep a checkout
+                # only while a downstream phase or recovery path needs it.
+                if not preserve_worktree:
                     self._gitops.destroy_worktree(worktree_path, keep_branch=True)
 
             # Update state after each iteration
