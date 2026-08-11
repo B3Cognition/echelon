@@ -19,6 +19,7 @@ Subcommands:
   plan-reopen-gaps — plan deterministic reopen work from fulfillment gaps
   init-verify-spec-run — create verify-spec runtime directory and state.json
   complete-verify-spec-run — durably mark verified run evidence complete
+  write-product-inventory — write bounded deliverable-file evidence for verify-spec
   write-codegraph-evidence — write verify-spec CodeGraph evidence artifacts
   write-perlgraph-evidence — write verify-spec PerlGraph evidence artifacts
   write-topology-evidence-receipt — finalize run-local delivery topology evidence
@@ -1111,6 +1112,40 @@ def _write_canonical_requirements() -> None:
     )
 
 
+def _write_product_inventory() -> None:
+    if len(sys.argv) < 4:
+        print(
+            "Usage: python -m harness write-product-inventory "
+            "<project-root> <verify-run-dir>",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    from pathlib import Path
+
+    from harness.product_inventory import write_product_inventory
+
+    verify_run_dir = Path(sys.argv[3])
+    _require_verify_spec_state(verify_run_dir)
+    result = write_product_inventory(
+        project_root=Path(sys.argv[2]),
+        verify_run_dir=verify_run_dir,
+    )
+    _stamp_verify_spec_state(
+        verify_run_dir,
+        {
+            "product_inventory": "ready",
+            "product_inventory_count": result.entry_count,
+            "product_inventory_source": result.inventory_source,
+        },
+    )
+    print(
+        "OK: wrote product inventory to "
+        f"{result.json_path} and {result.markdown_path} "
+        f"({result.entry_count} entries)"
+    )
+
+
 def _write_requirement_audit() -> None:
     if len(sys.argv) < 3:
         print(
@@ -1491,6 +1526,8 @@ def main() -> None:
         _complete_verify_spec_run()
     elif subcommand == "write-canonical-requirements":
         _write_canonical_requirements()
+    elif subcommand == "write-product-inventory":
+        _write_product_inventory()
     elif subcommand == "write-requirement-audit":
         _write_requirement_audit()
     elif subcommand == "write-judgment-prepass":
@@ -1531,6 +1568,7 @@ def main() -> None:
             "'write-progress-reconciliation-candidates', "
             "'apply-progress-reconciliation', 'plan-reopen-gaps', "
             "'init-verify-spec-run', 'complete-verify-spec-run', 'write-canonical-requirements', "
+            "'write-product-inventory', "
             "'write-requirement-audit', 'write-judgment-prepass', "
             "'write-fallback-fulfillment-template', "
             "'assemble-fulfillment-report', 'apply-deferred-scope', 'validate-fulfillment-artifacts', "

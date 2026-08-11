@@ -55,11 +55,17 @@ NEVER replace, delete, silently downgrade, or copy deterministic CodeGraph Candi
 ALWAYS map only IDs present in `{verify_run_dir}/canonical-requirements.json`.
 NEVER add extra implementation-map rows for non-inventory IDs; record them separately as `unmapped_candidate`.
 
+### Rule 8 - Product Evidence Boundary
+ALWAYS use `{verify_run_dir}/product-inventory.json` for repository-wide existence and cardinality claims and cite its bounded entry or basename count with direct file inspection.
+NEVER count `.echelon` control-plane files as product files or treat inventory membership alone as behavioral fulfillment proof.
+
 ## Inputs
 
 - `{verify_run_dir}/canonical-requirements.json`
 - `{verify_run_dir}/canonical-requirements.md`
 - `{verify_run_dir}/requirement-audit.md`
+- `{verify_run_dir}/product-inventory.json`
+- `{verify_run_dir}/product-inventory.md`
 - `{verify_run_dir}/state.json`
 - `{verify_run_dir}/codegraph-summary.json`
 - `{verify_run_dir}/codegraph-evidence-map.json` when present
@@ -73,16 +79,17 @@ NEVER add extra implementation-map rows for non-inventory IDs; record them separ
 
 1. Read `{verify_run_dir}/canonical-requirements.json`; this is the authoritative row set.
 2. Read every checklist item and verify its ID is present in the canonical inventory.
-3. If `{verify_run_dir}/codegraph-evidence-map.json` exists, copy each row's `codegraph_candidates` into the implementation map as candidate evidence only; also preserve `evidence_kind`, `evidence_strength`, `runtime_threshold`, and `confidence`.
-4. For rows listed in `summary.fallback_requirement_ids` (or, if absent, rows with deterministic confidence `low`, `none`, or `ambiguous`), rows with empty CodeGraph candidates, and cited high/medium candidate rows that appear contradictory, inspect source and tests for behavior, public routes, UI flows, configuration, data models, and migration evidence.
+3. Read `{verify_run_dir}/product-inventory.json`. For repository-wide existence and cardinality requirements, use its Python-owned product boundary and exclude its declared `.echelon` and `.git` control roots. Inventory membership is not behavioral fulfillment proof; inspect the cited source, executable tests, or measured runtime evidence for behavior.
+4. If `{verify_run_dir}/codegraph-evidence-map.json` exists, copy each row's `codegraph_candidates` into the implementation map as candidate evidence only; also preserve `evidence_kind`, `evidence_strength`, `runtime_threshold`, and `confidence`.
+5. For rows listed in `summary.fallback_requirement_ids` (or, if absent, rows with deterministic confidence `low`, `none`, or `ambiguous`), rows with empty CodeGraph candidates, and cited high/medium candidate rows that appear contradictory, inspect source and tests for behavior, public routes, UI flows, configuration, data models, and migration evidence.
    CodeGraph rows are candidate structural leads, not fulfillment proof. Fallback inspection refines CodeGraph candidates and does not replace or ignore them.
    Manual source/test citations must go only into the Verified Implementation Evidence and Verified Test Evidence cells. CodeGraph candidates must stay in the CodeGraph Candidates cell with Candidate Disposition `accepted`, `candidate_only`, `contradicted`, `unrelated`, or `none`. When CodeGraph has no evidence for a requirement, use source/test inspection to fill verified evidence and leave CodeGraph Candidates blank with Candidate Disposition `none`.
-5. If the deterministic map is absent because CodeGraph degraded, use CodeGraph summary/analysis when available and perform the previous manual mapping path.
-6. For Perl files, use PerlGraph package, module, sub, method, and call edges as additional structural context when they cite concrete project files. Treat low-confidence or dynamic PerlGraph edges as uncertainty evidence, not proof of fulfillment.
-7. Treat PerlGraph `unsupported_patterns` as source-backed notes about dynamic Perl behavior and candidate future PerlGraph improvements. They may explain why a row needs manual judgment, but they must not be converted into fulfilled implementation evidence by themselves.
-8. For each item, distinguish implementation evidence from executable test evidence.
-9. Mark confidence as `high`, `medium`, `low`, or `none` based only on cited evidence. For runtime thresholds, keep assertion-only gates at `low`/fallback unless measured CI/runtime artifacts are cited.
-10. If source inspection suggests a non-inventory item, record it as `unmapped_candidate` outside the implementation map table.
+6. If the deterministic map is absent because CodeGraph degraded, use CodeGraph summary/analysis when available and perform the previous manual mapping path.
+7. For Perl files, use PerlGraph package, module, sub, method, and call edges as additional structural context when they cite concrete project files. Treat low-confidence or dynamic PerlGraph edges as uncertainty evidence, not proof of fulfillment.
+8. Treat PerlGraph `unsupported_patterns` as source-backed notes about dynamic Perl behavior and candidate future PerlGraph improvements. They may explain why a row needs manual judgment, but they must not be converted into fulfilled implementation evidence by themselves.
+9. For each item, distinguish implementation evidence from executable test evidence.
+10. Mark confidence as `high`, `medium`, `low`, or `none` based only on cited evidence. For runtime thresholds, keep assertion-only gates at `low`/fallback unless measured CI/runtime artifacts are cited.
+11. If source inspection suggests a non-inventory item, record it as `unmapped_candidate` outside the implementation map table.
 
 ## Parser Contract
 

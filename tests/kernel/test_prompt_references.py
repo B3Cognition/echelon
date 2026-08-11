@@ -138,6 +138,25 @@ def test_verify_spec_map_runs_deterministic_codegraph_evidence_map_first():
     assert "`Confidence` must be `high`, `medium`, `low`, or `none`" in text
 
 
+def test_verify_spec_uses_python_owned_product_inventory_boundary():
+    audit_phase = (RUNTIME_ROOT / "workflow" / "phases" / "verify-spec-3-audit.md").read_text()
+    map_phase = (RUNTIME_ROOT / "workflow" / "phases" / "verify-spec-4-map.md").read_text()
+    workflow = (RUNTIME_ROOT / "workflow" / "definition.yaml").read_text()
+    mapper = _subagent("implementation-mapper").read_text()
+
+    assert "write-product-inventory" in audit_phase
+    for artifact in ("product-inventory.json", "product-inventory.md"):
+        assert artifact in audit_phase
+        assert artifact in map_phase
+        assert artifact in workflow
+        assert artifact in mapper
+    for text in (map_phase, mapper):
+        normalized = " ".join(text.split())
+        assert "repository-wide existence and cardinality" in normalized
+        assert ".echelon" in normalized
+        assert "not behavioral fulfillment proof" in normalized
+
+
 def test_verify_spec_uses_python_owned_canonical_requirement_inventory():
     audit_phase = (RUNTIME_ROOT / "workflow" / "phases" / "verify-spec-3-audit.md").read_text()
     map_phase = (RUNTIME_ROOT / "workflow" / "phases" / "verify-spec-4-map.md").read_text()

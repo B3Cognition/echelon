@@ -7,6 +7,8 @@
 Provide IMPLEMENTATION-MAPPER with:
 - `{verify_run_dir}/canonical-requirements.json`
 - `{verify_run_dir}/canonical-requirements.md`
+- `{verify_run_dir}/product-inventory.json`
+- `{verify_run_dir}/product-inventory.md`
 - fulfillment checklist
 - `{spec_dir}/deferred-scope.json` when present
 - current source tree and tests
@@ -50,6 +52,14 @@ IMPLEMENTATION-MAPPER until the required input exists.
 
 Map checklist items to concrete source, test, route, UI, configuration,
 CodeGraph evidence, and PerlGraph evidence for Perl source.
+
+Use `{verify_run_dir}/product-inventory.json` as the authoritative product-file
+boundary for repository-wide existence and cardinality claims. Its `.echelon`
+and `.git` exclusions are Python-owned: do not add deployed control-plane files
+back into product counts. Cite the inventory entry or basename count together
+with direct file inspection. Inventory membership is not behavioral fulfillment
+proof; behavior still requires verified source, executable test, or measured
+runtime evidence.
 
 When `{spec_dir}/deferred-scope.json` has active entries, selected requirement
 IDs are explicitly out of the current fulfillment scope. Do not manually

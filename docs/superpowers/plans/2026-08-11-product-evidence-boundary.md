@@ -28,10 +28,10 @@
 - Produces: `write_product_inventory(project_root: Path, verify_run_dir: Path) -> ProductInventoryResult`.
 - Produces: `{verify_run_dir}/product-inventory.json` and `{verify_run_dir}/product-inventory.md`.
 
-- [ ] Write failing tests for tracked, untracked, ignored, `.echelon`, `.git`, and non-Echelon hidden files.
-- [ ] Run `.venv/bin/pytest tests/unit/test_product_inventory.py -q` and confirm the module is missing.
-- [ ] Implement sorted Git-deliverable inventory, filesystem fallback, path containment, hashing, and both output formats.
-- [ ] Run `.venv/bin/pytest tests/unit/test_product_inventory.py -q` and confirm all tests pass.
+- [x] Write failing tests for tracked, untracked, ignored, `.echelon`, `.git`, and non-Echelon hidden files.
+- [x] Run `.venv/bin/pytest tests/unit/test_product_inventory.py -q` and confirm the module is missing.
+- [x] Implement sorted Git-deliverable inventory, filesystem fallback, path containment, hashing, and both output formats.
+- [x] Run `.venv/bin/pytest tests/unit/test_product_inventory.py -q` and confirm all tests pass.
 
 ### Task 2: Harness CLI ownership
 
@@ -43,10 +43,10 @@
 - Produces: `python -m harness write-product-inventory <project-root> <verify-run-dir>`.
 - Updates: existing verify state with `product_inventory: ready` and `product_inventory_count`.
 
-- [ ] Add a failing CLI test proving both artifacts and state stamps are written.
-- [ ] Run the CLI test and confirm `write-product-inventory` is unknown.
-- [ ] Add the subcommand, usage text, existing-state guard, writer call, and state stamp.
-- [ ] Rerun the focused tests and confirm they pass.
+- [x] Add a failing CLI test proving both artifacts and state stamps are written.
+- [x] Run the CLI test and confirm `write-product-inventory` is unknown.
+- [x] Add the subcommand, usage text, existing-state guard, writer call, and state stamp.
+- [x] Rerun the focused tests and confirm they pass.
 
 ### Task 3: Verify-spec and Prosaic mapper contract
 
@@ -61,10 +61,10 @@
 - Consumes: `product-inventory.json` as the machine-readable product boundary.
 - Consumes: `product-inventory.md` as the mapper-readable equivalent.
 
-- [ ] Add failing prompt/workflow assertions for the command, outputs, context pack, and cardinality boundary.
-- [ ] Run `.venv/bin/pytest tests/kernel/test_prompt_references.py -q` and confirm the new assertions fail.
-- [ ] Wire the deterministic command and artifact contract into runtime and Prosaic sources.
-- [ ] Rerun prompt-reference and workflow-validator tests.
+- [x] Add failing prompt/workflow assertions for the command, outputs, context pack, and cardinality boundary.
+- [x] Run `.venv/bin/pytest tests/kernel/test_prompt_references.py -q` and confirm the new assertions fail.
+- [x] Wire the deterministic command and artifact contract into runtime and Prosaic sources.
+- [x] Rerun prompt-reference and workflow-validator tests.
 
 ### Task 4: Regression verification and commit
 
@@ -74,9 +74,8 @@
 **Interfaces:**
 - Verifies: product inventory, fulfillment cache behavior, canonical Prosaic/runtime workflow validation.
 
-- [ ] Run `.venv/bin/pytest tests/unit/test_product_inventory.py tests/unit/test_fulfillment_runner.py tests/kernel/test_prompt_references.py tests/kernel/test_workflow_validator.py -q`.
-- [ ] Run `python -m harness.bundle_validator .`.
+- [x] Run `.venv/bin/pytest tests/unit/test_product_inventory.py tests/unit/test_fulfillment_runner.py tests/kernel/test_prompt_references.py tests/kernel/test_workflow_validator.py -q`.
+- [x] Run `python -m harness.bundle_validator .`.
 - [ ] Run `git diff --check` and inspect the complete diff.
 - [ ] Commit the EGR-153 implementation independently.
 - [ ] Redeploy bundles to the preserved greenfield workspace and rerun delivery verification.
-
