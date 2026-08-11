@@ -604,6 +604,7 @@ def _print_plan(result: WorkspaceGitMigrationResult) -> None:
         and not result.gitignore_updated
         and not result.untracked_runtime_paths
         and not result.staged_paths
+        and not result.committed
     ):
         print("No changes needed.")
     else:

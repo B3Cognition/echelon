@@ -132,6 +132,46 @@ def test_migration_write_points_next_step_to_commit_command(
 
 
 @pytest.mark.unit
+def test_migration_reports_commit_when_only_pre_staged_changes_exist(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _write_workspace(tmp_path)
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    migrate_workspace(tmp_path, write=True, commit=False)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Test User",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-m",
+            "baseline",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    tracked = tmp_path / "sources" / "README.md"
+    tracked.write_text(tracked.read_text(encoding="utf-8") + "\nUpdated.\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "add", "sources/README.md"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+
+    exit_code = main([str(tmp_path), "--commit", "--message", "migration update"])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "committed: True" in output
+    assert "No changes needed." not in output
+
+
+@pytest.mark.unit
 def test_existing_git_workspace_migration_only_stages_gitignore(tmp_path: Path) -> None:
     _write_workspace(tmp_path)
     subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
