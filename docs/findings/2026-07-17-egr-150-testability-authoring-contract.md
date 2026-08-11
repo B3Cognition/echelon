@@ -2,7 +2,7 @@
 
 **Review date:** 2026-07-17
 **Priority:** P1
-**Status:** open
+**Status:** fixed
 **Source incident:** OptaSearch `002-video-clips-playlists`
 
 ## Summary
@@ -57,7 +57,8 @@ discovering an undocumented syntax contract.
 
 ### CARTOGRAPHER protocol is underspecified
 
-`extension/agents/exploration/cartographer.md` currently:
+The then-current CARTOGRAPHER protocol (now
+`prosaic/subagents/echelon.cartographer.md`):
 
 - requires every requirement to be independently testable;
 - tells amendment mode to add numeric thresholds, units, and measurable hard
@@ -72,7 +73,8 @@ ID-bearing requirement line.
 
 ### The rich-spec template does not demonstrate either signal
 
-`extension/agents/exploration/templates/cartographer-spec-template.md` shows
+The rich-spec template (now
+`prosaic/agents/exploration/templates/cartographer-spec-template.md`) showed
 generic positive FR placeholders. It has no example of:
 
 - a quantitative constraint on the requirement line; or
@@ -102,7 +104,7 @@ without changing the canonical authoring form.
 Add an ALWAYS / NEVER pair to the invariant protocol:
 
 ```markdown
-### Rule 8 - Machine-Recognizable Testability
+### Rule 13 - Machine-Recognizable Testability
 
 ALWAYS express every evidence-backed quantitative boundary using the canonical
 form `<metric> <comparator> <value> [unit]`, with one of `<`, `<=`, `=`, `>=`,
@@ -145,15 +147,15 @@ Update CARTOGRAPHER's functional-requirement and amendment instructions to:
 - use the documented forms rather than empirical throwaway-copy probing when
   these testability sub-metrics fail.
 
-After initial authoring and after each amendment, require one diagnostic
-`understanding scan` before CARTOGRAPHER returns. If the configured testability
-gate is still missed, permit one localized, evidence-backed repair and one
-confirmation scan. SAGE remains the owner of the formal WHY2/WHY3 verdict; this
-preflight exists to prevent a predictable dispatch roundtrip, not to let
-CARTOGRAPHER approve its own spec.
+The original proposal asked CARTOGRAPHER to run a bounded diagnostic scan. That
+became obsolete when Echelon introduced the provider-free
+`phase1-understanding` node after every CARTOGRAPHER dispatch. The agent must not
+execute or locate validators; the controller runs the deterministic check and
+routes any focused amendment. SAGE remains the owner of the qualitative
+WHY2/WHY3 verdict.
 
 Do not duplicate this invariant workflow logic into
-`extension/workflow/phases/phase1-what.md`; under the repository's
+`runtime/workflow/phases/phase1-what.md`; under the repository's
 dispatcher/protocol split it belongs to the CARTOGRAPHER agent protocol.
 
 ### 4. Align the rich-spec template
@@ -187,14 +189,28 @@ Add focused tests proving:
 - CARTOGRAPHER contains the paired canonical-syntax and no-invention contract;
 - the rich-spec template contains both inline symbolic-constraint and grounded
   negative-requirement examples; and
-- CARTOGRAPHER performs the bounded diagnostic preflight without claiming the
-  formal SAGE verdict; and
+- controller-owned post-dispatch Understanding remains the only deterministic
+  preflight and CARTOGRAPHER does not claim the formal SAGE verdict; and
 - the phase dispatcher does not become a second copy of the invariant protocol.
+
+## Resolution
+
+The canonical Prosaic CARTOGRAPHER protocol now defines symbolic inline
+comparators, atomic grounded negative requirements, line-scoped metric
+visibility, targeted amendment, and explicit no-invention rules. Its rich-spec
+template demonstrates the same forms as non-quota examples. Understanding now
+accepts both `equals <integer-or-decimal>` and
+`equal to <integer-or-decimal>` as compatibility input while CARTOGRAPHER emits
+the symbolic canonical form.
+
+The runtime dispatcher remains unchanged. Existing controller-owned
+Understanding and SAGE routing supersedes the finding's earlier model-executed
+diagnostic proposal.
 
 ## Candidate Files
 
-- `extension/agents/exploration/cartographer.md`
-- `extension/agents/exploration/templates/cartographer-spec-template.md`
+- `prosaic/subagents/echelon.cartographer.md`
+- `prosaic/agents/exploration/templates/cartographer-spec-template.md`
 - `src/understanding/constraint_metrics.py`
 - `tests/unit/test_constraint_metrics.py` or the existing focused Understanding
   constraint-metric test module
@@ -212,9 +228,8 @@ Add focused tests proving:
   `MUST NOT` or `SHALL NOT` requirements instead of implicit omissions.
 - CARTOGRAPHER does not invent thresholds, units, error cases, or prohibitions to
   satisfy a metric.
-- CARTOGRAPHER performs one post-authoring diagnostic scan and at most one
-  localized repair plus confirmation scan before returning; SAGE still owns the
-  formal gate.
+- The controller runs Understanding after CARTOGRAPHER returns; CARTOGRAPHER
+  does not execute validators or claim the formal gate.
 - Understanding counts both `result_count = 0` and `result count equals 0` as
   hard constraints.
 - Existing symbolic, `equal to`, range, unit, and negative-space recognition

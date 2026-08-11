@@ -129,6 +129,30 @@ class TestCartographerTemplates:
             assert "/tmp/cartographer-understanding.json" not in text
             assert "controller-owned" in text.lower()
 
+    def test_cartographer_defines_machine_recognizable_testability(self) -> None:
+        agent_text = AGENT.read_text(encoding="utf-8")
+        phase_text = PHASE.read_text(encoding="utf-8")
+
+        assert "Machine-Recognizable Testability" in agent_text
+        assert "<metric> <comparator> <value> [unit]" in agent_text
+        assert "`<`, `<=`, `=`, `>=`, or `>`" in agent_text
+        assert "MUST NOT" in agent_text
+        assert "SHALL NOT" in agent_text
+        assert "invent thresholds" in agent_text
+        assert "Machine-Recognizable Testability" not in phase_text
+
+    def test_spec_template_demonstrates_grounded_metric_visible_constraints(
+        self,
+    ) -> None:
+        text = (TEMPLATE_DIR / "cartographer-spec-template.md").read_text(
+            encoding="utf-8"
+        )
+
+        assert "Constraint: `result_count = 0`" in text
+        assert "Constraint: `page_size <= 50 items`" in text
+        assert "MUST NOT expose records outside" in text
+        assert "only when supported by" in text
+
     def test_lexicon_deriver_consumes_injected_configuration_and_findings(
         self,
     ) -> None:

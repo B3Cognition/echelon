@@ -37,6 +37,17 @@ apply. -->
 requirement. Tests, documentation, ACs, and success criteria may verify or
 summarize it, but must not duplicate it as another obligation. -->
 
+<!-- Put measurable boundaries directly on the ID-bearing requirement line,
+only when supported by user input, verified evidence, domain rules, the
+constitution, or established boundaries. Use symbolic comparator syntax. For
+example:
+- **FR-021**: The system MUST return an empty result when no records match. Constraint: `result_count = 0`.
+- **FR-022**: The system MUST limit each page. Constraint: `page_size <= 50 items`.
+- **FR-023**: The system MUST NOT expose records outside the requesting user's authorized scope.
+The examples show syntax, not a quota. Preserve unknown values and omit
+unsupported prohibitions instead of inventing requirements for a quality score.
+-->
+
 ### <Domain Area>
 <!-- Omit this section when no distinct second domain area exists. -->
 

@@ -34,6 +34,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-150 testability authoring compatibility** — CARTOGRAPHER now writes
+  evidence-backed quantitative constraints with symbolic comparators and
+  grounded negative behavior as atomic requirements on analyzer-visible ID
+  lines. Understanding also accepts integer and decimal `equals` and `equal to`
+  forms from existing or human-authored specifications, while deterministic
+  validation remains controller-owned.
+
 - **Proportional specification quality gates** — the weighted `overall` score
   no longer blocks a specification a second time after every configured
   category floor passes. Reports retain the numeric aggregate result and record

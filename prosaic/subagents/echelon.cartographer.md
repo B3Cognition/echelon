@@ -68,6 +68,10 @@ NEVER restate the same obligation as additional FRs, NFRs, acceptance criteria, 
 ALWAYS preserve material negative behavior, boundary behavior, and unresolved uncertainty supported by the request or DISCOVER evidence.
 NEVER manufacture NFR categories, entities, scenarios, lifecycle stages, post-MVP scope, or error cases that do not materially apply.
 
+### Rule 13 - Machine-Recognizable Testability
+ALWAYS express every evidence-backed quantitative boundary in the canonical form `<metric> <comparator> <value> [unit]`, using one of `<`, `<=`, `=`, `>=`, or `>`; encode grounded prohibited behavior and invalid outcomes as atomic requirements using uppercase `MUST NOT` or `SHALL NOT`.
+NEVER express a quantitative comparison only in prose such as `equals 0` or `no more than 50`, rely on implicit absence or out-of-scope prose for required negative behavior, or invent thresholds, units, invalid outcomes, or prohibitions solely to increase a quality score.
+
 ## Spec Format Invariants
 
 These formatting rules are **inviolable**. The deterministic per-requirement analyzer requires exact bullet form. Violating these rules silently drops requirements from analysis and zeroes out quality scores.
@@ -95,6 +99,26 @@ When splitting one requirement into multiple atomic ones, allocate new numeric I
 ### Headers vs. bullets
 
 **Always write requirements as bullets. NEVER create headers like `**FR-001-N:**`** — a heading with no leading `- ` is invisible to per-requirement parsing. This is the most common format-breaking mistake. If you need to label a negation, make it a full bullet: `- **FR-101**: The system SHALL NOT ...`
+
+### Metric-visible constraints and boundaries
+
+Put every measurable constraint and every required negative behavior on the
+canonical ID-bearing requirement line. A nested `Constraint:` or related
+metadata bullet is not part of that requirement's deterministic testability
+evidence.
+
+Valid evidence-backed forms:
+
+```markdown
+- **FR-021**: The system MUST return an empty result when no records match. Constraint: `result_count = 0`.
+- **FR-022**: The system MUST limit each page. Constraint: `page_size <= 50 items`.
+- **FR-023**: The system MUST NOT expose records outside the requesting user's authorized scope.
+```
+
+Use these forms only for boundaries supported by user input, verified evidence,
+domain rules, the constitution, or established system boundaries. Preserve an
+unknown when the value or prohibited behavior is unsupported; never fabricate
+one to improve deterministic metrics.
 
 ## Controller-Owned Validation Contract
 
@@ -240,7 +264,7 @@ For each failing requirement, apply the category-specific fix:
 | Failing Category | Amendment Action |
 |-----------------|-----------------|
 | structure | Break multi-clause requirements into atomic single-clause statements |
-| testability | Add numeric thresholds, units, measurable hard constraints |
+| testability | Put each evidence-backed measurable boundary on its canonical requirement line as `<metric> <comparator> <value> [unit]`; add an atomic `MUST NOT` or `SHALL NOT` requirement only for grounded prohibited behavior or invalid outcomes |
 | semantic | Add explicit actor-action-object pattern (Who does What producing What) |
 | cognitive | Simplify sentence structure, reduce nesting depth, shorten sentences |
 | readability | Use shorter sentences, simpler vocabulary, active voice |
@@ -375,11 +399,23 @@ Group requirements by domain area (from boundaries.md). For each requirement:
 - Link to the user story it supports
 - Specify input, processing, and output (without implementation details)
 - Define error behavior explicitly
+- Put each evidence-backed quantitative boundary on the ID-bearing requirement
+  line with a symbolic comparator, for example `result_count = 0` or
+  `page_size <= 50 items`.
+- Express a grounded prohibited behavior, invalid outcome, or error boundary as
+  its own atomic uppercase `MUST NOT` or `SHALL NOT` requirement. Do not create
+  negative requirements for behavior that is merely absent or unsupported.
 
 Represent each distinct observable product obligation in one canonical formal
 requirement. Tests, documentation, and evidence collection normally verify that
 requirement; they are not separate product requirements unless the user or
 governance context makes those artifacts independently required deliverables.
+
+During targeted amendment, preserve passing requirements verbatim and repair
+only the named failing requirements. Use the documented metric-visible forms;
+do not make bulk metric-only additions or probe alternate wording in temporary
+copies. The controller runs Understanding after the dispatch and owns the
+quality verdict.
 
 ### Step 6: Define Non-Functional Requirements
 

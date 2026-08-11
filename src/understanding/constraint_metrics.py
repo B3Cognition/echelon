@@ -60,7 +60,8 @@ class ConstraintAnalyzer:
 
         # Comparisons
         r'<\s*\d+', r'>\s*\d+', r'=\s*\d+', r'<=\s*\d+', r'>=\s*\d+',
-        r'less\s+than\s+\d+', r'greater\s+than\s+\d+', r'equal\s+to\s+\d+',
+        r'less\s+than\s+\d+', r'greater\s+than\s+\d+',
+        r'\bequal(?:s|\s+to)\s+\d+(?:\.\d+)?\b',
         r'at\s+least\s+\d+', r'at\s+most\s+\d+', r'no\s+more\s+than\s+\d+',
         r'between\s+\d+\s+and\s+\d+', r'from\s+\d+\s+to\s+\d+',
 
