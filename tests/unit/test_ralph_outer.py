@@ -4010,10 +4010,10 @@ class TestOuterLoopConvergence:
         gitops.commit.assert_not_called()
         gitops.destroy_worktree.assert_not_called()
 
-    def test_target_scoped_llm_build_blocks_unsafe_host_execution(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    def test_target_scoped_llm_build_honors_approved_unsafe_host_execution(
+        self, tmp_path: Path
     ) -> None:
-        """Unsafe host LLM execution is incompatible with isolated target delivery."""
+        """Explicit host execution approval applies to the isolated build worktree."""
         config = _make_config()
         config.llm.tool_policy = LlmToolPolicy(
             allow_unsafe_host_execution=True,
@@ -4049,14 +4049,9 @@ class TestOuterLoopConvergence:
             build_prompt="implement something",
         )
 
-        assert result.status == "blocked"
-        assert result.termination_reason == "containment_violation"
-        assert state_store.read()["build_status"] == "unsafe_host_execution_blocked"
-        captured = capsys.readouterr()
-        assert "Unsafe host LLM execution is disabled for isolated target delivery" in captured.err
-        llm_build_runner.exec_build.assert_not_called()
-        gitops.commit.assert_not_called()
-        gitops.destroy_worktree.assert_not_called()
+        assert result.termination_reason != "containment_violation"
+        assert state_store.read().get("build_status") != "unsafe_host_execution_blocked"
+        llm_build_runner.exec_build.assert_called_once()
 
     def test_containment_allows_external_documentation_reports_only(
         self, tmp_path: Path
@@ -6698,6 +6693,63 @@ class TestOuterLoopConvergence:
         state = state_store.read()
         assert state["checkpoint_commits"][0]["task_ids"] == []
         assert state["checkpoint_commits"][0]["phase_group"] == "phase-3-play-loop"
+
+    def test_checkpoint_commit_preserves_dirty_finalization_without_task_progress(
+        self, tmp_path: Path
+    ) -> None:
+        controller, provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+        )
+        gitops.commit.return_value = "feedface"
+        unchanged = {"build": {"completed_tasks": 24, "task_results": {}}}
+
+        with patch.object(controller, "_has_file_changes", return_value=True):
+            checkpoint = controller._checkpoint_progress_commit(
+                worktree_path="/tmp/worktree",
+                before_state=unchanged,
+                after_state=unchanged,
+                outer_iter=2,
+                inner_iter=1,
+                phase="fix",
+                allow_without_task_progress=True,
+            )
+
+        assert checkpoint is not None
+        message = gitops.commit.call_args.args[1]
+        assert "fix tasks-unknown" in message
+        state = state_store.read()
+        assert state["checkpoint_commits"][0]["task_ids"] == []
+        assert state["checkpoint_commits"][0]["completed_tasks_before"] == 24
+        assert state["checkpoint_commits"][0]["completed_tasks_after"] == 24
+        gitops.push.assert_called_once_with(
+            "/tmp/worktree",
+            "harness/spec-001/default/iter-2",
+        )
+
+    def test_checkpoint_commit_skips_dirty_attempt_without_task_progress_by_default(
+        self, tmp_path: Path
+    ) -> None:
+        controller, provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+        )
+        unchanged = {"build": {"completed_tasks": 24, "task_results": {}}}
+
+        with patch.object(controller, "_has_file_changes", return_value=True):
+            checkpoint = controller._checkpoint_progress_commit(
+                worktree_path="/tmp/worktree",
+                before_state=unchanged,
+                after_state=unchanged,
+                outer_iter=2,
+                inner_iter=1,
+                phase="fix",
+            )
+
+        assert checkpoint is None
+        gitops.commit.assert_not_called()
+        gitops.push.assert_not_called()
+        assert "checkpoint_commits" not in state_store.read()
 
     def test_checkpoint_commit_skips_when_no_file_changes(self, tmp_path: Path) -> None:
         """Progress metadata alone does not create empty checkpoint commits."""

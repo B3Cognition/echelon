@@ -86,6 +86,33 @@ IMPLEMENTATION_INPUT_FILES = (
     "Makefile",
 )
 
+IMPLEMENTATION_ROOT_SOURCE_SUFFIXES = frozenset(
+    {
+        ".c",
+        ".cc",
+        ".cpp",
+        ".cs",
+        ".go",
+        ".h",
+        ".hpp",
+        ".java",
+        ".js",
+        ".jsx",
+        ".kt",
+        ".kts",
+        ".mjs",
+        ".php",
+        ".py",
+        ".rb",
+        ".rs",
+        ".swift",
+        ".ts",
+        ".tsx",
+    }
+)
+
+MEASURED_EVIDENCE_ROOT_SUFFIXES = frozenset({".json"})
+
 
 @dataclass(frozen=True)
 class FulfillmentRefreshResult:
@@ -450,12 +477,12 @@ class FulfillmentRunner:
                 verified_ledger=verified_ledger,
             )
         if report is None:
-            return FulfillmentRefreshResult(
-                status="failed",
-                exit_code=2,
-                scope="scoped",
-                reason="scoped verify-spec requires a base full fulfillment report",
-                report_path=report_path,
+            return self.refresh(
+                worktree_path,
+                spec_id,
+                spec_dir=spec_dir,
+                orchestration_root=spec_dir.parent.parent,
+                scope="full",
             )
 
         skill_path = find_skill(
@@ -991,6 +1018,14 @@ def _verified_ledger_summary(
 
 def _implementation_input_paths(worktree: Path) -> list[Path]:
     paths: set[Path] = set()
+    for path in worktree.iterdir():
+        if not path.is_file():
+            continue
+        suffix = path.suffix.lower()
+        if suffix in IMPLEMENTATION_ROOT_SOURCE_SUFFIXES or (
+            not path.name.startswith(".") and suffix in MEASURED_EVIDENCE_ROOT_SUFFIXES
+        ):
+            paths.add(path)
     for dirname in IMPLEMENTATION_INPUT_DIRS:
         root = worktree / dirname
         if not root.exists():

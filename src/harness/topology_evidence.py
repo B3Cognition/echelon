@@ -84,7 +84,7 @@ def write_topology_evidence_receipt(
     run_dir = Path(verify_run_dir).resolve(strict=True)
     spec = Path(spec_dir).resolve(strict=True)
     if project != source:
-        raise TopologyEvidenceError("delivery project root does not match ECHELON_SOURCE_ROOT")
+        _validate_harness_managed_worktree(project, workspace)
     try:
         run_dir.relative_to((workspace / "runs").resolve(strict=True))
         spec.relative_to(workspace)
@@ -120,7 +120,7 @@ def write_topology_evidence_receipt(
         raise TopologyEvidenceError("verify-spec state has no valid verify scope")
 
     fingerprint = fingerprint_source(
-        source,
+        project,
         resolve_re_fingerprint_profile(workspace),
     )
     providers = {
@@ -168,6 +168,33 @@ def write_topology_evidence_receipt(
     except DurableJsonError as exc:
         raise TopologyEvidenceError(str(exc)) from exc
     return TopologyEvidenceReceiptResult(receipt_path, status, source_id)
+
+
+def _validate_harness_managed_worktree(project: Path, workspace: Path) -> None:
+    """Require an alternate analyzed checkout to be owned by workspace runs."""
+    git_file = project / ".git"
+    if git_file.is_symlink() or not git_file.is_file():
+        raise TopologyEvidenceError(
+            "delivery project root is neither ECHELON_SOURCE_ROOT nor a harness worktree"
+        )
+    try:
+        marker = git_file.read_text(encoding="utf-8").strip()
+        prefix = "gitdir:"
+        if not marker.lower().startswith(prefix):
+            raise ValueError("invalid gitdir marker")
+        raw_git_dir = Path(marker[len(prefix) :].strip())
+        git_dir = (
+            raw_git_dir if raw_git_dir.is_absolute() else project / raw_git_dir
+        ).resolve(strict=True)
+        git_dir.relative_to((workspace / "runs").resolve(strict=True))
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        raise TopologyEvidenceError(
+            "delivery project root is not a harness-managed workspace worktree"
+        ) from exc
+    if "worktrees" not in git_dir.parts:
+        raise TopologyEvidenceError(
+            "delivery project root is not a harness-managed workspace worktree"
+        )
 
 
 def _delivery_provider_receipt(

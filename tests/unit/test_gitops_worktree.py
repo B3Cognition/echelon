@@ -1115,6 +1115,47 @@ def test_create_worktree_bases_legacy_iteration_on_previous_iteration_branch(tmp
     ) in calls
 
 
+def test_create_worktree_bases_legacy_iteration_on_latest_existing_prior_branch(
+    tmp_path,
+):
+    mirror = tmp_path / "runs" / "mirror.git"
+    mirror.mkdir(parents=True)
+
+    gitops = _make_gitops(tmp_path)
+    calls: list[tuple[list[str], str | None]] = []
+    new_branch = "harness/905-import-prose/default/iter-2"
+    missing_branch = "harness/905-import-prose/default/iter-1"
+    recovered_branch = "harness/905-import-prose/default/iter-0"
+
+    def fake_run_git(args, cwd=None, **_kwargs):
+        calls.append((args, cwd))
+        if args == ["symbolic-ref", "HEAD"]:
+            return SimpleNamespace(stdout="refs/heads/main\n", returncode=0)
+        if args == ["rev-parse", "--verify", f"refs/heads/{new_branch}"]:
+            return SimpleNamespace(stdout="", returncode=1)
+        if args == ["rev-parse", "--verify", f"refs/heads/{missing_branch}"]:
+            return SimpleNamespace(stdout="", returncode=1)
+        if args == ["rev-parse", "--verify", f"refs/heads/{recovered_branch}"]:
+            return SimpleNamespace(stdout=recovered_branch + "\n", returncode=0)
+        return SimpleNamespace(stdout="", returncode=0)
+
+    with patch("harness.gitops._run_git", side_effect=fake_run_git), patch.object(
+        gitops, "sync_runtime_extension"
+    ):
+        gitops.create_worktree(
+            "905-import-prose",
+            "default",
+            2,
+            base_branch=None,
+            build_id="build-new",
+        )
+
+    assert (
+        ["branch", new_branch, recovered_branch],
+        str(mirror),
+    ) in calls
+
+
 def test_clean_branch_listing_strips_git_worktree_marker():
     """`git branch --list` prefixes branches checked out in worktrees with `+`."""
     assert _clean_branch_listing("+ 001-feature") == "001-feature"

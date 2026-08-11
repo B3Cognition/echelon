@@ -4909,6 +4909,7 @@ class SquadController:
                     continue
                 return SquadResult.from_state(self._state_store.load())
 
+            self._materialize_controller_phase_inputs(node)
             executor = self._executors.get(node.type)
             try:
                 if executor is None:
@@ -5388,6 +5389,7 @@ class SquadController:
             self._intercept_human_gate(node)
             return SquadResult.from_state(self._state_store.load())
 
+        self._materialize_controller_phase_inputs(node)
         executor = self._executors.get(node.type)
         try:
             if executor is None:
@@ -7474,6 +7476,14 @@ class SquadController:
         except (OSError, ValueError) as exc:
             logger.warning("Could not materialize implementation targets: %s", exc)
 
+    def _materialize_controller_phase_inputs(self, node: PhaseNode) -> None:
+        """Materialize controller-owned metadata required by a deterministic node."""
+        if (
+            node.type == "deterministic_lexicon"
+            and node.lexicon_artifact == "tasks"
+        ):
+            self._materialize_implementation_targets()
+
     def _apply_product_input_updates(
         self,
         result: SquadAgentResult,
@@ -8305,8 +8315,16 @@ class SquadController:
         """
         gate_artifacts = {
             "phase1-lexicon": ("spec", "lexicon_pass", "lexicon_attempts"),
-            "phase3-plan": ("tasks", "tasks_lexicon_pass", "tasks_lexicon_attempts"),
-            "phase3-consensus": ("tasks", "tasks_lexicon_pass", "tasks_lexicon_attempts"),
+            "phase3-tasks-lexicon": (
+                "tasks",
+                "tasks_lexicon_pass",
+                "tasks_lexicon_attempts",
+            ),
+            "phase3-consensus-tasks-lexicon": (
+                "tasks",
+                "tasks_lexicon_pass",
+                "tasks_lexicon_attempts",
+            ),
         }
         gate_fields = gate_artifacts.get(node.id)
         if gate_fields is None:

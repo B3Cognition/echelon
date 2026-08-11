@@ -10336,6 +10336,18 @@ THEN: The dashboard is visible
         assert result.state_updates == {}
         assert not (spec_dir / "tasks-lexicon-report.json").exists()
 
+    def test_plan_at_iteration_cap_still_routes_to_visible_tasks_gate(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        node = ctrl._graph.get("phase3-plan")
+        state = store.load()
+        state.update({"iteration": 3, "max_iterations": 3})
+        store.save(state)
+
+        result = self._result({})
+        next_phase = _evaluate_prepared_result(ctrl, node, result)
+
+        assert next_phase == "phase3-tasks-lexicon"
+
     def test_tasks_gate_failure_redispatches_without_provider_or_commander(self, tmp_path):
         provider = _mock_provider()
         ctrl, store = _controller(tmp_path, provider=provider)
@@ -10370,6 +10382,33 @@ THEN: The dashboard is visible
         assert report["ok"] is False
         assert any(item["code"] == "parse-error" for item in report["findings"])
 
+    def test_tasks_gate_exhaustion_prepares_one_controller_owned_block(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        node = ctrl._graph.get("phase3-tasks-lexicon")
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "requirements.lexicon.md").write_text(
+            _valid_lexicon_spec(), encoding="utf-8"
+        )
+        (spec_dir / "tasks.md").write_text("not canonical tasks\n", encoding="utf-8")
+        state = store.load()
+        state.update({
+            "phase": node.id,
+            "iteration": 0,
+            "max_iterations": 3,
+            "spec_dir": str(spec_dir.relative_to(tmp_path)),
+            "tasks_lexicon_attempts": 2,
+        })
+        store.save(state)
+
+        result = ctrl._executors["deterministic_lexicon"].execute(node, store)
+        snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+        prepared = ctrl._prepare_phase_result(node, result, snapshot)
+
+        assert prepared.state_updates["tasks_lexicon_action"] == "block"
+        assert prepared.control_updates["blocked_reason"] == "lexicon_gate_exhausted"
+        assert ctrl._evaluate_transitions(node, prepared, snapshot) == "terminal-blocked"
+
     def test_tasks_gate_pass_falls_through_to_understanding(self, tmp_path):
         provider = _mock_provider()
         ctrl, store = _controller(tmp_path, provider=provider)
@@ -10396,6 +10435,36 @@ THEN: The dashboard is visible
         assert result.state_updates["tasks_lexicon_action"] == "proceed"
         assert result.state_updates["tasks_lexicon_pass"] is True
         assert result.state_updates["tasks_lexicon_attempts"] == 0
+
+    def test_tasks_gate_materializes_run_targets_before_validation(
+        self,
+        tmp_path,
+    ):
+        provider = _mock_provider()
+        ctrl, store = _controller(tmp_path, provider=provider)
+        node = ctrl._graph.get("phase3-tasks-lexicon")
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        _write_valid_plan_artifacts(spec_dir)
+        (spec_dir / "targets.yml").unlink()
+        (spec_dir / "spec.md").write_text("# Dashboard\n", encoding="utf-8")
+        _mark_constitution_complete(tmp_path, store)
+        state = store.load()
+        state.update({
+            "phase": node.id,
+            "spec_dir": str(spec_dir.relative_to(tmp_path)),
+            "implementation_targets": ["sources/app"],
+            "quality_scores": [{"pass": True, "source": "harness:understanding"}],
+        })
+        store.save(state)
+        ctrl._guard_spec_lexicon_evidence = MagicMock(side_effect=lambda phase: phase)
+        ctrl._guard_phase1_quality_evidence = MagicMock(side_effect=lambda phase: phase)
+
+        result = ctrl.run_single_phase(node.id, "validate", "banzai")
+
+        provider.exec_agent.assert_not_called()
+        assert result.phase == "phase3-understanding"
+        assert (spec_dir / "targets.yml").is_file()
 
     def test_consensus_revalidates_tasks_after_plan2(self, tmp_path):
         provider = _mock_provider()

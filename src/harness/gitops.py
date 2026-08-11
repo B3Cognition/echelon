@@ -852,14 +852,17 @@ class GitOpsManager:
         if outer_iter <= 0:
             return default_branch
 
-        previous_branch = f"harness/{spec_id}/{strategy_id}/iter-{outer_iter - 1}"
-        result = _run_git(
-            ["rev-parse", "--verify", f"refs/heads/{previous_branch}"],
-            cwd=str(self._mirror_path),
-            check=False,
-        )
-        if result.returncode == 0:
-            return previous_branch
+        for previous_iter in range(outer_iter - 1, -1, -1):
+            previous_branch = (
+                f"harness/{spec_id}/{strategy_id}/iter-{previous_iter}"
+            )
+            result = _run_git(
+                ["rev-parse", "--verify", f"refs/heads/{previous_branch}"],
+                cwd=str(self._mirror_path),
+                check=False,
+            )
+            if result.returncode == 0:
+                return previous_branch
         return default_branch
 
     def sync_runtime_extension(

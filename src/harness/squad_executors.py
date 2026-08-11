@@ -2386,7 +2386,14 @@ class DeterministicLexiconExecutor(PhaseExecutor):
         )
         return SquadAgentResult(
             exit_code=0,
-            echelon_result={"verdict": "DONE", "state_updates": updates},
+            echelon_result={
+                "verdict": (
+                    "BLOCKED"
+                    if artifact == "tasks" and gate.action == "block"
+                    else "DONE"
+                ),
+                "state_updates": updates,
+            },
             raw_output=raw_output,
             duration_ms=0,
             timed_out=False,

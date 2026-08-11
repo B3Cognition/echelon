@@ -972,6 +972,66 @@ class TestFulfillmentRunner:
         assert second.used_cache is False
         assert provider.exec_prompt.call_count == 2
 
+    def test_refresh_invalidates_cache_when_root_source_changes_without_commit_change(
+        self, tmp_path
+    ):
+        _write_verify_skill(tmp_path)
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        _write_spec_inputs(spec_dir)
+        _write_matching_audit(tmp_path)
+        source = tmp_path / "hello.py"
+        source.write_text("print('hello')\n", encoding="utf-8")
+        report = spec_dir / "fulfillment-report.md"
+        provider = MagicMock()
+        provider.cli = "claude"
+
+        def write_report(_worktree_path: str, _prompt: str) -> int:
+            _write_matching_report(report)
+            return 0
+
+        provider.exec_prompt.side_effect = write_report
+        runner = FulfillmentRunner(provider)
+
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"):
+            first = runner.refresh(str(tmp_path), "spec-001")
+            source.write_text("print('hello world')\n", encoding="utf-8")
+            second = runner.refresh(str(tmp_path), "spec-001")
+
+        assert first.status == "refreshed"
+        assert second.status == "refreshed"
+        assert second.used_cache is False
+        assert provider.exec_prompt.call_count == 2
+
+    def test_refresh_invalidates_cache_when_root_measured_evidence_changes(
+        self, tmp_path
+    ):
+        _write_verify_skill(tmp_path)
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        _write_spec_inputs(spec_dir)
+        _write_matching_audit(tmp_path)
+        evidence = tmp_path / "runtime-verification-evidence.json"
+        evidence.write_text('{"passed": false}\n', encoding="utf-8")
+        report = spec_dir / "fulfillment-report.md"
+        provider = MagicMock()
+        provider.cli = "claude"
+
+        def write_report(_worktree_path: str, _prompt: str) -> int:
+            _write_matching_report(report)
+            return 0
+
+        provider.exec_prompt.side_effect = write_report
+        runner = FulfillmentRunner(provider)
+
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"):
+            first = runner.refresh(str(tmp_path), "spec-001")
+            evidence.write_text('{"passed": true}\n', encoding="utf-8")
+            second = runner.refresh(str(tmp_path), "spec-001")
+
+        assert first.status == "refreshed"
+        assert second.status == "refreshed"
+        assert second.used_cache is False
+        assert provider.exec_prompt.call_count == 2
+
     def test_refresh_invalidates_cache_when_measured_test_result_changes(self, tmp_path):
         _write_verify_skill(tmp_path)
         spec_dir = tmp_path / "specs" / "spec-001-demo"
@@ -1127,6 +1187,46 @@ class TestFulfillmentRunner:
         assert "base_full_verify_commit: base123" in text
         assert "| FR-001 | IMPLEMENTED | src/a.swift | high | keep |" in text
         assert "| FR-002 | IMPLEMENTED | src/b.swift | high | fixed |" in text
+
+    def test_scoped_refresh_bootstraps_full_report_when_baseline_is_missing(
+        self, tmp_path
+    ):
+        _write_verify_skill(tmp_path)
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        _write_spec_inputs(
+            spec_dir,
+            tasks="- [x] T-001 complexity=standard phase=base req=FR-001 depends=none\n",
+        )
+        report = spec_dir / "fulfillment-report.md"
+        provider = MagicMock()
+        provider.cli = "claude"
+
+        def write_full_report(_worktree_path: str, prompt: str) -> int:
+            assert "scope=scoped" not in prompt
+            report.write_text(
+                "| ID | Status | Evidence | Confidence | Notes |\n"
+                "| --- | --- | --- | --- | --- |\n"
+                "| FR-001 | IMPLEMENTED | hello.py | high | bootstrapped |\n",
+                encoding="utf-8",
+            )
+            return 0
+
+        provider.exec_prompt.side_effect = write_full_report
+
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="head456"):
+            result = FulfillmentRunner(provider).refresh(
+                str(tmp_path),
+                "spec-001",
+                scope="scoped",
+                completed_task_ids=["T-001"],
+            )
+
+        assert result.status == "refreshed"
+        assert result.scope == "full"
+        assert result.reason == "full verify-spec completed"
+        metadata = read_fulfillment_metadata(report)
+        assert metadata["verified_commit"] == "head456"
+        assert metadata["verify_scope"] == "full"
 
     def test_scoped_refresh_rechecks_unresolved_ledger_rows_only(self, tmp_path):
         _write_verify_skill(tmp_path)

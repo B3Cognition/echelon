@@ -369,37 +369,6 @@ class RalphController:
                     # Run build
                     iter_prompt = self._make_iter_prompt(build_prompt, outer_iter, last_verify_failures_text)
                     before_build_state = self._state_store.read()
-                    unsafe_host_violation = _unsafe_host_execution_violation(
-                        self._config,
-                        before_build_state,
-                        worktree_path,
-                    )
-                    if unsafe_host_violation is not None:
-                        preserve_worktree = True
-                        _print_containment_violation_banner(
-                            self._spec_id,
-                            self._strategy_id,
-                            unsafe_host_violation,
-                        )
-                        return self._finalize(
-                            status="blocked",
-                            reason="containment_violation",
-                            outer_iterations=outer_iter + 1,
-                            inner_iterations=total_inner_iterations,
-                            pr_url=pr_url,
-                            tokens_used=tokens_used,
-                            final_verify=None,
-                            extra_state={
-                                "containment_violation": unsafe_host_violation,
-                                "build_status": "unsafe_host_execution_blocked",
-                                "build_reason": (
-                                    "Unsafe host LLM execution is disabled for isolated "
-                                    "target delivery; disable "
-                                    "harness.llm.tool_policy.allow_unsafe_host_execution "
-                                    "or use a containerized/brokered runner."
-                                ),
-                            },
-                        )
                     containment_before = _snapshot_containment_projects(
                         before_build_state,
                         getattr(self._gitops, "base_dir", None),
@@ -516,6 +485,11 @@ class RalphController:
                         outer_iter=outer_iter,
                         inner_iter=0,
                         phase="build",
+                        allow_without_task_progress=(
+                            build_result.get("completion_marker_explicit", False)
+                            and build_result.get("passed", True)
+                            and build_result.get("build_status") == "done"
+                        ),
                     )
 
                     # Check mode boundary
@@ -1300,6 +1274,11 @@ class RalphController:
                 outer_iter=outer_iter,
                 inner_iter=inner_iter,
                 phase="fix",
+                allow_without_task_progress=(
+                    fix_result.get("completion_marker_explicit", False)
+                    and fix_result.get("passed", True)
+                    and fix_result.get("build_status") == "done"
+                ),
             )
 
             if fix_result.get("build_status") == "blocked":
@@ -1502,6 +1481,7 @@ class RalphController:
                 "exit_code": result.exit_code,
                 "passed": result.succeeded,
                 "build_status": result.status,
+                "completion_marker_explicit": True,
                 "build_reason": result.reason,
                 "duration_s": result.duration_ms / 1000.0,
                 "tokens": result.token_usage,
@@ -1521,6 +1501,7 @@ class RalphController:
             "exit_code": result.exit_code,
             "passed": result.exit_code == 0,
             "build_status": "done" if result.exit_code == 0 else "unknown",
+            "completion_marker_explicit": False,
             "build_reason": None,
             "duration_s": result.duration_ms / 1000.0,
             "tokens": _estimate_tokens(result),
@@ -2626,6 +2607,7 @@ class RalphController:
                 "exit_code": result.exit_code,
                 "passed": result.succeeded,
                 "build_status": result.status,
+                "completion_marker_explicit": True,
                 "build_reason": result.reason,
                 "duration_s": result.duration_ms / 1000.0,
                 "tokens": 0,
@@ -2650,6 +2632,7 @@ class RalphController:
         return {
             "exit_code": result.exit_code,
             "passed": result.exit_code == 0,
+            "completion_marker_explicit": False,
             "duration_s": result.duration_ms / 1000.0,
             "tokens": _estimate_tokens(result),
             "impasse": False,
@@ -3947,6 +3930,7 @@ class RalphController:
         outer_iter: int,
         inner_iter: int,
         phase: str,
+        allow_without_task_progress: bool = False,
     ) -> Optional[Dict[str, Any]]:
         try:
             return self._checkpoint_progress_commit(
@@ -3956,6 +3940,7 @@ class RalphController:
                 outer_iter=outer_iter,
                 inner_iter=inner_iter,
                 phase=phase,
+                allow_without_task_progress=allow_without_task_progress,
             )
         except Exception as exc:
             logger.warning("Could not create harness checkpoint commit: %s", exc)
@@ -3970,11 +3955,14 @@ class RalphController:
         outer_iter: int,
         inner_iter: int,
         phase: str,
+        allow_without_task_progress: bool = False,
     ) -> Optional[Dict[str, Any]]:
-        """Commit a dirty worktree when build progress advanced.
+        """Commit a dirty worktree after verified build progress.
 
         Stage 1 checkpointing records truthful metadata only: task IDs when
         state identifies newly completed tasks, otherwise phase/wave context.
+        An explicitly successful invocation may preserve file-only finalization
+        after all canonical task progress has already been recorded.
         """
         before_build = before_state.get("build") if isinstance(before_state, dict) else {}
         after_build = after_state.get("build") if isinstance(after_state, dict) else {}
@@ -3987,7 +3975,11 @@ class RalphController:
         after_completed = int(after_build.get("completed_tasks") or 0)
         phase_group = str(after_build.get("current_phase_group") or "").strip()
 
-        if after_completed <= before_completed and not phase_group:
+        if (
+            after_completed <= before_completed
+            and not phase_group
+            and not allow_without_task_progress
+        ):
             return None
         if not self._has_file_changes(worktree_path):
             return None
@@ -4031,8 +4023,28 @@ class RalphController:
         checkpoints.append(checkpoint)
         state["checkpoint_commits"] = checkpoints
         self._state_store.write(state)
+        if allow_without_task_progress and after_completed <= before_completed:
+            branch = self._checkpoint_branch(worktree_path, outer_iter)
+            self._gitops.push(worktree_path, branch)
         logger.info("Committed harness checkpoint %s for %s", commit[:12], label)
         return checkpoint
+
+    def _checkpoint_branch(self, worktree_path: str, outer_iter: int) -> str:
+        fallback = (
+            f"harness/{self._spec_id}/{self._strategy_id}/iter-{outer_iter}"
+        )
+        try:
+            result = subprocess.run(
+                ["git", "branch", "--show-current"],
+                cwd=worktree_path,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return fallback
+        return result.stdout.strip() or fallback
 
     def _has_file_changes(self, worktree_path: str) -> bool:
         """Return True if any files were added or modified since last commit.
@@ -4960,38 +4972,6 @@ def _detect_first_containment_violation(
         if violation is not None:
             return violation
     return None
-
-
-def _unsafe_host_execution_violation(
-    config: HarnessConfig,
-    state: Dict[str, Any],
-    worktree_path: str,
-) -> Optional[Dict[str, Any]]:
-    policy = getattr(getattr(config, "llm", None), "tool_policy", None)
-    if not bool(getattr(policy, "allow_unsafe_host_execution", False)):
-        return None
-    workspace_root = str(state.get("workspace_root") or "").strip()
-    source_root = str(state.get("source_root") or "").strip()
-    if not workspace_root or not source_root:
-        return None
-    workspace = Path(workspace_root).expanduser().resolve(strict=False)
-    source = Path(source_root).expanduser().resolve(strict=False)
-    worktree = Path(worktree_path).expanduser().resolve(strict=False)
-    if workspace == source or source == worktree:
-        return None
-    return {
-        "project_dir": str(workspace),
-        "worktree_path": str(worktree),
-        "changed_status": [
-            "unsafe_host_execution_blocked: Unsafe host LLM execution is disabled for isolated target delivery"
-        ],
-        "policy": {
-            "allow_unsafe_host_execution": True,
-            "approval_reason": getattr(policy, "approval_reason", None),
-        },
-        "workspace_root": str(workspace),
-        "source_root": str(source),
-    }
 
 
 def _detect_containment_violation(

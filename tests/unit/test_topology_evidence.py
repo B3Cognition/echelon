@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -446,6 +447,61 @@ def _delivery_receipt_fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
         encoding="utf-8",
     )
     return workspace, source, spec, run
+
+
+@pytest.mark.unit
+def test_delivery_receipt_accepts_harness_managed_source_worktree(
+    tmp_path: Path,
+) -> None:
+    from harness.topology_evidence import write_topology_evidence_receipt
+
+    workspace, source, spec, run = _delivery_receipt_fixture(tmp_path)
+    subprocess.run(["git", "init", "-b", "main"], cwd=source, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=source,
+        check=True,
+    )
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=source, check=True)
+    (source / "hello.py").write_text('print("Hello, World!")\n', encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=source, check=True)
+    subprocess.run(["git", "commit", "-m", "initial"], cwd=source, check=True, capture_output=True)
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=source,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    mirror = workspace / "runs/targets/api/runs/mirror.git"
+    mirror.parent.mkdir(parents=True)
+    subprocess.run(
+        ["git", "clone", "--mirror", str(source), str(mirror)],
+        check=True,
+        capture_output=True,
+    )
+    worktree = workspace / "runs/targets/api/runs/build-1/worktrees/default/iter-0"
+    worktree.parent.mkdir(parents=True)
+    subprocess.run(
+        ["git", "worktree", "add", "-b", "harness/test", str(worktree), "main"],
+        cwd=mirror,
+        check=True,
+        capture_output=True,
+    )
+
+    result = write_topology_evidence_receipt(
+        worktree,
+        run,
+        spec,
+        workspace_root=workspace,
+        source_id="api",
+        source_root=source,
+    )
+
+    receipt = json.loads(result.receipt_path.read_text(encoding="utf-8"))
+    assert receipt["source_path"] == "sources/api"
+    assert receipt["analyzed_commit"] == head
 
 
 @pytest.mark.unit
