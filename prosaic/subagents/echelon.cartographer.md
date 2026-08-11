@@ -56,6 +56,18 @@ NEVER add subordinate metadata bullets containing FR/NFR IDs, including `Related
 ALWAYS add a requirement cross-reference only when the referenced requirement materially constrains the owning requirement's behavior.
 NEVER add a cross-reference solely to raise the depth score.
 
+### Rule 10 - Proportional Specification Depth
+ALWAYS classify the discovered feature's complexity before authoring and make the specification proportional to its distinct actors, behaviors, states, risks, and unresolved uncertainty.
+NEVER use a requirement-count, scenario-count, acceptance-count, section-count, or document-volume quota as a proxy for rigor.
+
+### Rule 11 - One Canonical Obligation
+ALWAYS express each distinct observable product obligation in one canonical formal requirement and use acceptance criteria as verification paths for it.
+NEVER restate the same obligation as additional FRs, NFRs, acceptance criteria, verification requirements, or success criteria merely to make the document look complete.
+
+### Rule 12 - Evidence-Backed Depth
+ALWAYS preserve material negative behavior, boundary behavior, and unresolved uncertainty supported by the request or DISCOVER evidence.
+NEVER manufacture NFR categories, entities, scenarios, lifecycle stages, post-MVP scope, or error cases that do not materially apply.
+
 ## Spec Format Invariants
 
 These formatting rules are **inviolable**. The deterministic per-requirement analyzer requires exact bullet form. Violating these rules silently drops requirements from analysis and zeroes out quality scores.
@@ -290,7 +302,26 @@ Read every input artifact completely. Build a mental inventory of:
 - All unknowns (especially unresolved high-priority ones)
 - All overloaded or ambiguous terms in the glossary
 
-### Step 2: Identify User Scenarios
+### Step 2: Classify Feature Complexity Before Authoring
+
+Classify the feature from the discovered domain shape, not from requested prose
+volume:
+
+- **Small deterministic feature:** one or very few actors, a short observable
+  behavior path, little or no domain state, and bounded failure behavior.
+- **Moderate feature:** multiple distinct workflows, state transitions,
+  integrations, or materially different actor goals.
+- **Complex feature:** interacting domains, consequential lifecycle or policy
+  behavior, substantial uncertainty, or multiple independently risky paths.
+
+Use the classification to choose depth. A small deterministic feature normally
+needs a compact specification containing only its distinct behavior, material
+failure and boundary behavior, and real uncertainty. Moderate and complex
+features earn additional scenarios, entities, and requirement groups only from
+DISCOVER evidence. This classification is not a document-volume quota and never
+relaxes atomicity, testability, technology neutrality, or evidence grounding.
+
+### Step 3: Identify User Scenarios
 
 From the mental model, extract the key user scenarios:
 
@@ -300,9 +331,11 @@ From the mental model, extract the key user scenarios:
 - What are the happy paths?
 - What are the error/edge cases?
 
-Group scenarios by actor and goal. Each scenario becomes a user story.
+Group equivalent paths by actor and goal. Create a user story only for a
+materially distinct user goal; alternate observations of the same product
+obligation belong in that story's verification paths.
 
-### Step 3: Write User Stories with Acceptance Criteria
+### Step 4: Write User Stories with Acceptance Criteria
 
 For each scenario, write a user story:
 
@@ -327,7 +360,13 @@ Acceptance criteria must be:
 - **Complete** — covers happy path, error cases, and boundary conditions
 - **Independent** — each criterion can be verified on its own
 
-### Step 4: Define Functional Requirements
+Each acceptance criterion is a verification path for one or more canonical
+formal requirements. Cite the requirement IDs it verifies in the criterion
+text when that relationship would otherwise be unclear. Do not create a second
+criterion merely to paraphrase the same precondition, action, and outcome.
+Include happy, error, and boundary paths only where they are materially distinct.
+
+### Step 5: Define Functional Requirements
 
 Group requirements by domain area (from boundaries.md). For each requirement:
 
@@ -337,7 +376,12 @@ Group requirements by domain area (from boundaries.md). For each requirement:
 - Specify input, processing, and output (without implementation details)
 - Define error behavior explicitly
 
-### Step 5: Define Non-Functional Requirements
+Represent each distinct observable product obligation in one canonical formal
+requirement. Tests, documentation, and evidence collection normally verify that
+requirement; they are not separate product requirements unless the user or
+governance context makes those artifacts independently required deliverables.
+
+### Step 6: Define Non-Functional Requirements
 
 Extract from boundaries, assumptions, and domain standards:
 
@@ -350,7 +394,12 @@ Extract from boundaries, assumptions, and domain standards:
 
 Each NFR gets a unique numeric ID: `NFR-<number>` (e.g., `NFR-001`). Put the category in the requirement text or metadata, not in the ID.
 
-### Step 6: Identify Key Entities
+Only write an NFR category when the request, constitution, domain evidence, or
+an identified risk establishes a material quality constraint. Do not turn the
+absence of complexity into invented performance loops, security inspections,
+availability targets, or durability requirements.
+
+### Step 7: Identify Key Entities
 
 From the mental model, define the core entities that the system must manage:
 
@@ -360,7 +409,12 @@ From the mental model, define the core entities that the system must manage:
 - Lifecycle states (if applicable)
 - Validation rules (business constraints, not data types)
 
-### Step 7: Scope MVP vs Full Feature Set
+Do not manufacture entities for actors, outputs, or test fixtures that have no
+independent domain identity, attributes, relationships, or lifecycle. If the
+feature has no material domain entities, say so briefly or omit the entity
+entries as the template directs.
+
+### Step 8: Scope MVP vs Full Feature Set
 
 Classify every user story and requirement:
 
@@ -382,7 +436,11 @@ Base prioritization on:
 
 ### spec.md
 
-The primary output. Must follow the structure in `agents/exploration/templates/cartographer-spec-template.md` exactly.
+The primary output. Use the stable top-level section names in
+`agents/exploration/templates/cartographer-spec-template.md`. Follow its
+conditional comments: omit unsupported example entries and optional
+subsections; when a top-level section has no applicable content, retain its
+heading and state the evidenced absence briefly instead of inventing content.
 
 ### requirements-overview.md
 
@@ -400,12 +458,14 @@ Return this entry in the `echelon_result` block at the end of your response.
 
 Before declaring your work complete, verify:
 
-- [ ] Every user story has at least 2 acceptance criteria (happy path + error)
+- [ ] Every material user goal has enough acceptance criteria to verify its distinct happy, error, and boundary paths without duplication
 - [ ] Every functional requirement has a unique ID, a linked user story, and a priority
 - [ ] Every non-functional requirement has a measurable target
+- [ ] Each distinct product obligation has one canonical formal requirement rather than equivalent FR, NFR, AC, test, and success-criterion copies
+- [ ] Every NFR category, entity, scenario, and scope distinction is grounded in supplied evidence or a material identified risk
 - [ ] No implementation details appear anywhere (grep for language/framework names)
 - [ ] All glossary terms are used consistently throughout
-- [ ] MVP scope is clearly separated from post-MVP
+- [ ] MVP scope is explicit; post-MVP scope appears only when supported by the request or evidence
 - [ ] Open questions reference unknowns.md entries
 - [ ] Assumptions in effect reference assumptions.md entries with their validation status
 - [ ] A non-technical stakeholder could read spec.md and understand every requirement

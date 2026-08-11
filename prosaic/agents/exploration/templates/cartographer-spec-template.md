@@ -4,6 +4,9 @@
 
 ## User Scenarios & Testing
 
+<!-- Include one scenario per materially distinct user goal. Do not split one
+product obligation into separate usage, testing, and documentation scenarios. -->
+
 ### Scenario 1: <Descriptive Name>
 
 **As a** <actor>,
@@ -12,12 +15,15 @@
 
 #### Acceptance Criteria
 
-- **AC-001**: Given <precondition>, when <action>, then <outcome>.
-- **AC-002**: Given <precondition>, when <action>, then <outcome>.
-- **AC-003**: Given <error condition>, when <action>, then <error handling>.
+- **AC-001**: Given <precondition>, when <action>, then <observable outcome that verifies the applicable FR-NNN>.
+- **AC-002**: Given <materially distinct error or boundary condition>, when <action>, then <observable outcome that verifies the applicable FR-NNN>.
+
+<!-- Each AC is a verification path for one canonical formal requirement. Omit
+duplicate criteria and omit error or boundary criteria that do not materially
+apply. -->
 
 ### Scenario 2: <Descriptive Name>
-...
+<!-- Omit this section when no distinct second user goal exists. -->
 
 ## Functional Requirements
 
@@ -26,23 +32,30 @@
 - **FR-001**: <requirement statement>
   - **User Story:** Scenario N
   - **Priority:** MVP
-- **FR-002**: <requirement statement>
-  - **User Story:** Scenario M
-  - **Priority:** Should-Have
+
+<!-- Express each distinct observable product obligation in one canonical formal
+requirement. Tests, documentation, ACs, and success criteria may verify or
+summarize it, but must not duplicate it as another obligation. -->
 
 ### <Domain Area>
-...
+<!-- Omit this section when no distinct second domain area exists. -->
 
 ## Non-Functional Requirements
+
+<!-- Include only quality constraints grounded in the request, constitution,
+domain evidence, or a material identified risk. Do not add an NFR merely to populate
+a category. -->
 
 - **NFR-001**: <performance requirement>
   - **Category:** Performance
   - **Measurable Target:** <target>
-- **NFR-002**: <security requirement>
-  - **Category:** Security
-  - **Measurable Target:** <target>
 
 ## Key Entities
+
+<!-- When no distinct domain entity with meaningful attributes, relationships,
+or lifecycle exists, retain this heading and state that no domain entities are
+required. Do not promote actors, outputs, or test fixtures to entities merely
+to populate the template. -->
 
 ### <Entity Name>
 - **Attributes:** <business-level attributes>
@@ -57,7 +70,8 @@
 - [ ] <measurable outcome>
 
 ### Full Product Success
-- [ ] <measurable outcome>
+<!-- Omit this subsection when no post-MVP capability is defined. -->
+- [ ] <measurable outcome distinct from MVP success>
 
 ## Scope
 
@@ -65,6 +79,7 @@
 - <feature/capability>
 
 ### In Scope (Post-MVP)
+<!-- Omit this subsection when no post-MVP scope is supported by the request. -->
 - <feature/capability>
 
 ### Explicitly Out of Scope

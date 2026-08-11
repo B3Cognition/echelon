@@ -81,6 +81,42 @@ class TestCartographerTemplates:
         assert "agents/exploration/templates/cartographer-overview-template.md" in text
         assert "using the provided templates" in text
 
+    def test_cartographer_classifies_complexity_before_authoring(self) -> None:
+        agent_text = AGENT.read_text(encoding="utf-8")
+        phase_text = PHASE.read_text(encoding="utf-8")
+
+        assert "Classify Feature Complexity Before Authoring" in agent_text
+        assert "small deterministic feature" in agent_text
+        assert "document-volume quota" in agent_text
+        assert "Classify the discovered feature's complexity" in phase_text
+
+    def test_cartographer_avoids_duplicate_obligations(self) -> None:
+        agent_text = AGENT.read_text(encoding="utf-8")
+        template_text = (TEMPLATE_DIR / "cartographer-spec-template.md").read_text(
+            encoding="utf-8"
+        )
+
+        for text in (agent_text, template_text):
+            assert "one canonical formal requirement" in text
+            assert "verification path" in text
+        assert "at least 2 acceptance criteria" not in agent_text
+        assert "- **FR-002**:" not in template_text
+        assert "- **NFR-002**:" not in template_text
+
+    def test_cartographer_keeps_only_evidenced_optional_depth(self) -> None:
+        agent_text = AGENT.read_text(encoding="utf-8")
+        template_text = (TEMPLATE_DIR / "cartographer-spec-template.md").read_text(
+            encoding="utf-8"
+        )
+
+        assert "Only write an NFR category" in agent_text
+        assert "Do not manufacture entities" in agent_text
+        assert "Omit this section when no distinct" in template_text
+        assert "Do not add an NFR merely to populate" in template_text
+        normalized_agent_text = agent_text.lower()
+        assert "preserve material negative behavior" in normalized_agent_text
+        assert "unresolved uncertainty" in normalized_agent_text
+
     def test_validation_execution_is_controller_owned(self) -> None:
         agent_text = AGENT.read_text(encoding="utf-8")
         phase_text = PHASE.read_text(encoding="utf-8")

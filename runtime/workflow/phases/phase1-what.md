@@ -63,6 +63,14 @@ The active runtime dispatches this role with the following request:
   ```
   Add user stories with acceptance criteria (Given/When/Then) using the provided templates. Cross-reference the glossary and mental model. No implementation details — no languages, frameworks, or databases. Staging directory: `${STAGING_DIR}/`. Return journal entries in `echelon_result.journal_entries`.
 
+  Classify the discovered feature's complexity before authoring. Keep the
+  specification proportional to distinct observable obligations, material
+  risks, and uncertainty without using document-volume quotas. Express each
+  product obligation in one canonical formal requirement; use acceptance
+  criteria as verification paths rather than duplicate obligations, and include
+  NFR categories or optional template sections only when evidence makes them
+  material.
+
   Controller-Owned Validation Contract:
   - The harness owns formal Understanding analysis in `phase1-understanding` and `phase3-understanding`; do not calculate or report deterministic scores.
   - Leave formal validation and downstream phase transitions to the harness after your one completion payload.

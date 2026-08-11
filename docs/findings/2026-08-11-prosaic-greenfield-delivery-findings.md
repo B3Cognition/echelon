@@ -121,7 +121,7 @@ eligible for repair.
 ## EGR-155: CARTOGRAPHER Output Is Disproportionate To Feature Scope
 
 **Priority:** P1
-**Status:** open
+**Status:** in-progress
 
 The request was to create a minimal Python Hello World program. First-pass
 artifacts expanded it into:
@@ -152,6 +152,34 @@ CARTOGRAPHER.
   uncertainty without rewarding document volume.
 - A repeated Hello World benchmark demonstrates materially smaller artifacts
   while preserving the exact output, exit-status, and no-input contract.
+
+### Implementation evidence
+
+The canonical Prosaic CARTOGRAPHER prose now classifies features as small,
+moderate, or complex before authoring. It requires one canonical formal
+requirement per distinct observable obligation, treats acceptance criteria as
+verification paths, and prohibits invented NFR categories, entities, scenarios,
+post-MVP scope, and document-volume quotas. The canonical template keeps stable
+top-level headings while marking unsupported entries and subsections as
+conditional; it no longer demonstrates multiple FR or NFR rows as an implicit
+minimum.
+
+Focused Cartographer and Phase 1 contract verification passes 15 tests. The
+supported Python 3.11 environment also passes 67 Cartographer, Phase 1, Prosaic
+package-install, optional-codegen-install, and runtime-deployment tests with:
+
+```bash
+.venv/bin/python -m pytest -q \
+  tests/unit/test_cartographer_templates.py \
+  tests/unit/test_phase1_quality.py \
+  tests/unit/test_optional_codegen_install.py \
+  tests/unit/test_prosaic_package_install.py \
+  tests/unit/test_workspace_init_deploy_runtime.py
+```
+
+EGR-155 remains in progress until the retained Hello World benchmark is
+repeated through a real provider and preserves the exact output, exit-status,
+standard-error, and no-input contract in materially smaller artifacts.
 
 ## EGR-156: Documentation Repair Does Not Converge Reliably
 
