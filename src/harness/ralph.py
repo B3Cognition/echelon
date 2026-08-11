@@ -46,6 +46,7 @@ from harness.llm_build_runner import LlmBuildRunner
 from harness.delivery_results import ImplementationResult
 from harness.mode import ModeController
 from harness.provider import SandboxHandle, SandboxProvider, SandboxSpec
+from harness.product_inventory import product_evidence_fingerprint
 from harness.phase_a_readiness import validate_phase_a_readiness
 from harness.secret_scan import scan_git_staged
 from harness.spec_frontmatter import find_spec_dir
@@ -58,6 +59,7 @@ from harness.task_progress import (
 from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
 from harness.canonical_requirements import extract_canonical_requirements
 from kernel.fulfillment import (
+    blocking_fulfillment_gaps,
     blocking_statuses,
     fulfillment_has_blocking_gaps,
     fulfillment_report_is_current,
@@ -1217,6 +1219,12 @@ class RalphController:
                     )
 
             # Run feedback (fix)
+            gap_fingerprint_before = _concrete_fulfillment_gap_fingerprint(
+                current_verify
+            )
+            product_fingerprint_before = _safe_product_evidence_fingerprint(
+                worktree_path
+            )
             feedback_prompt = self._make_feedback_prompt(
                 build_prompt, current_verify, inner_iter
             )
@@ -1360,6 +1368,46 @@ class RalphController:
                 return {
                     "converged": False,
                     "blocked": False,
+                    "inner_count": inner_iter,
+                    "tokens_used": tokens_used,
+                    "final_verify": current_verify,
+                }
+
+            gap_fingerprint_after = _concrete_fulfillment_gap_fingerprint(
+                current_verify
+            )
+            product_fingerprint_after = _safe_product_evidence_fingerprint(
+                worktree_path
+            )
+            if (
+                not applied_task_ids
+                and gap_fingerprint_before
+                and gap_fingerprint_after == gap_fingerprint_before
+                and product_fingerprint_before is not None
+                and product_fingerprint_after == product_fingerprint_before
+            ):
+                escalation_file = self._escalation.escalate(
+                    spec_id=self._spec_id,
+                    strategy_id=self._strategy_id,
+                    category="no_progress",
+                    context=(
+                        "## Fulfillment Repair Made No Progress\n\n"
+                        "COMMANDER completed one repair attempt, but the normalized "
+                        "fulfillment gap set and bounded product/evidence fingerprint "
+                        "were unchanged. Ralph stopped before spending another repair "
+                        "iteration on the same evidence state."
+                    ),
+                    last_verify_result=_verify_to_dict(current_verify),
+                )
+                fresh_state = self._state_store.read()
+                fresh_state["escalation_file"] = escalation_file
+                fresh_state["build_status"] = "blocked"
+                fresh_state["build_reason"] = "fulfillment_no_progress"
+                self._state_store.write(fresh_state)
+                return {
+                    "converged": False,
+                    "blocked": True,
+                    "blocked_reason": "fulfillment_no_progress",
                     "inner_count": inner_iter,
                     "tokens_used": tokens_used,
                     "final_verify": current_verify,
@@ -1615,14 +1663,44 @@ class RalphController:
             return verify_result
 
         statuses = ", ".join(sorted(blocking_statuses(strict=True)))
+        gaps = blocking_fulfillment_gaps(
+            report,
+            strict=True,
+            gaps_path=spec_dir / "fulfillment-gaps.md",
+        )
+        normalized_gaps = [
+            {
+                "requirement_id": gap.requirement_id,
+                "status": gap.status,
+                "summary": gap.summary,
+                "recommended_action": gap.recommended_action
+                or (
+                    f"Run `echelon spec reopen {self._spec_id}` or implement and "
+                    f"verify {gap.requirement_id}."
+                ),
+            }
+            for gap in gaps
+        ]
+        concrete_lines = "\n".join(
+            "- {requirement_id} [{status}]: {summary} Recommended action: "
+            "{recommended_action}".format(**gap)
+            for gap in normalized_gaps
+        )
         failure = FailureEntry(
             category=FailureCategory.OTHER,
             id="fulfillment-gaps",
             error=(
-                f"fulfillment report has unresolved statuses ({statuses}): {report}. "
+                f"fulfillment report has unresolved statuses ({statuses}): {report}."
+                + (
+                    f"\nConcrete unresolved requirements:\n{concrete_lines}"
+                    if concrete_lines
+                    else ""
+                )
+                + "\n"
                 f"Run `echelon spec reopen {self._spec_id}` or continue the delivery loop "
                 "with fulfillment-gaps.md as mandatory implementation context."
             ),
+            details={"gaps": normalized_gaps},
         )
         return VerifyResult(
             passed=False,
@@ -5137,6 +5215,54 @@ def _is_only_fulfillment_gaps(verify_result: VerifyResult) -> bool:
     )
 
 
+def _concrete_fulfillment_gap_fingerprint(
+    verify_result: VerifyResult,
+) -> str | None:
+    """Fingerprint structured actionable gaps; ignore legacy aggregate failures."""
+    if not _is_only_fulfillment_gaps(verify_result):
+        return None
+    gaps = verify_result.failures[0].details.get("gaps")
+    if not isinstance(gaps, list) or not gaps:
+        return None
+    normalized: list[dict[str, str]] = []
+    for raw in gaps:
+        if not isinstance(raw, dict):
+            return None
+        normalized.append(
+            {
+                "requirement_id": str(raw.get("requirement_id") or "").strip(),
+                "status": str(raw.get("status") or "").strip().upper(),
+                "summary": re.sub(
+                    r"\s+", " ", str(raw.get("summary") or "").strip()
+                ),
+                "recommended_action": re.sub(
+                    r"\s+",
+                    " ",
+                    str(raw.get("recommended_action") or "").strip(),
+                ),
+            }
+        )
+    return json.dumps(
+        sorted(normalized, key=lambda row: row["requirement_id"]),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _safe_product_evidence_fingerprint(worktree_path: str) -> str | None:
+    if not worktree_path:
+        return None
+    try:
+        return product_evidence_fingerprint(Path(worktree_path))
+    except (OSError, ValueError):
+        logger.warning(
+            "Could not fingerprint bounded product evidence at %s",
+            worktree_path,
+            exc_info=True,
+        )
+        return None
+
+
 def _clean_task_ids(value: object) -> List[str]:
     if not isinstance(value, list):
         return []
@@ -6287,7 +6413,12 @@ def _verify_to_dict(verify: VerifyResult) -> Dict[str, Any]:
     return {
         "passed": verify.passed,
         "failures": [
-            {"category": f.category.value, "id": f.id, "error": f.error}
+            {
+                "category": f.category.value,
+                "id": f.id,
+                "error": f.error,
+                **({"details": f.details} if f.details else {}),
+            }
             for f in verify.failures
         ],
         "duration_s": verify.duration_s,

@@ -1639,6 +1639,17 @@ class TestOuterLoopConvergence:
 
         assert result.passed is False
         assert result.failures[0].id == "fulfillment-gaps"
+        assert result.failures[0].details == {
+            "gaps": [
+                {
+                    "requirement_id": "FR-001",
+                    "status": "MISSING",
+                    "summary": "none",
+                    "recommended_action": "Run `echelon spec reopen spec-001` or implement and verify FR-001.",
+                }
+            ]
+        }
+        assert "FR-001 [MISSING]: none" in result.failures[0].error
         assert "echelon spec reopen spec-001" in result.failures[0].error
 
     def test_fulfillment_gate_treats_unverified_as_blocking_for_harness(

@@ -92,6 +92,127 @@ class TestInnerLoopConvergence:
         assert result.status == "verified"
         assert result.inner_iterations > 0
 
+    def test_unchanged_concrete_fulfillment_gaps_without_product_delta_block(
+        self, tmp_path: Path
+    ) -> None:
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        (worktree / "hello.py").write_text("print('hello')\n", encoding="utf-8")
+        ctrl = _make_controller(tmp_path, [])
+        gap = FailureEntry(
+            FailureCategory.OTHER,
+            "fulfillment-gaps",
+            "FR-001 [UNVERIFIED]: runtime receipt absent",
+            details={
+                "gaps": [
+                    {
+                        "requirement_id": "FR-001",
+                        "status": "UNVERIFIED",
+                        "summary": "runtime receipt absent",
+                        "recommended_action": "record a measured invocation",
+                    }
+                ]
+            },
+        )
+        unchanged = VerifyResult(passed=False, failures=[gap])
+        ctrl._exec_feedback = MagicMock(
+            return_value={
+                "exit_code": 0,
+                "passed": True,
+                "build_status": "done",
+                "build_reason": "no applicable source change",
+                "duration_s": 0.0,
+                "tokens": 0,
+                "task_ids": [],
+            }
+        )
+        ctrl._try_checkpoint_progress_commit = MagicMock(return_value=None)
+        ctrl._exec_verify = MagicMock(return_value=VerifyResult(passed=True))
+        ctrl._refresh_fulfillment_report = MagicMock(return_value=unchanged)
+        ctrl._apply_fulfillment_gate = MagicMock(return_value=unchanged)
+
+        result = ctrl._run_inner_loop(
+            handle=ctrl._provider.create(None),
+            verify_result=unchanged,
+            outer_iter=0,
+            max_inner=3,
+            tokens_used=0,
+            token_budget=None,
+            state=ctrl._state_store.read(),
+            build_command="echelon build",
+            strategy_context="",
+            worktree_path=str(worktree),
+            build_prompt="repair fulfillment",
+        )
+
+        assert result["blocked"] is True
+        assert result["blocked_reason"] == "fulfillment_no_progress"
+        assert result["inner_count"] == 1
+        assert ctrl._exec_feedback.call_count == 1
+        escalation_file = Path(ctrl._state_store.read()["escalation_file"])
+        assert "FR-001" in escalation_file.read_text(encoding="utf-8")
+
+    def test_concrete_fulfillment_gap_with_product_delta_remains_repairable(
+        self, tmp_path: Path
+    ) -> None:
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        product = worktree / "hello.py"
+        product.write_text("print('before')\n", encoding="utf-8")
+        ctrl = _make_controller(tmp_path, [])
+        gap = FailureEntry(
+            FailureCategory.OTHER,
+            "fulfillment-gaps",
+            "FR-001 [UNVERIFIED]: runtime receipt absent",
+            details={
+                "gaps": [
+                    {
+                        "requirement_id": "FR-001",
+                        "status": "UNVERIFIED",
+                        "summary": "runtime receipt absent",
+                        "recommended_action": "record a measured invocation",
+                    }
+                ]
+            },
+        )
+        unchanged_gap = VerifyResult(passed=False, failures=[gap])
+
+        def repair(*_args: object, **_kwargs: object) -> dict[str, object]:
+            product.write_text("print('after')\n", encoding="utf-8")
+            return {
+                "exit_code": 0,
+                "passed": True,
+                "build_status": "done",
+                "build_reason": "changed product evidence",
+                "duration_s": 0.0,
+                "tokens": 0,
+                "task_ids": [],
+            }
+
+        ctrl._exec_feedback = MagicMock(side_effect=repair)
+        ctrl._try_checkpoint_progress_commit = MagicMock(return_value=None)
+        ctrl._exec_verify = MagicMock(return_value=VerifyResult(passed=True))
+        ctrl._refresh_fulfillment_report = MagicMock(return_value=unchanged_gap)
+        ctrl._apply_fulfillment_gate = MagicMock(return_value=unchanged_gap)
+
+        result = ctrl._run_inner_loop(
+            handle=ctrl._provider.create(None),
+            verify_result=unchanged_gap,
+            outer_iter=0,
+            max_inner=1,
+            tokens_used=0,
+            token_budget=None,
+            state=ctrl._state_store.read(),
+            build_command="echelon build",
+            strategy_context="",
+            worktree_path=str(worktree),
+            build_prompt="repair fulfillment",
+        )
+
+        assert result["blocked"] is False
+        assert result["inner_count"] == 1
+        assert ctrl._state_store.read().get("escalation_file") is None
+
 
 @pytest.mark.unit
 class TestSameFailureEscalation:

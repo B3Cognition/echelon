@@ -79,3 +79,26 @@ class TestVerifyResultFromDict:
 
         with pytest.raises(SchemaViolationError):
             FailureEntry.from_dict({"category": "not_a_category", "id": "x", "error": "y"})
+
+    def test_failure_details_roundtrip(self) -> None:
+        from harness.verify_result import FailureEntry
+
+        entry = FailureEntry.from_dict(
+            {
+                "category": "other",
+                "id": "fulfillment-gaps",
+                "error": "two unresolved requirements",
+                "details": {
+                    "gaps": [
+                        {
+                            "requirement_id": "FR-001",
+                            "status": "MISSING",
+                            "summary": "implementation absent",
+                            "recommended_action": "implement FR-001",
+                        }
+                    ]
+                },
+            }
+        )
+
+        assert entry.details["gaps"][0]["requirement_id"] == "FR-001"

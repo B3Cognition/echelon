@@ -30,6 +30,7 @@ class FailureEntry:
     category: FailureCategory
     id: str
     error: str
+    details: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> FailureEntry:
@@ -52,6 +53,11 @@ class FailureEntry:
             category=category,
             id=str(data.get("id", "")),
             error=str(data.get("error", "")),
+            details=(
+                dict(data.get("details", {}))
+                if isinstance(data.get("details", {}), dict)
+                else {}
+            ),
         )
 
 

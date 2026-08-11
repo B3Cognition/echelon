@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-from harness.product_inventory import write_product_inventory
+from harness.product_inventory import product_evidence_fingerprint, write_product_inventory
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -121,6 +121,33 @@ def test_product_inventory_falls_back_without_discarding_hidden_product_files(
         ".env.example",
         "app.py",
     ]
+
+
+def test_product_evidence_fingerprint_ignores_control_plane_but_tracks_product(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    _git(project, "init", "-b", "main")
+    (project / "app.py").write_text("print('one')\n", encoding="utf-8")
+    (project / ".echelon" / "runtime").mkdir(parents=True)
+    (project / ".echelon" / "runtime" / "phase.md").write_text(
+        "one\n", encoding="utf-8"
+    )
+    _git(project, "add", "app.py", ".echelon")
+
+    original = product_evidence_fingerprint(project)
+    (project / ".echelon" / "runtime" / "phase.md").write_text(
+        "two\n", encoding="utf-8"
+    )
+    assert product_evidence_fingerprint(project) == original
+
+    (project / "__pycache__").mkdir()
+    (project / "__pycache__" / "app.cpython-311.pyc").write_bytes(b"generated")
+    assert product_evidence_fingerprint(project) == original
+
+    (project / "app.py").write_text("print('two')\n", encoding="utf-8")
+    assert product_evidence_fingerprint(project) != original
 
 
 def test_write_product_inventory_cli_stamps_existing_verify_state(

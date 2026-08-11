@@ -7,6 +7,7 @@ from kernel.fulfillment import (
     apply_deferred_scope_to_report,
     NON_STRICT_BLOCKING,
     STRICT_BLOCKING,
+    blocking_fulfillment_gaps,
     blocking_statuses,
     fulfillment_report_is_current,
     fulfillment_table_ids,
@@ -184,6 +185,38 @@ def test_zero_fulfillment_summary_counts_are_not_blocking(tmp_path):
 def test_blocking_statuses_returns_expected_sets():
     assert blocking_statuses() == NON_STRICT_BLOCKING
     assert blocking_statuses(strict=True) == STRICT_BLOCKING
+
+
+def test_blocking_fulfillment_gaps_returns_normalized_actionable_rows(
+    tmp_path: Path,
+) -> None:
+    report = tmp_path / "fulfillment-report.md"
+    report.write_text(
+        "| ID | Status | Evidence |\n"
+        "| --- | --- | --- |\n"
+        "| FR-002 | IMPLEMENTED | src/app.py |\n"
+        "| AC-016 | UNVERIFIED | README cardinality is not established. |\n"
+        "| FR-001 | MISSING | hello.py is absent. |\n",
+        encoding="utf-8",
+    )
+    gaps = tmp_path / "fulfillment-gaps.md"
+    gaps.write_text(
+        "# Fulfillment Gaps\n\n"
+        "- **AC-016 - UNVERIFIED:** README cardinality is not established.\n"
+        "- **FR-001 - MISSING:** hello.py is absent.\n\n"
+        "Recommended action: add deterministic product inventory evidence.\n",
+        encoding="utf-8",
+    )
+
+    result = blocking_fulfillment_gaps(report, strict=True, gaps_path=gaps)
+
+    assert [gap.requirement_id for gap in result] == ["AC-016", "FR-001"]
+    assert result[0].status == "UNVERIFIED"
+    assert result[0].summary == "README cardinality is not established."
+    assert (
+        result[0].recommended_action
+        == "add deterministic product inventory evidence."
+    )
 
 
 def test_deferred_scope_replaces_only_ledger_backed_requirement_rows(tmp_path: Path):

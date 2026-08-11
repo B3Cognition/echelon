@@ -54,7 +54,7 @@ Observed delivery cost and terminal state:
 ## EGR-153: Product Evidence Boundary Includes Deployed Runtime
 
 **Priority:** P0
-**Status:** open
+**Status:** fixed
 
 The target delivery worktree contains deployed `.echelon/prosaic` and
 `.echelon/runtime` alongside product files. Fulfillment evidence did not
@@ -75,6 +75,14 @@ legitimate hidden product files generally.
   invalidate fulfillment caches.
 - The retained greenfield run reaches a verified cardinality judgment without
   weakening AC-016, FR-001, or FR-022.
+
+### Resolution evidence
+
+Fresh run `build-20260811-153057-254453` generated the bounded product inventory
+from the deployed target worktree. It counted exactly one root `README.md` and
+one root `hello.py` while excluding `.echelon`, `.git`, and the harness status
+marker. AC-016, FR-001, and FR-022 were judged `IMPLEMENTED`; the final full
+refresh reported 42 reused rows and zero unresolved rows.
 
 ## EGR-154: Fulfillment Feedback Hides Actionable Gaps
 
@@ -101,6 +109,13 @@ stable.
   deterministic blocker before exhausting every configured repair iteration.
 - A changed gap set remains eligible for repair even when the wrapper failure
   category is still `fulfillment-gaps`.
+
+### Implementation status
+
+Implemented locally: verification failures now carry normalized structured gap
+rows, repair text names every concrete row, and an unchanged gap/evidence pair
+blocks after one COMMANDER attempt. A redeployed greenfield run remains before
+the finding is closed.
 
 ## EGR-155: CARTOGRAPHER Output Is Disproportionate To Feature Scope
 
@@ -228,4 +243,3 @@ semantics.
 5. EGR-156 documentation convergence.
 6. EGR-155 CARTOGRAPHER proportionality benchmark.
 7. EGR-157 through EGR-159 operational improvements.
-

@@ -15,6 +15,7 @@ import subprocess
 SCHEMA_VERSION = 1
 CONTROL_ROOTS = frozenset({".echelon", ".git"})
 CONTROL_PATHS = frozenset({".harness-build-status.json"})
+FINGERPRINT_IGNORED_PARTS = frozenset({"__pycache__", ".pytest_cache"})
 
 
 @dataclass(frozen=True)
@@ -23,6 +24,35 @@ class ProductInventoryResult:
     markdown_path: Path
     entry_count: int
     inventory_source: str
+
+
+def product_evidence_fingerprint(project_root: Path) -> str:
+    """Return a stable digest of the bounded product evidence set."""
+    root = project_root.expanduser().resolve(strict=True)
+    relative_paths, _inventory_source = _inventory_paths(root)
+    entries = [
+        _entry(root, relative)
+        for relative in relative_paths
+        if not _fingerprint_ignored(relative)
+    ]
+    canonical = [
+        {
+            "path": entry["path"],
+            "kind": entry["kind"],
+            "executable": entry["executable"],
+            "sha256": entry["sha256"],
+        }
+        for entry in entries
+    ]
+    encoded = json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _fingerprint_ignored(path: PurePosixPath) -> bool:
+    return bool(
+        FINGERPRINT_IGNORED_PARTS.intersection(path.parts)
+        or path.suffix in {".pyc", ".pyo"}
+    )
 
 
 def write_product_inventory(

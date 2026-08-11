@@ -30,6 +30,16 @@ class FulfillmentArtifactValidation:
     summary_count_mismatches: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class FulfillmentGap:
+    """One normalized blocking requirement judgment."""
+
+    requirement_id: str
+    status: str
+    summary: str
+    recommended_action: str
+
+
 def blocking_statuses(strict: bool = False) -> set[str]:
     """Return statuses that should block fulfillment completion."""
     return set(STRICT_BLOCKING if strict else NON_STRICT_BLOCKING)
@@ -98,6 +108,52 @@ def fulfillment_has_blocking_gaps(report_path: Path, strict: bool = False) -> bo
     if not report_path.exists():
         return False
     return bool(_statuses_in_report(report_path) & blocking_statuses(strict))
+
+
+def blocking_fulfillment_gaps(
+    report_path: Path,
+    *,
+    strict: bool = False,
+    gaps_path: Path | None = None,
+) -> tuple[FulfillmentGap, ...]:
+    """Return deterministic per-requirement blocking judgments from a report."""
+    if not report_path.exists():
+        return ()
+
+    allowed = blocking_statuses(strict)
+    recommendation = _fulfillment_gap_recommendation(gaps_path)
+    rows: list[FulfillmentGap] = []
+    for line in report_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        cells = _table_cells(line)
+        if cells is None or len(cells) < 2:
+            continue
+        requirement_id = cells[0]
+        status = cells[1].upper()
+        if not _TABLE_ITEM_ID_RE.match(requirement_id) or status not in allowed:
+            continue
+        summary = cells[2].strip() if len(cells) >= 3 else ""
+        rows.append(
+            FulfillmentGap(
+                requirement_id=requirement_id,
+                status=status,
+                summary=summary or "No fulfillment evidence was recorded.",
+                recommended_action=recommendation,
+            )
+        )
+    return tuple(sorted(rows, key=lambda row: row.requirement_id))
+
+
+def _fulfillment_gap_recommendation(path: Path | None) -> str:
+    if path is None or not path.is_file():
+        return ""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    match = re.search(
+        r"(?ims)^recommended action\s*:\s*(.+?)(?=^\s*$|^##\s|\Z)",
+        text,
+    )
+    if match is None:
+        return ""
+    return re.sub(r"\s+", " ", match.group(1)).strip()
 
 
 def apply_deferred_scope_to_report(report_path: Path, spec_dir: Path) -> tuple[str, ...]:
