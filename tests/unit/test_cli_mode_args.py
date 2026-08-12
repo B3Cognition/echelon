@@ -98,13 +98,17 @@ def test_cmd_run_exits_nonzero_when_squad_blocks(
     monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.cli._workspace_git_preflight", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.cli._workspace_git_preflight_for_squad_run", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._find_current_run_dir", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "echelon.cli._find_current_run_dir",
+        lambda *_args, **_kwargs: (
+            squad_dir if (squad_dir / "state.json").exists() else None
+        ),
+    )
     monkeypatch.setattr("echelon.cli._select_squad_dir", lambda *_args, **_kwargs: (squad_dir, True))
     monkeypatch.setattr("echelon.cli._print_cost_summary", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.cli._print_prior_knowledge", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.cli._print_staging_artifacts", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.cli._print_open_issues", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._print_next_steps", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("harness.config.load_config", lambda *_args, **_kwargs: object())
     monkeypatch.setattr("harness.config.get_full_resolved_config", lambda *_args, **_kwargs: {})
     monkeypatch.setattr("harness.squad_provider.SquadCliProvider", lambda *_args, **_kwargs: object())
@@ -130,6 +134,10 @@ def test_cmd_run_exits_nonzero_when_squad_blocks(
     assert "echelon spec continue" in out
     assert "will retry the blocked phase; it was not marked complete" in out
     assert "blocked  ·  2m 31s  ·  $0.1234" in out
+    assert out.count("SQUAD SUMMARY") == 1
+    assert out.count("Worked on") == 1
+    assert "echelon · NEXT STEP" not in out
+    assert "\n  next\n  ────\n" in out
 
 
 def test_blocked_summary_recaps_current_issues_and_prints_absolute_path(

@@ -262,14 +262,54 @@ def test_phase_a_banner_adds_narrative_worked_on_field(
 
     squad_dir = tmp_path / "runs" / "spec-20260812-120000-000001"
     squad_dir.mkdir(parents=True)
+    constitution = tmp_path / ".echelon" / "constitution.md"
+    constitution.parent.mkdir(parents=True)
+    constitution.write_text("# Constitution\n\nReady.\n", encoding="utf-8")
+    spec_dir = tmp_path / "specs" / "014-session-security"
+    spec_dir.mkdir(parents=True)
+    for name in (
+        "00-overview.md",
+        "requirements-overview.md",
+        "spec.md",
+        "plan.md",
+        "plan-conformance.md",
+        "research.md",
+        "data-model.md",
+        "tasks.md",
+        "test-strategy.md",
+        "test-architecture.md",
+        "coverage-map.md",
+        "constitution.md",
+    ):
+        (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+    (spec_dir / "plan-conformance.json").write_text(
+        json.dumps(
+            {
+                "status": "pass",
+                "findings": [],
+                "sources": [
+                    "spec.md",
+                    "requirements-overview.md",
+                    "plan.md",
+                    "tasks.md",
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     (squad_dir / "state.json").write_text(
         json.dumps(
             {
                 "status": "done",
                 "spec_id": "014-session-security",
+                "spec_dir": "specs/014-session-security",
                 "user_message": "Add sessions",
                 "phase": "terminal-done",
-                "completed_phases": ["phase1-what", "phase3-plan"],
+                "completed_phases": [
+                    "phase1-constitution",
+                    "phase1-what",
+                    "phase3-plan",
+                ],
             }
         ),
         encoding="utf-8",
@@ -286,7 +326,13 @@ def test_phase_a_banner_adds_narrative_worked_on_field(
     captured = capsys.readouterr()
     output = captured.out + captured.err
     assert "Worked on" in output
-    assert "Worked through 2 phases toward Add sessions." in output
+    assert "Worked through 3 phases toward Add sessions." in output
+    assert output.count("SQUAD SUMMARY") == 1
+    assert output.count("Worked on") == 1
+    assert "echelon · NEXT STEP" not in output
+    assert "\n  next\n  ────\n" in output
+    assert "echelon delivery run 014-session-security" in output
+    assert output.index("Worked on") < output.index("\n  next\n")
 
 
 def test_phase_a_banner_shows_provider_limit_beside_controller_failure(

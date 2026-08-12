@@ -4543,6 +4543,7 @@ def _print_squad_summary(
         if state
         else _RunRecoveryAction("advance")
     )
+    presentation = _next_step_presentation(project_root, status)
     spec_id = str(state.get("spec_id") or "").strip()
     spec_dir = str(state.get("published_spec_dir") or state.get("spec_dir") or "").strip()
     if not spec_id and spec_dir:
@@ -4595,23 +4596,27 @@ def _print_squad_summary(
         if provider_message:
             fields.append(("provider", provider_message))
 
-    if status in {"blocked", "interrupted", "budget_exhausted"}:
+    if (
+        presentation is None
+        and status in {"blocked", "interrupted", "budget_exhausted"}
+    ):
         command = action.command or "echelon spec continue"
         if command:
             label = "answer" if action.kind == "human_resume" else "continue"
             fields.append((label, command))
         if action.note:
             fields.append(("note", action.note))
-        if status == "blocked" and (
-            "issues.md" in action.note.lower() or action.kind == "manual_recovery"
-        ):
-            issues_recap = _current_issues_recap(project_root, squad_dir, state)
-            if issues_recap:
-                recap, issues_path = issues_recap
-                fields.append(("issues", recap))
-                guidance = _issue_resolution_guidance_recap(project_root, squad_dir, state)
-                if guidance:
-                    fields.append(("decisions", guidance))
+    if status == "blocked" and (
+        "issues.md" in action.note.lower() or action.kind == "manual_recovery"
+    ):
+        issues_recap = _current_issues_recap(project_root, squad_dir, state)
+        if issues_recap:
+            recap, issues_path = issues_recap
+            fields.append(("issues", recap))
+            guidance = _issue_resolution_guidance_recap(project_root, squad_dir, state)
+            if guidance:
+                fields.append(("decisions", guidance))
+            if presentation is None:
                 fields.extend(
                     _issue_resolution_screen_guidance(project_root, squad_dir, state)
                 )
@@ -4622,7 +4627,23 @@ def _print_squad_summary(
         phase_a_evidence,
     )
 
-    next_command = action.command if status != "done" else ""
+    if presentation is not None:
+        next_command = next(
+            (value for key, value in presentation.fields if key == "next"),
+            "",
+        )
+        next_note = next(
+            (
+                value
+                for preferred_key in ("note", "question")
+                for key, value in presentation.fields
+                if key == preferred_key
+            ),
+            "",
+        )
+    else:
+        next_command = action.command if status != "done" else ""
+        next_note = action.note
     fields = attach_to_terminal_fields(
         fields,
         phase_a_evidence(
@@ -4630,10 +4651,14 @@ def _print_squad_summary(
             state=state,
             result=result,
             next_command=next_command,
-            next_note=action.note,
+            next_note=next_note,
         ),
         project_root=project_root,
     )
+    if presentation is not None:
+        embedded = _format_embedded_next_step(presentation)
+        if embedded:
+            fields.append(("next", embedded))
     _banner("SQUAD SUMMARY", fields, subtitle=f"{icon} {status_text}")
 
 
@@ -5213,6 +5238,12 @@ def _constitution_template_markers(text: str) -> list[str]:
 _HARNESS_CHECKPOINT_REASONS = {"build_incomplete", "publish_failed", "checkpoint_outer_cap"}
 
 
+@dataclass(frozen=True)
+class _NextStepPresentation:
+    subtitle: str
+    fields: tuple[tuple[str, str], ...]
+
+
 def _phase_a_buildable(result_status: str, blockers: list) -> bool:
     """Single readiness predicate for Phase-A surfaces.
 
@@ -5225,18 +5256,21 @@ def _phase_a_buildable(result_status: str, blockers: list) -> bool:
     return not blockers and result_status not in ("blocked", "interrupted")
 
 
-def _print_next_steps(project_root: Path, result_status: str) -> None:
-    """Print actionable next-step guidance after a run completes or blocks.
+def _next_step_presentation(
+    project_root: Path,
+    result_status: str,
+) -> _NextStepPresentation | None:
+    """Plan actionable next-step guidance after a run completes or blocks.
 
     Checks build readiness (constitution, quality gates, HOW phase, tasks) and
-    surfaces either 'ready to build' or a prioritised list of blockers. Silent
-    when the run is still in progress (status not in done/blocked/interrupted).
+    returns either 'ready to build' or a prioritised list of blockers. Returns
+    no presentation while the run is still in progress.
     """
     import json as _json
     import re as _re
 
     if result_status not in ("done", "blocked", "interrupted"):
-        return
+        return None
 
     # ── Latest harness build owns next-step guidance when present ───────────
     harness_state = _find_latest_harness_build_state(project_root)
@@ -5252,8 +5286,10 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
                 fields.append(("next", f"echelon delivery land {spec_id}"))
             else:
                 fields.append(("next", f"echelon delivery land {spec_id}"))
-            _banner("NEXT STEP", fields, subtitle="Harness build converged — ready to land")
-            return
+            return _NextStepPresentation(
+                "Harness build converged — ready to land",
+                tuple(fields),
+            )
         fields.append(("harness status", harness_status))
         if termination_reason:
             fields.append(("reason", termination_reason))
@@ -5316,8 +5352,7 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
             subtitle = "HARNESS BUILD BLOCKED"
         if is_checkpoint and build_status != "provider_session_limit":
             subtitle = "HARNESS BUILD CHECKPOINTED"
-        _banner("NEXT STEP", fields, subtitle=subtitle)
-        return
+        return _NextStepPresentation(subtitle, tuple(fields))
 
     # ── Gather signals ──────────────────────────────────────────────────────
     blockers: list[str] = []
@@ -5359,8 +5394,10 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
             if rendered_options:
                 fields.append(("options", rendered_options))
             fields.append(("next", action.command))
-            _banner("NEXT STEP", fields, subtitle="RUN BLOCKED — answer required")
-            return
+            return _NextStepPresentation(
+                "RUN BLOCKED — answer required",
+                tuple(fields),
+            )
         if action.kind == "safe_rewind":
             fields = [
                 ("reason", action.reason),
@@ -5368,8 +5405,7 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
                 ("next", action.command),
                 ("then", "echelon spec continue"),
             ]
-            _banner("NEXT STEP", fields, subtitle="RUN BLOCKED")
-            return
+            return _NextStepPresentation("RUN BLOCKED", tuple(fields))
         if action.kind == "retry_phase":
             fields = [
                 ("reason", action.reason),
@@ -5377,12 +5413,10 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
                 ("next", action.command),
                 ("note", action.note),
             ]
-            _banner(
-                "NEXT STEP",
-                fields,
-                subtitle="RUN INTERRUPTED" if result_status == "interrupted" else "RUN BLOCKED",
+            return _NextStepPresentation(
+                "RUN INTERRUPTED" if result_status == "interrupted" else "RUN BLOCKED",
+                tuple(fields),
             )
-            return
         if action.kind == "manual_recovery":
             fields = [
                 ("reason", action.reason),
@@ -5393,14 +5427,12 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
                 fields.extend(
                     _issue_resolution_screen_guidance(project_root, run_dir, current_state)
                 )
-            _banner(
-                "NEXT STEP",
-                fields,
-                subtitle="RUN INTERRUPTED — manual recovery required"
+            return _NextStepPresentation(
+                "RUN INTERRUPTED — manual recovery required"
                 if result_status == "interrupted"
                 else "RUN BLOCKED — manual recovery required",
+                tuple(fields),
             )
-            return
 
     # 1. Constitution — phase provenance first, artifact integrity second
     completed = current_state.get("completed_phases")
@@ -5669,7 +5701,32 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
         else:
             subtitle = "RUN BLOCKED — resolve the block before building"
 
-    _banner("NEXT STEP", fields, subtitle=subtitle)
+    return _NextStepPresentation(subtitle, tuple(fields))
+
+
+def _format_embedded_next_step(presentation: _NextStepPresentation) -> str:
+    """Render next-step fields as one bounded lifecycle-summary section."""
+    command = next(
+        (value for key, value in presentation.fields if key == "next"),
+        "",
+    )
+    details = [
+        f"{key}: {value}"
+        for key, value in presentation.fields
+        if key != "next" and value
+    ]
+    return "\n".join(item for item in (command, *details) if item)
+
+
+def _print_next_steps(project_root: Path, result_status: str) -> None:
+    """Render standalone next-step guidance for non-lifecycle commands."""
+    presentation = _next_step_presentation(project_root, result_status)
+    if presentation is not None:
+        _banner(
+            "NEXT STEP",
+            list(presentation.fields),
+            subtitle=presentation.subtitle,
+        )
 
 
 def _run_artifact_dir(project_root: Path, run_dir: Path) -> Path:
@@ -6604,7 +6661,6 @@ def _cmd_run(
         message=run_message,
         implementation_targets=implementation_targets,
     )
-    _print_next_steps(project_root, result.status)
     if result.status != "done":
         sys.exit(1)
 
@@ -9293,13 +9349,6 @@ def _cmd_resume(
     # controller from there is always a silent no-op that returns "done" immediately.
     # Instead, record the answer and tell the user to run `echelon spec continue`.
     if blocked_phase == "terminal-blocked":
-        _banner("SQUAD RESUMED", [
-            ("answer", (answer[:60] + "…") if len(answer) > 60 else answer),
-            ("status", "unblocked — answer recorded"),
-            ("next", "continuing"),
-            ("note", "delegating to echelon spec continue"),
-            ("artifacts", str(squad_dir)),
-        ])
         _cmd_continue([], project_root=project_root, ext_dir=ext_dir)
         return
 
@@ -9338,14 +9387,18 @@ def _cmd_resume(
         mode=state.get("autonomy_mode") or state.get("mode", "semi"),
     )
 
-    _banner("SQUAD RESUMED", [
-        ("Phase resumed", state.get("phase", "?")),
-        ("Answer given", (answer[:60] + "…") if len(answer) > 60 else answer),
-        ("Status", result.status),
-        ("Current phase", result.phase),
-        ("Artifacts", str(squad_dir)),
-    ])
-    _print_next_steps(project_root, result.status)
+    _print_squad_summary(
+        project_root,
+        squad_dir,
+        result,
+        mode=state.get("autonomy_mode") or state.get("mode", "semi"),
+        message=state.get("user_message", ""),
+        implementation_targets=[
+            str(value)
+            for value in (state.get("implementation_targets") or [])
+            if str(value).strip()
+        ],
+    )
 
 
 def _resolve_escalation_option(answer: str, options: object) -> dict | None:

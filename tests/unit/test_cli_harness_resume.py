@@ -6,6 +6,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -1057,3 +1058,155 @@ class TestCmdHarnessResume:
         out = capsys.readouterr().out
         assert "verify_command" in out
         assert "echelon delivery resume" in out
+
+
+def _write_phase_a_resume_state(tmp_path: Path, *, phase: str) -> Path:
+    run_dir = tmp_path / "runs" / "spec-resume"
+    staging_dir = run_dir / "staging"
+    staging_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_dir.name,
+                "status": "blocked",
+                "phase": phase,
+                "autonomy_mode": "semi",
+                "user_message": "build search dashboard",
+                "implementation_targets": ["api"],
+                "staging_dir": str(staging_dir),
+                "blocked_reason": "checkpoint-assess human gate",
+                "escalation_question": "Approve the reviewed boundary?",
+                "escalation_options": [],
+                "completed_phases": ["phase1-constitution"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return run_dir
+
+
+def _patch_phase_a_resume_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
+    import harness.config
+    import harness.phase_graph
+    import harness.squad_provider
+
+    class FakeGraph:
+        def all_phase_ids(self) -> list[str]:
+            return ["checkpoint-assess", "phase1-discover", "terminal-blocked"]
+
+    monkeypatch.setattr(
+        harness.phase_graph,
+        "load_workspace_phase_graph",
+        lambda project_root: (FakeGraph(), project_root / ".echelon/runtime"),
+    )
+    monkeypatch.setattr(harness.config, "load_config", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(
+        harness.config,
+        "get_full_resolved_config",
+        lambda *_args, **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        harness.squad_provider,
+        "SquadCliProvider",
+        lambda *_args, **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        "echelon.cli._enforce_project_config_compatibility",
+        lambda *_args, **_kwargs: None,
+    )
+
+
+def test_phase_a_direct_resume_emits_one_summary_with_embedded_next_step(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _cmd_resume
+    import harness.squad
+
+    run_dir = _write_phase_a_resume_state(tmp_path, phase="checkpoint-assess")
+    _patch_phase_a_resume_dependencies(monkeypatch)
+
+    class FakeController:
+        def __init__(self, **kwargs: object) -> None:
+            self.store = kwargs["state_store"]
+
+        def run(self, **_kwargs: object) -> SimpleNamespace:
+            state = self.store.load()
+            state.update(
+                {
+                    "status": "blocked",
+                    "phase": "terminal-blocked",
+                    "blocked_reason": "missing_echelon_result",
+                    "last_dispatch": {"phase_id": "phase1-discover"},
+                }
+            )
+            self.store.save(state)
+            return SimpleNamespace(status="blocked", phase="terminal-blocked")
+
+    monkeypatch.setattr(harness.squad, "SquadController", FakeController)
+
+    _cmd_resume(
+        ["approve"],
+        project_root=tmp_path,
+        ext_dir=tmp_path / ".echelon/runtime",
+    )
+
+    assert (run_dir / "staging" / "user-clarifications.md").is_file()
+    output = capsys.readouterr().out
+    assert output.count("SQUAD SUMMARY") == 1
+    assert output.count("Worked on") == 1
+    assert "SQUAD RESUMED" not in output
+    assert "echelon · NEXT STEP" not in output
+    assert "\n  next\n  ────\n" in output
+    assert "mode       semi" in output
+    assert "targets    api" in output
+    assert "task       build search dashboard" in output
+
+
+def test_phase_a_nested_resume_to_continue_has_one_final_summary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _cmd_resume, _print_squad_summary
+
+    run_dir = _write_phase_a_resume_state(tmp_path, phase="terminal-blocked")
+    _patch_phase_a_resume_dependencies(monkeypatch)
+
+    def fake_continue(args, project_root, ext_dir):
+        state_path = run_dir / "state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state.update(
+            {
+                "status": "blocked",
+                "phase": "terminal-blocked",
+                "blocked_reason": "missing_echelon_result",
+                "last_dispatch": {"phase_id": "phase1-discover"},
+            }
+        )
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        _print_squad_summary(
+            project_root,
+            run_dir,
+            SimpleNamespace(status="blocked", phase="terminal-blocked"),
+            mode="semi",
+            message="build search dashboard",
+            implementation_targets=["api"],
+        )
+
+    monkeypatch.setattr("echelon.cli._cmd_continue", fake_continue)
+
+    _cmd_resume(
+        ["approve"],
+        project_root=tmp_path,
+        ext_dir=tmp_path / ".echelon/runtime",
+    )
+
+    output = capsys.readouterr().out
+    assert output.count("SQUAD SUMMARY") == 1
+    assert output.count("Worked on") == 1
+    assert "SQUAD RESUMED" not in output
+    assert "echelon · NEXT STEP" not in output
+    assert "\n  next\n  ────\n" in output

@@ -2124,6 +2124,62 @@ def test_continue_retries_external_blocker_phase_after_fix(
     assert calls == [["build search dashboard", "--mode", "semi"]]
 
 
+def test_continue_emits_one_summary_with_embedded_next_step(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "run_id": "spec-test",
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "missing_echelon_result",
+            "last_dispatch": {"phase_id": "phase1-discover"},
+            "completed_phases": ["init"],
+            "user_message": "build search dashboard",
+            "autonomy_mode": "semi",
+        },
+    )
+
+    def fake_cmd_run(args, project_root, ext_dir):
+        state_path = run_dir / "state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state.update(
+            {
+                "status": "blocked",
+                "phase": "terminal-blocked",
+                "blocked_reason": "missing_echelon_result",
+                "last_dispatch": {"phase_id": "phase1-discover"},
+            }
+        )
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        from echelon.cli import _print_squad_summary
+
+        _print_squad_summary(
+            project_root,
+            run_dir,
+            SimpleNamespace(status="blocked", phase="terminal-blocked"),
+            mode="semi",
+            message="build search dashboard",
+        )
+
+    monkeypatch.setattr("echelon.cli._cmd_run", fake_cmd_run)
+
+    _cmd_continue(
+        [],
+        project_root=tmp_path,
+        ext_dir=tmp_path / ".echelon/runtime",
+    )
+
+    output = capsys.readouterr().out
+    assert output.count("SQUAD SUMMARY") == 1
+    assert output.count("Worked on") == 1
+    assert "echelon · NEXT STEP" not in output
+    assert "\n  next\n  ────\n" in output
+
+
 def test_continue_retries_interrupted_phase(
     tmp_path: Path,
     monkeypatch,

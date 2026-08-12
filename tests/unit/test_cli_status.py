@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
+import echelon.cli as cli
 from echelon.cli import _cmd_status, _find_converged_harness_build, _print_next_steps
 from harness.blocked_decision import build_blocked_decision_v2
 from harness.recovery_instruction import RecoveryKind, RecoveryInstruction
@@ -243,6 +244,26 @@ def test_latest_converged_harness_build_is_ready_to_land(tmp_path: Path) -> None
     assert _find_converged_harness_build(tmp_path) == ("001-demo", None)
 
 
+def test_next_step_planner_preserves_converged_harness_guidance(
+    tmp_path: Path,
+) -> None:
+    _write_build_state(
+        tmp_path,
+        "build-20260606-221522-964255",
+        status="converged",
+        spec_id="001-demo",
+    )
+
+    presentation = cli._next_step_presentation(tmp_path, "done")
+
+    assert presentation is not None
+    assert presentation.subtitle == "Harness build converged — ready to land"
+    assert presentation.fields == (
+        ("spec", "001-demo"),
+        ("next", "echelon delivery land 001-demo"),
+    )
+
+
 def test_next_steps_report_latest_blocked_harness_build_before_phase_a_blockers(
     tmp_path: Path,
     capsys,
@@ -361,6 +382,53 @@ def test_next_steps_report_provider_session_limit_as_first_class_block(
     assert "harness/001-demo/default/iter-0" in captured.out
     assert "not_run" in captured.out
     assert "wait for provider reset, then echelon delivery continue 001-demo" in captured.out
+
+
+def test_next_step_planner_preserves_provider_limit_guidance(
+    tmp_path: Path,
+) -> None:
+    _write_build_state(
+        tmp_path,
+        "build-20260606-221522-964255",
+        status="blocked",
+        spec_id="001-demo",
+        termination_reason="build_incomplete",
+        extra={
+            "build_status": "provider_session_limit",
+            "build_reason": "LLM provider session limit reached before COMMANDER finalized",
+            "provider_limit_message": "You've hit your session limit · resets 9:10pm",
+            "provider_reset_hint": "9:10pm",
+            "salvage_commit": "abcdef1234567890abcdef1234567890abcdef12",
+            "salvage_branch": "harness/001-demo/default/iter-0",
+            "salvage_verified": "not_run",
+            "tokens_used": 1234,
+        },
+    )
+
+    presentation = cli._next_step_presentation(tmp_path, "done")
+
+    assert presentation is not None
+    assert presentation.subtitle == "HARNESS PROVIDER SESSION LIMIT"
+    assert presentation.fields == (
+        ("spec", "001-demo"),
+        ("harness status", "blocked"),
+        ("reason", "build_incomplete"),
+        ("build status", "provider_session_limit"),
+        (
+            "build reason",
+            "LLM provider session limit reached before COMMANDER finalized",
+        ),
+        ("provider", "You've hit your session limit · resets 9:10pm"),
+        ("reset", "9:10pm"),
+        ("token accounting", "1,234 tokens recorded before provider stop"),
+        ("salvage commit", "abcdef123456"),
+        ("salvage branch", "harness/001-demo/default/iter-0"),
+        ("salvage verified", "not_run"),
+        (
+            "next",
+            "wait for provider reset, then echelon delivery continue 001-demo",
+        ),
+    )
 
 
 def test_next_steps_report_build_blocker_without_recommending_a_retry(

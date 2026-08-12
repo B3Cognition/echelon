@@ -5,6 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
+import echelon.cli as cli
 from echelon.cli import (
     _next_continue_phase,
     _print_next_steps,
@@ -141,10 +144,38 @@ def test_blocked_squad_escalation_prioritizes_resume(
     _print_next_steps(tmp_path, "blocked")
 
     captured = capsys.readouterr()
+    assert "echelon · NEXT STEP" in captured.out
     assert "RUN BLOCKED — answer required" in captured.out
     assert 'echelon spec resume "<your answer>"' in captured.out
     assert "Q1: confirm widget team intent?" in captured.out
     assert "echelon spec continue" not in captured.out
+
+
+def test_next_step_planner_preserves_human_resume_guidance(tmp_path: Path) -> None:
+    run_dir = tmp_path / "runs" / "spec-20260607-215902-820491"
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "phase": "phase1-why2",
+                "blocked_reason": "WHY2 user-gated issue",
+                "escalation_question": "Q1: confirm widget team intent?",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    presentation = cli._next_step_presentation(tmp_path, "blocked")
+
+    assert presentation is not None
+    assert presentation.subtitle == "RUN BLOCKED — answer required"
+    assert presentation.fields == (
+        ("reason", "WHY2 user-gated issue"),
+        ("question", "Q1: confirm widget team intent?"),
+        ("next", 'echelon spec resume "<your answer>"'),
+    )
 
 
 def test_blocked_squad_escalation_displays_executable_options(
@@ -293,6 +324,40 @@ def test_controller_contract_failure_without_recovery_does_not_suggest_continue(
     assert "echelon spec rewind" not in captured.out
 
 
+def test_next_step_planner_preserves_manual_recovery_guidance(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "runs" / "spec-20260726-075512-129608"
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "phase": "phase1-why2",
+                "blocked_reason": "controller_state_contract_validation_failed",
+                "last_dispatch": {"phase_id": "phase1-understanding"},
+                "controller_contract_error": {
+                    "phase_id": "phase1-why2",
+                    "contract": "preparation",
+                    "validator": "ownership",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    presentation = cli._next_step_presentation(tmp_path, "blocked")
+
+    assert presentation is not None
+    assert presentation.subtitle == "RUN BLOCKED — manual recovery required"
+    assert presentation.fields == (
+        ("reason", "controller_state_contract_validation_failed"),
+        ("next", "inspect echelon spec status, then choose a recovery action"),
+        ("note", "no runtime-sync recovery instruction was recorded"),
+    )
+
+
 def test_stale_contract_metadata_renders_current_missing_output_recovery(
     tmp_path: Path,
     capsys,
@@ -385,6 +450,59 @@ def test_ready_next_step_has_clear_subtitle_and_next_command(
     assert "next" in captured.out
     assert "echelon delivery run 001-demo" in captured.out
     assert "\n  build\n" not in captured.out
+
+
+def test_next_step_planner_preserves_ready_guidance_and_embedded_order(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    constitution = tmp_path / ".echelon" / "constitution.md"
+    constitution.parent.mkdir(parents=True)
+    constitution.write_text("# Constitution\n\nReady.\n", encoding="utf-8")
+
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "quality-gates.md").write_text(
+        "# Quality Gates\n\n## Verdict: PASS\n",
+        encoding="utf-8",
+    )
+    for name in (
+        "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
+        "00-overview.md", "requirements-overview.md",
+        "plan-conformance.md", "plan-conformance.json",
+        "test-strategy.md", "test-architecture.md", "coverage-map.md",
+    ):
+        content = (
+            _valid_plan_conformance_json()
+            if name == "plan-conformance.json"
+            else f"# {name}\n"
+        )
+        (spec_dir / name).write_text(content, encoding="utf-8")
+    (spec_dir / "constitution.md").write_text(
+        "# Constitution\n\nReady.\n",
+        encoding="utf-8",
+    )
+
+    presentation = cli._next_step_presentation(tmp_path, "done")
+
+    assert presentation is not None
+    assert presentation.subtitle == "READY TO BUILD"
+    assert presentation.fields == (
+        (
+            "ready",
+            "✓ constitution.md ✓\n✓ WHY2 quality gates ✓\n"
+            "✓ HOW artifacts ✓\n✓ tasks.md ✓",
+        ),
+        ("next", "echelon delivery run 001-demo"),
+    )
+    assert cli._format_embedded_next_step(presentation) == (
+        "echelon delivery run 001-demo\n"
+        "ready: ✓ constitution.md ✓\n"
+        "✓ WHY2 quality gates ✓\n"
+        "✓ HOW artifacts ✓\n"
+        "✓ tasks.md ✓"
+    )
+    assert capsys.readouterr().out == ""
 
 
 def test_done_run_without_spec_md_is_not_ready_to_build(
@@ -547,6 +665,35 @@ def test_blocked_incomplete_discover_prioritizes_retry_over_constitution(
     assert "missing_echelon_result" in captured.out
     assert "phase1-discover" in captured.out
     assert "phase1-constitution has not completed" not in captured.out
+
+
+def test_next_step_planner_preserves_retry_phase_guidance(tmp_path: Path) -> None:
+    run_dir = tmp_path / "runs" / "spec-20260625-140321-450919"
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "phase": "terminal-blocked",
+                "blocked_reason": "missing_echelon_result",
+                "last_dispatch": {"phase_id": "phase1-discover"},
+                "completed_phases": ["init"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    presentation = cli._next_step_presentation(tmp_path, "blocked")
+
+    assert presentation is not None
+    assert presentation.subtitle == "RUN BLOCKED"
+    assert presentation.fields == (
+        ("reason", "missing_echelon_result"),
+        ("phase", "phase1-discover"),
+        ("next", "echelon spec continue"),
+        ("note", "will retry the blocked phase; it was not marked complete"),
+    )
 
 
 def test_blocked_missing_result_retries_redispatched_completed_phase(
