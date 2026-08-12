@@ -611,6 +611,81 @@ def test_generate_summary_accepts_complete_recorded_command_on_any_line(
 
 
 @pytest.mark.parametrize(
+    ("verification", "claim"),
+    (
+        (
+            "python scripts/lint.py --strict passed",
+            "The work is done after python scripts/lint.py --strict --verbose.",
+        ),
+        (
+            "python scripts/lint.py --strict passed",
+            "The work is done after python scripts/lint.py --strict python.",
+        ),
+        (
+            "pytest tests/unit/test_a.py --maxfail=1 passed",
+            "The work is done after pytest tests/unit/test_a.py --maxfail=1 "
+            "tests/unit/test_b.py.",
+        ),
+    ),
+)
+def test_generate_summary_rejects_nonexclusive_recorded_command_spans(
+    verification: str,
+    claim: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    summarizer_artifact: ProsaicCommandArtifact,
+) -> None:
+    _install_fake_prompt(monkeypatch, summarizer_artifact)
+    provider = FakeProvider(
+        json.dumps(
+            {
+                "lines": [
+                    "Implemented provider-owned model selection.",
+                    f"Recorded verification: {verification}.",
+                    claim,
+                    "The feature is ready for integration.",
+                ]
+            }
+        )
+    )
+    evidence = WorkedOnEvidence(
+        command="spec run",
+        status="done",
+        outcomes=("Implemented provider-owned model selection.",),
+        verification=verification,
+    )
+
+    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
+
+
+def test_generate_summary_accepts_multiple_complete_recorded_command_spans(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    summarizer_artifact: ProsaicCommandArtifact,
+) -> None:
+    _install_fake_prompt(monkeypatch, summarizer_artifact)
+    verification = (
+        "python scripts/lint.py --strict passed; "
+        "python -m unittest discover tests passed"
+    )
+    expected = (
+        "Implemented provider-owned model selection.",
+        f"Recorded verification: {verification}.",
+        "The work is done as recorded.",
+        "The feature is ready for integration.",
+    )
+    provider = FakeProvider(json.dumps({"lines": list(expected)}))
+    evidence = WorkedOnEvidence(
+        command="spec run",
+        status="done",
+        outcomes=("Implemented provider-owned model selection.",),
+        verification=verification,
+    )
+
+    assert generate_summary(tmp_path, evidence, provider=provider) == expected
+
+
+@pytest.mark.parametrize(
     "verification",
     (
         "passed: pytest tests/unit/test_a.py --maxfail=1",
@@ -1005,6 +1080,83 @@ def test_generate_summary_rejects_blocked_progress_euphemisms(
                     "Attempted spec continue for the requested work.",
                     "The run remains blocked.",
                     euphemism,
+                    "Next, run echelon spec continue.",
+                ]
+            }
+        )
+    )
+    evidence = WorkedOnEvidence(
+        command="spec continue",
+        status="blocked",
+        blocker="controller_state_contract_validation_failed",
+        next_command="echelon spec continue",
+    )
+
+    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
+
+
+@pytest.mark.parametrize(
+    "claim",
+    (
+        "The blocked work has clearance for integration.",
+        "The blocked work has approval.",
+        "The blocked work has eligibility.",
+        "The blocked work has readiness for deployment.",
+    ),
+)
+def test_generate_summary_rejects_blocked_noun_form_transition_claims(
+    claim: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    summarizer_artifact: ProsaicCommandArtifact,
+) -> None:
+    _install_fake_prompt(monkeypatch, summarizer_artifact)
+    provider = FakeProvider(
+        json.dumps(
+            {
+                "lines": [
+                    "Attempted spec continue for the requested work.",
+                    "The run remains blocked.",
+                    claim,
+                    "Next, run echelon spec continue.",
+                ]
+            }
+        )
+    )
+    evidence = WorkedOnEvidence(
+        command="spec continue",
+        status="blocked",
+        blocker="controller_state_contract_validation_failed",
+        next_command="echelon spec continue",
+    )
+
+    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
+
+
+@pytest.mark.parametrize(
+    "claim",
+    (
+        "The blocked feature received permission.",
+        "The blocked change obtained authorization.",
+        "The blocked change gained the go-ahead.",
+        "The blocked work was given clearance.",
+        "The blocked feature is granted approval.",
+    ),
+)
+def test_generate_summary_rejects_blocked_permission_acquisition_claims(
+    claim: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    summarizer_artifact: ProsaicCommandArtifact,
+) -> None:
+    _install_fake_prompt(monkeypatch, summarizer_artifact)
+    provider = FakeProvider(
+        json.dumps(
+            {
+                "lines": [
+                    "Attempted spec continue for the requested work.",
+                    "The run remains blocked.",
+                    claim,
                     "Next, run echelon spec continue.",
                 ]
             }

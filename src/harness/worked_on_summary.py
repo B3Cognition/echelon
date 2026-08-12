@@ -79,6 +79,79 @@ def _recorded_verification_commands(value: str) -> tuple[tuple[str, ...], ...]:
     return tuple(dict.fromkeys(command for command in commands if command))
 
 
+def _verification_command_mentions_are_exact(
+    line: str,
+    recorded_commands: tuple[tuple[str, ...], ...],
+) -> bool:
+    edge_chars = "`'\"()[]{}.,;:!?"
+    token_spans: list[tuple[str, int, int]] = []
+    for match in re.finditer(r"\S+", line):
+        raw_token = match.group(0)
+        cleaned = raw_token.strip(edge_chars)
+        if not cleaned:
+            continue
+        leading = len(raw_token) - len(raw_token.lstrip(edge_chars))
+        trailing = len(raw_token) - len(raw_token.rstrip(edge_chars))
+        token_spans.append(
+            (
+                cleaned.lower(),
+                match.start() + leading,
+                match.end() - trailing,
+            )
+        )
+
+    def tokens_are_contiguous(start: int, width: int) -> bool:
+        for index in range(start, start + width - 1):
+            gap = line[token_spans[index][2]:token_spans[index + 1][1]]
+            if not gap or any(
+                not (character.isspace() or character in "`'\"([{ ")
+                for character in gap
+            ):
+                return False
+        return True
+
+    def has_safe_end(end: int) -> bool:
+        final_end = token_spans[end - 1][2]
+        if end == len(token_spans):
+            return bool(
+                re.fullmatch(r"[`'\"\)\]\}]*[.!?]?", line[final_end:])
+            )
+        if token_spans[end][0] not in {"passed", "failed", "succeeded"}:
+            return False
+        gap = line[final_end:token_spans[end][1]]
+        return all(
+            character.isspace() or character in edge_chars
+            for character in gap
+        )
+
+    valid_spans: list[tuple[int, int]] = []
+    normalized_tokens = tuple(token for token, _start, _end in token_spans)
+    for command in recorded_commands:
+        width = len(command)
+        for index in range(len(normalized_tokens) - width + 1):
+            if normalized_tokens[index:index + width] != command:
+                continue
+            if not tokens_are_contiguous(index, width) or not has_safe_end(
+                index + width
+            ):
+                continue
+            valid_spans.append(
+                (token_spans[index][1], token_spans[index + width - 1][2])
+            )
+
+    for executable in {command[0] for command in recorded_commands}:
+        for mention in re.finditer(
+            rf"(?<!\w){re.escape(executable)}(?!\w)",
+            line.lower(),
+        ):
+            if sum(
+                start <= mention.start() and mention.end() <= end
+                for start, end in valid_spans
+            ) != 1:
+                return False
+    return True
+
+
 def _verification_command_claims(line: str) -> tuple[str, ...]:
     semantic = " ".join(line.lower().split()).rstrip(".!?")
     semantic = re.sub(r"^recorded verification:\s*", "", semantic)
@@ -613,6 +686,15 @@ def _valid_lines(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | None
             return None
         blocked_subject = re.compile(r"\b(?:work|features?|changes?|next steps?)\b")
         readiness = re.compile(r"\b(?:ready|cleared|approved|eligible|able)\b")
+        permission_readiness = re.compile(
+            r"\b(?:work|features?|changes?|next steps?)\s+"
+            r"(?:(?:has|have)(?:\s+(?:received|obtained|gained))?|"
+            r"receiv(?:e|es|ed|ing)|obtain(?:s|ed|ing)?|gain(?:s|ed|ing)?|"
+            r"(?:is|are|was|were)\s+(?:given|granted)|"
+            r"(?:has|have)\s+been\s+(?:given|granted))\s+"
+            r"(?:an?\s+|the\s+)?(?:clearance|approval|eligibility|readiness|"
+            r"permission|authorization|go[- ]ahead)\b"
+        )
         negated_readiness = re.compile(
             r"^(?:the\s+)?(?:blocked\s+)?(?:work|features?|changes?|next steps?|run)\s+"
             r"(?:is|remains)\s+(?:not|never)\s+(?:yet\s+)?"
@@ -638,6 +720,7 @@ def _valid_lines(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | None
                 return False
             return bool(
                 readiness.search(line)
+                or permission_readiness.search(line)
                 or transition.search(line)
             )
 
@@ -661,24 +744,11 @@ def _valid_lines(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | None
     recorded_commands = _recorded_verification_commands(exact_verification)
     for line in normalized:
         verification_line = " ".join(line.lower().split())
-        line_tokens = _command_tokens(verification_line)
-        for executable in {command[0] for command in recorded_commands}:
-            if not re.search(
-                rf"(?<!\w){re.escape(executable)}(?!\w)",
-                verification_line,
-            ):
-                continue
-            matching_commands = tuple(
-                command for command in recorded_commands if command[0] == executable
-            )
-            if not any(
-                any(
-                    line_tokens[index:index + len(command)] == command
-                    for index in range(len(line_tokens) - len(command) + 1)
-                )
-                for command in matching_commands
-            ):
-                return None
+        if not _verification_command_mentions_are_exact(
+            verification_line,
+            recorded_commands,
+        ):
+            return None
         if not re.search(r"\b(?:verification|validation|checks?|tests?)\b", verification_line):
             continue
         numeric_details = re.findall(number_pattern, verification_line)
