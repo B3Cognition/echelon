@@ -1,8 +1,284 @@
 # Perfectionist Specification Author Design
 
-**Status:** Approved for implementation
+**Status:** Deferred exploration — do not implement
 
 **Date:** 2026-08-12
+
+## Current Decision
+
+Do not implement Perfectionist as a separate dynamically selected Prosaic
+subagent in the current migration. The proposal below is retained as an
+architecture note for future brainstorming, not as an approved implementation
+contract.
+
+The near-term direction is deliberately smaller: keep
+`echelon.cartographer` as the only `phase1-what` author and consider an
+opt-in `perfectionist` operating mode inside that agent. That alternative needs
+its own reviewed design before implementation. This document does not approve
+or specify it.
+
+The separate-agent concept remains interesting because a distinct role could
+eventually provide a genuinely different requirements-engineering discipline,
+independent calibration, its own model policy, and explicit comparative
+telemetry. We are deferring it because Echelon does not currently have a
+first-class abstraction for interchangeable agents occupying one graph node.
+Adding Perfectionist now would therefore be a controller refactor disguised as
+a prose feature.
+
+## Why This Was Deferred
+
+The initial proposal assumed that selecting a second Markdown agent would be a
+local change. Review of the current runtime showed that the static
+`PhaseNode.agent` identity is consumed transitively throughout the system:
+
+- prompt body and frontmatter loading;
+- provider model, effort, tools, and color metadata;
+- context-budget policy and reports;
+- calibration and belief-register lookup;
+- telemetry dispatch identity and attempt history;
+- role-contract and routed-agent validation;
+- journal-entry authorization;
+- blocker and human-resolution messages;
+- phase labels and CLI presentation;
+- retry, resume, amendment, and output-recovery behavior.
+
+The author of `spec.md` also affects later agents. SAGE reviews the author's
+work, Understanding certifies it, Lexicon derives from it, and Architect and
+Orchestrator consume it. A new authoring strategy therefore cannot be treated
+as an isolated prompt substitution unless the downstream contract explicitly
+defines which effects are strategy-neutral and which must vary.
+
+Implementing only the visible dispatch change would risk mixed identity: for
+example, loading Perfectionist prose while using Cartographer metadata,
+calibration, telemetry, journal permissions, or recovery instructions. A broad
+change replacing every direct `node.agent` read would be difficult to audit and
+would enlarge the active Prosaic migration with unrelated controller risk.
+
+## Identified Ambiguities And Concerns
+
+### 1. Dynamic Agent Resolution Has No Single Boundary
+
+The proposal introduced `agent_variants` and an effective-agent resolver, but
+did not define where resolution becomes authoritative. If every consumer calls
+the resolver independently, one missed call creates inconsistent behavior. If
+the controller materializes an effective node, its lifetime, immutability, and
+relationship to the canonical graph must be specified.
+
+Before revisiting the design, Echelon would need a general routed-role
+abstraction that resolves an agent exactly once and supplies the same resolved
+identity to prompt assembly, provider policy, telemetry, validation, recovery,
+and presentation.
+
+### 2. The Workflow Graph Is Currently Static
+
+`runtime/workflow/definition.yaml` declares one agent per ordinary agent node.
+Conditional and staged nodes exist, but their semantics are dispatch sequences,
+not interchangeable implementations of one role contract. Reusing those types
+for Perfectionist would either create a second workflow branch or run both
+authors, neither of which matches the desired behavior.
+
+Future work must decide whether interchangeable role implementations are a
+general graph feature worth supporting beyond this one use case. A one-off
+`phase1-what` special case is not acceptable for the separate-agent design.
+
+### 3. Shared Prompt Composition And Validation Disagree
+
+The proposal moved stable authoring rules into a Markdown companion. Runtime
+prompt loading recursively expands companions, but routed-role validation
+currently inspects the raw agent file. Moving required `echelon_result`, output,
+or state-update contracts exclusively into a companion could therefore make a
+valid composed prompt fail static validation, or make an incomplete raw prompt
+appear valid only at execution time.
+
+We need to decide whether role contracts are validated from raw source or the
+fully composed Prosaic artifact. Until that decision is made, controller,
+evidence-routing, and result-shape rules should remain explicit in the phase
+contract and in every independently validated agent where required.
+
+### 4. Exhaustive Coverage Was Not Machine-Defined
+
+The proposal said that Perfectionist reviews all applicable dimensions while
+omitting irrelevant ones. That leaves no observable distinction between
+"reviewed and not applicable" and "forgotten." SAGE cannot enforce an
+exhaustive promise without receiving both the selected strategy and a
+machine-inspectable coverage record.
+
+A future Perfectionist likely needs a coverage matrix with stable dimensions
+and dispositions such as `covered`, `not_applicable`, and `unresolved`, plus
+evidence and mapped requirement IDs. We must still determine whether that
+matrix belongs in `requirements-overview.md`, a separate supporting artifact,
+or controller state. It must not become a second requirements source of truth.
+
+### 5. Downstream Quality Semantics Are Unclear
+
+SAGE and Understanding should not reward length, requirement count, or template
+population. It remains unclear whether they should validate different coverage
+expectations for Cartographer and Perfectionist or apply one strategy-neutral
+definition of specification quality.
+
+If SAGE becomes strategy-aware, the author selection must be injected into its
+context and preserved through WHY2 and WHY3. That creates a transitive behavior
+change requiring its own tests. If SAGE remains strategy-neutral, Perfectionist
+is only a best-effort authoring style and Echelon cannot claim that exhaustive
+coverage was certified.
+
+### 6. Template Ownership Was Incomplete
+
+The proposal named a Perfectionist specification template but placed its
+coverage record in `requirements-overview.md` without defining a matching
+overview template. Current WHAT execution supplies a concrete specification
+and overview template pair. Literal Markdown references are recursively
+inlined, so referencing both author pairs could accidentally expose competing
+templates to the model.
+
+A future design must select exactly one complete template pair and prove that
+the assembled prompt contains no instructions from the unselected strategy.
+
+### 7. Run Selection Semantics Were Underspecified
+
+The proposal made `spec_author` both required and optional for legacy state. It
+also did not distinguish an omitted CLI option from an explicit request for
+Cartographer. Those distinctions matter during resume, reset, retarget, manual
+recovery, and sealed human-decision flows.
+
+Any future design must define tri-state CLI intent and immutable run behavior:
+
+- omitted on a fresh run selects the default;
+- omitted on an active run inherits the persisted selection;
+- an explicit conflicting selection is rejected unless a new run is created;
+- every recovery path preserves the same selection;
+- old state has one deterministic normalization rule.
+
+The selected author must be controller-owned run identity and unavailable to
+agent-authored state updates.
+
+### 8. Existing Cartographer-Specific Names Would Leak
+
+Runtime prose, graph labels, calibration context, journal registries, recovery
+markers such as `cartographer_resume_existing_spec`, tests, and diagnostics
+still name Cartographer directly. Some names represent true role identity;
+others actually mean "the specification author."
+
+A future separate-agent implementation would first need an inventory and a
+careful naming migration with compatibility handling. Renaming these during the
+current Speckit-to-Prosaic migration would combine two refactors and obscure
+regressions.
+
+### 9. Provider Metadata And Calibration Policy Are Undefined
+
+A separate agent has independent Prosaic frontmatter, but the desired policy is
+not settled. It could intentionally share Cartographer's `model_tier`, effort,
+tools, and color, or eventually request a stronger model and different effort.
+Calibration and belief registers might be shared by role or separated by
+agent. Either choice changes how performance comparisons should be interpreted.
+
+The first implementation must not silently give Perfectionist a stronger model
+and then attribute output differences solely to authoring strategy.
+
+### 10. Historical Reproduction Is Not Yet A Stable Product Contract
+
+The original oversized Hello World artifacts exist in the retained test
+workspace and their metrics are recorded in findings, but the repository does
+not currently contain a complete sanitized fixture set. The exact old output
+was also emergent from its prompt, templates, provider behavior, and quality
+loops rather than a named mode.
+
+Before claiming historical equivalence, retain a repository-owned benchmark
+fixture and decide whether the goal is exact old behavior or a new
+evidence-backed exhaustive discipline. These are different products. Exact
+legacy behavior should remain test-only unless there is a compelling use case
+for its known duplication and unsupported obligations.
+
+## What Remains Attractive About A Separate Agent
+
+The idea should not be discarded. A separate Perfectionist could become the
+right design if Echelon later supports interchangeable role implementations as
+a first-class concept. It would offer:
+
+- a clean and recognizable requirements-engineering persona;
+- independent Prosaic metadata, calibration, and performance history;
+- stronger isolation between proportional and exhaustive instructions;
+- explicit A/B comparison in telemetry;
+- room for genuinely different methods rather than a growing conditional
+  Cartographer prompt;
+- future selection of authoring specialists based on domain or governance
+  needs.
+
+Those benefits become compelling when more than one workflow role needs
+pluggable implementations, or when Perfectionist's method diverges enough that
+one Cartographer prompt becomes difficult to understand and test.
+
+## Conditions For Reconsideration
+
+Reopen the separate-agent design when at least one of these is true:
+
+- Echelon needs interchangeable implementations for multiple workflow roles;
+- Cartographer's operating modes have accumulated conflicting instructions or
+  cannot be independently evaluated;
+- regulated or high-consequence work requires certified exhaustive coverage;
+- provider/model policy must differ by authoring discipline;
+- comparative telemetry and calibration need distinct agent identities;
+- a second specification author besides Perfectionist is proposed, making a
+  general abstraction clearly worthwhile.
+
+Before implementation, the following foundations should exist or be designed
+together:
+
+1. One authoritative role-resolution boundary.
+2. A graph schema for interchangeable role implementations.
+3. Composed-prompt role-contract validation.
+4. Controller-owned immutable strategy selection.
+5. A coverage artifact and explicit certification semantics.
+6. Strategy-aware or explicitly strategy-neutral downstream contracts.
+7. Complete template-pair selection without prompt contamination.
+8. Provider, model, effort, calibration, and belief-register policy.
+9. Repository-owned legacy and current benchmark fixtures.
+10. End-to-end tests for fresh run, retries, evidence routing, WHY repairs,
+    resume, retarget, manual recovery, telemetry, and packaging.
+
+## Future Brainstorming Questions
+
+When this topic returns, start with these questions rather than assuming the
+original proposal:
+
+1. Is Perfectionist a different agent, an authoring mode, a prompt overlay, or
+   a second-pass reviewer?
+2. Does it create the initial specification, enrich an existing proportional
+   specification, or produce an independent comparison artifact?
+3. What observable contract makes a specification "perfectionist" without
+   using size or count targets?
+4. Which coverage dimensions are universal, domain-specific, optional, or
+   constitution-derived?
+5. Should SAGE certify exhaustive coverage, or only ordinary specification
+   quality?
+6. Is the desired comparison exact legacy reproduction or a new exhaustive but
+   non-duplicative method?
+7. Can both strategies produce the same canonical `spec.md`, or should a
+   comparison run preserve two candidate artifacts before one is selected?
+8. How are cost, duration, quality, distinct obligations, unsupported claims,
+   and downstream task inflation compared fairly?
+9. Should Perfectionist share Cartographer's model and effort for controlled
+   experiments, or use an intentionally stronger execution profile?
+10. Is interchangeable role resolution valuable enough elsewhere in Echelon to
+    justify the controller abstraction?
+
+## Safe Experimental Path
+
+Before introducing dynamic graph routing, the separate prose can be explored
+outside production execution:
+
+1. Preserve a sanitized legacy Hello World artifact set as a fixture.
+2. Draft `echelon.perfectionist.md` in an experimental or test-only location.
+3. Render it directly through Prosaic and run it against copied discovery
+   context in an isolated workspace.
+4. Compare its output to current Cartographer using deterministic structural
+   measurements and independent review.
+5. Repeat on small, moderate, and genuinely complex requests.
+6. Use the evidence to decide whether operating mode, overlay, reviewer, or
+   separate agent is the right production abstraction.
+
+This path tests the product idea without changing Echelon's workflow graph or
+active controller behavior.
 
 ## Goal
 
