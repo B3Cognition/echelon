@@ -328,6 +328,7 @@ def generate_summary(
                     request_metadata={
                         "prompt_metadata": rendered.frontmatter,
                         "quiet": True,
+                        "allow_non_git_cwd": True,
                     },
                 )
         if int(getattr(result, "exit_code", -1)) != 0 or bool(getattr(result, "timed_out", False)):

@@ -213,6 +213,7 @@ def test_generate_summary_uses_fast_low_metadata_once_and_removes_temp_cwd(
     call = provider.calls[0]
     assert call["timeout_ms"] == 30_000
     assert call["request_metadata"]["quiet"] is True
+    assert call["request_metadata"]["allow_non_git_cwd"] is True
     metadata = call["request_metadata"]["prompt_metadata"]
     assert metadata["model_tier"] == "fast"
     assert metadata["effort"] == "low"

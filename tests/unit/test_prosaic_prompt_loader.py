@@ -88,7 +88,7 @@ def test_load_agent_inspects_the_project_prosaic_subagent_bundle(
             stdout=json.dumps(
                 {
                     "id": "subagents/echelon.summarizer.md",
-                    "type": "agent",
+                    "type": "subagent",
                     "frontmatter": {
                         "name": "echelon.summarizer",
                         "model_tier": "fast",
@@ -117,6 +117,37 @@ def test_load_agent_inspects_the_project_prosaic_subagent_bundle(
         ],
         "cwd": str(tmp_path),
     }
+
+
+@pytest.mark.unit
+def test_load_agent_accepts_prosaic_subagent_type(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / ".echelon" / "prosaic"
+    (source / "subagents").mkdir(parents=True)
+
+    def fake_run(command, **_kwargs):
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps(
+                {
+                    "id": "subagents/echelon.summarizer.md",
+                    "type": "subagent",
+                    "frontmatter": {"name": "echelon.summarizer"},
+                    "body": "Return summary JSON only.",
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr("harness.prosaic_prompt_loader.subprocess.run", fake_run)
+
+    artifact = ProsaicPromptLoader(tmp_path).load_agent("echelon.summarizer")
+
+    assert artifact is not None
+    assert artifact.frontmatter == {"name": "echelon.summarizer"}
 
 
 @pytest.mark.unit

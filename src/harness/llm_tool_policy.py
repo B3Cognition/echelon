@@ -72,6 +72,7 @@ def build_llm_cli_command(
     disallow_claude_task_tools: bool = False,
     codex_json: bool = False,
     codex_model: str | None = None,
+    codex_skip_git_repo_check: bool = False,
     output_last_message: str | None = None,
     opencode_json: bool = False,
     copilot_json: bool = False,
@@ -94,6 +95,8 @@ def build_llm_cli_command(
         cmd = [bin_, "exec"]
         if unsafe:
             cmd.append("--dangerously-bypass-approvals-and-sandbox")
+        if codex_skip_git_repo_check:
+            cmd.append("--skip-git-repo-check")
         if codex_model:
             cmd += ["--model", codex_model]
         if codex_json:

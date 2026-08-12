@@ -46,7 +46,7 @@ class ProsaicPromptLoader:
 
     def load_agent(self, agent_id: str) -> ProsaicCommandArtifact | None:
         """Return an agent artifact, or ``None`` when the bundle is not installed."""
-        return self._load_artifact(f"subagents/{agent_id}.md", expected_type="agent")
+        return self._load_artifact(f"subagents/{agent_id}.md", expected_type="subagent")
 
     def _load_artifact(
         self,
