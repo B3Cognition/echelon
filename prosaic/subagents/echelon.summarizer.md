@@ -2,7 +2,6 @@
 name: echelon.summarizer
 description: SUMMARIZER — concise terminal recap of completed work
 execution: agent
-tools: none
 color: blue
 model_tier: fast
 effort: low

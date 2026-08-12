@@ -1420,54 +1420,6 @@ def test_openai_compatible_backend_sends_tool_registry_when_enabled(
     assert captured["payload"]["tool_choice"] == "auto"
 
 
-def test_openai_compatible_backend_disables_tools_from_prompt_metadata(
-    monkeypatch, tmp_path
-) -> None:
-    from harness.ai_cli_backends.openai_compatible import OpenAICompatibleBackend
-
-    captured = {}
-
-    class FakeResponse:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def read(self):
-            return json.dumps({
-                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
-            }).encode()
-
-    def fake_urlopen(request, timeout):
-        captured["payload"] = json.loads(request.data.decode())
-        return FakeResponse()
-
-    monkeypatch.setattr(
-        "harness.ai_cli_backends.openai_compatible.urllib.request.urlopen",
-        fake_urlopen,
-    )
-
-    result = OpenAICompatibleBackend(
-        _openai_config(features={"streaming": False, "tool_calls": True})
-    ).run_prompt(
-        CliRunRequest(
-            cwd=str(tmp_path),
-            prompt="Summarize evidence.",
-            env={},
-            timeout_s=12.5,
-            metadata={"prompt_metadata": {"tools": "none"}},
-        )
-    )
-
-    assert result.exit_code == 0
-    assert captured["payload"]["messages"] == [
-        {"role": "user", "content": "Summarize evidence."}
-    ]
-    assert "tools" not in captured["payload"]
-    assert "tool_choice" not in captured["payload"]
-
-
 def test_openai_compatible_registry_hashes_file_inside_read_scope(tmp_path) -> None:
     from harness.ai_cli_backends.openai_compatible import _OpenAIToolRegistry
 
@@ -3116,49 +3068,6 @@ def test_claude_backend_ignores_unknown_model_tier(tmp_path) -> None:
     assert "--model" not in captured["command"]
 
 
-def test_claude_backend_disables_tools_from_prompt_metadata(tmp_path) -> None:
-    backend = ClaudeCliBackend(_config("claude"))
-    captured = {}
-
-    class FakeProcess:
-        stdout = io.BytesIO(b"")
-        returncode = 0
-
-        def kill(self) -> None:
-            return None
-
-        def wait(self) -> int:
-            return self.returncode
-
-    def fake_popen(command, **kwargs):
-        captured["command"] = command
-        captured["stderr"] = kwargs.get("stderr")
-        return FakeProcess()
-
-    request = CliRunRequest(
-        cwd=str(tmp_path),
-        prompt="Summarize evidence.",
-        env={},
-        timeout_s=10,
-        metadata={
-            "quiet": True,
-            "prompt_metadata": {
-                "tools": "none",
-                "tool_read_roots": [str(tmp_path)],
-            }
-        },
-    )
-
-    with patch("harness.ai_cli_backends.claude.subprocess.Popen", fake_popen):
-        backend.run_prompt(request)
-
-    command = captured["command"]
-    assert command.count("--tools") == 1
-    assert command[command.index("--tools") + 1] == ""
-    assert "--allowedTools" not in command
-    assert captured["stderr"] is subprocess.PIPE
-
-
 def test_claude_backend_enforces_prompt_file_scopes(tmp_path) -> None:
     backend = ClaudeCliBackend(_config("claude"))
     captured = {}
@@ -3779,22 +3688,36 @@ def test_codex_backend_maps_neutral_model_tier_to_cli_model(
     assert result.metadata["request_model"] == expected_model
 
 
-def test_codex_backend_fails_closed_when_tools_are_disabled(tmp_path) -> None:
+def test_codex_backend_runs_prompt_without_tools_override(tmp_path) -> None:
     backend = CodexCliBackend(_config("codex"))
+
+    class FakeProcess:
+        stdout = io.BytesIO(b"")
+        stderr = io.BytesIO(b"")
+        returncode = 0
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self) -> int:
+            return self.returncode
+
     request = CliRunRequest(
         cwd=str(tmp_path),
         prompt="Summarize evidence.",
         env={},
         timeout_s=10,
-        metadata={"prompt_metadata": {"tools": "none"}},
+        metadata={"prompt_metadata": {"model_tier": "fast", "effort": "low"}},
     )
 
-    with patch("harness.ai_cli_backends.codex.subprocess.Popen") as popen:
+    with patch(
+        "harness.ai_cli_backends.codex.subprocess.Popen",
+        return_value=FakeProcess(),
+    ) as popen:
         result = backend.run_prompt(request)
 
-    assert result.exit_code == 125
-    assert result.metadata["provider_error_code"] == "tool_free_mode_unsupported"
-    popen.assert_not_called()
+    assert result.exit_code == 0
+    popen.assert_called_once()
 
 
 def test_codex_backend_ignores_unknown_model_tier(tmp_path) -> None:
@@ -4064,24 +3987,6 @@ def test_opencode_backend_parses_json_events(tmp_path) -> None:
     assert cmd[-1].startswith("## Effective Host Tool Policy")
 
 
-def test_opencode_backend_fails_closed_when_tools_are_disabled(tmp_path) -> None:
-    backend = OpenCodeCliBackend(_config("opencode"))
-    request = CliRunRequest(
-        cwd=str(tmp_path),
-        prompt="Summarize evidence.",
-        env={},
-        timeout_s=10,
-        metadata={"prompt_metadata": {"tools": "none"}},
-    )
-
-    with patch("harness.ai_cli_backends.opencode.subprocess.Popen") as popen:
-        result = backend.run_prompt(request)
-
-    assert result.exit_code == 125
-    assert result.metadata["provider_error_code"] == "tool_free_mode_unsupported"
-    popen.assert_not_called()
-
-
 def test_opencode_backend_parses_recorded_fixture_text(tmp_path) -> None:
     backend = OpenCodeCliBackend(_config("opencode"))
     fixture = (
@@ -4219,41 +4124,6 @@ def test_copilot_backend_parses_jsonl_response(tmp_path) -> None:
     assert cmd[1] == "-p"
     assert cmd[2].startswith("## Effective Host Tool Policy")
     assert cmd[-4:] == ["--output-format", "json", "--stream", "off"]
-
-
-def test_copilot_backend_disables_all_tools_from_prompt_metadata(tmp_path) -> None:
-    backend = CopilotCliBackend(_config("copilot"))
-    captured = {}
-
-    class FakeProcess:
-        stdout = io.BytesIO(b"")
-        stderr = io.BytesIO(b"")
-        returncode = 0
-
-        def wait(self):
-            return self.returncode
-
-        def kill(self):
-            return None
-
-    def fake_popen(command, **_kwargs):
-        captured["command"] = command
-        return FakeProcess()
-
-    request = CliRunRequest(
-        cwd=str(tmp_path),
-        prompt="Summarize evidence.",
-        env={},
-        timeout_s=10,
-        metadata={"prompt_metadata": {"tools": "none"}},
-    )
-
-    with patch("harness.ai_cli_backends.copilot.subprocess.Popen", fake_popen):
-        result = backend.run_prompt(request)
-
-    assert result.exit_code == 0
-    assert "--excluded-tools=*" in captured["command"]
-    assert "--disable-builtin-mcps" in captured["command"]
 
 
 def test_copilot_backend_parses_recorded_fixture_text(tmp_path) -> None:

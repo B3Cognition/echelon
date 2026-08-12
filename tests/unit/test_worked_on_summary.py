@@ -49,7 +49,6 @@ def summarizer_artifact() -> ProsaicCommandArtifact:
             "name": "echelon.summarizer",
             "model_tier": "fast",
             "effort": "low",
-            "tools": "none",
         },
         body="Return the strict summary JSON.",
     )
@@ -213,11 +212,11 @@ def test_generate_summary_uses_fast_low_metadata_once_and_removes_temp_cwd(
     assert len(provider.calls) == 1
     call = provider.calls[0]
     assert call["timeout_ms"] == 30_000
-    assert call["request_metadata"] == {
-        "prompt_metadata": summarizer_artifact.frontmatter,
-        "quiet": True,
-    }
-    assert call["request_metadata"]["prompt_metadata"]["tools"] == "none"
+    assert call["request_metadata"]["quiet"] is True
+    metadata = call["request_metadata"]["prompt_metadata"]
+    assert metadata["model_tier"] == "fast"
+    assert metadata["effort"] == "low"
+    assert "tools" not in metadata
     cwd = Path(str(call["cwd"]))
     assert cwd.parent != tmp_path
     assert not cwd.exists()

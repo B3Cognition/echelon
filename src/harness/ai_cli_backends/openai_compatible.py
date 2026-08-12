@@ -74,10 +74,7 @@ class OpenAICompatibleBackend:
         prompt_metadata = _prompt_metadata(request)
         request_model = _metadata_str(prompt_metadata, "model") or llm.model
         streaming = _feature_enabled(llm.features, "streaming", default=True)
-        tools_disabled = _metadata_str(prompt_metadata, "tools").lower() == "none"
-        if not tools_disabled and _feature_enabled(
-            llm.features, "tool_calls", default=False
-        ):
+        if _feature_enabled(llm.features, "tool_calls", default=False):
             return self._run_prompt_with_tools(request, prompt_metadata, streaming)
         payload: dict[str, object] = {
             "model": request_model,

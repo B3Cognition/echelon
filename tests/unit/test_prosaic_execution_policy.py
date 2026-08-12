@@ -129,6 +129,8 @@ def test_all_subagents_declare_approved_model_tier_and_effort() -> None:
     for filename, expected in SUBAGENT_POLICY.items():
         metadata = _frontmatter(SUBAGENTS / filename)
         assert (metadata.get("model_tier"), metadata.get("effort")) == expected
+        if filename == "echelon.summarizer.md":
+            assert "tools" not in metadata
 
 
 def test_all_commands_declare_approved_model_tier_and_effort() -> None:
