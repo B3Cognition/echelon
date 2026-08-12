@@ -71,6 +71,78 @@ def test_load_command_returns_none_for_an_agent_only_prosaic_bundle(tmp_path: Pa
 
 
 @pytest.mark.unit
+def test_load_agent_inspects_the_project_prosaic_subagent_bundle(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / ".echelon" / "prosaic"
+    (source / "subagents").mkdir(parents=True)
+    captured: dict[str, object] = {}
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        captured["cwd"] = kwargs["cwd"]
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps(
+                {
+                    "id": "subagents/echelon.summarizer.md",
+                    "type": "agent",
+                    "frontmatter": {
+                        "name": "echelon.summarizer",
+                        "model_tier": "fast",
+                        "effort": "low",
+                    },
+                    "body": "Return summary JSON only.",
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr("harness.prosaic_prompt_loader.subprocess.run", fake_run)
+
+    artifact = ProsaicPromptLoader(tmp_path).load_agent("echelon.summarizer")
+
+    assert artifact is not None
+    assert artifact.frontmatter["model_tier"] == "fast"
+    assert artifact.frontmatter["effort"] == "low"
+    assert captured == {
+        "command": [
+            "prosaic",
+            "inspect",
+            "subagents/echelon.summarizer.md",
+            "--source",
+            str(source),
+        ],
+        "cwd": str(tmp_path),
+    }
+
+
+@pytest.mark.unit
+def test_render_agent_appends_encoded_evidence_without_commander_preamble() -> None:
+    artifact = ProsaicCommandArtifact(
+        frontmatter={"model_tier": "fast", "effort": "low"},
+        body="Return summary JSON only.",
+    )
+
+    rendered = ProsaicPromptLoader.render_agent(
+        artifact,
+        '{"status":"done","goal":"Add sessions"}',
+    )
+
+    assert rendered.prompt == (
+        "Return summary JSON only.\n\n"
+        "## Evidence Packet\n"
+        "```json\n"
+        '{"status":"done","goal":"Add sessions"}\n'
+        "```\n"
+    )
+    assert "You were dispatched as a subagent" not in rendered.prompt
+    assert rendered.frontmatter == {"model_tier": "fast", "effort": "low"}
+
+
+@pytest.mark.unit
 def test_load_command_inlines_referenced_companion_markdown(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

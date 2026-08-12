@@ -33,7 +33,7 @@ class RenderedProsaicCommand:
 
 
 class ProsaicPromptLoader:
-    """Load commands from an installer-owned project Prosaic bundle."""
+    """Load neutral artifacts from an installer-owned project Prosaic bundle."""
 
     def __init__(self, project_dir: Path, *, executable: str = "prosaic") -> None:
         self._project_dir = project_dir
@@ -42,10 +42,21 @@ class ProsaicPromptLoader:
 
     def load_command(self, command_id: str) -> ProsaicCommandArtifact | None:
         """Return a command artifact, or ``None`` when the bundle is not installed."""
-        if not (self._source_dir / "commands").is_dir():
+        return self._load_artifact(f"commands/{command_id}.md", expected_type="command")
+
+    def load_agent(self, agent_id: str) -> ProsaicCommandArtifact | None:
+        """Return an agent artifact, or ``None`` when the bundle is not installed."""
+        return self._load_artifact(f"subagents/{agent_id}.md", expected_type="agent")
+
+    def _load_artifact(
+        self,
+        artifact_id: str,
+        *,
+        expected_type: str,
+    ) -> ProsaicCommandArtifact | None:
+        if not (self._source_dir / artifact_id.split("/", 1)[0]).is_dir():
             return None
 
-        artifact_id = f"commands/{command_id}.md"
         try:
             result = subprocess.run(
                 [
@@ -71,7 +82,7 @@ class ProsaicPromptLoader:
                 f"Prosaic could not inspect {artifact_id}: {detail}"
             )
 
-        artifact = _parse_command_artifact(artifact_id, result.stdout)
+        artifact = _parse_artifact(artifact_id, result.stdout, expected_type=expected_type)
         return ProsaicCommandArtifact(
             frontmatter=artifact.frontmatter,
             body=append_prompt_companions(artifact.body, (self._source_dir,)),
@@ -92,10 +103,27 @@ class ProsaicPromptLoader:
             frontmatter=artifact.frontmatter,
         )
 
+    @staticmethod
+    def render_agent(
+        artifact: ProsaicCommandArtifact,
+        evidence_json: str,
+    ) -> RenderedProsaicCommand:
+        """Append an encoded evidence packet to a neutral agent prompt."""
+        return RenderedProsaicCommand(
+            prompt=(
+                f"{artifact.body.rstrip()}\n\n"
+                "## Evidence Packet\n"
+                f"```json\n{evidence_json}\n```\n"
+            ),
+            frontmatter=artifact.frontmatter,
+        )
 
-def _parse_command_artifact(
+
+def _parse_artifact(
     artifact_id: str,
     raw: str,
+    *,
+    expected_type: str,
 ) -> ProsaicCommandArtifact:
     try:
         artifact = json.loads(raw)
@@ -108,9 +136,10 @@ def _parse_command_artifact(
         raise ProsaicPromptLoadError(
             f"Prosaic returned an invalid artifact for {artifact_id}: expected object"
         )
-    if artifact.get("type") != "command":
+    if artifact.get("type") != expected_type:
         raise ProsaicPromptLoadError(
-            f"Prosaic returned {artifact.get('type')!r} for {artifact_id}, expected command"
+            f"Prosaic returned {artifact.get('type')!r} for {artifact_id}, "
+            f"expected {expected_type}"
         )
     frontmatter = artifact.get("frontmatter")
     body = artifact.get("body")

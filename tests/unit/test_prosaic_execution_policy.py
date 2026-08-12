@@ -57,6 +57,7 @@ SUBAGENT_POLICY = {
     "echelon.spec-fulfillment-auditor.md": ("balanced", "medium"),
     "echelon.spec-guard.md": ("strong", "medium"),
     "echelon.strategist.md": ("strong", "high"),
+    "echelon.summarizer.md": ("fast", "low"),
     "echelon.synthesizer.md": ("strong", "high"),
     "echelon.tech-writer.md": ("balanced", "medium"),
     "echelon.test-guardian.md": ("strong", "medium"),
