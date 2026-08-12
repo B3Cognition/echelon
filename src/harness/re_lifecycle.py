@@ -520,6 +520,14 @@ class ReLifecycleController:
             self._save_state(run_dir, state)
 
         if not state.get("extraction_complete"):
+            state["status"] = "running"
+            state.pop("blocked_reason", None)
+            state.pop("blocked_detail", None)
+            re_state = self._load_json(run_dir / "re" / "state.json")
+            re_state["status"] = "in_progress"
+            re_state.pop("blocked_reason", None)
+            self._save_json(run_dir / "re" / "state.json", re_state)
+            self._save_state(run_dir, state)
             outcome = ReExtractionController(
                 provider=self._provider_factory(),
                 project_root=self._project_root,

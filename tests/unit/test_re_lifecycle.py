@@ -1067,16 +1067,22 @@ def test_continue_reopens_completed_extraction_when_source_budget_is_raised(
         "harness.re_lifecycle.materialize_re_run_context",
         lambda **kwargs: kwargs["run_re_dir"].mkdir(parents=True) or {},
     )
-    extraction_calls: list[bool] = []
+    extraction_calls: list[tuple[str | None, str | None]] = []
 
     class FakeExtractionController:
         def __init__(self, **kwargs: object) -> None:
-            pass
+            self.run_dir = Path(str(kwargs["run_dir"]))
 
         def run(self):
             from harness.re_controller import ReControllerResult
 
-            extraction_calls.append(True)
+            outer = json.loads(
+                (self.run_dir / "state.json").read_text(encoding="utf-8")
+            )
+            inner = json.loads(
+                (self.run_dir / "re" / "state.json").read_text(encoding="utf-8")
+            )
+            extraction_calls.append((outer.get("status"), inner.get("status")))
             return ReControllerResult(completed=True)
 
     monkeypatch.setattr(
@@ -1118,7 +1124,10 @@ def test_continue_reopens_completed_extraction_when_source_budget_is_raised(
     second = controller.continue_run(re_max_inner=30)
 
     assert second.status == "blocked"
-    assert extraction_calls == [True, True]
+    assert extraction_calls == [
+        ("running", "in_progress"),
+        ("running", "in_progress"),
+    ]
 
 
 def _blocked_forced_target_run_that_becomes_overlapping(
