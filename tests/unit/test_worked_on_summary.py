@@ -565,6 +565,51 @@ def test_generate_summary_rejects_partial_or_changed_recorded_command(
     assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
 
 
+def test_generate_summary_rejects_partial_recorded_command_on_any_line(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    summarizer_artifact: ProsaicCommandArtifact,
+) -> None:
+    _install_fake_prompt(monkeypatch, summarizer_artifact)
+    provider = FakeProvider(
+        '{"lines":["Implemented provider-owned model selection.",'
+        '"Recorded verification: pytest tests/unit/test_a.py --maxfail=1 passed.",'
+        '"The work is done after pytest.",'
+        '"The feature is ready for integration."]}'
+    )
+    evidence = WorkedOnEvidence(
+        command="spec run",
+        status="done",
+        outcomes=("Implemented provider-owned model selection.",),
+        verification="pytest tests/unit/test_a.py --maxfail=1 passed",
+    )
+
+    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
+
+
+def test_generate_summary_accepts_complete_recorded_command_on_any_line(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    summarizer_artifact: ProsaicCommandArtifact,
+) -> None:
+    _install_fake_prompt(monkeypatch, summarizer_artifact)
+    expected = (
+        "Implemented provider-owned model selection.",
+        "Recorded verification: pytest tests/unit/test_a.py --maxfail=1 passed.",
+        "The work is done after pytest tests/unit/test_a.py --maxfail=1.",
+        "The feature is ready for integration.",
+    )
+    provider = FakeProvider(json.dumps({"lines": list(expected)}))
+    evidence = WorkedOnEvidence(
+        command="spec run",
+        status="done",
+        outcomes=("Implemented provider-owned model selection.",),
+        verification="pytest tests/unit/test_a.py --maxfail=1 passed",
+    )
+
+    assert generate_summary(tmp_path, evidence, provider=provider) == expected
+
+
 @pytest.mark.parametrize(
     ("verification", "claim"),
     (
@@ -772,7 +817,8 @@ def test_generate_summary_rejects_provider_limit_semantic_not_in_recorded_messag
     _install_fake_prompt(monkeypatch, summarizer_artifact)
     provider = FakeProvider(
         '{"lines":["The rate limit explains the stop.","The run remains blocked.",'
-        '"Retry remains available.","Next work remains pending."]}'
+        '"The recorded run status is blocked.",'
+        '"Next, run echelon spec continue."]}'
     )
     evidence = WorkedOnEvidence(
         command="spec continue",
@@ -794,8 +840,8 @@ def test_generate_summary_accepts_recorded_provider_limit_semantics(
     expected = (
         "The session limit resets at 17:00.",
         "The run remains blocked.",
-        "Retry remains available.",
-        "Next work remains pending.",
+        "The recorded run status is blocked.",
+        "Next, run echelon spec continue.",
     )
     provider = FakeProvider(json.dumps({"lines": list(expected)}))
     evidence = WorkedOnEvidence(
@@ -854,6 +900,8 @@ def test_generate_summary_rejects_blocked_readiness_variants(
     (
         "The next step can proceed to code review.",
         "The next step can be integrated.",
+        "The next step is cleared for code review.",
+        "The work is eligible to merge.",
     ),
 )
 def test_generate_summary_rejects_blocked_progress_euphemisms(
@@ -870,7 +918,7 @@ def test_generate_summary_rejects_blocked_progress_euphemisms(
                     "Attempted spec continue for the requested work.",
                     "The run remains blocked.",
                     euphemism,
-                    "Retry remains available.",
+                    "Next, run echelon spec continue.",
                 ]
             }
         )
@@ -894,7 +942,7 @@ def test_generate_summary_accepts_grounded_blocked_operator_action(
     expected = (
         "Attempted spec continue for the requested work.",
         "The run remains blocked.",
-        "Retry remains available.",
+        "The recorded run status is blocked.",
         "Next, run echelon spec continue.",
     )
     provider = FakeProvider(json.dumps({"lines": list(expected)}))
@@ -908,6 +956,63 @@ def test_generate_summary_accepts_grounded_blocked_operator_action(
     assert generate_summary(tmp_path, evidence, provider=provider) == expected
 
 
+@pytest.mark.parametrize(
+    "next_note",
+    (
+        "Run the focused verification suite.",
+        "Retry verification after the provider reset.",
+        "Resume delivery after answering the blocker.",
+        "Wait for the provider reset, then retry delivery.",
+        "Answer the recorded question.",
+        "Fix the failing check.",
+        "Resolve the recorded blocker.",
+    ),
+)
+def test_generate_summary_accepts_grounded_blocked_next_note_action(
+    next_note: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    summarizer_artifact: ProsaicCommandArtifact,
+) -> None:
+    _install_fake_prompt(monkeypatch, summarizer_artifact)
+    expected = (
+        "Attempted spec continue for the requested work.",
+        "The run remains blocked.",
+        "The recorded run status is blocked.",
+        next_note,
+    )
+    provider = FakeProvider(json.dumps({"lines": list(expected)}))
+    evidence = WorkedOnEvidence(
+        command="spec continue",
+        status="blocked",
+        blocker="controller_state_contract_validation_failed",
+        next_note=next_note,
+    )
+
+    assert generate_summary(tmp_path, evidence, provider=provider) == expected
+
+
+def test_generate_summary_rejects_ungrounded_blocked_next_action_claim(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    summarizer_artifact: ProsaicCommandArtifact,
+) -> None:
+    _install_fake_prompt(monkeypatch, summarizer_artifact)
+    provider = FakeProvider(
+        '{"lines":["Attempted spec continue for the requested work.",'
+        '"The run remains blocked.","The recorded run status is blocked.",'
+        '"Retry remains available."]}'
+    )
+    evidence = WorkedOnEvidence(
+        command="spec continue",
+        status="blocked",
+        blocker="controller_state_contract_validation_failed",
+        next_command="echelon spec continue",
+    )
+
+    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
+
+
 def test_generate_summary_rejects_blocked_command_reported_as_progress_fact(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -916,7 +1021,7 @@ def test_generate_summary_rejects_blocked_command_reported_as_progress_fact(
     _install_fake_prompt(monkeypatch, summarizer_artifact)
     provider = FakeProvider(
         '{"lines":["Attempted spec continue for the requested work.",'
-        '"The run remains blocked.","Retry remains available.",'
+        '"The run remains blocked.","The recorded run status is blocked.",'
         '"The next command is echelon spec continue."]}'
     )
     evidence = WorkedOnEvidence(

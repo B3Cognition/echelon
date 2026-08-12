@@ -58,11 +58,12 @@ you name a recorded command, include its complete command token sequence exactly
 Describe a provider stop with the same
 recorded session-limit, usage-limit, rate-limit, or quota semantics; generic
 "bounded evidence" is not a provider-limit explanation. NEVER describe blocked
-work as ready, including ready for code review, integration, merge, release,
-shipment, or deployment. NEVER say blocked work can proceed, advance, move,
-integrate, land, merge, release, ship, or deploy. Report a supplied blocked-run
-command only as an operator action such as `Next, run ...`, `Retry ...`,
-`Resume ...`, or `Wait ... then ...`.
+work, a feature, a change, or the next step as ready, cleared, approved,
+eligible, or able to proceed, advance, move, integrate, review, merge, land,
+release, ship, or deploy. Report a blocked-run next action only in an operator
+form grounded in the complete supplied `next_command` or `next_note`, such as
+`Next, run ...`, `Retry ...`, `Resume ...`, `Wait ... then ...`, `Answer ...`,
+`Fix ...`, or `Resolve ...`.
 
 ## Content Order
 
