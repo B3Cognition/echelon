@@ -70,8 +70,8 @@ def _recorded_verification_commands(value: str) -> tuple[tuple[str, ...], ...]:
         status = r"(?:passed|failed|succeeded)"
         matches = (
             re.fullmatch(rf"{status}\s*[:—-]\s*(.+)", clause),
-            re.fullmatch(rf"(.+?)\s+\({status}\)(?:\s+in\s+\S+)?", clause),
-            re.fullmatch(rf"(.+?)\s+{status}(?:\s+in\s+\S+)?", clause),
+            re.fullmatch(rf"(.+?)\s+\({status}\)(?:\s+in\s+.+)?", clause),
+            re.fullmatch(rf"(.+?)\s+{status}(?:\s+in\s+.+)?", clause),
         )
         command = next((match.group(1) for match in matches if match), "")
         if command:
@@ -612,33 +612,26 @@ def _valid_lines(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | None
         ):
             return None
         blocked_subject = re.compile(r"\b(?:work|features?|changes?|next steps?)\b")
-        readiness = re.compile(r"\b(?:ready|cleared|approved|eligible)\b")
+        readiness = re.compile(r"\b(?:ready|cleared|approved|eligible|able)\b")
         negated_readiness = re.compile(
-            r"\b(?:not|never)\b[^.!?]{0,20}\b(?:ready|cleared|approved|eligible)\b"
+            r"\b(?:not|never)\s+(?:yet\s+)?(?:ready|cleared|approved|eligible|able)\b"
         )
-        transition = (
-            r"(?:proceed|advance|move|integrate|review|merge|land|release|ship|deploy)"
-        )
-        modal_transition = re.compile(
-            rf"\b(?:can|may|could|will|would|shall)\s+(?:be\s+)?{transition}\w*\b|"
-            rf"\b(?:is\s+)?able\s+to\s+(?:be\s+)?{transition}\w*\b"
-        )
-        direct_transition = re.compile(
-            r"\b(?:proceeds?|advances?|moves?)\s+(?:to|into)\s+"
-            r"(?:code review|review|integration|landing|merge|release|shipping|deployment)\b|"
-            r"\b(?:integrates?|merges?|lands?|releases?|ships?|deploys?)\b"
+        transition = re.compile(
+            r"\b(?:proceed(?:s|ed|ing)?|advanc(?:e|es|ed|ing)|"
+            r"mov(?:e|es|ed|ing)|integrat(?:e|es|ed|ing)|review(?:s|ed|ing)?|"
+            r"merg(?:e|es|ed|ing)|land(?:s|ed|ing)?|releas(?:e|es|ed|ing)|"
+            r"ship(?:s|ped|ping)?|deploy(?:s|ed|ing)?|enter(?:s|ed|ing)?)\b"
         )
 
         def blocked_progress_claim(line: str) -> bool:
             subject = blocked_subject.search(line)
             if not subject:
                 return False
-            claim = line[subject.end():]
-            affirmative_readiness = readiness.search(claim) and not negated_readiness.search(claim)
+            if negated_readiness.search(line):
+                return False
             return bool(
-                affirmative_readiness
-                or modal_transition.search(claim)
-                or direct_transition.search(claim)
+                readiness.search(line)
+                or transition.search(line)
             )
 
         if any(blocked_progress_claim(line.lower()) for line in normalized):
@@ -663,7 +656,10 @@ def _valid_lines(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | None
         verification_line = " ".join(line.lower().split())
         line_tokens = _command_tokens(verification_line)
         for executable in {command[0] for command in recorded_commands}:
-            if executable not in line_tokens:
+            if not re.search(
+                rf"(?<!\w){re.escape(executable)}(?!\w)",
+                verification_line,
+            ):
                 continue
             matching_commands = tuple(
                 command for command in recorded_commands if command[0] == executable
@@ -744,6 +740,18 @@ def _valid_lines(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | None
             )
         return normalized_line in allowed
 
+    def recorded_command_attempt_line(line: str) -> bool:
+        recorded_command = _command_tokens(evidence.command)
+        line_tokens = _command_tokens(line)
+        return bool(
+            recorded_command
+            and re.search(r"\b(?:attempted|ran|started|executed)\b", line)
+            and any(
+                line_tokens[index:index + len(recorded_command)] == recorded_command
+                for index in range(len(line_tokens) - len(recorded_command) + 1)
+            )
+        )
+
     def supported_lifecycle_line(line: str) -> bool:
         if any(fact in line for fact in grounded_claims):
             return True
@@ -765,14 +773,8 @@ def _valid_lines(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | None
         if evidence.completed_tasks or evidence.completed_phases:
             if re.search(r"\b(?:worked|progress|tasks?|phases?|completed)\b", line):
                 return True
-        recorded_command = _command_tokens(evidence.command)
-        line_tokens = _command_tokens(line)
-        if recorded_command and re.search(r"\b(?:attempted|ran|started|executed)\b", line):
-            if any(
-                line_tokens[index:index + len(recorded_command)] == recorded_command
-                for index in range(len(line_tokens) - len(recorded_command) + 1)
-            ):
-                return True
+        if recorded_command_attempt_line(line):
+            return True
         if not blocked_status and (evidence.next_command or evidence.next_note):
             if re.search(r"\b(?:next|retry|resume|continue|remaining)\b", line):
                 return True
@@ -812,9 +814,24 @@ def _valid_lines(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | None
         return normalized_line in allowed
 
     def next_action_claim(line: str) -> bool:
-        action = r"(?:run|retry|resume|wait|answer|fix|resolve|continue|proceed)"
+        if blocked_status and negated_readiness.search(line):
+            return False
+        action = (
+            r"(?:run|retry|resume|wait|answer|fix|resolve|continue|proceed|"
+            r"advance|move|integrate|review|merge|land|release|ship|deploy|enter)"
+        )
+        action_mention = re.search(
+            r"\b(?:retr(?:y|ies|ied|ying)|resum(?:e|es|ed|ing)|"
+            r"answer(?:s|ed|ing)?|fix(?:es|ed|ing)?|resolv(?:e|es|ed|ing)|"
+            r"continu(?:e|es|ed|ing)|proceed(?:s|ed|ing)?|advanc(?:e|es|ed|ing)|"
+            r"mov(?:e|es|ed|ing)|integrat(?:e|es|ed|ing)|review(?:s|ed|ing)?|"
+            r"merg(?:e|es|ed|ing)|land(?:s|ed|ing)?|releas(?:e|es|ed|ing)|"
+            r"ship(?:s|ped|ping)?|deploy(?:s|ed|ing)?|enter(?:s|ed|ing)?)\b",
+            line,
+        )
         return bool(
             re.search(r"\b(?:next|remaining)\s+(?:step|action|command|work)\b", line)
+            or action_mention
             or re.match(
                 rf"^(?:(?:next|then),?\s+|please\s+)?{action}\b",
                 line,
@@ -827,12 +844,12 @@ def _valid_lines(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | None
 
     for line in normalized:
         lowered = " ".join(line.lower().split())
+        if exact_fact_line(lowered) or recorded_command_attempt_line(lowered):
+            continue
         if blocked_status and next_action_claim(lowered):
             if grounded_next_action_line(lowered):
                 continue
             return None
-        if exact_fact_line(lowered):
-            continue
         if re.search(r"[;,:]|\b(?:and|but|while|then)\b", lowered):
             return None
         if not supported_lifecycle_line(lowered):

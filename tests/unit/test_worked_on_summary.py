@@ -650,6 +650,57 @@ def test_generate_summary_rejects_partial_command_for_supported_verification_sha
     ("verification", "claim"),
     (
         (
+            "pytest tests/unit/test_a.py --maxfail=1 passed in 12.5 seconds",
+            "The work is done after pytest.",
+        ),
+        (
+            "pytest tests/unit/test_a.py --maxfail=1 passed",
+            "The work cites pytest's result.",
+        ),
+        (
+            "pytest tests/unit/test_a.py --maxfail=1 passed",
+            "The work cites pytest-based validation.",
+        ),
+        (
+            "pytest tests/unit/test_a.py --maxfail=1 passed",
+            "The work cites pytest/tests evidence.",
+        ),
+    ),
+)
+def test_generate_summary_rejects_punctuated_or_duration_command_shortening(
+    verification: str,
+    claim: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    summarizer_artifact: ProsaicCommandArtifact,
+) -> None:
+    _install_fake_prompt(monkeypatch, summarizer_artifact)
+    provider = FakeProvider(
+        json.dumps(
+            {
+                "lines": [
+                    "Implemented provider-owned model selection.",
+                    f"Recorded verification: {verification}.",
+                    claim,
+                    "The feature is ready for integration.",
+                ]
+            }
+        )
+    )
+    evidence = WorkedOnEvidence(
+        command="spec run",
+        status="done",
+        outcomes=("Implemented provider-owned model selection.",),
+        verification=verification,
+    )
+
+    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
+
+
+@pytest.mark.parametrize(
+    ("verification", "claim"),
+    (
+        (
             "pytest tests/unit/test_a.py --maxfail=1 passed",
             "Verification passed with `pytest tests/unit/test_a.py --maxfail=1`.",
         ),
@@ -1008,6 +1059,47 @@ def test_generate_summary_rejects_additional_blocked_transition_claims(
     assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
 
 
+@pytest.mark.parametrize(
+    "claim",
+    (
+        "The blocked work should be merged.",
+        "The blocked work must be merged.",
+        "The blocked work is going to be merged.",
+        "The blocked change is moving to code review.",
+        "The blocked feature enters code review.",
+        "Merge the blocked work.",
+        "The blocked work is not merely ready for review.",
+    ),
+)
+def test_generate_summary_rejects_blocked_transition_grammar_variants(
+    claim: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    summarizer_artifact: ProsaicCommandArtifact,
+) -> None:
+    _install_fake_prompt(monkeypatch, summarizer_artifact)
+    provider = FakeProvider(
+        json.dumps(
+            {
+                "lines": [
+                    "Attempted spec continue for the requested work.",
+                    "The run remains blocked.",
+                    claim,
+                    "Next, run echelon spec continue.",
+                ]
+            }
+        )
+    )
+    evidence = WorkedOnEvidence(
+        command="spec continue",
+        status="blocked",
+        blocker="controller_state_contract_validation_failed",
+        next_command="echelon spec continue",
+    )
+
+    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
+
+
 def test_generate_summary_accepts_negated_blocked_readiness(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1120,6 +1212,44 @@ def test_generate_summary_rejects_ungrounded_blocked_next_action_claim(
     ),
 )
 def test_generate_summary_rejects_prefixed_or_embedded_ungrounded_action(
+    claim: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    summarizer_artifact: ProsaicCommandArtifact,
+) -> None:
+    _install_fake_prompt(monkeypatch, summarizer_artifact)
+    provider = FakeProvider(
+        json.dumps(
+            {
+                "lines": [
+                    "Attempted spec continue for the requested work.",
+                    "The run remains blocked.",
+                    "The recorded run status is blocked.",
+                    claim,
+                ]
+            }
+        )
+    )
+    evidence = WorkedOnEvidence(
+        command="spec continue",
+        status="blocked",
+        blocker="controller_state_contract_validation_failed",
+        next_command="echelon spec continue",
+    )
+
+    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
+
+
+@pytest.mark.parametrize(
+    "claim",
+    (
+        "You can retry the blocked run.",
+        "The operator will retry the blocked run.",
+        "The operator should merge the blocked work.",
+        "Merge the blocked work.",
+    ),
+)
+def test_generate_summary_rejects_ungrounded_modal_or_lifecycle_action(
     claim: str,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
