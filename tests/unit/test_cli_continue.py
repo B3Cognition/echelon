@@ -1106,6 +1106,10 @@ def test_continue_provider_session_limit_retries_incomplete_phase(
             "phase": "terminal-blocked",
             "blocked_reason": "provider_session_limit",
             "provider_limit_message": "You've hit your session limit · resets 4am (Europe/Prague)",
+            "provider_limit_provenance": {
+                "phase_id": "phase3-consensus",
+                "termination_reason": "provider_session_limit",
+            },
             "last_dispatch": {"phase_id": "phase3-consensus"},
             "completed_phases": ["phase1-constitution", "phase3-plan"],
             "user_message": "style the CLI output",
@@ -2103,6 +2107,12 @@ def test_continue_retries_external_blocker_phase_after_fix(
             "completed_phases": ["phase1-constitution", "phase1-what"],
             "user_message": "build search dashboard",
             "autonomy_mode": "semi",
+            "provider_limit_message": "stale provider text",
+            "provider_limit_provenance": {
+                "phase_id": "phase3-plan",
+                "termination_reason": "provider_session_limit",
+            },
+            "provider_reset_hint": "5pm",
         },
     )
 
@@ -2120,6 +2130,9 @@ def test_continue_retries_external_blocker_phase_after_fix(
     assert state["phase"] == "phase1-why2"
     assert state["status"] == "running"
     assert state["blocked_reason"] is None
+    assert "provider_limit_message" not in state
+    assert "provider_limit_provenance" not in state
+    assert "provider_reset_hint" not in state
     assert "Retrying incomplete phase phase1-why2" in captured.out
     assert calls == [["build search dashboard", "--mode", "semi"]]
 

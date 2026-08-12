@@ -334,6 +334,21 @@ class StrategyCoordinator:
                 state = store.read() if store is not None else {}
             except Exception:
                 state = {}
+            from harness.provider_limits import (
+                clean_provider_limit_message,
+                current_provider_limit_message,
+            )
+
+            provider_limit_message = current_provider_limit_message(
+                state,
+                phase_id=result.blocked_phase or "implementation",
+                termination_reason=result.termination_reason,
+            )
+            provider_limit_provenance = (
+                state.get("provider_limit_provenance")
+                if provider_limit_message
+                else None
+            )
             comparison["strategies"][sid] = {
                 "status": result.status,
                 "termination_reason": result.termination_reason,
@@ -345,8 +360,13 @@ class StrategyCoordinator:
                 "converged": result.status == "converged",
                 "build_status": state.get("build_status"),
                 "build_reason": state.get("build_reason"),
-                "provider_reset_hint": state.get("provider_reset_hint"),
-                "provider_limit_message": state.get("provider_limit_message"),
+                "provider_reset_hint": (
+                    clean_provider_limit_message(state.get("provider_reset_hint"))
+                    if provider_limit_message
+                    else None
+                ),
+                "provider_limit_message": provider_limit_message or None,
+                "provider_limit_provenance": provider_limit_provenance,
                 "salvage_commit": state.get("salvage_commit"),
                 "salvage_branch": state.get("salvage_branch"),
                 "salvage_verified": state.get("salvage_verified"),

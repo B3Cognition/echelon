@@ -216,6 +216,29 @@ class TestFulfillmentRunner:
         assert "mapper agents" not in result.reason
         assert "old123" in result.reason
         assert "new456" in result.reason
+        assert len(result.reason) <= 240
+
+    def test_refresh_cleans_hostile_provider_session_limit_transcript(self, tmp_path):
+        _write_verify_skill(tmp_path)
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        _write_spec_inputs(spec_dir)
+        provider = MagicMock()
+        provider.cli = "claude"
+        provider.exec_prompt.return_value = 1
+        provider.last_stdout = (
+            "\x1b]0;forged\x07\x1b[31mYou've hit your session limit\x1b[0m "
+            "· resets 5pm (Europe/Prague)\x00 " + ("detail " * 80)
+        )
+
+        result = FulfillmentRunner(provider).refresh(str(tmp_path), "spec-001")
+
+        assert result.status == "provider_session_limit"
+        assert result.reason.startswith(
+            "You've hit your session limit · resets 5pm (Europe/Prague)"
+        )
+        assert len(result.reason) <= 240
+        assert "\x1b" not in result.reason
+        assert "\x00" not in result.reason
 
     def test_refresh_stamps_latest_fulfillment_report_on_success(self, tmp_path):
         _write_verify_skill(tmp_path)

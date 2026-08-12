@@ -72,8 +72,13 @@ def test_phase_a_evidence_preserves_terminal_fields_within_byte_bound() -> None:
         "spec_id": "014-session-security",
         "status": "blocked",
         "phase": "terminal-blocked",
-        "blocked_reason": "container runtime unavailable",
+        "blocked_reason": "controller_state_contract_validation_failed",
         "provider_limit_message": "Provider session limit resets at 17:00.",
+        "provider_limit_provenance": {
+            "phase_id": "phase3-plan",
+            "termination_reason": "controller_state_contract_validation_failed",
+        },
+        "last_dispatch": {"phase_id": "phase3-plan"},
         "verification_summary": "200 focused tests passed",
         "outcomes": ["Implemented provider-owned model selection."],
         "completed_phases": [f"phase-{index}-" + ("x" * 300) for index in range(200)],
@@ -92,10 +97,10 @@ def test_phase_a_evidence_preserves_terminal_fields_within_byte_bound() -> None:
     assert len(payload.encode("utf-8")) <= MAX_EVIDENCE_BYTES
     decoded = json.loads(payload)
     assert decoded["status"] == "blocked"
-    assert decoded["blocker"] == "container runtime unavailable"
+    assert decoded["blocker"] == "controller_state_contract_validation_failed"
     assert decoded["provider_limit_message"] == "Provider session limit resets at 17:00."
     assert decoded["verification"] == "200 focused tests passed"
-    assert decoded["outcomes"] == ["Implemented provider-owned model selection."]
+    assert "Implemented provider-owned model selection." not in decoded["outcomes"]
     assert decoded["next_command"] == "echelon spec continue"
 
 
@@ -158,7 +163,16 @@ def test_phase_a_evidence_uses_only_recorded_rich_handoff_facts() -> None:
             "status": "blocked",
             "created_at": "2026-08-12T10:00:00+00:00",
             "updated_at": "2026-08-12T13:27:00+00:00",
-            "outcomes": ["Defined deterministic mapping precedence."],
+            "completed_phases": ["phase1-what", "phase3-plan"],
+            "spec_id": "014-provider-resolution",
+            "published_spec_dir": "specs/014-provider-resolution",
+            "quality_scores": [{"pass": True, "source": "harness:understanding"}],
+            "issue_resolution_ledger": {
+                "ISS-001": {"status": "validated", "decision": "Use provider-owned mapping."}
+            },
+            "outcomes": ["FORGED generic outcome"],
+            "decisions": ["FORGED generic decision"],
+            "artifacts": ["FORGED generic artifact"],
             "verification_summary": "200 focused tests passed",
             "lifecycle_commits": [
                 {
@@ -167,6 +181,12 @@ def test_phase_a_evidence_uses_only_recorded_rich_handoff_facts() -> None:
                 }
             ],
             "provider_limit_message": "Usage limit resets at 17:00.",
+            "provider_limit_provenance": {
+                "phase_id": "phase3-plan",
+                "termination_reason": "provider_session_limit",
+            },
+            "last_dispatch": {"phase_id": "phase3-plan"},
+            "blocked_reason": "provider_session_limit",
         },
         result=SimpleNamespace(status="blocked", phase="phase3-plan"),
         next_command="echelon spec continue",
@@ -174,13 +194,28 @@ def test_phase_a_evidence_uses_only_recorded_rich_handoff_facts() -> None:
     )
 
     assert evidence.duration == "3h 27m"
-    assert evidence.outcomes == ("Defined deterministic mapping precedence.",)
+    assert any("implementation plan" in item.lower() for item in evidence.outcomes)
+    assert any("quality" in item.lower() for item in evidence.outcomes)
+    assert "FORGED generic outcome" not in evidence.outcomes
+    assert evidence.decisions == ("ISS-001: Use provider-owned mapping.",)
+    assert "FORGED generic decision" not in evidence.decisions
+    assert "FORGED generic artifact" not in evidence.artifacts
+    assert evidence.artifacts == ("specs/014-provider-resolution",)
     assert evidence.verification == "200 focused tests passed"
     assert evidence.commits == (
         "abcdef123456 — feat: resolve provider models",
     )
     assert evidence.provider_limit_message == "Usage limit resets at 17:00."
     assert evidence.next_note == "Retry the blocked phase after the provider reset."
+
+    from harness.worked_on_summary import narrative_candidates
+
+    candidate_text = {
+        candidate.id: candidate.text for candidate in narrative_candidates(evidence)
+    }
+    assert candidate_text["artifact-1"] == (
+        "Registered lifecycle artifact specs/014-provider-resolution."
+    )
 
 
 def test_phase_a_evidence_extracts_persisted_delivery_checkpoint_commit() -> None:
@@ -272,6 +307,10 @@ def test_delivery_evidence_uses_selected_canonical_strategy_facts() -> None:
                     }
                 ],
                 "provider_limit_message": "Rate limit resets in 20 minutes.",
+                "provider_limit_provenance": {
+                    "phase_id": "implementation",
+                    "termination_reason": "provider_session_limit",
+                },
                 "next_note": "Retry verification after the provider reset.",
             }
         }
@@ -295,7 +334,7 @@ def test_delivery_evidence_uses_selected_canonical_strategy_facts() -> None:
     assert evidence.next_note == "Retry verification after the provider reset."
 
 
-def test_delivery_evidence_keeps_canonical_provider_limit_for_generic_stop() -> None:
+def test_delivery_evidence_rejects_stale_provider_limit_for_generic_stop() -> None:
     result = SimpleNamespace(
         status="blocked",
         termination_reason="build_incomplete",
@@ -316,7 +355,7 @@ def test_delivery_evidence_keeps_canonical_provider_limit_for_generic_stop() -> 
         next_command="echelon delivery continue 014",
     )
 
-    assert evidence.provider_limit_message == "Usage limit resets at 17:00."
+    assert evidence.provider_limit_message == ""
 
 
 def test_delivery_scope_recovers_rich_persisted_strategy_evidence(
@@ -334,7 +373,7 @@ def test_delivery_scope_recovers_rich_persisted_strategy_evidence(
         json.dumps(
             {
                 "status": "blocked",
-                "termination_reason": "build_incomplete",
+                "termination_reason": "provider_session_limit",
                 "duration": "3m 5s",
                 "outcomes": ["Implemented the resolver."],
                 "checkpoint_commits": [
@@ -342,6 +381,10 @@ def test_delivery_scope_recovers_rich_persisted_strategy_evidence(
                 ],
                 "verification_summary": "pytest tests/unit -q passed",
                 "provider_limit_message": "Usage limit resets at 17:00.",
+                "provider_limit_provenance": {
+                    "phase_id": "implementation",
+                    "termination_reason": "provider_session_limit",
+                },
                 "next_note": "Retry after the provider reset.",
             }
         ),
@@ -359,6 +402,59 @@ def test_delivery_scope_recovers_rich_persisted_strategy_evidence(
     assert evidence.verification == "pytest tests/unit -q passed"
     assert evidence.provider_limit_message == "Usage limit resets at 17:00."
     assert evidence.next_note == "Retry after the provider reset."
+
+
+def test_phase_a_evidence_ignores_stale_provider_limit_without_matching_provenance() -> None:
+    evidence = phase_a_evidence(
+        command="spec continue",
+        state={
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "phase_a_readiness_failed",
+            "last_dispatch": {"phase_id": "phase4-document"},
+            "provider_limit_message": "STALE provider text",
+            "provider_limit_provenance": {
+                "phase_id": "phase3-plan",
+                "termination_reason": "provider_session_limit",
+            },
+        },
+        result=None,
+        next_command="echelon spec continue",
+    )
+
+    assert evidence.provider_limit_message == ""
+
+
+def test_delivery_failure_candidates_include_exact_bounded_failure() -> None:
+    from harness.worked_on_summary import narrative_candidates
+
+    failure = "fulfillment report has unresolved statuses"
+    result = SimpleNamespace(
+        status="blocked",
+        termination_reason="blocker_escalation",
+        final_verify=SimpleNamespace(
+            passed=False,
+            failures=[SimpleNamespace(error=failure)],
+        ),
+    )
+    evidence = delivery_evidence(
+        command="delivery continue",
+        intent=SimpleNamespace(spec_id="014", strategies=("default",)),
+        result_map={"default": result},
+        comparison={"strategies": {"default": {"converged": False}}},
+        next_command="echelon delivery continue 014",
+    )
+
+    candidates = {candidate.id: candidate for candidate in narrative_candidates(evidence)}
+
+    assert candidates["verification-failure-1"].text == (
+        "Verification failure: fulfillment report has unresolved statuses."
+    )
+    assert candidates["verification-failure-1"].required is True
+    packet, _ = __import__(
+        "harness.worked_on_summary", fromlist=["_candidate_selection_packet"]
+    )._candidate_selection_packet(tuple(candidates.values()))
+    assert len(packet.encode("utf-8")) <= MAX_EVIDENCE_BYTES
 
 
 def test_delivery_scope_normalizes_converged_state_to_ready_candidate(
@@ -950,3 +1046,77 @@ def test_format_worked_on_joins_plain_lines_without_glyphs() -> None:
         "Implemented the resolver.\nVerification passed."
     )
     assert "•" not in format_worked_on(("Implemented the resolver.",))
+
+
+def test_fallback_summary_enforces_line_and_total_terminal_bounds() -> None:
+    long = "deterministic-provider-resolution " * 80
+    evidence = WorkedOnEvidence(
+        command="delivery continue",
+        status="blocked",
+        goal=long,
+        outcomes=(long,),
+        decisions=(long,),
+        commits=("abcdef123456 — " + long,),
+        verification="failed: `" + long + "`",
+        verification_failures=("required verifier detail " + long,),
+        blocker="required blocker detail " + long,
+        provider_limit_message="required provider detail " + long,
+        next_command="echelon delivery continue 014 --reason '" + long + "'",
+    )
+
+    lines = fallback_summary(evidence)
+    rendered = format_worked_on(lines)
+
+    assert 4 <= len(lines) <= 8
+    assert all(len(line) <= 280 for line in lines)
+    assert len(rendered) <= 900
+    assert any(line.startswith("Verification failure: required verifier detail") for line in lines)
+    assert any(line.startswith("The run stopped because required blocker detail") for line in lines)
+    assert any(line.startswith("The provider reported a limit: required provider detail") for line in lines)
+    assert any(line.startswith("Next, run `echelon delivery continue 014") for line in lines)
+
+
+def test_model_selected_summary_enforces_bounds_without_reordering_required_lines(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    summarizer_artifact: ProsaicCommandArtifact,
+) -> None:
+    _install_fake_prompt(monkeypatch, summarizer_artifact)
+    long = "model-selected-detail " * 100
+    evidence = WorkedOnEvidence(
+        command="delivery continue",
+        status="blocked",
+        outcomes=(long,),
+        verification="failed",
+        verification_failures=("required verifier " + long,),
+        blocker="required blocker " + long,
+        provider_limit_message="required provider " + long,
+        next_command="echelon delivery continue 014 --note '" + long + "'",
+    )
+    requested = (
+        "outcome",
+        "progress",
+        "verification",
+        "verification-failure-1",
+        "blocker",
+        "provider-limit",
+        "next-action",
+    )
+    provider = FakeProvider(json.dumps({"line_ids": list(requested)}))
+
+    lines = generate_summary(tmp_path, evidence, provider=provider)
+
+    assert 4 <= len(lines) <= 8
+    assert all(len(line) <= 280 for line in lines)
+    assert len(format_worked_on(lines)) <= 900
+    assert lines[3].startswith("Verification failure: required verifier")
+    assert lines[4].startswith("The run stopped because required blocker")
+    assert lines[5].startswith("The provider reported a limit: required provider")
+    assert lines[6].startswith("Next, run `echelon delivery continue 014")
+
+
+def test_format_worked_on_defensively_bounds_external_lines() -> None:
+    rendered = format_worked_on(tuple("x" * 1_000 for _ in range(8)))
+
+    assert len(rendered) <= 900
+    assert all(len(line) <= 280 for line in rendered.splitlines())

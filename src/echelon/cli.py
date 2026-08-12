@@ -4007,7 +4007,9 @@ def _classify_run_recovery(
         )
 
     if reason == "provider_session_limit":
-        provider_message = str(run_state.get("provider_limit_message") or "").strip()
+        from harness.provider_limits import current_provider_limit_message
+
+        provider_message = current_provider_limit_message(run_state)
         note = "wait for the provider reset, then retry the blocked phase"
         if provider_message:
             note += f": {provider_message}"
@@ -4592,7 +4594,9 @@ def _print_squad_summary(
     if stopped:
         fields.append(("stopped", stopped))
     if status == "blocked":
-        provider_message = str(state.get("provider_limit_message") or "").strip()
+        from harness.provider_limits import current_provider_limit_message
+
+        provider_message = current_provider_limit_message(state)
         if provider_message:
             fields.append(("provider", provider_message))
 
@@ -4660,6 +4664,42 @@ def _print_squad_summary(
         if embedded:
             fields.append(("next", embedded))
     _banner("SQUAD SUMMARY", fields, subtitle=f"{icon} {status_text}")
+
+
+def _print_phase_a_terminal_handoff(
+    project_root: Path,
+    state: dict,
+    *,
+    title: str,
+    subtitle: str,
+    fields: list[tuple[str, str]],
+    next_command: str,
+    next_note: str = "",
+) -> None:
+    """Render one complete direct Phase A lifecycle handoff card."""
+    from harness.worked_on_summary import (
+        attach_to_terminal_fields,
+        current_worked_on_command,
+        phase_a_evidence,
+    )
+
+    fields = attach_to_terminal_fields(
+        fields,
+        phase_a_evidence(
+            command=current_worked_on_command("spec continue"),
+            state=state,
+            result=None,
+            next_command=next_command,
+            next_note=next_note,
+        ),
+        project_root=project_root,
+    )
+    next_value = next_command
+    if next_note:
+        next_value = f"{next_value}\n{next_note}" if next_value else next_note
+    if next_value:
+        fields.append(("next", next_value))
+    _banner(title, fields, subtitle=subtitle)
 
 
 def _normalize_rewind_spec_dir(project_root: Path, state: dict) -> tuple[Path | None, str | None]:
@@ -5299,14 +5339,27 @@ def _next_step_presentation(
             fields.append(("build status", build_status))
         if build_reason and build_reason != "None":
             fields.append(("build reason", build_reason))
-        provider_reset_hint = str(harness_state.get("provider_reset_hint") or "")
-        provider_limit_message = str(harness_state.get("provider_limit_message") or "")
+        from harness.provider_limits import (
+            clean_provider_limit_message,
+            current_provider_limit_message,
+        )
+
+        provider_limit_message = current_provider_limit_message(
+            harness_state,
+            phase_id=harness_state.get("blocked_phase") or "implementation",
+            termination_reason=termination_reason,
+        )
+        provider_reset_hint = (
+            clean_provider_limit_message(harness_state.get("provider_reset_hint"))
+            if provider_limit_message
+            else ""
+        )
         if provider_limit_message:
             fields.append(("provider", provider_limit_message))
         if provider_reset_hint:
             fields.append(("reset", provider_reset_hint))
         tokens_used = harness_state.get("tokens_used")
-        if build_status == "provider_session_limit":
+        if provider_limit_message and build_status == "provider_session_limit":
             fields.append(("token accounting", f"{int(tokens_used or 0):,} tokens recorded before provider stop"))
         salvage_commit = str(harness_state.get("salvage_commit") or "")
         salvage_branch = str(harness_state.get("salvage_branch") or "")
@@ -5318,7 +5371,7 @@ def _next_step_presentation(
         if salvage_verified:
             fields.append(("salvage verified", salvage_verified))
         is_checkpoint = termination_reason in _HARNESS_CHECKPOINT_REASONS
-        if build_status == "provider_session_limit":
+        if provider_limit_message and build_status == "provider_session_limit":
             fields.append(("next", f"wait for provider reset, then echelon delivery continue {spec_id}"))
             subtitle = "HARNESS PROVIDER SESSION LIMIT"
         elif termination_reason == "build_blocked":
@@ -5350,7 +5403,7 @@ def _next_step_presentation(
         else:
             fields.append(("next", f"echelon delivery run {spec_id} --reset"))
             subtitle = "HARNESS BUILD BLOCKED"
-        if is_checkpoint and build_status != "provider_session_limit":
+        if is_checkpoint and not provider_limit_message:
             subtitle = "HARNESS BUILD CHECKPOINTED"
         return _NextStepPresentation(subtitle, tuple(fields))
 
@@ -7673,18 +7726,25 @@ def _cmd_continue_impl(
                 ("decision needed", action.note or str(decision["question"])),
             ]
             fields.append(("options", _render_v2_decision_options(decision)))
-            fields.append(("resume with", action.command))
-            _banner("CHECKPOINT", fields, subtitle="Run paused. Human decision required.")
+            _print_phase_a_terminal_handoff(
+                project_root,
+                state,
+                title="CHECKPOINT",
+                subtitle="Run paused. Human decision required.",
+                fields=fields,
+                next_command=action.command,
+                next_note=action.note,
+            )
             return
         if action.kind == "manual_recovery":
-            _banner(
-                "CHECKPOINT",
-                [
-                    ("blocked by", action.reason),
-                    ("next", action.command),
-                    ("note", action.note),
-                ],
+            _print_phase_a_terminal_handoff(
+                project_root,
+                state,
+                title="CHECKPOINT",
                 subtitle="Run paused. Manual recovery required.",
+                fields=[("blocked by", action.reason)],
+                next_command=action.command,
+                next_note=action.note,
             )
             return
 
@@ -7725,6 +7785,8 @@ def _cmd_continue_impl(
 
     def start_phase(next_phase: str, *, verb: str, clear_recovery: bool = False) -> None:
         nonlocal state
+        from harness.provider_limits import clear_provider_limit
+
         state, _ = _ensure_active_continue_spec_context(
             project_root,
             squad_dir,
@@ -7733,6 +7795,7 @@ def _cmd_continue_impl(
         )
         state["phase"] = next_phase
         state["status"] = "running"
+        clear_provider_limit(state)
         if clear_recovery:
             state["blocked_reason"] = None
             state["escalation_question"] = None
@@ -7851,14 +7914,14 @@ def _cmd_continue_impl(
         fields = [("blocked by", action.reason)]
         if action.note:
             fields.append(("why", action.note))
-        fields.extend([
-            ("recover with", action.command),
-            ("then", "echelon spec continue"),
-        ])
-        _banner(
-            "CHECKPOINT",
-            fields,
+        _print_phase_a_terminal_handoff(
+            project_root,
+            state,
+            title="CHECKPOINT",
             subtitle="Run paused. Deterministic recovery required.",
+            fields=fields,
+            next_command=action.command,
+            next_note="After recovery, run echelon spec continue.",
         )
         return
     if action.reason == "phase_dispatch_limit_evidence_retry":
@@ -7892,24 +7955,29 @@ def _cmd_continue_impl(
         )
         if rendered_options:
             fields.append(("options", rendered_options))
-        fields.append(("resume with", action.command))
-        _banner(
-            "CHECKPOINT",
-            fields,
+        _print_phase_a_terminal_handoff(
+            project_root,
+            state,
+            title="CHECKPOINT",
             subtitle="Run paused. Human decision required.",
+            fields=fields,
+            next_command=action.command,
+            next_note=action.note,
         )
         return
     if action.kind == "manual_recovery":
         fields = [
             ("blocked by", action.reason),
-            ("next", action.command),
-            ("note", action.note),
         ]
         fields.extend(_issue_resolution_screen_guidance(project_root, squad_dir, state))
-        _banner(
-            "CHECKPOINT",
-            fields,
+        _print_phase_a_terminal_handoff(
+            project_root,
+            state,
+            title="CHECKPOINT",
             subtitle="Run paused. Manual recovery required.",
+            fields=fields,
+            next_command=action.command,
+            next_note=action.note,
         )
         return
 
@@ -9109,6 +9177,7 @@ def _resume_v2_human_input(
     from harness.human_input import HumanInputPolicyError
     from harness.squad import SquadController
     from harness.squad_provider import SquadCliProvider
+    from harness.provider_limits import clear_provider_limit
 
     try:
         decision = _active_v2_decision(state)
@@ -9118,6 +9187,12 @@ def _resume_v2_human_input(
     if decision is None:
         print("✗ Active schema-v2 decision is missing.", file=sys.stderr)
         raise SystemExit(1)
+
+    # A submitted answer begins a new controller transition; any observation
+    # from the dispatch that originally parked this decision is now historical.
+    state = dict(state)
+    if clear_provider_limit(state):
+        store.save(state)
 
     from harness.phase_graph import load_workspace_phase_graph
     graph, ext_dir = load_workspace_phase_graph(project_root)
@@ -9156,14 +9231,19 @@ def _resume_v2_human_input(
         raise SystemExit(1) from exc
 
     current = store.load()
-    _banner(
-        "HUMAN DECISION SUBMITTED",
-        [
+    if clear_provider_limit(current):
+        store.save(current)
+    _print_phase_a_terminal_handoff(
+        project_root,
+        current,
+        title="HUMAN DECISION SUBMITTED",
+        subtitle="Answer recorded. Continue the controller-owned workflow.",
+        fields=[
             ("Run ID", current.get("run_id", squad_dir.name)),
             ("Decision ID", decision["id"]),
             ("Answer", answer),
-            ("Next", "echelon spec continue"),
         ],
+        next_command="echelon spec continue",
     )
 
 
@@ -9343,6 +9423,9 @@ def _cmd_resume(
     state["escalation_resolver"] = "user"
     state["blocked_reason"] = None
     state["status"] = "running"
+    from harness.provider_limits import clear_provider_limit
+
+    clear_provider_limit(state)
     store.save(state)
 
     # terminal-blocked is a TERMINAL_PHASE in the squad controller — running the

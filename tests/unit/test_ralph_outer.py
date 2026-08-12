@@ -2151,6 +2151,18 @@ class TestOuterLoopConvergence:
             tmp_path,
             verify_results=[{"passed": True, "failures": []}],
         )
+        stale_state = state_store.read()
+        stale_state.update(
+            {
+                "provider_limit_message": "stale provider limit text",
+                "provider_limit_provenance": {
+                    "phase_id": "implementation",
+                    "termination_reason": "provider_session_limit",
+                },
+                "provider_reset_hint": "5pm",
+            }
+        )
+        state_store.write(stale_state)
 
         result = controller.run_loop(max_outer=5, max_inner=3)
 
@@ -2160,6 +2172,10 @@ class TestOuterLoopConvergence:
         assert result.pr_url is not None
         assert provider.created is True
         assert provider.destroyed is True
+        persisted = state_store.read()
+        assert "provider_limit_message" not in persisted
+        assert "provider_limit_provenance" not in persisted
+        assert "provider_reset_hint" not in persisted
         gitops.create_worktree.assert_called_once()
         gitops.promote_pr_ready.assert_called_once()
         gitops.local_merge.assert_called_once_with(
@@ -3837,6 +3853,10 @@ class TestOuterLoopConvergence:
         assert state["build_exit_code"] == 1
         assert state["provider_reset_hint"] == "9:10pm"
         assert state["provider_limit_message"] == "You've hit your session limit · resets 9:10pm"
+        assert state["provider_limit_provenance"] == {
+            "phase_id": "implementation",
+            "termination_reason": "provider_session_limit",
+        }
         assert provider.destroyed is True
         gitops.commit.assert_not_called()
         gitops.destroy_worktree.assert_not_called()

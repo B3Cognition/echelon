@@ -667,8 +667,17 @@ class TestRunSkillAutoLand:
                     "branch": result.branch,
                     "converged": False,
                     "build_status": "provider_session_limit",
-                    "provider_limit_message": "You've hit your session limit · resets 9:10pm",
-                    "provider_reset_hint": "9:10pm",
+                    "provider_limit_message": (
+                        "\x1b]0;forged\x07\x1b[31mYou've hit your session limit\x1b[0m "
+                        "· resets 9:10pm\x00 " + ("detail " * 80)
+                    ),
+                    "provider_limit_provenance": {
+                        "phase_id": "implementation",
+                        "termination_reason": "provider_session_limit",
+                    },
+                    "provider_reset_hint": (
+                        "\x1b]0;forged\x07\x1b[31m9:10pm\x1b[0m\x00"
+                    ),
                     "salvage_commit": "abcdef1234567890abcdef1234567890abcdef12",
                     "salvage_branch": "harness/001-demo/default/iter-0",
                     "salvage_verified": "not_run",
@@ -689,6 +698,9 @@ class TestRunSkillAutoLand:
         assert "◐ PROVIDER SESSION LIMIT" in captured.err
         assert "stopped: provider session limit" in captured.err
         assert "You've hit your session limit" in captured.err
+        assert "forged" not in captured.err
+        assert "\x1b" not in captured.err
+        assert "\x00" not in captured.err
         assert "reset: 9:10pm" in captured.err
         assert "salvage commit: abcdef123456" in captured.err
         assert "salvage branch: harness/001-demo/default/iter-0" in captured.err
@@ -752,8 +764,13 @@ class TestRunSkillAutoLand:
         captured = capsys.readouterr()
         assert "PROVIDER SESSION LIMIT" not in captured.err
         assert "provider: stale provider limit text" not in captured.err
+        assert "stale provider limit text" not in captured.err
         assert "provider-limited" not in captured.err
         assert "fulfillment report has unresolved statuses" in captured.err
+        assert (
+            "Verification failure: fulfillment report has unresolved statuses."
+            in captured.err
+        )
 
     def test_delivery_summary_renders_deferred_outer_cap_as_checkpointed(
         self,

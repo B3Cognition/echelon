@@ -110,6 +110,8 @@ def _should_print_suggested_answers(reason: object, result: Any) -> bool:
 
 
 def _is_provider_limited_summary_row(info: dict[str, Any], result: Any = None) -> bool:
+    from harness.provider_limits import current_provider_limit_message
+
     reason = (
         getattr(result, "termination_reason", None)
         if result is not None
@@ -119,6 +121,18 @@ def _is_provider_limited_summary_row(info: dict[str, Any], result: Any = None) -
         not info.get("converged", False)
         and str(reason or "") == "provider_session_limit"
         and str(info.get("build_status") or "") == "provider_session_limit"
+        and bool(
+            current_provider_limit_message(
+                info,
+                phase_id=(
+                    getattr(result, "blocked_phase", "")
+                    if result is not None
+                    else ""
+                )
+                or "implementation",
+                termination_reason=reason,
+            )
+        )
     )
 
 
@@ -242,9 +256,20 @@ def _print_delivery_summary(
         if result is not None:
             if reason and reason != "converged":
                 if provider_limited:
+                    from harness.provider_limits import (
+                        clean_provider_limit_message,
+                        current_provider_limit_message,
+                    )
+
                     lines.append("stopped: provider session limit")
-                    provider_message = str(info.get("provider_limit_message") or "")
-                    provider_reset = str(info.get("provider_reset_hint") or "")
+                    provider_message = current_provider_limit_message(
+                        info,
+                        phase_id=getattr(result, "blocked_phase", "") or "implementation",
+                        termination_reason=reason,
+                    )
+                    provider_reset = clean_provider_limit_message(
+                        info.get("provider_reset_hint")
+                    )
                     salvage_commit = str(info.get("salvage_commit") or "")
                     salvage_branch = str(info.get("salvage_branch") or "")
                     salvage_verified = str(info.get("salvage_verified") or "")

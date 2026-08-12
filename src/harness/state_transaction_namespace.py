@@ -132,6 +132,8 @@ LIFECYCLE_AND_DIAGNOSTIC_KEYS = frozenset(
         "escalation_selected_option",
         "interrupted_phase",
         "provider_limit_message",
+        "provider_limit_provenance",
+        "provider_reset_hint",
         "phase_a_readiness_blockers",
         "constitution_guard_reason",
         "published_re_context",

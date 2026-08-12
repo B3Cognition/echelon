@@ -4769,6 +4769,8 @@ class SquadController:
 
         while True:
             phase = self._state_store.current_phase()
+            if phase not in TERMINAL_PHASES:
+                self._clear_provider_limit_observation()
             phase = self._guard_spec_lexicon_evidence(phase)
             phase = self._guard_phase1_quality_evidence(phase)
             phase = self._guard_understanding_evidence(phase)
@@ -4781,6 +4783,14 @@ class SquadController:
 
             if phase in TERMINAL_PHASES:
                 state = self._state_store.load()
+                from harness.provider_limits import (
+                    clear_provider_limit,
+                    current_provider_limit_message,
+                )
+
+                if phase != PHASE_TERMINAL_BLOCKED or not current_provider_limit_message(state):
+                    if clear_provider_limit(state):
+                        self._state_store.save(state)
                 # ``terminal-blocked`` is not finalization.  It is a hard stop
                 # requested by a guard, and must never be converted into a
                 # readiness check or a successful completion merely because an
@@ -5365,6 +5375,7 @@ class SquadController:
             self._ensure_telemetry_manifest()
             self._refresh_run_context(f"manual phase replay {phase_id}")
 
+        self._clear_provider_limit_observation()
         phase = phase_id
         guarded_phase = self._guard_constitution_provenance(phase)
         if guarded_phase in TERMINAL_PHASES:
@@ -7783,6 +7794,14 @@ class SquadController:
         except ValueError:
             return str(path)
 
+    def _clear_provider_limit_observation(self) -> None:
+        """Clear transition-scoped provider evidence before a new dispatch."""
+        from harness.provider_limits import clear_provider_limit
+
+        state = self._state_store.load()
+        if clear_provider_limit(state):
+            self._state_store.save(state)
+
     def _block_after_phase_a_readiness_failure(
         self,
         readiness: PhaseAReadinessResult,
@@ -7798,6 +7817,9 @@ class SquadController:
         state["status"] = "blocked"
         state["blocked_reason"] = "phase_a_readiness_failed"
         state["phase_a_readiness_blockers"] = readiness.blockers
+        from harness.provider_limits import clear_provider_limit
+
+        clear_provider_limit(state)
         persisted = (
             self._state_store.commit_routing_snapshot_state(
                 snapshot,
@@ -7947,12 +7969,20 @@ class SquadController:
             for key in node.controller_state_update_keys:
                 if key in (result.state_updates or {}) and key != "blocked_reason":
                     state[key] = result.state_updates[key]
+        from harness.provider_limits import clear_provider_limit, record_provider_limit
+
+        persisted_provider_message = ""
         if reason == "provider_session_limit":
-            state["provider_limit_message"] = result.provider_limit_message
+            persisted_provider_message = record_provider_limit(
+                state,
+                result.provider_limit_message,
+                phase_id=phase,
+                termination_reason=reason,
+            )
             if result.echelon_result is None:
                 state["blocked_context"] = "missing_echelon_result"
         else:
-            state.pop("provider_limit_message", None)
+            clear_provider_limit(state)
             state.pop("blocked_context", None)
         state["last_dispatch"] = {
             "phase_id": phase,
@@ -7971,7 +8001,10 @@ class SquadController:
             else "phase not marked complete"
         )
         if reason == "provider_session_limit":
-            detail = f"missing_echelon_result; provider: {result.provider_limit_message}"
+            detail = (
+                "missing_echelon_result; provider: "
+                f"{persisted_provider_message or 'provider session limit'}"
+            )
         print(f"[squad] ✗ {phase} blocked: {reason} ({detail})", flush=True)
         return True
 
@@ -9127,9 +9160,27 @@ class SquadController:
             },
             "recovery_instruction": recovery.to_dict(),
         }
-        diagnostic_removals = frozenset({"provider_limit_message"})
+        from harness.provider_limits import clean_provider_limit_message
+
+        diagnostic_removals = frozenset(
+            {
+                "provider_limit_message",
+                "provider_limit_provenance",
+                "provider_reset_hint",
+            }
+        )
         if provider_limit_message:
-            diagnostic_updates["provider_limit_message"] = provider_limit_message
+            cleaned_provider_message = clean_provider_limit_message(
+                provider_limit_message
+            )
+            if cleaned_provider_message:
+                diagnostic_updates["provider_limit_message"] = cleaned_provider_message
+                diagnostic_updates["provider_limit_provenance"] = {
+                    "phase_id": from_phase,
+                    "termination_reason": (
+                        "controller_state_contract_validation_failed"
+                    ),
+                }
         persisted = self._state_store.merge_advance_failure_diagnostic(
             from_phase=from_phase,
             expected_state_revision=(

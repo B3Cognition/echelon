@@ -302,6 +302,10 @@ class TestSameFailureEscalation:
         state["build_reason"] = "stale provider limit"
         state["provider_limit_message"] = "stale provider limit text"
         state["provider_reset_hint"] = "2:30am"
+        state["provider_limit_provenance"] = {
+            "phase_id": "implementation",
+            "termination_reason": "provider_session_limit",
+        }
         ctrl._state_store.write(state)
 
         result = ctrl.run_loop(max_outer=1, max_inner=5)
@@ -318,6 +322,7 @@ class TestSameFailureEscalation:
         assert state.get("build_status") != "provider_session_limit"
         assert "provider_limit_message" not in state
         assert "provider_reset_hint" not in state
+        assert "provider_limit_provenance" not in state
         assert "suggested_answers" in escalation_text
 
     def test_same_failure_2x_does_not_trigger(self, tmp_path: Path) -> None:

@@ -46,6 +46,11 @@ from harness.llm_build_runner import LlmBuildRunner
 from harness.delivery_results import ImplementationResult
 from harness.mode import ModeController
 from harness.provider import SandboxHandle, SandboxProvider, SandboxSpec
+from harness.provider_limits import (
+    clean_provider_limit_message,
+    clear_provider_limit,
+    record_provider_limit,
+)
 from harness.product_inventory import product_evidence_fingerprint
 from harness.phase_a_readiness import validate_phase_a_readiness
 from harness.secret_scan import scan_git_staged
@@ -257,6 +262,8 @@ class RalphController:
         state = self._state_store.read()
         if not state:
             raise RuntimeError("State not initialized. Call state_store.initialize() first.")
+        if clear_provider_limit(state):
+            self._state_store.write(state)
 
         # Handle resume from blocked/interrupted state
         current_status = state.get("status", "initialized")
@@ -1303,8 +1310,7 @@ class RalphController:
                     state["escalation_file"] = escalation_file
                     state["build_status"] = "blocked"
                     state["build_reason"] = "same_failure_repeat"
-                    state.pop("provider_limit_message", None)
-                    state.pop("provider_reset_hint", None)
+                    clear_provider_limit(state)
                     self._state_store.write(state)
                     return {
                         "converged": False,
@@ -4849,6 +4855,21 @@ class RalphController:
             )
             if extra_state:
                 state.update(extra_state)
+            if reason == "provider_session_limit":
+                provider_message = state.get("provider_limit_message")
+                reset_hint = clean_provider_limit_message(
+                    state.get("provider_reset_hint")
+                )
+                recorded = record_provider_limit(
+                    state,
+                    provider_message,
+                    phase_id=state.get("blocked_phase") or "implementation",
+                    termination_reason=reason,
+                )
+                if recorded and reset_hint:
+                    state["provider_reset_hint"] = reset_hint
+            else:
+                clear_provider_limit(state)
             self._state_store.write(state)
         except Exception as e:
             logger.warning("Failed to update final state: %s", e)
@@ -5560,7 +5581,7 @@ def _is_provider_session_limit_verify_result(verify_result: VerifyResult) -> boo
 def _provider_session_limit_failure_text(verify_result: VerifyResult) -> str:
     for failure in verify_result.failures:
         if failure.id == "fulfillment-refresh-provider-session-limit":
-            return failure.error
+            return clean_provider_limit_message(failure.error)
     return ""
 
 
@@ -6284,7 +6305,7 @@ def _provider_session_limit_message(build_result: dict[str, object]) -> str:
             needle in lower
             for needle in ("session limit", "usage limit", "rate limit", "quota exceeded")
         ):
-            return cleaned
+            return clean_provider_limit_message(cleaned)
     return ""
 
 
@@ -6298,7 +6319,7 @@ def _provider_session_limit_reset_hint(build_result: dict[str, object]) -> str:
     for pattern in patterns:
         match = re.search(pattern, text, re.IGNORECASE)
         if match:
-            return match.group(1).strip()
+            return clean_provider_limit_message(match.group(1))
     return ""
 
 

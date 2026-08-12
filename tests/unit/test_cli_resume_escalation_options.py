@@ -176,6 +176,104 @@ def test_resume_submits_a_valid_v2_answer_only_through_controller(
     assert persisted["blocked_decision"] == decision
 
 
+def test_real_spec_resume_v2_handler_emits_one_integrated_handoff_and_clears_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli_app import run
+
+    monkeypatch.delenv("ECHELON_SQUAD_ACTIVE", raising=False)
+    run_dir = _write_blocked_run(tmp_path, [])
+    decision = build_blocked_decision_v2(
+        decision_id="dec-cli-resume-handoff",
+        status="awaiting_human",
+        source_kind="human_gate",
+        producer_id="checkpoint-assess",
+        source_phase="checkpoint-assess",
+        reason_code="checkpoint_assessment",
+        classification="material",
+        question="Approve the reviewed boundary?",
+        options=[
+            {
+                "id": "approve",
+                "label": "Approve the reviewed boundary",
+                "description": "Continue with the reviewed scope.",
+                "recommended": True,
+                "risk_level": "medium",
+                "next_phase": "phase2-decide",
+                "outcome": "approved",
+            }
+        ],
+        recommended_answer=None,
+        risk_level="medium",
+        resolution_handler="clarification_resume",
+        autonomy_mode="guided",
+        source_state_revision=0,
+        now="2026-08-12T10:00:00+00:00",
+    )
+    state_path = run_dir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "blocked_reason": "checkpoint_assessment",
+            "blocked_decision": decision,
+            "recovery_instruction": RecoveryInstruction(
+                kind=RecoveryKind.AWAIT_HUMAN_ANSWER,
+                reason_code="checkpoint_assessment",
+                phase="checkpoint-assess",
+                requires_human_input=True,
+                schema_version=2,
+                decision_id="dec-cli-resume-handoff",
+            ).to_dict(),
+            "provider_limit_message": "stale provider limit text",
+            "provider_limit_provenance": {
+                "phase_id": "phase1-what",
+                "termination_reason": "provider_session_limit",
+            },
+            "provider_reset_hint": "5pm",
+        }
+    )
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    answers: list[str] = []
+    _patch_resume_dependencies(monkeypatch)
+    controller = sys.modules["harness.squad"].SquadController
+
+    def resume_with_human_input(self, answer: str) -> bool:
+        answers.append(answer)
+        return True
+
+    controller.resume_with_human_input = resume_with_human_input
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "echelon.cli._installed_phase_runtime_or_exit",
+        lambda _root: tmp_path / ".echelon/runtime",
+    )
+    monkeypatch.setattr("echelon.cli._require_provider_capability", lambda *a, **k: None)
+    monkeypatch.setattr("echelon.wiki.service.capture_input_snapshot", lambda _root: None)
+    monkeypatch.setattr(
+        "echelon.wiki.service.refresh_after_changed_command",
+        lambda _root, _before: None,
+    )
+
+    assert run(["spec", "resume", "approve"]) is None
+
+    output = capsys.readouterr().out
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+    assert answers == ["approve"]
+    assert output.count("echelon ·") == 1
+    assert output.casefold().count("worked on") == 1
+    assert "echelon · WORKED ON" not in output
+    assert "echelon · NEXT STEP" not in output
+    assert "\n  Worked on\n" in output
+    assert "\n  next\n" in output
+    assert "echelon spec continue" in output
+    assert "stale provider limit text" not in output
+    assert "provider_limit_message" not in persisted
+    assert "provider_limit_provenance" not in persisted
+    assert "provider_reset_hint" not in persisted
+
+
 def test_resume_rejects_stale_v2_reason_before_controller_construction(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -242,6 +340,19 @@ def test_resume_option_a_routes_to_offered_next_phase(tmp_path: Path, monkeypatc
             },
         ],
     )
+    state_path = run_dir / "state.json"
+    seeded = json.loads(state_path.read_text(encoding="utf-8"))
+    seeded.update(
+        {
+            "provider_limit_message": "stale provider text",
+            "provider_limit_provenance": {
+                "phase_id": "phase1-what",
+                "termination_reason": "provider_session_limit",
+            },
+            "provider_reset_hint": "5pm",
+        }
+    )
+    state_path.write_text(json.dumps(seeded), encoding="utf-8")
     _patch_resume_dependencies(monkeypatch)
 
     _cmd_resume(["A"], project_root=tmp_path, ext_dir=tmp_path / ".echelon/runtime")
@@ -258,6 +369,9 @@ def test_resume_option_a_routes_to_offered_next_phase(tmp_path: Path, monkeypatc
     assert state["blocked_decision"]["status"] == "resolved"
     assert state["blocked_decision"]["resolved_by"] == "user"
     assert state["escalation_question"] is None
+    assert "provider_limit_message" not in state
+    assert "provider_limit_provenance" not in state
+    assert "provider_reset_hint" not in state
 
 
 def test_resume_rejects_option_with_invalid_next_phase(

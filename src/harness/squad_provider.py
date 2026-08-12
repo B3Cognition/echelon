@@ -19,6 +19,7 @@ from harness.echelon_result_schema import (
     validate_echelon_result_contract,
 )
 from harness.llm_provider import AICodingCliProvider
+from harness.provider_limits import clean_provider_limit_message
 
 
 class PhaseAGitBoundaryError(RuntimeError):
@@ -118,7 +119,7 @@ def _provider_session_limit_message(*transcripts: str) -> str:
         for line in transcript.splitlines():
             message = line.strip()
             if message and any(needle in message.lower() for needle in needles):
-                return message
+                return clean_provider_limit_message(message)
     return ""
 
 

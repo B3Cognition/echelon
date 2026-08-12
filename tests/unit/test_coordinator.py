@@ -836,6 +836,12 @@ class TestCompareResults:
                 ],
                 "next_note": "Retry after the provider reset.",
                 "completed_task_ids": ["T-001"],
+                "provider_limit_message": "Usage limit resets at 17:00.",
+                "provider_limit_provenance": {
+                    "phase_id": "implementation",
+                    "termination_reason": "provider_session_limit",
+                },
+                "provider_reset_hint": "\x1b]0;forged\x07\x1b[31m17:00\x1b[0m\x00",
             }
         )
         state_store.write(state)
@@ -859,6 +865,49 @@ class TestCompareResults:
         assert row["checkpoint_commits"] == state["checkpoint_commits"]
         assert row["next_note"] == "Retry after the provider reset."
         assert row["completed_task_ids"] == ["T-001"]
+        assert row["provider_limit_message"] == "Usage limit resets at 17:00."
+        assert row["provider_reset_hint"] == "17:00"
+        assert row["provider_limit_provenance"] == {
+            "phase_id": "implementation",
+            "termination_reason": "provider_session_limit",
+        }
+
+
+    def test_compare_results_omits_stale_provider_observation(self, tmp_path: Path) -> None:
+        coord = _make_coordinator(tmp_path)
+        state_store = StateStore(
+            tmp_path / "runs" / "build-test" / "state", "001", "default"
+        )
+        state_store.initialize("run-1", "semi")
+        coord._state_stores["default"] = state_store
+        state = state_store.read()
+        state.update(
+            {
+                "provider_limit_message": "STALE provider text",
+                "provider_limit_provenance": {
+                    "phase_id": "implementation",
+                    "termination_reason": "provider_session_limit",
+                },
+                "provider_reset_hint": "17:00",
+            }
+        )
+        state_store.write(state)
+        result = DeliveryResult(
+            status="blocked",
+            termination_reason="blocker_escalation",
+            outer_iterations=1,
+            inner_iterations=3,
+            pr_url=None,
+            tokens_used=100,
+            final_verify=None,
+            blocked_phase="implementation",
+        )
+
+        row = coord.compare_results({"default": result})["strategies"]["default"]
+
+        assert row["provider_limit_message"] is None
+        assert row["provider_reset_hint"] is None
+        assert row["provider_limit_provenance"] is None
 
     def test_compare_results_includes_fulfillment_refresh_from_state(
         self, tmp_path: Path

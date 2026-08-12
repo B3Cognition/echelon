@@ -199,6 +199,37 @@ def test_squad_provider_captures_provider_session_limit_without_repair(monkeypat
     assert result.echelon_result_repair_attempted is False
 
 
+def test_squad_provider_cleans_hostile_provider_limit_output(monkeypatch, tmp_path) -> None:
+    config = HarnessConfig(
+        target_repo=".",
+        target_default_branch="main",
+        provider="docker",
+        llm=LlmConfig(cli="codex"),
+    )
+    provider = SquadCliProvider(config)
+
+    def fake_run_agent_result(project_root, prompt, timeout_ms=None):
+        return CliRunResult(
+            exit_code=2,
+            stdout=(
+                "\x1b]0;forged\x07\x1b[31mYou've hit your session limit\x1b[0m "
+                "· resets 5pm (Europe/Prague)\x00 " + ("detail " * 80)
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(provider, "run_agent_result", fake_run_agent_result)
+
+    result = provider.exec_agent(str(tmp_path), "original prompt")
+
+    assert result.provider_limit_message.startswith(
+        "You've hit your session limit · resets 5pm (Europe/Prague)"
+    )
+    assert len(result.provider_limit_message) <= 240
+    assert "\x1b" not in result.provider_limit_message
+    assert "\x00" not in result.provider_limit_message
+
+
 def test_squad_provider_repairs_schema_invalid_echelon_result_after_clean_exit(monkeypatch, tmp_path) -> None:
     config = HarnessConfig(
         target_repo=".",

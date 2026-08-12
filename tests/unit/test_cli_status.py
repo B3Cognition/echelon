@@ -357,12 +357,16 @@ def test_next_steps_report_provider_session_limit_as_first_class_block(
         "build-20260606-221522-964255",
         status="blocked",
         spec_id="001-demo",
-        termination_reason="build_incomplete",
+        termination_reason="provider_session_limit",
         extra={
             "build_status": "provider_session_limit",
             "build_reason": "LLM provider session limit reached before COMMANDER finalized",
             "provider_limit_message": "You've hit your session limit · resets 9:10pm",
-            "provider_reset_hint": "9:10pm",
+            "provider_limit_provenance": {
+                "phase_id": "implementation",
+                "termination_reason": "provider_session_limit",
+            },
+            "provider_reset_hint": "\x1b]0;forged\x07\x1b[31m9:10pm\x1b[0m\x00",
             "salvage_commit": "abcdef1234567890abcdef1234567890abcdef12",
             "salvage_branch": "harness/001-demo/default/iter-0",
             "salvage_verified": "not_run",
@@ -377,6 +381,9 @@ def test_next_steps_report_provider_session_limit_as_first_class_block(
     assert "HARNESS BUILD CHECKPOINTED" not in captured.out
     assert "You've hit your session limit" in captured.out
     assert "9:10pm" in captured.out
+    assert "forged" not in captured.out
+    assert "\x1b" not in captured.out
+    assert "\x00" not in captured.out
     assert "1,234 tokens recorded before provider stop" in captured.out
     assert "abcdef123456" in captured.out
     assert "harness/001-demo/default/iter-0" in captured.out
@@ -392,11 +399,15 @@ def test_next_step_planner_preserves_provider_limit_guidance(
         "build-20260606-221522-964255",
         status="blocked",
         spec_id="001-demo",
-        termination_reason="build_incomplete",
+        termination_reason="provider_session_limit",
         extra={
             "build_status": "provider_session_limit",
             "build_reason": "LLM provider session limit reached before COMMANDER finalized",
             "provider_limit_message": "You've hit your session limit · resets 9:10pm",
+            "provider_limit_provenance": {
+                "phase_id": "implementation",
+                "termination_reason": "provider_session_limit",
+            },
             "provider_reset_hint": "9:10pm",
             "salvage_commit": "abcdef1234567890abcdef1234567890abcdef12",
             "salvage_branch": "harness/001-demo/default/iter-0",
@@ -412,7 +423,7 @@ def test_next_step_planner_preserves_provider_limit_guidance(
     assert presentation.fields == (
         ("spec", "001-demo"),
         ("harness status", "blocked"),
-        ("reason", "build_incomplete"),
+        ("reason", "provider_session_limit"),
         ("build status", "provider_session_limit"),
         (
             "build reason",

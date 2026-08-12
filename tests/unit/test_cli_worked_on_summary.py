@@ -7,6 +7,8 @@ from types import SimpleNamespace
 import pytest
 
 from echelon.cli_app import run
+from harness.blocked_decision import build_blocked_decision_v2
+from harness.recovery_instruction import RecoveryKind, RecoveryInstruction
 from harness.worked_on_summary import (
     WorkedOnEvidence,
     attach_to_terminal_fields,
@@ -25,6 +27,44 @@ def test_terminal_task_summary_uses_first_non_empty_bounded_line() -> None:
     assert len(summary) <= 160
     assert summary.endswith("…")
     assert "\n" not in summary
+
+
+def test_phase_a_banner_omits_stale_provider_text_after_non_provider_block(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _print_squad_summary
+
+    squad_dir = tmp_path / "runs" / "spec-stale-provider"
+    squad_dir.mkdir(parents=True)
+    (squad_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "phase": "terminal-blocked",
+                "blocked_reason": "phase_a_readiness_failed",
+                "last_dispatch": {"phase_id": "phase4-document"},
+                "provider_limit_message": "STALE provider text must never render",
+                "provider_limit_provenance": {
+                    "phase_id": "phase3-plan",
+                    "termination_reason": "provider_session_limit",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _print_squad_summary(
+        tmp_path,
+        squad_dir,
+        SimpleNamespace(status="blocked", phase="terminal-blocked"),
+        mode="semi",
+        message="Implement provider model resolution",
+    )
+
+    output = capsys.readouterr().out
+    assert "phase_a_readiness_failed" in output
+    assert "STALE provider text" not in output
 
 
 @pytest.mark.parametrize(
@@ -115,6 +155,160 @@ def test_phase_a_lifecycle_callbacks_emit_one_summary_for_persisted_run(
     assert output.count("WORKED ON") == 1
     assert "Worked through 1 phases toward Add sessions." in output
     assert "provider unavailable" in output
+
+
+def _direct_v2_state(status: str) -> dict[str, object]:
+    decision = build_blocked_decision_v2(
+        decision_id="dec-terminal-handoff",
+        status=status,
+        source_kind="human_gate",
+        producer_id="checkpoint-assess",
+        source_phase="checkpoint-assess",
+        reason_code="checkpoint_assessment",
+        classification="material",
+        question="Approve the reviewed boundary?",
+        options=[
+            {
+                "id": "approve",
+                "label": "Approve the reviewed boundary",
+                "description": "Continue with the reviewed scope.",
+                "recommended": True,
+                "risk_level": "medium",
+                "next_phase": "phase2-decide",
+                "outcome": "approved",
+            }
+        ],
+        recommended_answer=None,
+        risk_level="medium",
+        resolution_handler="gate_outcome",
+        autonomy_mode="guided",
+        source_state_revision=0,
+        attempts=1 if status == "failed" else 0,
+        failure_code="resolution_attempts_exhausted" if status == "failed" else None,
+        now="2026-08-12T10:00:00+00:00",
+    )
+    kind = (
+        RecoveryKind.AWAIT_HUMAN_ANSWER
+        if status == "awaiting_human"
+        else RecoveryKind.MANUAL_DIAGNOSIS
+    )
+    return {
+        "run_id": "spec-terminal-handoff",
+        "status": "blocked",
+        "phase": "checkpoint-assess",
+        "blocked_reason": "checkpoint_assessment",
+        "user_message": "Review the public API boundary",
+        "autonomy_mode": "guided",
+        "blocked_decision": decision,
+        "recovery_instruction": RecoveryInstruction(
+            kind=kind,
+            reason_code="checkpoint_assessment",
+            phase="checkpoint-assess" if status == "awaiting_human" else "",
+            requires_human_input=status == "awaiting_human",
+            schema_version=2,
+            decision_id="dec-terminal-handoff",
+        ).to_dict(),
+    }
+
+
+@pytest.mark.parametrize(
+    ("family", "state", "expected_command"),
+    (
+        (
+            "schema-v2 human checkpoint",
+            _direct_v2_state("awaiting_human"),
+            'echelon spec resume "<your answer>"',
+        ),
+        (
+            "schema-v2 manual recovery",
+            _direct_v2_state("failed"),
+            "inspect echelon spec status",
+        ),
+        (
+            "legacy safe rewind",
+            {
+                "run_id": "spec-terminal-handoff",
+                "status": "blocked",
+                "phase": "terminal-blocked",
+                "blocked_reason": "missing_echelon_result",
+                "user_message": "Review the public API boundary",
+                "autonomy_mode": "semi",
+                "recovery_instruction": RecoveryInstruction(
+                    kind=RecoveryKind.SAFE_REWIND,
+                    reason_code="missing_echelon_result",
+                    phase="phase3-plan",
+                    requires_human_input=False,
+                ).to_dict(),
+            },
+            "echelon spec rewind phase3-plan",
+        ),
+        (
+            "legacy human checkpoint",
+            {
+                "run_id": "spec-terminal-handoff",
+                "status": "blocked",
+                "phase": "checkpoint-assess",
+                "blocked_reason": "checkpoint-assess human gate",
+                "escalation_question": "Approve the reviewed boundary?",
+                "user_message": "Review the public API boundary",
+                "autonomy_mode": "semi",
+            },
+            'echelon spec resume "<your answer>"',
+        ),
+        (
+            "legacy manual recovery",
+            {
+                "run_id": "spec-terminal-handoff",
+                "status": "blocked",
+                "phase": "terminal-blocked",
+                "blocked_reason": "token_budget_exhausted",
+                "user_message": "Review the public API boundary",
+                "autonomy_mode": "semi",
+            },
+            "increase analysis.token_budget_k",
+        ),
+    ),
+    ids=lambda value: value if isinstance(value, str) else None,
+)
+def test_real_spec_continue_direct_terminal_families_emit_one_integrated_handoff(
+    family: str,
+    state: dict[str, object],
+    expected_command: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    del family
+    monkeypatch.delenv("ECHELON_SQUAD_ACTIVE", raising=False)
+    (tmp_path / ".git").mkdir()
+    run_dir = tmp_path / "runs" / "spec-terminal-handoff"
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
+    (run_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "echelon.cli._installed_phase_runtime_or_exit",
+        lambda _root: tmp_path / ".echelon/runtime",
+    )
+    monkeypatch.setattr("echelon.cli._require_provider_capability", lambda *a, **k: None)
+    monkeypatch.setattr("echelon.wiki.service.capture_input_snapshot", lambda _root: None)
+    monkeypatch.setattr(
+        "echelon.wiki.service.refresh_after_changed_command",
+        lambda _root, _before: None,
+    )
+
+    assert run(["spec", "continue"]) is None
+
+    captured = capsys.readouterr()
+    output = captured.out + captured.err
+    assert output.count("echelon ·") == 1
+    assert output.casefold().count("worked on") == 1
+    assert "echelon · WORKED ON" not in output
+    assert "echelon · NEXT STEP" not in output
+    assert "\n  Worked on\n" in output
+    assert "\n  next\n" in output
+    assert output.index("\n  Worked on\n") < output.index("\n  next\n")
+    assert expected_command in output
 
 
 def test_nested_scope_and_rich_banner_emit_exactly_once(
@@ -352,6 +546,11 @@ def test_phase_a_banner_shows_provider_limit_beside_controller_failure(
                 "provider_limit_message": (
                     "You've hit your session limit · resets 4am (Europe/Prague)"
                 ),
+                "provider_limit_provenance": {
+                    "phase_id": "phase3-plan",
+                    "termination_reason": "controller_state_contract_validation_failed",
+                },
+                "last_dispatch": {"phase_id": "phase3-plan"},
             }
         ),
         encoding="utf-8",
@@ -425,6 +624,11 @@ def test_reported_phase_a_provider_transcript_has_one_lifecycle_handoff(
                 "provider_limit_message": (
                     "You've hit your session limit · resets 5pm (Europe/Prague)"
                 ),
+                "provider_limit_provenance": {
+                    "phase_id": "phase3-plan",
+                    "termination_reason": "controller_state_contract_validation_failed",
+                },
+                "last_dispatch": {"phase_id": "phase3-plan"},
                 "recovery_instruction": {
                     "schema_version": 1,
                     "kind": "sync_runtime_then_retry",
@@ -483,6 +687,50 @@ def test_reported_phase_a_provider_transcript_has_one_lifecycle_handoff(
 
     embedded_next = output.split(next_heading, 1)[1]
     assert "echelon spec continue" in embedded_next
+
+
+def test_phase_a_banner_defensively_cleans_hostile_provider_text(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _print_squad_summary
+
+    squad_dir = tmp_path / "runs" / "spec-provider-cleaning"
+    squad_dir.mkdir(parents=True)
+    hostile = (
+        "\x1b]0;forged\x07\x1b[31mYou've hit your session limit\x1b[0m "
+        "· resets 5pm (Europe/Prague)\x00 " + ("detail " * 80)
+    )
+    (squad_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "phase": "phase3-plan",
+                "blocked_reason": "controller_state_contract_validation_failed",
+                "last_dispatch": {"phase_id": "phase3-plan"},
+                "provider_limit_message": hostile,
+                "provider_limit_provenance": {
+                    "phase_id": "phase3-plan",
+                    "termination_reason": "controller_state_contract_validation_failed",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _print_squad_summary(
+        tmp_path,
+        squad_dir,
+        SimpleNamespace(status="blocked", phase="phase3-plan"),
+        mode="semi",
+        message="Implement provider model resolution",
+    )
+
+    output = capsys.readouterr().out
+    assert "You've hit your session limit · resets 5pm (Europe/Prague)" in output
+    assert "\x1b" not in output
+    assert "\x00" not in output
+    assert "detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail detail" not in output
 
 
 @pytest.mark.parametrize(

@@ -15,13 +15,17 @@ import tempfile
 from typing import Mapping, Sequence
 
 from harness.prosaic_prompt_loader import ProsaicPromptLoader
+from harness.provider_limits import (
+    clean_provider_limit_message,
+    current_provider_limit_message,
+)
 
 
 MAX_EVIDENCE_BYTES = 12 * 1024
 _MAX_TEXT = 600
 _MAX_ITEMS = 16
 _MAX_LINE = 280
-_MAX_TOTAL_LINES = 1_600
+_MAX_TOTAL_LINES = 900
 _MAX_FALLBACK_LINE = _MAX_TOTAL_LINES // 8
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 _ANSI_RE = re.compile(
@@ -96,12 +100,15 @@ class WorkedOnEvidence:
                     "next_command",
                     "next_note",
                 } else _MAX_TEXT
-                cleaner = (
-                    _clean_opaque_text
-                    if key in {"verification", "next_command"}
-                    else _clean_text
-                )
-                normalized[key] = cleaner(value, limit=limit)
+                if key == "provider_limit_message":
+                    normalized[key] = clean_provider_limit_message(value)
+                else:
+                    cleaner = (
+                        _clean_opaque_text
+                        if key in {"verification", "next_command"}
+                        else _clean_text
+                    )
+                    normalized[key] = cleaner(value, limit=limit)
         encoded = json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
         if len(encoded.encode("utf-8")) <= MAX_EVIDENCE_BYTES:
             return encoded
@@ -154,8 +161,8 @@ class WorkedOnEvidence:
                 )
         if len(encoded.encode("utf-8")) > MAX_EVIDENCE_BYTES:
             normalized["blocker"] = _clean_text(normalized.get("blocker"), limit=240)
-            normalized["provider_limit_message"] = _clean_text(
-                normalized.get("provider_limit_message"), limit=240
+            normalized["provider_limit_message"] = clean_provider_limit_message(
+                normalized.get("provider_limit_message")
             )
             normalized["verification"] = _clean_opaque_text(
                 normalized.get("verification"), limit=240
@@ -250,6 +257,80 @@ def _recorded_verification(source: Mapping[str, object]) -> str:
     return f"{status} in {duration:.1f}s" if duration else status
 
 
+def _phase_a_outcomes(state: Mapping[str, object]) -> tuple[str, ...]:
+    """Derive handoff outcomes from controller-owned lifecycle evidence."""
+    completed = set(_clean_items(state.get("completed_phases")))
+    spec_id = _clean_text(state.get("spec_id")) or "the active specification"
+    outcomes: list[str] = []
+    if state.get("published_spec_dir") or "phase4-document" in completed:
+        outcomes.append(f"Published the Phase A specification for {spec_id}.")
+    if "phase3-plan" in completed:
+        outcomes.append(f"Produced the implementation plan and task breakdown for {spec_id}.")
+    if "phase3-how" in completed:
+        outcomes.append(f"Produced architecture and implementation contracts for {spec_id}.")
+    if "phase1-what" in completed:
+        outcomes.append(f"Authored the product specification for {spec_id}.")
+
+    scores = state.get("quality_scores")
+    if isinstance(scores, (list, tuple)) and scores:
+        latest = scores[-1]
+        if isinstance(latest, Mapping) and type(latest.get("pass")) is bool:
+            outcomes.append(
+                "Certified the latest specification quality assessment."
+                if latest["pass"]
+                else "Recorded unresolved specification quality findings."
+            )
+    return tuple(dict.fromkeys(_clean_items(outcomes)))
+
+
+def _phase_a_decisions(state: Mapping[str, object]) -> tuple[str, ...]:
+    """Derive decisions only from durable controller decision records."""
+    decisions: list[str] = []
+    ledger = state.get("issue_resolution_ledger")
+    if isinstance(ledger, Mapping):
+        for issue_id in sorted(str(key) for key in ledger):
+            entry = ledger.get(issue_id)
+            if not isinstance(entry, Mapping):
+                continue
+            decision = _clean_text(entry.get("decision"), limit=180)
+            if decision and entry.get("status") in {"selected", "repaired", "validated"}:
+                decisions.append(f"{issue_id}: {decision}")
+
+    blocked = state.get("blocked_decision")
+    if isinstance(blocked, Mapping) and blocked.get("status") == "resolved":
+        selected_id = _clean_text(blocked.get("selected_option_id"), limit=120)
+        answer = _clean_text(blocked.get("answer_text"), limit=180)
+        if selected_id:
+            options = blocked.get("options")
+            if isinstance(options, (list, tuple)):
+                for option in options:
+                    if isinstance(option, Mapping) and option.get("id") == selected_id:
+                        answer = _clean_text(
+                            option.get("outcome") or option.get("label"), limit=180
+                        )
+                        break
+        if answer:
+            decisions.append(answer)
+
+    for key, label in (
+        ("feasibility_verdict", "Feasibility verdict"),
+        ("intent_alignment_verdict", "Intent-alignment verdict"),
+    ):
+        verdict = _clean_text(state.get(key), limit=80)
+        if verdict:
+            decisions.append(f"{label}: {verdict}")
+    return tuple(dict.fromkeys(_clean_items(decisions)))
+
+
+def _phase_a_artifacts(state: Mapping[str, object]) -> tuple[str, ...]:
+    artifacts: list[str] = []
+    for key in ("published_spec_dir", "spec_dir"):
+        value = _clean_text(state.get(key), limit=240)
+        if value:
+            artifacts.append(value)
+    return tuple(dict.fromkeys(artifacts))
+
+
 def phase_a_evidence(
     *,
     command: str,
@@ -259,8 +340,6 @@ def phase_a_evidence(
     next_note: str = "",
 ) -> WorkedOnEvidence:
     status = _clean_text(getattr(result, "status", "") or state.get("status") or "unknown")
-    decisions = state.get("decisions") or state.get("decision_log") or ()
-    artifacts = state.get("artifacts") or ()
     return WorkedOnEvidence(
         command=_clean_text(command),
         status=status,
@@ -269,12 +348,10 @@ def phase_a_evidence(
         goal=_clean_text(state.get("user_message") or state.get("message")),
         current_phase=_clean_text(getattr(result, "phase", "") or state.get("phase")),
         completed_phases=_clean_items(state.get("completed_phases")),
-        decisions=_clean_items(decisions),
-        artifacts=_clean_items(
-            artifacts.keys() if isinstance(artifacts, Mapping) else artifacts
-        ),
+        decisions=_phase_a_decisions(state),
+        artifacts=_phase_a_artifacts(state),
         duration=_recorded_duration(state),
-        outcomes=_clean_items(state.get("outcomes")),
+        outcomes=_phase_a_outcomes(state),
         commits=_attributed_commits(state),
         verification=_recorded_verification(state),
         blocker=_clean_text(
@@ -282,7 +359,7 @@ def phase_a_evidence(
             or state.get("termination_reason")
             or state.get("escalation_question")
         ),
-        provider_limit_message=_clean_text(state.get("provider_limit_message")),
+        provider_limit_message=current_provider_limit_message(state),
         next_command=_clean_opaque_text(next_command),
         next_note=_clean_text(
             next_note or state.get("next_note") or state.get("recovery_note")
@@ -374,8 +451,16 @@ def delivery_evidence(
         outcomes.extend(_clean_items(row.get("outcomes")))
         commits.extend(_attributed_commits(row))
     provider_limit_message = ""
-    for row in selected_rows:
-        provider_limit_message = _clean_text(row.get("provider_limit_message"))
+    for strategy_id in selected_ids:
+        row = strategy_rows.get(strategy_id)
+        result = result_map.get(strategy_id)
+        if not isinstance(row, Mapping) or result is None:
+            continue
+        provider_limit_message = current_provider_limit_message(
+            row,
+            phase_id=getattr(result, "blocked_phase", "") or "implementation",
+            termination_reason=getattr(result, "termination_reason", ""),
+        )
         if provider_limit_message:
             break
     durations = tuple(_recorded_duration(row) for row in selected_rows)
@@ -441,6 +526,27 @@ def _exact_fact_sentence(value: object, *, prefix: str) -> str:
     return rendered if rendered[-1:] in {".", "!", "?"} else f"{rendered}."
 
 
+def _bounded_lines(lines: Sequence[str]) -> tuple[str, ...]:
+    """Apply the final per-line and whole-section terminal budgets."""
+    source = tuple(_clean_opaque_text(line, limit=_MAX_LINE) for line in lines)
+    if len("\n".join(source)) <= _MAX_TOTAL_LINES:
+        return source
+
+    # Keep the selected 4–8 facts and their ordering.  A uniform deterministic
+    # cap makes even a required-only selection fit without dropping semantics.
+    low, high = 1, _MAX_LINE
+    while low < high:
+        candidate = (low + high + 1) // 2
+        rendered = tuple(
+            _clean_opaque_text(line, limit=candidate) for line in source
+        )
+        if len("\n".join(rendered)) <= _MAX_TOTAL_LINES:
+            low = candidate
+        else:
+            high = candidate - 1
+    return tuple(_clean_opaque_text(line, limit=low) for line in source)
+
+
 def narrative_candidates(
     evidence: WorkedOnEvidence,
 ) -> tuple[NarrativeCandidate, ...]:
@@ -489,6 +595,17 @@ def narrative_candidates(
                 50 + index,
             )
         )
+    for index, artifact in enumerate(evidence.artifacts, start=1):
+        candidates.append(
+            NarrativeCandidate(
+                f"artifact-{index}",
+                _exact_fact_sentence(
+                    artifact,
+                    prefix="Registered lifecycle artifact ",
+                ),
+                60 + index,
+            )
+        )
 
     if evidence.verification == "passed":
         verification = "Verification passed for the completed work."
@@ -502,6 +619,16 @@ def narrative_candidates(
     else:
         verification = "No verification result was recorded."
     candidates.append(NarrativeCandidate("verification", verification, 70))
+
+    for index, failure in enumerate(evidence.verification_failures, start=1):
+        candidates.append(
+            NarrativeCandidate(
+                f"verification-failure-{index}",
+                _exact_fact_sentence(failure, prefix="Verification failure: "),
+                70 + index,
+                required=index == 1 and evidence.verification.startswith("failed"),
+            )
+        )
 
     for index, commit in enumerate(evidence.commits, start=1):
         candidates.append(
@@ -538,7 +665,9 @@ def narrative_candidates(
                 NarrativeCandidate(
                     "provider-limit",
                     _exact_fact_sentence(
-                        evidence.provider_limit_message,
+                        clean_provider_limit_message(
+                            evidence.provider_limit_message
+                        ),
                         prefix="The provider reported a limit: ",
                     ),
                     110,
@@ -572,7 +701,15 @@ def narrative_candidates(
             )
         )
 
-    return tuple(candidates)
+    return tuple(
+        NarrativeCandidate(
+            candidate.id,
+            _clean_opaque_text(candidate.text, limit=_MAX_LINE),
+            candidate.priority,
+            required=candidate.required,
+        )
+        for candidate in candidates
+    )
 
 
 def _selected_candidate_ids(
@@ -663,14 +800,14 @@ def fallback_summary(evidence: WorkedOnEvidence) -> tuple[str, ...]:
     """Render deterministic candidates when selection is unavailable or invalid."""
     candidates = narrative_candidates(evidence)
     selected = set(_fallback_candidate_ids(candidates))
-    return tuple(
+    return _bounded_lines(tuple(
         candidate.text
         for candidate in sorted(
             candidates,
             key=lambda candidate: (candidate.priority, candidate.id),
         )
         if candidate.id in selected
-    )
+    ))
 
 
 def generate_summary(
@@ -722,13 +859,15 @@ def generate_summary(
             candidate.id: candidate.text
             for candidate in candidates
         }
-        return tuple(candidate_map[candidate_id] for candidate_id in selected_ids)
+        return _bounded_lines(
+            tuple(candidate_map[candidate_id] for candidate_id in selected_ids)
+        )
     except (Exception, KeyboardInterrupt):
         return fallback
 
 
 def format_worked_on(lines: Sequence[str]) -> str:
-    return "\n".join(lines)
+    return "\n".join(_bounded_lines(tuple(lines)))
 
 
 @dataclass
@@ -883,7 +1022,13 @@ def _delivery_scope_evidence(scope: _SummaryScope) -> WorkedOnEvidence | None:
         (
             item
             for state in states
-            if (item := _clean_text(state.get("provider_limit_message")))
+            if (
+                item := current_provider_limit_message(
+                    state,
+                    phase_id=state.get("blocked_phase") or "implementation",
+                    termination_reason=state.get("termination_reason"),
+                )
+            )
         ),
         "",
     )

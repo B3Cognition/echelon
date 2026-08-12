@@ -22,6 +22,7 @@ from harness.scoped_verify import (
 )
 from harness.skill_loader import build_skill_prompt, find_skill
 from harness.spec_frontmatter import find_spec_dir
+from harness.provider_limits import clean_provider_limit_message
 from harness.verified_fulfillment_ledger import (
     VerifiedLedgerReusePlan,
     build_verified_ledger,
@@ -1107,7 +1108,7 @@ def _provider_session_limit_reason(
     )
     if stale_detail:
         reason = f"{reason}; {stale_detail}"
-    return reason
+    return clean_provider_limit_message(reason)
 
 
 def _provider_limit_text(prompt_executor: PromptExecutor) -> str:
@@ -1258,10 +1259,10 @@ def _provider_session_limit_summary(text: str) -> str:
 
 
 def _truncate_provider_reason(text: str, limit: int = 240) -> str:
-    collapsed = " ".join(text.split())
-    if len(collapsed) <= limit:
-        return collapsed
-    return collapsed[: limit - 3].rstrip() + "..."
+    # ``limit`` remains in the private signature for compatibility with focused
+    # tests/callers; provider observations have one shared 240-character bound.
+    del limit
+    return clean_provider_limit_message(text)
 
 
 def _is_provider_session_limit_text(text: str) -> bool:
@@ -1292,15 +1293,14 @@ def _existing_report_stale_detail(
     verified_commit = metadata.get("verified_commit")
     if not isinstance(verified_commit, str) or not verified_commit:
         return (
-            f"existing fulfillment report {existing_report} has no "
-            f"verified_commit for current HEAD {current_commit}"
+            "existing fulfillment report has no verified_commit for current "
+            f"HEAD {current_commit}; stale evidence was not reused"
         )
     if verified_commit == current_commit:
         return ""
     return (
-        f"existing fulfillment report {existing_report} was verified at "
-        f"{verified_commit}, current HEAD is {current_commit}; do not use it "
-        "as current fulfillment evidence"
+        f"stale fulfillment report commit {verified_commit}; current HEAD "
+        f"{current_commit}; stale evidence was not reused"
     )
 
 

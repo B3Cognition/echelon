@@ -2164,6 +2164,10 @@ class TestAgentResultIntegrity:
         assert state["provider_limit_message"] == (
             "You've hit your session limit · resets 4am (Europe/Prague)"
         )
+        assert state["provider_limit_provenance"] == {
+            "phase_id": "phase1-what",
+            "termination_reason": "controller_state_contract_validation_failed",
+        }
         assert "blocked_context" not in state
         assert "session limit" not in json.dumps(
             state["controller_contract_error"]
@@ -2185,6 +2189,11 @@ class TestAgentResultIntegrity:
         _mark_constitution_complete(tmp_path, store)
         state = store.load()
         state["provider_limit_message"] = "historical provider limit"
+        state["provider_limit_provenance"] = {
+            "phase_id": "phase3-plan",
+            "termination_reason": "provider_session_limit",
+        }
+        state["provider_reset_hint"] = "5pm"
         store.save(state)
 
         result = ctrl.run("msg", "banzai")
@@ -2193,6 +2202,8 @@ class TestAgentResultIntegrity:
         assert result.status == "blocked"
         assert state["blocked_reason"] == "controller_state_contract_validation_failed"
         assert "provider_limit_message" not in state
+        assert "provider_limit_provenance" not in state
+        assert "provider_reset_hint" not in state
 
     def test_agent_phase_without_parseable_echelon_result_blocks(self, tmp_path):
         provider = _mock_provider()
@@ -7337,6 +7348,35 @@ Modified principles:
         state = store.load()
         assert state["status"] == "blocked"
         assert state["blocked_reason"] == "constitution_artifact_mismatch"
+
+    def test_manual_phase_guard_clears_historical_provider_observation(
+        self,
+        tmp_path,
+    ):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "phase1-what")
+        state = store.load()
+        state.update(
+            {
+                "completed_phases": ["phase1-constitution"],
+                "provider_limit_message": "historical provider limit",
+                "provider_limit_provenance": {
+                    "phase_id": "phase1-constitution",
+                    "termination_reason": "provider_session_limit",
+                },
+                "provider_reset_hint": "5pm",
+            }
+        )
+        store.save(state)
+
+        result = ctrl.run_single_phase("phase1-what", "msg", "banzai")
+
+        assert result.status == "blocked"
+        state = store.load()
+        assert state["blocked_reason"] == "constitution_artifact_mismatch"
+        assert "provider_limit_message" not in state
+        assert "provider_limit_provenance" not in state
+        assert "provider_reset_hint" not in state
 
     def test_chief_dispatched_in_controller(self, tmp_path):
         """SquadController dispatches an agent (not no-op) for phase1-constitution."""
