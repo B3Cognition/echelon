@@ -370,6 +370,99 @@ def test_phase_a_banner_shows_provider_limit_beside_controller_failure(
     assert "provider   You've hit your session limit" in output
 
 
+def test_reported_phase_a_provider_transcript_has_one_lifecycle_handoff(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _print_squad_summary
+
+    full_multiline_task = (
+        "Replace provider-owned model selection with a proportional configuration "
+        "contract while preserving every supported backend and generated artifact.\n"
+        "Define deterministic precedence, validation, migration, and lossy-provider "
+        "behavior for the supported providers.\n"
+        "Add focused verification for configuration resolution and generated outputs."
+    )
+    completed_phases = [
+        "phase1-constitution",
+        "phase1-discover",
+        "phase1-synthesize",
+        "phase1-model",
+        "phase1-what",
+        "phase1-why1",
+        "phase1-gate",
+        "phase1-understanding",
+        "phase1-why2",
+        "checkpoint-assess",
+        "phase2-architect",
+        "phase2-investigate",
+        "phase2-guard",
+        "phase2-benchmark",
+        "phase2-advocate",
+        "phase2-oracle",
+        "phase2-maverick",
+        "phase2-consensus",
+        "phase2-sentinel",
+        "phase3-orchestrate",
+        "phase3-verify",
+        "phase3-plan",
+    ]
+    squad_dir = tmp_path / "runs" / "spec-20260812-120000-000001"
+    squad_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(
+        squad_dir.name,
+        encoding="utf-8",
+    )
+    (squad_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "phase": "phase3-plan",
+                "user_message": full_multiline_task,
+                "completed_phases": completed_phases,
+                "blocked_reason": "controller_state_contract_validation_failed",
+                "provider_limit_message": (
+                    "You've hit your session limit · resets 5pm (Europe/Prague)"
+                ),
+                "recovery_instruction": {
+                    "schema_version": 1,
+                    "kind": "sync_runtime_then_retry",
+                    "reason_code": "controller_state_contract_validation_failed",
+                    "phase": "phase3-plan",
+                    "requires_human_input": False,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "echelon.cli._runtime_bundle_compatibility",
+        lambda _project_root: SimpleNamespace(
+            compatible=True,
+            command="",
+            note="runtime extension is compatible",
+        ),
+    )
+
+    _print_squad_summary(
+        tmp_path,
+        squad_dir,
+        SimpleNamespace(status="blocked", phase="phase3-plan"),
+        mode="semi",
+        message=full_multiline_task,
+    )
+
+    captured = capsys.readouterr()
+    output = captured.out + captured.err
+    assert output.count("echelon · SQUAD SUMMARY") == 1
+    assert "echelon · NEXT STEP" not in output
+    assert "You've hit your session limit" in output
+    assert full_multiline_task not in output
+    assert output.casefold().count("worked on") == 1
+    assert "echelon spec continue" in output
+
+
 @pytest.mark.parametrize(
     ("argv", "handler"),
     [

@@ -598,14 +598,21 @@ deterministically impacted. In short: full fulfillment evidence is still require
 Harness `run` and `resume` also print `HARNESS HISTORY`: tracked runs, checkpoint state, and token/cost totals for the same spec so repeated resumes do not feel like a black box.
 
 Every `echelon spec run`, `spec continue`, `spec resume`, `delivery run`,
-`delivery continue`, and `delivery resume` terminal outcome also includes a
-`Worked on` narrative. A dedicated `fast`/`low` SUMMARIZER agent turns bounded,
-durable run evidence into two to four outcome-focused sentences covering what
-changed, what was verified, where work stopped, and the next recovery action.
-This applies to successful, blocked, interrupted, and failed runs. If the
-summary agent is unavailable, times out, or returns invalid output, Echelon
-prints a deterministic narrative fallback without changing run state or the
-command's exit code.
+`delivery continue`, and `delivery resume` terminal outcome includes a single
+lifecycle banner with a four-to-eight-line, unbulleted `Worked on` narrative.
+The banner keeps the authoritative controller stop reason and, when both apply,
+shows the provider limit as a separate operational cause. Its `next` section
+contains the recovery or advance action instead of printing a second `NEXT STEP`
+banner.
+
+Echelon builds every narrative line from bounded durable evidence. The separate
+`fast`/`low` SUMMARIZER agent selects and orders opaque IDs from that
+controller-owned candidate list; it does not author terminal prose. If the agent
+is unavailable, times out, or returns an invalid selection, Echelon uses the same
+candidates in deterministic order without changing run state or the command's
+exit code. Long multi-line task requests are display-truncated to the first
+cleaned line (at most 160 characters), while the full request remains in run
+state and artifacts.
 
 ### Explicit scope deferrals
 
