@@ -67,12 +67,15 @@ def _recorded_verification_commands(value: str) -> tuple[tuple[str, ...], ...]:
     commands = [_command_tokens(item) for item in re.findall(r"`([^`]+)`", text)]
     for clause in re.split(r"\s*;\s*", text):
         clause = re.sub(r"^(?:recorded )?verification:\s*", "", clause)
-        match = re.fullmatch(
-            r"(.+?)\s+(?:passed|failed|succeeded)(?:\s+in\s+\S+)?",
-            clause,
+        status = r"(?:passed|failed|succeeded)"
+        matches = (
+            re.fullmatch(rf"{status}\s*[:—-]\s*(.+)", clause),
+            re.fullmatch(rf"(.+?)\s+\({status}\)(?:\s+in\s+\S+)?", clause),
+            re.fullmatch(rf"(.+?)\s+{status}(?:\s+in\s+\S+)?", clause),
         )
-        if match:
-            commands.append(_command_tokens(match.group(1)))
+        command = next((match.group(1) for match in matches if match), "")
+        if command:
+            commands.append(_command_tokens(command))
     return tuple(dict.fromkeys(command for command in commands if command))
 
 
@@ -608,18 +611,37 @@ def _valid_lines(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | None
             joined,
         ):
             return None
-        blocked_subject = r"(?:the\s+)?(?:work|feature|change|next step)"
-        blocked_transition = (
-            r"(?:proceed|advance|move|integrat(?:e|ed)|review(?:ed)?|"
-            r"merg(?:e|ed)|land(?:ed)?|releas(?:e|ed)|ship(?:ped)?|deploy(?:ed)?)"
+        blocked_subject = re.compile(r"\b(?:work|features?|changes?|next steps?)\b")
+        readiness = re.compile(r"\b(?:ready|cleared|approved|eligible)\b")
+        negated_readiness = re.compile(
+            r"\b(?:not|never)\b[^.!?]{0,20}\b(?:ready|cleared|approved|eligible)\b"
         )
-        blocked_progress_claim = re.compile(
-            rf"\b{blocked_subject}\b[^.!?]*?(?:"
-            rf"\b(?:ready|cleared|approved|eligible)\b|"
-            rf"\b(?:is\s+)?able\s+to\s+(?:be\s+)?{blocked_transition}\b|"
-            rf"\b(?:can|may)\s+(?:be\s+)?{blocked_transition}\b)"
+        transition = (
+            r"(?:proceed|advance|move|integrate|review|merge|land|release|ship|deploy)"
         )
-        if any(blocked_progress_claim.search(line.lower()) for line in normalized):
+        modal_transition = re.compile(
+            rf"\b(?:can|may|could|will|would|shall)\s+(?:be\s+)?{transition}\w*\b|"
+            rf"\b(?:is\s+)?able\s+to\s+(?:be\s+)?{transition}\w*\b"
+        )
+        direct_transition = re.compile(
+            r"\b(?:proceeds?|advances?|moves?)\s+(?:to|into)\s+"
+            r"(?:code review|review|integration|landing|merge|release|shipping|deployment)\b|"
+            r"\b(?:integrates?|merges?|lands?|releases?|ships?|deploys?)\b"
+        )
+
+        def blocked_progress_claim(line: str) -> bool:
+            subject = blocked_subject.search(line)
+            if not subject:
+                return False
+            claim = line[subject.end():]
+            affirmative_readiness = readiness.search(claim) and not negated_readiness.search(claim)
+            return bool(
+                affirmative_readiness
+                or modal_transition.search(claim)
+                or direct_transition.search(claim)
+            )
+
+        if any(blocked_progress_claim(line.lower()) for line in normalized):
             return None
     if verification.startswith("failed") and re.search(
         r"\b(?:verification|validation|checks?|tests?) (?:passed|succeeded|were successful)\b",
@@ -790,11 +812,15 @@ def _valid_lines(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | None
         return normalized_line in allowed
 
     def next_action_claim(line: str) -> bool:
+        action = r"(?:run|retry|resume|wait|answer|fix|resolve|continue|proceed)"
         return bool(
             re.search(r"\b(?:next|remaining)\s+(?:step|action|command|work)\b", line)
             or re.match(
-                r"^(?:(?:next|then),?\s+)?"
-                r"(?:run|retry|resume|wait|answer|fix|resolve)\b",
+                rf"^(?:(?:next|then),?\s+|please\s+)?{action}\b",
+                line,
+            )
+            or re.search(
+                rf"\b(?:should|must|needs?\s+to|please)\s+{action}\b",
                 line,
             )
         )
