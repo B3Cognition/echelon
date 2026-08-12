@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from contextlib import contextmanager
+from contextvars import ContextVar
 import json
 from pathlib import Path
 import re
@@ -299,3 +301,173 @@ def generate_summary(
 
 def format_worked_on(bullets: Sequence[str]) -> str:
     return "\n".join(f"• {bullet}" for bullet in bullets)
+
+
+@dataclass
+class _SummaryScope:
+    command: str
+    project_root: Path
+    spec_id: str = ""
+    emitted: bool = False
+
+
+_ACTIVE_SCOPE: ContextVar[_SummaryScope | None] = ContextVar(
+    "echelon_worked_on_scope",
+    default=None,
+)
+
+
+def _read_json_object(path: Path) -> dict[str, object]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _phase_a_scope_evidence(scope: _SummaryScope) -> WorkedOnEvidence | None:
+    runs = scope.project_root / "runs"
+    state_path: Path | None = None
+    try:
+        current = (runs / ".current").read_text(encoding="utf-8").strip()
+    except OSError:
+        current = ""
+    if current:
+        candidate = runs / current / "state.json"
+        if candidate.is_file():
+            state_path = candidate
+    if state_path is None:
+        candidates = sorted(
+            runs.glob("spec-*/state.json"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        ) if runs.is_dir() else []
+        state_path = candidates[0] if candidates else None
+    if state_path is None:
+        return None
+    state = _read_json_object(state_path)
+    if not state:
+        return None
+    status = _clean_text(state.get("status") or "unknown")
+    next_command = ""
+    if status != "done":
+        next_command = (
+            "echelon spec resume \"<answer>\""
+            if state.get("blocked_decision") or state.get("escalation_question")
+            else "echelon spec continue"
+        )
+    return phase_a_evidence(
+        command=scope.command,
+        state=state,
+        result=None,
+        next_command=next_command,
+    )
+
+
+def _delivery_scope_evidence(scope: _SummaryScope) -> WorkedOnEvidence | None:
+    if not scope.spec_id:
+        return None
+    runs = scope.project_root / "runs"
+    marker = runs / f".current-build-{scope.spec_id}"
+    try:
+        build_id = marker.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    state_dir = runs / build_id / "state"
+    states = [_read_json_object(path) for path in sorted(state_dir.glob("*.json"))]
+    states = [state for state in states if state]
+    if not states:
+        return None
+    statuses = [_clean_text(state.get("status")) for state in states]
+    status = "done" if statuses and all(item == "done" for item in statuses) else next(
+        (item for item in statuses if item),
+        "unknown",
+    )
+    blocker = next(
+        (
+            _clean_text(state.get("termination_reason") or state.get("blocked_reason"))
+            for state in states
+            if state.get("termination_reason") or state.get("blocked_reason")
+        ),
+        "",
+    )
+    tasks: list[str] = []
+    for state in states:
+        tasks.extend(_clean_items(state.get("completed_task_ids")))
+    next_command = "" if status == "done" else f"echelon delivery continue {scope.spec_id}"
+    return WorkedOnEvidence(
+        command=scope.command,
+        status=status,
+        spec_id=scope.spec_id,
+        completed_tasks=tuple(dict.fromkeys(tasks))[:_MAX_ITEMS],
+        blocker=blocker,
+        next_command=next_command,
+        strategies=tuple(path.stem for path in sorted(state_dir.glob("*.json")))[:_MAX_ITEMS],
+    )
+
+
+def _scope_evidence(scope: _SummaryScope) -> WorkedOnEvidence | None:
+    if scope.command.startswith("delivery "):
+        return _delivery_scope_evidence(scope)
+    return _phase_a_scope_evidence(scope)
+
+
+def attach_to_terminal_fields(
+    fields: Sequence[tuple[str, str]],
+    evidence: WorkedOnEvidence,
+    *,
+    project_root: Path,
+    config: object | None = None,
+    provider: object | None = None,
+) -> list[tuple[str, str]]:
+    """Append one narrative section and satisfy an active emit-once scope."""
+    bullets = generate_summary(
+        project_root,
+        evidence,
+        config=config,
+        provider=provider,
+    )
+    scope = _ACTIVE_SCOPE.get()
+    if scope is not None:
+        scope.emitted = True
+    return [*fields, ("Worked on", format_worked_on(bullets))]
+
+
+@contextmanager
+def worked_on_scope(
+    command: str,
+    project_root: Path,
+    *,
+    spec_id: str = "",
+):
+    """Emit exactly one summary across a possibly nested lifecycle command."""
+    active = _ACTIVE_SCOPE.get()
+    if active is not None:
+        yield active
+        return
+
+    scope = _SummaryScope(
+        command=_clean_text(command),
+        project_root=Path(project_root).resolve(),
+        spec_id=_clean_text(spec_id),
+    )
+    token = _ACTIVE_SCOPE.set(scope)
+    try:
+        yield scope
+    finally:
+        try:
+            if not scope.emitted:
+                evidence = _scope_evidence(scope)
+                if evidence is not None:
+                    bullets = generate_summary(scope.project_root, evidence)
+                    from echelon.ui import banner
+
+                    banner(
+                        "WORKED ON",
+                        [("summary", format_worked_on(bullets))],
+                    )
+                    scope.emitted = True
+        except Exception:
+            pass
+        finally:
+            _ACTIVE_SCOPE.reset(token)

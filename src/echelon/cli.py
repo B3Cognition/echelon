@@ -4593,6 +4593,22 @@ def _print_squad_summary(
                     _issue_resolution_screen_guidance(project_root, squad_dir, state)
                 )
     fields.append(("result", _phase_a_result_line(status, state)))
+    from harness.worked_on_summary import (
+        attach_to_terminal_fields,
+        phase_a_evidence,
+    )
+
+    next_command = action.command if status != "done" else ""
+    fields = attach_to_terminal_fields(
+        fields,
+        phase_a_evidence(
+            command="spec run",
+            state=state,
+            result=result,
+            next_command=next_command,
+        ),
+        project_root=project_root,
+    )
     _banner("SQUAD SUMMARY", fields, subtitle=f"{icon} {status_text}")
 
 

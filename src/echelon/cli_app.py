@@ -14,6 +14,8 @@ from typing import Callable, Optional
 
 import typer
 
+from harness.worked_on_summary import worked_on_scope
+
 
 app = typer.Typer(
     add_completion=False,
@@ -1901,7 +1903,8 @@ def spec_run(
         args.append("--discard")
     if confirm:
         args.append("--confirm")
-    legacy_cli._cmd_spec_run(args)
+    with worked_on_scope("spec run", Path.cwd()):
+        legacy_cli._cmd_spec_run(args)
 
 
 @spec_app.command("retarget")
@@ -1955,7 +1958,8 @@ def spec_continue(
 
     args = list(ctx.args)
     _extend_option(args, "--mode", mode)
-    legacy_cli._cmd_spec_continue(args)
+    with worked_on_scope("spec continue", Path.cwd()):
+        legacy_cli._cmd_spec_continue(args)
 
 
 @spec_app.command(
@@ -1976,7 +1980,8 @@ def spec_resume(
     if answer is not None:
         args.append(answer)
     args.extend(list(ctx.args))
-    legacy_cli._cmd_spec_resume(args)
+    with worked_on_scope("spec resume", Path.cwd()):
+        legacy_cli._cmd_spec_resume(args)
 
 
 @spec_app.command("add-input")
