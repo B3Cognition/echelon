@@ -2161,11 +2161,38 @@ class TestAgentResultIntegrity:
             "phase": "phase1-what",
             "requires_human_input": False,
         }
-        assert "provider_limit_message" not in state
+        assert state["provider_limit_message"] == (
+            "You've hit your session limit · resets 4am (Europe/Prague)"
+        )
         assert "blocked_context" not in state
         assert "session limit" not in json.dumps(
             state["controller_contract_error"]
         )
+
+    def test_non_provider_preparation_failure_removes_stale_provider_limit(
+        self, tmp_path
+    ):
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=2,
+            echelon_result=None,
+            raw_output="missing structured result",
+            duration_ms=100,
+            timed_out=False,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "banzai", "msg", 0, "phase1-what", max_iterations=5)
+        _mark_constitution_complete(tmp_path, store)
+        state = store.load()
+        state["provider_limit_message"] = "historical provider limit"
+        store.save(state)
+
+        result = ctrl.run("msg", "banzai")
+        state = store.load()
+
+        assert result.status == "blocked"
+        assert state["blocked_reason"] == "controller_state_contract_validation_failed"
+        assert "provider_limit_message" not in state
 
     def test_agent_phase_without_parseable_echelon_result_blocks(self, tmp_path):
         provider = _mock_provider()

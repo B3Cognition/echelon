@@ -2797,6 +2797,7 @@ class SquadStateStore:
         expected_state_revision: int,
         expected_previous_dispatch_sha256: str | None,
         updates: dict[str, Any],
+        removals: frozenset[str] = frozenset(),
         token_usage_delta: int = 0,
     ) -> bool:
         """Merge a failure only if no phase/dispatch publication won the race."""
@@ -2816,6 +2817,8 @@ class SquadStateStore:
             ):
                 return False
             next_state = deepcopy(state)
+            for key in removals:
+                next_state.pop(key, None)
             next_state.update(deepcopy(updates))
             authority_changed = (
                 _canonicalize_resolved_human_input_audit_for_diagnostic(

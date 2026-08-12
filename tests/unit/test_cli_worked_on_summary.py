@@ -231,6 +231,41 @@ def test_phase_a_banner_adds_narrative_worked_on_field(
     assert "Worked through 2 phases toward Add sessions." in output
 
 
+def test_phase_a_banner_shows_provider_limit_beside_controller_failure(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _print_squad_summary
+
+    squad_dir = tmp_path / "runs" / "spec-20260812-120000-000001"
+    squad_dir.mkdir(parents=True)
+    (squad_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "phase": "phase3-plan",
+                "blocked_reason": "controller_state_contract_validation_failed",
+                "provider_limit_message": (
+                    "You've hit your session limit · resets 4am (Europe/Prague)"
+                ),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _print_squad_summary(
+        tmp_path,
+        squad_dir,
+        SimpleNamespace(status="blocked", phase="phase3-plan"),
+        mode="semi",
+        message="Implement provider model resolution",
+    )
+
+    output = capsys.readouterr().out
+    assert "stopped    controller_state_contract_validation_failed" in output
+    assert "provider   You've hit your session limit" in output
+
+
 @pytest.mark.parametrize(
     ("argv", "handler"),
     [

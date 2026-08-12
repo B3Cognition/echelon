@@ -43,15 +43,22 @@ def banner(
                 _p(f"│{body.ljust(CARD_INNER)}│")
     _p(f"╰{'─' * CARD_INNER}╯\n")
 
-    def _is_section(val: str) -> bool:
-        return "\n" in val or val.strip().startswith("echelon ") or len(val.split()) > 8
+    def _is_section(key: str, val: str) -> bool:
+        return key != "provider" and (
+            "\n" in val
+            or val.strip().startswith("echelon ")
+            or len(val.split()) > 8
+        )
 
-    label_w = max((len(k) for k, v in fields if not _is_section(v)), default=0)
+    label_w = max(
+        (len(key) for key, val in fields if not _is_section(key, val)),
+        default=0,
+    )
 
     prev_section = False
     prev_inline = False
     for key, val in fields:
-        if _is_section(val):
+        if _is_section(key, val):
             if prev_inline or prev_section:
                 _p()
             _p(f"  {key}")

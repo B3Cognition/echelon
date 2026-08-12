@@ -4567,7 +4567,7 @@ def _print_squad_summary(
         stopped = "completed"
     if stopped:
         fields.append(("stopped", stopped))
-    if status == "blocked" and stopped == "provider_session_limit":
+    if status == "blocked":
         provider_message = str(state.get("provider_limit_message") or "").strip()
         if provider_message:
             fields.append(("provider", provider_message))

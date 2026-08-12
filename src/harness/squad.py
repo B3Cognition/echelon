@@ -8828,6 +8828,12 @@ class SquadController:
         try:
             return self._prepare_phase_result(node, result, snapshot)
         except ControllerStateContractViolation as exc:
+            try:
+                provider_limit_message = detach_squad_agent_result(
+                    result
+                ).provider_limit_message
+            except ControllerStateContractViolation:
+                provider_limit_message = ""
             self._block_after_state_advance_failure(
                 node,
                 node.id,
@@ -8839,6 +8845,7 @@ class SquadController:
                 snapshot=snapshot,
                 diagnostic_contract=exc.contract,
                 diagnostic_subject="controller result preparation",
+                provider_limit_message=provider_limit_message,
             )
             return None
 
@@ -9065,6 +9072,7 @@ class SquadController:
         token_usage_delta: int = 0,
         diagnostic_contract: str | None = None,
         diagnostic_subject: str = "state advance",
+        provider_limit_message: str = "",
     ) -> None:
         """Persist a stable diagnostic without treating failure as an advance."""
         contract = node.controller_state_contract
@@ -9092,6 +9100,36 @@ class SquadController:
                 "controller_state_contract_validation_failed",
             )
         )
+        diagnostic_updates = {
+            "status": "blocked",
+            "blocked_reason": (
+                "controller_state_contract_validation_failed"
+            ),
+            "controller_contract_error": {
+                "phase_id": from_phase,
+                "contract": (
+                    diagnostic_contract
+                    or (
+                        contract.name
+                        if contract is not None
+                        else "routing_decision"
+                    )
+                ),
+                "contract_sha256": (
+                    contract.sha256 if contract is not None else None
+                ),
+                "json_path": json_path,
+                "validator": validator,
+                "message": (
+                    f"{diagnostic_subject} failed at "
+                    f"{json_path} ({validator})"
+                ),
+            },
+            "recovery_instruction": recovery.to_dict(),
+        }
+        diagnostic_removals = frozenset({"provider_limit_message"})
+        if provider_limit_message:
+            diagnostic_updates["provider_limit_message"] = provider_limit_message
         persisted = self._state_store.merge_advance_failure_diagnostic(
             from_phase=from_phase,
             expected_state_revision=(
@@ -9108,33 +9146,8 @@ class SquadController:
                 if snapshot is not None
                 else None
             ),
-            updates={
-                "status": "blocked",
-                "blocked_reason": (
-                    "controller_state_contract_validation_failed"
-                ),
-                "controller_contract_error": {
-                    "phase_id": from_phase,
-                    "contract": (
-                        diagnostic_contract
-                        or (
-                            contract.name
-                            if contract is not None
-                            else "routing_decision"
-                        )
-                    ),
-                    "contract_sha256": (
-                        contract.sha256 if contract is not None else None
-                    ),
-                    "json_path": json_path,
-                    "validator": validator,
-                    "message": (
-                        f"{diagnostic_subject} failed at "
-                        f"{json_path} ({validator})"
-                    ),
-                },
-                "recovery_instruction": recovery.to_dict(),
-            },
+            updates=diagnostic_updates,
+            removals=diagnostic_removals,
             token_usage_delta=token_usage_delta,
         )
         if not persisted and token_usage_delta:
