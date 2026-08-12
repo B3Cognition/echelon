@@ -361,6 +361,83 @@ def test_delivery_scope_recovers_rich_persisted_strategy_evidence(
     assert evidence.next_note == "Retry after the provider reset."
 
 
+def test_delivery_scope_normalizes_converged_state_to_ready_candidate(
+    tmp_path: Path,
+) -> None:
+    from harness.worked_on_summary import (
+        _SummaryScope,
+        _delivery_scope_evidence,
+        narrative_candidates,
+    )
+
+    state_dir = tmp_path / "runs" / "build-1" / "state"
+    state_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current-build-014").write_text(
+        "build-1",
+        encoding="utf-8",
+    )
+    (state_dir / "default.json").write_text(
+        json.dumps(
+            {
+                "status": "converged",
+                "termination_reason": "converged",
+                "outcomes": ["Implemented the resolver."],
+                "verification_summary": "passed in 12.5s",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    evidence = _delivery_scope_evidence(
+        _SummaryScope("delivery continue", tmp_path, spec_id="014")
+    )
+
+    assert evidence is not None
+    assert evidence.status == "done"
+    assert evidence.blocker == ""
+    assert evidence.next_command == ""
+    candidate_ids = {candidate.id for candidate in narrative_candidates(evidence)}
+    assert "readiness" in candidate_ids
+    assert "blocker" not in candidate_ids
+
+
+def test_candidate_selection_packet_is_bounded_and_retains_required_facts() -> None:
+    from harness.worked_on_summary import (
+        _candidate_selection_packet,
+        narrative_candidates,
+    )
+
+    huge = "🙂" * 600
+    evidence = WorkedOnEvidence(
+        command="delivery continue",
+        status="blocked",
+        outcomes=tuple(f"Outcome {index} {huge}" for index in range(64)),
+        decisions=tuple(f"Decision {index} {huge}" for index in range(64)),
+        commits=tuple(
+            f"abcdef12345{index % 10} — checkpoint {index} {huge}"
+            for index in range(64)
+        ),
+        blocker="verification failed",
+        provider_limit_message="Usage limit resets at 17:00.",
+        next_command="echelon delivery continue 014",
+    )
+
+    packet, retained = _candidate_selection_packet(narrative_candidates(evidence))
+    payload = json.loads(packet)
+    by_id = {candidate.id: candidate for candidate in retained}
+
+    assert len(packet.encode("utf-8")) <= MAX_EVIDENCE_BYTES
+    assert {"blocker", "provider-limit", "next-action"} <= set(by_id)
+    assert by_id["blocker"].text == "The run stopped because verification failed."
+    assert by_id["provider-limit"].text == (
+        "The provider reported a limit: Usage limit resets at 17:00."
+    )
+    assert by_id["next-action"].text == (
+        "Next, run `echelon delivery continue 014`."
+    )
+    assert {item["id"] for item in payload["candidates"]} == set(by_id)
+
+
 def test_delivery_evidence_uses_converged_strategy_verification_regardless_of_order() -> None:
     passed = SimpleNamespace(
         status="done",

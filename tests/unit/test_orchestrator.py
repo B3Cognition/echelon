@@ -13,6 +13,36 @@ from echelon.orchestrator import (
     validate_targets,
 )
 
+
+def test_aggregate_verification_preserves_exact_pass_facts() -> None:
+    from echelon.orchestrator import _aggregate_verification_facts
+
+    facts = (
+        "passed in 12.5s",
+        "passed: `pytest tests/api/test_sessions.py -q`",
+    )
+
+    assert _aggregate_verification_facts(facts) == (
+        "passed — passed in 12.5s; "
+        "passed: `pytest tests/api/test_sessions.py -q`"
+    )
+
+
+def test_aggregate_verification_groups_failures_without_losing_pass_facts() -> None:
+    from echelon.orchestrator import _aggregate_verification_facts
+
+    facts = (
+        "passed in 12.5s",
+        "failed in 3.2s",
+        "failed: `pytest tests/web/test_sessions.py -q`",
+    )
+
+    assert _aggregate_verification_facts(facts) == (
+        "failed — failed in 3.2s; "
+        "failed: `pytest tests/web/test_sessions.py -q`; "
+        "passed — passed in 12.5s"
+    )
+
 def _make_target(tmp_path: Path, name: str, git_repo: bool = True) -> Path:
     t = tmp_path / name
     t.mkdir()
@@ -343,7 +373,11 @@ class TestRunMultiTarget:
                         "duration": "2m" if target == "api" else "3m",
                         "outcomes": [f"Implemented {target}."],
                         "commits": [f"abcdef12345{len(target)} — checkpoint {target}"],
-                        "verification": "passed",
+                        "verification": (
+                            "failed: `pytest tests/web -q`"
+                            if target == "web"
+                            else "passed in 12.5s"
+                        ),
                         "provider_limit_message": (
                             "Usage limit resets at 17:00." if target == "web" else ""
                         ),
@@ -372,7 +406,10 @@ class TestRunMultiTarget:
         assert len(recorded) == 1
         assert recorded[0].completed_tasks == ("T-api", "T-web")
         assert recorded[0].artifacts == ("dist/api.zip", "dist/web.zip")
-        assert recorded[0].verification == "passed"
+        assert recorded[0].verification == (
+            "failed — failed: `pytest tests/web -q`; "
+            "passed — passed in 12.5s"
+        )
         assert recorded[0].status == "blocked"
         assert recorded[0].duration == "2m; 3m"
         assert recorded[0].outcomes == ("Implemented api.", "Implemented web.")
@@ -382,6 +419,71 @@ class TestRunMultiTarget:
         )
         assert recorded[0].provider_limit_message == "Usage limit resets at 17:00."
         assert recorded[0].next_note == "Retry after the provider reset."
+
+    def test_maximal_multi_target_aggregate_bounds_candidates_and_keeps_required(
+        self, tmp_path: Path
+    ) -> None:
+        from harness.worked_on_summary import (
+            MAX_EVIDENCE_BYTES,
+            _candidate_selection_packet,
+            narrative_candidates,
+        )
+
+        target = tmp_path / "web"
+        target.mkdir()
+        recorded = []
+        huge = "🙂" * 600
+
+        def fake_popen(cmd, cwd, stdout, stderr, text, env=None):
+            Path(env["ECHELON_WORKED_ON_SUMMARY_FILE"]).write_text(
+                json.dumps(
+                    {
+                        "command": "delivery run",
+                        "status": "blocked",
+                        "spec_id": "024",
+                        "outcomes": [
+                            f"Outcome {index} {huge}" for index in range(64)
+                        ],
+                        "commits": [
+                            f"abcdef12345{index % 10} — checkpoint {index} {huge}"
+                            for index in range(64)
+                        ],
+                        "verification": "failed in 3.2s",
+                        "blocker": "verification failed",
+                        "provider_limit_message": "Usage limit resets at 17:00.",
+                        "next_note": "Retry after the provider reset.",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            mock = MagicMock()
+            mock.stdout = iter([])
+            mock.returncode = 1
+            mock.wait.return_value = None
+            return mock
+
+        with (
+            patch("subprocess.Popen", side_effect=fake_popen),
+            patch(
+                "harness.worked_on_summary.record_terminal_evidence",
+                side_effect=recorded.append,
+            ),
+        ):
+            assert run_multi_target("024", [target], [], echelon_bin="echelon") == 1
+
+        evidence = recorded[0]
+        packet, retained = _candidate_selection_packet(
+            narrative_candidates(evidence)
+        )
+        by_id = {candidate.id: candidate for candidate in retained}
+
+        assert len(evidence.outcomes) == 16
+        assert len(evidence.commits) == 16
+        assert len(packet.encode("utf-8")) <= MAX_EVIDENCE_BYTES
+        assert {"blocker", "provider-limit", "next-action"} <= set(by_id)
+        assert "verification failed" in by_id["blocker"].text
+        assert "Usage limit resets at 17:00." in by_id["provider-limit"].text
+        assert "echelon delivery continue 024" in by_id["next-action"].text
 
     def test_nested_target_metadata_keeps_workspace_root_and_source_id(
         self, tmp_path: Path

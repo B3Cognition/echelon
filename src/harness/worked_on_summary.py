@@ -631,6 +631,34 @@ def _fallback_candidate_ids(
     )
 
 
+def _candidate_selection_packet(
+    candidates: Sequence[NarrativeCandidate],
+) -> tuple[str, tuple[NarrativeCandidate, ...]]:
+    """Serialize a bounded candidate menu without dropping required facts."""
+    retained = list(candidates)
+
+    def encode() -> str:
+        return json.dumps(
+            {"candidates": [asdict(candidate) for candidate in retained]},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+
+    packet = encode()
+    while len(packet.encode("utf-8")) > MAX_EVIDENCE_BYTES:
+        optional = [
+            candidate
+            for candidate in retained
+            if not candidate.required
+        ]
+        if len(retained) <= 4 or not optional:
+            raise ValueError("required narrative candidates exceed prompt budget")
+        drop = max(optional, key=lambda candidate: (candidate.priority, candidate.id))
+        retained.remove(drop)
+        packet = encode()
+    return packet, tuple(retained)
+
+
 def fallback_summary(evidence: WorkedOnEvidence) -> tuple[str, ...]:
     """Render deterministic candidates when selection is unavailable or invalid."""
     candidates = narrative_candidates(evidence)
@@ -655,17 +683,8 @@ def generate_summary(
     """Invoke SUMMARIZER once, then render only controller-authored candidates."""
     candidates = narrative_candidates(evidence)
     fallback = fallback_summary(evidence)
-    selection_packet = json.dumps(
-        {
-            "candidates": [
-                asdict(candidate)
-                for candidate in candidates
-            ]
-        },
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
     try:
+        selection_packet, dispatch_candidates = _candidate_selection_packet(candidates)
         artifact = ProsaicPromptLoader(project_root).load_agent("echelon.summarizer")
         if artifact is None:
             return fallback
@@ -695,7 +714,7 @@ def generate_summary(
             return fallback
         selected_ids = _selected_candidate_ids(
             str(getattr(result, "stdout", "")),
-            candidates,
+            dispatch_candidates,
         )
         if selected_ids is None:
             return fallback
@@ -824,7 +843,10 @@ def _delivery_scope_evidence(scope: _SummaryScope) -> WorkedOnEvidence | None:
             if scope.exit_status != "done"
             else "",
         )
-    statuses = [_clean_text(state.get("status")) for state in states]
+    statuses = [
+        "done" if (item := _clean_text(state.get("status"))) == "converged" else item
+        for state in states
+    ]
     status = "done" if statuses and all(item == "done" for item in statuses) else next(
         (item for item in statuses if item),
         "unknown",
@@ -833,7 +855,12 @@ def _delivery_scope_evidence(scope: _SummaryScope) -> WorkedOnEvidence | None:
         (
             _clean_text(state.get("termination_reason") or state.get("blocked_reason"))
             for state in states
-            if state.get("termination_reason") or state.get("blocked_reason")
+            if (
+                state.get("termination_reason") or state.get("blocked_reason")
+            )
+            and _clean_text(
+                state.get("termination_reason") or state.get("blocked_reason")
+            ) != "converged"
         ),
         "",
     )

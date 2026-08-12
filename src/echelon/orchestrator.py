@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -19,6 +20,32 @@ from kernel.task_contract import parse_task_rows
 
 
 _ECHELON_YML_REL = ".echelon/config.yml"
+
+
+def _aggregate_verification_facts(facts: tuple[str, ...]) -> str:
+    """Classify aggregate verification while preserving every durable fact."""
+    unique = tuple(dict.fromkeys(fact for fact in facts if fact))
+    if not unique:
+        return ""
+    if all(fact == "passed" for fact in unique):
+        return "passed"
+    if all(fact == "failed" for fact in unique):
+        return "failed"
+
+    groups: dict[str, list[str]] = {"failed": [], "passed": [], "recorded": []}
+    for fact in unique:
+        words = set(re.findall(r"[a-z]+", fact.lower()))
+        classification = (
+            "failed" if "failed" in words
+            else "passed" if "passed" in words
+            else "recorded"
+        )
+        groups[classification].append(fact)
+    return "; ".join(
+        f"{classification} — {'; '.join(groups[classification])}"
+        for classification in ("failed", "passed", "recorded")
+        if groups[classification]
+    )
 
 
 def _serialize_target_contract(value: object, *, location: str) -> str:
@@ -353,10 +380,10 @@ def run_multi_target(
     )
     outcomes = tuple(
         dict.fromkeys(outcome for evidence in child_evidence for outcome in evidence.outcomes)
-    )
+    )[:16]
     commits = tuple(
         dict.fromkeys(commit for evidence in child_evidence for commit in evidence.commits)
-    )
+    )[:16]
     verification_states = tuple(
         evidence.verification for evidence in child_evidence if evidence.verification
     )
@@ -391,13 +418,7 @@ def run_multi_target(
             duration="; ".join(durations),
             outcomes=outcomes,
             commits=commits,
-            verification=(
-                "failed"
-                if "failed" in verification_states
-                else "passed" if verification_states and all(
-                    state == "passed" for state in verification_states
-                ) else ""
-            ),
+            verification=_aggregate_verification_facts(verification_states),
             blocker=(
                 "; ".join(dict.fromkeys(blockers))
                 if blockers
