@@ -142,6 +142,47 @@ def test_re_status_reports_live_state_and_source_quality_debt(
 
 
 @pytest.mark.unit
+def test_re_status_does_not_claim_all_sources_passed_when_controller_status_is_done(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.cli_app import app
+
+    run_dir = tmp_path / "runs" / "re-20260808-100000-000002"
+    re_dir = run_dir / "re"
+    re_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current-re").write_text(
+        run_dir.name + "\n", encoding="utf-8"
+    )
+    (run_dir / "state.json").write_text(
+        json.dumps({"status": "blocked", "re_policy": "refresh-all"}),
+        encoding="utf-8",
+    )
+    (re_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "done",
+                "phase": "re-extract-2-specify",
+                "re_source_order": ["passed", "active", "pending"],
+                "re_source_states": {
+                    "passed": {"status": "passed", "coverage_pct": 100.0},
+                    "active": {"status": "active", "coverage_pct": 24.1},
+                    "pending": {"status": "pending", "coverage_pct": 35.9},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(app, ["re", "status"])
+
+    assert result.exit_code == 0
+    assert "Do not start another continuation" in result.output
+    assert "All sources have passed" not in result.output
+
+
+@pytest.mark.unit
 def test_re_continue_prints_controller_summary_before_provider_dispatch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

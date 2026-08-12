@@ -9692,10 +9692,16 @@ def _cmd_re_status(args: list[str]) -> None:
     source_rows = _re_status_source_rows(run_re_dir, inner)
     raw_source_states = inner.get("re_source_states")
     source_states = raw_source_states if isinstance(raw_source_states, dict) else {}
-    partial_count = sum(
-        isinstance(value, dict) and value.get("status") == "partial_quality_debt"
+    source_statuses = [
+        value.get("status")
         for value in source_states.values()
+        if isinstance(value, dict)
+    ]
+    active_source_count = sum(status == "active" for status in source_statuses)
+    partial_count = sum(
+        status == "partial_quality_debt" for status in source_statuses
     )
+    nonpassed_count = sum(status != "passed" for status in source_statuses)
     fields = [
         ("run", run_dir.name),
         ("controller", controller_status),
@@ -9721,12 +9727,17 @@ def _cmd_re_status(args: list[str]) -> None:
         print("  source                                 status                 coverage / debt")
         print("  ─────────────────────────────────────  ─────────────────────  ─────────────────")
         print("\n".join(source_rows))
-    if controller_status == "in_progress":
+    if controller_status == "in_progress" or active_source_count:
         action = "Do not start another continuation while the controller is active."
     elif partial_count:
         action = (
             f"{partial_count} source(s) have partial quality debt; this is not a full-quality outcome. "
             "Raise --re-max-inner above the current budget, then continue."
+        )
+    elif nonpassed_count:
+        action = (
+            f"{nonpassed_count} source(s) have not passed the source-quality gate. "
+            "Continue the current RE run."
         )
     else:
         action = "All sources have passed the controller's source-quality gate."
