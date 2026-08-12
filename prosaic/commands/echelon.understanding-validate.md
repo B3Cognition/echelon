@@ -7,6 +7,7 @@ invocation: automatic
 visibility: user
 color: green
 model_tier: fast
+effort: low
 ---
 ## Role
 

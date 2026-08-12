@@ -4,7 +4,8 @@ description: SPEC GUARD — verifies implemented code matches specification requ
 execution: agent
 tools: write
 color: red
-model_tier: balanced
+model_tier: strong
+effort: medium
 ---
 # echelon-spec-guard (SPEC GUARD) Agent
 

@@ -1,5 +1,7 @@
 ---
 name: echelon.re-constitute
+model_tier: fast
+effort: low
 description: Generate strategic artifacts (constitution, strategy, risks, gaps, ADRs)
 ---
 ## Role

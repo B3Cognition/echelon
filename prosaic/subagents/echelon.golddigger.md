@@ -4,7 +4,8 @@ description: GOLDDIGGER — brownfield extraction driver via native re-extract p
 execution: agent
 tools: full
 color: green
-model_tier: strong
+model_tier: balanced
+effort: medium
 ---
 # echelon-golddigger (GOLDDIGGER) Agent
 

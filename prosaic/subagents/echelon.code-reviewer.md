@@ -5,6 +5,7 @@ execution: agent
 tools: write
 color: red
 model_tier: strong
+effort: high
 ---
 # echelon-code-reviewer (CODE REVIEWER) Agent
 

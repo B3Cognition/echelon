@@ -4,7 +4,8 @@ description: SENTINEL — test architecture lead designing test strategies
 execution: agent
 tools: write
 color: purple
-model_tier: balanced
+model_tier: strong
+effort: medium
 ---
 # echelon-sentinel (SENTINEL) Agent (TEST-echelon-architect (ARCHITECT))
 

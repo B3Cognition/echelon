@@ -6,6 +6,7 @@ execution: agent
 tools: write
 color: red
 model_tier: balanced
+effort: medium
 ---
 # echelon-spec-fulfillment-auditor (SPEC FULFILLMENT AUDITOR) Agent
 

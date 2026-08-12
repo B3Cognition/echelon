@@ -4,10 +4,10 @@ description: Design and implement CI/CD for this project — Dockerfile, .echelo
   deploy block, GitHub Actions CI, and database services if detected. Re-runnable.
 execution: skill
 invocation: automatic
-effort: high
+effort: low
 tools: full
 color: red
-model_tier: balanced
+model_tier: fast
 ---
 # Retired
 

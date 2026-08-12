@@ -4,7 +4,8 @@ description: SYNTHESIZER — fuses raw discovery outputs into unified knowledge 
 execution: agent
 tools: write
 color: green
-model_tier: balanced
+model_tier: strong
+effort: high
 ---
 # echelon-synthesizer (SYNTHESIZER) Agent (FUSE)
 

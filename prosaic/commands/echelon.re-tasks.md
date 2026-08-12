@@ -1,5 +1,7 @@
 ---
 name: echelon.re-tasks
+model_tier: fast
+effort: low
 description: Generate per-domain tasks.md files
 ---
 ## Role

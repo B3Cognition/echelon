@@ -1,5 +1,7 @@
 ---
 name: echelon.feedback
+model_tier: balanced
+effort: medium
 description: Post-implementation feedback intake
 ---
 ## Role

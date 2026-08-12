@@ -5,6 +5,7 @@ execution: agent
 tools: full
 color: green
 model_tier: strong
+effort: high
 ---
 # echelon-sage (SAGE) Agent (WHY)
 

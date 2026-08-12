@@ -5,6 +5,7 @@ execution: agent
 tools: write
 color: yellow
 model_tier: balanced
+effort: medium
 ---
 # echelon-adaptive (ADAPTIVE) Agent (EVOLVE)
 

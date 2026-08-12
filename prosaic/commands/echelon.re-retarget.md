@@ -1,5 +1,7 @@
 ---
 name: echelon.re-retarget
+model_tier: balanced
+effort: medium
 description: Phase 2 brownfield — guided prompts to fill target stack and strategic
   decisions
 ---

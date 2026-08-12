@@ -5,6 +5,7 @@ execution: agent
 tools: write
 color: blue
 model_tier: strong
+effort: high
 ---
 # echelon-strategist (STRATEGIST) Agent (OVERVIEW)
 

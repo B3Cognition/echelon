@@ -6,6 +6,7 @@ execution: agent
 tools: write
 color: red
 model_tier: strong
+effort: medium
 ---
 # echelon-engineering-manager (ENGINEERING MANAGER) (EM) Agent
 

@@ -1,5 +1,7 @@
 ---
 name: echelon.ground
+model_tier: fast
+effort: low
 description: Manually trigger reality check on artifacts
 ---
 ## Role

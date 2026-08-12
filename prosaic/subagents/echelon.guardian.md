@@ -5,6 +5,7 @@ execution: agent
 tools: write
 color: cyan
 model_tier: strong
+effort: high
 ---
 # echelon-guardian (GUARDIAN) Agent (SECURITY)
 

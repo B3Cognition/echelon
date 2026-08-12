@@ -4,7 +4,8 @@ description: RE-SPECIFIER — synthesises domain specifications from analysis ar
 execution: agent
 tools: write
 color: orange
-model_tier: balanced
+model_tier: strong
+effort: high
 ---
 # echelon-re-specifier (RE-SPECIFIER) Agent
 

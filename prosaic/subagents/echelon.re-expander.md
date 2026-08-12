@@ -4,7 +4,8 @@ description: RE-EXPANDER — fills coverage gaps from orphan file clusters
 execution: agent
 tools: write
 color: orange
-model_tier: balanced
+model_tier: strong
+effort: high
 ---
 # echelon-re-expander (RE-EXPANDER) Agent
 

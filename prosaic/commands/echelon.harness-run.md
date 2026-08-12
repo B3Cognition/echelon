@@ -5,7 +5,8 @@ invocation: explicit
 visibility: user
 tools: full
 color: blue
-model_tier: strong
+model_tier: fast
+effort: low
 ---
 ## Role
 

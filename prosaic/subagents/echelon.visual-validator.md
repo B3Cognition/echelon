@@ -6,6 +6,7 @@ execution: agent
 tools: full
 color: red
 model_tier: balanced
+effort: high
 ---
 # echelon-visual-validator (VISUAL echelon-validator (VALIDATOR)) Agent
 

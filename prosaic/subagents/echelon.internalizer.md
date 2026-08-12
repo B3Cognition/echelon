@@ -6,6 +6,7 @@ execution: agent
 tools: write
 color: yellow
 model_tier: balanced
+effort: medium
 ---
 # echelon-internalizer (INTERNALIZER) Agent (INTERNALIZE_METRICS)
 

@@ -1,5 +1,7 @@
 ---
 name: echelon.innovate
+model_tier: fast
+effort: low
 description: Manually trigger INNOVATE specialist
 ---
 ## Role

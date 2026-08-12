@@ -5,6 +5,7 @@ execution: agent
 tools: write
 color: orange
 model_tier: fast
+effort: low
 ---
 # echelon-re-checklister (RE-CHECKLISTER) Agent
 

@@ -5,6 +5,7 @@ execution: agent
 tools: write
 color: cyan
 model_tier: balanced
+effort: high
 ---
 # echelon-maverick (MAVERICK) Agent (INNOVATE)
 

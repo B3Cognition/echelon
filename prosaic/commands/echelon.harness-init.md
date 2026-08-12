@@ -7,6 +7,7 @@ visibility: user
 tools: full
 color: blue
 model_tier: balanced
+effort: medium
 ---
 ## Role
 

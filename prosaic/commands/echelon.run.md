@@ -1,5 +1,7 @@
 ---
 name: echelon.run
+model_tier: fast
+effort: low
 description: Full autonomous cognitive squad run — requires echelon.init first
 ---
 ## Step 1: Anchor project root

@@ -1,5 +1,7 @@
 ---
 name: echelon.change
+model_tier: strong
+effort: high
 description: Handle specification change during build phase
 ---
 ## Role

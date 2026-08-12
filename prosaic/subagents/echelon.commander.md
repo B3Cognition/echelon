@@ -5,6 +5,7 @@ execution: agent
 tools: full
 color: blue
 model_tier: strong
+effort: medium
 ---
 # echelon-commander (COMMANDER) Agent
 

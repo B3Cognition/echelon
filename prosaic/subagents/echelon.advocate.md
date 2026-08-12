@@ -5,6 +5,7 @@ execution: agent
 tools: write
 color: cyan
 model_tier: balanced
+effort: medium
 ---
 # echelon-advocate (ADVOCATE) Agent (UX-A11Y)
 

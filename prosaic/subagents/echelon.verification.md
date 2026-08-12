@@ -5,7 +5,8 @@ description: VERIFICATION — backpropagation specialist tracing requirements to
 execution: agent
 tools: write
 color: red
-model_tier: balanced
+model_tier: strong
+effort: high
 ---
 # echelon-verification (VERIFICATION) Agent (Backpropagation Check)
 

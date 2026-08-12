@@ -5,6 +5,7 @@ execution: agent
 tools: write
 color: green
 model_tier: balanced
+effort: medium
 ---
 # echelon-scout (SCOUT) Agent (DISCOVER)
 

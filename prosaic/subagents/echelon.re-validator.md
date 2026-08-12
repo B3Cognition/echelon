@@ -5,7 +5,8 @@ description: RE-VALIDATOR — quality-checks specs and auto-resolves ambiguities
 execution: agent
 tools: write
 color: orange
-model_tier: balanced
+model_tier: strong
+effort: high
 ---
 # echelon-re-validator (RE-VALIDATOR) Agent
 

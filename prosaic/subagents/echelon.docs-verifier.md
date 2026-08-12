@@ -6,6 +6,7 @@ execution: agent
 tools: write
 color: red
 model_tier: balanced
+effort: medium
 ---
 # echelon-docs-verifier (DOCS VERIFIER) Agent
 

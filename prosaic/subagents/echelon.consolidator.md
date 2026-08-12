@@ -4,7 +4,8 @@ description: CONSOLIDATOR — transforms raw episodic experience into generalize
 execution: agent
 tools: write
 color: yellow
-model_tier: balanced
+model_tier: strong
+effort: high
 ---
 # echelon-consolidator (CONSOLIDATOR) Agent
 

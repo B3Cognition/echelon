@@ -4,7 +4,8 @@ description: INTEGRATOR — verifies system integration after each build phase
 execution: agent
 tools: write
 color: red
-model_tier: balanced
+model_tier: strong
+effort: medium
 ---
 # echelon-integrator (INTEGRATOR) Agent
 

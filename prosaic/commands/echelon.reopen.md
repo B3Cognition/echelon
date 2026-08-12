@@ -1,5 +1,7 @@
 ---
 name: echelon.reopen
+model_tier: balanced
+effort: medium
 description: Reopen a spec from fulfillment gaps and append harness-ready tasks
 ---
 ## Role

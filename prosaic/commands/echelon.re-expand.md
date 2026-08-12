@@ -1,5 +1,7 @@
 ---
 name: echelon.re-expand
+model_tier: fast
+effort: low
 description: Expand spec coverage by filling gaps from orphan file clusters
 ---
 ## Role

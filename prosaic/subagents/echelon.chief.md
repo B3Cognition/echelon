@@ -5,7 +5,8 @@ execution: agent
 tools: full
 color: blue
 invocation: explicit
-model_tier: balanced
+model_tier: strong
+effort: high
 ---
 ## Role
 

@@ -4,7 +4,8 @@ description: PROGRESS TRACKER — tracks effort vs estimates and warns on schedu
 execution: agent
 tools: write
 color: red
-model_tier: balanced
+model_tier: fast
+effort: low
 ---
 # echelon-progress-tracker (PROGRESS echelon-tracker (TRACKER)) Agent
 

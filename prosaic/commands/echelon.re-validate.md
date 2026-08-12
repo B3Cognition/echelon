@@ -1,5 +1,7 @@
 ---
 name: echelon.re-validate
+model_tier: fast
+effort: low
 description: Validate specs for quality, auto-resolve ambiguities from code
 ---
 ## Role

@@ -4,7 +4,8 @@ description: ORACLE — domain-specific knowledge specialist
 execution: agent
 tools: write
 color: cyan
-model_tier: balanced
+model_tier: strong
+effort: high
 ---
 # echelon-oracle (ORACLE) Agent (DOMAIN-EXPERT)
 

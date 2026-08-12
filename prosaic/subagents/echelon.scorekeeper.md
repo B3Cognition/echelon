@@ -4,7 +4,8 @@ description: SCOREKEEPER — tracks and scores agent performance
 execution: agent
 tools: write
 color: blue
-model_tier: balanced
+model_tier: fast
+effort: low
 ---
 # echelon-scorekeeper (SCOREKEEPER) Agent
 

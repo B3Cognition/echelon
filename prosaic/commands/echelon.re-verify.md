@@ -1,5 +1,7 @@
 ---
 name: echelon.re-verify
+model_tier: fast
+effort: low
 description: Verify spec coverage against codebase and identify orphan files
 ---
 ## Role

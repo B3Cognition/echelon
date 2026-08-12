@@ -5,6 +5,7 @@ execution: agent
 tools: full
 color: green
 model_tier: strong
+effort: high
 ---
 # echelon-cartographer (CARTOGRAPHER) Agent (WHAT)
 

@@ -4,7 +4,8 @@ description: MONITOR — metacognition watchdog asking if the squad is still on 
 execution: agent
 tools: write
 color: yellow
-model_tier: balanced
+model_tier: fast
+effort: low
 ---
 # echelon-monitor (MONITOR) Agent (METACOGNITION)
 

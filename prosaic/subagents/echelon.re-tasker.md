@@ -4,7 +4,8 @@ description: RE-TASKER — generates per-domain tasks.md files
 execution: agent
 tools: write
 color: orange
-model_tier: balanced
+model_tier: strong
+effort: high
 ---
 # echelon-re-tasker (RE-TASKER) Agent
 

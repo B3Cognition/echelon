@@ -5,7 +5,8 @@ description: REALIST — connects squad artifacts to real-world data and histori
 execution: agent
 tools: write
 color: yellow
-model_tier: balanced
+model_tier: strong
+effort: high
 ---
 # echelon-realist (REALIST) Agent (GROUND)
 

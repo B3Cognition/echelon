@@ -4,7 +4,8 @@ description: RE-PLANNER — generates per-domain plan.md informed by constitutio
 execution: agent
 tools: write
 color: orange
-model_tier: balanced
+model_tier: strong
+effort: high
 ---
 # echelon-re-planner (RE-PLANNER) Agent
 

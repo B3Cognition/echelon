@@ -1,5 +1,7 @@
 ---
 name: echelon.re-plan
+model_tier: fast
+effort: low
 description: Generate per-domain plan.md files
 ---
 ## Role

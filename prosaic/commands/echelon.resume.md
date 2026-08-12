@@ -1,5 +1,7 @@
 ---
 name: echelon.resume
+model_tier: fast
+effort: low
 description: Provide answer to human escalation
 ---
 ## Role

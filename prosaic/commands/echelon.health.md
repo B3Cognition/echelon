@@ -1,5 +1,7 @@
 ---
 name: echelon.health
+model_tier: balanced
+effort: medium
 description: Periodic health check — spec-code drift, estimate drift, KB freshness
 ---
 ## Role

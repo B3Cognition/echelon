@@ -1,5 +1,7 @@
 ---
 name: echelon.re-extract
+model_tier: balanced
+effort: medium
 description: Phase 1 brownfield extraction — analyze codebase and generate domain
   specs + strategic artifacts
 ---

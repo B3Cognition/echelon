@@ -6,6 +6,7 @@ execution: command
 invocation: explicit
 tools: write
 model_tier: balanced
+effort: medium
 ---
 ## Role
 

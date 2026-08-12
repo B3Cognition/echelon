@@ -1,5 +1,7 @@
 ---
 name: echelon.re-checklist
+model_tier: fast
+effort: low
 description: Generate quality checklists for specs (per-domain + summary)
 ---
 ## Role

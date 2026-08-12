@@ -1,5 +1,7 @@
 ---
 name: echelon.verify-spec
+model_tier: balanced
+effort: medium
 description: Read-only fulfillment audit for an existing spec against the current
   implementation
 ---

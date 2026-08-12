@@ -1,5 +1,7 @@
 ---
 name: echelon.status
+model_tier: fast
+effort: low
 description: Check current squad state and progress
 ---
 ## Role

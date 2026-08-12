@@ -5,6 +5,7 @@ execution: agent
 tools: full
 color: orange
 model_tier: balanced
+effort: medium
 ---
 # echelon-re-analyzer (RE-ANALYZER) Agent
 

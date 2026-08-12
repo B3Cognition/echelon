@@ -4,7 +4,8 @@ description: VETERAN — cross-project knowledge curator managing patterns and p
 execution: agent
 tools: write
 color: yellow
-model_tier: balanced
+model_tier: strong
+effort: high
 ---
 # echelon-veteran (VETERAN) Agent (PROJECT SCOPING)
 

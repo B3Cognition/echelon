@@ -5,6 +5,7 @@ execution: skill
 tools: write
 color: red
 model_tier: balanced
+effort: medium
 ---
 ## Role
 

@@ -5,6 +5,7 @@ execution: agent
 tools: full
 color: yellow
 model_tier: balanced
+effort: high
 ---
 # echelon-auditor (AUDITOR) Agent (CALIBRATE)
 

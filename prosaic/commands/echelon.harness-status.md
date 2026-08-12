@@ -5,7 +5,8 @@ invocation: automatic
 visibility: user
 tools: write
 color: blue
-model_tier: balanced
+model_tier: fast
+effort: low
 ---
 ## Role
 

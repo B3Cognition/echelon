@@ -5,6 +5,7 @@ execution: agent
 tools: full
 color: red
 model_tier: strong
+effort: high
 ---
 # echelon-debugger (DEBUGGER) Agent (DEBUG)
 

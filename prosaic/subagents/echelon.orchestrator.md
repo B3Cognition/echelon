@@ -5,6 +5,7 @@ execution: agent
 tools: full
 color: purple
 model_tier: strong
+effort: high
 ---
 # echelon-orchestrator (ORCHESTRATOR) Agent (PLAN)
 

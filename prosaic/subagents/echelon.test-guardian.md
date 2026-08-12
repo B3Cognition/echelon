@@ -4,7 +4,8 @@ description: TEST GUARDIAN — audits test sufficiency and edge case coverage
 execution: agent
 tools: write
 color: red
-model_tier: balanced
+model_tier: strong
+effort: medium
 ---
 # echelon-test-guardian (TEST echelon-guardian (GUARDIAN)) Agent
 

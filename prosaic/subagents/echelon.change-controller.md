@@ -5,6 +5,7 @@ execution: agent
 tools: write
 color: red
 model_tier: strong
+effort: high
 ---
 # echelon-change-controller (CHANGE CONTROLLER) Agent
 

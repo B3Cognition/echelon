@@ -5,6 +5,7 @@ execution: agent
 tools: write
 color: blue
 model_tier: balanced
+effort: medium
 ---
 # echelon-checkpoint (CHECKPOINT) Agent (INTERNALIZE)
 

@@ -1,5 +1,7 @@
 ---
 name: echelon.investigate
+model_tier: fast
+effort: low
 description: Manually trigger SCIENTIST for a specific question
 ---
 ## Role

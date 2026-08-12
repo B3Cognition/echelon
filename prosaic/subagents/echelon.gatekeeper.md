@@ -5,6 +5,7 @@ execution: agent
 tools: write
 color: orange
 model_tier: strong
+effort: high
 ---
 # echelon-gatekeeper (GATEKEEPER) Agent (ASSESS)
 

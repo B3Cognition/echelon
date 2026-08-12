@@ -5,6 +5,7 @@ execution: agent
 tools: write
 color: orange
 model_tier: balanced
+effort: medium
 ---
 # echelon-validator (VALIDATOR) Agent (INTERNALIZATION-GATE)
 

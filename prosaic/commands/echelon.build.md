@@ -1,5 +1,7 @@
 ---
 name: echelon.build
+model_tier: strong
+effort: high
 description: Execute the building phase — implement tasks with role-based agents
 ---
 ## Role

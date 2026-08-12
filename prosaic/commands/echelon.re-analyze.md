@@ -1,5 +1,7 @@
 ---
 name: echelon.re-analyze
+model_tier: fast
+effort: low
 description: Extract structured data from codebase into analysis.json
 ---
 ## Role

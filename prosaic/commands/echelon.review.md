@@ -1,5 +1,7 @@
 ---
 name: echelon.review
+model_tier: strong
+effort: medium
 description: Automated PR review triage — fetches blocking comments from GitHub/GitLab,
   groups by proximity + reviewer, DEBUGGER + SENTINEL + SPEC GUARD per group → review-fix
   plan + tasks. Machine-invoked by ReviewLoopController.

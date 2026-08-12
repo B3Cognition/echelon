@@ -1,5 +1,7 @@
 ---
 name: echelon.verify
+model_tier: strong
+effort: high
 description: Run full backpropagation verification — 100% spec coverage check
 ---
 ## Role

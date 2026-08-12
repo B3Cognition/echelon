@@ -1,5 +1,7 @@
 ---
 name: echelon.re-plan-all
+model_tier: balanced
+effort: medium
 description: Phase 3 brownfield — generate per-domain plans and tasks after strategic
   decisions are filled
 ---

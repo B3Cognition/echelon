@@ -5,6 +5,7 @@ execution: agent
 tools: full
 color: cyan
 model_tier: strong
+effort: high
 ---
 # echelon-investigator (INVESTIGATOR) Agent (SCIENTIST)
 

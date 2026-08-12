@@ -1,5 +1,7 @@
 ---
 name: echelon.re-specify
+model_tier: fast
+effort: low
 description: Generate domain specifications from analysis artifacts
 ---
 ## Role
