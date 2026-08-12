@@ -1734,6 +1734,63 @@ def test_agent_prompt_includes_authoritative_implementation_target_contract(tmp_
     assert "Do not infer or add another implementation target" in prompt
 
 
+@pytest.mark.parametrize(
+    ("state", "expected_mode", "expected_strategy"),
+    [
+        ({}, "proportional", "smallest complete evidence-backed specification"),
+        (
+            {"spec_authoring_mode": "proportional"},
+            "proportional",
+            "smallest complete evidence-backed specification",
+        ),
+        (
+            {"spec_authoring_mode": "perfectionist"},
+            "perfectionist",
+            "systematic applicability review",
+        ),
+    ],
+)
+def test_phase1_what_prompt_includes_trusted_spec_authoring_mode(
+    tmp_path,
+    state,
+    expected_mode,
+    expected_strategy,
+):
+    from harness.phase_graph import PhaseNode
+
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    state.update({"squad_dir": str(squad_dir)})
+
+    prompt = ex._assemble_prompt(PhaseNode(id="phase1-what", type="agent"), state)
+
+    assert prompt.count("## Specification Authoring Mode") == 1
+    assert f"Mode: {expected_mode}" in prompt
+    assert expected_strategy in prompt
+    assert "One canonical requirement per distinct observable obligation" in prompt
+    assert "Do not invent product behavior, entities, thresholds, or quality constraints" in prompt
+
+
+def test_non_what_prompt_does_not_receive_spec_authoring_mode(tmp_path):
+    from harness.phase_graph import PhaseNode
+
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+
+    prompt = ex._assemble_prompt(
+        PhaseNode(id="phase1-why2", type="agent"),
+        {
+            "squad_dir": str(squad_dir),
+            "spec_authoring_mode": "perfectionist",
+        },
+    )
+
+    assert "## Specification Authoring Mode" not in prompt
+    assert "Mode: perfectionist" not in prompt
+
+
 def test_pre_dispatch_quarantines_unallowed_state_updates_before_mutation(tmp_path):
     """Pre-dispatch reporting fields never enter the state mutation plane."""
     from harness.phase_graph import PhaseNode

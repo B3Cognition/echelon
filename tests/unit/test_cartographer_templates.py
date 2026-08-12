@@ -81,14 +81,34 @@ class TestCartographerTemplates:
         assert "agents/exploration/templates/cartographer-overview-template.md" in text
         assert "using the provided templates" in text
 
-    def test_cartographer_classifies_complexity_before_authoring(self) -> None:
+    def test_cartographer_defines_both_authoring_modes(self) -> None:
         agent_text = AGENT.read_text(encoding="utf-8")
         phase_text = PHASE.read_text(encoding="utf-8")
 
+        assert "Specification Authoring Modes" in agent_text
+        assert "### Proportional Mode" in agent_text
+        assert "### Perfectionist Mode" in agent_text
         assert "Classify Feature Complexity Before Authoring" in agent_text
         assert "small deterministic feature" in agent_text
+        assert "systematic applicability review" in agent_text
         assert "document-volume quota" in agent_text
-        assert "Classify the discovered feature's complexity" in phase_text
+        assert "controller-injected `Specification Authoring Mode`" in phase_text
+        assert "Classify the discovered feature's complexity" not in phase_text
+
+    def test_perfectionist_mode_preserves_common_cartographer_invariants(self) -> None:
+        agent_text = AGENT.read_text(encoding="utf-8")
+
+        assert "one canonical formal requirement" in agent_text
+        assert "never fabricate a requirement" in agent_text
+        assert "unresolved facts" in agent_text
+        assert "acceptance-to-requirement" in agent_text
+        assert "product-input traceability" in agent_text
+
+    def test_workflow_keeps_cartographer_as_the_only_what_agent(self) -> None:
+        definition = DEFINITION.read_text(encoding="utf-8")
+
+        assert "agent: echelon.cartographer" in definition
+        assert "echelon.perfectionist" not in definition
 
     def test_cartographer_avoids_duplicate_obligations(self) -> None:
         agent_text = AGENT.read_text(encoding="utf-8")

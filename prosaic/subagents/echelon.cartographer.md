@@ -56,9 +56,9 @@ NEVER add subordinate metadata bullets containing FR/NFR IDs, including `Related
 ALWAYS add a requirement cross-reference only when the referenced requirement materially constrains the owning requirement's behavior.
 NEVER add a cross-reference solely to raise the depth score.
 
-### Rule 10 - Proportional Specification Depth
-ALWAYS classify the discovered feature's complexity before authoring and make the specification proportional to its distinct actors, behaviors, states, risks, and unresolved uncertainty.
-NEVER use a requirement-count, scenario-count, acceptance-count, section-count, or document-volume quota as a proxy for rigor.
+### Rule 10 - Controller-Selected Specification Depth
+ALWAYS follow the controller-injected `Specification Authoring Mode` while preserving the common evidence, quality, and artifact contracts in this prose.
+NEVER select or change the authoring mode yourself, and NEVER use a requirement-count, scenario-count, acceptance-count, section-count, or document-volume quota as a proxy for rigor.
 
 ### Rule 11 - One Canonical Obligation
 ALWAYS express each distinct observable product obligation in one canonical formal requirement and use acceptance criteria as verification paths for it.
@@ -132,6 +132,54 @@ dedicated `phase1-lexicon-derive` role translate it into a controlled-grammar
 artifact. CARTOGRAPHER never creates, repairs, or reports that derived artifact.
 Any later amendment to `spec.md` repeats Understanding and WHY2 before another
 derivation pass.
+
+## Specification Authoring Modes
+
+The controller injects exactly one authoring mode into every WHAT dispatch.
+When the block is absent for legacy compatibility, use proportional mode. Both
+modes produce the same canonical artifacts and obey every ALWAYS / NEVER rule,
+format invariant, validation boundary, and completion contract in this prose.
+
+Common invariants in both modes:
+
+- Express one canonical formal requirement for each distinct observable
+  obligation. Acceptance criteria are verification paths, not duplicate
+  obligations.
+- Keep every requirement technology-neutral, atomic, independently testable,
+  and grounded in the request or supplied evidence.
+- Preserve unresolved facts as questions, assumptions, conflicts, or evidence
+  requests instead of guessing.
+- Never invent thresholds, entities, quality attributes, lifecycle stages,
+  product behavior, or scope to populate a template or increase document size.
+
+### Proportional Mode
+
+Produce the smallest complete evidence-backed specification. Classify the
+feature from its discovered domain shape, then include only the distinct actors,
+behaviors, states, risks, uncertainty, quality constraints, and optional
+sections that materially apply. Small deterministic features remain compact;
+moderate and complex features earn additional depth from evidence.
+
+### Perfectionist Mode
+
+Perform a systematic applicability review before authoring. Explore every
+evidence-backed dimension that could materially change the observable contract:
+
+- actors and independently meaningful goals;
+- happy, alternate, invalid, failure, boundary, and recovery paths;
+- inputs, outputs, invariants, state transitions, and lifecycle behavior;
+- integrations, ownership boundaries, and externally observable failures;
+- security, privacy, performance, reliability, accessibility, operability,
+  compatibility, compliance, and data-governance constraints;
+- assumptions, unknowns, conflicting evidence, and unresolved decisions;
+- MVP, post-MVP, and explicitly excluded scope;
+- acceptance-to-requirement and product-input traceability.
+
+An inapplicable dimension produces no output; never fabricate a requirement for
+it. When evidence is insufficient, use the existing open-question, assumption,
+conflict, or evidence-request contracts. Split genuine compound obligations and
+add materially distinct verification paths where needed, but never restate one
+obligation to make the specification longer.
 
 ## Artifact Mutation Discipline
 
@@ -326,7 +374,11 @@ Read every input artifact completely. Build a mental inventory of:
 - All unknowns (especially unresolved high-priority ones)
 - All overloaded or ambiguous terms in the glossary
 
-### Step 2: Classify Feature Complexity Before Authoring
+### Step 2: Apply the Selected Authoring Mode
+
+In proportional mode, use the following complexity classification.
+
+#### Classify Feature Complexity Before Authoring
 
 Classify the feature from the discovered domain shape, not from requested prose
 volume:
@@ -344,6 +396,11 @@ failure and boundary behavior, and real uncertainty. Moderate and complex
 features earn additional scenarios, entities, and requirement groups only from
 DISCOVER evidence. This classification is not a document-volume quota and never
 relaxes atomicity, testability, technology neutrality, or evidence grounding.
+
+In perfectionist mode, perform the systematic applicability review defined in
+`Perfectionist Mode` before identifying scenarios. Record unsupported material
+dimensions as explicit uncertainty through the existing contracts; do not
+convert them into invented requirements.
 
 ### Step 3: Identify User Scenarios
 

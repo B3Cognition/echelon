@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
+from echelon.spec_authoring import PERFECTIONIST_MODE, normalize_spec_authoring_mode
 from harness.controller_state_contracts import ControllerStateContractViolation
 from harness.governance_structural_gate import (
     GovernanceStructuralGateResult,
@@ -362,6 +363,38 @@ def _render_implementation_target_context(state: dict) -> str:
         "",
     ]
     return "\n".join(lines)
+
+
+def _render_spec_authoring_mode_context(state: dict, phase_id: str) -> str:
+    """Render the controller-selected Cartographer strategy for WHAT only."""
+    if phase_id != "phase1-what":
+        return ""
+    mode = normalize_spec_authoring_mode(state.get("spec_authoring_mode"))
+    if mode == PERFECTIONIST_MODE:
+        strategy = (
+            "- Perform a systematic applicability review of every evidence-backed behavior "
+            "and quality dimension before authoring. Cover materially distinct actors, paths, "
+            "states, boundaries, integrations, quality constraints, uncertainty, scope, and "
+            "traceability. An inapplicable dimension produces no requirement; insufficient "
+            "evidence remains an explicit question, assumption, or evidence request."
+        )
+    else:
+        strategy = (
+            "- Produce the smallest complete evidence-backed specification. Classify the "
+            "feature's discovered complexity and add scenarios, requirements, quality "
+            "dimensions, and optional sections only when they materially apply."
+        )
+    return "\n".join(
+        [
+            "## Specification Authoring Mode",
+            f"Mode: {mode}",
+            strategy,
+            "- One canonical requirement per distinct observable obligation; acceptance criteria are verification paths, not duplicate obligations.",
+            "- Keep every requirement grounded, atomic, testable, and technology-neutral. Preserve unresolved facts instead of guessing.",
+            "- Do not invent product behavior, entities, thresholds, or quality constraints, and do not use document-volume quotas as a proxy for rigor.",
+            "",
+        ]
+    )
 
 
 def _render_product_input_context(state: dict) -> str:
@@ -1819,6 +1852,7 @@ class PhaseExecutor(ABC):
             f"PROJECT_ROOT={self._project_root}\n"
             f"{_workspace_source_roots_context(self._project_root)}"
             f"{_render_implementation_target_context(state)}"
+            f"{_render_spec_authoring_mode_context(state, node.id)}"
             f"{_render_product_input_context(state)}"
             f"{_render_controller_repair_context(state)}"
             f"{_render_issue_resolution_context(state)}"
