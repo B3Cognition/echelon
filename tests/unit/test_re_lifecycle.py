@@ -1048,6 +1048,79 @@ def test_continue_completed_run_does_not_publish_or_repeat_extraction(
     assert extraction_calls == [True]
 
 
+@pytest.mark.unit
+def test_continue_reopens_completed_extraction_when_source_budget_is_raised(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile = ReFingerprintProfile()
+    monkeypatch.setattr("harness.re_lifecycle.discover_workspace", _empty_manifest)
+    monkeypatch.setattr(
+        "harness.re_lifecycle.resolve_re_fingerprint_profile", lambda root: profile
+    )
+    monkeypatch.setattr("harness.re_lifecycle.load_published_index", lambda root: None)
+    monkeypatch.setattr(
+        "harness.re_lifecycle.build_re_execution_plan",
+        lambda **kwargs: _work_plan(profile),
+    )
+    monkeypatch.setattr(
+        "harness.re_lifecycle.materialize_re_run_context",
+        lambda **kwargs: kwargs["run_re_dir"].mkdir(parents=True) or {},
+    )
+    extraction_calls: list[bool] = []
+
+    class FakeExtractionController:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
+        def run(self):
+            from harness.re_controller import ReControllerResult
+
+            extraction_calls.append(True)
+            return ReControllerResult(completed=True)
+
+    monkeypatch.setattr(
+        "harness.re_lifecycle.ReExtractionController", FakeExtractionController
+    )
+    controller = ReLifecycleController(
+        project_root=tmp_path,
+        extension_root=tmp_path / "extension",
+        provider_factory=object,
+    )
+
+    first = controller.run(policy="refresh-all", re_max_inner=20, reset=False)
+    run_dir = tmp_path / "runs" / first.run_id
+    outer_state_path = run_dir / "state.json"
+    outer_state = json.loads(outer_state_path.read_text(encoding="utf-8"))
+    outer_state.update(
+        {
+            "status": "blocked",
+            "blocked_reason": "re_source_quality_debt: api",
+            "extraction_complete": True,
+        }
+    )
+    outer_state_path.write_text(json.dumps(outer_state), encoding="utf-8")
+    inner_state_path = run_dir / "re" / "state.json"
+    inner_state = json.loads(inner_state_path.read_text(encoding="utf-8"))
+    inner_state.update(
+        {
+            "status": "done",
+            "re_source_budgets": {
+                "max_source_cycles": 20,
+                "max_domain_repairs": 20,
+                "max_source_reanalysis": 20,
+            },
+            "re_source_states": {"api": {"status": "partial_quality_debt"}},
+        }
+    )
+    inner_state_path.write_text(json.dumps(inner_state), encoding="utf-8")
+
+    second = controller.continue_run(re_max_inner=30)
+
+    assert second.status == "blocked"
+    assert extraction_calls == [True, True]
+
+
 def _blocked_forced_target_run_that_becomes_overlapping(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

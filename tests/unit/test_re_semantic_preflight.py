@@ -40,6 +40,7 @@ def test_preflight_rejects_unscoped_universal_requirement(tmp_path: Path) -> Non
         "behavior_coverage_missing",
         "unscoped_universal_claim",
     ]
+    assert "unscoped universal term(s): every" in findings[1].message
 
 
 def test_preflight_accepts_exhaustively_scoped_claim(tmp_path: Path) -> None:
@@ -73,6 +74,41 @@ def test_preflight_accepts_universal_words_in_bounded_exclusion_clause(
     )
 
     assert check_semantic_preflight(spec, None) == ()
+
+
+def test_preflight_accepts_not_verified_against_every_possible_as_bounded_scope(
+    tmp_path: Path,
+) -> None:
+    spec = tmp_path / "spec.md"
+    spec.write_text(
+        "## Requirements (Functional)\n\n"
+        "### FR-001: Failure isolation\n"
+        "Observed failures are isolated per item. `src/io.ts:4-12` "
+        "Evidence Scope: bounded to the observed branch; not verified against "
+        "every possible failure combination. `src/io.ts:4-12`\n\n"
+        + _coverage(),
+        encoding="utf-8",
+    )
+
+    assert check_semantic_preflight(spec, None) == ()
+
+
+def test_preflight_rejects_duplicate_requirement_ids(tmp_path: Path) -> None:
+    spec = tmp_path / "spec.md"
+    spec.write_text(
+        "## Requirements (Functional)\n\n"
+        "### FR-001: Load\nLoad input. `src/io.ts:1`\n\n"
+        "### FR-001: Validate\nValidate input. `src/io.ts:2`\n\n"
+        "## Requirements (Non-Functional)\n\n"
+        "### NFR-001: Safety\nBounded safety behavior. `src/io.ts:3`\n\n"
+        + _coverage(),
+        encoding="utf-8",
+    )
+
+    findings = check_semantic_preflight(spec, None)
+
+    assert [item.code for item in findings] == ["duplicate_requirement_id"]
+    assert findings[0].message == "duplicate requirement heading: FR-001"
 
 
 def test_preflight_accepts_case_insensitive_exhaustive_scope(tmp_path: Path) -> None:

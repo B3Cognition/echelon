@@ -2585,6 +2585,9 @@ def test_re_max_inner_override_reclaims_semantic_debt_only_after_a_genuine_raise
             "root": "src",
         }
     ]
+    assert state["re_workspace_synthesis_dirty_targets"] == [
+        {"source_id": "api", "domain_id": "001-re-domain"}
+    ]
 
 
 @pytest.mark.unit
@@ -2613,6 +2616,7 @@ def test_source_local_semantic_repair_requeues_only_the_failing_source(
             super().__init__()
             self.specifier_sources: list[str] = []
             self.workspace_synthesis_count = 0
+            self.workspace_synthesis_prompts: list[str] = []
 
         def exec_agent(self, project_root: str, prompt: str) -> SquadAgentResult:
             phase = prompt.split("RE phase: ", 1)[1].split("\n", 1)[0]
@@ -2621,6 +2625,7 @@ def test_source_local_semantic_repair_requeues_only_the_failing_source(
                 and "Generate source overviews, source-owned synthesis, and workspace synthesis only" in prompt
             ):
                 self.workspace_synthesis_count += 1
+                self.workspace_synthesis_prompts.append(prompt)
             if phase == "re-extract-2-specify" and "Source ID: `" in prompt:
                 self.specifier_sources.append(
                     prompt.split("Source ID: `", 1)[1].split("`", 1)[0]
@@ -2652,6 +2657,13 @@ def test_source_local_semantic_repair_requeues_only_the_failing_source(
     assert result.completed
     assert provider.specifier_sources == ["api", "web", "api"]
     assert provider.workspace_synthesis_count == 2
+    second_synthesis = provider.workspace_synthesis_prompts[1]
+    assert f"- `{(run_dir / 're/sources/api/overview.md').resolve()}`" in (
+        second_synthesis
+    )
+    assert f"- `{(run_dir / 're/sources/web/overview.md').resolve()}`" not in (
+        second_synthesis
+    )
 
 
 @pytest.mark.unit

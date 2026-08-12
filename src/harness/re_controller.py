@@ -980,6 +980,20 @@ class ReExtractionController:
         if not pending_repairs:
             state.pop("re_pending_source_repair_targets", None)
             return
+        state["re_workspace_synthesis_dirty_targets"] = [
+            {
+                "source_id": str(target["source_id"]),
+                **(
+                    {"domain_id": str(target["domain_id"])}
+                    if target.get("domain_id") is not None
+                    else {}
+                ),
+            }
+            for targets in pending_repairs.values()
+            if isinstance(targets, list)
+            for target in targets
+            if isinstance(target, dict) and isinstance(target.get("source_id"), str)
+        ]
         active_source_id = state.get("re_active_source_id")
         active_state = (
             source_states.get(active_source_id)
@@ -1506,6 +1520,13 @@ class ReExtractionController:
             if isinstance(audits, dict):
                 for target in targets:
                     audits.pop(f"{source_id}/{target['domain_id']}", None)
+            state["re_workspace_synthesis_dirty_targets"] = [
+                {
+                    "source_id": source_id,
+                    "domain_id": str(target["domain_id"]),
+                }
+                for target in targets
+            ]
             state["re_workspace_synthesis_complete"] = False
             state["phase"] = "re-extract-2-specify"
             self._reported_source_id = None
@@ -2092,6 +2113,7 @@ class ReExtractionController:
         del targets[0]
         if target.get("kind") == "workspace-synthesis":
             state["re_workspace_synthesis_complete"] = True
+            state.pop("re_workspace_synthesis_dirty_targets", None)
 
     def _prompt_metadata_for_target(
         self,
@@ -2106,6 +2128,7 @@ class ReExtractionController:
         if kind == "workspace-synthesis":
             return self._workspace_synthesis_prompt_metadata(
                 plan,
+                state=state,
                 retry_outputs=self._workspace_synthesis_retry_outputs(plan, state),
             )
         source_id = target.get("source_id")
@@ -2157,6 +2180,7 @@ class ReExtractionController:
         self,
         plan: ReExecutionPlan,
         *,
+        state: dict | None = None,
         retry_outputs: tuple[Path, ...] = (),
     ) -> dict[str, object]:
         published, canonical_source_ids = self._validated_workspace_inputs(plan)
@@ -2196,7 +2220,9 @@ class ReExtractionController:
                 raise ValueError("canonical workspace root is unsafe")
             read_roots.append(workspace_root)
 
-        write_paths = retry_outputs or self._workspace_synthesis_output_paths(plan)
+        write_paths = retry_outputs or self._workspace_synthesis_output_paths(
+            plan, state
+        )
         return {
             "tool_read_roots": [str(path) for path in read_roots],
             "tool_write_paths": [str(path) for path in write_paths],
@@ -2209,13 +2235,23 @@ class ReExtractionController:
         }
 
     def _workspace_synthesis_output_paths(
-        self, plan: ReExecutionPlan
+        self,
+        plan: ReExecutionPlan,
+        state: dict | None = None,
     ) -> tuple[Path, ...]:
         write_paths = {
             self._workspace_synthesis_run_path("workspace", name)
             for name in ("overview.md", "relationships.md", "contracts.md")
         }
+        dirty_targets = self._workspace_synthesis_dirty_targets(plan, state)
+        dirty_source_ids = (
+            {source_id for source_id, _domain_id in dirty_targets}
+            if dirty_targets is not None
+            else None
+        )
         for source in plan.refresh_sources:
+            if dirty_source_ids is not None and source.id not in dirty_source_ids:
+                continue
             source_id = self._workspace_synthesis_component(source.id)
             write_paths.update(
                 self._workspace_synthesis_run_path("sources", source_id, name)
@@ -2229,6 +2265,15 @@ class ReExtractionController:
         architecture = load_re_architecture_map(
             self._run_re_dir / "workspace" / "architecture-map.json"
         )
+        dirty_domain_ids = (
+            {
+                domain_id
+                for _source_id, domain_id in dirty_targets
+                if domain_id is not None
+            }
+            if dirty_targets is not None
+            else None
+        )
         write_paths.update(
             self._workspace_synthesis_run_path(
                 "workspace",
@@ -2236,8 +2281,39 @@ class ReExtractionController:
                 f"{self._workspace_synthesis_component(domain_id)}.md",
             )
             for domain_id in {domain.domain_id for domain in architecture.domains}
+            if dirty_domain_ids is None or domain_id in dirty_domain_ids
         )
         return tuple(sorted(write_paths))
+
+    def _workspace_synthesis_dirty_targets(
+        self,
+        plan: ReExecutionPlan,
+        state: dict | None,
+    ) -> tuple[tuple[str, str | None], ...] | None:
+        """Return trusted incremental invalidations, or None for a full synthesis."""
+        if not isinstance(state, dict):
+            return None
+        raw_targets = state.get("re_workspace_synthesis_dirty_targets")
+        if not isinstance(raw_targets, list) or not raw_targets:
+            return None
+        refresh_ids = {source.id for source in plan.refresh_sources}
+        targets: list[tuple[str, str | None]] = []
+        for raw_target in raw_targets:
+            if not isinstance(raw_target, dict):
+                return None
+            source_id = raw_target.get("source_id")
+            domain_id = raw_target.get("domain_id")
+            if (
+                not isinstance(source_id, str)
+                or source_id not in refresh_ids
+                or (
+                    domain_id is not None
+                    and (not isinstance(domain_id, str) or not domain_id)
+                )
+            ):
+                return None
+            targets.append((source_id, domain_id))
+        return tuple(targets)
 
     def _workspace_synthesis_retry_outputs(
         self,
@@ -2253,7 +2329,7 @@ class ReExtractionController:
             return ()
         expected = {
             path.relative_to(self._run_re_dir).as_posix(): path
-            for path in self._workspace_synthesis_output_paths(plan)
+            for path in self._workspace_synthesis_output_paths(plan, state)
         }
         requested = [
             item.strip() for item in detail.removeprefix(prefix).split(",") if item.strip()
@@ -2387,7 +2463,7 @@ class ReExtractionController:
             target.get("kind") == "workspace-synthesis"
             and agent_block_detail is None
         ):
-            synthesis_error = self._workspace_synthesis_error(plan)
+            synthesis_error = self._workspace_synthesis_error(plan, state)
             if synthesis_error is not None:
                 state["re_agent_result_detail"] = synthesis_error
                 if self._schedule_workspace_synthesis_repair(
@@ -2759,7 +2835,9 @@ class ReExtractionController:
             )
             removed = self._workspace_synthesis_id_list(plan.removed_sources)
             retry_outputs = self._workspace_synthesis_retry_outputs(plan, state)
-            output_paths = retry_outputs or self._workspace_synthesis_output_paths(plan)
+            output_paths = retry_outputs or self._workspace_synthesis_output_paths(
+                plan, state
+            )
             required_outputs = "\n".join(
                 f"- `{path}`"
                 for path in output_paths
@@ -3571,9 +3649,9 @@ class ReExtractionController:
         detail: str,
     ) -> bool:
         """Schedule one scoped retry when file validation finds only missing outputs."""
-        retry_outputs = self._workspace_synthesis_retry_outputs(
-            plan, {"re_agent_result_detail": detail}
-        )
+        retry_state = dict(state)
+        retry_state["re_agent_result_detail"] = detail
+        retry_outputs = self._workspace_synthesis_retry_outputs(plan, retry_state)
         if not retry_outputs:
             return False
         attempts = self._metric(state, "re_workspace_synthesis_repair_attempts")
@@ -3589,7 +3667,11 @@ class ReExtractionController:
         )
         return True
 
-    def _workspace_synthesis_error(self, plan: ReExecutionPlan) -> str | None:
+    def _workspace_synthesis_error(
+        self,
+        plan: ReExecutionPlan,
+        state: dict | None = None,
+    ) -> str | None:
         """Return a deterministic error for an incomplete staged synthesis."""
         forbidden: list[str] = []
         refresh_ids = {source.id for source in plan.refresh_sources}
@@ -3611,35 +3693,10 @@ class ReExtractionController:
                 + ", ".join(sorted(forbidden))
             )
 
-        required = [
-            self._run_re_dir / "workspace" / "overview.md",
-            self._run_re_dir / "workspace" / "relationships.md",
-            self._run_re_dir / "workspace" / "contracts.md",
-        ]
-        required.extend(
-            self._run_re_dir / "sources" / source.id / "overview.md"
-            for source in plan.refresh_sources
-        )
-        for source in plan.refresh_sources:
-            required.extend(
-                (
-                    self._run_re_dir / "sources" / source.id / "architecture.md",
-                    self._run_re_dir / "sources" / source.id / "contracts.md",
-                    self._run_re_dir / "sources" / source.id / "components.md",
-                )
-            )
         try:
-            architecture = load_re_architecture_map(
-                self._run_re_dir / "workspace" / "architecture-map.json"
-            )
+            required = list(self._workspace_synthesis_output_paths(plan, state))
         except ValueError as exc:
             return f"workspace synthesis architecture map is invalid: {exc}"
-        required.extend(
-            self._run_re_dir / "workspace" / "domains" / f"{domain_id}.md"
-            for domain_id in sorted(
-                {domain.domain_id for domain in architecture.domains}
-            )
-        )
 
         invalid: list[str] = []
         for path in required:
@@ -3687,7 +3744,7 @@ class ReExtractionController:
             == _WORKSPACE_SYNTHESIS_SCOPE_PROTOCOL_VERSION
         ):
             return False
-        if self._workspace_synthesis_error(plan) is not None:
+        if self._workspace_synthesis_error(plan, state) is not None:
             return False
 
         target = targets[0]

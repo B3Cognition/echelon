@@ -145,6 +145,20 @@ def test_source_measurement_counts_only_visible_cited_source_files(tmp_path: Pat
 
 
 @pytest.mark.unit
+def test_source_measurement_excludes_empty_source_files(tmp_path: Path) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    source_root = tmp_path / "sources" / "api"
+    (source_root / "src" / "__init__.py").write_text("", encoding="utf-8")
+
+    report = measure_source_quality(run_dir / "re", _plan(run_dir), "api")
+
+    assert report.eligible_file_count == 5
+    assert report.covered_file_count == 5
+    assert report.orphan_paths == ()
+    assert report.passed
+
+
+@pytest.mark.unit
 def test_source_measurement_counts_supporting_artifacts_for_unowned_files(
     tmp_path: Path,
 ) -> None:
@@ -167,6 +181,49 @@ def test_source_measurement_counts_supporting_artifacts_for_unowned_files(
     assert report.coverage_pct == 100
     assert report.orphan_paths == ()
     assert report.passed
+
+
+@pytest.mark.unit
+def test_source_measurement_accepts_valid_multi_range_support_evidence(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    source_root = tmp_path / "sources" / "api"
+    (source_root / "root-support.ts").write_text(
+        "export const runtimeSupport = true;\n", encoding="utf-8"
+    )
+    (run_dir / "re" / "sources" / "api" / "supporting-artifacts.md").write_text(
+        "# Supporting Artifacts\n\n"
+        "- `root-support.ts:1, 1-1` configures runtime support.\n",
+        encoding="utf-8",
+    )
+
+    report = measure_source_quality(run_dir / "re", _plan(run_dir), "api")
+
+    assert report.coverage_pct == 100
+    assert report.orphan_paths == ()
+    assert report.passed
+
+
+@pytest.mark.unit
+def test_source_measurement_rejects_multi_range_evidence_with_invalid_later_range(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    source_root = tmp_path / "sources" / "api"
+    (source_root / "root-support.ts").write_text(
+        "export const runtimeSupport = true;\n", encoding="utf-8"
+    )
+    (run_dir / "re" / "sources" / "api" / "supporting-artifacts.md").write_text(
+        "# Supporting Artifacts\n\n"
+        "- `root-support.ts:1, 2` configures runtime support.\n",
+        encoding="utf-8",
+    )
+
+    report = measure_source_quality(run_dir / "re", _plan(run_dir), "api")
+
+    assert report.orphan_paths == ("root-support.ts",)
+    assert not report.passed
 
 
 @pytest.mark.unit

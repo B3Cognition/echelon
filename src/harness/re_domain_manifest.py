@@ -426,7 +426,7 @@ def _source_files(root: Path) -> list[Path]:
     return [
         path
         for path in _visible_files(root)
-        if path.suffix.lower() in _SOURCE_SUFFIXES
+        if path.suffix.lower() in _SOURCE_SUFFIXES and _is_nonempty_file(path)
     ]
 
 
@@ -454,6 +454,13 @@ def _line_count(path: Path) -> int:
             return sum(1 for _ in handle)
     except OSError:
         return 0
+
+
+def _is_nonempty_file(path: Path) -> bool:
+    try:
+        return path.stat().st_size > 0
+    except OSError:
+        return False
 
 
 def _slug(root: str) -> str:

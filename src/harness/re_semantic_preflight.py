@@ -22,7 +22,8 @@ BEHAVIOR_COVERAGE_CATEGORIES = (
 
 _UNIVERSAL = re.compile(r"\b(all|always|every|never)\b", re.I)
 _BOUNDED_EXCLUSION = re.compile(
-    r"\b(?:not exhaustive|does not cover|doesn't cover|excludes|outside (?:the )?scope)\b",
+    r"\b(?:not exhaustive|not verified against|does not cover|doesn't cover|"
+    r"excludes|outside (?:the )?scope)\b",
     re.I,
 )
 _SENTENCE_BOUNDARY = re.compile(r"[.!?][\"')\]]*\s+(?=[A-Z`*])")
@@ -107,20 +108,41 @@ def check_semantic_preflight(
             )
 
     without_fences = _FENCE.sub("", text)
+    requirement_ids: set[str] = set()
+    reported_duplicate_ids: set[str] = set()
     for match in _REQUIREMENT.finditer(without_fences):
+        title = match.group("title").strip()
+        requirement_id_match = re.match(r"(?:FR|NFR)-\d+", title, re.IGNORECASE)
+        if requirement_id_match is not None:
+            requirement_id = requirement_id_match.group(0).upper()
+            if (
+                requirement_id in requirement_ids
+                and requirement_id not in reported_duplicate_ids
+            ):
+                findings.append(
+                    SemanticPreflightFinding(
+                        "duplicate_requirement_id",
+                        f"duplicate requirement heading: {requirement_id}",
+                    )
+                )
+                reported_duplicate_ids.add(requirement_id)
+            requirement_ids.add(requirement_id)
         body = match.group("body")
+        universal_terms = _unscoped_universal_terms(body)
         exhaustive_scope = re.search(
             r"(?:\*\*)?Evidence Scope:(?:\*\*)?\s*exhaustive\b",
             body,
             re.IGNORECASE,
         )
-        if _has_unscoped_universal_claim(body) and not (
+        if universal_terms and not (
             exhaustive_scope and contains_source_reference(body)
         ):
             findings.append(
                 SemanticPreflightFinding(
                     "unscoped_universal_claim",
-                    f"{match.group('title').strip()} uses a universal claim without exhaustive evidence scope",
+                    f"{title} uses a universal claim without "
+                    "exhaustive evidence scope; unscoped universal term(s): "
+                    + ", ".join(universal_terms),
                     source_references(body),
                 )
             )
@@ -137,15 +159,18 @@ def check_semantic_preflight(
     return tuple(findings)
 
 
-def _has_unscoped_universal_claim(body: str) -> bool:
-    """Return whether a requirement makes a universal claim outside an exclusion."""
+def _unscoped_universal_terms(body: str) -> tuple[str, ...]:
+    """Return distinct universal terms outside bounded exclusion clauses."""
+    terms: list[str] = []
     for match in _UNIVERSAL.finditer(body):
         sentence_start = 0
         for boundary in _SENTENCE_BOUNDARY.finditer(body, 0, match.start()):
             sentence_start = boundary.end()
         if not _BOUNDED_EXCLUSION.search(body[sentence_start:match.start()]):
-            return True
-    return False
+            term = match.group(0).casefold()
+            if term not in terms:
+                terms.append(term)
+    return tuple(terms)
 
 
 def _behavior_coverage_rows(

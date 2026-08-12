@@ -508,6 +508,16 @@ class ReLifecycleController:
             re_state["re_max_inner"] = re_max_inner
             self._save_json(run_dir / "re" / "state.json", re_state)
             self._save_state(run_dir, state)
+        if (
+            state.get("extraction_complete") is True
+            and self._source_budget_raise_reopens_extraction(run_dir, re_max_inner)
+        ):
+            # The controller may have completed its final artifact phases and
+            # left publication blocked on source debt. A genuine source-budget
+            # increase must re-enter that completed controller so it can
+            # reclaim the exact debt queue instead of short-circuiting here.
+            state["extraction_complete"] = False
+            self._save_state(run_dir, state)
 
         if not state.get("extraction_complete"):
             outcome = ReExtractionController(
@@ -635,6 +645,31 @@ class ReLifecycleController:
             if source_key in inner:
                 state[target_key] = inner[source_key]
         self._save_state(run_dir, state)
+
+    def _source_budget_raise_reopens_extraction(
+        self,
+        run_dir: Path,
+        re_max_inner: int | None,
+    ) -> bool:
+        if re_max_inner is None or not self._partial_debt_sources(run_dir):
+            return False
+        inner = self._load_json(run_dir / "re" / "state.json")
+        budgets = inner.get("re_source_budgets")
+        if not isinstance(budgets, dict):
+            return False
+        for key in (
+            "max_source_cycles",
+            "max_domain_repairs",
+            "max_source_reanalysis",
+        ):
+            current = budgets.get(key)
+            if (
+                isinstance(current, int)
+                and not isinstance(current, bool)
+                and re_max_inner > current
+            ):
+                return True
+        return False
 
     @staticmethod
     def _load_json(path: Path) -> dict:

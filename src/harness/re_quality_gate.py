@@ -30,6 +30,7 @@ from harness.re_source_evidence import (
     SOURCE_REFERENCE,
     contains_source_reference,
     source_reference_matches,
+    source_reference_ranges,
 )
 
 
@@ -712,22 +713,23 @@ def _validated_source_evidence(
     root = source_root.resolve()
     for match in source_reference_matches(text):
         raw_path = match.group("path").strip()
-        start = int(match.group("start"))
-        end = int(match.group("end") or start)
+        ranges = source_reference_ranges(match)
         reference = match.group(0)
         relative = Path(raw_path)
         if (
             not raw_path
             or relative.is_absolute()
             or ".." in relative.parts
-            or end < start
+            or any(end < start for start, end in ranges)
         ):
             invalid.add(reference)
             continue
         candidate = _resolve_domain_evidence_path(
             relative, source_root=root, domain_root=domain_root
         )
-        if candidate is None or end > _line_count(candidate):
+        if candidate is None or any(
+            end > _line_count(candidate) for _start, end in ranges
+        ):
             invalid.add(reference)
             continue
         valid.add(reference)
@@ -741,20 +743,21 @@ def _covered_source_paths(
     covered: set[Path] = set()
     for match in source_reference_matches(text):
         raw_path = match.group("path").strip()
-        start = int(match.group("start"))
-        end = int(match.group("end") or start)
+        ranges = source_reference_ranges(match)
         relative = Path(raw_path)
         if (
             not raw_path
             or relative.is_absolute()
             or ".." in relative.parts
-            or end < start
+            or any(end < start for start, end in ranges)
         ):
             continue
         candidate = _resolve_domain_evidence_path(
             relative, source_root=source_root, domain_root=domain_root
         )
-        if candidate is not None and end <= _line_count(candidate):
+        if candidate is not None and all(
+            end <= _line_count(candidate) for _start, end in ranges
+        ):
             covered.add(candidate)
     return covered
 
@@ -764,14 +767,13 @@ def _covered_source_paths_in_source(text: str, *, source_root: Path) -> set[Path
     covered: set[Path] = set()
     for match in source_reference_matches(text):
         raw_path = match.group("path").strip()
-        start = int(match.group("start"))
-        end = int(match.group("end") or start)
+        ranges = source_reference_ranges(match)
         relative = Path(raw_path)
         if (
             not raw_path
             or relative.is_absolute()
             or ".." in relative.parts
-            or end < start
+            or any(end < start for start, end in ranges)
         ):
             continue
         candidate = (source_root / relative).resolve()
@@ -779,7 +781,9 @@ def _covered_source_paths_in_source(text: str, *, source_root: Path) -> set[Path
             candidate.relative_to(source_root)
         except ValueError:
             continue
-        if candidate.is_file() and end <= _line_count(candidate):
+        if candidate.is_file() and all(
+            end <= _line_count(candidate) for _start, end in ranges
+        ):
             covered.add(candidate)
     return covered
 
