@@ -15,9 +15,9 @@ Current grounded counts:
 
 | Surface | Count | Meaning |
 |---|---:|---|
-| Neutral Prosaic agent roles | 56 | Canonical subagent files with neutral `echelon.*` identities |
+| Neutral Prosaic agent roles | 57 | Canonical subagent files with neutral `echelon.*` identities |
 | Workflow-dispatched roles | 38 | Neutral IDs used by structured `agent` or nested dispatch nodes |
-| Direct-use roles | 18 | Available roles invoked outside ordinary workflow agent nodes |
+| Direct-use roles | 19 | Available roles invoked outside ordinary workflow agent nodes |
 | Support prose files | 14 | Appendices and templates that are not independent agent entry points |
 
 Every workflow-dispatched ID resolves to a canonical Prosaic subagent. Direct-use
@@ -28,7 +28,7 @@ for judgment and routing rather than declared as an ordinary agent phase.
 
 | Layer | Prosaic roles | Workflow-dispatched | Direct-use |
 |---|---:|---:|---:|
-| Control | 6 | 3 | 3 |
+| Control | 7 | 3 | 4 |
 | Exploration | 7 | 6 | 1 |
 | Feasibility | 2 | 1 | 1 |
 | Solution | 3 | 3 | 0 |
@@ -59,7 +59,7 @@ nodes in the runtime graph.
 
 | Layer | Roles |
 |---|---|
-| Control | COMMANDER, SCOREKEEPER, CHECKPOINT |
+| Control | COMMANDER, SCOREKEEPER, CHECKPOINT, SUMMARIZER |
 | Exploration | GOLDDIGGER |
 | Feasibility | VALIDATOR |
 | Learning | ADAPTIVE, AUDITOR, CONSOLIDATOR, INTERNALIZER, MIRROR, MONITOR, REALIST, VETERAN |
