@@ -121,12 +121,13 @@ class ClaudeCliBackend:
         return self.run_prompt(request)
 
     def _run_stream_json(self, cmd: list[str], request: CliRunRequest) -> CliRunResult:
+        quiet = request.metadata.get("quiet") is True
         proc = subprocess.Popen(
             cmd,
             cwd=request.cwd,
             env=dict(request.env),
             stdout=subprocess.PIPE,
-            stderr=None,
+            stderr=subprocess.PIPE if quiet else None,
         )
         captured_lines: list[str] = []
         text_chunks: list[str] = []
@@ -135,7 +136,13 @@ class ClaudeCliBackend:
         token_usage = 0
         cost_usd = 0.0
         response_model = ""
+        raw_stderr: list[str] = []
         printer = StreamEventPrinter()
+
+        def drain_stderr() -> None:
+            stream = getattr(proc, "stderr", None)
+            if stream is not None:
+                raw_stderr.append(stream.read().decode("utf-8", errors="replace"))
 
         def kill() -> None:
             nonlocal timed_out
@@ -157,8 +164,11 @@ class ClaudeCliBackend:
             captured_lines[:] = list(reversed(bounded))
 
         timer = threading.Timer(request.timeout_s, kill)
+        stderr_thread = threading.Thread(target=drain_stderr, daemon=True)
         try:
             timer.start()
+            if quiet:
+                stderr_thread.start()
             assert proc.stdout is not None
             for raw in proc.stdout:
                 line = raw.decode("utf-8", errors="replace").strip()
@@ -204,12 +214,16 @@ class ClaudeCliBackend:
             proc.wait()
         finally:
             timer.cancel()
+            if quiet:
+                stderr_thread.join(timeout=1.0)
 
         stdout = "".join(text_chunks).strip() or "\n".join(captured_lines)
         return CliRunResult(
             exit_code=-1 if timed_out else int(proc.returncode),
             stdout=stdout,
-            stderr="\n".join(dict.fromkeys(error_chunks)),
+            stderr="\n".join(
+                item for item in dict.fromkeys([*error_chunks, *raw_stderr]) if item
+            ),
             token_usage=token_usage,
             cost_usd=cost_usd,
             timed_out=timed_out,

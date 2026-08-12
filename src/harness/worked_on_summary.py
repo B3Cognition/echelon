@@ -288,7 +288,7 @@ def _valid_bullets(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | No
     ):
         return None
     if evidence.status in {"blocked", "failed", "error"} and re.search(
-        r"\b(?:(?:run|delivery|spec|work|implementation) (?:completed successfully|fully completed|converged)|all work (?:completed|finished)|all checks succeeded)\b",
+        r"\b(?:everything|release|run|delivery|spec|work|implementation)\b.{0,32}\b(?:succeeded|successful(?:ly)?|fully completed|converged)\b|\ball work (?:completed|finished)\b|\ball checks succeeded\b",
         joined,
     ):
         return None
@@ -325,7 +325,10 @@ def generate_summary(
                     workdir,
                     rendered.prompt,
                     timeout_ms=30_000,
-                    request_metadata={"prompt_metadata": rendered.frontmatter},
+                    request_metadata={
+                        "prompt_metadata": rendered.frontmatter,
+                        "quiet": True,
+                    },
                 )
         if int(getattr(result, "exit_code", -1)) != 0 or bool(getattr(result, "timed_out", False)):
             return fallback
@@ -568,9 +571,7 @@ def worked_on_scope(
     spec_id: str = "",
 ):
     """Emit exactly one summary across a possibly nested lifecycle command."""
-    if os.environ.get("ECHELON_WORKED_ON_SUMMARY") == "defer":
-        yield None
-        return
+    deferred = os.environ.get("ECHELON_WORKED_ON_SUMMARY") == "defer"
     active = _ACTIVE_SCOPE.get()
     if active is not None:
         yield active
@@ -601,17 +602,21 @@ def worked_on_scope(
             if not scope.emitted:
                 evidence = _scope_evidence(scope)
                 if evidence is not None:
-                    bullets = generate_summary(scope.project_root, evidence)
-                    from echelon.ui import banner
+                    if deferred:
+                        _write_deferred_evidence(evidence)
+                        scope.emitted = True
+                    else:
+                        bullets = generate_summary(scope.project_root, evidence)
+                        from echelon.ui import banner
 
-                    banner(
-                        "WORKED ON",
-                        [("summary", format_worked_on(bullets))],
-                        file=sys.stderr
-                        if scope.command.startswith("delivery ")
-                        else None,
-                    )
-                    scope.emitted = True
+                        banner(
+                            "WORKED ON",
+                            [("summary", format_worked_on(bullets))],
+                            file=sys.stderr
+                            if scope.command.startswith("delivery ")
+                            else None,
+                        )
+                        scope.emitted = True
         except (Exception, KeyboardInterrupt):
             pass
         finally:

@@ -3130,8 +3130,9 @@ def test_claude_backend_disables_tools_from_prompt_metadata(tmp_path) -> None:
         def wait(self) -> int:
             return self.returncode
 
-    def fake_popen(command, **_kwargs):
+    def fake_popen(command, **kwargs):
         captured["command"] = command
+        captured["stderr"] = kwargs.get("stderr")
         return FakeProcess()
 
     request = CliRunRequest(
@@ -3140,6 +3141,7 @@ def test_claude_backend_disables_tools_from_prompt_metadata(tmp_path) -> None:
         env={},
         timeout_s=10,
         metadata={
+            "quiet": True,
             "prompt_metadata": {
                 "tools": "none",
                 "tool_read_roots": [str(tmp_path)],
@@ -3154,6 +3156,7 @@ def test_claude_backend_disables_tools_from_prompt_metadata(tmp_path) -> None:
     assert command.count("--tools") == 1
     assert command[command.index("--tools") + 1] == ""
     assert "--allowedTools" not in command
+    assert captured["stderr"] is subprocess.PIPE
 
 
 def test_claude_backend_enforces_prompt_file_scopes(tmp_path) -> None:

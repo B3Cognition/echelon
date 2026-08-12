@@ -214,7 +214,8 @@ def test_generate_summary_uses_fast_low_metadata_once_and_removes_temp_cwd(
     call = provider.calls[0]
     assert call["timeout_ms"] == 30_000
     assert call["request_metadata"] == {
-        "prompt_metadata": summarizer_artifact.frontmatter
+        "prompt_metadata": summarizer_artifact.frontmatter,
+        "quiet": True,
     }
     assert call["request_metadata"]["prompt_metadata"]["tools"] == "none"
     cwd = Path(str(call["cwd"]))
@@ -265,6 +266,8 @@ def test_generate_summary_suppresses_provider_console_noise(
         '{"bullets":["Run failed verification.","Second sentence."]}',
         '{"bullets":["The work completed successfully.","All checks succeeded."]}',
         '{"bullets":["The implementation completed successfully.","Next action remains."]}',
+        '{"bullets":["Everything was successfully implemented.","Next action remains."]}',
+        '{"bullets":["The release succeeded.","Next action remains."]}',
         '{"bullets":["Validation succeeded.","Next action remains."]}',
         '{"bullets":["Implemented one change. Verified another.","All done."]}',
     ],
@@ -279,7 +282,18 @@ def test_generate_summary_falls_back_on_invalid_or_contradictory_output(
     provider = FakeProvider(stdout)
     evidence = WorkedOnEvidence(
         command="delivery run",
-        status="blocked" if "completed successfully" in stdout else "done",
+        status=(
+            "blocked"
+            if any(
+                phrase in stdout
+                for phrase in (
+                    "completed successfully",
+                    "successfully implemented",
+                    "release succeeded",
+                )
+            )
+            else "done"
+        ),
         goal="Add sessions",
         verification=(
             "failed"

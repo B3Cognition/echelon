@@ -128,6 +128,22 @@ def test_delivery_scope_summarizes_failure_before_build_state_exists(
     assert "014-session-security" in output
 
 
+def test_deferred_delivery_scope_persists_early_failure_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    evidence_path = tmp_path / "child-summary.json"
+    monkeypatch.setenv("ECHELON_WORKED_ON_SUMMARY", "defer")
+    monkeypatch.setenv("ECHELON_WORKED_ON_SUMMARY_FILE", str(evidence_path))
+
+    with pytest.raises(SystemExit):
+        with worked_on_scope("delivery run", tmp_path, spec_id="014-session-security"):
+            raise SystemExit(2)
+
+    payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+    assert payload["status"] == "failed"
+    assert payload["blocker"] == "delivery stopped before build state was created"
+
+
 def test_new_spec_preflight_failure_does_not_summarize_stale_prior_run(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
