@@ -319,6 +319,8 @@ class TestRunMultiTarget:
         assert calls[0]["env"]["ECHELON_IMPLEMENTATION_TARGET"] == "sources/api"
         assert calls[1]["env"]["ECHELON_IMPLEMENTATION_TARGET"] == "sources/web"
         assert calls[0]["env"]["ECHELON_DECLARED_TARGETS"] == "sources/web,sources/api"
+        assert calls[0]["env"]["ECHELON_WORKED_ON_SUMMARY"] == "defer"
+        assert calls[1]["env"]["ECHELON_WORKED_ON_SUMMARY"] == "defer"
 
     def test_nested_target_metadata_keeps_workspace_root_and_source_id(
         self, tmp_path: Path

@@ -248,6 +248,7 @@ def run_multi_target(
             env["ECHELON_SOURCE_GIT_ROLE"] = source_git_role
             env["ECHELON_IMPLEMENTATION_TARGET"] = _implementation_target(target)
             env["ECHELON_DECLARED_TARGETS"] = ",".join(declared_targets)
+            env["ECHELON_WORKED_ON_SUMMARY"] = "defer"
             expected_contract_json = contract_json_by_path.get(
                 env["ECHELON_IMPLEMENTATION_TARGET"]
             )
@@ -315,6 +316,29 @@ def run_multi_target(
         if rc != 0:
             all_ok = False
 
+    from harness.worked_on_summary import WorkedOnEvidence, record_terminal_evidence
+
+    failed_labels = tuple(
+        display_label
+        for result_id, (_target, display_label) in target_runs
+        if results.get(result_id, 1) != 0
+    )
+    record_terminal_evidence(
+        WorkedOnEvidence(
+            command=f"delivery {command}",
+            status="done" if all_ok else "failed",
+            spec_id=spec_id,
+            targets=tuple(display_labels),
+            blocker=(
+                f"delivery failed for {', '.join(failed_labels)}"
+                if failed_labels
+                else ""
+            ),
+            next_command=(
+                "" if all_ok else f"echelon delivery continue {spec_id}"
+            ),
+        )
+    )
     return 0 if all_ok else 1
 
 

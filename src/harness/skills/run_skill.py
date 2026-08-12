@@ -350,6 +350,7 @@ def _print_delivery_summary(
 
     from harness.worked_on_summary import (
         attach_to_terminal_fields,
+        current_worked_on_command,
         delivery_evidence,
     )
 
@@ -359,7 +360,7 @@ def _print_delivery_summary(
     fields = attach_to_terminal_fields(
         fields,
         delivery_evidence(
-            command="delivery run",
+            command=current_worked_on_command("delivery run"),
             intent=intent,
             result_map=result_map,
             comparison=comparison,

@@ -48,7 +48,7 @@ def summarizer_artifact() -> ProsaicCommandArtifact:
             "name": "echelon.summarizer",
             "model_tier": "fast",
             "effort": "low",
-            "tools": "write",
+            "tools": "none",
         },
         body="Return the strict summary JSON.",
     )
@@ -123,6 +123,44 @@ def test_delivery_evidence_reports_progress_verification_and_recovery() -> None:
     assert evidence.next_command == "echelon delivery continue 014-session-security"
 
 
+def test_delivery_evidence_uses_converged_strategy_verification_regardless_of_order() -> None:
+    passed = SimpleNamespace(
+        status="done",
+        termination_reason="converged",
+        final_verify=SimpleNamespace(passed=True, failures=[]),
+    )
+    failed = SimpleNamespace(
+        status="failed",
+        termination_reason="outer_cap",
+        final_verify=SimpleNamespace(
+            passed=False,
+            failures=[SimpleNamespace(error="losing strategy failed")],
+        ),
+    )
+    comparison = {
+        "strategies": {
+            "winner": {"converged": True},
+            "loser": {"converged": False},
+        },
+        "summary": {"converged": 1, "failed": 1},
+    }
+
+    for result_map in (
+        {"winner": passed, "loser": failed},
+        {"loser": failed, "winner": passed},
+    ):
+        evidence = delivery_evidence(
+            command="delivery run",
+            intent=SimpleNamespace(spec_id="014", strategies=("winner", "loser")),
+            result_map=result_map,
+            comparison=comparison,
+            next_command="",
+        )
+        assert evidence.status == "done"
+        assert evidence.verification == "passed"
+        assert evidence.verification_failures == ()
+
+
 def test_fallback_is_narrative_and_keeps_recovery_action() -> None:
     evidence = WorkedOnEvidence(
         command="spec continue",
@@ -177,6 +215,7 @@ def test_generate_summary_uses_fast_low_metadata_once_and_removes_temp_cwd(
     assert call["request_metadata"] == {
         "prompt_metadata": summarizer_artifact.frontmatter
     }
+    assert call["request_metadata"]["prompt_metadata"]["tools"] == "none"
     cwd = Path(str(call["cwd"]))
     assert cwd.parent != tmp_path
     assert not cwd.exists()
@@ -193,6 +232,8 @@ def test_generate_summary_uses_fast_low_metadata_once_and_removes_temp_cwd(
         '{"bullets":["Safe sentence.","Unsafe \\u001b[31mred sentence."]}',
         '{"bullets":["# Heading.","Second sentence."]}',
         '{"bullets":["Run failed verification.","Second sentence."]}',
+        '{"bullets":["The work completed successfully.","All checks succeeded."]}',
+        '{"bullets":["Implemented one change. Verified another.","All done."]}',
     ],
 )
 def test_generate_summary_falls_back_on_invalid_or_contradictory_output(
@@ -205,9 +246,9 @@ def test_generate_summary_falls_back_on_invalid_or_contradictory_output(
     provider = FakeProvider(stdout)
     evidence = WorkedOnEvidence(
         command="delivery run",
-        status="done",
+        status="blocked" if "completed successfully" in stdout else "done",
         goal="Add sessions",
-        verification="passed",
+        verification="failed" if "All checks succeeded" in stdout else "passed",
     )
 
     assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)

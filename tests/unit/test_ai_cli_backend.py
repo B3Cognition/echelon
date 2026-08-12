@@ -1420,6 +1420,54 @@ def test_openai_compatible_backend_sends_tool_registry_when_enabled(
     assert captured["payload"]["tool_choice"] == "auto"
 
 
+def test_openai_compatible_backend_disables_tools_from_prompt_metadata(
+    monkeypatch, tmp_path
+) -> None:
+    from harness.ai_cli_backends.openai_compatible import OpenAICompatibleBackend
+
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps({
+                "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+            }).encode()
+
+    def fake_urlopen(request, timeout):
+        captured["payload"] = json.loads(request.data.decode())
+        return FakeResponse()
+
+    monkeypatch.setattr(
+        "harness.ai_cli_backends.openai_compatible.urllib.request.urlopen",
+        fake_urlopen,
+    )
+
+    result = OpenAICompatibleBackend(
+        _openai_config(features={"streaming": False, "tool_calls": True})
+    ).run_prompt(
+        CliRunRequest(
+            cwd=str(tmp_path),
+            prompt="Summarize evidence.",
+            env={},
+            timeout_s=12.5,
+            metadata={"prompt_metadata": {"tools": "none"}},
+        )
+    )
+
+    assert result.exit_code == 0
+    assert captured["payload"]["messages"] == [
+        {"role": "user", "content": "Summarize evidence."}
+    ]
+    assert "tools" not in captured["payload"]
+    assert "tool_choice" not in captured["payload"]
+
+
 def test_openai_compatible_registry_hashes_file_inside_read_scope(tmp_path) -> None:
     from harness.ai_cli_backends.openai_compatible import _OpenAIToolRegistry
 
@@ -3066,6 +3114,46 @@ def test_claude_backend_ignores_unknown_model_tier(tmp_path) -> None:
         backend.run_prompt(request)
 
     assert "--model" not in captured["command"]
+
+
+def test_claude_backend_disables_tools_from_prompt_metadata(tmp_path) -> None:
+    backend = ClaudeCliBackend(_config("claude"))
+    captured = {}
+
+    class FakeProcess:
+        stdout = io.BytesIO(b"")
+        returncode = 0
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self) -> int:
+            return self.returncode
+
+    def fake_popen(command, **_kwargs):
+        captured["command"] = command
+        return FakeProcess()
+
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Summarize evidence.",
+        env={},
+        timeout_s=10,
+        metadata={
+            "prompt_metadata": {
+                "tools": "none",
+                "tool_read_roots": [str(tmp_path)],
+            }
+        },
+    )
+
+    with patch("harness.ai_cli_backends.claude.subprocess.Popen", fake_popen):
+        backend.run_prompt(request)
+
+    command = captured["command"]
+    assert command.count("--tools") == 1
+    assert command[command.index("--tools") + 1] == ""
+    assert "--allowedTools" not in command
 
 
 def test_claude_backend_enforces_prompt_file_scopes(tmp_path) -> None:

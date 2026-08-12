@@ -5,8 +5,10 @@ from dataclasses import asdict, dataclass
 from contextlib import contextmanager
 from contextvars import ContextVar
 import json
+import os
 from pathlib import Path
 import re
+import sys
 import tempfile
 from typing import Mapping, Sequence
 
@@ -165,16 +167,32 @@ def delivery_evidence(
         if isinstance(row, Mapping):
             completed_tasks.extend(_clean_items(row.get("completed_task_ids")))
 
+    selected_results = results
+    converged_ids = tuple(
+        str(strategy_id)
+        for strategy_id, row in strategy_rows.items()
+        if isinstance(row, Mapping) and bool(row.get("converged"))
+    )
+    if converged_ids:
+        selected_results = tuple(
+            result_map[strategy_id]
+            for strategy_id in converged_ids
+            if strategy_id in result_map
+        )
+
     verification = ""
     failures: list[str] = []
-    for result in results:
+    observed_verification: list[bool] = []
+    for result in selected_results:
         verify = getattr(result, "final_verify", None)
         if verify is None:
             continue
         passed = bool(getattr(verify, "passed", False))
-        verification = "passed" if passed else "failed"
+        observed_verification.append(passed)
         for failure in getattr(verify, "failures", None) or ():
             failures.append(_clean_text(getattr(failure, "error", failure), limit=240))
+    if observed_verification:
+        verification = "passed" if all(observed_verification) else "failed"
 
     strategies = getattr(intent, "strategies", ()) or tuple(strategy_rows)
     return WorkedOnEvidence(
@@ -202,7 +220,7 @@ def fallback_summary(evidence: WorkedOnEvidence) -> tuple[str, ...]:
     elif evidence.status == "done":
         bullets.append(f"Completed work toward {goal}.")
     else:
-        bullets.append(f"Made progress toward {goal}.")
+        bullets.append(f"Attempted {evidence.command or 'the requested work'} for {goal}.")
 
     if evidence.verification:
         if evidence.verification == "passed":
@@ -245,6 +263,7 @@ def _valid_bullets(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | No
             or len(bullet) > _MAX_BULLET
             or bullet.startswith(("#", "- ", "* ", "• ", "```", "|"))
             or bullet[-1:] not in {".", "!", "?"}
+            or len(re.findall(r"[.!?](?:\s|$)", bullet)) != 1
         ):
             return None
         normalized.append(bullet)
@@ -252,14 +271,23 @@ def _valid_bullets(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | No
         return None
 
     joined = " ".join(normalized).lower()
-    if evidence.verification == "passed" and re.search(r"\bverification (?:failed|did not pass)\b", joined):
+    if evidence.verification == "passed" and re.search(
+        r"\b(?:verification|checks?|tests?) (?:failed|did not pass|found failures?)\b",
+        joined,
+    ):
         return None
-    if evidence.verification == "failed" and re.search(r"\bverification passed\b", joined):
+    if evidence.verification == "failed" and re.search(
+        r"\b(?:verification|checks?|tests?) (?:passed|succeeded|were successful)\b|\ball checks succeeded\b",
+        joined,
+    ):
         return None
-    if evidence.status == "done" and re.search(r"\b(?:run|delivery|spec) (?:failed|blocked)\b", joined):
+    if evidence.status == "done" and re.search(
+        r"\b(?:run|delivery|spec|work) (?:failed|blocked|stopped unsuccessfully)\b",
+        joined,
+    ):
         return None
     if evidence.status in {"blocked", "failed", "error"} and re.search(
-        r"\b(?:run|delivery|spec) (?:completed successfully|converged)\b",
+        r"\b(?:(?:run|delivery|spec|work) (?:completed successfully|fully completed|converged)|all work (?:completed|finished)|all checks succeeded)\b",
         joined,
     ):
         return None
@@ -309,6 +337,9 @@ class _SummaryScope:
     project_root: Path
     spec_id: str = ""
     emitted: bool = False
+    initial_phase_a_signature: tuple[str, int, int] | None = None
+    exit_status: str = ""
+    pending_evidence: WorkedOnEvidence | None = None
 
 
 _ACTIVE_SCOPE: ContextVar[_SummaryScope | None] = ContextVar(
@@ -337,17 +368,17 @@ def _phase_a_scope_evidence(scope: _SummaryScope) -> WorkedOnEvidence | None:
         if candidate.is_file():
             state_path = candidate
     if state_path is None:
-        candidates = sorted(
-            runs.glob("spec-*/state.json"),
-            key=lambda path: path.stat().st_mtime,
-            reverse=True,
-        ) if runs.is_dir() else []
-        state_path = candidates[0] if candidates else None
-    if state_path is None:
-        return None
+        return _phase_a_without_current_state(scope)
+    signature = _phase_a_signature(scope.project_root)
+    if (
+        scope.command == "spec run"
+        and signature is not None
+        and signature == scope.initial_phase_a_signature
+    ):
+        return _phase_a_without_current_state(scope)
     state = _read_json_object(state_path)
     if not state:
-        return None
+        return _phase_a_without_current_state(scope)
     status = _clean_text(state.get("status") or "unknown")
     next_command = ""
     if status != "done":
@@ -364,6 +395,20 @@ def _phase_a_scope_evidence(scope: _SummaryScope) -> WorkedOnEvidence | None:
     )
 
 
+def _phase_a_without_current_state(scope: _SummaryScope) -> WorkedOnEvidence:
+    failed = scope.exit_status in {"failed", "interrupted"}
+    return WorkedOnEvidence(
+        command=scope.command,
+        status=scope.exit_status if failed else "unknown",
+        spec_id=scope.spec_id,
+        blocker=(
+            f"{scope.command} stopped before new run state was created"
+            if failed
+            else ""
+        ),
+    )
+
+
 def _delivery_scope_evidence(scope: _SummaryScope) -> WorkedOnEvidence | None:
     if not scope.spec_id:
         return None
@@ -372,12 +417,32 @@ def _delivery_scope_evidence(scope: _SummaryScope) -> WorkedOnEvidence | None:
     try:
         build_id = marker.read_text(encoding="utf-8").strip()
     except OSError:
-        return None
+        return WorkedOnEvidence(
+            command=scope.command,
+            status=scope.exit_status or "unknown",
+            spec_id=scope.spec_id,
+            blocker="delivery stopped before build state was created"
+            if scope.exit_status in {"failed", "interrupted"}
+            else "",
+            next_command=f"echelon delivery continue {scope.spec_id}"
+            if scope.exit_status != "done"
+            else "",
+        )
     state_dir = runs / build_id / "state"
     states = [_read_json_object(path) for path in sorted(state_dir.glob("*.json"))]
     states = [state for state in states if state]
     if not states:
-        return None
+        return WorkedOnEvidence(
+            command=scope.command,
+            status=scope.exit_status or "unknown",
+            spec_id=scope.spec_id,
+            blocker="delivery stopped before strategy state was created"
+            if scope.exit_status in {"failed", "interrupted"}
+            else "",
+            next_command=f"echelon delivery continue {scope.spec_id}"
+            if scope.exit_status != "done"
+            else "",
+        )
     statuses = [_clean_text(state.get("status")) for state in states]
     status = "done" if statuses and all(item == "done" for item in statuses) else next(
         (item for item in statuses if item),
@@ -407,6 +472,8 @@ def _delivery_scope_evidence(scope: _SummaryScope) -> WorkedOnEvidence | None:
 
 
 def _scope_evidence(scope: _SummaryScope) -> WorkedOnEvidence | None:
+    if scope.pending_evidence is not None:
+        return scope.pending_evidence
     if scope.command.startswith("delivery "):
         return _delivery_scope_evidence(scope)
     return _phase_a_scope_evidence(scope)
@@ -421,6 +488,8 @@ def attach_to_terminal_fields(
     provider: object | None = None,
 ) -> list[tuple[str, str]]:
     """Append one narrative section and satisfy an active emit-once scope."""
+    if os.environ.get("ECHELON_WORKED_ON_SUMMARY") == "defer":
+        return list(fields)
     bullets = generate_summary(
         project_root,
         evidence,
@@ -433,6 +502,28 @@ def attach_to_terminal_fields(
     return [*fields, ("Worked on", format_worked_on(bullets))]
 
 
+def current_worked_on_command(default: str) -> str:
+    scope = _ACTIVE_SCOPE.get()
+    return scope.command if scope is not None else default
+
+
+def record_terminal_evidence(evidence: WorkedOnEvidence) -> None:
+    scope = _ACTIVE_SCOPE.get()
+    if scope is not None:
+        scope.pending_evidence = evidence
+
+
+def _phase_a_signature(project_root: Path) -> tuple[str, int, int] | None:
+    runs = project_root / "runs"
+    try:
+        run_id = (runs / ".current").read_text(encoding="utf-8").strip()
+        state_path = runs / run_id / "state.json"
+        stat = state_path.stat()
+    except OSError:
+        return None
+    return run_id, stat.st_mtime_ns, stat.st_size
+
+
 @contextmanager
 def worked_on_scope(
     command: str,
@@ -441,6 +532,9 @@ def worked_on_scope(
     spec_id: str = "",
 ):
     """Emit exactly one summary across a possibly nested lifecycle command."""
+    if os.environ.get("ECHELON_WORKED_ON_SUMMARY") == "defer":
+        yield None
+        return
     active = _ACTIVE_SCOPE.get()
     if active is not None:
         yield active
@@ -450,10 +544,22 @@ def worked_on_scope(
         command=_clean_text(command),
         project_root=Path(project_root).resolve(),
         spec_id=_clean_text(spec_id),
+        initial_phase_a_signature=_phase_a_signature(Path(project_root).resolve()),
     )
     token = _ACTIVE_SCOPE.set(scope)
     try:
-        yield scope
+        try:
+            yield scope
+        except BaseException as exc:
+            if isinstance(exc, KeyboardInterrupt):
+                scope.exit_status = "interrupted"
+            elif isinstance(exc, SystemExit) and (exc.code is None or exc.code == 0):
+                scope.exit_status = "done"
+            else:
+                scope.exit_status = "failed"
+            raise
+        else:
+            scope.exit_status = "done"
     finally:
         try:
             if not scope.emitted:
@@ -465,6 +571,9 @@ def worked_on_scope(
                     banner(
                         "WORKED ON",
                         [("summary", format_worked_on(bullets))],
+                        file=sys.stderr
+                        if scope.command.startswith("delivery ")
+                        else None,
                     )
                     scope.emitted = True
         except Exception:

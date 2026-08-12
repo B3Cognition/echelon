@@ -70,6 +70,9 @@ class ClaudeCliBackend:
                 return _invalid_review_triage_profile_result()
             cmd.extend(profile_args)
             return self._run_stream_json(cmd, request)
+        if _prompt_metadata_str(request, "tools").lower() == "none":
+            cmd.extend(["--tools", ""])
+            return self._run_stream_json(cmd, request)
         scope_args = _prompt_file_scope_args(request)
         if scope_args:
             cmd.extend(scope_args)

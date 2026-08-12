@@ -47,7 +47,13 @@ def test_phase_a_lifecycle_callbacks_emit_one_summary_for_persisted_run(
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(f"echelon.cli.{handler}", lambda _args: None)
+    def fake_handler(_args: object) -> None:
+        if handler == "_cmd_spec_run":
+            state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+            state["phase"] = "phase3-plan"
+            (run_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+    monkeypatch.setattr(f"echelon.cli.{handler}", fake_handler)
     monkeypatch.setattr(
         "echelon.wiki.service.capture_input_snapshot",
         lambda _root: None,
@@ -101,11 +107,53 @@ def test_scope_preserves_original_system_exit_code(
     )
 
     with pytest.raises(SystemExit) as exc:
-        with worked_on_scope("spec run", tmp_path):
+        with worked_on_scope("spec continue", tmp_path):
             raise SystemExit(7)
 
     assert exc.value.code == 7
     assert "WORKED ON" in capsys.readouterr().out
+
+
+def test_delivery_scope_summarizes_failure_before_build_state_exists(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exc:
+        with worked_on_scope("delivery run", tmp_path, spec_id="014-session-security"):
+            raise SystemExit(2)
+
+    assert exc.value.code == 2
+    output = capsys.readouterr().err
+    assert "WORKED ON" in output
+    assert "014-session-security" in output
+
+
+def test_new_spec_preflight_failure_does_not_summarize_stale_prior_run(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    run_dir = tmp_path / "runs" / "spec-old"
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text("spec-old", encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "done",
+                "spec_id": "001-old-work",
+                "user_message": "Old work",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit):
+        with worked_on_scope("spec run", tmp_path):
+            raise SystemExit(2)
+
+    output = capsys.readouterr().out
+    assert "WORKED ON" in output
+    assert "Old work" not in output
+    assert "spec run stopped before new run state was created" in output
 
 
 def test_phase_a_banner_adds_narrative_worked_on_field(
@@ -138,7 +186,8 @@ def test_phase_a_banner_adds_narrative_worked_on_field(
         message="Add sessions",
     )
 
-    output = capsys.readouterr().out
+    captured = capsys.readouterr()
+    output = captured.out + captured.err
     assert "Worked on" in output
     assert "Worked through 2 phases toward Add sessions." in output
 
@@ -188,7 +237,8 @@ def test_delivery_lifecycle_callbacks_emit_one_summary_for_persisted_run(
 
     assert run(argv) is None
 
-    output = capsys.readouterr().out
+    captured = capsys.readouterr()
+    output = captured.out + captured.err
     assert output.count("WORKED ON") == 1
     assert "Worked through 2 tasks toward 014-session-security." in output
     assert "echelon delivery continue 014-session-security" in output

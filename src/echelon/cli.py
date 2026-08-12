@@ -4595,6 +4595,7 @@ def _print_squad_summary(
     fields.append(("result", _phase_a_result_line(status, state)))
     from harness.worked_on_summary import (
         attach_to_terminal_fields,
+        current_worked_on_command,
         phase_a_evidence,
     )
 
@@ -4602,7 +4603,7 @@ def _print_squad_summary(
     fields = attach_to_terminal_fields(
         fields,
         phase_a_evidence(
-            command="spec run",
+            command=current_worked_on_command("spec run"),
             state=state,
             result=result,
             next_command=next_command,
