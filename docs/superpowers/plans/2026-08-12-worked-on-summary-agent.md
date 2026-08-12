@@ -13,7 +13,7 @@
 - Cover `spec run`, `spec continue`, `spec resume`, `delivery run`, `delivery continue`, and `delivery resume`.
 - Attempt a summary for successful, blocked, interrupted, and failed valid runs.
 - Use a distinct `echelon.summarizer` prompt with `model_tier: fast` and `effort: low`.
-- Give the summarizer bounded structured evidence, no repository context, and no requested tool operations.
+- Give the summarizer bounded structured evidence and no repository context; use normal provider tool availability for cross-provider execution while instructing the agent to synthesize without tools.
 - Return two to four outcome-focused sentences, not a generated file inventory.
 - Cap serialized evidence at 12 KiB and provider latency at 30 seconds.
 - Summary failures must not change durable state or the original command exit code.
@@ -98,13 +98,12 @@ The prompt frontmatter must include:
 name: echelon.summarizer
 description: SUMMARIZER — concise terminal recap of completed work
 execution: agent
-tools: write
 color: blue
 model_tier: fast
 effort: low
 ```
 
-Its ALWAYS/NEVER pairs must require evidence-grounded outcome prose, prohibit tool calls and repository inspection, reject file-inventory summaries, and require the exact JSON envelope.
+Its ALWAYS/NEVER pairs must require evidence-grounded outcome prose, prohibit tool calls and repository inspection, reject file-inventory summaries, and require the exact JSON envelope. Do not declare a restrictive `tools` profile: normal provider availability keeps the separate-agent path portable across Claude, Codex, Copilot, OpenCode, and OpenAI-compatible backends.
 
 - [ ] **Step 4: Run focused tests and verify GREEN**
 

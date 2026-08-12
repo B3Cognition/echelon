@@ -58,9 +58,10 @@ Representative blocked output:
 ### Dedicated summarizer agent
 
 Add a neutral Prosaic subagent named `echelon.summarizer`. Its frontmatter fixes
-the execution profile to `model_tier: fast` and `effort: low`. It requests no
-tool operations because all allowed evidence is supplied in its prompt. Its
-invariant protocol requires it to:
+the execution profile to `model_tier: fast` and `effort: low`. It uses the
+provider's normal tool availability so every supported provider, including
+Codex, can execute the separate-agent path. Its invariant protocol still
+requires it to:
 
 - summarize material outcomes, decisions, progress, verification, and recovery;
 - avoid dry file inventories and generic statements;
@@ -69,8 +70,12 @@ invariant protocol requires it to:
 - return only the strict structured response requested by the caller.
 
 The agent is distinct from COMMANDER, MANAGER, and the deterministic harness. It
-is invoked from an empty temporary working directory and does not write
-artifacts, run commands, mutate state, or participate in routing.
+is invoked from an empty temporary working directory and is instructed not to
+write artifacts, run commands, mutate state, or participate in routing. Normal
+tool availability is a provider-compatibility choice, not an invitation to use
+tools; the empty workspace, bounded evidence packet, 30-second timeout, quiet
+dispatch, strict response validation, and deterministic fallback remain the
+enforced safety boundary.
 
 ### Shared terminal-summary service
 
@@ -164,7 +169,8 @@ control banner structure.
 
 The invocation uses the configured provider with the summarizer's `fast`/`low`
 metadata, a 30-second timeout, and an instruction-level cap of four short
-sentences. The small packet and tool-free prompt keep token use and latency low.
+sentences. The small packet, passive prompt, fast model tier, and low effort keep
+token use and latency low.
 
 Summary generation is best effort. Provider errors, timeouts, session limits,
 missing deployed prompt files, invalid JSON, schema violations, or unsafe output
