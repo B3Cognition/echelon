@@ -597,6 +597,16 @@ deterministically impacted. In short: full fulfillment evidence is still require
 
 Harness `run` and `resume` also print `HARNESS HISTORY`: tracked runs, checkpoint state, and token/cost totals for the same spec so repeated resumes do not feel like a black box.
 
+Every `echelon spec run`, `spec continue`, `spec resume`, `delivery run`,
+`delivery continue`, and `delivery resume` terminal outcome also includes a
+`Worked on` narrative. A dedicated `fast`/`low` SUMMARIZER agent turns bounded,
+durable run evidence into two to four outcome-focused sentences covering what
+changed, what was verified, where work stopped, and the next recovery action.
+This applies to successful, blocked, interrupted, and failed runs. If the
+summary agent is unavailable, times out, or returns invalid output, Echelon
+prints a deterministic narrative fallback without changing run state or the
+command's exit code.
+
 ### Explicit scope deferrals
 
 Use `echelon spec defer <id> <T-*|FR-*|NFR-*|AC-*|SC-*> --reason "..."` when an
