@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from contextvars import ContextVar
+import io
 import json
 import os
 from pathlib import Path
@@ -287,7 +288,12 @@ def _valid_bullets(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | No
     ):
         return None
     if evidence.status in {"blocked", "failed", "error"} and re.search(
-        r"\b(?:(?:run|delivery|spec|work) (?:completed successfully|fully completed|converged)|all work (?:completed|finished)|all checks succeeded)\b",
+        r"\b(?:(?:run|delivery|spec|work|implementation) (?:completed successfully|fully completed|converged)|all work (?:completed|finished)|all checks succeeded)\b",
+        joined,
+    ):
+        return None
+    if evidence.verification == "failed" and re.search(
+        r"\b(?:verification|validation|checks?|tests?) (?:passed|succeeded|were successful)\b",
         joined,
     ):
         return None
@@ -314,16 +320,17 @@ def generate_summary(
 
             provider = AICodingCliProvider(config or load_config(project_root, squad_only=True))
         with tempfile.TemporaryDirectory(prefix="echelon-summary-") as workdir:
-            result = provider.run_agent_result(
-                workdir,
-                rendered.prompt,
-                timeout_ms=30_000,
-                request_metadata={"prompt_metadata": rendered.frontmatter},
-            )
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                result = provider.run_agent_result(
+                    workdir,
+                    rendered.prompt,
+                    timeout_ms=30_000,
+                    request_metadata={"prompt_metadata": rendered.frontmatter},
+                )
         if int(getattr(result, "exit_code", -1)) != 0 or bool(getattr(result, "timed_out", False)):
             return fallback
         return _valid_bullets(str(getattr(result, "stdout", "")), evidence) or fallback
-    except Exception:
+    except (Exception, KeyboardInterrupt):
         return fallback
 
 
@@ -489,6 +496,7 @@ def attach_to_terminal_fields(
 ) -> list[tuple[str, str]]:
     """Append one narrative section and satisfy an active emit-once scope."""
     if os.environ.get("ECHELON_WORKED_ON_SUMMARY") == "defer":
+        _write_deferred_evidence(evidence)
         return list(fields)
     bullets = generate_summary(
         project_root,
@@ -500,6 +508,34 @@ def attach_to_terminal_fields(
     if scope is not None:
         scope.emitted = True
     return [*fields, ("Worked on", format_worked_on(bullets))]
+
+
+def _write_deferred_evidence(evidence: WorkedOnEvidence) -> None:
+    path = os.environ.get("ECHELON_WORKED_ON_SUMMARY_FILE", "").strip()
+    if not path:
+        return
+    try:
+        Path(path).write_text(evidence.to_json(), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def read_deferred_evidence(path: Path) -> WorkedOnEvidence | None:
+    payload = _read_json_object(path)
+    if not payload:
+        return None
+    fields = WorkedOnEvidence.__dataclass_fields__
+    values: dict[str, object] = {}
+    for name in fields:
+        value = payload.get(name, () if name in {
+            "completed_phases", "decisions", "completed_tasks", "task_titles",
+            "artifacts", "verification_failures", "targets", "strategies",
+        } else "")
+        values[name] = tuple(value) if isinstance(value, list) else value
+    try:
+        return WorkedOnEvidence(**values)
+    except TypeError:
+        return None
 
 
 def current_worked_on_command(default: str) -> str:
@@ -576,7 +612,7 @@ def worked_on_scope(
                         else None,
                     )
                     scope.emitted = True
-        except Exception:
+        except (Exception, KeyboardInterrupt):
             pass
         finally:
             _ACTIVE_SCOPE.reset(token)

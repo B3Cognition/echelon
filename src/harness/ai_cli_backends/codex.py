@@ -28,9 +28,13 @@ class CodexCliBackend:
         self._bin = shutil.which("codex") or "codex"
 
     def run_prompt(self, request: CliRunRequest) -> CliRunResult:
+        if _tools_disabled(request):
+            return _tool_free_mode_unsupported(self.name)
         return self._run_codex(request, use_final_message=True)
 
     def run_agent(self, request: CliRunRequest) -> CliRunResult:
+        if _tools_disabled(request):
+            return _tool_free_mode_unsupported(self.name)
         return self._run_codex(request, use_final_message=True)
 
     def _run_codex(
@@ -143,6 +147,20 @@ def _codex_model_for_request(request: CliRunRequest) -> str | None:
     if not isinstance(tier, str):
         return None
     return _MODEL_TIER_TO_CODEX_MODEL.get(tier.strip().lower())
+
+
+def _tools_disabled(request: CliRunRequest) -> bool:
+    metadata = request.metadata.get("prompt_metadata")
+    return isinstance(metadata, dict) and str(metadata.get("tools", "")).lower() == "none"
+
+
+def _tool_free_mode_unsupported(provider: str) -> CliRunResult:
+    return CliRunResult(
+        exit_code=125,
+        stdout="",
+        stderr=f"{provider} backend cannot enforce tool-free execution",
+        metadata={"provider_error_code": "tool_free_mode_unsupported"},
+    )
 
 
 @dataclass(frozen=True)

@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 from collections import Counter
 from pathlib import Path
@@ -219,6 +220,8 @@ def run_multi_target(
             else label
         )
     target_runs = list(enumerate(zip(ordered_targets, display_labels)))
+    summary_temp = tempfile.TemporaryDirectory(prefix="echelon-target-summaries-")
+    summary_dir = Path(summary_temp.name)
 
     def _run_one(result_id: int, target: Path, display_label: str) -> None:
         name = target.name
@@ -249,6 +252,9 @@ def run_multi_target(
             env["ECHELON_IMPLEMENTATION_TARGET"] = _implementation_target(target)
             env["ECHELON_DECLARED_TARGETS"] = ",".join(declared_targets)
             env["ECHELON_WORKED_ON_SUMMARY"] = "defer"
+            env["ECHELON_WORKED_ON_SUMMARY_FILE"] = str(
+                summary_dir / f"{result_id}.json"
+            )
             expected_contract_json = contract_json_by_path.get(
                 env["ECHELON_IMPLEMENTATION_TARGET"]
             )
@@ -316,21 +322,66 @@ def run_multi_target(
         if rc != 0:
             all_ok = False
 
-    from harness.worked_on_summary import WorkedOnEvidence, record_terminal_evidence
+    from harness.worked_on_summary import (
+        WorkedOnEvidence,
+        read_deferred_evidence,
+        record_terminal_evidence,
+    )
 
     failed_labels = tuple(
         display_label
         for result_id, (_target, display_label) in target_runs
         if results.get(result_id, 1) != 0
     )
+    child_evidence = tuple(
+        evidence
+        for result_id, _target in target_runs
+        if (evidence := read_deferred_evidence(summary_dir / f"{result_id}.json"))
+        is not None
+    )
+    completed_tasks = tuple(
+        dict.fromkeys(task for evidence in child_evidence for task in evidence.completed_tasks)
+    )
+    task_titles = tuple(
+        dict.fromkeys(title for evidence in child_evidence for title in evidence.task_titles)
+    )
+    artifacts = tuple(
+        dict.fromkeys(artifact for evidence in child_evidence for artifact in evidence.artifacts)
+    )
+    verification_states = tuple(
+        evidence.verification for evidence in child_evidence if evidence.verification
+    )
+    blockers = tuple(
+        evidence.blocker for evidence in child_evidence if evidence.blocker
+    )
+    child_statuses = tuple(evidence.status for evidence in child_evidence)
+    aggregate_status = "done" if all_ok else (
+        "failed"
+        if any(status in {"failed", "error"} for status in child_statuses)
+        else "blocked"
+        if any(status and status != "done" for status in child_statuses)
+        else "failed"
+    )
     record_terminal_evidence(
         WorkedOnEvidence(
             command=f"delivery {command}",
-            status="done" if all_ok else "failed",
+            status=aggregate_status,
             spec_id=spec_id,
             targets=tuple(display_labels),
+            completed_tasks=completed_tasks,
+            task_titles=task_titles,
+            artifacts=artifacts,
+            verification=(
+                "failed"
+                if "failed" in verification_states
+                else "passed" if verification_states and all(
+                    state == "passed" for state in verification_states
+                ) else ""
+            ),
             blocker=(
-                f"delivery failed for {', '.join(failed_labels)}"
+                "; ".join(dict.fromkeys(blockers))
+                if blockers
+                else f"delivery stopped for {', '.join(failed_labels)}"
                 if failed_labels
                 else ""
             ),
@@ -339,6 +390,7 @@ def run_multi_target(
             ),
         )
     )
+    summary_temp.cleanup()
     return 0 if all_ok else 1
 
 

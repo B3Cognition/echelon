@@ -322,6 +322,50 @@ class TestRunMultiTarget:
         assert calls[0]["env"]["ECHELON_WORKED_ON_SUMMARY"] == "defer"
         assert calls[1]["env"]["ECHELON_WORKED_ON_SUMMARY"] == "defer"
 
+    def test_multi_target_aggregates_deferred_child_evidence(
+        self, tmp_path: Path
+    ) -> None:
+        targets = [tmp_path / "api", tmp_path / "web"]
+        for target in targets:
+            target.mkdir()
+        recorded = []
+
+        def fake_popen(cmd, cwd, stdout, stderr, text, env=None):
+            target = Path(cwd).name
+            Path(env["ECHELON_WORKED_ON_SUMMARY_FILE"]).write_text(
+                json.dumps(
+                    {
+                        "command": "delivery run",
+                        "status": "blocked" if target == "web" else "done",
+                        "spec_id": "024",
+                        "completed_tasks": [f"T-{target}"],
+                        "artifacts": [f"dist/{target}.zip"],
+                        "verification": "passed",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            mock = MagicMock()
+            mock.stdout = iter([])
+            mock.returncode = 1 if target == "web" else 0
+            mock.wait.return_value = None
+            return mock
+
+        with (
+            patch("subprocess.Popen", side_effect=fake_popen),
+            patch(
+                "harness.worked_on_summary.record_terminal_evidence",
+                side_effect=recorded.append,
+            ),
+        ):
+            assert run_multi_target("024", targets, [], echelon_bin="echelon") == 1
+
+        assert len(recorded) == 1
+        assert recorded[0].completed_tasks == ("T-api", "T-web")
+        assert recorded[0].artifacts == ("dist/api.zip", "dist/web.zip")
+        assert recorded[0].verification == "passed"
+        assert recorded[0].status == "blocked"
+
     def test_nested_target_metadata_keeps_workspace_root_and_source_id(
         self, tmp_path: Path
     ) -> None:

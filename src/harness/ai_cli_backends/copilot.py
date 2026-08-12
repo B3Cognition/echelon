@@ -26,6 +26,8 @@ class CopilotCliBackend:
             self._config.llm.tool_policy,
             copilot_json=True,
         )
+        if _tools_disabled(request):
+            cmd.extend(["--excluded-tools=*", "--disable-builtin-mcps"])
         return self._run(cmd, request)
 
     def run_agent(self, request: CliRunRequest) -> CliRunResult:
@@ -106,3 +108,8 @@ def _extract_copilot_text(line: str) -> str:
     if "type" in event:
         return ""
     return line
+
+
+def _tools_disabled(request: CliRunRequest) -> bool:
+    metadata = request.metadata.get("prompt_metadata")
+    return isinstance(metadata, dict) and str(metadata.get("tools", "")).lower() == "none"

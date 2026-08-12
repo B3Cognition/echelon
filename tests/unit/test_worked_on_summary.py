@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -222,6 +223,36 @@ def test_generate_summary_uses_fast_low_metadata_once_and_removes_temp_cwd(
     assert '"goal":"Add sessions"' in str(call["prompt"])
 
 
+def test_generate_summary_suppresses_provider_console_noise(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    summarizer_artifact: ProsaicCommandArtifact,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _install_fake_prompt(monkeypatch, summarizer_artifact)
+
+    class NoisyProvider(FakeProvider):
+        def run_agent_result(self, *args, **kwargs):
+            print('raw {"bullets":["Done.","Verified."]}')
+            print("provider diagnostic", file=sys.stderr)
+            return super().run_agent_result(*args, **kwargs)
+
+    provider = NoisyProvider(
+        '{"bullets":["Completed the requested work.","Verification passed."]}'
+    )
+    evidence = WorkedOnEvidence(
+        command="spec run", status="done", verification="passed"
+    )
+
+    assert generate_summary(tmp_path, evidence, provider=provider) == (
+        "Completed the requested work.",
+        "Verification passed.",
+    )
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
 @pytest.mark.parametrize(
     "stdout",
     [
@@ -233,6 +264,8 @@ def test_generate_summary_uses_fast_low_metadata_once_and_removes_temp_cwd(
         '{"bullets":["# Heading.","Second sentence."]}',
         '{"bullets":["Run failed verification.","Second sentence."]}',
         '{"bullets":["The work completed successfully.","All checks succeeded."]}',
+        '{"bullets":["The implementation completed successfully.","Next action remains."]}',
+        '{"bullets":["Validation succeeded.","Next action remains."]}',
         '{"bullets":["Implemented one change. Verified another.","All done."]}',
     ],
 )
@@ -248,7 +281,11 @@ def test_generate_summary_falls_back_on_invalid_or_contradictory_output(
         command="delivery run",
         status="blocked" if "completed successfully" in stdout else "done",
         goal="Add sessions",
-        verification="failed" if "All checks succeeded" in stdout else "passed",
+        verification=(
+            "failed"
+            if "All checks succeeded" in stdout or "Validation succeeded" in stdout
+            else "passed"
+        ),
     )
 
     assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)

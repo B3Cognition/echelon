@@ -19,6 +19,13 @@ class OpenCodeCliBackend:
         self._bin = shutil.which(self.name) or self.name
 
     def run_prompt(self, request: CliRunRequest) -> CliRunResult:
+        if _tools_disabled(request):
+            return CliRunResult(
+                exit_code=125,
+                stdout="",
+                stderr="opencode backend cannot enforce tool-free execution",
+                metadata={"provider_error_code": "tool_free_mode_unsupported"},
+            )
         cmd = build_llm_cli_command(
             self.name,
             self._bin,
@@ -106,3 +113,8 @@ def _extract_opencode_text(line: str) -> str:
     if "type" in event:
         return ""
     return line
+
+
+def _tools_disabled(request: CliRunRequest) -> bool:
+    metadata = request.metadata.get("prompt_metadata")
+    return isinstance(metadata, dict) and str(metadata.get("tools", "")).lower() == "none"
