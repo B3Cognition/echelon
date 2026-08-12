@@ -52,8 +52,10 @@ ALWAYS preserve exact recorded verification facts and `short SHA — subject`
 commit strings when supplied, and explicitly explain a supplied provider limit
 when the run is blocked.
 NEVER generalize away supplied verification counts, alter attributed commit
-identities, omit a provider limit that explains the stop, or claim facts that
-the evidence does not record.
+identities, omit a provider limit that explains the stop, add numeric test counts
+or named verification commands absent from the recorded verification text, or
+claim facts that the evidence does not record. NEVER describe blocked work as
+ready for integration, review, merge, release, shipment, or deployment.
 
 ## Content Order
 
@@ -61,7 +63,8 @@ the evidence does not record.
 2. Mention implementation or specification progress when supported.
 3. Mention exact verification and explicitly attributed commits when supplied.
 4. Explain the authoritative blocker and any supplied provider-limit cause.
-5. End with readiness or the supplied next action.
+5. End completed work with grounded readiness, or blocked work with the supplied
+   next action.
 
 Do not add bullet glyphs. Each array entry is one plain prose line and the
 terminal renderer owns its layout.

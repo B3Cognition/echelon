@@ -181,6 +181,35 @@ def test_phase_a_evidence_uses_only_recorded_rich_handoff_facts() -> None:
     assert evidence.next_note == "Retry the blocked phase after the provider reset."
 
 
+def test_phase_a_evidence_extracts_persisted_delivery_checkpoint_commit() -> None:
+    evidence = phase_a_evidence(
+        command="spec continue",
+        state={
+            "status": "blocked",
+            "checkpoint_commits": [
+                {
+                    "commit": "abcdef1234567890abcdef1234567890abcdef12",
+                    "subject": "harness-checkpoint: 014/default iter-0 build T-001",
+                    "outer_iter": 0,
+                    "inner_iter": 1,
+                    "phase": "build",
+                    "task_ids": ["T-001"],
+                    "phase_group": "phase-2-foundation",
+                    "completed_tasks_before": 0,
+                    "completed_tasks_after": 1,
+                    "created_at": "2026-08-12T10:03:05+00:00",
+                }
+            ],
+        },
+        result=SimpleNamespace(status="blocked", phase="build"),
+        next_command="echelon spec continue",
+    )
+
+    assert evidence.commits == (
+        "abcdef123456 — harness-checkpoint: 014/default iter-0 build T-001",
+    )
+
+
 def test_delivery_evidence_reports_progress_verification_and_recovery() -> None:
     result = SimpleNamespace(
         status="blocked",
@@ -226,10 +255,18 @@ def test_delivery_evidence_uses_selected_canonical_strategy_facts() -> None:
                 "started_at": "2026-08-12T10:00:00+00:00",
                 "updated_at": "2026-08-12T10:03:05+00:00",
                 "outcomes": ["Implemented the resolver."],
-                "lifecycle_commits": [
+                "checkpoint_commits": [
                     {
-                        "sha": "1234567890abcdef1234567890abcdef12345678",
-                        "subject": "feat: implement resolver",
+                        "commit": "1234567890abcdef1234567890abcdef12345678",
+                        "subject": "harness-checkpoint: 014/default iter-0 build T-001",
+                        "outer_iter": 0,
+                        "inner_iter": 1,
+                        "phase": "build",
+                        "task_ids": ["T-001"],
+                        "phase_group": "phase-2-foundation",
+                        "completed_tasks_before": 0,
+                        "completed_tasks_after": 1,
+                        "created_at": "2026-08-12T10:03:05+00:00",
                     }
                 ],
                 "provider_limit_message": "Rate limit resets in 20 minutes.",
@@ -249,7 +286,9 @@ def test_delivery_evidence_uses_selected_canonical_strategy_facts() -> None:
     assert evidence.duration == "3m 5s"
     assert evidence.outcomes == ("Implemented the resolver.",)
     assert evidence.verification == "passed in 12.5s"
-    assert evidence.commits == ("1234567890ab — feat: implement resolver",)
+    assert evidence.commits == (
+        "1234567890ab — harness-checkpoint: 014/default iter-0 build T-001",
+    )
     assert evidence.provider_limit_message == "Rate limit resets in 20 minutes."
     assert evidence.next_note == "Retry verification after the provider reset."
 
@@ -323,7 +362,7 @@ def test_generate_summary_uses_fast_low_metadata_once_and_removes_temp_cwd(
                 "lines": [
                     "Implemented provider-owned model selection.",
                     "Added deterministic mapping precedence.",
-                    "Verification passed across 200 focused tests.",
+                    "Verification passed.",
                     "The feature is ready for integration.",
                 ]
             }
@@ -345,7 +384,7 @@ def test_generate_summary_uses_fast_low_metadata_once_and_removes_temp_cwd(
     assert lines == (
         "Implemented provider-owned model selection.",
         "Added deterministic mapping precedence.",
-        "Verification passed across 200 focused tests.",
+        "Verification passed.",
         "The feature is ready for integration.",
     )
     assert "•" not in format_worked_on(lines)
@@ -362,6 +401,68 @@ def test_generate_summary_uses_fast_low_metadata_once_and_removes_temp_cwd(
     assert cwd.parent != tmp_path
     assert not cwd.exists()
     assert '"goal":"Add sessions"' in str(call["prompt"])
+
+
+@pytest.mark.parametrize(
+    "invented_verification",
+    (
+        "Verification passed across 999 focused tests.",
+        "Verification passed with `pytest tests/unit -q`.",
+        "Verification passed with pytest tests/unit -q.",
+    ),
+)
+def test_generate_summary_rejects_unrecorded_verification_details(
+    invented_verification: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    summarizer_artifact: ProsaicCommandArtifact,
+) -> None:
+    _install_fake_prompt(monkeypatch, summarizer_artifact)
+    provider = FakeProvider(
+        json.dumps(
+            {
+                "lines": [
+                    "Implemented provider-owned model selection.",
+                    "Added deterministic mapping precedence.",
+                    invented_verification,
+                    "The feature is ready for integration.",
+                ]
+            }
+        )
+    )
+    evidence = WorkedOnEvidence(
+        command="spec run",
+        status="done",
+        outcomes=(
+            "Implemented provider-owned model selection.",
+            "Added deterministic mapping precedence.",
+        ),
+        verification="passed",
+    )
+
+    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
+
+
+def test_generate_summary_rejects_count_that_only_prefix_matches_recorded_duration(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    summarizer_artifact: ProsaicCommandArtifact,
+) -> None:
+    _install_fake_prompt(monkeypatch, summarizer_artifact)
+    provider = FakeProvider(
+        '{"lines":["Implemented provider-owned model selection.",'
+        '"Recorded verification: passed in 12.5s.",'
+        '"Verification covered 12 focused tests.",'
+        '"The feature is ready for integration."]}'
+    )
+    evidence = WorkedOnEvidence(
+        command="spec run",
+        status="done",
+        outcomes=("Implemented provider-owned model selection.",),
+        verification="passed in 12.5s",
+    )
+
+    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
 
 
 def test_generate_summary_suppresses_provider_console_noise(
@@ -473,6 +574,27 @@ def test_generate_summary_rejects_blocked_output_that_omits_provider_limit(
         status="blocked",
         blocker="controller_state_contract_validation_failed",
         provider_limit_message="You've hit your session limit.",
+        next_command="echelon spec continue",
+    )
+
+    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
+
+
+def test_generate_summary_rejects_blocked_provider_output_without_limit_or_with_readiness(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    summarizer_artifact: ProsaicCommandArtifact,
+) -> None:
+    _install_fake_prompt(monkeypatch, summarizer_artifact)
+    provider = FakeProvider(
+        '{"lines":["The provider handled the request.","The run remains blocked.",'
+        '"The feature is ready for integration.","Next retry remains available."]}'
+    )
+    evidence = WorkedOnEvidence(
+        command="spec continue",
+        status="blocked",
+        blocker="provider_session_limit",
+        provider_limit_message="Session limit resets at 17:00.",
         next_command="echelon spec continue",
     )
 

@@ -357,6 +357,7 @@ class StrategyCoordinator:
                 "outcomes": state.get("outcomes"),
                 "lifecycle_commits": state.get("lifecycle_commits"),
                 "commit_records": state.get("commit_records"),
+                "checkpoint_commits": state.get("checkpoint_commits"),
                 "next_note": state.get("next_note"),
                 "recovery_note": state.get("recovery_note"),
                 "recommended_action": state.get("recommended_action"),

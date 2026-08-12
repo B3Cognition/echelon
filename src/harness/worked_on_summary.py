@@ -25,6 +25,12 @@ _MAX_TOTAL_LINES = 1_600
 _MAX_FALLBACK_LINE = _MAX_TOTAL_LINES // 8
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 _ANSI_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
+_VERIFY_COMMAND_RE = re.compile(
+    r"\b(?:python3?\s+-m\s+pytest|pytest|tox|nox|npm(?:\s+run)?\s+test|"
+    r"pnpm(?:\s+run)?\s+test|yarn\s+test|cargo\s+test|go\s+test|mvn\s+test|"
+    r"gradle\s+test|dotnet\s+test|make\s+test)\b",
+    re.IGNORECASE,
+)
 
 
 def _clean_text(value: object, *, limit: int = _MAX_TEXT) -> str:
@@ -200,18 +206,19 @@ def _recorded_duration(source: Mapping[str, object]) -> str:
 
 
 def _attributed_commits(source: Mapping[str, object]) -> tuple[str, ...]:
-    records = source.get("lifecycle_commits") or source.get("commit_records") or ()
-    if not isinstance(records, (list, tuple)):
-        return ()
     commits: list[str] = []
-    for record in records:
-        if not isinstance(record, Mapping):
+    for key in ("lifecycle_commits", "commit_records", "checkpoint_commits"):
+        records = source.get(key)
+        if not isinstance(records, (list, tuple)):
             continue
-        sha = _clean_text(record.get("commit") or record.get("sha"), limit=64)
-        subject = _clean_text(record.get("subject"), limit=150)
-        if not sha or not subject or re.fullmatch(r"[0-9a-fA-F]{7,64}", sha) is None:
-            continue
-        commits.append(f"{sha[:12]} — {subject}")
+        for record in records:
+            if not isinstance(record, Mapping):
+                continue
+            sha = _clean_text(record.get("commit") or record.get("sha"), limit=64)
+            subject = _clean_text(record.get("subject"), limit=150)
+            if not sha or not subject or re.fullmatch(r"[0-9a-fA-F]{7,64}", sha) is None:
+                continue
+            commits.append(f"{sha[:12]} — {subject}")
     return tuple(dict.fromkeys(commits))[:_MAX_ITEMS]
 
 
@@ -539,7 +546,10 @@ def _valid_lines(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | None
     ):
         return None
     if evidence.status in {"blocked", "failed", "error"} and re.search(
-        r"\b(?:succeeded|successful(?:ly)?|shipped|converged)\b|\ball work (?:completed|finished)\b|\ball checks succeeded\b",
+        r"\b(?:succeeded|successful(?:ly)?|shipped|converged)\b|"
+        r"\ball work (?:completed|finished)\b|\ball checks succeeded\b|"
+        r"\bready (?:for|to) (?:integration|integrate|review|merge|release|ship|deploy|deployment)\b|"
+        r"\b(?:integration|review|merge|release|deployment)-ready\b",
         joined,
     ):
         return None
@@ -552,12 +562,27 @@ def _valid_lines(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | None
         evidence.status in {"blocked", "failed", "error"}
         and evidence.provider_limit_message
         and not re.search(
-            r"\b(?:provider|session limit|usage limit|rate limit|quota)\b",
+            r"\b(?:(?:session|usage|rate) limit|quota|bounded evidence)\b",
             joined,
         )
     ):
         return None
     exact_verification = " ".join(evidence.verification.lower().split())
+    number_pattern = r"(?<![\w.,])\d[\d,]*(?:\.\d+)?(?![\d.,])"
+    recorded_numbers = set(re.findall(number_pattern, exact_verification))
+    for line in normalized:
+        verification_line = " ".join(line.lower().split())
+        if not re.search(r"\b(?:verification|validation|checks?|tests?)\b", verification_line):
+            continue
+        numeric_details = re.findall(number_pattern, verification_line)
+        named_details = re.findall(r"`([^`]+)`", verification_line)
+        named_details.extend(
+            match.group(0).lower() for match in _VERIFY_COMMAND_RE.finditer(line)
+        )
+        if any(detail not in recorded_numbers for detail in numeric_details) or any(
+            detail not in exact_verification for detail in named_details
+        ):
+            return None
     if (
         exact_verification
         and exact_verification not in {"passed", "failed"}
@@ -612,7 +637,7 @@ def _valid_lines(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | None
         if evidence.commits and evidence.commits[0].split("—", 1)[0].strip().lower() in line:
             return True
         if evidence.provider_limit_message and re.search(
-            r"\b(?:provider|session limit|usage limit|rate limit|quota)\b", line
+            r"\b(?:(?:session|usage|rate) limit|quota|bounded evidence)\b", line
         ):
             return True
         if evidence.blocker and (
@@ -624,7 +649,7 @@ def _valid_lines(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | None
             if re.search(r"\b(?:worked|progress|tasks?|phases?|completed)\b", line):
                 return True
         if evidence.next_command or evidence.next_note:
-            if re.search(r"\b(?:next|retry|resume|continue|remaining|ready)\b", line):
+            if re.search(r"\b(?:next|retry|resume|continue|remaining)\b", line):
                 return True
         if evidence.status and evidence.status.lower() in line:
             return True

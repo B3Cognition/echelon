@@ -6822,8 +6822,10 @@ class TestOuterLoopConvergence:
         assert "harness-checkpoint:" in message
         assert "T-002" in message
         assert "phase-2-foundation" in message
+        assert checkpoint["subject"] == message.splitlines()[0]
         state = state_store.read()
         assert state["checkpoint_commits"][0]["commit"] == "abc123def456"
+        assert state["checkpoint_commits"][0]["subject"] == message.splitlines()[0]
         assert state["checkpoint_commits"][0]["task_ids"] == ["T-002"]
 
     def test_checkpoint_commit_uses_phase_when_task_ids_unknown(self, tmp_path: Path) -> None:

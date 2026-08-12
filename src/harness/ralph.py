@@ -4189,6 +4189,7 @@ class RalphController:
         commit = self._gitops.commit(worktree_path, message)
         checkpoint = {
             "commit": commit,
+            "subject": message.splitlines()[0],
             "outer_iter": outer_iter,
             "inner_iter": inner_iter,
             "phase": phase,

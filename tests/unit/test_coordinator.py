@@ -820,10 +820,18 @@ class TestCompareResults:
             {
                 "updated_at": "2026-08-12T10:03:05+00:00",
                 "outcomes": ["Implemented the resolver."],
-                "lifecycle_commits": [
+                "checkpoint_commits": [
                     {
                         "commit": "abcdef1234567890abcdef1234567890abcdef12",
-                        "subject": "feat: implement resolver",
+                        "subject": "harness-checkpoint: 001/default iter-0 build T-001",
+                        "outer_iter": 0,
+                        "inner_iter": 1,
+                        "phase": "build",
+                        "task_ids": ["T-001"],
+                        "phase_group": "phase-2-foundation",
+                        "completed_tasks_before": 0,
+                        "completed_tasks_after": 1,
+                        "created_at": "2026-08-12T10:03:05+00:00",
                     }
                 ],
                 "next_note": "Retry after the provider reset.",
@@ -848,7 +856,7 @@ class TestCompareResults:
         assert row["started_at"] == persisted["started_at"]
         assert row["updated_at"] == persisted["updated_at"]
         assert row["outcomes"] == ["Implemented the resolver."]
-        assert row["lifecycle_commits"] == state["lifecycle_commits"]
+        assert row["checkpoint_commits"] == state["checkpoint_commits"]
         assert row["next_note"] == "Retry after the provider reset."
         assert row["completed_task_ids"] == ["T-001"]
 

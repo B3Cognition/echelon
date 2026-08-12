@@ -4497,8 +4497,16 @@ def _cmd_spec_resolve(args: list[str], *, project_root: Path, ext_dir: Path) -> 
 
 def _terminal_task_summary(message: str, limit: int = 160) -> str:
     """Return the first meaningful request line within the terminal field bound."""
-    first_line = next((line for line in message.splitlines() if line.strip()), "")
-    summary = " ".join(first_line.split())
+    from harness.worked_on_summary import _clean_text
+
+    summary = next(
+        (
+            cleaned
+            for line in message.splitlines()
+            if (cleaned := _clean_text(line))
+        ),
+        "",
+    )
     if len(summary) <= limit:
         return summary
     if limit <= 0:

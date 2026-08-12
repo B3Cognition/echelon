@@ -28,6 +28,22 @@ def test_terminal_task_summary_uses_first_non_empty_bounded_line() -> None:
 
 
 @pytest.mark.parametrize(
+    "message",
+    (
+        "\x1b[31m\x1b[0m\nImplement provider-owned model selection.",
+        "\x00\x07\x1f\nImplement provider-owned model selection.",
+        "\x1b[31mImplement\x1b[0m provider-owned model selection.",
+    ),
+)
+def test_terminal_task_summary_strips_controls_before_selecting_line(
+    message: str,
+) -> None:
+    from echelon.cli import _terminal_task_summary
+
+    assert _terminal_task_summary(message) == "Implement provider-owned model selection."
+
+
+@pytest.mark.parametrize(
     ("argv", "handler"),
     [
         (["spec", "run", "Add sessions"], "_cmd_spec_run"),
