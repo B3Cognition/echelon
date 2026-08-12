@@ -144,6 +144,29 @@ def test_deferred_delivery_scope_persists_early_failure_evidence(
     assert payload["blocker"] == "delivery stopped before build state was created"
 
 
+def test_deferred_rich_evidence_is_not_overwritten_by_scope_finalization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    evidence_path = tmp_path / "child-summary.json"
+    monkeypatch.setenv("ECHELON_WORKED_ON_SUMMARY", "defer")
+    monkeypatch.setenv("ECHELON_WORKED_ON_SUMMARY_FILE", str(evidence_path))
+    rich = WorkedOnEvidence(
+        command="delivery run",
+        status="blocked",
+        completed_tasks=("T-001",),
+        verification="failed",
+        blocker="verification failed",
+    )
+
+    with worked_on_scope("delivery run", tmp_path, spec_id="014-session-security"):
+        attach_to_terminal_fields([], rich, project_root=tmp_path)
+
+    payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+    assert payload["status"] == "blocked"
+    assert payload["completed_tasks"] == ["T-001"]
+    assert payload["verification"] == "failed"
+
+
 def test_new_spec_preflight_failure_does_not_summarize_stale_prior_run(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

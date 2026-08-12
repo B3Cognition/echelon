@@ -268,6 +268,7 @@ def test_generate_summary_suppresses_provider_console_noise(
         '{"bullets":["The implementation completed successfully.","Next action remains."]}',
         '{"bullets":["Everything was successfully implemented.","Next action remains."]}',
         '{"bullets":["The release succeeded.","Next action remains."]}',
+        '{"bullets":["The feature shipped successfully.","Next action remains."]}',
         '{"bullets":["Validation succeeded.","Next action remains."]}',
         '{"bullets":["Implemented one change. Verified another.","All done."]}',
     ],
@@ -290,6 +291,7 @@ def test_generate_summary_falls_back_on_invalid_or_contradictory_output(
                     "completed successfully",
                     "successfully implemented",
                     "release succeeded",
+                    "shipped successfully",
                 )
             )
             else "done"

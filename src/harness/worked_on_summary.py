@@ -288,7 +288,7 @@ def _valid_bullets(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | No
     ):
         return None
     if evidence.status in {"blocked", "failed", "error"} and re.search(
-        r"\b(?:everything|release|run|delivery|spec|work|implementation)\b.{0,32}\b(?:succeeded|successful(?:ly)?|fully completed|converged)\b|\ball work (?:completed|finished)\b|\ball checks succeeded\b",
+        r"\b(?:succeeded|successful(?:ly)?|shipped|converged)\b|\ball work (?:completed|finished)\b|\ball checks succeeded\b",
         joined,
     ):
         return None
@@ -500,6 +500,9 @@ def attach_to_terminal_fields(
     """Append one narrative section and satisfy an active emit-once scope."""
     if os.environ.get("ECHELON_WORKED_ON_SUMMARY") == "defer":
         _write_deferred_evidence(evidence)
+        scope = _ACTIVE_SCOPE.get()
+        if scope is not None:
+            scope.emitted = True
         return list(fields)
     bullets = generate_summary(
         project_root,
