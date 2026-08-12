@@ -93,6 +93,15 @@
       ],
       "default": "semi"
     },
+    "spec_authoring_mode": {
+      "type": "string",
+      "enum": [
+        "proportional",
+        "perfectionist"
+      ],
+      "default": "proportional",
+      "description": "Controller-owned Cartographer authoring depth for this spec run."
+    },
     "iteration": {
       "type": "integer",
       "minimum": 0,

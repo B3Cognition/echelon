@@ -237,6 +237,7 @@ def test_store_owned_transaction_namespace_covers_every_identity_class() -> None
         "why3_verdict",
         "assess2_verdict",
         "user_request",
+        "spec_authoring_mode",
     } <= STORE_OWNED_TRANSACTION_KEYS
 
 

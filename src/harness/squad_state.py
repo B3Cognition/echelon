@@ -60,6 +60,7 @@ from harness.state_transaction_namespace import (
     validate_pending_external_publication,
     validate_product_input_mutation,
 )
+from echelon.spec_authoring import normalize_spec_authoring_mode
 from echelon.strict_json import loads_strict_json
 
 logger = logging.getLogger(__name__)
@@ -2279,6 +2280,7 @@ class SquadStateStore:
         product_inputs: dict[str, object] | None = None,
         ignore_re: bool = False,
         requested_re_sources: list[str] | None = None,
+        spec_authoring_mode: str = "proportional",
     ) -> None:
         if autonomy_mode == "semi" and mode in AUTONOMY_MODES and mode not in PROJECT_MODES:
             autonomy_mode = mode
@@ -2291,6 +2293,9 @@ class SquadStateStore:
             "phase": entry_phase,
             "mode": mode,
             "autonomy_mode": autonomy_mode,
+            "spec_authoring_mode": normalize_spec_authoring_mode(
+                spec_authoring_mode
+            ),
             "iteration": 0,
             "max_iterations": max_iterations,
             "token_usage": 0,

@@ -82,6 +82,7 @@ CAS_AND_RUN_IDENTITY_KEYS = frozenset(
         "context_dir",
         "mode",
         "autonomy_mode",
+        "spec_authoring_mode",
         "max_iterations",
         "token_budget",
         "user_message",

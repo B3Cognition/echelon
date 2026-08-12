@@ -477,6 +477,20 @@ class TestSquadStateStore:
         assert state["token_budget"] == 500_000
         assert state["mode"] == "greenfield"
         assert state["autonomy_mode"] == "semi"
+        assert state["spec_authoring_mode"] == "proportional"
+
+    def test_initialize_can_store_perfectionist_spec_authoring_mode(self, tmp_path):
+        store = _store(tmp_path)
+        store.initialize(
+            "run-001",
+            "greenfield",
+            "do stuff",
+            500_000,
+            "init",
+            spec_authoring_mode="perfectionist",
+        )
+
+        assert store.load()["spec_authoring_mode"] == "perfectionist"
 
     def test_initialize_can_store_project_and_autonomy_modes_separately(self, tmp_path):
         store = _store(tmp_path)
