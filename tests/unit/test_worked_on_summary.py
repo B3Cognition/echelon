@@ -465,6 +465,63 @@ def test_generate_summary_rejects_count_that_only_prefix_matches_recorded_durati
     assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
 
 
+def test_generate_summary_rejects_mismatched_recorded_command_target(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    summarizer_artifact: ProsaicCommandArtifact,
+) -> None:
+    _install_fake_prompt(monkeypatch, summarizer_artifact)
+    provider = FakeProvider(
+        '{"lines":["Implemented provider-owned model selection.",'
+        '"Recorded verification: pytest tests/unit/test_a.py passed.",'
+        '"Verification passed with pytest tests/unit/test_b.py.",'
+        '"The feature is ready for integration."]}'
+    )
+    evidence = WorkedOnEvidence(
+        command="spec run",
+        status="done",
+        outcomes=("Implemented provider-owned model selection.",),
+        verification="pytest tests/unit/test_a.py passed",
+    )
+
+    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
+
+
+@pytest.mark.parametrize(
+    ("verification", "claim"),
+    (
+        ("ruff check src passed", "Verification passed with ruff check src."),
+        (
+            "python -m unittest discover tests passed",
+            "Verification passed with python -m unittest discover tests.",
+        ),
+    ),
+)
+def test_generate_summary_accepts_exact_arbitrary_recorded_command(
+    verification: str,
+    claim: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    summarizer_artifact: ProsaicCommandArtifact,
+) -> None:
+    _install_fake_prompt(monkeypatch, summarizer_artifact)
+    expected = (
+        "Implemented provider-owned model selection.",
+        f"Recorded verification: {verification}.",
+        claim,
+        "The feature is ready for integration.",
+    )
+    provider = FakeProvider(json.dumps({"lines": list(expected)}))
+    evidence = WorkedOnEvidence(
+        command="spec run",
+        status="done",
+        outcomes=("Implemented provider-owned model selection.",),
+        verification=verification,
+    )
+
+    assert generate_summary(tmp_path, evidence, provider=provider) == expected
+
+
 def test_generate_summary_suppresses_provider_console_noise(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -589,6 +646,112 @@ def test_generate_summary_rejects_blocked_provider_output_without_limit_or_with_
     provider = FakeProvider(
         '{"lines":["The provider handled the request.","The run remains blocked.",'
         '"The feature is ready for integration.","Next retry remains available."]}'
+    )
+    evidence = WorkedOnEvidence(
+        command="spec continue",
+        status="blocked",
+        blocker="provider_session_limit",
+        provider_limit_message="Session limit resets at 17:00.",
+        next_command="echelon spec continue",
+    )
+
+    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
+
+
+def test_generate_summary_rejects_bounded_evidence_and_code_review_readiness_evasion(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    summarizer_artifact: ProsaicCommandArtifact,
+) -> None:
+    _install_fake_prompt(monkeypatch, summarizer_artifact)
+    provider = FakeProvider(
+        '{"lines":["Bounded evidence explains the stop.","The run remains blocked.",'
+        '"The next step is ready for code review.","Retry remains available."]}'
+    )
+    evidence = WorkedOnEvidence(
+        command="spec continue",
+        status="blocked",
+        blocker="provider_session_limit",
+        provider_limit_message="Session limit resets at 17:00.",
+        next_command="echelon spec continue",
+    )
+
+    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
+
+
+def test_generate_summary_rejects_provider_limit_semantic_not_in_recorded_message(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    summarizer_artifact: ProsaicCommandArtifact,
+) -> None:
+    _install_fake_prompt(monkeypatch, summarizer_artifact)
+    provider = FakeProvider(
+        '{"lines":["The rate limit explains the stop.","The run remains blocked.",'
+        '"Retry remains available.","Next work remains pending."]}'
+    )
+    evidence = WorkedOnEvidence(
+        command="spec continue",
+        status="blocked",
+        blocker="provider_session_limit",
+        provider_limit_message="Session limit resets at 17:00.",
+        next_command="echelon spec continue",
+    )
+
+    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
+
+
+def test_generate_summary_accepts_recorded_provider_limit_semantics(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    summarizer_artifact: ProsaicCommandArtifact,
+) -> None:
+    _install_fake_prompt(monkeypatch, summarizer_artifact)
+    expected = (
+        "The session limit resets at 17:00.",
+        "The run remains blocked.",
+        "Retry remains available.",
+        "Next work remains pending.",
+    )
+    provider = FakeProvider(json.dumps({"lines": list(expected)}))
+    evidence = WorkedOnEvidence(
+        command="spec continue",
+        status="blocked",
+        blocker="provider_session_limit",
+        provider_limit_message="Session limit resets at 17:00.",
+        next_command="echelon spec continue",
+    )
+
+    assert generate_summary(tmp_path, evidence, provider=provider) == expected
+
+
+@pytest.mark.parametrize(
+    "readiness",
+    (
+        "The next step is ready for code review.",
+        "The next step is ready for review.",
+        "The next step is ready for integration.",
+        "The next step is ready to merge.",
+        "The next step is ready to deploy.",
+    ),
+)
+def test_generate_summary_rejects_blocked_readiness_variants(
+    readiness: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    summarizer_artifact: ProsaicCommandArtifact,
+) -> None:
+    _install_fake_prompt(monkeypatch, summarizer_artifact)
+    provider = FakeProvider(
+        json.dumps(
+            {
+                "lines": [
+                    "The session limit explains the stop.",
+                    "The run remains blocked.",
+                    readiness,
+                    "Retry remains available.",
+                ]
+            }
+        )
     )
     evidence = WorkedOnEvidence(
         command="spec continue",

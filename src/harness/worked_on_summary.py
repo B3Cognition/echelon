@@ -24,12 +24,8 @@ _MAX_LINE = 280
 _MAX_TOTAL_LINES = 1_600
 _MAX_FALLBACK_LINE = _MAX_TOTAL_LINES // 8
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
-_ANSI_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
-_VERIFY_COMMAND_RE = re.compile(
-    r"\b(?:python3?\s+-m\s+pytest|pytest|tox|nox|npm(?:\s+run)?\s+test|"
-    r"pnpm(?:\s+run)?\s+test|yarn\s+test|cargo\s+test|go\s+test|mvn\s+test|"
-    r"gradle\s+test|dotnet\s+test|make\s+test)\b",
-    re.IGNORECASE,
+_ANSI_RE = re.compile(
+    r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\)|[ -/]*[0-~])"
 )
 
 
@@ -48,6 +44,50 @@ def _clean_items(value: object, *, limit: int = _MAX_ITEMS) -> tuple[str, ...]:
         return ()
     cleaned = tuple(_clean_text(item, limit=180) for item in value)
     return tuple(item for item in cleaned if item)[:limit]
+
+
+def _command_tokens(value: str) -> tuple[str, ...]:
+    return tuple(
+        cleaned
+        for token in value.lower().split()
+        if (cleaned := token.strip("`'\"()[]{}.,;:!?"))
+    )
+
+
+def _contains_token_sequence(recorded: tuple[str, ...], claim: str) -> bool:
+    claimed = _command_tokens(claim)
+    if not claimed:
+        return True
+    width = len(claimed)
+    return any(recorded[index:index + width] == claimed for index in range(len(recorded) - width + 1))
+
+
+def _verification_command_claims(line: str) -> tuple[str, ...]:
+    semantic = " ".join(line.lower().split()).rstrip(".!?")
+    semantic = re.sub(r"^recorded verification:\s*", "", semantic)
+    claims = list(re.findall(r"`([^`]+)`", semantic))
+    cue = re.search(
+        r"\b(?:with|via|using|ran|running|command(?:\s+(?:was|is))?:?)\s+(.+)$",
+        semantic,
+    )
+    if cue:
+        claims.append(cue.group(1).strip("` "))
+    leading = re.fullmatch(r"(.+?)\s+(?:passed|failed|succeeded)", semantic)
+    if leading and not re.fullmatch(
+        r"(?:verification|validation|all checks?|checks?|all tests?|tests?)",
+        leading.group(1),
+    ):
+        claims.append(leading.group(1))
+    return tuple(dict.fromkeys(claims))
+
+
+def _provider_limit_semantics(value: str) -> frozenset[str]:
+    text = " ".join(value.lower().split())
+    return frozenset(
+        semantic
+        for semantic in ("session limit", "usage limit", "rate limit", "quota")
+        if re.search(rf"\b{re.escape(semantic)}\b", text)
+    )
 
 
 @dataclass(frozen=True)
@@ -547,8 +587,7 @@ def _valid_lines(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | None
         return None
     if evidence.status in {"blocked", "failed", "error"} and re.search(
         r"\b(?:succeeded|successful(?:ly)?|shipped|converged)\b|"
-        r"\ball work (?:completed|finished)\b|\ball checks succeeded\b|"
-        r"\bready (?:for|to) (?:integration|integrate|review|merge|release|ship|deploy|deployment)\b|"
+        r"\ball work (?:completed|finished)\b|\ball checks succeeded\b|\bready\b|"
         r"\b(?:integration|review|merge|release|deployment)-ready\b",
         joined,
     ):
@@ -558,29 +597,25 @@ def _valid_lines(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | None
         joined,
     ):
         return None
-    if (
-        evidence.status in {"blocked", "failed", "error"}
-        and evidence.provider_limit_message
-        and not re.search(
-            r"\b(?:(?:session|usage|rate) limit|quota|bounded evidence)\b",
-            joined,
+    if evidence.status in {"blocked", "failed", "error"} and evidence.provider_limit_message:
+        recorded_limit_semantics = _provider_limit_semantics(
+            evidence.provider_limit_message
         )
-    ):
-        return None
+        if not recorded_limit_semantics.intersection(_provider_limit_semantics(joined)):
+            return None
     exact_verification = " ".join(evidence.verification.lower().split())
     number_pattern = r"(?<![\w.,])\d[\d,]*(?:\.\d+)?(?![\d.,])"
     recorded_numbers = set(re.findall(number_pattern, exact_verification))
+    recorded_verification_tokens = _command_tokens(exact_verification)
     for line in normalized:
         verification_line = " ".join(line.lower().split())
         if not re.search(r"\b(?:verification|validation|checks?|tests?)\b", verification_line):
             continue
         numeric_details = re.findall(number_pattern, verification_line)
-        named_details = re.findall(r"`([^`]+)`", verification_line)
-        named_details.extend(
-            match.group(0).lower() for match in _VERIFY_COMMAND_RE.finditer(line)
-        )
+        command_claims = _verification_command_claims(verification_line)
         if any(detail not in recorded_numbers for detail in numeric_details) or any(
-            detail not in exact_verification for detail in named_details
+            not _contains_token_sequence(recorded_verification_tokens, claim)
+            for claim in command_claims
         ):
             return None
     if (
@@ -625,6 +660,11 @@ def _valid_lines(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | None
                     f"recorded lifecycle commit {fact}",
                 )
             )
+        if evidence.provider_limit_message:
+            fact = " ".join(
+                evidence.provider_limit_message.lower().split()
+            ).rstrip(".!?")
+            allowed.update((fact, f"the {fact}", f"the provider reported a limit: {fact}"))
         return normalized_line in allowed
 
     def supported_lifecycle_line(line: str) -> bool:
@@ -637,7 +677,7 @@ def _valid_lines(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | None
         if evidence.commits and evidence.commits[0].split("—", 1)[0].strip().lower() in line:
             return True
         if evidence.provider_limit_message and re.search(
-            r"\b(?:(?:session|usage|rate) limit|quota|bounded evidence)\b", line
+            r"\b(?:(?:session|usage|rate) limit|quota)\b", line
         ):
             return True
         if evidence.blocker and (

@@ -43,6 +43,23 @@ def test_terminal_task_summary_strips_controls_before_selecting_line(
     assert _terminal_task_summary(message) == "Implement provider-owned model selection."
 
 
+@pytest.mark.parametrize("escape_only", ("\x1bc", "\x1b(0"))
+def test_terminal_task_summary_strips_non_csi_escape_only_lines(
+    escape_only: str,
+) -> None:
+    from echelon.cli import _terminal_task_summary
+
+    assert _terminal_task_summary(
+        f"{escape_only}\nImplement provider-owned model selection."
+    ) == "Implement provider-owned model selection."
+
+
+def test_terminal_task_summary_preserves_normal_unicode_after_escape_cleaning() -> None:
+    from echelon.cli import _terminal_task_summary
+
+    assert _terminal_task_summary("Žluťoučký kůň 🧪") == "Žluťoučký kůň 🧪"
+
+
 @pytest.mark.parametrize(
     ("argv", "handler"),
     [
