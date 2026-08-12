@@ -43,6 +43,46 @@ def test_aggregate_verification_groups_failures_without_losing_pass_facts() -> N
         "passed — passed in 12.5s"
     )
 
+
+def test_aggregate_verification_ignores_failure_word_inside_pass_command() -> None:
+    from echelon.orchestrator import _aggregate_verification_facts
+
+    fact = "passed: pytest tests/test_failed_login.py"
+
+    assert _aggregate_verification_facts((fact,)) == f"passed — {fact}"
+
+
+def test_aggregate_verification_treats_zero_failed_count_as_pass() -> None:
+    from echelon.orchestrator import _aggregate_verification_facts
+
+    fact = "2 passed, 0 failed"
+
+    assert _aggregate_verification_facts((fact,)) == f"passed — {fact}"
+
+
+def test_aggregate_verification_uses_failed_prefix_before_passing_path() -> None:
+    from echelon.orchestrator import _aggregate_verification_facts
+
+    fact = "failed: pytest tests/test_passing_login.py"
+
+    assert _aggregate_verification_facts((fact,)) == f"failed — {fact}"
+
+
+def test_mixed_verification_fails_without_rewriting_exact_facts() -> None:
+    from echelon.orchestrator import _aggregate_verification_facts
+
+    passed_path = "passed: pytest tests/test_failed_login.py"
+    count_summary = "2 passed, 0 failed"
+    failed_path = "failed: pytest tests/test_passing_login.py"
+
+    assert _aggregate_verification_facts(
+        (passed_path, count_summary, failed_path)
+    ) == (
+        f"failed — {failed_path}; "
+        f"passed — {passed_path}; {count_summary}"
+    )
+
+
 def _make_target(tmp_path: Path, name: str, git_repo: bool = True) -> Path:
     t = tmp_path / name
     t.mkdir()

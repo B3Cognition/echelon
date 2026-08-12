@@ -34,12 +34,24 @@ def _aggregate_verification_facts(facts: tuple[str, ...]) -> str:
 
     groups: dict[str, list[str]] = {"failed": [], "passed": [], "recorded": []}
     for fact in unique:
-        words = set(re.findall(r"[a-z]+", fact.lower()))
-        classification = (
-            "failed" if "failed" in words
-            else "passed" if "passed" in words
-            else "recorded"
+        leading_status = re.match(
+            r"^\s*(?:verification\s+)?(passed|failed)\b",
+            fact,
+            flags=re.IGNORECASE,
         )
+        count_summary = re.match(
+            r"^\s*(\d+)\s+passed\s*,\s*(\d+)\s+failed\b",
+            fact,
+            flags=re.IGNORECASE,
+        )
+        if leading_status:
+            classification = leading_status.group(1).lower()
+        elif count_summary:
+            classification = (
+                "passed" if int(count_summary.group(2)) == 0 else "failed"
+            )
+        else:
+            classification = "recorded"
         groups[classification].append(fact)
     return "; ".join(
         f"{classification} — {'; '.join(groups[classification])}"
