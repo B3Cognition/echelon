@@ -4714,6 +4714,7 @@ class SquadController:
                     "specify_feature_directory",
                     "user_message",
                     "autonomy_mode",
+                    "spec_authoring_mode",
                     "implementation_targets",
                     "retarget",
                     "product_inputs",
@@ -4733,6 +4734,9 @@ class SquadController:
                 entry_phase=entry_phase,
                 max_iterations=self._max_iterations,
                 autonomy_mode=mode,
+                spec_authoring_mode=str(
+                    prepared_identity.get("spec_authoring_mode") or "proportional"
+                ),
                 implementation_targets=self._implementation_targets,
                 product_inputs=(
                     self._product_inputs.state_payload(self._project_root)

@@ -355,6 +355,7 @@ def test_retarget_bootstrap_keeps_spec_and_branch_but_creates_new_run(
         {
             "user_message": "Build the original API feature",
             "autonomy_mode": "autonomous",
+            "spec_authoring_mode": "perfectionist",
             "implementation_targets": ["services/legacy"],
             "published_re_context": {
                 "status": "attached",
@@ -407,6 +408,7 @@ def test_retarget_bootstrap_keeps_spec_and_branch_but_creates_new_run(
     assert state["phase"] == "phase0-constitution"
     assert state["user_message"] == "Build the original API feature"
     assert state["autonomy_mode"] == "autonomous"
+    assert state["spec_authoring_mode"] == "perfectionist"
     assert state["ignore_re"] is False
     assert state["requested_re_sources"] == ["api"]
 

@@ -258,6 +258,83 @@ def test_cmd_run_passes_repeatable_implementation_targets_and_ignore_re(
     assert captured["product_inputs"].manifest_hash
 
 
+def test_cmd_run_persists_perfectionist_mode_for_fresh_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    squad_dir = tmp_path / "runs" / "spec-20260706-120000-000001"
+    captured: dict[str, object] = {}
+
+    class FakeController:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def run(self, **_kwargs: object) -> SimpleNamespace:
+            captured.update(
+                json.loads((squad_dir / "state.json").read_text(encoding="utf-8"))
+            )
+            return SimpleNamespace(status="done", phase="DONE", run_id=squad_dir.name)
+
+    monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.cli._workspace_git_preflight", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.cli._workspace_git_preflight_for_squad_run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.cli._find_current_run_dir", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.cli._select_squad_dir", lambda *_args, **_kwargs: (squad_dir, True))
+    monkeypatch.setattr("echelon.cli._print_cost_summary", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.cli._print_prior_knowledge", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.cli._print_staging_artifacts", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.cli._print_open_issues", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.cli._print_next_steps", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("harness.config.load_config", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr("harness.config.get_full_resolved_config", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr("harness.squad_provider.SquadCliProvider", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr("harness.phase_graph.load_workspace_phase_graph", lambda *_args: (object(), tmp_path / ".echelon" / "runtime"))
+    monkeypatch.setattr("harness.squad.SquadController", FakeController)
+
+    _cmd_run(
+        ["build notes", "--perfectionist"],
+        project_root=tmp_path,
+        ext_dir=tmp_path / "ext",
+    )
+
+    assert captured["spec_authoring_mode"] == "perfectionist"
+    output = capsys.readouterr().out
+    assert "Spec authoring" in output
+    assert "perfectionist" in output
+
+
+@pytest.mark.parametrize("state", [{}, {"spec_authoring_mode": "proportional"}])
+def test_cmd_run_rejects_perfectionist_for_active_non_perfectionist_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    state: dict[str, object],
+) -> None:
+    squad_dir = tmp_path / "runs" / "spec-20260706-120000-000001"
+    squad_dir.mkdir(parents=True)
+    (squad_dir / "state.json").write_text(
+        json.dumps({"user_message": "build notes", **state}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.cli._workspace_git_preflight", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.cli._workspace_git_preflight_for_squad_run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.cli._find_current_run_dir", lambda *_args, **_kwargs: squad_dir)
+    monkeypatch.setattr("echelon.cli._select_squad_dir", lambda *_args, **_kwargs: (squad_dir, False))
+    monkeypatch.setattr("harness.config.load_config", lambda *_args, **_kwargs: object())
+
+    with pytest.raises(SystemExit) as exc:
+        _cmd_run(
+            ["build notes", "--perfectionist"],
+            project_root=tmp_path,
+            ext_dir=tmp_path / "ext",
+        )
+
+    assert exc.value.code == 2
+    assert "--reset --perfectionist" in capsys.readouterr().err
+
+
 @pytest.mark.parametrize("policy", ["changed", "target-changed", "target-only"])
 def test_cmd_run_rejects_moved_reverse_engineering_policies(
     tmp_path: Path,

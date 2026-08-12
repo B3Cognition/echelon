@@ -44,6 +44,7 @@ from echelon.spec_lifecycle import (
     resolve_active_spec_run,
     resolve_spec_run,
 )
+from echelon.spec_authoring import normalize_spec_authoring_mode
 from echelon.spec_switch import (
     DirtySpecWorktreeError,
     SpecSwitchError,
@@ -321,6 +322,9 @@ def _expected_retarget_prepared_state(
         "completed_phases": [],
         "user_message": baseline_state["user_message"],
         "autonomy_mode": baseline_state["autonomy_mode"],
+        "spec_authoring_mode": normalize_spec_authoring_mode(
+            baseline_state.get("spec_authoring_mode")
+        ),
         "implementation_targets": list(replacement_targets),
         "product_inputs": dict(product_inputs),
         "ignore_re": ignore_re,

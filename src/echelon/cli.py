@@ -6258,6 +6258,10 @@ def _cmd_run(
     from harness.squad import SquadController
     from harness.squad_provider import SquadCliProvider
     from harness.squad_state import SquadStateStore
+    from echelon.spec_authoring import (
+        SpecAuthoringModeError,
+        resolve_spec_authoring_mode,
+    )
 
     _enforce_project_config_compatibility(project_root)
     _workspace_git_preflight(project_root, command_name="echelon spec run")
@@ -6265,6 +6269,7 @@ def _cmd_run(
     # Parse optional flags
     mode = "semi"
     reset = False
+    perfectionist_requested = False
     next_phase = ""
     implementation_targets = [
         value.strip()
@@ -6289,6 +6294,9 @@ def _cmd_run(
             i += 2
         elif args[i] == "--reset":
             reset = True
+            i += 1
+        elif args[i] == "--perfectionist":
+            perfectionist_requested = True
             i += 1
         elif args[i] == "--init":
             init_target = True
@@ -6443,6 +6451,18 @@ def _cmd_run(
     state_store = SquadStateStore(squad_dir)
     product_inputs = None
     existing_state = state_store.load()
+    try:
+        spec_authoring_mode = resolve_spec_authoring_mode(
+            existing_state,
+            is_fresh=is_fresh,
+            perfectionist_requested=perfectionist_requested,
+        )
+    except SpecAuthoringModeError as exc:
+        print(f"✗ echelon spec run: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
+    if existing_state.get("spec_authoring_mode") != spec_authoring_mode:
+        existing_state["spec_authoring_mode"] = spec_authoring_mode
+        state_store.save(existing_state)
     run_message = message
     if not is_fresh:
         existing_message = str(existing_state.get("user_message") or "").strip()
@@ -6524,6 +6544,7 @@ def _cmd_run(
     _banner("SQUAD RUN", [
         ("Run ID", run_id),
         ("Mode", mode),
+        ("Spec authoring", spec_authoring_mode),
         ("Task", (run_message[:80] + "…") if len(run_message) > 80 else run_message),
         ("Dir", str(squad_dir.name)),
         ("Implementation targets", ", ".join(implementation_targets)),

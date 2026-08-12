@@ -931,6 +931,32 @@ def _controller(tmp_path: Path, provider=None, mode: str = "banzai", squad_dir: 
     return ctrl, store
 
 
+def test_prepared_run_preserves_spec_authoring_mode_during_initialization(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctrl, store = _controller(tmp_path)
+    store.save(
+        {
+            "run_id": "prepared-run",
+            "status": "preparing",
+            "user_message": "Build carefully",
+            "spec_authoring_mode": "perfectionist",
+        }
+    )
+    observed: dict[str, object] = {}
+
+    def capture_state(*_args: object, **_kwargs: object) -> SquadResult:
+        observed.update(store.load())
+        return SquadResult.from_state(store.load())
+
+    monkeypatch.setattr(ctrl, "_run_locked", capture_state)
+
+    ctrl.run("Build carefully", "banzai")
+
+    assert observed["spec_authoring_mode"] == "perfectionist"
+
+
 def _install_test_clarification_policy(
     ctrl: SquadController,
     *,
