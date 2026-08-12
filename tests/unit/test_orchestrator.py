@@ -340,7 +340,16 @@ class TestRunMultiTarget:
                         "spec_id": "024",
                         "completed_tasks": [f"T-{target}"],
                         "artifacts": [f"dist/{target}.zip"],
+                        "duration": "2m" if target == "api" else "3m",
+                        "outcomes": [f"Implemented {target}."],
+                        "commits": [f"abcdef12345{len(target)} — checkpoint {target}"],
                         "verification": "passed",
+                        "provider_limit_message": (
+                            "Usage limit resets at 17:00." if target == "web" else ""
+                        ),
+                        "next_note": (
+                            "Retry after the provider reset." if target == "web" else ""
+                        ),
                     }
                 ),
                 encoding="utf-8",
@@ -365,6 +374,14 @@ class TestRunMultiTarget:
         assert recorded[0].artifacts == ("dist/api.zip", "dist/web.zip")
         assert recorded[0].verification == "passed"
         assert recorded[0].status == "blocked"
+        assert recorded[0].duration == "2m; 3m"
+        assert recorded[0].outcomes == ("Implemented api.", "Implemented web.")
+        assert recorded[0].commits == (
+            "abcdef123453 — checkpoint api",
+            "abcdef123453 — checkpoint web",
+        )
+        assert recorded[0].provider_limit_message == "Usage limit resets at 17:00."
+        assert recorded[0].next_note == "Retry after the provider reset."
 
     def test_nested_target_metadata_keeps_workspace_root_and_source_id(
         self, tmp_path: Path

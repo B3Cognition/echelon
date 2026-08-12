@@ -348,11 +348,28 @@ def run_multi_target(
     artifacts = tuple(
         dict.fromkeys(artifact for evidence in child_evidence for artifact in evidence.artifacts)
     )
+    durations = tuple(
+        dict.fromkeys(evidence.duration for evidence in child_evidence if evidence.duration)
+    )
+    outcomes = tuple(
+        dict.fromkeys(outcome for evidence in child_evidence for outcome in evidence.outcomes)
+    )
+    commits = tuple(
+        dict.fromkeys(commit for evidence in child_evidence for commit in evidence.commits)
+    )
     verification_states = tuple(
         evidence.verification for evidence in child_evidence if evidence.verification
     )
     blockers = tuple(
         evidence.blocker for evidence in child_evidence if evidence.blocker
+    )
+    provider_limits = tuple(
+        evidence.provider_limit_message
+        for evidence in child_evidence
+        if evidence.provider_limit_message
+    )
+    next_notes = tuple(
+        evidence.next_note for evidence in child_evidence if evidence.next_note
     )
     child_statuses = tuple(evidence.status for evidence in child_evidence)
     aggregate_status = "done" if all_ok else (
@@ -371,6 +388,9 @@ def run_multi_target(
             completed_tasks=completed_tasks,
             task_titles=task_titles,
             artifacts=artifacts,
+            duration="; ".join(durations),
+            outcomes=outcomes,
+            commits=commits,
             verification=(
                 "failed"
                 if "failed" in verification_states
@@ -385,9 +405,11 @@ def run_multi_target(
                 if failed_labels
                 else ""
             ),
+            provider_limit_message=next(iter(provider_limits), ""),
             next_command=(
                 "" if all_ok else f"echelon delivery continue {spec_id}"
             ),
+            next_note=next(iter(next_notes), ""),
         )
     )
     summary_temp.cleanup()

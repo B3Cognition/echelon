@@ -107,7 +107,9 @@ def test_rich_evidence_round_trips_through_deferred_storage(tmp_path: Path) -> N
         duration="3h 27m",
         outcomes=("Implemented provider-owned model selection.",),
         commits=("abcdef123456 — feat: resolve provider models",),
+        verification="passed: `bash  -lc 'pytest -q'`",
         provider_limit_message="Session limit resets at 17:00.",
+        next_command="bash  -lc 'echelon delivery continue 014'",
         next_note="Retry after the provider reset.",
     )
     path.write_text(evidence.to_json(), encoding="utf-8")
@@ -293,6 +295,72 @@ def test_delivery_evidence_uses_selected_canonical_strategy_facts() -> None:
     assert evidence.next_note == "Retry verification after the provider reset."
 
 
+def test_delivery_evidence_keeps_canonical_provider_limit_for_generic_stop() -> None:
+    result = SimpleNamespace(
+        status="blocked",
+        termination_reason="build_incomplete",
+        final_verify=None,
+    )
+    evidence = delivery_evidence(
+        command="delivery continue",
+        intent=SimpleNamespace(spec_id="014", strategies=("default",)),
+        result_map={"default": result},
+        comparison={
+            "strategies": {
+                "default": {
+                    "converged": False,
+                    "provider_limit_message": "Usage limit resets at 17:00.",
+                }
+            }
+        },
+        next_command="echelon delivery continue 014",
+    )
+
+    assert evidence.provider_limit_message == "Usage limit resets at 17:00."
+
+
+def test_delivery_scope_recovers_rich_persisted_strategy_evidence(
+    tmp_path: Path,
+) -> None:
+    from harness.worked_on_summary import _SummaryScope, _delivery_scope_evidence
+
+    state_dir = tmp_path / "runs" / "build-1" / "state"
+    state_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current-build-014").write_text(
+        "build-1",
+        encoding="utf-8",
+    )
+    (state_dir / "default.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "termination_reason": "build_incomplete",
+                "duration": "3m 5s",
+                "outcomes": ["Implemented the resolver."],
+                "checkpoint_commits": [
+                    {"commit": "abcdef1234567", "subject": "checkpoint resolver"}
+                ],
+                "verification_summary": "pytest tests/unit -q passed",
+                "provider_limit_message": "Usage limit resets at 17:00.",
+                "next_note": "Retry after the provider reset.",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    evidence = _delivery_scope_evidence(
+        _SummaryScope("delivery continue", tmp_path, spec_id="014")
+    )
+
+    assert evidence is not None
+    assert evidence.duration == "3m 5s"
+    assert evidence.outcomes == ("Implemented the resolver.",)
+    assert evidence.commits == ("abcdef123456 — checkpoint resolver",)
+    assert evidence.verification == "pytest tests/unit -q passed"
+    assert evidence.provider_limit_message == "Usage limit resets at 17:00."
+    assert evidence.next_note == "Retry after the provider reset."
+
+
 def test_delivery_evidence_uses_converged_strategy_verification_regardless_of_order() -> None:
     passed = SimpleNamespace(
         status="done",
@@ -330,24 +398,350 @@ def test_delivery_evidence_uses_converged_strategy_verification_regardless_of_or
         assert evidence.verification == "passed"
         assert evidence.verification_failures == ()
 
+def test_narrative_candidates_are_controller_authored_and_stably_identified() -> None:
+    from harness.worked_on_summary import narrative_candidates
 
-def test_fallback_is_rich_narrative_and_keeps_recovery_action() -> None:
+    evidence = WorkedOnEvidence(
+        command="delivery run",
+        status="done",
+        goal="Add sessions",
+        completed_tasks=("T-001", "T-002"),
+        outcomes=(
+            "Implemented the resolver.",
+            "Added deterministic mapping precedence.",
+        ),
+        decisions=("Use provider-owned mapping.",),
+        verification="pytest tests/unit/test_resolver.py -q passed",
+        commits=("abcdef123456 — feat: implement resolver",),
+    )
+
+    candidates = narrative_candidates(evidence)
+    by_id = {candidate.id: candidate for candidate in candidates}
+
+    assert tuple(by_id) == (
+        "outcome",
+        "progress",
+        "outcome-2",
+        "decision-1",
+        "verification",
+        "commit-1",
+        "readiness",
+    )
+    assert by_id["outcome"].text == "Implemented the resolver."
+    assert by_id["progress"].text == "Worked through 2 tasks toward Add sessions."
+    assert by_id["outcome-2"].text == "Added deterministic mapping precedence."
+    assert by_id["decision-1"].text == "Recorded decision: Use provider-owned mapping."
+    assert by_id["verification"].text == (
+        "Recorded verification: pytest tests/unit/test_resolver.py -q passed."
+    )
+    assert by_id["commit-1"].text == (
+        "Recorded lifecycle commit abcdef123456 — feat: implement resolver."
+    )
+    assert by_id["readiness"].text == "The completed work is ready for review."
+    assert all(not candidate.required for candidate in candidates)
+
+
+def test_unfinished_candidate_facts_are_required() -> None:
+    from harness.worked_on_summary import narrative_candidates
+
     evidence = WorkedOnEvidence(
         command="spec continue",
         status="blocked",
-        goal="Add secure sessions",
-        completed_phases=("phase1-what", "phase3-plan"),
-        blocker="container runtime unavailable",
+        blocker="controller state validation failed",
+        provider_limit_message="Session limit resets at 17:00.",
         next_command="echelon spec continue",
     )
 
-    lines = fallback_summary(evidence)
+    by_id = {
+        candidate.id: candidate
+        for candidate in narrative_candidates(evidence)
+    }
 
-    assert 4 <= len(lines) <= 8
-    assert lines[0] == "Worked through 2 phases toward Add secure sessions."
-    assert any("container runtime unavailable" in line for line in lines)
-    assert lines[-1] == "Next, run `echelon spec continue`."
-    assert not any("files" in line.lower() for line in lines)
+    assert by_id["blocker"].text == (
+        "The run stopped because controller state validation failed."
+    )
+    assert by_id["provider-limit"].text == (
+        "The provider reported a limit: Session limit resets at 17:00."
+    )
+    assert by_id["next-action"].text == "Next, run `echelon spec continue`."
+    assert {
+        candidate_id
+        for candidate_id, candidate in by_id.items()
+        if candidate.required
+    } == {"blocker", "provider-limit", "next-action"}
+
+
+def test_sparse_unfinished_evidence_still_builds_four_factual_candidates() -> None:
+    from harness.worked_on_summary import narrative_candidates
+
+    candidates = narrative_candidates(
+        WorkedOnEvidence(
+            command="delivery run",
+            status="failed",
+            next_command="echelon delivery continue 014",
+        )
+    )
+
+    assert len(candidates) >= 4
+    assert candidates[0].text == (
+        "Attempted delivery run for the requested work."
+    )
+    assert any(
+        candidate.text == "No completed tasks or phases were recorded."
+        for candidate in candidates
+    )
+    assert any(
+        candidate.text == "The recorded run status is failed."
+        for candidate in candidates
+    )
+    assert any(
+        candidate.text == "Next, run `echelon delivery continue 014`."
+        for candidate in candidates
+    )
+
+
+def test_candidate_commands_remain_controller_owned_opaque_text() -> None:
+    from harness.worked_on_summary import narrative_candidates
+
+    verification = (
+        "passed: `bash  -lc 'pytest tests/unit/test_a.py -q && "
+        "printf \"%s\" \"$TOKEN\"'`"
+    )
+    next_command = (
+        "bash  -lc 'echelon delivery continue 014 && "
+        "printf \"%s\" \"$TOKEN\"'"
+    )
+    candidates = narrative_candidates(
+        WorkedOnEvidence(
+            command="delivery continue",
+            status="blocked",
+            verification=verification,
+            blocker="provider_session_limit",
+            next_command=next_command,
+        )
+    )
+    by_id = {candidate.id: candidate.text for candidate in candidates}
+
+    assert verification in by_id["verification"]
+    assert next_command in by_id["next-action"]
+
+
+def test_opaque_candidate_facts_cannot_inject_terminal_lines() -> None:
+    from harness.worked_on_summary import narrative_candidates
+
+    candidates = narrative_candidates(
+        WorkedOnEvidence(
+            command="delivery continue",
+            status="blocked",
+            verification="passed\rFORGED STATUS\r\nMORE",
+            blocker="provider_session_limit",
+            next_command="echo ok\rFORGED ACTION",
+        )
+    )
+    rendered = format_worked_on(candidate.text for candidate in candidates)
+
+    assert "\r" not in rendered
+    assert "\nFORGED" not in rendered
+
+
+def test_progress_candidate_surfaces_recorded_duration() -> None:
+    from harness.worked_on_summary import narrative_candidates
+
+    candidates = narrative_candidates(
+        WorkedOnEvidence(
+            command="delivery run",
+            status="done",
+            duration="3m 5s",
+        )
+    )
+
+    assert {candidate.id: candidate.text for candidate in candidates}["progress"] == (
+        "The recorded run duration was 3m 5s."
+    )
+
+
+def _candidate_fixture() -> tuple[object, ...]:
+    from harness.worked_on_summary import NarrativeCandidate
+
+    return (
+        NarrativeCandidate("outcome", "Implemented the resolver.", 10),
+        NarrativeCandidate("changes", "Added deterministic mapping.", 20),
+        NarrativeCandidate("verification", "Verification passed.", 30),
+        NarrativeCandidate("blocker", "The run remains blocked.", 40, required=True),
+        NarrativeCandidate(
+            "provider-limit",
+            "The provider reported a session limit.",
+            50,
+            required=True,
+        ),
+        NarrativeCandidate(
+            "next-action",
+            "Next, run `echelon spec continue`.",
+            60,
+            required=True,
+        ),
+        NarrativeCandidate("readiness", "The work is ready for review.", 70),
+        NarrativeCandidate("commit-1", "Recorded commit abcdef123456.", 80),
+        NarrativeCandidate("decision-1", "Recorded decision: use A.", 90),
+    )
+
+
+def test_selected_candidate_ids_accepts_exact_closed_contract() -> None:
+    from harness.worked_on_summary import _selected_candidate_ids
+
+    candidates = _candidate_fixture()
+    assert _selected_candidate_ids(
+        '{"line_ids":["outcome","changes","verification","blocker",'
+        '"provider-limit","next-action"]}',
+        candidates,
+    ) == (
+        "outcome",
+        "changes",
+        "verification",
+        "blocker",
+        "provider-limit",
+        "next-action",
+    )
+
+
+@pytest.mark.parametrize(
+    "raw",
+    (
+        '{"line_ids":["outcome","changes"]}',
+        '{"line_ids":["outcome","changes","verification","blocker",'
+        '"provider-limit","next-action","readiness","commit-1","decision-1"]}',
+        '{"line_ids":["outcome","changes","verification","unknown",'
+        '"blocker","provider-limit","next-action"]}',
+        '{"line_ids":["outcome","changes","verification","verification",'
+        '"blocker","provider-limit","next-action"]}',
+        'commentary\n{"line_ids":["outcome","changes","verification","blocker",'
+        '"provider-limit","next-action"]}',
+        '{"line_ids":["outcome","changes","verification","blocker",'
+        '"provider-limit","next-action"],"text":"MODEL INJECTION"}',
+        '{"line_ids":["outcome","changes","verification","blocker",'
+        '"provider-limit","next-action"],"lines":["MODEL INJECTION"]}',
+    ),
+)
+def test_selected_candidate_ids_rejects_malformed_or_open_contract(raw: str) -> None:
+    from harness.worked_on_summary import _selected_candidate_ids
+
+    assert _selected_candidate_ids(raw, _candidate_fixture()) is None
+
+
+@pytest.mark.parametrize("omitted", ("blocker", "provider-limit", "next-action"))
+def test_selected_candidate_ids_rejects_omitted_required_id(omitted: str) -> None:
+    from harness.worked_on_summary import _selected_candidate_ids
+
+    ids = [
+        candidate.id
+        for candidate in _candidate_fixture()
+        if candidate.id != omitted
+    ][:8]
+    assert len(ids) >= 4
+
+    assert _selected_candidate_ids(
+        json.dumps({"line_ids": ids}),
+        _candidate_fixture(),
+    ) is None
+
+
+def test_generate_summary_renders_only_selected_controller_text(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    summarizer_artifact: ProsaicCommandArtifact,
+) -> None:
+    _install_fake_prompt(monkeypatch, summarizer_artifact)
+    from harness.worked_on_summary import NarrativeCandidate
+
+    candidates = (
+        NarrativeCandidate("outcome", "Implemented the resolver.", 10),
+        NarrativeCandidate("changes", "Added deterministic mapping.", 20),
+        NarrativeCandidate("verification", "Verification passed.", 30),
+        NarrativeCandidate("readiness", "The work is ready for review.", 40),
+    )
+    monkeypatch.setattr(
+        "harness.worked_on_summary.narrative_candidates",
+        lambda _evidence: candidates,
+    )
+    provider = FakeProvider(
+        '{"line_ids":["outcome","changes","verification","readiness"]}'
+    )
+
+    lines = generate_summary(
+        tmp_path,
+        WorkedOnEvidence(command="delivery run", status="done"),
+        provider=provider,
+    )
+
+    assert lines == tuple(candidate.text for candidate in candidates)
+    assert format_worked_on(lines) == (
+        "Implemented the resolver.\n"
+        "Added deterministic mapping.\n"
+        "Verification passed.\n"
+        "The work is ready for review."
+    )
+    assert "•" not in format_worked_on(lines)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    (
+        '{"line_ids":["outcome","progress","verification","readiness"],'
+        '"text":"MODEL-AUTHORED SENTENCE"}',
+        '{"line_ids":["outcome","progress","verification","readiness"],'
+        '"lines":["MODEL-AUTHORED SENTENCE"]}',
+        '{"line_ids":["outcome","progress","verification","unknown"]}',
+        '{"line_ids":["outcome","outcome","verification","readiness"]}',
+    ),
+)
+def test_model_text_and_invalid_ids_never_render(
+    raw: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    summarizer_artifact: ProsaicCommandArtifact,
+) -> None:
+    _install_fake_prompt(monkeypatch, summarizer_artifact)
+    evidence = WorkedOnEvidence(
+        command="delivery run",
+        status="done",
+        goal="Add sessions",
+        outcomes=("Implemented the resolver.",),
+        verification="passed",
+    )
+    fallback = fallback_summary(evidence)
+
+    rendered = generate_summary(
+        tmp_path,
+        evidence,
+        provider=FakeProvider(raw),
+    )
+
+    assert rendered == fallback
+    assert "MODEL-AUTHORED SENTENCE" not in format_worked_on(rendered)
+    assert "unknown" not in format_worked_on(rendered)
+
+
+def test_generate_summary_requires_all_unfinished_required_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    summarizer_artifact: ProsaicCommandArtifact,
+) -> None:
+    _install_fake_prompt(monkeypatch, summarizer_artifact)
+    evidence = WorkedOnEvidence(
+        command="spec continue",
+        status="blocked",
+        blocker="controller state validation failed",
+        provider_limit_message="Session limit resets at 17:00.",
+        next_command="echelon spec continue",
+    )
+    provider = FakeProvider(
+        '{"line_ids":["outcome","progress","verification","blocker",'
+        '"next-action"]}'
+    )
+
+    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(
+        evidence
+    )
 
 
 def test_generate_summary_uses_fast_low_metadata_once_and_removes_temp_cwd(
@@ -357,25 +751,13 @@ def test_generate_summary_uses_fast_low_metadata_once_and_removes_temp_cwd(
 ) -> None:
     _install_fake_prompt(monkeypatch, summarizer_artifact)
     provider = FakeProvider(
-        json.dumps(
-            {
-                "lines": [
-                    "Implemented provider-owned model selection.",
-                    "Added deterministic mapping precedence.",
-                    "Verification passed.",
-                    "The feature is ready for integration.",
-                ]
-            }
-        )
+        '{"line_ids":["outcome","progress","verification","readiness"]}'
     )
     evidence = WorkedOnEvidence(
         command="spec run",
         status="done",
         goal="Add sessions",
-        outcomes=(
-            "Implemented provider-owned model selection.",
-            "Added deterministic mapping precedence.",
-        ),
+        outcomes=("Implemented provider-owned model selection.",),
         verification="passed",
     )
 
@@ -383,11 +765,10 @@ def test_generate_summary_uses_fast_low_metadata_once_and_removes_temp_cwd(
 
     assert lines == (
         "Implemented provider-owned model selection.",
-        "Added deterministic mapping precedence.",
-        "Verification passed.",
-        "The feature is ready for integration.",
+        "No completed tasks or phases were recorded.",
+        "Verification passed for the completed work.",
+        "The completed work is ready for review.",
     )
-    assert "•" not in format_worked_on(lines)
     assert len(provider.calls) == 1
     call = provider.calls[0]
     assert call["timeout_ms"] == 30_000
@@ -400,418 +781,10 @@ def test_generate_summary_uses_fast_low_metadata_once_and_removes_temp_cwd(
     cwd = Path(str(call["cwd"]))
     assert cwd.parent != tmp_path
     assert not cwd.exists()
-    assert '"goal":"Add sessions"' in str(call["prompt"])
-
-
-@pytest.mark.parametrize(
-    "invented_verification",
-    (
-        "Verification passed across 999 focused tests.",
-        "Verification passed with `pytest tests/unit -q`.",
-        "Verification passed with pytest tests/unit -q.",
-    ),
-)
-def test_generate_summary_rejects_unrecorded_verification_details(
-    invented_verification: str,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    summarizer_artifact: ProsaicCommandArtifact,
-) -> None:
-    _install_fake_prompt(monkeypatch, summarizer_artifact)
-    provider = FakeProvider(
-        json.dumps(
-            {
-                "lines": [
-                    "Implemented provider-owned model selection.",
-                    "Added deterministic mapping precedence.",
-                    invented_verification,
-                    "The feature is ready for integration.",
-                ]
-            }
-        )
-    )
-    evidence = WorkedOnEvidence(
-        command="spec run",
-        status="done",
-        outcomes=(
-            "Implemented provider-owned model selection.",
-            "Added deterministic mapping precedence.",
-        ),
-        verification="passed",
-    )
-
-    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
-
-
-def test_generate_summary_rejects_count_that_only_prefix_matches_recorded_duration(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    summarizer_artifact: ProsaicCommandArtifact,
-) -> None:
-    _install_fake_prompt(monkeypatch, summarizer_artifact)
-    provider = FakeProvider(
-        '{"lines":["Implemented provider-owned model selection.",'
-        '"Recorded verification: passed in 12.5s.",'
-        '"Verification covered 12 focused tests.",'
-        '"The feature is ready for integration."]}'
-    )
-    evidence = WorkedOnEvidence(
-        command="spec run",
-        status="done",
-        outcomes=("Implemented provider-owned model selection.",),
-        verification="passed in 12.5s",
-    )
-
-    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
-
-
-def test_generate_summary_rejects_mismatched_recorded_command_target(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    summarizer_artifact: ProsaicCommandArtifact,
-) -> None:
-    _install_fake_prompt(monkeypatch, summarizer_artifact)
-    provider = FakeProvider(
-        '{"lines":["Implemented provider-owned model selection.",'
-        '"Recorded verification: pytest tests/unit/test_a.py passed.",'
-        '"Verification passed with pytest tests/unit/test_b.py.",'
-        '"The feature is ready for integration."]}'
-    )
-    evidence = WorkedOnEvidence(
-        command="spec run",
-        status="done",
-        outcomes=("Implemented provider-owned model selection.",),
-        verification="pytest tests/unit/test_a.py passed",
-    )
-
-    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
-
-
-@pytest.mark.parametrize(
-    ("verification", "claim"),
-    (
-        ("ruff check src passed", "Verification passed with ruff check src."),
-        (
-            "python -m unittest discover tests passed",
-            "Verification passed with python -m unittest discover tests.",
-        ),
-    ),
-)
-def test_generate_summary_accepts_exact_arbitrary_recorded_command(
-    verification: str,
-    claim: str,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    summarizer_artifact: ProsaicCommandArtifact,
-) -> None:
-    _install_fake_prompt(monkeypatch, summarizer_artifact)
-    expected = (
-        "Implemented provider-owned model selection.",
-        f"Recorded verification: {verification}.",
-        claim,
-        "The feature is ready for integration.",
-    )
-    provider = FakeProvider(json.dumps({"lines": list(expected)}))
-    evidence = WorkedOnEvidence(
-        command="spec run",
-        status="done",
-        outcomes=("Implemented provider-owned model selection.",),
-        verification=verification,
-    )
-
-    assert generate_summary(tmp_path, evidence, provider=provider) == expected
-
-
-@pytest.mark.parametrize(
-    ("verification", "claim"),
-    (
-        (
-            "pytest tests/unit/test_a.py --maxfail=1 passed",
-            "Verification passed with pytest tests/unit/test_a.py.",
-        ),
-        (
-            "ruff check src passed",
-            "Verification passed after ruff check tests.",
-        ),
-    ),
-)
-def test_generate_summary_rejects_partial_or_changed_recorded_command(
-    verification: str,
-    claim: str,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    summarizer_artifact: ProsaicCommandArtifact,
-) -> None:
-    _install_fake_prompt(monkeypatch, summarizer_artifact)
-    provider = FakeProvider(
-        json.dumps(
-            {
-                "lines": [
-                    "Implemented provider-owned model selection.",
-                    f"Recorded verification: {verification}.",
-                    claim,
-                    "The feature is ready for integration.",
-                ]
-            }
-        )
-    )
-    evidence = WorkedOnEvidence(
-        command="spec run",
-        status="done",
-        outcomes=("Implemented provider-owned model selection.",),
-        verification=verification,
-    )
-
-    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
-
-
-def test_generate_summary_rejects_partial_recorded_command_on_any_line(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    summarizer_artifact: ProsaicCommandArtifact,
-) -> None:
-    _install_fake_prompt(monkeypatch, summarizer_artifact)
-    provider = FakeProvider(
-        '{"lines":["Implemented provider-owned model selection.",'
-        '"Recorded verification: pytest tests/unit/test_a.py --maxfail=1 passed.",'
-        '"The work is done after pytest.",'
-        '"The feature is ready for integration."]}'
-    )
-    evidence = WorkedOnEvidence(
-        command="spec run",
-        status="done",
-        outcomes=("Implemented provider-owned model selection.",),
-        verification="pytest tests/unit/test_a.py --maxfail=1 passed",
-    )
-
-    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
-
-
-def test_generate_summary_accepts_complete_recorded_command_on_any_line(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    summarizer_artifact: ProsaicCommandArtifact,
-) -> None:
-    _install_fake_prompt(monkeypatch, summarizer_artifact)
-    expected = (
-        "Implemented provider-owned model selection.",
-        "Recorded verification: pytest tests/unit/test_a.py --maxfail=1 passed.",
-        "The work is done after pytest tests/unit/test_a.py --maxfail=1.",
-        "The feature is ready for integration.",
-    )
-    provider = FakeProvider(json.dumps({"lines": list(expected)}))
-    evidence = WorkedOnEvidence(
-        command="spec run",
-        status="done",
-        outcomes=("Implemented provider-owned model selection.",),
-        verification="pytest tests/unit/test_a.py --maxfail=1 passed",
-    )
-
-    assert generate_summary(tmp_path, evidence, provider=provider) == expected
-
-
-@pytest.mark.parametrize(
-    ("verification", "claim"),
-    (
-        (
-            "python scripts/lint.py --strict passed",
-            "The work is done after python scripts/lint.py --strict --verbose.",
-        ),
-        (
-            "python scripts/lint.py --strict passed",
-            "The work is done after python scripts/lint.py --strict python.",
-        ),
-        (
-            "pytest tests/unit/test_a.py --maxfail=1 passed",
-            "The work is done after pytest tests/unit/test_a.py --maxfail=1 "
-            "tests/unit/test_b.py.",
-        ),
-    ),
-)
-def test_generate_summary_rejects_nonexclusive_recorded_command_spans(
-    verification: str,
-    claim: str,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    summarizer_artifact: ProsaicCommandArtifact,
-) -> None:
-    _install_fake_prompt(monkeypatch, summarizer_artifact)
-    provider = FakeProvider(
-        json.dumps(
-            {
-                "lines": [
-                    "Implemented provider-owned model selection.",
-                    f"Recorded verification: {verification}.",
-                    claim,
-                    "The feature is ready for integration.",
-                ]
-            }
-        )
-    )
-    evidence = WorkedOnEvidence(
-        command="spec run",
-        status="done",
-        outcomes=("Implemented provider-owned model selection.",),
-        verification=verification,
-    )
-
-    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
-
-
-def test_generate_summary_accepts_multiple_complete_recorded_command_spans(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    summarizer_artifact: ProsaicCommandArtifact,
-) -> None:
-    _install_fake_prompt(monkeypatch, summarizer_artifact)
-    verification = (
-        "python scripts/lint.py --strict passed; "
-        "python -m unittest discover tests passed"
-    )
-    expected = (
-        "Implemented provider-owned model selection.",
-        f"Recorded verification: {verification}.",
-        "The work is done as recorded.",
-        "The feature is ready for integration.",
-    )
-    provider = FakeProvider(json.dumps({"lines": list(expected)}))
-    evidence = WorkedOnEvidence(
-        command="spec run",
-        status="done",
-        outcomes=("Implemented provider-owned model selection.",),
-        verification=verification,
-    )
-
-    assert generate_summary(tmp_path, evidence, provider=provider) == expected
-
-
-@pytest.mark.parametrize(
-    "verification",
-    (
-        "passed: pytest tests/unit/test_a.py --maxfail=1",
-        "pytest tests/unit/test_a.py --maxfail=1 (passed)",
-    ),
-)
-def test_generate_summary_rejects_partial_command_for_supported_verification_shapes(
-    verification: str,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    summarizer_artifact: ProsaicCommandArtifact,
-) -> None:
-    _install_fake_prompt(monkeypatch, summarizer_artifact)
-    provider = FakeProvider(
-        json.dumps(
-            {
-                "lines": [
-                    "Implemented provider-owned model selection.",
-                    f"Recorded verification: {verification}.",
-                    "The work is done after pytest.",
-                    "The feature is ready for integration.",
-                ]
-            }
-        )
-    )
-    evidence = WorkedOnEvidence(
-        command="spec run",
-        status="done",
-        outcomes=("Implemented provider-owned model selection.",),
-        verification=verification,
-    )
-
-    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
-
-
-@pytest.mark.parametrize(
-    ("verification", "claim"),
-    (
-        (
-            "pytest tests/unit/test_a.py --maxfail=1 passed in 12.5 seconds",
-            "The work is done after pytest.",
-        ),
-        (
-            "pytest tests/unit/test_a.py --maxfail=1 passed",
-            "The work cites pytest's result.",
-        ),
-        (
-            "pytest tests/unit/test_a.py --maxfail=1 passed",
-            "The work cites pytest-based validation.",
-        ),
-        (
-            "pytest tests/unit/test_a.py --maxfail=1 passed",
-            "The work cites pytest/tests evidence.",
-        ),
-    ),
-)
-def test_generate_summary_rejects_punctuated_or_duration_command_shortening(
-    verification: str,
-    claim: str,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    summarizer_artifact: ProsaicCommandArtifact,
-) -> None:
-    _install_fake_prompt(monkeypatch, summarizer_artifact)
-    provider = FakeProvider(
-        json.dumps(
-            {
-                "lines": [
-                    "Implemented provider-owned model selection.",
-                    f"Recorded verification: {verification}.",
-                    claim,
-                    "The feature is ready for integration.",
-                ]
-            }
-        )
-    )
-    evidence = WorkedOnEvidence(
-        command="spec run",
-        status="done",
-        outcomes=("Implemented provider-owned model selection.",),
-        verification=verification,
-    )
-
-    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
-
-
-@pytest.mark.parametrize(
-    ("verification", "claim"),
-    (
-        (
-            "pytest tests/unit/test_a.py --maxfail=1 passed",
-            "Verification passed with `pytest tests/unit/test_a.py --maxfail=1`.",
-        ),
-        (
-            "ruff check src passed",
-            "Verification passed after `ruff check src`.",
-        ),
-        (
-            "python -m unittest tests.test_x passed",
-            "Verification passed with `python -m unittest tests.test_x`.",
-        ),
-    ),
-)
-def test_generate_summary_accepts_complete_recorded_command(
-    verification: str,
-    claim: str,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    summarizer_artifact: ProsaicCommandArtifact,
-) -> None:
-    _install_fake_prompt(monkeypatch, summarizer_artifact)
-    expected = (
-        "Implemented provider-owned model selection.",
-        f"Recorded verification: {verification}.",
-        claim,
-        "The feature is ready for integration.",
-    )
-    provider = FakeProvider(json.dumps({"lines": list(expected)}))
-    evidence = WorkedOnEvidence(
-        command="spec run",
-        status="done",
-        outcomes=("Implemented provider-owned model selection.",),
-        verification=verification,
-    )
-
-    assert generate_summary(tmp_path, evidence, provider=provider) == expected
+    prompt = str(call["prompt"])
+    assert '"candidates":' in prompt
+    assert '"id":"outcome"' in prompt
+    assert '"required":false' in prompt
 
 
 def test_generate_summary_suppresses_provider_console_noise(
@@ -824,863 +797,53 @@ def test_generate_summary_suppresses_provider_console_noise(
 
     class NoisyProvider(FakeProvider):
         def run_agent_result(self, *args, **kwargs):
-            print('raw {"lines":["Done.","Built.","Verified.","Ready."]}')
+            print('raw {"line_ids":["outcome","progress","verification","readiness"]}')
             print("provider diagnostic", file=sys.stderr)
             return super().run_agent_result(*args, **kwargs)
 
     provider = NoisyProvider(
-        '{"lines":["Implemented the requested work.","Recorded the completed change.",'
-        '"Verification passed.","The work is ready for integration."]}'
+        '{"line_ids":["outcome","progress","verification","readiness"]}'
     )
     evidence = WorkedOnEvidence(
         command="spec run",
         status="done",
-        outcomes=(
-            "Implemented the requested work.",
-            "Recorded the completed change.",
-        ),
+        outcomes=("Implemented the requested work.",),
         verification="passed",
     )
 
     assert generate_summary(tmp_path, evidence, provider=provider) == (
         "Implemented the requested work.",
-        "Recorded the completed change.",
-        "Verification passed.",
-        "The work is ready for integration.",
+        "No completed tasks or phases were recorded.",
+        "Verification passed for the completed work.",
+        "The completed work is ready for review.",
     )
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err == ""
 
 
-@pytest.mark.parametrize(
-    "stdout",
-    [
-        "not json",
-        '{"lines":["Only one.","Only two."]}',
-        '{"lines":["One.","Two.","Three.","Four.","Five.","Six.","Seven.","Eight.","Nine."]}',
-        '{"lines":["Safe sentence.","Unsafe \\u001b[31mred sentence.","Third.","Fourth."]}',
-        '{"lines":["# Heading.","Second.","Third.","Fourth."]}',
-        '{"lines":["- Bullet.","Second.","Third.","Fourth."]}',
-        '{"lines":["Run failed verification.","Second.","Third.","Fourth."]}',
-        '{"lines":["The work completed successfully.","All checks succeeded.","Third.","Fourth."]}',
-        '{"lines":["The implementation completed successfully.","Next action remains.","Third.","Fourth."]}',
-        '{"lines":["Everything was successfully implemented.","Next action remains.","Third.","Fourth."]}',
-        '{"lines":["The release succeeded.","Next action remains.","Third.","Fourth."]}',
-        '{"lines":["The feature shipped successfully.","Next action remains.","Third.","Fourth."]}',
-        '{"lines":["Validation succeeded.","Next action remains.","Third.","Fourth."]}',
-        '{"lines":["Implemented one change. Verified another.","Second.","Third.","Fourth."]}',
-        'commentary\n{"lines":["One.","Two.","Three.","Four."]}',
-    ],
-)
-def test_generate_summary_falls_back_on_invalid_or_contradictory_output(
-    stdout: str,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    summarizer_artifact: ProsaicCommandArtifact,
-) -> None:
-    _install_fake_prompt(monkeypatch, summarizer_artifact)
-    provider = FakeProvider(stdout)
+def test_fallback_orders_candidates_and_retains_required_facts() -> None:
     evidence = WorkedOnEvidence(
-        command="delivery run",
-        status=(
-            "blocked"
-            if any(
-                phrase in stdout
-                for phrase in (
-                    "completed successfully",
-                    "successfully implemented",
-                    "release succeeded",
-                    "shipped successfully",
-                )
-            )
-            else "done"
+        command="delivery continue",
+        status="blocked",
+        outcomes=tuple(f"Recorded outcome {index}." for index in range(8)),
+        decisions=tuple(f"Decision {index}." for index in range(8)),
+        commits=tuple(
+            f"abcdef12345{index} — checkpoint {index}"
+            for index in range(8)
         ),
-        goal="Add sessions",
-        verification=(
-            "failed"
-            if "All checks succeeded" in stdout or "Validation succeeded" in stdout
-            else "passed"
-        ),
-    )
-
-    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
-    assert len(provider.calls) == 1
-
-
-def test_generate_summary_rejects_blocked_output_that_omits_provider_limit(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    summarizer_artifact: ProsaicCommandArtifact,
-) -> None:
-    _install_fake_prompt(monkeypatch, summarizer_artifact)
-    provider = FakeProvider(
-        '{"lines":["Implemented the resolver.","Recorded partial progress.",'
-        '"The run remains blocked.","Retry the current phase later."]}'
-    )
-    evidence = WorkedOnEvidence(
-        command="spec continue",
-        status="blocked",
-        blocker="controller_state_contract_validation_failed",
-        provider_limit_message="You've hit your session limit.",
-        next_command="echelon spec continue",
-    )
-
-    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
-
-
-def test_generate_summary_rejects_blocked_provider_output_without_limit_or_with_readiness(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    summarizer_artifact: ProsaicCommandArtifact,
-) -> None:
-    _install_fake_prompt(monkeypatch, summarizer_artifact)
-    provider = FakeProvider(
-        '{"lines":["The provider handled the request.","The run remains blocked.",'
-        '"The feature is ready for integration.","Next retry remains available."]}'
-    )
-    evidence = WorkedOnEvidence(
-        command="spec continue",
-        status="blocked",
-        blocker="provider_session_limit",
-        provider_limit_message="Session limit resets at 17:00.",
-        next_command="echelon spec continue",
-    )
-
-    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
-
-
-def test_generate_summary_rejects_bounded_evidence_and_code_review_readiness_evasion(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    summarizer_artifact: ProsaicCommandArtifact,
-) -> None:
-    _install_fake_prompt(monkeypatch, summarizer_artifact)
-    provider = FakeProvider(
-        '{"lines":["Bounded evidence explains the stop.","The run remains blocked.",'
-        '"The next step is ready for code review.","Retry remains available."]}'
-    )
-    evidence = WorkedOnEvidence(
-        command="spec continue",
-        status="blocked",
-        blocker="provider_session_limit",
-        provider_limit_message="Session limit resets at 17:00.",
-        next_command="echelon spec continue",
-    )
-
-    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
-
-
-def test_generate_summary_rejects_provider_limit_semantic_not_in_recorded_message(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    summarizer_artifact: ProsaicCommandArtifact,
-) -> None:
-    _install_fake_prompt(monkeypatch, summarizer_artifact)
-    provider = FakeProvider(
-        '{"lines":["The rate limit explains the stop.","The run remains blocked.",'
-        '"The recorded run status is blocked.",'
-        '"Next, run echelon spec continue."]}'
-    )
-    evidence = WorkedOnEvidence(
-        command="spec continue",
-        status="blocked",
-        blocker="provider_session_limit",
-        provider_limit_message="Session limit resets at 17:00.",
-        next_command="echelon spec continue",
-    )
-
-    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
-
-
-def test_generate_summary_accepts_recorded_provider_limit_semantics(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    summarizer_artifact: ProsaicCommandArtifact,
-) -> None:
-    _install_fake_prompt(monkeypatch, summarizer_artifact)
-    expected = (
-        "The session limit resets at 17:00.",
-        "The run remains blocked.",
-        "The recorded run status is blocked.",
-        "Next, run echelon spec continue.",
-    )
-    provider = FakeProvider(json.dumps({"lines": list(expected)}))
-    evidence = WorkedOnEvidence(
-        command="spec continue",
-        status="blocked",
-        blocker="provider_session_limit",
-        provider_limit_message="Session limit resets at 17:00.",
-        next_command="echelon spec continue",
-    )
-
-    assert generate_summary(tmp_path, evidence, provider=provider) == expected
-
-
-@pytest.mark.parametrize(
-    "readiness",
-    (
-        "The next step is ready for code review.",
-        "The next step is ready for review.",
-        "The next step is ready for integration.",
-        "The next step is ready to merge.",
-        "The next step is ready to deploy.",
-    ),
-)
-def test_generate_summary_rejects_blocked_readiness_variants(
-    readiness: str,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    summarizer_artifact: ProsaicCommandArtifact,
-) -> None:
-    _install_fake_prompt(monkeypatch, summarizer_artifact)
-    provider = FakeProvider(
-        json.dumps(
-            {
-                "lines": [
-                    "The session limit explains the stop.",
-                    "The run remains blocked.",
-                    readiness,
-                    "Retry remains available.",
-                ]
-            }
-        )
-    )
-    evidence = WorkedOnEvidence(
-        command="spec continue",
-        status="blocked",
-        blocker="provider_session_limit",
-        provider_limit_message="Session limit resets at 17:00.",
-        next_command="echelon spec continue",
-    )
-
-    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
-
-
-@pytest.mark.parametrize(
-    "euphemism",
-    (
-        "The next step can proceed to code review.",
-        "The next step can be integrated.",
-        "The next step is cleared for code review.",
-        "The work is eligible to merge.",
-    ),
-)
-def test_generate_summary_rejects_blocked_progress_euphemisms(
-    euphemism: str,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    summarizer_artifact: ProsaicCommandArtifact,
-) -> None:
-    _install_fake_prompt(monkeypatch, summarizer_artifact)
-    provider = FakeProvider(
-        json.dumps(
-            {
-                "lines": [
-                    "Attempted spec continue for the requested work.",
-                    "The run remains blocked.",
-                    euphemism,
-                    "Next, run echelon spec continue.",
-                ]
-            }
-        )
-    )
-    evidence = WorkedOnEvidence(
-        command="spec continue",
-        status="blocked",
-        blocker="controller_state_contract_validation_failed",
-        next_command="echelon spec continue",
-    )
-
-    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
-
-
-@pytest.mark.parametrize(
-    "claim",
-    (
-        "The blocked work has clearance for integration.",
-        "The blocked work has approval.",
-        "The blocked work has eligibility.",
-        "The blocked work has readiness for deployment.",
-    ),
-)
-def test_generate_summary_rejects_blocked_noun_form_transition_claims(
-    claim: str,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    summarizer_artifact: ProsaicCommandArtifact,
-) -> None:
-    _install_fake_prompt(monkeypatch, summarizer_artifact)
-    provider = FakeProvider(
-        json.dumps(
-            {
-                "lines": [
-                    "Attempted spec continue for the requested work.",
-                    "The run remains blocked.",
-                    claim,
-                    "Next, run echelon spec continue.",
-                ]
-            }
-        )
-    )
-    evidence = WorkedOnEvidence(
-        command="spec continue",
-        status="blocked",
-        blocker="controller_state_contract_validation_failed",
-        next_command="echelon spec continue",
-    )
-
-    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
-
-
-@pytest.mark.parametrize(
-    "claim",
-    (
-        "The blocked feature received permission.",
-        "The blocked change obtained authorization.",
-        "The blocked change gained the go-ahead.",
-        "The blocked work was given clearance.",
-        "The blocked feature is granted approval.",
-    ),
-)
-def test_generate_summary_rejects_blocked_permission_acquisition_claims(
-    claim: str,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    summarizer_artifact: ProsaicCommandArtifact,
-) -> None:
-    _install_fake_prompt(monkeypatch, summarizer_artifact)
-    provider = FakeProvider(
-        json.dumps(
-            {
-                "lines": [
-                    "Attempted spec continue for the requested work.",
-                    "The run remains blocked.",
-                    claim,
-                    "Next, run echelon spec continue.",
-                ]
-            }
-        )
-    )
-    evidence = WorkedOnEvidence(
-        command="spec continue",
-        status="blocked",
-        blocker="controller_state_contract_validation_failed",
-        next_command="echelon spec continue",
-    )
-
-    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
-
-
-@pytest.mark.parametrize(
-    "euphemism",
-    (
-        "The blocked work will be merged.",
-        "The blocked work could be merged.",
-        "The blocked changes are eligible to merge.",
-        "The blocked next steps are ready for review.",
-        "The blocked work proceeds to code review.",
-    ),
-)
-def test_generate_summary_rejects_additional_blocked_transition_claims(
-    euphemism: str,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    summarizer_artifact: ProsaicCommandArtifact,
-) -> None:
-    _install_fake_prompt(monkeypatch, summarizer_artifact)
-    provider = FakeProvider(
-        json.dumps(
-            {
-                "lines": [
-                    "Attempted spec continue for the requested work.",
-                    "The run remains blocked.",
-                    euphemism,
-                    "Next, run echelon spec continue.",
-                ]
-            }
-        )
-    )
-    evidence = WorkedOnEvidence(
-        command="spec continue",
-        status="blocked",
-        blocker="controller_state_contract_validation_failed",
-        next_command="echelon spec continue",
-    )
-
-    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
-
-
-@pytest.mark.parametrize(
-    "claim",
-    (
-        "The blocked work should be merged.",
-        "The blocked work must be merged.",
-        "The blocked work is going to be merged.",
-        "The blocked change is moving to code review.",
-        "The blocked feature enters code review.",
-        "Merge the blocked work.",
-        "The blocked work is not merely ready for review.",
-    ),
-)
-def test_generate_summary_rejects_blocked_transition_grammar_variants(
-    claim: str,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    summarizer_artifact: ProsaicCommandArtifact,
-) -> None:
-    _install_fake_prompt(monkeypatch, summarizer_artifact)
-    provider = FakeProvider(
-        json.dumps(
-            {
-                "lines": [
-                    "Attempted spec continue for the requested work.",
-                    "The run remains blocked.",
-                    claim,
-                    "Next, run echelon spec continue.",
-                ]
-            }
-        )
-    )
-    evidence = WorkedOnEvidence(
-        command="spec continue",
-        status="blocked",
-        blocker="controller_state_contract_validation_failed",
-        next_command="echelon spec continue",
-    )
-
-    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
-
-
-@pytest.mark.parametrize(
-    "claim",
-    (
-        "The blocked work is not ready although the feature is eligible.",
-        "The blocked run is not ready although you should retry tomorrow.",
-        "The blocked run is not eligible although it will resume tomorrow.",
-    ),
-)
-def test_generate_summary_rejects_claim_after_negated_readiness(
-    claim: str,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    summarizer_artifact: ProsaicCommandArtifact,
-) -> None:
-    _install_fake_prompt(monkeypatch, summarizer_artifact)
-    provider = FakeProvider(
-        json.dumps(
-            {
-                "lines": [
-                    "Attempted spec continue for the requested work.",
-                    "The run remains blocked.",
-                    claim,
-                    "Next, run echelon spec continue.",
-                ]
-            }
-        )
-    )
-    evidence = WorkedOnEvidence(
-        command="spec continue",
-        status="blocked",
-        blocker="controller_state_contract_validation_failed",
-        next_command="echelon spec continue",
-    )
-
-    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
-
-
-def test_generate_summary_accepts_negated_blocked_readiness(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    summarizer_artifact: ProsaicCommandArtifact,
-) -> None:
-    _install_fake_prompt(monkeypatch, summarizer_artifact)
-    expected = (
-        "Attempted spec continue for the requested work.",
-        "The blocked work is not ready for review.",
-        "The recorded run status is blocked.",
-        "Next, run echelon spec continue.",
-    )
-    provider = FakeProvider(json.dumps({"lines": list(expected)}))
-    evidence = WorkedOnEvidence(
-        command="spec continue",
-        status="blocked",
-        blocker="controller_state_contract_validation_failed",
-        next_command="echelon spec continue",
-    )
-
-    assert generate_summary(tmp_path, evidence, provider=provider) == expected
-
-
-def test_generate_summary_accepts_grounded_blocked_operator_action(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    summarizer_artifact: ProsaicCommandArtifact,
-) -> None:
-    _install_fake_prompt(monkeypatch, summarizer_artifact)
-    expected = (
-        "Attempted spec continue for the requested work.",
-        "The run remains blocked.",
-        "The recorded run status is blocked.",
-        "Next, run echelon spec continue.",
-    )
-    provider = FakeProvider(json.dumps({"lines": list(expected)}))
-    evidence = WorkedOnEvidence(
-        command="spec continue",
-        status="blocked",
-        blocker="controller_state_contract_validation_failed",
-        next_command="echelon spec continue",
-    )
-
-    assert generate_summary(tmp_path, evidence, provider=provider) == expected
-
-
-@pytest.mark.parametrize(
-    "next_note",
-    (
-        "Run the focused verification suite.",
-        "Retry verification after the provider reset.",
-        "Resume delivery after answering the blocker.",
-        "Wait for the provider reset, then retry delivery.",
-        "Answer the recorded question.",
-        "Fix the failing check.",
-        "Resolve the recorded blocker.",
-    ),
-)
-def test_generate_summary_accepts_grounded_blocked_next_note_action(
-    next_note: str,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    summarizer_artifact: ProsaicCommandArtifact,
-) -> None:
-    _install_fake_prompt(monkeypatch, summarizer_artifact)
-    expected = (
-        "Attempted spec continue for the requested work.",
-        "The run remains blocked.",
-        "The recorded run status is blocked.",
-        next_note,
-    )
-    provider = FakeProvider(json.dumps({"lines": list(expected)}))
-    evidence = WorkedOnEvidence(
-        command="spec continue",
-        status="blocked",
-        blocker="controller_state_contract_validation_failed",
-        next_note=next_note,
-    )
-
-    assert generate_summary(tmp_path, evidence, provider=provider) == expected
-
-
-def test_generate_summary_rejects_ungrounded_blocked_next_action_claim(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    summarizer_artifact: ProsaicCommandArtifact,
-) -> None:
-    _install_fake_prompt(monkeypatch, summarizer_artifact)
-    provider = FakeProvider(
-        '{"lines":["Attempted spec continue for the requested work.",'
-        '"The run remains blocked.","The recorded run status is blocked.",'
-        '"Retry remains available."]}'
-    )
-    evidence = WorkedOnEvidence(
-        command="spec continue",
-        status="blocked",
-        blocker="controller_state_contract_validation_failed",
-        next_command="echelon spec continue",
-    )
-
-    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
-
-
-@pytest.mark.parametrize(
-    "claim",
-    (
-        "The operator should retry after the blocked run.",
-        "Please run the blocked delivery after reset.",
-        "Continue the blocked run after reset.",
-    ),
-)
-def test_generate_summary_rejects_prefixed_or_embedded_ungrounded_action(
-    claim: str,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    summarizer_artifact: ProsaicCommandArtifact,
-) -> None:
-    _install_fake_prompt(monkeypatch, summarizer_artifact)
-    provider = FakeProvider(
-        json.dumps(
-            {
-                "lines": [
-                    "Attempted spec continue for the requested work.",
-                    "The run remains blocked.",
-                    "The recorded run status is blocked.",
-                    claim,
-                ]
-            }
-        )
-    )
-    evidence = WorkedOnEvidence(
-        command="spec continue",
-        status="blocked",
-        blocker="controller_state_contract_validation_failed",
-        next_command="echelon spec continue",
-    )
-
-    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
-
-
-@pytest.mark.parametrize(
-    "claim",
-    (
-        "You can retry the blocked run.",
-        "The operator will retry the blocked run.",
-        "The operator should merge the blocked work.",
-        "Merge the blocked work.",
-    ),
-)
-def test_generate_summary_rejects_ungrounded_modal_or_lifecycle_action(
-    claim: str,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    summarizer_artifact: ProsaicCommandArtifact,
-) -> None:
-    _install_fake_prompt(monkeypatch, summarizer_artifact)
-    provider = FakeProvider(
-        json.dumps(
-            {
-                "lines": [
-                    "Attempted spec continue for the requested work.",
-                    "The run remains blocked.",
-                    "The recorded run status is blocked.",
-                    claim,
-                ]
-            }
-        )
-    )
-    evidence = WorkedOnEvidence(
-        command="spec continue",
-        status="blocked",
-        blocker="controller_state_contract_validation_failed",
-        next_command="echelon spec continue",
-    )
-
-    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
-
-
-@pytest.mark.parametrize(
-    "claim",
-    (
-        "Attempted spec continue so you should retry tomorrow.",
-        "Attempted spec continue to retry tomorrow.",
-        "You can run the blocked command.",
-        "The operator will run the blocked command.",
-        "The operator can wait for the blocked reset.",
-        "The operator plans to run the blocked command.",
-    ),
-)
-def test_generate_summary_rejects_residual_or_modal_ungrounded_action(
-    claim: str,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    summarizer_artifact: ProsaicCommandArtifact,
-) -> None:
-    _install_fake_prompt(monkeypatch, summarizer_artifact)
-    provider = FakeProvider(
-        json.dumps(
-            {
-                "lines": [
-                    "The run remains blocked.",
-                    "The recorded run status is blocked.",
-                    claim,
-                    "Next, run echelon spec continue.",
-                ]
-            }
-        )
-    )
-    evidence = WorkedOnEvidence(
-        command="spec continue",
-        status="blocked",
-        blocker="controller_state_contract_validation_failed",
-        next_command="echelon spec continue",
-    )
-
-    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
-
-
-def test_generate_summary_rejects_blocked_command_reported_as_progress_fact(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    summarizer_artifact: ProsaicCommandArtifact,
-) -> None:
-    _install_fake_prompt(monkeypatch, summarizer_artifact)
-    provider = FakeProvider(
-        '{"lines":["Attempted spec continue for the requested work.",'
-        '"The run remains blocked.","The recorded run status is blocked.",'
-        '"The next command is echelon spec continue."]}'
-    )
-    evidence = WorkedOnEvidence(
-        command="spec continue",
-        status="blocked",
-        blocker="controller_state_contract_validation_failed",
-        next_command="echelon spec continue",
-    )
-
-    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
-
-
-def test_generate_summary_rejects_contradiction_of_exact_verification_fact(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    summarizer_artifact: ProsaicCommandArtifact,
-) -> None:
-    _install_fake_prompt(monkeypatch, summarizer_artifact)
-    provider = FakeProvider(
-        '{"lines":["Implemented the resolver.","Recorded the completed change.",'
-        '"Verification failed for the work.","The feature is ready for integration."]}'
-    )
-    evidence = WorkedOnEvidence(
-        command="delivery run",
-        status="done",
-        verification="passed in 12.5s",
-    )
-
-    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
-
-
-@pytest.mark.parametrize(
-    "missing_fact",
-    ["verification", "commit", "outcome"],
-)
-def test_generate_summary_requires_supplied_exact_grounding_facts(
-    missing_fact: str,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    summarizer_artifact: ProsaicCommandArtifact,
-) -> None:
-    _install_fake_prompt(monkeypatch, summarizer_artifact)
-    facts = {
-        "verification": "Recorded verification: 200 focused tests passed.",
-        "commit": "Recorded abcdef123456 — feat: resolve models.",
-        "outcome": "Implemented provider-owned model selection.",
-    }
-    lines = [
-        value for key, value in facts.items() if key != missing_fact
-    ]
-    lines.extend(("Recorded deterministic progress.", "The work is ready for review."))
-    provider = FakeProvider(json.dumps({"lines": lines[:4]}))
-    evidence = WorkedOnEvidence(
-        command="delivery run",
-        status="done",
-        outcomes=("Implemented provider-owned model selection.",),
-        commits=("abcdef123456 — feat: resolve models",),
-        verification="200 focused tests passed",
-    )
-
-    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
-
-
-def test_generate_summary_accepts_all_exact_grounding_facts_with_colons(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    summarizer_artifact: ProsaicCommandArtifact,
-) -> None:
-    _install_fake_prompt(monkeypatch, summarizer_artifact)
-    expected = (
-        "Implemented provider-owned model selection.",
-        "Recorded verification: 200 focused tests passed.",
-        "Recorded abcdef123456 — feat: resolve models.",
-        "The work is ready for review.",
-    )
-    provider = FakeProvider(json.dumps({"lines": list(expected)}))
-    evidence = WorkedOnEvidence(
-        command="delivery run",
-        status="done",
-        outcomes=("Implemented provider-owned model selection.",),
-        commits=("abcdef123456 — feat: resolve models",),
-        verification="200 focused tests passed",
-    )
-
-    assert generate_summary(tmp_path, evidence, provider=provider) == expected
-
-
-def test_generate_summary_rejects_claim_piggybacking_on_exact_outcome(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    summarizer_artifact: ProsaicCommandArtifact,
-) -> None:
-    _install_fake_prompt(monkeypatch, summarizer_artifact)
-    provider = FakeProvider(
-        '{"lines":["Refactored OAuth while implemented provider-owned model selection.",'
-        '"The recorded run status is done.","The work is ready for review.",'
-        '"No further recovery command was recorded."]}'
-    )
-    evidence = WorkedOnEvidence(
-        command="delivery run",
-        status="done",
-        outcomes=("Implemented provider-owned model selection.",),
-    )
-
-    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
-
-
-@pytest.mark.parametrize(
-    "invented",
-    [
-        "Implemented an OAuth gateway.",
-        "Refactored authentication into a new gateway.",
-        "Deployed the service integration.",
-        "Worked through one phase and refactored authentication into a new OAuth gateway.",
-        "Worked through one phase; refactored authentication into a new OAuth gateway.",
-        "Worked through one phase, then refactored authentication into a new OAuth gateway.",
-    ],
-)
-def test_generate_summary_rejects_unrecorded_engineering_outcome(
-    invented: str,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    summarizer_artifact: ProsaicCommandArtifact,
-) -> None:
-    _install_fake_prompt(monkeypatch, summarizer_artifact)
-    provider = FakeProvider(
-        json.dumps(
-            {
-                "lines": [
-                    invented,
-                    "Worked through one phase.",
-                    "The recorded run status is done.",
-                    "The work is ready for review.",
-                ]
-            }
-        )
-    )
-    evidence = WorkedOnEvidence(
-        command="spec run",
-        status="done",
-        completed_phases=("phase1-what",),
-    )
-
-    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
-
-
-def test_fallback_lines_remain_within_external_contract_bounds() -> None:
-    huge = "🙂" * 1_000
-    evidence = WorkedOnEvidence(
-        command=huge,
-        status="blocked",
-        goal=huge,
-        duration=huge,
-        blocker=huge,
-        provider_limit_message=huge,
-        next_command=huge,
-        next_note=huge,
+        verification="failed",
+        blocker="verification failed",
+        provider_limit_message="Usage limit resets at 17:00.",
+        next_command="echelon delivery continue 014",
     )
 
     lines = fallback_summary(evidence)
 
     assert 4 <= len(lines) <= 8
-    assert all(len(line) <= 280 for line in lines)
-    assert sum(len(line) for line in lines) <= 1_600
-    assert all(len(re.findall(r"[.!?](?:\s|$)", line)) == 1 for line in lines)
+    assert any("verification failed" in line for line in lines)
+    assert any("Usage limit resets at 17:00." in line for line in lines)
+    assert lines[-1] == "Next, run `echelon delivery continue 014`."
 
 
 @pytest.mark.parametrize("exit_code,timed_out", [(1, False), (0, True)])
@@ -1693,9 +856,15 @@ def test_generate_summary_falls_back_without_retry_on_provider_failure(
 ) -> None:
     _install_fake_prompt(monkeypatch, summarizer_artifact)
     provider = FakeProvider("", exit_code=exit_code, timed_out=timed_out)
-    evidence = WorkedOnEvidence(command="spec run", status="blocked", blocker="provider unavailable")
+    evidence = WorkedOnEvidence(
+        command="spec run",
+        status="blocked",
+        blocker="provider unavailable",
+    )
 
-    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
+    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(
+        evidence
+    )
     assert len(provider.calls) == 1
 
 

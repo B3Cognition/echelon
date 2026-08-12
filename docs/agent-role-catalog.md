@@ -65,12 +65,12 @@ nodes in the runtime graph.
 | Learning | ADAPTIVE, AUDITOR, CONSOLIDATOR, INTERNALIZER, MIRROR, MONITOR, REALIST, VETERAN |
 | Build | CHANGE CONTROLLER, ENGINEERING MANAGER, SPEC FULFILLMENT AUDITOR, VERIFICATION, VISUAL VALIDATOR |
 
-SUMMARIZER converts a bounded packet of durable lifecycle evidence into four to
-eight plain, outcome-first handoff lines. It preserves exact recorded
-verification and lifecycle-attributed `short SHA — subject` commits, explains a
-current provider limit on blocked work, and never discovers facts by scanning
-the repository. Invalid or unavailable model output falls back to the same
-evidence-grounded paragraph-style contract.
+SUMMARIZER selects and orders four to eight opaque IDs from an Echelon-authored
+candidate list; it never authors terminal prose. Echelon deterministically builds
+the outcome-first sentences from bounded durable lifecycle evidence, preserving
+exact verification commands, lifecycle-attributed `short SHA — subject` commits,
+provider limits, and recovery actions. Unknown, duplicate, incomplete, or
+open-ended model output falls back to deterministic candidate ordering.
 
 ## Companion Prose
 

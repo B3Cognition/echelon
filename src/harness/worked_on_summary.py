@@ -39,146 +39,22 @@ def _clean_text(value: object, *, limit: int = _MAX_TEXT) -> str:
     return text
 
 
+def _clean_opaque_text(value: object, *, limit: int = _MAX_TEXT) -> str:
+    """Bound one opaque fact without normalizing its internal shell syntax."""
+    text = str(value or "").strip()
+    text = _ANSI_RE.sub("", text)
+    text = re.sub(r"[\r\n]+", " ", text)
+    text = _CONTROL_RE.sub("", text)
+    if len(text) > limit:
+        text = text[: max(0, limit - 1)].rstrip() + "…"
+    return text
+
+
 def _clean_items(value: object, *, limit: int = _MAX_ITEMS) -> tuple[str, ...]:
     if not isinstance(value, (list, tuple, set)):
         return ()
     cleaned = tuple(_clean_text(item, limit=180) for item in value)
     return tuple(item for item in cleaned if item)[:limit]
-
-
-def _command_tokens(value: str) -> tuple[str, ...]:
-    return tuple(
-        cleaned
-        for token in value.lower().split()
-        if (cleaned := token.strip("`'\"()[]{}.,;:!?"))
-    )
-
-
-def _contains_token_sequence(recorded: tuple[str, ...], claim: str) -> bool:
-    claimed = _command_tokens(claim)
-    if not claimed:
-        return True
-    width = len(claimed)
-    return any(recorded[index:index + width] == claimed for index in range(len(recorded) - width + 1))
-
-
-def _recorded_verification_commands(value: str) -> tuple[tuple[str, ...], ...]:
-    text = " ".join(value.lower().split())
-    commands = [_command_tokens(item) for item in re.findall(r"`([^`]+)`", text)]
-    for clause in re.split(r"\s*;\s*", text):
-        clause = re.sub(r"^(?:recorded )?verification:\s*", "", clause)
-        status = r"(?:passed|failed|succeeded)"
-        matches = (
-            re.fullmatch(rf"{status}\s*[:—-]\s*(.+)", clause),
-            re.fullmatch(rf"(.+?)\s+\({status}\)(?:\s+in\s+.+)?", clause),
-            re.fullmatch(rf"(.+?)\s+{status}(?:\s+in\s+.+)?", clause),
-        )
-        command = next((match.group(1) for match in matches if match), "")
-        if command:
-            commands.append(_command_tokens(command))
-    return tuple(dict.fromkeys(command for command in commands if command))
-
-
-def _verification_command_mentions_are_exact(
-    line: str,
-    recorded_commands: tuple[tuple[str, ...], ...],
-) -> bool:
-    edge_chars = "`'\"()[]{}.,;:!?"
-    token_spans: list[tuple[str, int, int]] = []
-    for match in re.finditer(r"\S+", line):
-        raw_token = match.group(0)
-        cleaned = raw_token.strip(edge_chars)
-        if not cleaned:
-            continue
-        leading = len(raw_token) - len(raw_token.lstrip(edge_chars))
-        trailing = len(raw_token) - len(raw_token.rstrip(edge_chars))
-        token_spans.append(
-            (
-                cleaned.lower(),
-                match.start() + leading,
-                match.end() - trailing,
-            )
-        )
-
-    def tokens_are_contiguous(start: int, width: int) -> bool:
-        for index in range(start, start + width - 1):
-            gap = line[token_spans[index][2]:token_spans[index + 1][1]]
-            if not gap or any(
-                not (character.isspace() or character in "`'\"([{ ")
-                for character in gap
-            ):
-                return False
-        return True
-
-    def has_safe_end(end: int) -> bool:
-        final_end = token_spans[end - 1][2]
-        if end == len(token_spans):
-            return bool(
-                re.fullmatch(r"[`'\"\)\]\}]*[.!?]?", line[final_end:])
-            )
-        if token_spans[end][0] not in {"passed", "failed", "succeeded"}:
-            return False
-        gap = line[final_end:token_spans[end][1]]
-        return all(
-            character.isspace() or character in edge_chars
-            for character in gap
-        )
-
-    valid_spans: list[tuple[int, int]] = []
-    normalized_tokens = tuple(token for token, _start, _end in token_spans)
-    for command in recorded_commands:
-        width = len(command)
-        for index in range(len(normalized_tokens) - width + 1):
-            if normalized_tokens[index:index + width] != command:
-                continue
-            if not tokens_are_contiguous(index, width) or not has_safe_end(
-                index + width
-            ):
-                continue
-            valid_spans.append(
-                (token_spans[index][1], token_spans[index + width - 1][2])
-            )
-
-    for executable in {command[0] for command in recorded_commands}:
-        for mention in re.finditer(
-            rf"(?<!\w){re.escape(executable)}(?!\w)",
-            line.lower(),
-        ):
-            if sum(
-                start <= mention.start() and mention.end() <= end
-                for start, end in valid_spans
-            ) != 1:
-                return False
-    return True
-
-
-def _verification_command_claims(line: str) -> tuple[str, ...]:
-    semantic = " ".join(line.lower().split()).rstrip(".!?")
-    semantic = re.sub(r"^recorded verification:\s*", "", semantic)
-    claims = list(re.findall(r"`([^`]+)`", semantic))
-    cue = re.search(
-        r"\b(?:with|via|using|ran|running|command(?:\s+(?:was|is))?:?)\s+(.+)$",
-        semantic,
-    )
-    if cue:
-        claims.append(cue.group(1).strip("` "))
-    leading = re.fullmatch(r"(.+?)\s+(?:passed|failed|succeeded)", semantic)
-    if leading and not re.fullmatch(
-        r"(?:verification|validation|all checks?|checks?|all tests?|tests?)",
-        leading.group(1),
-    ):
-        claims.append(leading.group(1))
-    return tuple(dict.fromkeys(claims))
-
-
-def _provider_limit_semantics(value: str) -> frozenset[str]:
-    text = " ".join(value.lower().split())
-    return frozenset(
-        semantic
-        for semantic in ("session limit", "usage limit", "rate limit", "quota")
-        if re.search(rf"\b{re.escape(semantic)}\b", text)
-    )
-
 
 @dataclass(frozen=True)
 class WorkedOnEvidence:
@@ -220,7 +96,12 @@ class WorkedOnEvidence:
                     "next_command",
                     "next_note",
                 } else _MAX_TEXT
-                normalized[key] = _clean_text(value, limit=limit)
+                cleaner = (
+                    _clean_opaque_text
+                    if key in {"verification", "next_command"}
+                    else _clean_text
+                )
+                normalized[key] = cleaner(value, limit=limit)
         encoded = json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
         if len(encoded.encode("utf-8")) <= MAX_EVIDENCE_BYTES:
             return encoded
@@ -276,10 +157,10 @@ class WorkedOnEvidence:
             normalized["provider_limit_message"] = _clean_text(
                 normalized.get("provider_limit_message"), limit=240
             )
-            normalized["verification"] = _clean_text(
+            normalized["verification"] = _clean_opaque_text(
                 normalized.get("verification"), limit=240
             )
-            normalized["next_command"] = _clean_text(
+            normalized["next_command"] = _clean_opaque_text(
                 normalized.get("next_command"), limit=240
             )
             normalized["next_note"] = _clean_text(
@@ -353,7 +234,7 @@ def _attributed_commits(source: Mapping[str, object]) -> tuple[str, ...]:
 
 
 def _recorded_verification(source: Mapping[str, object]) -> str:
-    summary = _clean_text(
+    summary = _clean_opaque_text(
         source.get("verification_summary") or source.get("verification")
     )
     if summary:
@@ -402,7 +283,7 @@ def phase_a_evidence(
             or state.get("escalation_question")
         ),
         provider_limit_message=_clean_text(state.get("provider_limit_message")),
-        next_command=_clean_text(next_command),
+        next_command=_clean_opaque_text(next_command),
         next_note=_clean_text(
             next_note or state.get("next_note") or state.get("recovery_note")
         ),
@@ -493,12 +374,8 @@ def delivery_evidence(
         outcomes.extend(_clean_items(row.get("outcomes")))
         commits.extend(_attributed_commits(row))
     provider_limit_message = ""
-    for strategy_id, result in zip(selected_ids, selected_results):
-        if _clean_text(getattr(result, "termination_reason", "")) != "provider_session_limit":
-            continue
-        row = strategy_rows.get(strategy_id)
-        if isinstance(row, Mapping):
-            provider_limit_message = _clean_text(row.get("provider_limit_message"))
+    for row in selected_rows:
+        provider_limit_message = _clean_text(row.get("provider_limit_message"))
         if provider_limit_message:
             break
     durations = tuple(_recorded_duration(row) for row in selected_rows)
@@ -534,415 +411,238 @@ def delivery_evidence(
         verification_failures=tuple(failures)[:_MAX_ITEMS],
         blocker=reasons[0] if reasons else "",
         provider_limit_message=provider_limit_message,
-        next_command=_clean_text(next_command),
+        next_command=_clean_opaque_text(next_command),
         next_note=next_note,
         strategies=_clean_items(strategies),
     )
 
+@dataclass(frozen=True)
+class NarrativeCandidate:
+    """One controller-authored sentence available for terminal selection."""
 
-def fallback_summary(evidence: WorkedOnEvidence) -> tuple[str, ...]:
-    """Build useful narrative prose without an LLM."""
-    def sentence(value: str, *, prefix: str = "") -> str:
-        text = _clean_text(value, limit=_MAX_FALLBACK_LINE - len(prefix) - 1)
-        text = re.split(r"(?<=[.!?])\s+", text, maxsplit=1)[0]
-        rendered = f"{prefix}{text}" if text else prefix.rstrip()
-        return rendered if rendered[-1:] in {".", "!", "?"} else f"{rendered}."
+    id: str
+    text: str
+    priority: int
+    required: bool = False
 
-    def command_sentence(value: str) -> str:
-        text = _clean_text(
-            value,
-            limit=_MAX_FALLBACK_LINE - len("Next, run ``."),
-        )
-        text = re.split(r"(?<=[.!?])\s+", text, maxsplit=1)[0]
-        text = text.rstrip(".!?")
-        return f"Next, run `{text}`."
 
-    goal = evidence.goal or evidence.spec_id or "the requested work"
-    progress_count = len(evidence.completed_tasks) or len(evidence.completed_phases)
-    progress_kind = "tasks" if evidence.completed_tasks else "phases"
-    if progress_count:
-        progress = f"Worked through {progress_count} {progress_kind} toward {goal}."
-    elif evidence.status == "done":
-        progress = f"Completed work toward {goal}."
-    else:
-        progress = f"Attempted {evidence.command or 'the requested work'} for {goal}."
-    progress = sentence(progress)
+def _sentence(value: object, *, prefix: str = "") -> str:
+    """Build one controller-owned sentence from a bounded durable fact."""
+    text = _clean_text(value)
+    text = re.split(r"(?<=[.!?])\s+", text, maxsplit=1)[0]
+    rendered = f"{prefix}{text}" if text else prefix.rstrip()
+    return rendered if rendered[-1:] in {".", "!", "?"} else f"{rendered}."
 
-    lines: list[str] = []
+
+def _exact_fact_sentence(value: object, *, prefix: str) -> str:
+    """Wrap an opaque durable fact without interpreting its internal syntax."""
+    text = _clean_opaque_text(value)
+    rendered = f"{prefix}{text}"
+    return rendered if rendered[-1:] in {".", "!", "?"} else f"{rendered}."
+
+
+def narrative_candidates(
+    evidence: WorkedOnEvidence,
+) -> tuple[NarrativeCandidate, ...]:
+    """Construct the complete controller-authored terminal narrative menu."""
+    unfinished = evidence.status != "done"
+    goal = _clean_text(evidence.goal or evidence.spec_id) or "the requested work"
+    command = _clean_text(evidence.command) or "the requested work"
+    candidates: list[NarrativeCandidate] = []
+
     if evidence.outcomes:
-        lines.append(sentence(evidence.outcomes[0]))
-    elif evidence.decisions:
-        lines.append(sentence(evidence.decisions[0], prefix="Recorded decision: "))
+        primary = _sentence(evidence.outcomes[0])
+    elif unfinished:
+        primary = _sentence(f"Attempted {command} for {goal}")
     else:
-        lines.append(progress)
-    if progress_count and lines[0] != progress:
-        lines.append(progress)
+        primary = _sentence(f"Completed work toward {goal}")
+    candidates.append(NarrativeCandidate("outcome", primary, 10))
 
-    important: list[str] = []
-    if evidence.verification:
-        if evidence.verification == "passed":
-            important.append("Verification passed for the completed work.")
-        elif evidence.verification == "failed":
-            important.append("Verification found remaining issues in the current work.")
-        else:
-            important.append(sentence(evidence.verification, prefix="Recorded verification: "))
-    if evidence.commits:
-        important.append(sentence(evidence.commits[0], prefix="Recorded lifecycle commit "))
+    progress_count = len(evidence.completed_tasks) or len(evidence.completed_phases)
+    if progress_count:
+        progress_kind = "tasks" if evidence.completed_tasks else "phases"
+        progress = _sentence(
+            f"Worked through {progress_count} {progress_kind} toward {goal}"
+        )
+    elif evidence.duration:
+        progress = _sentence(
+            evidence.duration,
+            prefix="The recorded run duration was ",
+        )
+    else:
+        progress = "No completed tasks or phases were recorded."
+    candidates.append(NarrativeCandidate("progress", progress, 20))
 
-    tail: list[str] = []
-    if evidence.status != "done" or evidence.blocker:
-        reason = evidence.blocker or evidence.status or "an unfinished run"
-        tail.append(sentence(reason, prefix="The run stopped because "))
-    if evidence.provider_limit_message:
-        tail.append(
-            sentence(
-                evidence.provider_limit_message,
-                prefix="The provider reported a limit: ",
+    for index, outcome in enumerate(evidence.outcomes[1:], start=2):
+        candidates.append(
+            NarrativeCandidate(
+                f"outcome-{index}",
+                _sentence(outcome),
+                30 + index,
             )
         )
-    if evidence.next_note:
-        tail.append(sentence(evidence.next_note))
-    if evidence.next_command:
-        tail.append(command_sentence(evidence.next_command))
-
-    lines.extend(important[: max(0, 8 - len(lines) - len(tail))])
-    optional: list[str] = []
-    if len(evidence.outcomes) > 1:
-        optional.append(sentence(evidence.outcomes[1]))
-    if evidence.duration:
-        optional.append(sentence(evidence.duration, prefix="Recorded duration was "))
-    for detail in optional:
-        if len(lines) + len(tail) < 8:
-            lines.append(detail)
-    if len(lines) + len(tail) < 4:
-        lines.append(
-            sentence(evidence.status or "unknown", prefix="The recorded run status is ")
+    for index, decision in enumerate(evidence.decisions, start=1):
+        candidates.append(
+            NarrativeCandidate(
+                f"decision-{index}",
+                _sentence(decision, prefix="Recorded decision: "),
+                50 + index,
+            )
         )
-    if len(lines) + len(tail) < 4 and not evidence.verification:
-        lines.append("No verification result was recorded.")
-    if len(lines) + len(tail) < 4:
-        lines.append("No further recovery command was recorded.")
-    lines.extend(tail[: max(0, 8 - len(lines))])
-    return tuple(lines[:8])
+
+    if evidence.verification == "passed":
+        verification = "Verification passed for the completed work."
+    elif evidence.verification == "failed":
+        verification = "Verification found remaining issues in the current work."
+    elif evidence.verification:
+        verification = _exact_fact_sentence(
+            evidence.verification,
+            prefix="Recorded verification: ",
+        )
+    else:
+        verification = "No verification result was recorded."
+    candidates.append(NarrativeCandidate("verification", verification, 70))
+
+    for index, commit in enumerate(evidence.commits, start=1):
+        candidates.append(
+            NarrativeCandidate(
+                f"commit-{index}",
+                _exact_fact_sentence(
+                    commit,
+                    prefix="Recorded lifecycle commit ",
+                ),
+                80 + index,
+            )
+        )
+
+    if unfinished:
+        reason = _clean_text(evidence.blocker)
+        blocker = (
+            _sentence(reason, prefix="The run stopped because ")
+            if reason
+            else _sentence(
+                evidence.status or "unknown",
+                prefix="The recorded run status is ",
+            )
+        )
+        candidates.append(
+            NarrativeCandidate(
+                "blocker",
+                blocker,
+                100,
+                required=bool(reason),
+            )
+        )
+        if evidence.provider_limit_message:
+            candidates.append(
+                NarrativeCandidate(
+                    "provider-limit",
+                    _exact_fact_sentence(
+                        evidence.provider_limit_message,
+                        prefix="The provider reported a limit: ",
+                    ),
+                    110,
+                    required=True,
+                )
+            )
+        if evidence.next_command:
+            next_action = _exact_fact_sentence(
+                f"`{_clean_opaque_text(evidence.next_command)}`",
+                prefix="Next, run ",
+            )
+        elif evidence.next_note:
+            next_action = _sentence(evidence.next_note)
+        else:
+            next_action = ""
+        if next_action:
+            candidates.append(
+                NarrativeCandidate(
+                    "next-action",
+                    next_action,
+                    120,
+                    required=True,
+                )
+            )
+    else:
+        candidates.append(
+            NarrativeCandidate(
+                "readiness",
+                "The completed work is ready for review.",
+                120,
+            )
+        )
+
+    return tuple(candidates)
 
 
-def _valid_lines(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | None:
+def _selected_candidate_ids(
+    raw: str,
+    candidates: Sequence[NarrativeCandidate],
+) -> tuple[str, ...] | None:
+    """Validate the model's closed selection contract without reading prose."""
     try:
         payload = json.loads(raw)
-    except (TypeError, json.JSONDecodeError):
+    except (json.JSONDecodeError, TypeError):
         return None
-    if not isinstance(payload, dict) or set(payload) != {"lines"}:
+    if not isinstance(payload, dict) or set(payload) != {"line_ids"}:
         return None
-    lines = payload.get("lines")
-    if not isinstance(lines, list) or not 4 <= len(lines) <= 8:
+    ids = payload["line_ids"]
+    if not isinstance(ids, list) or not 4 <= len(ids) <= 8:
         return None
-
-    normalized: list[str] = []
-    for raw_line in lines:
-        if not isinstance(raw_line, str):
-            return None
-        if _ANSI_RE.search(raw_line) or _CONTROL_RE.search(raw_line):
-            return None
-        line = raw_line.strip()
-        if (
-            not line
-            or "\n" in line
-            or len(line) > _MAX_LINE
-            or line.startswith(("#", "- ", "* ", "• ", "```", "|"))
-            or line[-1:] not in {".", "!", "?"}
-            or len(re.findall(r"[.!?](?:\s|$)", line)) != 1
-        ):
-            return None
-        normalized.append(line)
-    if sum(len(item) for item in normalized) > _MAX_TOTAL_LINES:
+    if any(not isinstance(candidate_id, str) for candidate_id in ids):
+        return None
+    selected = tuple(ids)
+    if len(set(selected)) != len(selected):
         return None
 
-    joined = " ".join(normalized).lower()
-    grounded = " ".join(joined.split())
-    verification = evidence.verification.lower()
-    if verification.startswith("passed") and re.search(
-        r"\b(?:verification|checks?|tests?) (?:failed|did not pass|found failures?)\b",
-        joined,
-    ):
+    candidate_ids = tuple(candidate.id for candidate in candidates)
+    if len(set(candidate_ids)) != len(candidate_ids):
         return None
-    if verification.startswith("failed") and re.search(
-        r"\b(?:verification|checks?|tests?) (?:passed|succeeded|were successful)\b|\ball checks succeeded\b",
-        joined,
-    ):
+    known = set(candidate_ids)
+    if any(candidate_id not in known for candidate_id in selected):
         return None
-    if evidence.status == "done" and re.search(
-        r"\b(?:run|delivery|spec|work) (?:failed|blocked|stopped unsuccessfully)\b",
-        joined,
-    ):
+    required = {
+        candidate.id
+        for candidate in candidates
+        if candidate.required
+    }
+    if not required.issubset(selected):
         return None
-    blocked_status = evidence.status in {"blocked", "failed", "error"}
-    if blocked_status:
-        if re.search(
-            r"\b(?:succeeded|successful(?:ly)?|shipped|converged)\b|"
-            r"\ball work (?:completed|finished)\b|\ball checks succeeded\b|"
-            r"\b(?:integration|review|merge|release|deployment)-ready\b",
-            joined,
-        ):
-            return None
-        blocked_subject = re.compile(r"\b(?:work|features?|changes?|next steps?)\b")
-        readiness = re.compile(r"\b(?:ready|cleared|approved|eligible|able)\b")
-        permission_readiness = re.compile(
-            r"\b(?:work|features?|changes?|next steps?)\s+"
-            r"(?:(?:has|have)(?:\s+(?:received|obtained|gained))?|"
-            r"receiv(?:e|es|ed|ing)|obtain(?:s|ed|ing)?|gain(?:s|ed|ing)?|"
-            r"(?:is|are|was|were)\s+(?:given|granted)|"
-            r"(?:has|have)\s+been\s+(?:given|granted))\s+"
-            r"(?:an?\s+|the\s+)?(?:clearance|approval|eligibility|readiness|"
-            r"permission|authorization|go[- ]ahead)\b"
-        )
-        negated_readiness = re.compile(
-            r"^(?:the\s+)?(?:blocked\s+)?(?:work|features?|changes?|next steps?|run)\s+"
-            r"(?:is|remains)\s+(?:not|never)\s+(?:yet\s+)?"
-            r"(?:ready|cleared|approved|eligible|able)"
-            r"(?:\s+(?:for|to)\s+(?:code review|review|integration|merge|landing|"
-            r"release|shipping|deployment|proceed|advance|move|integrate|land|ship|deploy))?$"
-        )
+    return selected
 
-        def negated_readiness_line(line: str) -> bool:
-            return bool(negated_readiness.fullmatch(line.rstrip(".!?")))
-        transition = re.compile(
-            r"\b(?:proceed(?:s|ed|ing)?|advanc(?:e|es|ed|ing)|"
-            r"mov(?:e|es|ed|ing)|integrat(?:e|es|ed|ing)|review(?:s|ed|ing)?|"
-            r"merg(?:e|es|ed|ing)|land(?:s|ed|ing)?|releas(?:e|es|ed|ing)|"
-            r"ship(?:s|ped|ping)?|deploy(?:s|ed|ing)?|enter(?:s|ed|ing)?)\b"
-        )
 
-        def blocked_progress_claim(line: str) -> bool:
-            subject = blocked_subject.search(line)
-            if not subject:
-                return False
-            if negated_readiness_line(line):
-                return False
-            return bool(
-                readiness.search(line)
-                or permission_readiness.search(line)
-                or transition.search(line)
-            )
-
-        if any(blocked_progress_claim(line.lower()) for line in normalized):
-            return None
-    if verification.startswith("failed") and re.search(
-        r"\b(?:verification|validation|checks?|tests?) (?:passed|succeeded|were successful)\b",
-        joined,
-    ):
-        return None
-    if evidence.status in {"blocked", "failed", "error"} and evidence.provider_limit_message:
-        recorded_limit_semantics = _provider_limit_semantics(
-            evidence.provider_limit_message
-        )
-        if not recorded_limit_semantics.intersection(_provider_limit_semantics(joined)):
-            return None
-    exact_verification = " ".join(evidence.verification.lower().split())
-    number_pattern = r"(?<![\w.,])\d[\d,]*(?:\.\d+)?(?![\d.,])"
-    recorded_numbers = set(re.findall(number_pattern, exact_verification))
-    recorded_verification_tokens = _command_tokens(exact_verification)
-    recorded_commands = _recorded_verification_commands(exact_verification)
-    for line in normalized:
-        verification_line = " ".join(line.lower().split())
-        if not _verification_command_mentions_are_exact(
-            verification_line,
-            recorded_commands,
-        ):
-            return None
-        if not re.search(r"\b(?:verification|validation|checks?|tests?)\b", verification_line):
-            continue
-        numeric_details = re.findall(number_pattern, verification_line)
-        command_claims = _verification_command_claims(verification_line)
-        if any(detail not in recorded_numbers for detail in numeric_details) or any(
-            not _contains_token_sequence(recorded_verification_tokens, claim)
-            for claim in command_claims
-        ):
-            return None
-    if (
-        exact_verification
-        and exact_verification not in {"passed", "failed"}
-        and exact_verification not in grounded
-    ):
-        return None
-    if evidence.commits and " ".join(evidence.commits[0].lower().split()) not in grounded:
-        return None
-    required_outcomes = tuple(
-        " ".join(item.lower().split())
-        for item in (*evidence.outcomes[:2], *evidence.decisions[:2])
-        if item
-    )
-    if any(item not in grounded for item in required_outcomes):
-        return None
-    grounded_claims = tuple(
-        " ".join(item.lower().split())
-        for item in (*evidence.outcomes, *evidence.decisions)
-        if item
+def _fallback_candidate_ids(
+    candidates: Sequence[NarrativeCandidate],
+) -> tuple[str, ...]:
+    ordered = sorted(candidates, key=lambda candidate: (candidate.priority, candidate.id))
+    selected = {
+        candidate.id
+        for candidate in ordered
+        if candidate.required
+    }
+    for candidate in ordered:
+        if len(selected) >= 8:
+            break
+        selected.add(candidate.id)
+    return tuple(
+        candidate.id
+        for candidate in ordered
+        if candidate.id in selected
     )
 
-    def exact_fact_line(line: str) -> bool:
-        normalized_line = line.rstrip(".!?")
-        allowed: set[str] = set()
-        for item in evidence.outcomes:
-            fact = " ".join(item.lower().split()).rstrip(".!?")
-            allowed.update((fact, f"recorded outcome: {fact}"))
-        for item in evidence.decisions:
-            fact = " ".join(item.lower().split()).rstrip(".!?")
-            allowed.update((fact, f"recorded decision: {fact}"))
-        if exact_verification not in {"", "passed", "failed"}:
-            fact = exact_verification.rstrip(".!?")
-            allowed.update((fact, f"recorded verification: {fact}"))
-        if evidence.commits:
-            fact = " ".join(evidence.commits[0].lower().split()).rstrip(".!?")
-            allowed.update(
-                (
-                    fact,
-                    f"recorded {fact}",
-                    f"recorded lifecycle commit {fact}",
-                )
-            )
-        if evidence.provider_limit_message:
-            fact = " ".join(
-                evidence.provider_limit_message.lower().split()
-            ).rstrip(".!?")
-            allowed.update((fact, f"the {fact}", f"the provider reported a limit: {fact}"))
-        if evidence.next_command:
-            command = " ".join(evidence.next_command.lower().split()).rstrip(".!?")
-            allowed.update(
-                (
-                    f"next, run {command}",
-                    f"next, run `{command}`",
-                    f"retry {command}",
-                    f"resume {command}",
-                )
-            )
-        return normalized_line in allowed
 
-    def recorded_command_attempt_line(line: str) -> bool:
-        command = " ".join(evidence.command.lower().split()).rstrip(".!?")
-        if not command:
-            return False
-        normalized_line = line.rstrip(".!?")
-        allowed = {
-            f"{verb} {command}"
-            for verb in ("attempted", "ran", "started", "executed")
-        }
-        goals = {
-            "the requested work",
-            " ".join(evidence.goal.lower().split()).rstrip(".!?"),
-            " ".join(evidence.spec_id.lower().split()).rstrip(".!?"),
-        }
-        allowed.update(
-            f"attempted {command} for {goal}"
-            for goal in goals
-            if goal
+def fallback_summary(evidence: WorkedOnEvidence) -> tuple[str, ...]:
+    """Render deterministic candidates when selection is unavailable or invalid."""
+    candidates = narrative_candidates(evidence)
+    selected = set(_fallback_candidate_ids(candidates))
+    return tuple(
+        candidate.text
+        for candidate in sorted(
+            candidates,
+            key=lambda candidate: (candidate.priority, candidate.id),
         )
-        return normalized_line in allowed
-
-    def supported_lifecycle_line(line: str) -> bool:
-        if any(fact in line for fact in grounded_claims):
-            return True
-        if evidence.verification and re.search(
-            r"\b(?:verification|validation|checks?|tests?)\b", line
-        ):
-            return True
-        if evidence.commits and evidence.commits[0].split("—", 1)[0].strip().lower() in line:
-            return True
-        if evidence.provider_limit_message and re.search(
-            r"\b(?:(?:session|usage|rate) limit|quota)\b", line
-        ):
-            return True
-        if evidence.blocker and (
-            " ".join(evidence.blocker.lower().split()) in line
-            or re.search(r"\b(?:blocked|stopped|failed|unfinished)\b", line)
-        ):
-            return True
-        if evidence.completed_tasks or evidence.completed_phases:
-            if re.search(r"\b(?:worked|progress|tasks?|phases?|completed)\b", line):
-                return True
-        if recorded_command_attempt_line(line):
-            return True
-        if not blocked_status and (evidence.next_command or evidence.next_note):
-            if re.search(r"\b(?:next|retry|resume|continue|remaining)\b", line):
-                return True
-        if evidence.status and evidence.status.lower() in line:
-            return True
-        if evidence.status == "done" and re.search(
-            r"\b(?:ready for (?:integration|review)|ready to (?:integrate|review)|complete(?:d)?)\b",
-            line,
-        ):
-            return True
-        return False
-
-    def grounded_next_action_line(line: str) -> bool:
-        normalized_line = line.rstrip(".!?")
-        allowed: set[str] = set()
-        if evidence.next_command:
-            command = " ".join(evidence.next_command.lower().split()).rstrip(".!?")
-            for action in ("run", "retry", "resume", "answer", "fix", "resolve"):
-                allowed.update(
-                    (
-                        f"{action} {command}",
-                        f"{action} `{command}`",
-                        f"next, {action} {command}",
-                        f"next, {action} `{command}`",
-                        f"then, {action} {command}",
-                        f"then, {action} `{command}`",
-                    )
-                )
-        if evidence.next_note:
-            note = " ".join(evidence.next_note.lower().split()).rstrip(".!?")
-            if re.match(
-                r"^(?:(?:next|then),?\s+)?"
-                r"(?:run|retry|resume|wait|answer|fix|resolve)\b",
-                note,
-            ):
-                allowed.update((note, f"next, {note}", f"then, {note}"))
-        return normalized_line in allowed
-
-    def next_action_claim(line: str) -> bool:
-        if blocked_status and negated_readiness_line(line):
-            return False
-        action = (
-            r"(?:run|retry|resume|wait|answer|fix|resolve|continue|proceed|"
-            r"advance|move|integrate|review|merge|land|release|ship|deploy|enter)"
-        )
-        action_mention = re.search(
-            r"\b(?:retr(?:y|ies|ied|ying)|resum(?:e|es|ed|ing)|"
-            r"answer(?:s|ed|ing)?|fix(?:es|ed|ing)?|resolv(?:e|es|ed|ing)|"
-            r"continu(?:e|es|ed|ing)|proceed(?:s|ed|ing)?|advanc(?:e|es|ed|ing)|"
-            r"mov(?:e|es|ed|ing)|integrat(?:e|es|ed|ing)|review(?:s|ed|ing)?|"
-            r"merg(?:e|es|ed|ing)|land(?:s|ed|ing)?|releas(?:e|es|ed|ing)|"
-            r"ship(?:s|ped|ping)?|deploy(?:s|ed|ing)?|enter(?:s|ed|ing)?)\b",
-            line,
-        )
-        return bool(
-            re.search(r"\b(?:next|remaining)\s+(?:step|action|command|work)\b", line)
-            or action_mention
-            or re.match(
-                rf"^(?:(?:next|then),?\s+|please\s+)?{action}\b",
-                line,
-            )
-            or re.search(
-                rf"\b(?:can|may|could|will|would|shall|should|must|ought\s+to|"
-                rf"plans?\s+to|intends?\s+to|is\s+going\s+to|needs?\s+to|please)\s+"
-                rf"(?:be\s+)?{action}\b",
-                line,
-            )
-        )
-
-    for line in normalized:
-        lowered = " ".join(line.lower().split())
-        if exact_fact_line(lowered) or recorded_command_attempt_line(lowered):
-            continue
-        if blocked_status and next_action_claim(lowered):
-            if grounded_next_action_line(lowered):
-                continue
-            return None
-        if re.search(r"[;,:]|\b(?:and|but|while|then)\b", lowered):
-            return None
-        if not supported_lifecycle_line(lowered):
-            return None
-    return tuple(normalized)
+        if candidate.id in selected
+    )
 
 
 def generate_summary(
@@ -952,18 +652,31 @@ def generate_summary(
     config: object | None = None,
     provider: object | None = None,
 ) -> tuple[str, ...]:
-    """Invoke SUMMARIZER once and fall back for every unavailable/invalid result."""
+    """Invoke SUMMARIZER once, then render only controller-authored candidates."""
+    candidates = narrative_candidates(evidence)
     fallback = fallback_summary(evidence)
+    selection_packet = json.dumps(
+        {
+            "candidates": [
+                asdict(candidate)
+                for candidate in candidates
+            ]
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
     try:
         artifact = ProsaicPromptLoader(project_root).load_agent("echelon.summarizer")
         if artifact is None:
             return fallback
-        rendered = ProsaicPromptLoader.render_agent(artifact, evidence.to_json())
+        rendered = ProsaicPromptLoader.render_agent(artifact, selection_packet)
         if provider is None:
             from harness.config import load_config
             from harness.llm_provider import AICodingCliProvider
 
-            provider = AICodingCliProvider(config or load_config(project_root, squad_only=True))
+            provider = AICodingCliProvider(
+                config or load_config(project_root, squad_only=True)
+            )
         with tempfile.TemporaryDirectory(prefix="echelon-summary-") as workdir:
             with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
                 result = provider.run_agent_result(
@@ -976,9 +689,21 @@ def generate_summary(
                         "allow_non_git_cwd": True,
                     },
                 )
-        if int(getattr(result, "exit_code", -1)) != 0 or bool(getattr(result, "timed_out", False)):
+        if int(getattr(result, "exit_code", -1)) != 0 or bool(
+            getattr(result, "timed_out", False)
+        ):
             return fallback
-        return _valid_lines(str(getattr(result, "stdout", "")), evidence) or fallback
+        selected_ids = _selected_candidate_ids(
+            str(getattr(result, "stdout", "")),
+            candidates,
+        )
+        if selected_ids is None:
+            return fallback
+        candidate_map = {
+            candidate.id: candidate.text
+            for candidate in candidates
+        }
+        return tuple(candidate_map[candidate_id] for candidate_id in selected_ids)
     except (Exception, KeyboardInterrupt):
         return fallback
 
@@ -1113,16 +838,56 @@ def _delivery_scope_evidence(scope: _SummaryScope) -> WorkedOnEvidence | None:
         "",
     )
     tasks: list[str] = []
+    outcomes: list[str] = []
+    commits: list[str] = []
     for state in states:
         tasks.extend(_clean_items(state.get("completed_task_ids")))
+        outcomes.extend(_clean_items(state.get("outcomes")))
+        commits.extend(_attributed_commits(state))
+    duration = next(
+        (item for state in states if (item := _recorded_duration(state))),
+        "",
+    )
+    verification = next(
+        (item for state in states if (item := _recorded_verification(state))),
+        "",
+    )
+    provider_limit_message = next(
+        (
+            item
+            for state in states
+            if (item := _clean_text(state.get("provider_limit_message")))
+        ),
+        "",
+    )
+    next_note = next(
+        (
+            item
+            for state in states
+            if (
+                item := _clean_text(
+                    state.get("next_note")
+                    or state.get("recovery_note")
+                    or state.get("recommended_action")
+                )
+            )
+        ),
+        "",
+    )
     next_command = "" if status == "done" else f"echelon delivery continue {scope.spec_id}"
     return WorkedOnEvidence(
         command=scope.command,
         status=status,
         spec_id=scope.spec_id,
         completed_tasks=tuple(dict.fromkeys(tasks))[:_MAX_ITEMS],
+        duration=duration,
+        outcomes=tuple(dict.fromkeys(outcomes))[:_MAX_ITEMS],
+        commits=tuple(dict.fromkeys(commits))[:_MAX_ITEMS],
+        verification=verification,
         blocker=blocker,
+        provider_limit_message=provider_limit_message,
         next_command=next_command,
+        next_note=next_note,
         strategies=tuple(path.stem for path in sorted(state_dir.glob("*.json")))[:_MAX_ITEMS],
     )
 
