@@ -141,3 +141,54 @@ def test_phase_a_banner_adds_narrative_worked_on_field(
     output = capsys.readouterr().out
     assert "Worked on" in output
     assert "Worked through 2 phases toward Add sessions." in output
+
+
+@pytest.mark.parametrize(
+    ("argv", "handler"),
+    [
+        (["delivery", "run", "014-session-security"], "_cmd_harness_run"),
+        (["delivery", "continue", "014-session-security"], "_cmd_harness_continue"),
+        (
+            ["delivery", "resume", "014-session-security", "Use option A"],
+            "_cmd_harness_resume",
+        ),
+    ],
+)
+def test_delivery_lifecycle_callbacks_emit_one_summary_for_persisted_run(
+    argv: list[str],
+    handler: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runs = tmp_path / "runs"
+    state_dir = runs / "build-20260812-120000-000001" / "state"
+    state_dir.mkdir(parents=True)
+    (runs / ".current-build-014-session-security").write_text(
+        "build-20260812-120000-000001",
+        encoding="utf-8",
+    )
+    (state_dir / "default.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "termination_reason": "build_incomplete",
+                "completed_task_ids": ["T-001", "T-002"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(f"echelon.cli.{handler}", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.wiki.service.capture_input_snapshot", lambda _root: None)
+    monkeypatch.setattr(
+        "echelon.wiki.service.refresh_after_changed_command",
+        lambda _root, _before: None,
+    )
+
+    assert run(argv) is None
+
+    output = capsys.readouterr().out
+    assert output.count("WORKED ON") == 1
+    assert "Worked through 2 tasks toward 014-session-security." in output
+    assert "echelon delivery continue 014-session-security" in output

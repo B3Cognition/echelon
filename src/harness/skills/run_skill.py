@@ -348,6 +348,27 @@ def _print_delivery_summary(
             landing_text += f" ({landing.reason})"
         fields.append(("landing", landing_text))
 
+    from harness.worked_on_summary import (
+        attach_to_terminal_fields,
+        delivery_evidence,
+    )
+
+    next_command = ""
+    if n_converged == 0:
+        next_command = f"echelon delivery continue {intent.spec_id}"
+    fields = attach_to_terminal_fields(
+        fields,
+        delivery_evidence(
+            command="delivery run",
+            intent=intent,
+            result_map=result_map,
+            comparison=comparison,
+            next_command=next_command,
+        ),
+        project_root=workspace_root,
+        config=config,
+    )
+
     _banner("DELIVERY SUMMARY", fields, file=sys.stderr)
 
 

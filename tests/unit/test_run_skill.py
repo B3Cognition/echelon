@@ -641,6 +641,9 @@ class TestRunSkillAutoLand:
         assert "stopped: checkpoint recovery needed" in captured.err
         assert "continue: echelon delivery continue 001-demo" in captured.err
         assert "0 converged, 0 failed, 1 checkpointed" in captured.err
+        assert "Worked on" in captured.err
+        assert "The run stopped because build_incomplete." in captured.err
+        assert "echelon delivery continue 001-demo" in captured.err
 
     def test_delivery_summary_renders_provider_session_limit_as_block(
         self,

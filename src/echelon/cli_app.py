@@ -3522,33 +3522,34 @@ def delivery_run(
     """Run build, verification, review, and PR loop for a spec."""
     from echelon import cli as legacy_cli
 
-    legacy_cli._cmd_harness_run(
-        _merge_run_args(
-            spec_id,
-            list(ctx.args),
-            mode=mode,
-            strategy=strategy,
-            max_outer=max_outer,
-            max_inner=max_inner,
-            token_budget=token_budget,
-            auto_merge=auto_merge,
-            kill_losers=kill_losers,
-            reset=reset,
-        ),
-        command_prefix="echelon delivery run",
-        display_args=_display_run_args(
-            spec_id,
-            list(ctx.args),
-            mode=mode,
-            strategy=strategy,
-            max_outer=max_outer,
-            max_inner=max_inner,
-            token_budget=token_budget,
-            auto_merge=auto_merge,
-            kill_losers=kill_losers,
-            reset=reset,
-        ),
-    )
+    with worked_on_scope("delivery run", Path.cwd(), spec_id=spec_id):
+        legacy_cli._cmd_harness_run(
+            _merge_run_args(
+                spec_id,
+                list(ctx.args),
+                mode=mode,
+                strategy=strategy,
+                max_outer=max_outer,
+                max_inner=max_inner,
+                token_budget=token_budget,
+                auto_merge=auto_merge,
+                kill_losers=kill_losers,
+                reset=reset,
+            ),
+            command_prefix="echelon delivery run",
+            display_args=_display_run_args(
+                spec_id,
+                list(ctx.args),
+                mode=mode,
+                strategy=strategy,
+                max_outer=max_outer,
+                max_inner=max_inner,
+                token_budget=token_budget,
+                auto_merge=auto_merge,
+                kill_losers=kill_losers,
+                reset=reset,
+            ),
+        )
 
 
 @harness_app.command(
@@ -3617,14 +3618,15 @@ def delivery_resume(
     if answer is not None:
         legacy_args.append(answer)
     legacy_args.extend(list(ctx.args))
-    legacy_cli._cmd_harness_resume(
-        _merge_resume_args(
-            spec_id,
-            legacy_args,
-            mode=mode,
-            strategy=strategy,
+    with worked_on_scope("delivery resume", Path.cwd(), spec_id=spec_id):
+        legacy_cli._cmd_harness_resume(
+            _merge_resume_args(
+                spec_id,
+                legacy_args,
+                mode=mode,
+                strategy=strategy,
+            )
         )
-    )
 
 
 @delivery_app.command(
@@ -3640,14 +3642,15 @@ def delivery_continue(
     """Continue a blocked delivery run when no answer is needed."""
     from echelon import cli as legacy_cli
 
-    legacy_cli._cmd_harness_continue(
-        _merge_resume_args(
-            spec_id,
-            list(ctx.args),
-            mode=mode,
-            strategy=strategy,
+    with worked_on_scope("delivery continue", Path.cwd(), spec_id=spec_id):
+        legacy_cli._cmd_harness_continue(
+            _merge_resume_args(
+                spec_id,
+                list(ctx.args),
+                mode=mode,
+                strategy=strategy,
+            )
         )
-    )
 
 
 @harness_app.command(
