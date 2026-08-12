@@ -118,6 +118,24 @@ Verification facts retain recorded counts and command names when durable state
 provides them; a generic passed/failed statement is used only when that is the
 full available evidence.
 
+## Grounded Narrative Candidates
+
+Echelon deterministically converts the bounded evidence packet into four-to-eight
+short narrative candidates. Each candidate has a stable opaque ID, rendered text,
+and a priority. Candidate text is controller-owned and may contain only facts
+copied from or deterministically derived from durable evidence.
+
+The candidate builder produces outcome-first prose rather than raw inventory. It
+may describe recorded progress, material outcomes or decisions, exact verification
+facts, explicitly attributed commits, the authoritative blocker, a secondary
+provider-limit observation, and the recorded next action. Sparse early failures
+still receive four factual lines by describing the attempted command, absence of
+recorded progress, stop condition, and recovery action. It does not invent filler.
+
+Candidates containing commands preserve the exact cleaned durable command as an
+opaque value. Echelon does not parse shell quoting or attempt semantic validation
+of generated shell prose because the model never authors command text.
+
 ## SUMMARIZER Contract
 
 SUMMARIZER remains a separate `fast` model with `low` effort and normal provider
@@ -125,10 +143,13 @@ tool availability. Its task is evidence synthesis, not repository discovery.
 The prompt instructs it to use the supplied bounded evidence as the source of
 truth and not to inspect unrelated workspace state.
 
-The response contract changes from two-to-four bullets to four-to-eight short,
-single-sentence lines. Lines contain no bullet glyphs, headings, Markdown fences,
-or raw JSON. The terminal renderer joins them as an unbulleted paragraph-style
-handoff.
+SUMMARIZER receives candidate IDs with their controller-owned narrative text and
+returns exactly one JSON object with one `line_ids` key. Its value contains four
+to-eight unique candidate IDs in the preferred reading order. It cannot author or
+rewrite terminal prose. Unknown IDs, duplicate IDs, too few or too many IDs, or a
+response that omits a mandatory blocker, provider-limit, or next-action candidate
+is invalid. The terminal renders only text looked up from the controller-owned
+candidate map; no model-authored string reaches the banner.
 
 Content priority is:
 
@@ -138,15 +159,17 @@ Content priority is:
 4. the authoritative blocker and secondary provider cause;
 5. readiness or remaining work.
 
-The generated prose must not claim success for blocked work, turn phase names or
-file inventories into the main narrative, invent verification, or omit a supplied
-provider limit when it materially explains the stop.
+The selected prose therefore cannot claim success for blocked work, turn phase
+names or file inventories into the main narrative, invent verification, alter
+shell quoting, or omit a supplied provider limit when it materially explains the
+stop. These properties are enforced by candidate construction and required IDs,
+not heuristic natural-language validation.
 
 ## Deterministic Fallback
 
 Provider unavailability, timeout, malformed output, or unsupported output falls
-back silently to deterministic prose. The fallback follows the same unbulleted
-four-to-eight-line format and uses the same evidence priorities.
+back silently to deterministic candidate ordering. The fallback follows the same
+unbulleted four-to-eight-line format and uses the same evidence priorities.
 
 The fallback must explicitly mention a current provider-limit observation and
 must remain useful even when only status, blocker, completed-phase count, and the
@@ -172,7 +195,8 @@ duplicate `worked on` sections.
 
 - Result-contract validation remains fail-closed.
 - Provider messages remain cleaned, bounded, and treated as untrusted text.
-- Generated lines pass structural and contradiction validation before rendering.
+- SUMMARIZER output is validated only as a closed selection of candidate IDs.
+- Terminal prose is always looked up from controller-owned candidate text.
 - SUMMARIZER errors and progress output remain quiet.
 - Raw model JSON never reaches the terminal.
 - Missing optional evidence never blocks lifecycle completion or recovery output.
@@ -188,11 +212,11 @@ Test-first implementation covers:
 3. later non-provider failures and successful continuations do not render stale
    provider-limit messages;
 4. long multi-line task prompts render as one bounded task line;
-5. valid SUMMARIZER output contains four-to-eight unbulleted factual lines;
-6. malformed, contradictory, timed-out, and failed SUMMARIZER calls use the
-   paragraph-style deterministic fallback;
-7. supplied provider-limit evidence cannot disappear from generated or fallback
-   blocked handoffs;
+5. valid SUMMARIZER output selects four-to-eight unique known candidate IDs;
+6. unknown, duplicate, undersized, oversized, timed-out, and failed SUMMARIZER
+   calls use the paragraph-style deterministic fallback;
+7. mandatory blocker, provider-limit, and next-action candidates cannot disappear
+   from selected or fallback blocked handoffs;
 8. exact verification and explicitly attributed commits appear when present and
    are omitted when absent;
 9. Phase A run, continue, and resume exits each emit one lifecycle banner, one
@@ -215,3 +239,4 @@ suite run before completion.
   lifecycle summary.
 - Claiming commits, tests, or implementation outcomes that are not explicitly
   represented by durable evidence.
+- Rendering any free-form model-authored prose in the terminal handoff.

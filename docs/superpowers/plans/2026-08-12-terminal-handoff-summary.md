@@ -4,7 +4,7 @@
 
 **Goal:** Render one compact Phase A lifecycle banner with a grounded paragraph-style handoff, an integrated next action, and an explicit secondary provider-limit line when a limit caused the authoritative controller contract failure.
 
-**Architecture:** Preserve controller authority while carrying a bounded provider-limit observation beside the authoritative stop reason. Extend the existing bounded `WorkedOnEvidence` packet and SUMMARIZER contract to produce four-to-eight plain lines. Refactor next-step analysis into a reusable presentation object so lifecycle banners can embed it while standalone commands retain the existing `NEXT STEP` card.
+**Architecture:** Preserve controller authority while carrying a bounded provider-limit observation beside the authoritative stop reason. Extend the existing bounded `WorkedOnEvidence` packet, deterministically build four-to-eight grounded narrative candidates, and let SUMMARIZER select/order only opaque candidate IDs. Refactor next-step analysis into a reusable presentation object so lifecycle banners can embed it while standalone commands retain the existing `NEXT STEP` card.
 
 **Tech Stack:** Python 3, Click-style Echelon CLI functions, pytest, Prosaic agent prompt artifacts, JSON run state, existing `echelon.ui.banner` renderer.
 
@@ -14,7 +14,8 @@
 - The authoritative stop reason remains `controller_state_contract_validation_failed` when required provider output is missing or invalid.
 - A provider limit is a secondary bounded observation and cannot change recovery authority, exit codes, or result-contract validation.
 - SUMMARIZER remains a separate `fast` model with `low` effort and normal provider tool availability.
-- Generated and fallback handoffs contain four-to-eight short, unbulleted, evidence-grounded lines.
+- Selected and fallback handoffs contain four-to-eight short, unbulleted, controller-owned evidence-grounded lines.
+- No free-form model-authored string is rendered; SUMMARIZER only selects and orders known candidate IDs.
 - The displayed task is the first non-empty cleaned line, truncated to 160 characters with an ellipsis.
 - Standalone commands without a lifecycle summary retain actionable `NEXT STEP` output.
 - Raw provider transcripts and raw SUMMARIZER JSON never reach terminal handoff output.
@@ -169,6 +170,11 @@ git commit -m "fix: surface provider limits beside controller failures"
 
 ### Task 2: Produce Rich Paragraph-Style Worked-On Handoffs
 
+> **Approved protocol revision:** The original free-prose validator reached its
+> five-round review breaker. Replace it with the closed candidate-selection
+> protocol below. This revision supersedes Steps 2 and 5 wherever they refer to
+> generated `lines` or semantic prose validation.
+
 **Files:**
 - Modify: `src/harness/worked_on_summary.py`
 - Modify: `prosaic/subagents/echelon.summarizer.md`
@@ -179,7 +185,8 @@ git commit -m "fix: surface provider limits beside controller failures"
 **Interfaces:**
 - Consumes: durable Phase A/delivery state and canonical result facts.
 - Produces: extended `WorkedOnEvidence` fields `duration: str`, `outcomes: tuple[str, ...]`, `commits: tuple[str, ...]`, `provider_limit_message: str`, and `next_note: str`.
-- Produces: `_valid_lines(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | None` accepting exactly `{"lines": [...]}` with four-to-eight sentences.
+- Produces: frozen `NarrativeCandidate(id: str, text: str, priority: int, required: bool = False)` and `narrative_candidates(evidence: WorkedOnEvidence) -> tuple[NarrativeCandidate, ...]`.
+- Produces: `_selected_candidate_ids(raw: str, candidates: Sequence[NarrativeCandidate]) -> tuple[str, ...] | None` accepting exactly `{"line_ids": [...]}` with four-to-eight unique known IDs and every required ID.
 - Produces: `format_worked_on(lines: Sequence[str]) -> str` joining plain lines without glyphs.
 
 - [ ] **Step 1: Add failing evidence serialization and formatting tests**
@@ -197,22 +204,18 @@ assert "•" not in format_worked_on(("Implemented the resolver.",))
 Add a task-display regression proving a multi-line request renders only the first
 non-empty line and never exceeds 160 characters including the ellipsis.
 
-- [ ] **Step 2: Add failing generated-output contract tests**
+- [ ] **Step 2: Add failing candidate-selection contract tests**
 
-Use the fake provider to return:
+Build candidate fixtures with stable IDs and use the fake provider to return:
 
 ```json
-{"lines":[
-  "Implemented provider-owned model selection.",
-  "Added deterministic mapping precedence.",
-  "Verification passed across 200 focused tests.",
-  "The feature is ready for integration."
-]}
+{"line_ids":["outcome","changes","verification","readiness"]}
 ```
 
-Assert the four lines render without bullets. Add invalid cases for two lines,
-nine lines, headings, bullet prefixes, multiple sentences, raw JSON commentary,
-success claims on blocked evidence, and omission of a supplied provider limit.
+Assert the four controller-owned candidate texts render without bullets. Add
+invalid cases for two IDs, nine IDs, unknown IDs, duplicate IDs, raw JSON
+commentary, and omission of a required blocker, provider-limit, or next-action ID.
+Assert model-provided text fields are rejected and never rendered.
 
 - [ ] **Step 3: Run the worked-on tests and confirm RED**
 
@@ -222,8 +225,8 @@ Run:
 pytest tests/unit/test_worked_on_summary.py tests/unit/test_cli_worked_on_summary.py -q
 ```
 
-Expected: FAIL because the current contract uses `bullets`, permits two-to-four
-items, prefixes glyphs, and lacks the richer evidence fields.
+Expected: FAIL because the current contract does not expose the closed candidate
+selection protocol.
 
 - [ ] **Step 4: Extend the bounded evidence packet**
 
@@ -241,30 +244,36 @@ before artifact/task/phase inventories. Populate:
 
 Do not call `git log` to infer run ownership.
 
-- [ ] **Step 5: Implement the four-to-eight-line validator and fallback**
+- [ ] **Step 5: Implement candidate construction, selection, and fallback**
 
-Rename the validator around the external contract:
+Create candidates deterministically from evidence. Stable candidate families are
+`outcome`, `progress`, `outcome-*`, `decision-*`, `verification`, `commit-*`,
+`blocker`, `provider-limit`, `readiness`, and `next-action`. Mark `blocker`,
+`provider-limit`, and `next-action` required when their evidence is present for an
+unfinished run. Candidate text must preserve exact durable commands and commit
+facts without parsing or rewriting shell syntax.
+
+Validate only the closed external contract:
 
 ```python
-def _valid_lines(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | None:
+def _selected_candidate_ids(
+    raw: str,
+    candidates: Sequence[NarrativeCandidate],
+) -> tuple[str, ...] | None:
     payload = json.loads(raw)
-    if not isinstance(payload, dict) or set(payload) != {"lines"}:
+    if not isinstance(payload, dict) or set(payload) != {"line_ids"}:
         return None
-    lines = payload["lines"]
-    if not isinstance(lines, list) or not 4 <= len(lines) <= 8:
+    ids = payload["line_ids"]
+    if not isinstance(ids, list) or not 4 <= len(ids) <= 8:
         return None
-    ...
+    # require strings, uniqueness, known IDs, and every required candidate ID
 ```
 
-Retain ANSI/control stripping, per-line and aggregate bounds, one-sentence
-validation, and status/verification contradiction checks. Add a grounding guard:
-when `evidence.provider_limit_message` is non-empty, blocked output must contain
-one of `provider`, `session limit`, `usage limit`, `rate limit`, or `quota`.
-
-Rewrite `fallback_summary` to return four-to-eight concise lines in outcome,
-progress, verification, blocker/provider, and readiness order. Never pad with
-invented facts; use grounded lifecycle facts such as recorded progress and the
-next command to meet the minimum.
+Look up selected text exclusively from the candidate map. Rewrite
+`fallback_summary` as deterministic candidate ordering using priority and required
+IDs. Never inspect or render model-authored text. Sparse evidence still produces
+four factual candidates from attempted command, recorded lack of progress, stop
+status, and recovery action.
 
 - [ ] **Step 6: Render plain lines and bound the task field**
 
@@ -281,11 +290,12 @@ an ellipsis. Use it for the `task` field in `_print_squad_summary`.
 
 - [ ] **Step 7: Update the SUMMARIZER prompt and agent catalog**
 
-Change the exact response rule to `{"lines": [...]}` with four-to-eight short,
-single-sentence strings. Require outcome-first engineering prose, exact recorded
-verification/commits when supplied, explicit provider-limit explanation when
-supplied, and no phase/file/task inventory as the lead. Preserve untrusted-input
-rules, normal tool availability, `model_tier: fast`, and `effort: low`.
+Change the exact response rule to `{"line_ids": [...]}` with four-to-eight unique
+IDs copied from the supplied candidate list. Require all IDs marked `required`,
+outcome-first ordering, and no unknown IDs or text fields. State explicitly that
+SUMMARIZER selects and orders but never authors terminal prose. Preserve
+untrusted-input rules, normal tool availability, `model_tier: fast`, and
+`effort: low`.
 
 - [ ] **Step 8: Run focused summary tests**
 
