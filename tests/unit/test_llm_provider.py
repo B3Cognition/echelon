@@ -461,6 +461,57 @@ class TestAICodingCliProvider:
         assert "session limit" in provider.last_stdout
         assert "resets 9:10pm" in provider.last_stdout
 
+    def test_streaming_preserves_result_error_after_assistant_output(self, tmp_path):
+        provider = AICodingCliProvider(_config())
+        error = "API Error: 500 Internal server error. Try again in a moment."
+        lines = [
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [{"type": "text", "text": "artifact updated"}]
+                },
+            },
+            {
+                "type": "result",
+                "is_error": True,
+                "result": error,
+                "num_turns": 2,
+                "duration_ms": 1,
+            },
+        ]
+
+        with _patch_claude_popen(lines=lines, returncode=1):
+            result = provider.run_agent_result(str(tmp_path), "repair the artifact")
+
+        assert result.stdout == "artifact updated"
+        assert result.stderr == error
+
+    def test_streaming_preserves_assistant_api_error_metadata(self, tmp_path):
+        provider = AICodingCliProvider(_config())
+        error = "API Error: 500 Internal server error. Try again in a moment."
+        lines = [
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [{"type": "text", "text": "artifact updated"}]
+                },
+            },
+            {
+                "type": "assistant",
+                "error": "server_error",
+                "isApiErrorMessage": True,
+                "apiErrorStatus": 500,
+                "message": {"content": [{"type": "text", "text": error}]},
+            },
+            {"type": "result", "is_error": True, "result": ""},
+        ]
+
+        with _patch_claude_popen(lines=lines, returncode=1):
+            result = provider.run_agent_result(str(tmp_path), "repair the artifact")
+
+        assert "artifact updated" in result.stdout
+        assert result.stderr == error
+
     def test_streaming_captures_token_usage_from_result_event(self, tmp_path):
         provider = AICodingCliProvider(_config())
         lines = [

@@ -183,6 +183,57 @@ def test_re_status_does_not_claim_all_sources_passed_when_controller_status_is_d
 
 
 @pytest.mark.unit
+def test_re_status_renders_stale_active_source_as_blocked_when_controller_blocked(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.cli_app import app
+
+    run_dir = tmp_path / "runs" / "re-20260808-100000-000003"
+    re_dir = run_dir / "re"
+    re_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current-re").write_text(
+        run_dir.name + "\n", encoding="utf-8"
+    )
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "blocked_reason": "re_agent_dispatch_failed",
+                "re_policy": "refresh-all",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (re_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "phase": "re-extract-2-specify",
+                "blocked_reason": "re_agent_dispatch_failed",
+                "re_agent_result_detail": "API Error: 500 Internal server error",
+                "re_source_order": ["soccer-api"],
+                "re_source_states": {
+                    "soccer-api": {"status": "active", "coverage_pct": 35.9}
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(app, ["re", "status"])
+
+    assert result.exit_code == 0
+    assert "1 blocked" in result.output
+    assert "soccer-api" in result.output
+    assert "blocked" in result.output
+    assert "API Error: 500 Internal server error" in result.output
+    assert "echelon re continue" in result.output
+    assert "Do not start another continuation" not in result.output
+
+
+@pytest.mark.unit
 def test_re_continue_prints_controller_summary_before_provider_dispatch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

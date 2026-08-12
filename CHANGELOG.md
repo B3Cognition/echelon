@@ -34,6 +34,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **RE transient provider recovery and terminal status** — Claude stream errors
+  now preserve provider 5xx details even after earlier assistant output. A
+  transient source-domain specification failure validates the staged artifact
+  and enters deterministic repair instead of blocking immediately, while
+  `echelon re status` reports stale active sources as blocked when the
+  controller has stopped and shows the actionable blocker detail.
+
 - **Standalone legacy workspace import** — `workspace migrate-to-prosaic` now
   neutralizes old Spec-Kit Git registry and hook state atomically without
   invoking `specify`, while preserving unrelated extension data and failing

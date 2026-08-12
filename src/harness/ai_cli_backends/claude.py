@@ -127,6 +127,7 @@ class ClaudeCliBackend:
         )
         captured_lines: list[str] = []
         text_chunks: list[str] = []
+        error_chunks: list[str] = []
         timed_out = False
         token_usage = 0
         cost_usd = 0.0
@@ -175,6 +176,8 @@ class ClaudeCliBackend:
                                 text = block.get("text", "")
                                 text_chunks.append(text)
                                 capture(text)
+                                if event.get("isApiErrorMessage") or event.get("error"):
+                                    error_chunks.append(str(text))
                     elif (
                         etype == "content_block_delta"
                         and event.get("delta", {}).get("type") == "text_delta"
@@ -186,7 +189,10 @@ class ClaudeCliBackend:
                         token_usage = _extract_token_usage(event)
                         cost_usd = float(event.get("total_cost_usd") or 0)
                         if event.get("is_error"):
-                            capture(event.get("result", ""))
+                            error = str(event.get("result") or "").strip()
+                            capture(error)
+                            if error:
+                                error_chunks.append(error)
                 except json.JSONDecodeError:
                     capture(line)
                     text_chunks.append(line)
@@ -200,7 +206,7 @@ class ClaudeCliBackend:
         return CliRunResult(
             exit_code=-1 if timed_out else int(proc.returncode),
             stdout=stdout,
-            stderr="",
+            stderr="\n".join(dict.fromkeys(error_chunks)),
             token_usage=token_usage,
             cost_usd=cost_usd,
             timed_out=timed_out,

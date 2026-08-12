@@ -64,7 +64,7 @@ SKILL_MAP = {
     "reopen":  "echelon.reopen",
 }
 
-CLI_VERSION = "4.0.0"
+CLI_VERSION = "4.0.1"
 LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
 
 from echelon.workspace_model import discover_workspace  # noqa: E402  (after stdlib imports)
@@ -9599,12 +9599,15 @@ def _re_source_progress(state: dict) -> str:
     summary = f"{passed}/{len(source_ids)} passed"
     partial = statuses.count("partial_quality_debt")
     active = statuses.count("active")
+    blocked = statuses.count("blocked")
     pending = statuses.count("pending")
     extras: list[str] = []
     if partial:
         extras.append(f"{partial} partial")
     if active:
         extras.append(f"{active} active")
+    if blocked:
+        extras.append(f"{blocked} blocked")
     if pending:
         extras.append(f"{pending} pending")
     return summary + (" · " + " · ".join(extras) if extras else "")
@@ -9657,6 +9660,25 @@ def _re_status_source_rows(run_re_dir: Path, state: dict) -> list[str]:
     return rows
 
 
+def _re_status_display_state(state: dict, controller_status: str) -> dict:
+    """Project stale active sources into the controller's terminal state."""
+    if controller_status != "blocked":
+        return state
+    raw_states = state.get("re_source_states")
+    if not isinstance(raw_states, dict):
+        return state
+    source_states: dict[str, object] = {}
+    for source_id, raw_source_state in raw_states.items():
+        if (
+            isinstance(raw_source_state, dict)
+            and raw_source_state.get("status") == "active"
+        ):
+            source_states[source_id] = {**raw_source_state, "status": "blocked"}
+        else:
+            source_states[source_id] = raw_source_state
+    return {**state, "re_source_states": source_states}
+
+
 def _format_re_token_budget(state: dict, outer: dict) -> str:
     usage = state.get("re_token_usage")
     profile = state.get("re_execution_profile")
@@ -9686,11 +9708,12 @@ def _cmd_re_status(args: list[str]) -> None:
         print(f"echelon re status: missing controller state for {run_dir.name}", file=sys.stderr)
         raise SystemExit(2)
     controller_status = str(inner.get("status") or "unknown")
+    display_inner = _re_status_display_state(inner, controller_status)
     lifecycle_status = str(outer.get("status") or "unknown")
     phase = str(inner.get("phase") or outer.get("phase") or "unknown")
     phase_label = _RE_PHASE_LABELS.get(phase, "current controller phase")
-    source_rows = _re_status_source_rows(run_re_dir, inner)
-    raw_source_states = inner.get("re_source_states")
+    source_rows = _re_status_source_rows(run_re_dir, display_inner)
+    raw_source_states = display_inner.get("re_source_states")
     source_states = raw_source_states if isinstance(raw_source_states, dict) else {}
     source_statuses = [
         value.get("status")
@@ -9708,10 +9731,17 @@ def _cmd_re_status(args: list[str]) -> None:
         ("lifecycle", lifecycle_status),
         ("phase", f"{phase} — {phase_label}"),
         ("policy", str(outer.get("re_policy") or "unknown")),
-        ("sources", _re_source_progress(inner)),
+        ("sources", _re_source_progress(display_inner)),
         ("synthesis", "complete" if inner.get("re_workspace_synthesis_complete") is True else "pending"),
         ("token budget", _format_re_token_budget(inner, outer)),
     ]
+    if controller_status == "blocked":
+        fields.extend(
+            (
+                ("blocked reason", str(inner.get("blocked_reason") or "unknown")),
+                ("detail", str(inner.get("re_agent_result_detail") or "not available")),
+            )
+        )
     _banner(
         "RE STATUS",
         fields,
@@ -9727,8 +9757,15 @@ def _cmd_re_status(args: list[str]) -> None:
         print("  source                                 status                 coverage / debt")
         print("  ─────────────────────────────────────  ─────────────────────  ─────────────────")
         print("\n".join(source_rows))
-    if controller_status == "in_progress" or active_source_count:
+    if controller_status == "in_progress":
         action = "Do not start another continuation while the controller is active."
+    elif controller_status == "blocked":
+        action = (
+            "The controller is stopped at the blocker shown above. Resolve it if "
+            "needed, then run `echelon re continue`."
+        )
+    elif active_source_count:
+        action = "Do not start another continuation while a source is active."
     elif partial_count:
         action = (
             f"{partial_count} source(s) have partial quality debt; this is not a full-quality outcome. "

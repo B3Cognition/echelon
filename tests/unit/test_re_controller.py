@@ -2774,6 +2774,84 @@ def test_agent_dispatch_failure_records_provider_error_detail(tmp_path: Path) ->
 
 
 @pytest.mark.unit
+def test_transient_spec_dispatch_failure_routes_staged_artifact_into_repair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    base_failure = _unscoped_universal_claim_report().failures[0]
+    failing = ReQualityReport(
+        passed=False,
+        failures=(
+            replace(
+                base_failure,
+                domain_id="001-re-src",
+                spec_path=(
+                    run_dir
+                    / "re"
+                    / "sources"
+                    / "api"
+                    / "specs"
+                    / "001-re-src"
+                    / "spec.md"
+                ),
+            ),
+        ),
+    )
+    quality_calls = 0
+
+    def staged_quality(*_args: object, **_kwargs: object) -> ReQualityReport:
+        nonlocal quality_calls
+        quality_calls += 1
+        if quality_calls == 1:
+            return failing
+        return ReQualityReport(passed=True, failures=())
+
+    monkeypatch.setattr(
+        "harness.re_controller.validate_staged_re_domain_quality",
+        staged_quality,
+    )
+
+    class TransientThenSuccessfulProvider(_ShallowSpecifierProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.domain_dispatches = 0
+
+        def exec_agent(self, project_root: str, prompt: str) -> SquadAgentResult:
+            if (
+                "RE phase: re-extract-2-specify" in prompt
+                and "Source ID: `api`" in prompt
+                and "Domain ID: `001-re-src`" in prompt
+            ):
+                self.domain_dispatches += 1
+                if self.domain_dispatches == 1:
+                    return SquadAgentResult(
+                        exit_code=1,
+                        echelon_result=None,
+                        raw_output="artifact updated",
+                        stderr="API Error: 500 Internal server error",
+                        duration_ms=1,
+                        timed_out=False,
+                    )
+            return super().exec_agent(project_root, prompt)
+
+    provider = TransientThenSuccessfulProvider()
+    result = ReExtractionController(
+        provider=provider,
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert result.completed
+    assert provider.domain_dispatches >= 2
+    assert quality_calls >= 2
+    state = json.loads((run_dir / "re" / "state.json").read_text(encoding="utf-8"))
+    assert state["last_dispatch"]["post_dispatch_complete"] is True
+    assert state["status"] == "done"
+
+
+@pytest.mark.unit
 def test_agent_blocked_deep_spec_gate_failure_enters_bounded_repair_loop(
     tmp_path: Path,
 ) -> None:

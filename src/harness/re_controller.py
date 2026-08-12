@@ -426,11 +426,51 @@ class ReExtractionController:
                     if cleanup_error is not None:
                         return self._block(state, cleanup_error)
                 if result.timed_out or result.exit_code != 0:
-                    state["re_agent_result_detail"] = self._dispatch_failure_detail(
+                    detail = self._dispatch_failure_detail(
                         result.timed_out,
                         result.exit_code,
                         getattr(result, "stderr", ""),
                     )
+                    state["re_agent_result_detail"] = detail
+                    if (
+                        phase == "re-extract-2-specify"
+                        and isinstance(target, dict)
+                        and target.get("kind") == "source-domain"
+                        and self._is_transient_provider_failure(
+                            result.timed_out,
+                            getattr(result, "stderr", ""),
+                        )
+                    ):
+                        try:
+                            state = complete_dispatch(
+                                state, {"state_updates": {}}
+                            )
+                        except (KeyError, ValueError) as exc:
+                            state["re_agent_result_detail"] = str(exc)
+                            return self._block(state, "re_agent_result_invalid")
+                        print(
+                            "[re] transient provider failure; validating the "
+                            "staged source-domain artifact before retrying",
+                            flush=True,
+                        )
+                        for snapshot_key in (
+                            "re_quality_repair_snapshot",
+                            "re_target_quality_repair_snapshot",
+                        ):
+                            if snapshot_key not in state:
+                                continue
+                            snapshot_reason = self._repair_snapshot_failure(
+                                state, snapshot_key
+                            )
+                            if snapshot_reason is not None:
+                                return self._block(state, snapshot_reason)
+                        target_result = self._run_specification_target_post_dispatch(
+                            state, plan, target
+                        )
+                        if target_result is not None:
+                            return target_result
+                        self._save_state(state)
+                        continue
                     return self._block(state, "re_agent_dispatch_failed")
                 payload = result.echelon_result
             if not isinstance(payload, dict):
@@ -2556,6 +2596,31 @@ class ReExtractionController:
         if detail:
             details.append(detail[:500])
         return "; ".join(details) or "agent dispatch failed"
+
+    @staticmethod
+    def _is_transient_provider_failure(
+        timed_out: bool, provider_detail: str = ""
+    ) -> bool:
+        """Recognize provider-side failures safe for staged-artifact validation."""
+        if timed_out:
+            return False
+        detail = " ".join(provider_detail.lower().split())
+        return any(
+            marker in detail
+            for marker in (
+                "api error: 500",
+                "api error: 502",
+                "api error: 503",
+                "api error: 504",
+                "internal server error",
+                "server_error",
+                "bad gateway",
+                "service unavailable",
+                "temporarily unavailable",
+                "gateway timeout",
+                "overloaded",
+            )
+        )
 
     @staticmethod
     def _result_contract_failure_detail(result: object) -> str:
