@@ -1091,7 +1091,7 @@ This keeps commands readable and makes individual phases independently editable 
 | Terminal | Purpose |
 | -------- | ------- |
 | `echelon workspace init [--allow-unsafe-host-execution]` | One-time project setup — `.echelon/config.yml`, local tool-policy approval, deploy infra, git hook |
-| `echelon spec run "<description>" [--mode <semi\|banzai\|guided>] [--target <source-path>]... [--input <role:path>]... [--init] [--ignore-re]` | Phase A: snapshot optional published RE and immutable product evidence, then run the squad → spec.md, plan.md, tasks.md, targets.yml, feature branch |
+| `echelon spec run "<description>" [--mode <semi\|banzai\|guided>] [--perfectionist] [--target <source-path>]... [--input <role:path>]... [--init] [--ignore-re]` | Phase A: snapshot optional published RE and immutable product evidence, then run the squad → spec.md, plan.md, tasks.md, targets.yml, feature branch |
 | `echelon re run [--re-policy <policy>] [--re-max-inner <n>] [--profile <fast\|balanced\|high>] [--reset]` | Start or resume the independent workspace RE lifecycle; publish a validated completed run explicitly |
 | `echelon re continue [--re-max-inner <n>]` | Continue the active RE run without supplying a new answer |
 | `echelon re resume "<answer>" [--re-max-inner <n>]` | Resolve a structured RE human-input block and continue |
@@ -1135,6 +1135,14 @@ This keeps commands readable and makes individual phases independently editable 
 | `echelon benchmark list` / `echelon benchmark run <fixture> --variant <id> --baseline-ref <ref>` | Experimental EGR-063 artifact-quality benchmark runner. Variants compare baseline Phase A/build behavior against opt-in constitution, tasks, and ADR cleanse phases; each real run resets to the supplied committed Phase A baseline before and after execution |
 | `echelon delivery land <id>` | Merge PR, delete remote branch, clean worktrees, mark spec landed; uses `targets:` to land the target repo branch and blocks on unresolved fulfillment gaps |
 | `echelon delivery land <id> --allow-fulfillment-gaps` | Emergency override for knowingly landing despite fulfillment gaps |
+
+Spec authoring is `proportional` by default: Cartographer produces the smallest
+complete specification supported by the request and evidence. Use
+`echelon spec run --perfectionist "<description>"` for a systematic review of
+every applicable behavior, boundary, quality dimension, uncertainty, scope,
+and traceability concern. This changes authoring depth only; it does not change
+autonomy, provider, model, effort, templates, validation gates, or downstream
+planning.
 
 ### delivery — build, verify, PR
 

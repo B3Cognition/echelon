@@ -4,6 +4,7 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
+README = ROOT / "README.md"
 TEMPLATE_DIR = ROOT / "prosaic" / "agents" / "exploration" / "templates"
 AGENT = ROOT / "prosaic" / "subagents" / "echelon.cartographer.md"
 PHASE = ROOT / "runtime" / "workflow" / "phases" / "phase1-what.md"
@@ -109,6 +110,14 @@ class TestCartographerTemplates:
 
         assert "agent: echelon.cartographer" in definition
         assert "echelon.perfectionist" not in definition
+
+    def test_readme_documents_perfectionist_as_authoring_depth_only(self) -> None:
+        text = README.read_text(encoding="utf-8")
+        normalized = " ".join(text.split())
+
+        assert "echelon spec run --perfectionist" in text
+        assert "proportional" in text
+        assert "does not change autonomy, provider, model, effort" in normalized
 
     def test_cartographer_avoids_duplicate_obligations(self) -> None:
         agent_text = AGENT.read_text(encoding="utf-8")

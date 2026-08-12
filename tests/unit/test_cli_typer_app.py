@@ -722,7 +722,7 @@ def test_spec_help_uses_typer_front_door():
     assert "Usage: root spec [OPTIONS] COMMAND [ARGS]..." in result.output
     assert "Phase A/spec lifecycle commands" in result.output
     assert "Common forms:" in result.output
-    assert "run <description> [--mode semi|banzai|guided] [--reset]" in result.output
+    assert "run <description> [--mode semi|banzai|guided] [--reset] [--perfectionist]" in result.output
     assert "run" in result.output
     assert "status" in result.output
     assert "Usage: echelon spec <subcommand>" not in result.output
@@ -855,6 +855,7 @@ def test_spec_run_typed_options_route_to_legacy_spec_run(monkeypatch):
         "--mode",
         "banzai",
         "--reset",
+        "--perfectionist",
         "--init",
         "--message",
         "include migration notes",
@@ -877,6 +878,7 @@ def test_spec_run_typed_options_route_to_legacy_spec_run(monkeypatch):
         "--mode",
         "banzai",
         "--reset",
+        "--perfectionist",
         "--init",
         "--message",
         "include migration notes",
@@ -893,6 +895,17 @@ def test_spec_run_typed_options_route_to_legacy_spec_run(monkeypatch):
         "--ignore-re",
         "--stash",
     ]]
+
+
+@pytest.mark.unit
+def test_spec_run_help_exposes_perfectionist_authoring_mode():
+    result = invoke_help("spec", "run")
+    normalized = " ".join(result.output.split())
+
+    assert result.exit_code == 0
+    assert "--perfectionist" in normalized
+    assert "Cartographer" in normalized
+    assert "authoring" in normalized
 
 
 @pytest.mark.unit

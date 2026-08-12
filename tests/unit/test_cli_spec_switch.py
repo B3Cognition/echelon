@@ -201,6 +201,18 @@ def test_spec_help_documents_checkpoint_gated_switch_flags(capsys) -> None:
     assert "spec switch <spec-or-run-id>" in USAGE
 
 
+def test_spec_help_documents_perfectionist_authoring_mode(capsys) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        _cmd_spec(["--help"])
+
+    output = capsys.readouterr().out
+    assert exit_info.value.code == 0
+    assert "run <description>" in output
+    assert "--perfectionist" in output
+    assert "Exhaustive Cartographer authoring" in output
+    assert "--perfectionist" in USAGE
+
+
 def test_spec_switch_dispatches_to_deterministic_presenter(
     tmp_path: Path,
     monkeypatch,

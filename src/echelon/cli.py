@@ -86,11 +86,12 @@ Commands:
   workspace migrate [--write] [--commit] [--message <msg>]
                                             Migrate legacy workspace layout
 
-  spec run <description> [--mode semi|banzai|guided] [--reset]
+  spec run <description> [--mode semi|banzai|guided] [--reset] [--perfectionist]
                     [--message <text>] [--next-phase <id>]
                     [--target <source-id-or-path>]... [--re-source <source-id-or-re-path>]... [--init]
                     [--ignore-re]
-                                            Run Phase A squad spec authoring.
+                                            Run Phase A squad spec authoring;
+                                            --perfectionist requests exhaustive Cartographer authoring.
   spec status                               Show current run state, artifacts, cost, and next action.
   spec continue [--mode semi|banzai|guided] Run the next no-input Phase A recovery action.
   spec resume "<answers>"                   Answer escalation questions from a blocked run.
@@ -10443,11 +10444,12 @@ def _cmd_spec(args: list[str]) -> None:
     if not args or args[0] in ("-h", "--help"):
         print(
             "Usage: echelon spec <subcommand> [args...]\n\n"
-            "  run <description> [--mode semi|banzai|guided] [--reset]\n"
+            "  run <description> [--mode semi|banzai|guided] [--reset] [--perfectionist]\n"
             "                    [--message <text>] [--next-phase <id>]\n"
             "                    [--target <source-id-or-path>]... [--re-source <source-id-or-re-path>]... [--init]\n"
             "                    [--ignore-re] [--stash | --discard --confirm]\n"
             "                                      Run Phase A squad spec authoring\n"
+            "                                      --perfectionist: Exhaustive Cartographer authoring\n"
             "  status                              Show current run state and next action\n"
             "  continue [--mode semi|banzai|guided]\n"
             "                                      Run the next no-input Phase A recovery action\n"
