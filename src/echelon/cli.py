@@ -4495,6 +4495,19 @@ def _cmd_spec_resolve(args: list[str], *, project_root: Path, ext_dir: Path) -> 
     )
 
 
+def _terminal_task_summary(message: str, limit: int = 160) -> str:
+    """Return the first meaningful request line within the terminal field bound."""
+    first_line = next((line for line in message.splitlines() if line.strip()), "")
+    summary = " ".join(first_line.split())
+    if len(summary) <= limit:
+        return summary
+    if limit <= 0:
+        return ""
+    if limit == 1:
+        return "…"
+    return summary[: limit - 1].rstrip() + "…"
+
+
 def _print_squad_summary(
     project_root: Path,
     squad_dir: Path,
@@ -4547,7 +4560,9 @@ def _print_squad_summary(
     if implementation_targets:
         fields.append(("targets", ", ".join(implementation_targets)))
     if message:
-        fields.append(("task", message))
+        task_summary = _terminal_task_summary(message)
+        if task_summary:
+            fields.append(("task", task_summary))
 
     current_phase = _phase_a_current_phase(state, result_phase)
     fields.append(("current", current_phase))
@@ -4607,6 +4622,7 @@ def _print_squad_summary(
             state=state,
             result=result,
             next_command=next_command,
+            next_note=action.note,
         ),
         project_root=project_root,
     )

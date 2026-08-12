@@ -808,6 +808,50 @@ class TestCompareResults:
             == "/tmp/escalations/001-default.md"
         )
 
+    def test_compare_results_carries_durable_worked_on_evidence(self, tmp_path: Path) -> None:
+        coord = _make_coordinator(tmp_path)
+        state_store = StateStore(
+            tmp_path / "runs" / "build-test" / "state", "001", "default"
+        )
+        state_store.initialize("run-1", "semi")
+        coord._state_stores["default"] = state_store
+        state = state_store.read()
+        state.update(
+            {
+                "updated_at": "2026-08-12T10:03:05+00:00",
+                "outcomes": ["Implemented the resolver."],
+                "lifecycle_commits": [
+                    {
+                        "commit": "abcdef1234567890abcdef1234567890abcdef12",
+                        "subject": "feat: implement resolver",
+                    }
+                ],
+                "next_note": "Retry after the provider reset.",
+                "completed_task_ids": ["T-001"],
+            }
+        )
+        state_store.write(state)
+        persisted = state_store.read()
+        result = DeliveryResult(
+            status="blocked",
+            termination_reason="provider_session_limit",
+            outer_iterations=1,
+            inner_iterations=0,
+            pr_url=None,
+            tokens_used=100,
+            final_verify=None,
+            blocked_phase="implementation",
+        )
+
+        row = coord.compare_results({"default": result})["strategies"]["default"]
+
+        assert row["started_at"] == persisted["started_at"]
+        assert row["updated_at"] == persisted["updated_at"]
+        assert row["outcomes"] == ["Implemented the resolver."]
+        assert row["lifecycle_commits"] == state["lifecycle_commits"]
+        assert row["next_note"] == "Retry after the provider reset."
+        assert row["completed_task_ids"] == ["T-001"]
+
     def test_compare_results_includes_fulfillment_refresh_from_state(
         self, tmp_path: Path
     ) -> None:

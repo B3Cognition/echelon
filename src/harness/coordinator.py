@@ -352,6 +352,15 @@ class StrategyCoordinator:
                 "salvage_verified": state.get("salvage_verified"),
                 "escalation_file": state.get("escalation_file"),
                 "fulfillment_refresh": state.get("fulfillment_refresh"),
+                "started_at": state.get("started_at"),
+                "updated_at": state.get("updated_at"),
+                "outcomes": state.get("outcomes"),
+                "lifecycle_commits": state.get("lifecycle_commits"),
+                "commit_records": state.get("commit_records"),
+                "next_note": state.get("next_note"),
+                "recovery_note": state.get("recovery_note"),
+                "recommended_action": state.get("recommended_action"),
+                "completed_task_ids": state.get("completed_task_ids"),
             }
 
         # Summary

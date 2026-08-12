@@ -1,9 +1,10 @@
 """Best-effort narrative summaries for terminal Echelon lifecycle handoffs."""
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from contextvars import ContextVar
+from dataclasses import asdict, dataclass
+from datetime import datetime
 import io
 import json
 import os
@@ -19,8 +20,9 @@ from harness.prosaic_prompt_loader import ProsaicPromptLoader
 MAX_EVIDENCE_BYTES = 12 * 1024
 _MAX_TEXT = 600
 _MAX_ITEMS = 16
-_MAX_BULLET = 280
-_MAX_TOTAL_BULLETS = 900
+_MAX_LINE = 280
+_MAX_TOTAL_LINES = 1_600
+_MAX_FALLBACK_LINE = _MAX_TOTAL_LINES // 8
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 _ANSI_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
 
@@ -55,10 +57,15 @@ class WorkedOnEvidence:
     completed_tasks: tuple[str, ...] = ()
     task_titles: tuple[str, ...] = ()
     artifacts: tuple[str, ...] = ()
+    duration: str = ""
+    outcomes: tuple[str, ...] = ()
+    commits: tuple[str, ...] = ()
     verification: str = ""
     verification_failures: tuple[str, ...] = ()
     blocker: str = ""
+    provider_limit_message: str = ""
     next_command: str = ""
+    next_note: str = ""
     targets: tuple[str, ...] = ()
     strategies: tuple[str, ...] = ()
 
@@ -68,9 +75,16 @@ class WorkedOnEvidence:
         normalized: dict[str, object] = {}
         for key, value in raw.items():
             if isinstance(value, tuple):
-                normalized[key] = list(value)
+                normalized[key] = list(_clean_items(value))
             else:
-                normalized[key] = value
+                limit = 360 if key in {
+                    "verification",
+                    "blocker",
+                    "provider_limit_message",
+                    "next_command",
+                    "next_note",
+                } else _MAX_TEXT
+                normalized[key] = _clean_text(value, limit=limit)
         encoded = json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
         if len(encoded.encode("utf-8")) <= MAX_EVIDENCE_BYTES:
             return encoded
@@ -81,7 +95,6 @@ class WorkedOnEvidence:
             "decisions",
             "completed_phases",
             "completed_tasks",
-            "verification_failures",
             "targets",
             "strategies",
         )
@@ -97,10 +110,126 @@ class WorkedOnEvidence:
                     separators=(",", ":"),
                 )
         if len(encoded.encode("utf-8")) > MAX_EVIDENCE_BYTES:
-            normalized["goal"] = _clean_text(normalized.get("goal"), limit=160)
+            for key in ("run_id", "spec_id", "goal", "current_phase"):
+                normalized[key] = _clean_text(normalized.get(key), limit=160)
+            encoded = json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
+        for key in ("verification_failures", "commits", "outcomes"):
+            values = normalized.get(key)
+            if not isinstance(values, list):
+                continue
+            while len(values) > 1 and len(encoded.encode("utf-8")) > MAX_EVIDENCE_BYTES:
+                values.pop()
+                encoded = json.dumps(
+                    normalized,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+        for key in ("verification_failures", "commits", "outcomes"):
+            values = normalized.get(key)
+            if not isinstance(values, list):
+                continue
+            while values and len(encoded.encode("utf-8")) > MAX_EVIDENCE_BYTES:
+                values.pop()
+                encoded = json.dumps(
+                    normalized,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+        if len(encoded.encode("utf-8")) > MAX_EVIDENCE_BYTES:
             normalized["blocker"] = _clean_text(normalized.get("blocker"), limit=240)
+            normalized["provider_limit_message"] = _clean_text(
+                normalized.get("provider_limit_message"), limit=240
+            )
+            normalized["verification"] = _clean_text(
+                normalized.get("verification"), limit=240
+            )
+            normalized["next_command"] = _clean_text(
+                normalized.get("next_command"), limit=240
+            )
+            normalized["next_note"] = _clean_text(
+                normalized.get("next_note"), limit=240
+            )
+            encoded = json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
+        if len(encoded.encode("utf-8")) > MAX_EVIDENCE_BYTES:
+            for key in (
+                "command",
+                "status",
+                "run_id",
+                "spec_id",
+                "goal",
+                "current_phase",
+                "duration",
+            ):
+                normalized[key] = _clean_text(normalized.get(key), limit=80)
             encoded = json.dumps(normalized, ensure_ascii=False, separators=(",", ":"))
         return encoded
+
+
+def _format_elapsed(started: object, finished: object) -> str:
+    start_text = _clean_text(started)
+    finish_text = _clean_text(finished)
+    if not start_text or not finish_text:
+        return ""
+    try:
+        start = datetime.fromisoformat(start_text.replace("Z", "+00:00"))
+        finish = datetime.fromisoformat(finish_text.replace("Z", "+00:00"))
+    except ValueError:
+        return ""
+    seconds = max(0, int((finish - start).total_seconds()))
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, seconds = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m {seconds}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes}m"
+
+
+def _recorded_duration(source: Mapping[str, object]) -> str:
+    recorded = _clean_text(
+        source.get("duration") or source.get("elapsed") or source.get("elapsed_time")
+    )
+    if recorded:
+        return recorded
+    return _format_elapsed(
+        source.get("started_at") or source.get("created_at"),
+        source.get("finished_at")
+        or source.get("completed_at")
+        or source.get("updated_at"),
+    )
+
+
+def _attributed_commits(source: Mapping[str, object]) -> tuple[str, ...]:
+    records = source.get("lifecycle_commits") or source.get("commit_records") or ()
+    if not isinstance(records, (list, tuple)):
+        return ()
+    commits: list[str] = []
+    for record in records:
+        if not isinstance(record, Mapping):
+            continue
+        sha = _clean_text(record.get("commit") or record.get("sha"), limit=64)
+        subject = _clean_text(record.get("subject"), limit=150)
+        if not sha or not subject or re.fullmatch(r"[0-9a-fA-F]{7,64}", sha) is None:
+            continue
+        commits.append(f"{sha[:12]} — {subject}")
+    return tuple(dict.fromkeys(commits))[:_MAX_ITEMS]
+
+
+def _recorded_verification(source: Mapping[str, object]) -> str:
+    summary = _clean_text(
+        source.get("verification_summary") or source.get("verification")
+    )
+    if summary:
+        return summary
+    raw = source.get("last_verify_result")
+    if not isinstance(raw, Mapping) or "passed" not in raw:
+        return ""
+    status = "passed" if bool(raw.get("passed")) else "failed"
+    try:
+        duration = float(raw.get("duration_s") or 0)
+    except (TypeError, ValueError):
+        duration = 0
+    return f"{status} in {duration:.1f}s" if duration else status
 
 
 def phase_a_evidence(
@@ -109,6 +238,7 @@ def phase_a_evidence(
     state: Mapping[str, object],
     result: object | None,
     next_command: str,
+    next_note: str = "",
 ) -> WorkedOnEvidence:
     status = _clean_text(getattr(result, "status", "") or state.get("status") or "unknown")
     decisions = state.get("decisions") or state.get("decision_log") or ()
@@ -125,12 +255,20 @@ def phase_a_evidence(
         artifacts=_clean_items(
             artifacts.keys() if isinstance(artifacts, Mapping) else artifacts
         ),
+        duration=_recorded_duration(state),
+        outcomes=_clean_items(state.get("outcomes")),
+        commits=_attributed_commits(state),
+        verification=_recorded_verification(state),
         blocker=_clean_text(
             state.get("blocked_reason")
             or state.get("termination_reason")
             or state.get("escalation_question")
         ),
+        provider_limit_message=_clean_text(state.get("provider_limit_message")),
         next_command=_clean_text(next_command),
+        next_note=_clean_text(
+            next_note or state.get("next_note") or state.get("recovery_note")
+        ),
         targets=_clean_items(state.get("implementation_targets")),
     )
 
@@ -146,7 +284,11 @@ def delivery_evidence(
     strategy_rows = comparison.get("strategies")
     strategy_rows = strategy_rows if isinstance(strategy_rows, Mapping) else {}
     results = tuple(result_map.values())
-    converged = any(bool(row.get("converged")) for row in strategy_rows.values() if isinstance(row, Mapping))
+    converged = any(
+        bool(row.get("converged"))
+        for row in strategy_rows.values()
+        if isinstance(row, Mapping)
+    )
     reasons = tuple(
         _clean_text(getattr(result, "termination_reason", ""))
         for result in results
@@ -168,18 +310,23 @@ def delivery_evidence(
         if isinstance(row, Mapping):
             completed_tasks.extend(_clean_items(row.get("completed_task_ids")))
 
-    selected_results = results
     converged_ids = tuple(
         str(strategy_id)
         for strategy_id, row in strategy_rows.items()
         if isinstance(row, Mapping) and bool(row.get("converged"))
     )
-    if converged_ids:
-        selected_results = tuple(
-            result_map[strategy_id]
-            for strategy_id in converged_ids
-            if strategy_id in result_map
-        )
+    selected_ids = converged_ids or tuple(
+        str(strategy_id) for strategy_id in result_map
+    )
+    selected_ids = tuple(
+        strategy_id for strategy_id in selected_ids if strategy_id in result_map
+    )
+    selected_results = tuple(result_map[strategy_id] for strategy_id in selected_ids)
+    selected_rows = tuple(
+        row
+        for strategy_id in selected_ids
+        if isinstance((row := strategy_rows.get(strategy_id)), Mapping)
+    )
 
     verification = ""
     failures: list[str] = []
@@ -194,6 +341,47 @@ def delivery_evidence(
             failures.append(_clean_text(getattr(failure, "error", failure), limit=240))
     if observed_verification:
         verification = "passed" if all(observed_verification) else "failed"
+        if len(selected_results) == 1:
+            duration_s = getattr(
+                getattr(selected_results[0], "final_verify", None),
+                "duration_s",
+                0,
+            )
+            if duration_s:
+                verification = f"{verification} in {float(duration_s):.1f}s"
+
+    outcomes: list[str] = []
+    commits: list[str] = []
+    for row in selected_rows:
+        outcomes.extend(_clean_items(row.get("outcomes")))
+        commits.extend(_attributed_commits(row))
+    provider_limit_message = ""
+    for strategy_id, result in zip(selected_ids, selected_results):
+        if _clean_text(getattr(result, "termination_reason", "")) != "provider_session_limit":
+            continue
+        row = strategy_rows.get(strategy_id)
+        if isinstance(row, Mapping):
+            provider_limit_message = _clean_text(row.get("provider_limit_message"))
+        if provider_limit_message:
+            break
+    durations = tuple(_recorded_duration(row) for row in selected_rows)
+    duration = next((item for item in durations if item), "")
+    next_note = next(
+        (
+            _clean_text(
+                row.get("next_note")
+                or row.get("recovery_note")
+                or row.get("recommended_action")
+            )
+            for row in selected_rows
+            if _clean_text(
+                row.get("next_note")
+                or row.get("recovery_note")
+                or row.get("recommended_action")
+            )
+        ),
+        "",
+    )
 
     strategies = getattr(intent, "strategies", ()) or tuple(strategy_rows)
     return WorkedOnEvidence(
@@ -202,82 +390,145 @@ def delivery_evidence(
         spec_id=_clean_text(getattr(intent, "spec_id", "")),
         goal=_clean_text(getattr(intent, "goal", "") or getattr(intent, "user_message", "")),
         completed_tasks=tuple(dict.fromkeys(completed_tasks))[:_MAX_ITEMS],
+        duration=duration,
+        outcomes=tuple(dict.fromkeys(outcomes))[:_MAX_ITEMS],
+        commits=tuple(dict.fromkeys(commits))[:_MAX_ITEMS],
         verification=verification,
         verification_failures=tuple(failures)[:_MAX_ITEMS],
         blocker=reasons[0] if reasons else "",
+        provider_limit_message=provider_limit_message,
         next_command=_clean_text(next_command),
+        next_note=next_note,
         strategies=_clean_items(strategies),
     )
 
 
 def fallback_summary(evidence: WorkedOnEvidence) -> tuple[str, ...]:
     """Build useful narrative prose without an LLM."""
-    bullets: list[str] = []
+    def sentence(value: str, *, prefix: str = "") -> str:
+        text = _clean_text(value, limit=_MAX_FALLBACK_LINE - len(prefix) - 1)
+        text = re.split(r"(?<=[.!?])\s+", text, maxsplit=1)[0]
+        rendered = f"{prefix}{text}" if text else prefix.rstrip()
+        return rendered if rendered[-1:] in {".", "!", "?"} else f"{rendered}."
+
+    def command_sentence(value: str) -> str:
+        text = _clean_text(
+            value,
+            limit=_MAX_FALLBACK_LINE - len("Next, run ``."),
+        )
+        text = re.split(r"(?<=[.!?])\s+", text, maxsplit=1)[0]
+        text = text.rstrip(".!?")
+        return f"Next, run `{text}`."
+
     goal = evidence.goal or evidence.spec_id or "the requested work"
     progress_count = len(evidence.completed_tasks) or len(evidence.completed_phases)
     progress_kind = "tasks" if evidence.completed_tasks else "phases"
     if progress_count:
-        bullets.append(f"Worked through {progress_count} {progress_kind} toward {goal}.")
+        progress = f"Worked through {progress_count} {progress_kind} toward {goal}."
     elif evidence.status == "done":
-        bullets.append(f"Completed work toward {goal}.")
+        progress = f"Completed work toward {goal}."
     else:
-        bullets.append(f"Attempted {evidence.command or 'the requested work'} for {goal}.")
+        progress = f"Attempted {evidence.command or 'the requested work'} for {goal}."
+    progress = sentence(progress)
 
+    lines: list[str] = []
+    if evidence.outcomes:
+        lines.append(sentence(evidence.outcomes[0]))
+    elif evidence.decisions:
+        lines.append(sentence(evidence.decisions[0], prefix="Recorded decision: "))
+    else:
+        lines.append(progress)
+    if progress_count and lines[0] != progress:
+        lines.append(progress)
+
+    important: list[str] = []
     if evidence.verification:
         if evidence.verification == "passed":
-            bullets.append("Verification passed for the completed work.")
+            important.append("Verification passed for the completed work.")
         elif evidence.verification == "failed":
-            bullets.append("Verification found remaining issues in the current work.")
+            important.append("Verification found remaining issues in the current work.")
         else:
-            bullets.append(f"Verification status is {evidence.verification}.")
+            important.append(sentence(evidence.verification, prefix="Recorded verification: "))
+    if evidence.commits:
+        important.append(sentence(evidence.commits[0], prefix="Recorded lifecycle commit "))
+
+    tail: list[str] = []
     if evidence.status != "done" or evidence.blocker:
         reason = evidence.blocker or evidence.status or "an unfinished run"
-        bullets.append(f"The run stopped because {reason}.")
+        tail.append(sentence(reason, prefix="The run stopped because "))
+    if evidence.provider_limit_message:
+        tail.append(
+            sentence(
+                evidence.provider_limit_message,
+                prefix="The provider reported a limit: ",
+            )
+        )
+    if evidence.next_note:
+        tail.append(sentence(evidence.next_note))
     if evidence.next_command:
-        bullets.append(f"Next, run `{evidence.next_command}`.")
-    if len(bullets) < 2:
-        bullets.append("The run reached its terminal handoff state.")
-    return tuple(bullets[:4])
+        tail.append(command_sentence(evidence.next_command))
+
+    lines.extend(important[: max(0, 8 - len(lines) - len(tail))])
+    optional: list[str] = []
+    if len(evidence.outcomes) > 1:
+        optional.append(sentence(evidence.outcomes[1]))
+    if evidence.duration:
+        optional.append(sentence(evidence.duration, prefix="Recorded duration was "))
+    for detail in optional:
+        if len(lines) + len(tail) < 8:
+            lines.append(detail)
+    if len(lines) + len(tail) < 4:
+        lines.append(
+            sentence(evidence.status or "unknown", prefix="The recorded run status is ")
+        )
+    if len(lines) + len(tail) < 4 and not evidence.verification:
+        lines.append("No verification result was recorded.")
+    if len(lines) + len(tail) < 4:
+        lines.append("No further recovery command was recorded.")
+    lines.extend(tail[: max(0, 8 - len(lines))])
+    return tuple(lines[:8])
 
 
-def _valid_bullets(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | None:
+def _valid_lines(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | None:
     try:
         payload = json.loads(raw)
     except (TypeError, json.JSONDecodeError):
         return None
-    if not isinstance(payload, dict) or set(payload) != {"bullets"}:
+    if not isinstance(payload, dict) or set(payload) != {"lines"}:
         return None
-    bullets = payload.get("bullets")
-    if not isinstance(bullets, list) or not 2 <= len(bullets) <= 4:
+    lines = payload.get("lines")
+    if not isinstance(lines, list) or not 4 <= len(lines) <= 8:
         return None
 
     normalized: list[str] = []
-    for raw_bullet in bullets:
-        if not isinstance(raw_bullet, str):
+    for raw_line in lines:
+        if not isinstance(raw_line, str):
             return None
-        if _ANSI_RE.search(raw_bullet) or _CONTROL_RE.search(raw_bullet):
+        if _ANSI_RE.search(raw_line) or _CONTROL_RE.search(raw_line):
             return None
-        bullet = raw_bullet.strip()
+        line = raw_line.strip()
         if (
-            not bullet
-            or "\n" in bullet
-            or len(bullet) > _MAX_BULLET
-            or bullet.startswith(("#", "- ", "* ", "• ", "```", "|"))
-            or bullet[-1:] not in {".", "!", "?"}
-            or len(re.findall(r"[.!?](?:\s|$)", bullet)) != 1
+            not line
+            or "\n" in line
+            or len(line) > _MAX_LINE
+            or line.startswith(("#", "- ", "* ", "• ", "```", "|"))
+            or line[-1:] not in {".", "!", "?"}
+            or len(re.findall(r"[.!?](?:\s|$)", line)) != 1
         ):
             return None
-        normalized.append(bullet)
-    if sum(len(item) for item in normalized) > _MAX_TOTAL_BULLETS:
+        normalized.append(line)
+    if sum(len(item) for item in normalized) > _MAX_TOTAL_LINES:
         return None
 
     joined = " ".join(normalized).lower()
-    if evidence.verification == "passed" and re.search(
+    grounded = " ".join(joined.split())
+    verification = evidence.verification.lower()
+    if verification.startswith("passed") and re.search(
         r"\b(?:verification|checks?|tests?) (?:failed|did not pass|found failures?)\b",
         joined,
     ):
         return None
-    if evidence.verification == "failed" and re.search(
+    if verification.startswith("failed") and re.search(
         r"\b(?:verification|checks?|tests?) (?:passed|succeeded|were successful)\b|\ball checks succeeded\b",
         joined,
     ):
@@ -292,11 +543,106 @@ def _valid_bullets(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | No
         joined,
     ):
         return None
-    if evidence.verification == "failed" and re.search(
+    if verification.startswith("failed") and re.search(
         r"\b(?:verification|validation|checks?|tests?) (?:passed|succeeded|were successful)\b",
         joined,
     ):
         return None
+    if (
+        evidence.status in {"blocked", "failed", "error"}
+        and evidence.provider_limit_message
+        and not re.search(
+            r"\b(?:provider|session limit|usage limit|rate limit|quota)\b",
+            joined,
+        )
+    ):
+        return None
+    exact_verification = " ".join(evidence.verification.lower().split())
+    if (
+        exact_verification
+        and exact_verification not in {"passed", "failed"}
+        and exact_verification not in grounded
+    ):
+        return None
+    if evidence.commits and " ".join(evidence.commits[0].lower().split()) not in grounded:
+        return None
+    required_outcomes = tuple(
+        " ".join(item.lower().split())
+        for item in (*evidence.outcomes[:2], *evidence.decisions[:2])
+        if item
+    )
+    if any(item not in grounded for item in required_outcomes):
+        return None
+    grounded_claims = tuple(
+        " ".join(item.lower().split())
+        for item in (*evidence.outcomes, *evidence.decisions)
+        if item
+    )
+
+    def exact_fact_line(line: str) -> bool:
+        normalized_line = line.rstrip(".!?")
+        allowed: set[str] = set()
+        for item in evidence.outcomes:
+            fact = " ".join(item.lower().split()).rstrip(".!?")
+            allowed.update((fact, f"recorded outcome: {fact}"))
+        for item in evidence.decisions:
+            fact = " ".join(item.lower().split()).rstrip(".!?")
+            allowed.update((fact, f"recorded decision: {fact}"))
+        if exact_verification not in {"", "passed", "failed"}:
+            fact = exact_verification.rstrip(".!?")
+            allowed.update((fact, f"recorded verification: {fact}"))
+        if evidence.commits:
+            fact = " ".join(evidence.commits[0].lower().split()).rstrip(".!?")
+            allowed.update(
+                (
+                    fact,
+                    f"recorded {fact}",
+                    f"recorded lifecycle commit {fact}",
+                )
+            )
+        return normalized_line in allowed
+
+    def supported_lifecycle_line(line: str) -> bool:
+        if any(fact in line for fact in grounded_claims):
+            return True
+        if evidence.verification and re.search(
+            r"\b(?:verification|validation|checks?|tests?)\b", line
+        ):
+            return True
+        if evidence.commits and evidence.commits[0].split("—", 1)[0].strip().lower() in line:
+            return True
+        if evidence.provider_limit_message and re.search(
+            r"\b(?:provider|session limit|usage limit|rate limit|quota)\b", line
+        ):
+            return True
+        if evidence.blocker and (
+            " ".join(evidence.blocker.lower().split()) in line
+            or re.search(r"\b(?:blocked|stopped|failed|unfinished)\b", line)
+        ):
+            return True
+        if evidence.completed_tasks or evidence.completed_phases:
+            if re.search(r"\b(?:worked|progress|tasks?|phases?|completed)\b", line):
+                return True
+        if evidence.next_command or evidence.next_note:
+            if re.search(r"\b(?:next|retry|resume|continue|remaining|ready)\b", line):
+                return True
+        if evidence.status and evidence.status.lower() in line:
+            return True
+        if evidence.status == "done" and re.search(
+            r"\b(?:ready for (?:integration|review)|ready to (?:integrate|review)|complete(?:d)?)\b",
+            line,
+        ):
+            return True
+        return False
+
+    for line in normalized:
+        lowered = " ".join(line.lower().split())
+        if exact_fact_line(lowered):
+            continue
+        if re.search(r"[;,:]|\b(?:and|but|while|then)\b", lowered):
+            return None
+        if not supported_lifecycle_line(lowered):
+            return None
     return tuple(normalized)
 
 
@@ -333,13 +679,13 @@ def generate_summary(
                 )
         if int(getattr(result, "exit_code", -1)) != 0 or bool(getattr(result, "timed_out", False)):
             return fallback
-        return _valid_bullets(str(getattr(result, "stdout", "")), evidence) or fallback
+        return _valid_lines(str(getattr(result, "stdout", "")), evidence) or fallback
     except (Exception, KeyboardInterrupt):
         return fallback
 
 
-def format_worked_on(bullets: Sequence[str]) -> str:
-    return "\n".join(f"• {bullet}" for bullet in bullets)
+def format_worked_on(lines: Sequence[str]) -> str:
+    return "\n".join(lines)
 
 
 @dataclass
@@ -505,7 +851,7 @@ def attach_to_terminal_fields(
         if scope is not None:
             scope.emitted = True
         return list(fields)
-    bullets = generate_summary(
+    lines = generate_summary(
         project_root,
         evidence,
         config=config,
@@ -514,7 +860,7 @@ def attach_to_terminal_fields(
     scope = _ACTIVE_SCOPE.get()
     if scope is not None:
         scope.emitted = True
-    return [*fields, ("Worked on", format_worked_on(bullets))]
+    return [*fields, ("Worked on", format_worked_on(lines))]
 
 
 def _write_deferred_evidence(evidence: WorkedOnEvidence) -> None:
@@ -533,11 +879,20 @@ def read_deferred_evidence(path: Path) -> WorkedOnEvidence | None:
         return None
     fields = WorkedOnEvidence.__dataclass_fields__
     values: dict[str, object] = {}
+    tuple_fields = {
+        "completed_phases",
+        "decisions",
+        "completed_tasks",
+        "task_titles",
+        "artifacts",
+        "outcomes",
+        "commits",
+        "verification_failures",
+        "targets",
+        "strategies",
+    }
     for name in fields:
-        value = payload.get(name, () if name in {
-            "completed_phases", "decisions", "completed_tasks", "task_titles",
-            "artifacts", "verification_failures", "targets", "strategies",
-        } else "")
+        value = payload.get(name, () if name in tuple_fields else "")
         values[name] = tuple(value) if isinstance(value, list) else value
     try:
         return WorkedOnEvidence(**values)
@@ -610,12 +965,12 @@ def worked_on_scope(
                         _write_deferred_evidence(evidence)
                         scope.emitted = True
                     else:
-                        bullets = generate_summary(scope.project_root, evidence)
+                        lines = generate_summary(scope.project_root, evidence)
                         from echelon.ui import banner
 
                         banner(
                             "WORKED ON",
-                            [("summary", format_worked_on(bullets))],
+                            [("summary", format_worked_on(lines))],
                             file=sys.stderr
                             if scope.command.startswith("delivery ")
                             else None,

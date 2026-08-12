@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 import sys
 from types import SimpleNamespace
 
@@ -16,6 +17,7 @@ from harness.worked_on_summary import (
     format_worked_on,
     generate_summary,
     phase_a_evidence,
+    read_deferred_evidence,
 )
 
 
@@ -71,6 +73,9 @@ def test_phase_a_evidence_preserves_terminal_fields_within_byte_bound() -> None:
         "status": "blocked",
         "phase": "terminal-blocked",
         "blocked_reason": "container runtime unavailable",
+        "provider_limit_message": "Provider session limit resets at 17:00.",
+        "verification_summary": "200 focused tests passed",
+        "outcomes": ["Implemented provider-owned model selection."],
         "completed_phases": [f"phase-{index}-" + ("x" * 300) for index in range(200)],
         "decisions": ["y" * 1000 for _ in range(100)],
         "artifacts": ["z" * 1000 for _ in range(100)],
@@ -88,7 +93,92 @@ def test_phase_a_evidence_preserves_terminal_fields_within_byte_bound() -> None:
     decoded = json.loads(payload)
     assert decoded["status"] == "blocked"
     assert decoded["blocker"] == "container runtime unavailable"
+    assert decoded["provider_limit_message"] == "Provider session limit resets at 17:00."
+    assert decoded["verification"] == "200 focused tests passed"
+    assert decoded["outcomes"] == ["Implemented provider-owned model selection."]
     assert decoded["next_command"] == "echelon spec continue"
+
+
+def test_rich_evidence_round_trips_through_deferred_storage(tmp_path: Path) -> None:
+    path = tmp_path / "worked-on.json"
+    evidence = WorkedOnEvidence(
+        command="delivery run",
+        status="blocked",
+        duration="3h 27m",
+        outcomes=("Implemented provider-owned model selection.",),
+        commits=("abcdef123456 — feat: resolve provider models",),
+        provider_limit_message="Session limit resets at 17:00.",
+        next_note="Retry after the provider reset.",
+    )
+    path.write_text(evidence.to_json(), encoding="utf-8")
+
+    assert read_deferred_evidence(path) == evidence
+
+
+def test_evidence_byte_bound_retains_priority_multibyte_facts() -> None:
+    huge = "🙂" * 5_000
+    evidence = WorkedOnEvidence(
+        command=huge,
+        status=huge,
+        run_id=huge,
+        spec_id=huge,
+        goal=huge,
+        current_phase=huge,
+        duration=huge,
+        outcomes=(huge,) * 16,
+        commits=(huge,) * 16,
+        verification=huge,
+        verification_failures=(huge,) * 16,
+        blocker=huge,
+        provider_limit_message=huge,
+        next_command=huge,
+        next_note=huge,
+    )
+
+    payload = evidence.to_json()
+    decoded = json.loads(payload)
+
+    assert len(payload.encode("utf-8")) <= MAX_EVIDENCE_BYTES
+    for key in (
+        "verification",
+        "blocker",
+        "provider_limit_message",
+        "next_command",
+        "next_note",
+    ):
+        assert decoded[key]
+
+
+def test_phase_a_evidence_uses_only_recorded_rich_handoff_facts() -> None:
+    evidence = phase_a_evidence(
+        command="spec continue",
+        state={
+            "status": "blocked",
+            "created_at": "2026-08-12T10:00:00+00:00",
+            "updated_at": "2026-08-12T13:27:00+00:00",
+            "outcomes": ["Defined deterministic mapping precedence."],
+            "verification_summary": "200 focused tests passed",
+            "lifecycle_commits": [
+                {
+                    "commit": "abcdef1234567890abcdef1234567890abcdef12",
+                    "subject": "feat: resolve provider models",
+                }
+            ],
+            "provider_limit_message": "Usage limit resets at 17:00.",
+        },
+        result=SimpleNamespace(status="blocked", phase="phase3-plan"),
+        next_command="echelon spec continue",
+        next_note="Retry the blocked phase after the provider reset.",
+    )
+
+    assert evidence.duration == "3h 27m"
+    assert evidence.outcomes == ("Defined deterministic mapping precedence.",)
+    assert evidence.verification == "200 focused tests passed"
+    assert evidence.commits == (
+        "abcdef123456 — feat: resolve provider models",
+    )
+    assert evidence.provider_limit_message == "Usage limit resets at 17:00."
+    assert evidence.next_note == "Retry the blocked phase after the provider reset."
 
 
 def test_delivery_evidence_reports_progress_verification_and_recovery() -> None:
@@ -121,6 +211,47 @@ def test_delivery_evidence_reports_progress_verification_and_recovery() -> None:
     assert evidence.verification == "failed"
     assert evidence.completed_tasks == ("T-001", "T-002")
     assert evidence.next_command == "echelon delivery continue 014-session-security"
+
+
+def test_delivery_evidence_uses_selected_canonical_strategy_facts() -> None:
+    result = SimpleNamespace(
+        status="blocked",
+        termination_reason="provider_session_limit",
+        final_verify=SimpleNamespace(passed=True, failures=[], duration_s=12.5),
+    )
+    comparison = {
+        "strategies": {
+            "default": {
+                "converged": False,
+                "started_at": "2026-08-12T10:00:00+00:00",
+                "updated_at": "2026-08-12T10:03:05+00:00",
+                "outcomes": ["Implemented the resolver."],
+                "lifecycle_commits": [
+                    {
+                        "sha": "1234567890abcdef1234567890abcdef12345678",
+                        "subject": "feat: implement resolver",
+                    }
+                ],
+                "provider_limit_message": "Rate limit resets in 20 minutes.",
+                "next_note": "Retry verification after the provider reset.",
+            }
+        }
+    }
+
+    evidence = delivery_evidence(
+        command="delivery continue",
+        intent=SimpleNamespace(spec_id="014", strategies=("default",)),
+        result_map={"default": result},
+        comparison=comparison,
+        next_command="echelon delivery continue 014",
+    )
+
+    assert evidence.duration == "3m 5s"
+    assert evidence.outcomes == ("Implemented the resolver.",)
+    assert evidence.verification == "passed in 12.5s"
+    assert evidence.commits == ("1234567890ab — feat: implement resolver",)
+    assert evidence.provider_limit_message == "Rate limit resets in 20 minutes."
+    assert evidence.next_note == "Retry verification after the provider reset."
 
 
 def test_delivery_evidence_uses_converged_strategy_verification_regardless_of_order() -> None:
@@ -161,7 +292,7 @@ def test_delivery_evidence_uses_converged_strategy_verification_regardless_of_or
         assert evidence.verification_failures == ()
 
 
-def test_fallback_is_narrative_and_keeps_recovery_action() -> None:
+def test_fallback_is_rich_narrative_and_keeps_recovery_action() -> None:
     evidence = WorkedOnEvidence(
         command="spec continue",
         status="blocked",
@@ -171,13 +302,13 @@ def test_fallback_is_narrative_and_keeps_recovery_action() -> None:
         next_command="echelon spec continue",
     )
 
-    bullets = fallback_summary(evidence)
+    lines = fallback_summary(evidence)
 
-    assert 2 <= len(bullets) <= 4
-    assert bullets[0] == "Worked through 2 phases toward Add secure sessions."
-    assert "container runtime unavailable" in bullets[1]
-    assert bullets[-1] == "Next, run `echelon spec continue`."
-    assert not any("files" in bullet.lower() for bullet in bullets)
+    assert 4 <= len(lines) <= 8
+    assert lines[0] == "Worked through 2 phases toward Add secure sessions."
+    assert any("container runtime unavailable" in line for line in lines)
+    assert lines[-1] == "Next, run `echelon spec continue`."
+    assert not any("files" in line.lower() for line in lines)
 
 
 def test_generate_summary_uses_fast_low_metadata_once_and_removes_temp_cwd(
@@ -189,9 +320,11 @@ def test_generate_summary_uses_fast_low_metadata_once_and_removes_temp_cwd(
     provider = FakeProvider(
         json.dumps(
             {
-                "bullets": [
-                    "Defined the session boundary.",
-                    "Verified the new behavior.",
+                "lines": [
+                    "Implemented provider-owned model selection.",
+                    "Added deterministic mapping precedence.",
+                    "Verification passed across 200 focused tests.",
+                    "The feature is ready for integration.",
                 ]
             }
         )
@@ -200,15 +333,22 @@ def test_generate_summary_uses_fast_low_metadata_once_and_removes_temp_cwd(
         command="spec run",
         status="done",
         goal="Add sessions",
+        outcomes=(
+            "Implemented provider-owned model selection.",
+            "Added deterministic mapping precedence.",
+        ),
         verification="passed",
     )
 
-    bullets = generate_summary(tmp_path, evidence, provider=provider)
+    lines = generate_summary(tmp_path, evidence, provider=provider)
 
-    assert bullets == (
-        "Defined the session boundary.",
-        "Verified the new behavior.",
+    assert lines == (
+        "Implemented provider-owned model selection.",
+        "Added deterministic mapping precedence.",
+        "Verification passed across 200 focused tests.",
+        "The feature is ready for integration.",
     )
+    assert "•" not in format_worked_on(lines)
     assert len(provider.calls) == 1
     call = provider.calls[0]
     assert call["timeout_ms"] == 30_000
@@ -234,20 +374,29 @@ def test_generate_summary_suppresses_provider_console_noise(
 
     class NoisyProvider(FakeProvider):
         def run_agent_result(self, *args, **kwargs):
-            print('raw {"bullets":["Done.","Verified."]}')
+            print('raw {"lines":["Done.","Built.","Verified.","Ready."]}')
             print("provider diagnostic", file=sys.stderr)
             return super().run_agent_result(*args, **kwargs)
 
     provider = NoisyProvider(
-        '{"bullets":["Completed the requested work.","Verification passed."]}'
+        '{"lines":["Implemented the requested work.","Recorded the completed change.",'
+        '"Verification passed.","The work is ready for integration."]}'
     )
     evidence = WorkedOnEvidence(
-        command="spec run", status="done", verification="passed"
+        command="spec run",
+        status="done",
+        outcomes=(
+            "Implemented the requested work.",
+            "Recorded the completed change.",
+        ),
+        verification="passed",
     )
 
     assert generate_summary(tmp_path, evidence, provider=provider) == (
-        "Completed the requested work.",
+        "Implemented the requested work.",
+        "Recorded the completed change.",
         "Verification passed.",
+        "The work is ready for integration.",
     )
     captured = capsys.readouterr()
     assert captured.out == ""
@@ -258,19 +407,20 @@ def test_generate_summary_suppresses_provider_console_noise(
     "stdout",
     [
         "not json",
-        '{"bullets":[]}',
-        '{"bullets":["Only one sentence."]}',
-        '{"bullets":["One.","Two.","Three.","Four.","Five."]}',
-        '{"bullets":["Safe sentence.","Unsafe \\u001b[31mred sentence."]}',
-        '{"bullets":["# Heading.","Second sentence."]}',
-        '{"bullets":["Run failed verification.","Second sentence."]}',
-        '{"bullets":["The work completed successfully.","All checks succeeded."]}',
-        '{"bullets":["The implementation completed successfully.","Next action remains."]}',
-        '{"bullets":["Everything was successfully implemented.","Next action remains."]}',
-        '{"bullets":["The release succeeded.","Next action remains."]}',
-        '{"bullets":["The feature shipped successfully.","Next action remains."]}',
-        '{"bullets":["Validation succeeded.","Next action remains."]}',
-        '{"bullets":["Implemented one change. Verified another.","All done."]}',
+        '{"lines":["Only one.","Only two."]}',
+        '{"lines":["One.","Two.","Three.","Four.","Five.","Six.","Seven.","Eight.","Nine."]}',
+        '{"lines":["Safe sentence.","Unsafe \\u001b[31mred sentence.","Third.","Fourth."]}',
+        '{"lines":["# Heading.","Second.","Third.","Fourth."]}',
+        '{"lines":["- Bullet.","Second.","Third.","Fourth."]}',
+        '{"lines":["Run failed verification.","Second.","Third.","Fourth."]}',
+        '{"lines":["The work completed successfully.","All checks succeeded.","Third.","Fourth."]}',
+        '{"lines":["The implementation completed successfully.","Next action remains.","Third.","Fourth."]}',
+        '{"lines":["Everything was successfully implemented.","Next action remains.","Third.","Fourth."]}',
+        '{"lines":["The release succeeded.","Next action remains.","Third.","Fourth."]}',
+        '{"lines":["The feature shipped successfully.","Next action remains.","Third.","Fourth."]}',
+        '{"lines":["Validation succeeded.","Next action remains.","Third.","Fourth."]}',
+        '{"lines":["Implemented one change. Verified another.","Second.","Third.","Fourth."]}',
+        'commentary\n{"lines":["One.","Two.","Three.","Four."]}',
     ],
 )
 def test_generate_summary_falls_back_on_invalid_or_contradictory_output(
@@ -308,6 +458,182 @@ def test_generate_summary_falls_back_on_invalid_or_contradictory_output(
     assert len(provider.calls) == 1
 
 
+def test_generate_summary_rejects_blocked_output_that_omits_provider_limit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    summarizer_artifact: ProsaicCommandArtifact,
+) -> None:
+    _install_fake_prompt(monkeypatch, summarizer_artifact)
+    provider = FakeProvider(
+        '{"lines":["Implemented the resolver.","Recorded partial progress.",'
+        '"The run remains blocked.","Retry the current phase later."]}'
+    )
+    evidence = WorkedOnEvidence(
+        command="spec continue",
+        status="blocked",
+        blocker="controller_state_contract_validation_failed",
+        provider_limit_message="You've hit your session limit.",
+        next_command="echelon spec continue",
+    )
+
+    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
+
+
+def test_generate_summary_rejects_contradiction_of_exact_verification_fact(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    summarizer_artifact: ProsaicCommandArtifact,
+) -> None:
+    _install_fake_prompt(monkeypatch, summarizer_artifact)
+    provider = FakeProvider(
+        '{"lines":["Implemented the resolver.","Recorded the completed change.",'
+        '"Verification failed for the work.","The feature is ready for integration."]}'
+    )
+    evidence = WorkedOnEvidence(
+        command="delivery run",
+        status="done",
+        verification="passed in 12.5s",
+    )
+
+    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
+
+
+@pytest.mark.parametrize(
+    "missing_fact",
+    ["verification", "commit", "outcome"],
+)
+def test_generate_summary_requires_supplied_exact_grounding_facts(
+    missing_fact: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    summarizer_artifact: ProsaicCommandArtifact,
+) -> None:
+    _install_fake_prompt(monkeypatch, summarizer_artifact)
+    facts = {
+        "verification": "Recorded verification: 200 focused tests passed.",
+        "commit": "Recorded abcdef123456 — feat: resolve models.",
+        "outcome": "Implemented provider-owned model selection.",
+    }
+    lines = [
+        value for key, value in facts.items() if key != missing_fact
+    ]
+    lines.extend(("Recorded deterministic progress.", "The work is ready for review."))
+    provider = FakeProvider(json.dumps({"lines": lines[:4]}))
+    evidence = WorkedOnEvidence(
+        command="delivery run",
+        status="done",
+        outcomes=("Implemented provider-owned model selection.",),
+        commits=("abcdef123456 — feat: resolve models",),
+        verification="200 focused tests passed",
+    )
+
+    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
+
+
+def test_generate_summary_accepts_all_exact_grounding_facts_with_colons(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    summarizer_artifact: ProsaicCommandArtifact,
+) -> None:
+    _install_fake_prompt(monkeypatch, summarizer_artifact)
+    expected = (
+        "Implemented provider-owned model selection.",
+        "Recorded verification: 200 focused tests passed.",
+        "Recorded abcdef123456 — feat: resolve models.",
+        "The work is ready for review.",
+    )
+    provider = FakeProvider(json.dumps({"lines": list(expected)}))
+    evidence = WorkedOnEvidence(
+        command="delivery run",
+        status="done",
+        outcomes=("Implemented provider-owned model selection.",),
+        commits=("abcdef123456 — feat: resolve models",),
+        verification="200 focused tests passed",
+    )
+
+    assert generate_summary(tmp_path, evidence, provider=provider) == expected
+
+
+def test_generate_summary_rejects_claim_piggybacking_on_exact_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    summarizer_artifact: ProsaicCommandArtifact,
+) -> None:
+    _install_fake_prompt(monkeypatch, summarizer_artifact)
+    provider = FakeProvider(
+        '{"lines":["Refactored OAuth while implemented provider-owned model selection.",'
+        '"The recorded run status is done.","The work is ready for review.",'
+        '"No further recovery command was recorded."]}'
+    )
+    evidence = WorkedOnEvidence(
+        command="delivery run",
+        status="done",
+        outcomes=("Implemented provider-owned model selection.",),
+    )
+
+    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
+
+
+@pytest.mark.parametrize(
+    "invented",
+    [
+        "Implemented an OAuth gateway.",
+        "Refactored authentication into a new gateway.",
+        "Deployed the service integration.",
+        "Worked through one phase and refactored authentication into a new OAuth gateway.",
+        "Worked through one phase; refactored authentication into a new OAuth gateway.",
+        "Worked through one phase, then refactored authentication into a new OAuth gateway.",
+    ],
+)
+def test_generate_summary_rejects_unrecorded_engineering_outcome(
+    invented: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    summarizer_artifact: ProsaicCommandArtifact,
+) -> None:
+    _install_fake_prompt(monkeypatch, summarizer_artifact)
+    provider = FakeProvider(
+        json.dumps(
+            {
+                "lines": [
+                    invented,
+                    "Worked through one phase.",
+                    "The recorded run status is done.",
+                    "The work is ready for review.",
+                ]
+            }
+        )
+    )
+    evidence = WorkedOnEvidence(
+        command="spec run",
+        status="done",
+        completed_phases=("phase1-what",),
+    )
+
+    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
+
+
+def test_fallback_lines_remain_within_external_contract_bounds() -> None:
+    huge = "🙂" * 1_000
+    evidence = WorkedOnEvidence(
+        command=huge,
+        status="blocked",
+        goal=huge,
+        duration=huge,
+        blocker=huge,
+        provider_limit_message=huge,
+        next_command=huge,
+        next_note=huge,
+    )
+
+    lines = fallback_summary(evidence)
+
+    assert 4 <= len(lines) <= 8
+    assert all(len(line) <= 280 for line in lines)
+    assert sum(len(line) for line in lines) <= 1_600
+    assert all(len(re.findall(r"[.!?](?:\s|$)", line)) == 1 for line in lines)
+
+
 @pytest.mark.parametrize("exit_code,timed_out", [(1, False), (0, True)])
 def test_generate_summary_falls_back_without_retry_on_provider_failure(
     exit_code: int,
@@ -324,7 +650,8 @@ def test_generate_summary_falls_back_without_retry_on_provider_failure(
     assert len(provider.calls) == 1
 
 
-def test_format_worked_on_owns_bullet_rendering() -> None:
-    assert format_worked_on(("Defined the boundary.", "Verified the behavior.")) == (
-        "• Defined the boundary.\n• Verified the behavior."
+def test_format_worked_on_joins_plain_lines_without_glyphs() -> None:
+    assert format_worked_on(("Implemented the resolver.", "Verification passed.")) == (
+        "Implemented the resolver.\nVerification passed."
     )
+    assert "•" not in format_worked_on(("Implemented the resolver.",))

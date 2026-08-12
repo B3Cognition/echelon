@@ -14,6 +14,19 @@ from harness.worked_on_summary import (
 )
 
 
+def test_terminal_task_summary_uses_first_non_empty_bounded_line() -> None:
+    from echelon.cli import _terminal_task_summary
+
+    message = "\n   Implement   provider-owned model selection.   \n" + ("ignored " * 50)
+    assert _terminal_task_summary(message) == "Implement provider-owned model selection."
+
+    long_message = "  " + ("deterministic provider resolution " * 10) + "\nignored"
+    summary = _terminal_task_summary(long_message)
+    assert len(summary) <= 160
+    assert summary.endswith("…")
+    assert "\n" not in summary
+
+
 @pytest.mark.parametrize(
     ("argv", "handler"),
     [
@@ -153,9 +166,14 @@ def test_deferred_rich_evidence_is_not_overwritten_by_scope_finalization(
     rich = WorkedOnEvidence(
         command="delivery run",
         status="blocked",
+        duration="4m 12s",
+        outcomes=("Implemented the session resolver.",),
+        commits=("abcdef123456 — feat: implement session resolver",),
         completed_tasks=("T-001",),
         verification="failed",
         blocker="verification failed",
+        provider_limit_message="Session limit resets at 17:00.",
+        next_note="Retry verification after the reset.",
     )
 
     with worked_on_scope("delivery run", tmp_path, spec_id="014-session-security"):
@@ -165,6 +183,13 @@ def test_deferred_rich_evidence_is_not_overwritten_by_scope_finalization(
     assert payload["status"] == "blocked"
     assert payload["completed_tasks"] == ["T-001"]
     assert payload["verification"] == "failed"
+    assert payload["duration"] == "4m 12s"
+    assert payload["outcomes"] == ["Implemented the session resolver."]
+    assert payload["commits"] == [
+        "abcdef123456 — feat: implement session resolver"
+    ]
+    assert payload["provider_limit_message"] == "Session limit resets at 17:00."
+    assert payload["next_note"] == "Retry verification after the reset."
 
 
 def test_new_spec_preflight_failure_does_not_summarize_stale_prior_run(

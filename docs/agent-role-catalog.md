@@ -65,6 +65,13 @@ nodes in the runtime graph.
 | Learning | ADAPTIVE, AUDITOR, CONSOLIDATOR, INTERNALIZER, MIRROR, MONITOR, REALIST, VETERAN |
 | Build | CHANGE CONTROLLER, ENGINEERING MANAGER, SPEC FULFILLMENT AUDITOR, VERIFICATION, VISUAL VALIDATOR |
 
+SUMMARIZER converts a bounded packet of durable lifecycle evidence into four to
+eight plain, outcome-first handoff lines. It preserves exact recorded
+verification and lifecycle-attributed `short SHA — subject` commits, explains a
+current provider limit on blocked work, and never discovers facts by scanning
+the repository. Invalid or unavailable model output falls back to the same
+evidence-grounded paragraph-style contract.
+
 ## Companion Prose
 
 The files under `prosaic/agents/` are appendices and templates used by canonical
