@@ -1100,6 +1100,43 @@ def test_generate_summary_rejects_blocked_transition_grammar_variants(
     assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
 
 
+@pytest.mark.parametrize(
+    "claim",
+    (
+        "The blocked work is not ready although the feature is eligible.",
+        "The blocked run is not ready although you should retry tomorrow.",
+        "The blocked run is not eligible although it will resume tomorrow.",
+    ),
+)
+def test_generate_summary_rejects_claim_after_negated_readiness(
+    claim: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    summarizer_artifact: ProsaicCommandArtifact,
+) -> None:
+    _install_fake_prompt(monkeypatch, summarizer_artifact)
+    provider = FakeProvider(
+        json.dumps(
+            {
+                "lines": [
+                    "Attempted spec continue for the requested work.",
+                    "The run remains blocked.",
+                    claim,
+                    "Next, run echelon spec continue.",
+                ]
+            }
+        )
+    )
+    evidence = WorkedOnEvidence(
+        command="spec continue",
+        status="blocked",
+        blocker="controller_state_contract_validation_failed",
+        next_command="echelon spec continue",
+    )
+
+    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
+
+
 def test_generate_summary_accepts_negated_blocked_readiness(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1264,6 +1301,46 @@ def test_generate_summary_rejects_ungrounded_modal_or_lifecycle_action(
                     "The run remains blocked.",
                     "The recorded run status is blocked.",
                     claim,
+                ]
+            }
+        )
+    )
+    evidence = WorkedOnEvidence(
+        command="spec continue",
+        status="blocked",
+        blocker="controller_state_contract_validation_failed",
+        next_command="echelon spec continue",
+    )
+
+    assert generate_summary(tmp_path, evidence, provider=provider) == fallback_summary(evidence)
+
+
+@pytest.mark.parametrize(
+    "claim",
+    (
+        "Attempted spec continue so you should retry tomorrow.",
+        "Attempted spec continue to retry tomorrow.",
+        "You can run the blocked command.",
+        "The operator will run the blocked command.",
+        "The operator can wait for the blocked reset.",
+        "The operator plans to run the blocked command.",
+    ),
+)
+def test_generate_summary_rejects_residual_or_modal_ungrounded_action(
+    claim: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    summarizer_artifact: ProsaicCommandArtifact,
+) -> None:
+    _install_fake_prompt(monkeypatch, summarizer_artifact)
+    provider = FakeProvider(
+        json.dumps(
+            {
+                "lines": [
+                    "The run remains blocked.",
+                    "The recorded run status is blocked.",
+                    claim,
+                    "Next, run echelon spec continue.",
                 ]
             }
         )

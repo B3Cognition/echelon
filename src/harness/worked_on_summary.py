@@ -614,8 +614,15 @@ def _valid_lines(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | None
         blocked_subject = re.compile(r"\b(?:work|features?|changes?|next steps?)\b")
         readiness = re.compile(r"\b(?:ready|cleared|approved|eligible|able)\b")
         negated_readiness = re.compile(
-            r"\b(?:not|never)\s+(?:yet\s+)?(?:ready|cleared|approved|eligible|able)\b"
+            r"^(?:the\s+)?(?:blocked\s+)?(?:work|features?|changes?|next steps?|run)\s+"
+            r"(?:is|remains)\s+(?:not|never)\s+(?:yet\s+)?"
+            r"(?:ready|cleared|approved|eligible|able)"
+            r"(?:\s+(?:for|to)\s+(?:code review|review|integration|merge|landing|"
+            r"release|shipping|deployment|proceed|advance|move|integrate|land|ship|deploy))?$"
         )
+
+        def negated_readiness_line(line: str) -> bool:
+            return bool(negated_readiness.fullmatch(line.rstrip(".!?")))
         transition = re.compile(
             r"\b(?:proceed(?:s|ed|ing)?|advanc(?:e|es|ed|ing)|"
             r"mov(?:e|es|ed|ing)|integrat(?:e|es|ed|ing)|review(?:s|ed|ing)?|"
@@ -627,7 +634,7 @@ def _valid_lines(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | None
             subject = blocked_subject.search(line)
             if not subject:
                 return False
-            if negated_readiness.search(line):
+            if negated_readiness_line(line):
                 return False
             return bool(
                 readiness.search(line)
@@ -741,16 +748,25 @@ def _valid_lines(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | None
         return normalized_line in allowed
 
     def recorded_command_attempt_line(line: str) -> bool:
-        recorded_command = _command_tokens(evidence.command)
-        line_tokens = _command_tokens(line)
-        return bool(
-            recorded_command
-            and re.search(r"\b(?:attempted|ran|started|executed)\b", line)
-            and any(
-                line_tokens[index:index + len(recorded_command)] == recorded_command
-                for index in range(len(line_tokens) - len(recorded_command) + 1)
-            )
+        command = " ".join(evidence.command.lower().split()).rstrip(".!?")
+        if not command:
+            return False
+        normalized_line = line.rstrip(".!?")
+        allowed = {
+            f"{verb} {command}"
+            for verb in ("attempted", "ran", "started", "executed")
+        }
+        goals = {
+            "the requested work",
+            " ".join(evidence.goal.lower().split()).rstrip(".!?"),
+            " ".join(evidence.spec_id.lower().split()).rstrip(".!?"),
+        }
+        allowed.update(
+            f"attempted {command} for {goal}"
+            for goal in goals
+            if goal
         )
+        return normalized_line in allowed
 
     def supported_lifecycle_line(line: str) -> bool:
         if any(fact in line for fact in grounded_claims):
@@ -814,7 +830,7 @@ def _valid_lines(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | None
         return normalized_line in allowed
 
     def next_action_claim(line: str) -> bool:
-        if blocked_status and negated_readiness.search(line):
+        if blocked_status and negated_readiness_line(line):
             return False
         action = (
             r"(?:run|retry|resume|wait|answer|fix|resolve|continue|proceed|"
@@ -837,7 +853,9 @@ def _valid_lines(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | None
                 line,
             )
             or re.search(
-                rf"\b(?:should|must|needs?\s+to|please)\s+{action}\b",
+                rf"\b(?:can|may|could|will|would|shall|should|must|ought\s+to|"
+                rf"plans?\s+to|intends?\s+to|is\s+going\s+to|needs?\s+to|please)\s+"
+                rf"(?:be\s+)?{action}\b",
                 line,
             )
         )
