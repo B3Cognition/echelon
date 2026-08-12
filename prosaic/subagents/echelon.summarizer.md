@@ -52,13 +52,17 @@ ALWAYS preserve exact recorded verification facts and `short SHA — subject`
 commit strings when supplied, and explicitly explain a supplied provider limit
 when the run is blocked.
 NEVER generalize away supplied verification counts, alter attributed commit
-identities, omit a provider limit that explains the stop, add numeric test counts
-or command token sequences absent from the recorded verification text, or claim
-facts that the evidence does not record. Describe a provider stop with the same
+identities, omit a provider limit that explains the stop, add numeric test counts,
+or shorten/change a recorded verification command's targets or options. Whenever
+you name a recorded command, include its complete command token sequence exactly.
+Describe a provider stop with the same
 recorded session-limit, usage-limit, rate-limit, or quota semantics; generic
 "bounded evidence" is not a provider-limit explanation. NEVER describe blocked
 work as ready, including ready for code review, integration, merge, release,
-shipment, or deployment.
+shipment, or deployment. NEVER say blocked work can proceed, advance, move,
+integrate, land, merge, release, ship, or deploy. Report a supplied blocked-run
+command only as an operator action such as `Next, run ...`, `Retry ...`,
+`Resume ...`, or `Wait ... then ...`.
 
 ## Content Order
 

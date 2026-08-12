@@ -62,6 +62,20 @@ def _contains_token_sequence(recorded: tuple[str, ...], claim: str) -> bool:
     return any(recorded[index:index + width] == claimed for index in range(len(recorded) - width + 1))
 
 
+def _recorded_verification_commands(value: str) -> tuple[tuple[str, ...], ...]:
+    text = " ".join(value.lower().split())
+    commands = [_command_tokens(item) for item in re.findall(r"`([^`]+)`", text)]
+    for clause in re.split(r"\s*;\s*", text):
+        clause = re.sub(r"^(?:recorded )?verification:\s*", "", clause)
+        match = re.fullmatch(
+            r"(.+?)\s+(?:passed|failed|succeeded)(?:\s+in\s+\S+)?",
+            clause,
+        )
+        if match:
+            commands.append(_command_tokens(match.group(1)))
+    return tuple(dict.fromkeys(command for command in commands if command))
+
+
 def _verification_command_claims(line: str) -> tuple[str, ...]:
     semantic = " ".join(line.lower().split()).rstrip(".!?")
     semantic = re.sub(r"^recorded verification:\s*", "", semantic)
@@ -588,7 +602,11 @@ def _valid_lines(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | None
     if evidence.status in {"blocked", "failed", "error"} and re.search(
         r"\b(?:succeeded|successful(?:ly)?|shipped|converged)\b|"
         r"\ball work (?:completed|finished)\b|\ball checks succeeded\b|\bready\b|"
-        r"\b(?:integration|review|merge|release|deployment)-ready\b",
+        r"\b(?:integration|review|merge|release|deployment)-ready\b|"
+        r"\b(?:can|may|could|will)\s+(?:(?:proceed|advance|move)\b|"
+        r"be\s+(?:integrated|landed|merged|released|shipped|deployed)\b)|"
+        r"\b(?:proceed|advance|move)\s+to\s+(?:code review|review|integration|"
+        r"landing|merge|release|shipping|deployment)\b",
         joined,
     ):
         return None
@@ -607,12 +625,28 @@ def _valid_lines(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | None
     number_pattern = r"(?<![\w.,])\d[\d,]*(?:\.\d+)?(?![\d.,])"
     recorded_numbers = set(re.findall(number_pattern, exact_verification))
     recorded_verification_tokens = _command_tokens(exact_verification)
+    recorded_commands = _recorded_verification_commands(exact_verification)
     for line in normalized:
         verification_line = " ".join(line.lower().split())
         if not re.search(r"\b(?:verification|validation|checks?|tests?)\b", verification_line):
             continue
         numeric_details = re.findall(number_pattern, verification_line)
         command_claims = _verification_command_claims(verification_line)
+        line_tokens = _command_tokens(verification_line)
+        for executable in {command[0] for command in recorded_commands}:
+            if executable not in line_tokens:
+                continue
+            matching_commands = tuple(
+                command for command in recorded_commands if command[0] == executable
+            )
+            if not any(
+                any(
+                    line_tokens[index:index + len(command)] == command
+                    for index in range(len(line_tokens) - len(command) + 1)
+                )
+                for command in matching_commands
+            ):
+                return None
         if any(detail not in recorded_numbers for detail in numeric_details) or any(
             not _contains_token_sequence(recorded_verification_tokens, claim)
             for claim in command_claims
@@ -665,6 +699,16 @@ def _valid_lines(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | None
                 evidence.provider_limit_message.lower().split()
             ).rstrip(".!?")
             allowed.update((fact, f"the {fact}", f"the provider reported a limit: {fact}"))
+        if evidence.next_command:
+            command = " ".join(evidence.next_command.lower().split()).rstrip(".!?")
+            allowed.update(
+                (
+                    f"next, run {command}",
+                    f"next, run `{command}`",
+                    f"retry {command}",
+                    f"resume {command}",
+                )
+            )
         return normalized_line in allowed
 
     def supported_lifecycle_line(line: str) -> bool:
@@ -700,8 +744,23 @@ def _valid_lines(raw: str, evidence: WorkedOnEvidence) -> tuple[str, ...] | None
             return True
         return False
 
+    next_command_tokens = _command_tokens(evidence.next_command)
     for line in normalized:
         lowered = " ".join(line.lower().split())
+        lowered_tokens = _command_tokens(lowered)
+        if (
+            evidence.status in {"blocked", "failed", "error"}
+            and next_command_tokens
+            and any(
+                lowered_tokens[index:index + len(next_command_tokens)]
+                == next_command_tokens
+                for index in range(
+                    len(lowered_tokens) - len(next_command_tokens) + 1
+                )
+            )
+            and not re.match(r"^(?:next,\s*run|retry\b|resume\b|wait\b.+\bthen\b)", lowered)
+        ):
+            return None
         if exact_fact_line(lowered):
             continue
         if re.search(r"[;,:]|\b(?:and|but|while|then)\b", lowered):
