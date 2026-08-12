@@ -457,10 +457,32 @@ def test_reported_phase_a_provider_transcript_has_one_lifecycle_handoff(
     output = captured.out + captured.err
     assert output.count("echelon · SQUAD SUMMARY") == 1
     assert "echelon · NEXT STEP" not in output
-    assert "You've hit your session limit" in output
+    assert "stopped    controller_state_contract_validation_failed" in output
+    assert (
+        "provider   You've hit your session limit · resets 5pm (Europe/Prague)"
+        in output
+    )
     assert full_multiline_task not in output
     assert output.casefold().count("worked on") == 1
-    assert "echelon spec continue" in output
+
+    worked_on_heading = "\n  Worked on\n  ─────────\n"
+    next_heading = "\n  next\n  ────\n"
+    assert worked_on_heading in output
+    assert next_heading in output
+    narrative = output.split(worked_on_heading, 1)[1].split(next_heading, 1)[0]
+    narrative_lines = [
+        line[2:] if line.startswith("  ") else line
+        for line in narrative.splitlines()
+        if line.strip()
+    ]
+    assert 4 <= len(narrative_lines) <= 8
+    assert all(
+        not line.startswith(("•", "- ", "* "))
+        for line in narrative_lines
+    )
+
+    embedded_next = output.split(next_heading, 1)[1]
+    assert "echelon spec continue" in embedded_next
 
 
 @pytest.mark.parametrize(
