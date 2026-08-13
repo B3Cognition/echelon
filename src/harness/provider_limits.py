@@ -8,6 +8,11 @@ import re
 
 PROVIDER_LIMIT_MESSAGE_MAX = 240
 PROVIDER_LIMIT_PROVENANCE_KEY = "provider_limit_provenance"
+PROVIDER_LIMIT_STATE_KEYS = (
+    "provider_limit_message",
+    PROVIDER_LIMIT_PROVENANCE_KEY,
+    "provider_reset_hint",
+)
 
 _TERMINAL_ESCAPE_RE = re.compile(
     r"(?:"
@@ -21,10 +26,18 @@ _TERMINAL_ESCAPE_RE = re.compile(
     r")"
 )
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+_TRANSCRIPT_CONTROL_RE = re.compile(r"[\x00-\x09\x0b\x0c\x0e-\x1f\x7f-\x9f]")
+
+
+def clean_provider_transcript(value: object) -> str:
+    """Strip complete terminal payloads before any transcript line search."""
+    text = _TERMINAL_ESCAPE_RE.sub("", str(value or ""))
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    return _TRANSCRIPT_CONTROL_RE.sub(" ", text)
 
 
 def _bounded_text(value: object, *, limit: int) -> str:
-    text = _TERMINAL_ESCAPE_RE.sub("", str(value or ""))
+    text = clean_provider_transcript(value)
     text = _CONTROL_RE.sub(" ", text)
     text = re.sub(r"\s+", " ", text).strip()
     if len(text) > limit:
@@ -40,11 +53,7 @@ def clean_provider_limit_message(value: object) -> str:
 def clear_provider_limit(state: MutableMapping[str, object]) -> bool:
     """Remove every field whose meaning is tied to a provider-limit stop."""
     changed = False
-    for key in (
-        "provider_limit_message",
-        PROVIDER_LIMIT_PROVENANCE_KEY,
-        "provider_reset_hint",
-    ):
+    for key in PROVIDER_LIMIT_STATE_KEYS:
         if key in state:
             state.pop(key, None)
             changed = True

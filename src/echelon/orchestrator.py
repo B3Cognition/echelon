@@ -399,6 +399,14 @@ def run_multi_target(
     verification_states = tuple(
         evidence.verification for evidence in child_evidence if evidence.verification
     )
+    verification_failures = tuple(
+        dict.fromkeys(
+            failure
+            for evidence in child_evidence
+            for failure in evidence.verification_failures
+            if failure
+        )
+    )[:16]
     blockers = tuple(
         evidence.blocker for evidence in child_evidence if evidence.blocker
     )
@@ -431,6 +439,7 @@ def run_multi_target(
             outcomes=outcomes,
             commits=commits,
             verification=_aggregate_verification_facts(verification_states),
+            verification_failures=verification_failures,
             blocker=(
                 "; ".join(dict.fromkeys(blockers))
                 if blockers

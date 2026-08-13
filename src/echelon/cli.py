@@ -2385,6 +2385,10 @@ def _mark_current_harness_state_blocked(
 ) -> None:
     try:
         from harness.paths import build_dir, current_build_marker, runs_dir
+        from harness.provider_limits import (
+            PROVIDER_LIMIT_STATE_KEYS,
+            clear_provider_limit,
+        )
         from harness.state import DELIVERY_STATE_VERSION, StateStore
 
         marker = current_build_marker(project_root, spec_id)
@@ -2425,7 +2429,11 @@ def _mark_current_harness_state_blocked(
             updates = {"blocked_phase": phase, "termination_reason": reason}
             if error:
                 updates["harness_error"] = error
-            state_store.transition("blocked", updates=updates)
+            state_store.transition(
+                "blocked",
+                updates=updates,
+                removals=PROVIDER_LIMIT_STATE_KEYS,
+            )
             return
 
         # Legacy state remains V1. The coordinator is the only component that
@@ -2434,6 +2442,7 @@ def _mark_current_harness_state_blocked(
         data["termination_reason"] = reason
         if error:
             data["harness_error"] = error
+        clear_provider_limit(data)
         state_store.write(data)
     except Exception:
         pass

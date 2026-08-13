@@ -22,7 +22,10 @@ from harness.scoped_verify import (
 )
 from harness.skill_loader import build_skill_prompt, find_skill
 from harness.spec_frontmatter import find_spec_dir
-from harness.provider_limits import clean_provider_limit_message
+from harness.provider_limits import (
+    clean_provider_limit_message,
+    clean_provider_transcript,
+)
 from harness.verified_fulfillment_ledger import (
     VerifiedLedgerReusePlan,
     build_verified_ledger,
@@ -1094,7 +1097,7 @@ def _provider_session_limit_reason(
     existing_report: Path | None,
     current_commit: str | None,
 ) -> str:
-    text = _provider_limit_text(prompt_executor)
+    text = clean_provider_transcript(_provider_limit_text(prompt_executor))
     if not _is_provider_session_limit_text(text):
         return ""
 
@@ -1239,7 +1242,8 @@ def _verify_spec_artifact_paths(line: str) -> list[Path]:
 
 
 def _provider_session_limit_summary(text: str) -> str:
-    for line in reversed(text.splitlines()):
+    cleaned_text = clean_provider_transcript(text)
+    for line in reversed(cleaned_text.splitlines()):
         line = line.strip()
         if line and _is_provider_session_limit_text(line):
             return _truncate_provider_reason(line)
@@ -1251,11 +1255,11 @@ def _provider_session_limit_summary(text: str) -> str:
         r"quota exceeded[^.\n;]*(?:resets? [^.\n;]*)?",
     )
     for pattern in patterns:
-        matches = list(re.finditer(pattern, text, flags=re.IGNORECASE))
+        matches = list(re.finditer(pattern, cleaned_text, flags=re.IGNORECASE))
         if matches:
             return _truncate_provider_reason(matches[-1].group(0).strip())
 
-    return _truncate_provider_reason(text.strip())
+    return ""
 
 
 def _truncate_provider_reason(text: str, limit: int = 240) -> str:
@@ -1266,7 +1270,7 @@ def _truncate_provider_reason(text: str, limit: int = 240) -> str:
 
 
 def _is_provider_session_limit_text(text: str) -> bool:
-    lowered = text.lower()
+    lowered = clean_provider_transcript(text).lower()
     if not lowered:
         return False
     return any(

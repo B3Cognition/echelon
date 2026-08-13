@@ -15,9 +15,12 @@ import json
 import logging
 import os
 import tempfile
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from harness.provider_limits import PROVIDER_LIMIT_STATE_KEYS
 
 logger = logging.getLogger(__name__)
 
@@ -433,15 +436,24 @@ class StateStore:
         return data
 
     def transition(
-        self, new_status: str, *, updates: Dict[str, Any] | None = None
+        self,
+        new_status: str,
+        *,
+        updates: Dict[str, Any] | None = None,
+        removals: Iterable[str] = (),
     ) -> Dict[str, Any]:
-        """Atomically transition status and merge any checkpoint updates."""
+        """Atomically transition status, remove stale keys, and merge updates."""
         if updates and "status" in updates:
             raise ValueError("transition updates cannot contain status")
         data = self.read()
         data["status"] = new_status
         if updates:
             data.update(updates)
+        if new_status != "blocked":
+            for key in PROVIDER_LIMIT_STATE_KEYS:
+                data.pop(key, None)
+        for key in removals:
+            data.pop(key, None)
 
         previous_status = self._data.get("status") if self._data else None
         if previous_status in {"blocked", "interrupted"} and new_status != previous_status:

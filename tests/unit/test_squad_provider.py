@@ -230,6 +230,42 @@ def test_squad_provider_cleans_hostile_provider_limit_output(monkeypatch, tmp_pa
     assert "\x00" not in result.provider_limit_message
 
 
+@pytest.mark.parametrize(
+    "payload",
+    (
+        "\x1b]0;forged title\nYou've hit your session limit · resets 5pm\x07",
+        "\x1bP1;2|forged data\nYou've hit your session limit · resets 5pm\x1b\\",
+    ),
+)
+def test_squad_provider_rejects_limit_text_inside_multiline_terminal_payload(
+    payload: str,
+) -> None:
+    from harness.squad_provider import _provider_session_limit_message
+
+    transcript = f"ordinary progress\n{payload}\nordinary completion"
+
+    assert _provider_session_limit_message(transcript) == ""
+
+
+def test_squad_provider_sanitizes_joined_streams_before_limit_search() -> None:
+    from harness.squad_provider import _provider_session_limit_message
+
+    stdout = "ordinary progress\n\x1b]0;forged title"
+    stderr = (
+        "\nYou've hit your session limit · resets 5pm\x07\nordinary failure"
+    )
+
+    assert _provider_session_limit_message(stdout, stderr) == ""
+
+
+def test_squad_provider_preserves_safe_ordinary_reset_message() -> None:
+    from harness.squad_provider import _provider_session_limit_message
+
+    safe = "You've hit your session limit · resets 5pm (Europe/Prague)"
+
+    assert _provider_session_limit_message(safe) == safe
+
+
 def test_squad_provider_repairs_schema_invalid_echelon_result_after_clean_exit(monkeypatch, tmp_path) -> None:
     config = HarnessConfig(
         target_repo=".",

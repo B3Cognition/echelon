@@ -33,6 +33,10 @@ from harness.delivery_results import (
 from harness.verify_result import VerifyResult
 from harness.mode import ModeController
 from harness.provider import SandboxProvider
+from harness.provider_limits import (
+    PROVIDER_LIMIT_STATE_KEYS,
+    current_provider_limit_message,
+)
 from harness.ralph import RalphController
 from harness.repair_loop import (
     RepairAttempt,
@@ -613,6 +617,16 @@ class StrategyCoordinator:
     ) -> DeliveryResult:
         """Persist a recoverable phase failure with its exact restart point."""
         state = state_store.read()
+        provider_observation_is_current = (
+            reason == "provider_session_limit"
+            and bool(
+                current_provider_limit_message(
+                    state,
+                    phase_id=phase,
+                    termination_reason=reason,
+                )
+            )
+        )
         state_store.transition(
             "blocked",
             updates={
@@ -622,6 +636,11 @@ class StrategyCoordinator:
                 "outer_iter": max(int(state.get("outer_iter") or 0), outer_iterations),
                 "tokens_used": max(int(state.get("tokens_used") or 0), tokens_used),
             },
+            removals=(
+                ()
+                if provider_observation_is_current
+                else PROVIDER_LIMIT_STATE_KEYS
+            ),
         )
         return DeliveryResult(
             status="blocked",
@@ -648,8 +667,10 @@ class StrategyCoordinator:
     ) -> DeliveryResult:
         """Own single-target lifecycle publication and terminal convergence."""
         state = state_store.read()
-        if state.get("status") != "finalizing":
-            state_store.transition("finalizing", updates={"blocked_phase": None})
+        state_store.transition(
+            "finalizing",
+            updates={"blocked_phase": None},
+        )
         if len(declared_targets) == 1:
             try:
                 state = state_store.read()

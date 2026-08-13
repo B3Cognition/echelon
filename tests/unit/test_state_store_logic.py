@@ -106,6 +106,94 @@ class TestStateStoreInvariants:
         assert state["status"] == "blocked"
         assert state["blocked_phase"] == "review"
 
+    def test_transition_applies_removals_in_the_same_atomic_write(
+        self, tmp_path: Path
+    ) -> None:
+        store = self._make_store(tmp_path)
+        store.transition("running")
+        stale = store.read()
+        stale.update(
+            {
+                "provider_limit_message": "Usage limit resets at 17:00.",
+                "provider_limit_provenance": {
+                    "phase_id": "implementation",
+                    "termination_reason": "provider_session_limit",
+                },
+                "provider_reset_hint": "17:00",
+            }
+        )
+        store.write(stale)
+
+        state = store.transition(
+            "blocked",
+            updates={"blocked_phase": "implementation"},
+            removals=(
+                "provider_limit_message",
+                "provider_limit_provenance",
+                "provider_reset_hint",
+            ),
+        )
+
+        assert state["status"] == "blocked"
+        assert state["blocked_phase"] == "implementation"
+        assert "provider_limit_message" not in state
+        assert "provider_limit_provenance" not in state
+        assert "provider_reset_hint" not in state
+        assert store.read() == state
+
+    def test_new_dispatch_transition_clears_provider_observation_by_default(
+        self, tmp_path: Path
+    ) -> None:
+        store = self._make_store(tmp_path)
+        store.transition("running")
+        provider_block = store.read()
+        provider_block.update(
+            {
+                "provider_limit_message": "Usage limit resets at 17:00.",
+                "provider_limit_provenance": {
+                    "phase_id": "implementation",
+                    "termination_reason": "provider_session_limit",
+                },
+                "provider_reset_hint": "17:00",
+            }
+        )
+        store.write(provider_block)
+        store.transition(
+            "blocked",
+            updates={
+                "blocked_phase": "implementation",
+                "termination_reason": "provider_session_limit",
+            },
+        )
+
+        state = store.transition("running")
+
+        assert state["status"] == "running"
+        assert "provider_limit_message" not in state
+        assert "provider_limit_provenance" not in state
+        assert "provider_reset_hint" not in state
+
+    def test_new_dispatch_clearing_wins_over_conflicting_updates(
+        self, tmp_path: Path
+    ) -> None:
+        store = self._make_store(tmp_path)
+
+        state = store.transition(
+            "running",
+            updates={
+                "provider_limit_message": "resurrected",
+                "provider_limit_provenance": {
+                    "phase_id": "implementation",
+                    "termination_reason": "provider_session_limit",
+                },
+                "provider_reset_hint": "17:00",
+            },
+        )
+
+        assert "provider_limit_message" not in state
+        assert "provider_limit_provenance" not in state
+        assert "provider_reset_hint" not in state
+
     def test_blocked_transition_requires_exact_phase(self, tmp_path: Path) -> None:
         store = self._make_store(tmp_path)
         store.transition("running")

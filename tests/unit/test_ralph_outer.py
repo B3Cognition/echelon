@@ -8203,3 +8203,44 @@ class TestVerifyLocallySwift:
 
         mock_py.assert_called_once()
         mock_sw.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        "\x1b]0;forged title\nYou've hit your session limit · resets 5pm\x07",
+        "\x1bP1;2|forged data\nYou've hit your session limit · resets 5pm\x1b\\",
+    ),
+)
+def test_ralph_rejects_limit_text_inside_multiline_terminal_payload(
+    payload: str,
+) -> None:
+    from harness.ralph import (
+        _is_provider_session_limit,
+        _provider_session_limit_message,
+        _provider_session_limit_reset_hint,
+    )
+
+    build_result = {
+        "stdout": f"ordinary progress\n{payload}\nordinary completion",
+        "stderr": "",
+    }
+
+    assert _is_provider_session_limit(build_result) is False
+    assert _provider_session_limit_message(build_result) == ""
+    assert _provider_session_limit_reset_hint(build_result) == ""
+
+
+def test_ralph_preserves_safe_ordinary_reset_message() -> None:
+    from harness.ralph import (
+        _is_provider_session_limit,
+        _provider_session_limit_message,
+        _provider_session_limit_reset_hint,
+    )
+
+    safe = "You've hit your session limit · resets 5pm (Europe/Prague)"
+    build_result = {"stdout": safe, "stderr": ""}
+
+    assert _is_provider_session_limit(build_result) is True
+    assert _provider_session_limit_message(build_result) == safe
+    assert _provider_session_limit_reset_hint(build_result) == "5pm (Europe/Prague)"

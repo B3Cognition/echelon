@@ -48,6 +48,7 @@ from harness.mode import ModeController
 from harness.provider import SandboxHandle, SandboxProvider, SandboxSpec
 from harness.provider_limits import (
     clean_provider_limit_message,
+    clean_provider_transcript,
     clear_provider_limit,
     record_provider_limit,
 )
@@ -6273,7 +6274,7 @@ def _salvage_build_worktree(
 
 
 def _is_provider_session_limit(build_result: dict[str, object]) -> bool:
-    text = _provider_limit_text(build_result).lower()
+    text = clean_provider_transcript(_provider_limit_text(build_result)).lower()
     if not text:
         return False
     needles = (
@@ -6295,7 +6296,7 @@ def _provider_limit_text(build_result: dict[str, object]) -> str:
 
 
 def _provider_session_limit_message(build_result: dict[str, object]) -> str:
-    text = _provider_limit_text(build_result)
+    text = clean_provider_transcript(_provider_limit_text(build_result))
     for line in text.splitlines():
         cleaned = line.strip()
         if not cleaned:
@@ -6310,7 +6311,7 @@ def _provider_session_limit_message(build_result: dict[str, object]) -> str:
 
 
 def _provider_session_limit_reset_hint(build_result: dict[str, object]) -> str:
-    text = _provider_limit_text(build_result)
+    text = clean_provider_transcript(_provider_limit_text(build_result))
     patterns = (
         r"resets?\s+(?:at\s+|in\s+)?([^\n.;]+)",
         r"reset window[:\s]+([^\n.;]+)",

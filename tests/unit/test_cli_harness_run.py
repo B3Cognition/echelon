@@ -120,6 +120,81 @@ def test_mark_current_harness_state_blocked_uses_v2_checkpoint_phase(
 
 
 @pytest.mark.unit
+def test_mark_current_harness_state_blocked_clears_stale_provider_observation(
+    tmp_path: Path,
+) -> None:
+    from echelon.cli import _mark_current_harness_state_blocked
+
+    store = StateStore(tmp_path / "runs" / "state", "003", "default")
+    store.initialize("run-1", "semi")
+    store.transition("running")
+    state = store.read()
+    state.update(
+        {
+            "provider_limit_message": "Usage limit resets at 17:00.",
+            "provider_limit_provenance": {
+                "phase_id": "implementation",
+                "termination_reason": "provider_session_limit",
+            },
+            "provider_reset_hint": "17:00",
+        }
+    )
+    store.write(state)
+    store.transition(
+        "blocked",
+        updates={
+            "blocked_phase": "implementation",
+            "termination_reason": "provider_session_limit",
+        },
+    )
+
+    _mark_current_harness_state_blocked(
+        tmp_path, "003", "default", "harness_error", "boom"
+    )
+
+    persisted = store.read()
+    assert persisted["termination_reason"] == "harness_error"
+    assert "provider_limit_message" not in persisted
+    assert "provider_limit_provenance" not in persisted
+    assert "provider_reset_hint" not in persisted
+
+
+@pytest.mark.unit
+def test_mark_current_legacy_harness_state_blocked_clears_stale_provider_observation(
+    tmp_path: Path,
+) -> None:
+    from echelon.cli import _mark_current_harness_state_blocked
+
+    store = StateStore(tmp_path / "runs" / "state", "003", "default")
+    store.state_file.parent.mkdir(parents=True, exist_ok=True)
+    store.state_file.write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "termination_reason": "provider_session_limit",
+                "provider_limit_message": "Usage limit resets at 17:00.",
+                "provider_limit_provenance": {
+                    "phase_id": "implementation",
+                    "termination_reason": "provider_session_limit",
+                },
+                "provider_reset_hint": "17:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _mark_current_harness_state_blocked(
+        tmp_path, "003", "default", "harness_error", "boom"
+    )
+
+    persisted = store.read()
+    assert persisted["termination_reason"] == "harness_error"
+    assert "provider_limit_message" not in persisted
+    assert "provider_limit_provenance" not in persisted
+    assert "provider_reset_hint" not in persisted
+
+
+@pytest.mark.unit
 def test_mark_current_harness_state_blocked_preserves_converged_state(tmp_path: Path) -> None:
     from echelon.cli import _mark_current_harness_state_blocked
 

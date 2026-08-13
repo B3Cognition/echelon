@@ -7659,6 +7659,41 @@ class TestCommanderJudgmentStateUpdates:
         assert store.load()["blocked_reason"] == "consecutive_why_fails"
         publish.assert_not_called()
 
+    def test_already_done_success_removes_stale_provider_observation(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The idempotent terminal success save clears evidence from an older stop."""
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "DONE", max_iterations=5)
+        state = store.load()
+        state.update(
+            {
+                "phase": "DONE",
+                "status": "done",
+                "blocked_reason": None,
+                "provider_limit_message": "Usage limit resets at 17:00.",
+                "provider_limit_provenance": {
+                    "phase_id": "phase3-plan",
+                    "termination_reason": "provider_session_limit",
+                },
+                "provider_reset_hint": "17:00",
+            }
+        )
+        store.save(state)
+        monkeypatch.setattr(
+            ctrl,
+            "_publish_terminal_phase_a_artifacts_if_available",
+            lambda: None,
+        )
+
+        result = ctrl.run("msg", "banzai")
+
+        persisted = store.load()
+        assert result.status == "done"
+        assert "provider_limit_message" not in persisted
+        assert "provider_limit_provenance" not in persisted
+        assert "provider_reset_hint" not in persisted
+
     def test_governance_block_merged_into_eval_state(self, tmp_path):
         ctrl, _ = _controller(tmp_path)
         cfg = ctrl._governance_config()

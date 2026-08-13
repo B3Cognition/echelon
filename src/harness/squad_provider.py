@@ -19,7 +19,10 @@ from harness.echelon_result_schema import (
     validate_echelon_result_contract,
 )
 from harness.llm_provider import AICodingCliProvider
-from harness.provider_limits import clean_provider_limit_message
+from harness.provider_limits import (
+    clean_provider_limit_message,
+    clean_provider_transcript,
+)
 
 
 class PhaseAGitBoundaryError(RuntimeError):
@@ -115,11 +118,11 @@ class SquadAgentResult:
 def _provider_session_limit_message(*transcripts: str) -> str:
     """Return the provider's actionable session-limit line, when present."""
     needles = ("session limit", "usage limit", "rate limit", "quota exceeded")
-    for transcript in transcripts:
-        for line in transcript.splitlines():
-            message = line.strip()
-            if message and any(needle in message.lower() for needle in needles):
-                return clean_provider_limit_message(message)
+    cleaned_transcript = clean_provider_transcript("\n".join(transcripts))
+    for line in cleaned_transcript.splitlines():
+        message = line.strip()
+        if message and any(needle in message.lower() for needle in needles):
+            return clean_provider_limit_message(message)
     return ""
 
 

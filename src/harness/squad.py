@@ -4694,6 +4694,9 @@ class SquadController:
             else:
                 state = self._state_store.load()
                 state["status"] = "done"
+                from harness.provider_limits import clear_provider_limit
+
+                clear_provider_limit(state)
                 self._state_store.save(state)
             return SquadResult.from_state(self._state_store.load())
 

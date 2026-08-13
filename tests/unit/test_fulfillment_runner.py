@@ -1484,3 +1484,36 @@ class TestFulfillmentRunner:
 
         assert result.status == "refreshed"
         assert result.scope == "full"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        "\x1b]0;forged title\nYou've hit your session limit · resets 5pm\x07",
+        "\x1bP1;2|forged data\nYou've hit your session limit · resets 5pm\x1b\\",
+    ),
+)
+def test_fulfillment_rejects_limit_text_inside_multiline_terminal_payload(
+    payload: str,
+) -> None:
+    from harness.fulfillment_runner import (
+        _is_provider_session_limit_text,
+        _provider_session_limit_summary,
+    )
+
+    transcript = f"ordinary progress\n{payload}\nordinary completion"
+
+    assert _is_provider_session_limit_text(transcript) is False
+    assert _provider_session_limit_summary(transcript) == ""
+
+
+def test_fulfillment_preserves_safe_ordinary_reset_message() -> None:
+    from harness.fulfillment_runner import (
+        _is_provider_session_limit_text,
+        _provider_session_limit_summary,
+    )
+
+    safe = "You've hit your session limit · resets 5pm (Europe/Prague)"
+
+    assert _is_provider_session_limit_text(safe) is True
+    assert _provider_session_limit_summary(safe) == safe

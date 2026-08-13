@@ -113,6 +113,7 @@ def test_rich_evidence_round_trips_through_deferred_storage(tmp_path: Path) -> N
         outcomes=("Implemented provider-owned model selection.",),
         commits=("abcdef123456 — feat: resolve provider models",),
         verification="passed: `bash  -lc 'pytest -q'`",
+        verification_failures=("tests/web/test_sessions.py::test_expired",),
         provider_limit_message="Session limit resets at 17:00.",
         next_command="bash  -lc 'echelon delivery continue 014'",
         next_note="Retry after the provider reset.",
@@ -154,6 +155,48 @@ def test_evidence_byte_bound_retains_priority_multibyte_facts() -> None:
         "next_note",
     ):
         assert decoded[key]
+
+
+def test_failed_evidence_byte_bound_retains_one_required_verification_failure(
+    tmp_path: Path,
+) -> None:
+    from harness.worked_on_summary import narrative_candidates
+
+    huge = "🙂" * 5_000
+    failure = "tests/web/test_sessions.py::test_expired failed"
+    evidence = WorkedOnEvidence(
+        command=huge,
+        status=huge,
+        run_id=huge,
+        spec_id=huge,
+        goal=huge,
+        current_phase=huge,
+        duration=huge,
+        outcomes=(huge,) * 16,
+        commits=(huge,) * 16,
+        verification=f"failed {huge}",
+        verification_failures=(failure,),
+        blocker=huge,
+        provider_limit_message=huge,
+        next_command=huge,
+        next_note=huge,
+    )
+
+    payload = evidence.to_json()
+    path = tmp_path / "worked-on.json"
+    path.write_text(payload, encoding="utf-8")
+    restored = read_deferred_evidence(path)
+
+    assert len(payload.encode("utf-8")) <= MAX_EVIDENCE_BYTES
+    assert restored is not None
+    assert restored.verification.startswith("failed")
+    assert restored.verification_failures == (failure,)
+    failure_candidates = tuple(
+        candidate
+        for candidate in narrative_candidates(restored)
+        if candidate.id.startswith("verification-failure-")
+    )
+    assert failure_candidates[0].required is True
 
 
 def test_phase_a_evidence_uses_only_recorded_rich_handoff_facts() -> None:
@@ -402,6 +445,94 @@ def test_delivery_scope_recovers_rich_persisted_strategy_evidence(
     assert evidence.verification == "pytest tests/unit -q passed"
     assert evidence.provider_limit_message == "Usage limit resets at 17:00."
     assert evidence.next_note == "Retry after the provider reset."
+
+
+def test_delivery_scope_recovers_bounded_deduplicated_verification_failures(
+    tmp_path: Path,
+) -> None:
+    from harness.worked_on_summary import (
+        MAX_EVIDENCE_BYTES,
+        _SummaryScope,
+        _candidate_selection_packet,
+        _delivery_scope_evidence,
+        fallback_summary,
+        format_worked_on,
+        narrative_candidates,
+    )
+
+    state_dir = tmp_path / "runs" / "build-1" / "state"
+    state_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current-build-014").write_text(
+        "build-1",
+        encoding="utf-8",
+    )
+    shared = "tests/shared/test_auth.py::test_expired failed"
+    (state_dir / "api.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "termination_reason": "blocker_escalation",
+                "last_verify_result": {
+                    "passed": False,
+                    "failures": [
+                        {"id": "shared", "error": shared},
+                        {"id": "api", "error": "api contract assertion failed"},
+                    ],
+                    "duration_s": 3.2,
+                    "token_usage": 0,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (state_dir / "web.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "termination_reason": "blocker_escalation",
+                "last_verify_result": {
+                    "passed": False,
+                    "failures": [
+                        {"id": "shared", "error": shared},
+                        {"id": "web", "error": "web assertion failed"},
+                    ],
+                    "duration_s": 4.1,
+                    "token_usage": 0,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    evidence = _delivery_scope_evidence(
+        _SummaryScope("delivery continue", tmp_path, spec_id="014")
+    )
+
+    assert evidence is not None
+    assert evidence.verification.startswith("failed")
+    assert evidence.verification_failures == (
+        shared,
+        "api contract assertion failed",
+        "web assertion failed",
+    )
+    candidates = narrative_candidates(evidence)
+    failure_candidates = tuple(
+        candidate
+        for candidate in candidates
+        if candidate.id.startswith("verification-failure-")
+    )
+    assert tuple(candidate.text for candidate in failure_candidates) == (
+        f"Verification failure: {shared}.",
+        "Verification failure: api contract assertion failed.",
+        "Verification failure: web assertion failed.",
+    )
+    assert failure_candidates[0].required is True
+    packet, _ = _candidate_selection_packet(candidates)
+    lines = fallback_summary(evidence)
+    assert len(packet.encode("utf-8")) <= MAX_EVIDENCE_BYTES
+    assert 4 <= len(lines) <= 8
+    assert all(len(line) <= 280 for line in lines)
+    assert len(format_worked_on(lines)) <= 900
 
 
 def test_phase_a_evidence_ignores_stale_provider_limit_without_matching_provenance() -> None:

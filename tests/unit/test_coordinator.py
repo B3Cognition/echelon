@@ -243,6 +243,133 @@ class TestSingleStrategy:
         assert result.blocked_phase == "visual"
         assert store.read()["termination_reason"] == "registered_worktree_missing"
 
+    def test_non_provider_phase_block_removes_stale_provider_observation_atomically(
+        self, tmp_path: Path
+    ) -> None:
+        """One persisted block transition cannot retain an unrelated provider stop."""
+        coord = _make_coordinator(tmp_path)
+        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store.initialize("run-1", "semi")
+        store.transition("running")
+        stale = store.read()
+        stale.update(
+            {
+                "provider_limit_message": "Usage limit resets at 17:00.",
+                "provider_limit_provenance": {
+                    "phase_id": "implementation",
+                    "termination_reason": "build_incomplete",
+                },
+                "provider_reset_hint": "17:00",
+            }
+        )
+        store.write(stale)
+        implementation = ImplementationResult(
+            "blocked", "build_incomplete", 1, 0, None, 3, None
+        )
+
+        with patch.object(store, "write", wraps=store.write) as write:
+            result = coord._persist_phase_block(
+                store,
+                phase="implementation",
+                reason="build_incomplete",
+                implementation=implementation,
+                outer_iterations=1,
+                tokens_used=3,
+            )
+
+        persisted = store.read()
+        assert result.status == "blocked"
+        assert persisted["termination_reason"] == "build_incomplete"
+        assert "provider_limit_message" not in persisted
+        assert "provider_limit_provenance" not in persisted
+        assert "provider_reset_hint" not in persisted
+        assert write.call_count == 1
+
+    def test_current_provider_phase_block_retains_its_owned_observation(
+        self, tmp_path: Path
+    ) -> None:
+        coord = _make_coordinator(tmp_path)
+        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store.initialize("run-1", "semi")
+        store.transition("running")
+        state = store.read()
+        state.update(
+            {
+                "provider_limit_message": "Usage limit resets at 17:00.",
+                "provider_limit_provenance": {
+                    "phase_id": "implementation",
+                    "termination_reason": "provider_session_limit",
+                },
+                "provider_reset_hint": "17:00",
+            }
+        )
+        store.write(state)
+        implementation = ImplementationResult(
+            "blocked", "provider_session_limit", 1, 0, None, 3, None
+        )
+
+        result = coord._persist_phase_block(
+            store,
+            phase="implementation",
+            reason="provider_session_limit",
+            implementation=implementation,
+            outer_iterations=1,
+            tokens_used=3,
+        )
+
+        persisted = store.read()
+        assert result.termination_reason == "provider_session_limit"
+        assert persisted["provider_limit_message"] == (
+            "Usage limit resets at 17:00."
+        )
+        assert persisted["provider_limit_provenance"] == {
+            "phase_id": "implementation",
+            "termination_reason": "provider_session_limit",
+        }
+        assert persisted["provider_reset_hint"] == "17:00"
+
+    def test_successful_finalization_removes_stale_provider_observation(
+        self, tmp_path: Path
+    ) -> None:
+        """Terminal convergence persists no evidence owned by an older stop."""
+        coord = _make_coordinator(tmp_path)
+        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        store.initialize("run-1", "semi", declared_targets=[])
+        store.transition("running")
+        store.transition("verified")
+        stale = store.read()
+        stale.update(
+            {
+                "provider_limit_message": "Usage limit resets at 17:00.",
+                "provider_limit_provenance": {
+                    "phase_id": "implementation",
+                    "termination_reason": "provider_session_limit",
+                },
+                "provider_reset_hint": "17:00",
+            }
+        )
+        store.write(stale)
+        implementation = ImplementationResult(
+            "verified", "verified", 1, 0, None, 3, VerifyResult(passed=True)
+        )
+
+        result = coord._finalize_delivery(
+            store,
+            spec_dir=None,
+            declared_targets=[],
+            implementation=implementation,
+            outer_iterations=1,
+            tokens_used=3,
+            final_verify=implementation.final_verify,
+        )
+
+        persisted = store.read()
+        assert result.status == "converged"
+        assert persisted["status"] == "converged"
+        assert "provider_limit_message" not in persisted
+        assert "provider_limit_provenance" not in persisted
+        assert "provider_reset_hint" not in persisted
+
     def test_finalization_blocks_conflicting_persisted_verification_commit(
         self, tmp_path: Path
     ) -> None:

@@ -29,6 +29,22 @@ def test_provider_limit_cleaner_preserves_safe_message_exactly() -> None:
     assert clean_provider_limit_message(safe) == safe
 
 
+def test_provider_transcript_cleaner_strips_multiline_string_payloads_before_search() -> None:
+    from harness.provider_limits import clean_provider_transcript
+
+    transcript = (
+        "ordinary progress\n"
+        "\x1b]0;forged title\nYou've hit your session limit · resets 5pm\x07\n"
+        "ordinary middle\n"
+        "\x1bP1;2|forged data\nUsage limit resets 6pm\x1b\\\n"
+        "ordinary completion"
+    )
+
+    assert clean_provider_transcript(transcript) == (
+        "ordinary progress\n\nordinary middle\n\nordinary completion"
+    )
+
+
 def test_provider_limit_cleaner_removes_non_csi_and_unterminated_osc_sequences() -> None:
     from harness.provider_limits import clean_provider_limit_message
 

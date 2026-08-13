@@ -418,6 +418,15 @@ class TestRunMultiTarget:
                             if target == "web"
                             else "passed in 12.5s"
                         ),
+                        "verification_failures": (
+                            [
+                                "tests/web/test_sessions.py::test_expired failed",
+                                "shared contract assertion failed",
+                                "tests/web/test_sessions.py::test_expired failed",
+                            ]
+                            if target == "web"
+                            else []
+                        ),
                         "provider_limit_message": (
                             "Usage limit resets at 17:00." if target == "web" else ""
                         ),
@@ -457,6 +466,22 @@ class TestRunMultiTarget:
             "abcdef123453 — checkpoint api",
             "abcdef123453 — checkpoint web",
         )
+        assert recorded[0].verification_failures == (
+            "tests/web/test_sessions.py::test_expired failed",
+            "shared contract assertion failed",
+        )
+        from harness.worked_on_summary import narrative_candidates
+
+        failures = tuple(
+            candidate
+            for candidate in narrative_candidates(recorded[0])
+            if candidate.id.startswith("verification-failure-")
+        )
+        assert failures[0].required is True
+        assert failures[0].text == (
+            "Verification failure: "
+            "tests/web/test_sessions.py::test_expired failed."
+        )
         assert recorded[0].provider_limit_message == "Usage limit resets at 17:00."
         assert recorded[0].next_note == "Retry after the provider reset."
 
@@ -489,6 +514,9 @@ class TestRunMultiTarget:
                             for index in range(64)
                         ],
                         "verification": "failed in 3.2s",
+                        "verification_failures": [
+                            f"Failure {index} {huge}" for index in range(64)
+                        ],
                         "blocker": "verification failed",
                         "provider_limit_message": "Usage limit resets at 17:00.",
                         "next_note": "Retry after the provider reset.",
@@ -519,8 +547,16 @@ class TestRunMultiTarget:
 
         assert len(evidence.outcomes) == 16
         assert len(evidence.commits) == 16
+        assert len(evidence.verification_failures) == 16
+        assert all(len(failure) <= 240 for failure in evidence.verification_failures)
         assert len(packet.encode("utf-8")) <= MAX_EVIDENCE_BYTES
-        assert {"blocker", "provider-limit", "next-action"} <= set(by_id)
+        assert {
+            "verification-failure-1",
+            "blocker",
+            "provider-limit",
+            "next-action",
+        } <= set(by_id)
+        assert by_id["verification-failure-1"].required is True
         assert "verification failed" in by_id["blocker"].text
         assert "Usage limit resets at 17:00." in by_id["provider-limit"].text
         assert "echelon delivery continue 024" in by_id["next-action"].text

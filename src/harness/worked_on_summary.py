@@ -60,6 +60,19 @@ def _clean_items(value: object, *, limit: int = _MAX_ITEMS) -> tuple[str, ...]:
     cleaned = tuple(_clean_text(item, limit=180) for item in value)
     return tuple(item for item in cleaned if item)[:limit]
 
+
+def _verification_failure_items(value: object) -> tuple[str, ...]:
+    """Return exact bounded failure facts in deterministic first-seen order."""
+    if not isinstance(value, (list, tuple, set)):
+        return ()
+    source = sorted(value, key=str) if isinstance(value, set) else value
+    cleaned = (
+        _clean_text(item, limit=240)
+        for item in source
+    )
+    return tuple(dict.fromkeys(item for item in cleaned if item))[:_MAX_ITEMS]
+
+
 @dataclass(frozen=True)
 class WorkedOnEvidence:
     command: str
@@ -91,7 +104,11 @@ class WorkedOnEvidence:
         normalized: dict[str, object] = {}
         for key, value in raw.items():
             if isinstance(value, tuple):
-                normalized[key] = list(_clean_items(value))
+                normalized[key] = list(
+                    _verification_failure_items(value)
+                    if key == "verification_failures"
+                    else _clean_items(value)
+                )
             else:
                 limit = 360 if key in {
                     "verification",
@@ -148,11 +165,22 @@ class WorkedOnEvidence:
                     ensure_ascii=False,
                     separators=(",", ":"),
                 )
-        for key in ("verification_failures", "commits", "outcomes"):
+        verification_failed = str(normalized.get("verification") or "").startswith(
+            "failed"
+        )
+        for key in ("commits", "outcomes", "verification_failures"):
             values = normalized.get(key)
             if not isinstance(values, list):
                 continue
-            while values and len(encoded.encode("utf-8")) > MAX_EVIDENCE_BYTES:
+            minimum = (
+                1
+                if key == "verification_failures" and verification_failed and values
+                else 0
+            )
+            while (
+                len(values) > minimum
+                and len(encoded.encode("utf-8")) > MAX_EVIDENCE_BYTES
+            ):
                 values.pop()
                 encoded = json.dumps(
                     normalized,
@@ -255,6 +283,24 @@ def _recorded_verification(source: Mapping[str, object]) -> str:
     except (TypeError, ValueError):
         duration = 0
     return f"{status} in {duration:.1f}s" if duration else status
+
+
+def _recorded_verification_failures(
+    source: Mapping[str, object],
+) -> tuple[str, ...]:
+    """Extract exact portable errors from one persisted verification result."""
+    raw = source.get("last_verify_result")
+    if not isinstance(raw, Mapping):
+        return _verification_failure_items(source.get("verification_failures"))
+    entries = raw.get("failures")
+    if not isinstance(entries, (list, tuple)):
+        return ()
+    return _verification_failure_items(
+        tuple(
+            entry.get("error") if isinstance(entry, Mapping) else entry
+            for entry in entries
+        )
+    )
 
 
 def _phase_a_outcomes(state: Mapping[str, object]) -> tuple[str, ...]:
@@ -493,7 +539,7 @@ def delivery_evidence(
         outcomes=tuple(dict.fromkeys(outcomes))[:_MAX_ITEMS],
         commits=tuple(dict.fromkeys(commits))[:_MAX_ITEMS],
         verification=verification,
-        verification_failures=tuple(failures)[:_MAX_ITEMS],
+        verification_failures=_verification_failure_items(failures),
         blocker=reasons[0] if reasons else "",
         provider_limit_message=provider_limit_message,
         next_command=_clean_opaque_text(next_command),
@@ -1006,17 +1052,24 @@ def _delivery_scope_evidence(scope: _SummaryScope) -> WorkedOnEvidence | None:
     tasks: list[str] = []
     outcomes: list[str] = []
     commits: list[str] = []
+    verification_records: list[tuple[str, bool]] = []
+    failures: list[str] = []
     for state in states:
         tasks.extend(_clean_items(state.get("completed_task_ids")))
         outcomes.extend(_clean_items(state.get("outcomes")))
         commits.extend(_attributed_commits(state))
+        state_failures = _recorded_verification_failures(state)
+        failures.extend(state_failures)
+        verification_records.append(
+            (_recorded_verification(state), bool(state_failures))
+        )
     duration = next(
         (item for state in states if (item := _recorded_duration(state))),
         "",
     )
     verification = next(
-        (item for state in states if (item := _recorded_verification(state))),
-        "",
+        (item for item, failed in verification_records if failed and item),
+        next((item for item, _failed in verification_records if item), ""),
     )
     provider_limit_message = next(
         (
@@ -1056,6 +1109,7 @@ def _delivery_scope_evidence(scope: _SummaryScope) -> WorkedOnEvidence | None:
         outcomes=tuple(dict.fromkeys(outcomes))[:_MAX_ITEMS],
         commits=tuple(dict.fromkeys(commits))[:_MAX_ITEMS],
         verification=verification,
+        verification_failures=_verification_failure_items(failures),
         blocker=blocker,
         provider_limit_message=provider_limit_message,
         next_command=next_command,
@@ -1129,7 +1183,10 @@ def read_deferred_evidence(path: Path) -> WorkedOnEvidence | None:
     }
     for name in fields:
         value = payload.get(name, () if name in tuple_fields else "")
-        values[name] = tuple(value) if isinstance(value, list) else value
+        if name == "verification_failures":
+            values[name] = _verification_failure_items(value)
+        else:
+            values[name] = tuple(value) if isinstance(value, list) else value
     try:
         return WorkedOnEvidence(**values)
     except TypeError:
