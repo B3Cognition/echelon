@@ -17,7 +17,8 @@ ca_overlays:
 
 execution:
   max_parallel_agents: 5        # Max out parallelism
-  agent_timeout_seconds: 600    # 10 min — let agents think
+  # Optional per-agent timeout. When omitted, Echelon uses the provider timeout.
+  # agent_timeout_seconds: 600
   max_retries: 3                # Resilient — retry hard before giving up
 
   # ALL tiers run on Opus — maximum reasoning power across the board

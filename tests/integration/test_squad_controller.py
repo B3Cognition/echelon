@@ -2167,6 +2167,36 @@ class TestAgentResultIntegrity:
             state["controller_contract_error"]
         )
 
+    def test_agent_timeout_without_result_is_reported_directly(self, tmp_path):
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=-9,
+            echelon_result=None,
+            raw_output="partial architecture output",
+            duration_ms=600_004,
+            timed_out=True,
+            stderr="agent timed out after 600 seconds",
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "banzai", "msg", 0, "phase1-what", max_iterations=5)
+        _mark_constitution_complete(tmp_path, store)
+
+        result = ctrl.run("msg", "banzai")
+        state = store.load()
+
+        assert result.status == "blocked"
+        assert state["phase"] == "terminal-blocked"
+        assert state["blocked_reason"] == "agent_timeout"
+        assert state["recovery_instruction"] == {
+            "schema_version": 1,
+            "kind": "retry_phase",
+            "reason_code": "agent_timeout",
+            "phase": "phase1-what",
+            "requires_human_input": False,
+        }
+        assert state["last_dispatch"]["phase_id"] == "phase1-what"
+        assert "controller_contract_error" not in state
+
     def test_agent_phase_without_parseable_echelon_result_blocks(self, tmp_path):
         provider = _mock_provider()
         provider.exec_agent.return_value = SquadAgentResult(

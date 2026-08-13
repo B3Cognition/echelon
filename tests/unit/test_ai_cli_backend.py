@@ -1642,6 +1642,51 @@ def test_openai_compatible_registry_corrects_echelon_result_tool_call(tmp_path) 
     assert "Do not call more tools" in result["instruction"]
 
 
+def test_openai_compatible_registry_rejects_control_plane_reads_and_searches(
+    tmp_path: Path,
+) -> None:
+    from harness.ai_cli_backends.openai_compatible import _OpenAIToolRegistry
+
+    product = tmp_path / "sources" / "app.py"
+    control = tmp_path / ".echelon" / "prosaic" / "subagents" / "agent.md"
+    product.parent.mkdir(parents=True)
+    control.parent.mkdir(parents=True)
+    product.write_text("PRODUCT_SENTINEL = True\n", encoding="utf-8")
+    control.write_text("CONTROL_SENTINEL\n", encoding="utf-8")
+    registry = _OpenAIToolRegistry(
+        tmp_path,
+        {},
+        {"tool_forbidden_roots": [str(tmp_path / ".echelon")]},
+    )
+
+    direct = _registry_tool_payload(
+        registry,
+        "read_file",
+        {"path": ".echelon/prosaic/subagents/agent.md"},
+    )
+    listed = _registry_tool_payload(
+        registry,
+        "list_files",
+        {"pattern": "**/*.md"},
+    )
+    grepped = _registry_tool_payload(
+        registry,
+        "grep_files",
+        {"pattern": "SENTINEL", "file_pattern": "**/*"},
+    )
+    tree = _registry_tool_payload(
+        registry,
+        "list_tree_with_sizes",
+        {"path": ".", "max_entries": 50},
+    )
+
+    assert direct["status"] == "error"
+    assert "forbidden provider control plane" in direct["error"]
+    assert all(".echelon" not in path for path in listed["matches"])
+    assert [match["path"] for match in grepped["matches"]] == ["sources/app.py"]
+    assert all(not entry["path"].startswith(".echelon") for entry in tree["entries"])
+
+
 def test_openai_compatible_registry_filters_noisy_default_paths(tmp_path) -> None:
     from harness.ai_cli_backends.openai_compatible import _OpenAIToolRegistry
 
@@ -3137,6 +3182,50 @@ def test_claude_backend_enforces_prompt_file_scopes(tmp_path) -> None:
     }
 
 
+def test_claude_boundary_is_prompt_only_without_sandbox_for_ordinary_dispatch(
+    tmp_path: Path,
+) -> None:
+    backend = ClaudeCliBackend(_config("claude"))
+
+    class FakeProcess:
+        stdout = io.BytesIO(b"")
+        returncode = 0
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self) -> int:
+            return self.returncode
+
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Build this.",
+        env={},
+        timeout_s=10,
+        metadata={
+            "prompt_metadata": {
+                "tool_forbidden_roots": [str(tmp_path / ".echelon")],
+                "product_plane_boundary": "echelon-v1",
+            }
+        },
+    )
+
+    with (
+        patch(
+            "harness.ai_cli_backends.claude._sandbox_exec_path",
+            return_value=None,
+        ),
+        patch(
+            "harness.ai_cli_backends.claude.subprocess.Popen",
+            return_value=FakeProcess(),
+        ) as popen,
+    ):
+        result = backend.run_prompt(request)
+
+    assert result.exit_code == 0
+    popen.assert_called_once()
+
+
 def test_claude_backend_compiles_review_triage_profile(tmp_path) -> None:
     config = _config("claude")
     backend = ClaudeCliBackend(
@@ -3374,6 +3463,68 @@ def test_claude_workspace_sandbox_allows_scoped_paths_inside_forbidden_root(
     assert f'(allow file-read* (subpath "{canonical_root}"))' in profile
     assert f'(allow file-write* (literal "{write_path}"))' in profile
     assert f'(allow file-write* (literal "{write_path.parent}"))' in profile
+
+
+def test_claude_workspace_sandbox_allows_runtime_helpers_without_safe_mode(
+    tmp_path: Path,
+) -> None:
+    backend = ClaudeCliBackend(_config("claude"))
+    captured = {}
+
+    class FakeProcess:
+        stdout = io.BytesIO(b"")
+        returncode = 0
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self) -> int:
+            return self.returncode
+
+    def fake_popen(command, **_kwargs):
+        captured["command"] = command
+        return FakeProcess()
+
+    control_root = (tmp_path / ".echelon").resolve()
+    scripts_root = (control_root / "runtime" / "scripts").resolve()
+    project_config = (control_root / "config.yml").resolve()
+    local_config = (control_root / "local.yml").resolve()
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Run the explicitly named config helper.",
+        env={},
+        timeout_s=10,
+        metadata={
+            "prompt_metadata": {
+                "tool_forbidden_roots": [str(control_root)],
+                "tool_operational_roots": [str(scripts_root)],
+                "tool_operational_read_paths": [
+                    str(project_config),
+                    str(local_config),
+                ],
+                "tool_operational_metadata_paths": [str(control_root)],
+            }
+        },
+    )
+
+    with (
+        patch("harness.ai_cli_backends.claude.subprocess.Popen", fake_popen),
+        patch(
+            "harness.ai_cli_backends.claude._sandbox_exec_path",
+            return_value="/usr/bin/sandbox-exec",
+        ),
+    ):
+        backend.run_prompt(request)
+
+    command = captured["command"]
+    profile = command[2]
+    assert command[:2] == ["/usr/bin/sandbox-exec", "-p"]
+    assert f'(allow file-read* (subpath "{scripts_root}"))' in profile
+    assert f'(allow file-read* (literal "{project_config}"))' in profile
+    assert f'(allow file-read* (literal "{local_config}"))' in profile
+    assert f'(allow file-read-metadata (literal "{control_root}"))' in profile
+    assert f'(allow file-write* (subpath "{scripts_root}"))' not in profile
+    assert "--safe-mode" not in command
 
 
 @pytest.mark.skipif(

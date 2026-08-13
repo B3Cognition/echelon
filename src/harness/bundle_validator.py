@@ -11,7 +11,10 @@ from typing import Any, Iterable
 
 import yaml
 
-from harness.prompt_companions import prompt_companion_references
+from harness.prompt_companions import (
+    prompt_companion_references,
+    resolve_prompt_companion_reference,
+)
 from harness.prompt_markdown import read_prompt_markdown
 from harness.workflow_validator import validate_workflow_definition
 
@@ -125,15 +128,15 @@ def _validate_companion_references(
     errors: list[str],
 ) -> None:
     missing: set[str] = set()
-    for artifact in prosaic_root.rglob("*.md") if prosaic_root.is_dir() else ():
+    artifacts = list(prosaic_root.rglob("*.md")) if prosaic_root.is_dir() else []
+    workflow_root = runtime_root / "workflow"
+    if workflow_root.is_dir():
+        artifacts.extend(workflow_root.rglob("*.md"))
+    roots = (prosaic_root, runtime_root)
+    for artifact in artifacts:
         body = artifact.read_text(encoding="utf-8")
         for reference in prompt_companion_references(body):
-            roots = (
-                (runtime_root, prosaic_root)
-                if reference.startswith("workflow/")
-                else (prosaic_root, runtime_root)
-            )
-            if not any((root / reference).is_file() for root in roots):
+            if resolve_prompt_companion_reference(reference, roots) is None:
                 missing.add(reference)
     if missing:
         errors.extend(
@@ -141,7 +144,7 @@ def _validate_companion_references(
             for reference in sorted(missing)
         )
     else:
-        checks.append("all Prosaic companion Markdown references resolve")
+        checks.append("all package-owned prompt resource references resolve")
 
 
 def _validate_runtime_yaml(

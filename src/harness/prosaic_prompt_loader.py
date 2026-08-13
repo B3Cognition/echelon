@@ -74,7 +74,10 @@ class ProsaicPromptLoader:
         artifact = _parse_command_artifact(artifact_id, result.stdout)
         return ProsaicCommandArtifact(
             frontmatter=artifact.frontmatter,
-            body=append_prompt_companions(artifact.body, (self._source_dir,)),
+            body=append_prompt_companions(
+                artifact.body,
+                (self._source_dir, self._source_dir.parent / "runtime"),
+            ),
         )
 
     @staticmethod

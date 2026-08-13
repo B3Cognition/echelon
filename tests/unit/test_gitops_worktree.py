@@ -908,7 +908,7 @@ def test_sync_runtime_extension_real_tree_matches_delivery_surface_policy(tmp_pa
         assert not (runtime / forbidden).exists(), forbidden
 
 
-def test_sync_runtime_extension_delegates_claude_prose_to_prosaic(tmp_path):
+def test_sync_runtime_extension_does_not_materialize_provider_native_prose(tmp_path):
     source = tmp_path / ".echelon" / "runtime"
     (source / "workflow").mkdir(parents=True)
     (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
@@ -918,34 +918,20 @@ def test_sync_runtime_extension_delegates_claude_prose_to_prosaic(tmp_path):
     exclude = tmp_path / "git-exclude"
 
     gitops = _make_gitops(tmp_path, llm_cli="claude")
-    with (
-        patch("harness.gitops._run_git") as run_git,
-        patch(
-            "harness.gitops.deploy_provider_prose",
-            return_value=(
-                ".claude/commands/",
-                ".claude/agents/",
-                ".claude/skills/",
-                ".prosaic-manifest.json",
-                ".prosaic-backups/",
-                ".echelon/prosaic-provider-owner.json",
-            ),
-        ) as deploy,
-    ):
+    with patch("harness.gitops._run_git") as run_git:
         run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
         gitops.sync_runtime_extension(worktree)
 
-    deploy.assert_called_once_with("claude", worktree)
+    import harness.gitops as gitops_module
+
+    assert not hasattr(gitops_module, "deploy_provider_prose")
     ignored = exclude.read_text(encoding="utf-8")
-    assert ".claude/commands/" in ignored
-    assert ".claude/agents/" in ignored
-    assert ".claude/skills/" in ignored
-    assert ".prosaic-manifest.json" in ignored
-    assert ".prosaic-backups/" in ignored
-    assert ".echelon/prosaic-provider-owner.json" in ignored
+    assert ".echelon/prosaic/" in ignored
+    assert ".echelon/runtime/" in ignored
+    assert ".claude/" not in ignored
 
 
-def test_sync_runtime_extension_skips_provider_prose_deployment_for_codex(tmp_path):
+def test_sync_runtime_extension_has_same_control_plane_for_codex(tmp_path):
     source = tmp_path / ".echelon" / "runtime"
     (source / "workflow").mkdir(parents=True)
     (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
@@ -955,14 +941,10 @@ def test_sync_runtime_extension_skips_provider_prose_deployment_for_codex(tmp_pa
     exclude = tmp_path / "git-exclude"
 
     gitops = _make_gitops(tmp_path, llm_cli="codex")
-    with (
-        patch("harness.gitops._run_git") as run_git,
-        patch("harness.gitops.deploy_provider_prose", return_value=()) as deploy,
-    ):
+    with patch("harness.gitops._run_git") as run_git:
         run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
         gitops.sync_runtime_extension(worktree)
 
-    deploy.assert_called_once_with("codex", worktree)
     assert ".claude/" not in exclude.read_text(encoding="utf-8")
 
 

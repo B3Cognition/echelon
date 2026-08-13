@@ -4962,6 +4962,22 @@ class SquadController:
                 )
                 return SquadResult.from_state(self._state_store.load())
 
+            if result.timed_out:
+                snapshot = self._state_store.capture_routing_snapshot(
+                    expected_phase=node.id,
+                )
+                self._block_after_executor_failure(
+                    phase,
+                    "agent_timeout",
+                    result,
+                    snapshot=snapshot,
+                    recovery_instruction=retry_phase_recovery(
+                        phase,
+                        "agent_timeout",
+                    ),
+                )
+                return SquadResult.from_state(self._state_store.load())
+
             if node.id == "phase4-document":
                 self._enter_retarget_finalizing(self._state_store.load())
             snapshot = self._state_store.capture_routing_snapshot(
@@ -5435,6 +5451,22 @@ class SquadController:
                 recovery_instruction=trusted_executor_block_recovery(
                     phase,
                     result.reason,
+                ),
+            )
+            return SquadResult.from_state(self._state_store.load())
+
+        if result.timed_out:
+            snapshot = self._state_store.capture_routing_snapshot(
+                expected_phase=node.id,
+            )
+            self._block_after_executor_failure(
+                phase,
+                "agent_timeout",
+                result,
+                snapshot=snapshot,
+                recovery_instruction=retry_phase_recovery(
+                    phase,
+                    "agent_timeout",
                 ),
             )
             return SquadResult.from_state(self._state_store.load())

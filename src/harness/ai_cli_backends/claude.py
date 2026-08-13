@@ -93,25 +93,56 @@ class ClaudeCliBackend:
             if isinstance(raw_prompt_metadata, Mapping)
             else ()
         )
+        operational_roots = (
+            _prompt_scope_paths(
+                request,
+                raw_prompt_metadata,
+                "tool_operational_roots",
+            )
+            if isinstance(raw_prompt_metadata, Mapping)
+            else ()
+        )
+        operational_read_paths = (
+            _prompt_scope_paths(
+                request,
+                raw_prompt_metadata,
+                "tool_operational_read_paths",
+            )
+            if isinstance(raw_prompt_metadata, Mapping)
+            else ()
+        )
+        operational_metadata_paths = (
+            _prompt_scope_paths(
+                request,
+                raw_prompt_metadata,
+                "tool_operational_metadata_paths",
+            )
+            if isinstance(raw_prompt_metadata, Mapping)
+            else ()
+        )
         if forbidden_roots:
             sandbox_exec = _sandbox_exec_path()
-            if sandbox_exec is None:
+            if sandbox_exec is None and (read_roots or write_paths):
                 return CliRunResult(
                     exit_code=125,
                     stdout="",
                     stderr="workspace synthesis host boundary is unavailable",
                     metadata={"workspace_synthesis_boundary": "unavailable"},
                 )
-            cmd = [
-                sandbox_exec,
-                "-p",
-                _workspace_sandbox_profile(
-                    forbidden_roots,
-                    read_roots=read_roots,
-                    write_paths=write_paths,
-                ),
-                *cmd,
-            ]
+            if sandbox_exec is not None:
+                cmd = [
+                    sandbox_exec,
+                    "-p",
+                    _workspace_sandbox_profile(
+                        forbidden_roots,
+                        read_roots=read_roots,
+                        write_paths=write_paths,
+                        operational_roots=operational_roots,
+                        operational_read_paths=operational_read_paths,
+                        operational_metadata_paths=operational_metadata_paths,
+                    ),
+                    *cmd,
+                ]
         return self._run_stream_json(cmd, request)
 
     def run_agent(self, request: CliRunRequest) -> CliRunResult:
@@ -410,6 +441,9 @@ def _workspace_sandbox_profile(
     *,
     read_roots: tuple[str, ...] = (),
     write_paths: tuple[str, ...] = (),
+    operational_roots: tuple[str, ...] = (),
+    operational_read_paths: tuple[str, ...] = (),
+    operational_metadata_paths: tuple[str, ...] = (),
 ) -> str:
     exclusions: list[str] = []
     for root in forbidden_roots:
@@ -429,7 +463,15 @@ def _workspace_sandbox_profile(
         f"(allow file-write* {allowed_files})",
         *(
             f"(allow file-read* (subpath {json.dumps(root)}))"
-            for root in read_roots
+            for root in (*read_roots, *operational_roots)
+        ),
+        *(
+            f"(allow file-read* (literal {json.dumps(path)}))"
+            for path in operational_read_paths
+        ),
+        *(
+            f"(allow file-read-metadata (literal {json.dumps(path)}))"
+            for path in operational_metadata_paths
         ),
         *(
             rule

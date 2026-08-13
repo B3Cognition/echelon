@@ -20,6 +20,7 @@ from harness.provider_capability import (
     CLI_PROVIDER_CAPABILITIES,
     ProviderCapability,
 )
+from harness.provider_workspace_scope import apply_product_plane_boundary
 
 
 SUPPORTED_EXECUTION_PROFILES = {"claude": frozenset({"review_triage_v1"})}
@@ -126,6 +127,11 @@ class AICodingCliProvider:
         self.last_token_usage = 0
         timeout_s = (timeout_ms / 1000.0) if timeout_ms else self._timeout_s
         metadata = _request_metadata(extra_env, request_metadata)
+        prompt, metadata = apply_product_plane_boundary(
+            worktree_path,
+            prompt,
+            metadata,
+        )
         profile_violation = _execution_profile_violation(self._cli, metadata)
         if profile_violation is not None:
             self._record_result(profile_violation, metadata)
@@ -160,6 +166,11 @@ class AICodingCliProvider:
         self.last_token_usage = 0
         timeout_s = (timeout_ms / 1000.0) if timeout_ms else self._timeout_s
         metadata = _request_metadata(extra_env, request_metadata)
+        prompt, metadata = apply_product_plane_boundary(
+            project_root,
+            prompt,
+            metadata,
+        )
         profile_violation = _execution_profile_violation(self._cli, metadata)
         if profile_violation is not None:
             self._record_result(profile_violation, metadata)

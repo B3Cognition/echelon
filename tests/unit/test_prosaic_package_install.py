@@ -23,7 +23,7 @@ def _write_bundle_source(root: Path) -> None:
     )
 
 
-def test_install_prosaic_bundle_stages_sources_and_deploys_packages(
+def test_install_prosaic_bundle_removes_staging_after_deploying_packages(
     tmp_path: Path,
 ) -> None:
     from echelon.prosaic_packages import install_prosaic_bundle
@@ -43,16 +43,38 @@ def test_install_prosaic_bundle_stages_sources_and_deploys_packages(
         run=run,
     )
 
-    assert report.prose_source == workspace / ".echelon/packages/echelon-prose"
-    assert report.runtime_source == workspace / ".echelon/packages/echelon-runtime"
-    assert (report.prose_source / "commands/echelon.demo.md").read_text(encoding="utf-8").endswith(
-        "# Demo\n"
-    )
-    assert (report.runtime_source / "workflow/definition.yaml").read_text(encoding="utf-8") == "phases: []\n"
+    assert report.prose_root == workspace / ".echelon/prosaic"
+    assert report.runtime_root == workspace / ".echelon/runtime"
+    assert report.prose_source == report.prose_root
+    assert report.runtime_source == report.runtime_root
+    assert not (workspace / ".echelon/packages").exists()
     assert commands == [
         (["prosaic", "package", "deploy", "echelon-prose"], workspace),
         (["prosaic", "package", "deploy", "echelon-runtime"], workspace),
     ]
+    assert not (workspace / "prosaic.config.yaml").exists()
+
+
+def test_install_prosaic_bundle_removes_staging_when_deployment_fails(
+    tmp_path: Path,
+) -> None:
+    from echelon.prosaic_packages import (
+        ProsaicBundleInstallError,
+        install_prosaic_bundle,
+    )
+
+    echelon_root = tmp_path / "echelon"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _write_bundle_source(echelon_root)
+
+    def run(command: list[str], **_kwargs: object) -> None:
+        raise subprocess.CalledProcessError(1, command, stderr="deployment failed")
+
+    with pytest.raises(ProsaicBundleInstallError, match="installation failed"):
+        install_prosaic_bundle(workspace, echelon_root=echelon_root, run=run)
+
+    assert not (workspace / ".echelon/packages").exists()
     assert not (workspace / "prosaic.config.yaml").exists()
 
 
@@ -94,6 +116,7 @@ def test_install_prosaic_bundle_deploys_staged_content_with_prosaic(
     assert (workspace / ".echelon/runtime/workflow/definition.yaml").read_text(
         encoding="utf-8"
     ) == "phases: []\n"
+    assert not (workspace / ".echelon/packages").exists()
 
 
 def test_built_wheel_installs_canonical_prosaic_bundles(tmp_path: Path) -> None:
@@ -140,8 +163,7 @@ from echelon.prosaic_packages import install_prosaic_bundle
 
 workspace = Path(sys.argv[2])
 install_prosaic_bundle(workspace, run=lambda *_args, **_kwargs: None)
-assert (workspace / ".echelon/packages/echelon-prose/commands").is_dir()
-assert (workspace / ".echelon/packages/echelon-runtime/workflow/definition.yaml").is_file()
+assert not (workspace / ".echelon/packages").exists()
 """
     subprocess.run(
         [sys.executable, "-c", script, str(installed), str(workspace)],

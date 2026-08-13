@@ -16,10 +16,9 @@ execution:
   # @belief(claim: "3 parallel agents is the sweet spot balancing speed and coherence without context fragmentation", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: medium)
   max_parallel_agents: 3
 
-  # Per-agent timeout (seconds). Agent is killed and retried once if exceeded.
-  # [range: 60-600] Most agents complete in 60-180s. 600s = edge cases.
-  # @belief(claim: "300s timeout captures 95th-percentile agent completion while preventing stuck-agent budget drain", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: high)
-  agent_timeout_seconds: 300
+  # Optional per-agent timeout (seconds). When omitted, Echelon uses the provider timeout.
+  # Enable this only when the workspace needs a stricter ceiling than its AI provider.
+  # agent_timeout_seconds: 600
 
   # Max retries per agent before skipping with warning
   # [range: 0-3] Higher = more resilient, but may waste tokens on stuck agents.

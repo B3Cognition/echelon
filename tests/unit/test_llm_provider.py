@@ -60,6 +60,105 @@ def _patch_claude_popen(lines: list[dict] | None = None, returncode: int = 0):
 @pytest.mark.unit
 class TestAICodingCliProvider:
 
+    @pytest.mark.parametrize("method", ("run_prompt_result", "run_agent_result"))
+    def test_provider_applies_product_plane_boundary_to_every_dispatch(
+        self, tmp_path, method
+    ):
+        provider = AICodingCliProvider(_config(cli="codex"))
+        backend_method = "run_agent" if method == "run_agent_result" else "run_prompt"
+
+        with patch.object(
+            provider._backend,
+            backend_method,
+            return_value=CliRunResult(exit_code=0, stdout="done", stderr=""),
+        ) as run_backend:
+            getattr(provider, method)(str(tmp_path), "implement the request")
+
+        request = run_backend.call_args.args[0]
+        assert request.prompt.startswith("## Echelon Product-Plane Boundary")
+        assert (
+            "Echelon has already embedded all selected instructions" in request.prompt
+        )
+        assert "implement the request" in request.prompt
+        prompt_metadata = request.metadata["prompt_metadata"]
+        assert set(prompt_metadata["tool_forbidden_roots"]) >= {
+            str((tmp_path / ".echelon").resolve()),
+            str((tmp_path / ".claude").resolve()),
+            str((tmp_path / ".codex").resolve()),
+            str((tmp_path / ".opencode").resolve()),
+            str((tmp_path / ".prosaic").resolve()),
+            str((tmp_path / "CLAUDE.md").resolve()),
+            str((tmp_path / "AGENTS.md").resolve()),
+            str((tmp_path / ".github/copilot-instructions.md").resolve()),
+            str((tmp_path / ".github/instructions").resolve()),
+            str((tmp_path / ".mcp.json").resolve()),
+            str((tmp_path / "opencode.json").resolve()),
+            str((tmp_path / "opencode.jsonc").resolve()),
+        }
+        assert prompt_metadata["tool_operational_roots"] == [
+            str((tmp_path / ".echelon/runtime/scripts").resolve())
+        ]
+        assert prompt_metadata["tool_operational_read_paths"] == [
+            str((tmp_path / ".echelon/config.yml").resolve()),
+            str((tmp_path / ".echelon/local.yml").resolve()),
+        ]
+        assert prompt_metadata["tool_operational_metadata_paths"] == [
+            str((tmp_path / ".echelon").resolve())
+        ]
+        assert "execute explicitly named Echelon runtime helpers" in request.prompt
+        assert "Never inspect or search those helper files" in request.prompt
+
+    def test_provider_boundary_preserves_narrower_prompt_scopes_and_metadata(
+        self, tmp_path
+    ):
+        provider = AICodingCliProvider(_config(cli="codex"))
+        source = tmp_path / "sources" / "app"
+        output = tmp_path / "specs" / "feature.md"
+
+        with patch.object(
+            provider._backend,
+            "run_prompt",
+            return_value=CliRunResult(exit_code=0, stdout="done", stderr=""),
+        ) as run_backend:
+            provider.run_prompt_result(
+                str(tmp_path),
+                "inspect product code",
+                request_metadata={
+                    "trace_id": "trace-1",
+                    "prompt_metadata": {
+                        "model_tier": "fast",
+                        "tool_read_roots": [str(source)],
+                        "tool_write_paths": [str(output)],
+                        "tool_forbidden_roots": [str(tmp_path / "private")],
+                    },
+                },
+            )
+
+        request = run_backend.call_args.args[0]
+        assert request.metadata["trace_id"] == "trace-1"
+        prompt_metadata = request.metadata["prompt_metadata"]
+        assert prompt_metadata["model_tier"] == "fast"
+        assert prompt_metadata["tool_read_roots"] == [str(source)]
+        assert prompt_metadata["tool_write_paths"] == [str(output)]
+        assert (
+            str((tmp_path / "private").resolve())
+            in prompt_metadata["tool_forbidden_roots"]
+        )
+
+    def test_provider_does_not_duplicate_product_plane_contract(self, tmp_path):
+        provider = AICodingCliProvider(_config(cli="codex"))
+        prompt = "## Echelon Product-Plane Boundary\n\nExisting boundary.\n\nDo work."
+
+        with patch.object(
+            provider._backend,
+            "run_prompt",
+            return_value=CliRunResult(exit_code=0, stdout="done", stderr=""),
+        ) as run_backend:
+            provider.run_prompt_result(str(tmp_path), prompt)
+
+        request = run_backend.call_args.args[0]
+        assert request.prompt.count("## Echelon Product-Plane Boundary") == 1
+
     def test_provider_retains_normalized_invocation_metadata(self, tmp_path):
         provider = AICodingCliProvider(_config(cli="codex"))
         backend_result = CliRunResult(
@@ -237,7 +336,10 @@ class TestAICodingCliProvider:
         cmd_passed = popen.call_args.args[0]
         env_passed = popen.call_args.kwargs["env"]
         assert "-p" in cmd_passed
-        assert "run generic prompt" in cmd_passed[cmd_passed.index("-p") + 1]
+        prompt_index = max(
+            index for index, item in enumerate(cmd_passed) if item == "-p"
+        )
+        assert "run generic prompt" in cmd_passed[prompt_index + 1]
         assert "HARNESS_BUILD_STATUS_FILE" not in env_passed
 
     def test_exec_prompt_injects_effective_tool_policy_preamble(self, tmp_path):
@@ -245,7 +347,10 @@ class TestAICodingCliProvider:
             AICodingCliProvider(_config()).exec_prompt(str(tmp_path), "build this")
 
         cmd_passed = popen.call_args.args[0]
-        prompt = cmd_passed[cmd_passed.index("-p") + 1]
+        prompt_index = max(
+            index for index, item in enumerate(cmd_passed) if item == "-p"
+        )
+        prompt = cmd_passed[prompt_index + 1]
         assert prompt.startswith("## Effective Host Tool Policy")
         assert "Unsafe host execution bypass: disabled" in prompt
         assert "build this" in prompt
@@ -257,7 +362,7 @@ class TestAICodingCliProvider:
             result = provider.exec_prompt(str(tmp_path), "build this")
 
         cmd_passed = popen.call_args.args[0]
-        assert cmd_passed[0] == "claude"
+        assert "claude" in cmd_passed
         assert "-p" in cmd_passed
         assert result == 0
 
