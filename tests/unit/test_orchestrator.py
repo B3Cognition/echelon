@@ -145,7 +145,12 @@ class TestRunMultiTarget:
         assert summarize.call_count == 1
         context = summarize.call_args.args[0]
         assert context.command == "echelon delivery continue"
-        assert context.status == "done"
+        assert context.status == "returned"
+        assert context.next_step == (
+            "Review the target delivery results above before choosing the next command."
+        )
+        assert all("worker returned exit 0" in fact for fact in context.facts)
+        assert "land" not in context.next_step
 
     def test_non_json_safe_canonical_contract_fails_before_launch(
         self,

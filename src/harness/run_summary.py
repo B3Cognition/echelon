@@ -132,6 +132,8 @@ def _fallback_summary(context: RunSummaryContext) -> str:
     work = "delivery" if delivery else "specification work"
     if context.status == "done":
         lines = [f"Echelon completed the requested {work}."]
+    elif context.status == "returned":
+        lines = [f"Echelon finished dispatching the requested {work}."]
     else:
         lines = [f"Echelon worked on the requested {work}, but it is not complete."]
 
@@ -144,10 +146,11 @@ def _fallback_summary(context: RunSummaryContext) -> str:
         (fact for fact in facts if fact.lower().startswith("published")),
         "",
     )
-    verification = next(
-        (fact for fact in facts if "verify:" in fact.lower()),
-        next((fact for fact in facts if "verification" in fact.lower()), ""),
-    )
+    verification_facts = [fact for fact in facts if "verify:" in fact.lower()]
+    if not verification_facts:
+        verification_facts = [
+            fact for fact in facts if "verification" in fact.lower()
+        ]
     stopped = next(
         (fact for fact in facts if "stopped:" in fact.lower()),
         "",
@@ -157,7 +160,20 @@ def _fallback_summary(context: RunSummaryContext) -> str:
         lines.append(outcome)
     elif published:
         lines.append(published)
-    if verification:
+    if len(verification_facts) > 1:
+        verification_results = {
+            fact[fact.lower().index("verify:") + 7 :].strip().rstrip(".")
+            for fact in verification_facts
+            if "verify:" in fact.lower()
+        }
+        if len(verification_results) > 1:
+            lines.append(
+                "Verification differed across strategies; see the delivery details above."
+            )
+        elif verification_results:
+            lines.append(f"Verification: {next(iter(verification_results))}.")
+    elif verification_facts:
+        verification = verification_facts[0]
         if "verify:" in verification.lower():
             verification = verification[verification.lower().index("verify:") + 7 :]
             verification = f"Verification: {verification.strip().rstrip('.')}."

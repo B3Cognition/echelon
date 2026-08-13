@@ -348,20 +348,18 @@ def _print_multi_target_summary(
     from harness.run_summary import RunSummaryContext, summarize_run_for_cli
 
     target_facts = tuple(
-        f"Target {label}: {'completed' if results.get(result_id, 1) == 0 else 'failed'}."
+        f"Target {label}: worker returned exit {results.get(result_id, 1)}."
         for result_id, (_target, label) in target_runs
     )
     next_step = (
-        f"echelon delivery land {spec_id}"
-        if all_ok
-        else f"echelon delivery continue {spec_id}"
+        "Review the target delivery results above before choosing the next command."
     )
     worked_on = summarize_run_for_cli(
         RunSummaryContext(
             project_root=workspace_root,
             command=f"echelon delivery {command}",
             task=f"Deliver spec {spec_id} across its declared workspace targets.",
-            status="done" if all_ok else "blocked",
+            status="returned",
             facts=target_facts,
             next_step=next_step,
             inspect_paths=(),
@@ -374,11 +372,7 @@ def _print_multi_target_summary(
             ("worked on", worked_on),
             ("next", next_step),
         ],
-        subtitle=(
-            "Multi-target delivery completed."
-            if all_ok
-            else "Multi-target delivery stopped."
-        ),
+        subtitle=("Target workers returned." if all_ok else "A target worker failed."),
     )
 
 

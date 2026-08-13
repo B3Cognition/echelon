@@ -145,6 +145,33 @@ def test_delivery_fallback_prioritizes_outcome_and_verification_over_branch_nois
     assert "iterations:" not in summary
 
 
+def test_delivery_fallback_does_not_report_one_strategy_as_aggregate_verification(
+    tmp_path: Path,
+) -> None:
+    context = RunSummaryContext(
+        project_root=tmp_path,
+        command="echelon delivery run",
+        task="Deliver spec 123.",
+        status="blocked",
+        facts=(
+            "default: verify: ✓ passed",
+            "backup: verify: ✗ failed (2 checks)",
+            "Delivery result: 1 converged, 1 failed.",
+        ),
+        next_step="echelon delivery run 123",
+    )
+    provider = _RecordingProvider(CliRunResult(exit_code=1, stdout="", stderr=""))
+
+    summary = summarize_run(
+        context,
+        provider=provider,
+        agent=SummaryAgent(prompt="Summarize.", metadata={}),
+    )
+
+    assert "Verification differed across strategies" in summary
+    assert "Verification: ✓ passed" not in summary
+
+
 def test_summarize_run_keeps_provider_progress_out_of_the_terminal(
     tmp_path: Path,
     capsys,
