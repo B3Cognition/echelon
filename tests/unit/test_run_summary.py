@@ -172,6 +172,32 @@ def test_delivery_fallback_does_not_report_one_strategy_as_aggregate_verificatio
     assert "Verification: ✓ passed" not in summary
 
 
+def test_delivery_fallback_normalizes_matching_verdicts_with_different_timings(
+    tmp_path: Path,
+) -> None:
+    context = RunSummaryContext(
+        project_root=tmp_path,
+        command="echelon delivery run",
+        task="Deliver spec 123.",
+        status="done",
+        facts=(
+            "default: verify: ✓ passed (1.0s)",
+            "backup: verify: ✓ passed (2.0s)",
+            "Delivery result: 2 converged, 0 failed.",
+        ),
+    )
+    provider = _RecordingProvider(CliRunResult(exit_code=1, stdout="", stderr=""))
+
+    summary = summarize_run(
+        context,
+        provider=provider,
+        agent=SummaryAgent(prompt="Summarize.", metadata={}),
+    )
+
+    assert "Verification: passed across strategies." in summary
+    assert "Verification differed" not in summary
+
+
 def test_summarize_run_keeps_provider_progress_out_of_the_terminal(
     tmp_path: Path,
     capsys,

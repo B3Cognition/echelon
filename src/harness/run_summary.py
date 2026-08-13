@@ -161,17 +161,25 @@ def _fallback_summary(context: RunSummaryContext) -> str:
     elif published:
         lines.append(published)
     if len(verification_facts) > 1:
-        verification_results = {
+        verification_results = [
             fact[fact.lower().index("verify:") + 7 :].strip().rstrip(".")
             for fact in verification_facts
             if "verify:" in fact.lower()
+        ]
+        verdicts = {
+            verdict
+            for result in verification_results
+            for verdict in ("failed", "passed", "deferred", "skipped")
+            if verdict in result.lower()
         }
-        if len(verification_results) > 1:
+        if len(verdicts) > 1 or (not verdicts and len(set(verification_results)) > 1):
             lines.append(
                 "Verification differed across strategies; see the delivery details above."
             )
+        elif verdicts:
+            lines.append(f"Verification: {next(iter(verdicts))} across strategies.")
         elif verification_results:
-            lines.append(f"Verification: {next(iter(verification_results))}.")
+            lines.append(f"Verification: {verification_results[0]}.")
     elif verification_facts:
         verification = verification_facts[0]
         if "verify:" in verification.lower():
