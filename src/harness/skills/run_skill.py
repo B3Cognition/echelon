@@ -205,6 +205,7 @@ def _print_delivery_summary(
     fulfillment_recommendation = _fulfillment_gap_recommendation(spec_dir)
 
     fields: list[tuple[str, str]] = [("spec", f"{intent.spec_id}{task_note}")]
+    summary_facts: list[str] = []
     if target_repo:
         fields.append(("target", target_repo))
     fields.append(("strategies", f"{', '.join(intent.strategies)}  |  mode: {intent.mode}"))
@@ -310,6 +311,7 @@ def _print_delivery_summary(
                 )
 
         fields.append((sid, "\n".join(lines)))
+        summary_facts.extend(f"{sid}: {line}" for line in lines)
 
     summary = comparison.get("summary", {})
     n_converged = summary.get("converged", 0)
@@ -340,6 +342,14 @@ def _print_delivery_summary(
     if total_tokens:
         result_str += f"  ·  {total_tokens:,} tokens"
     fields.append(("delivery", result_str))
+    summary_facts.append(f"Delivery result: {result_str}.")
+    next_step = ""
+    if n_checkpointed or n_provider_limited:
+        next_step = f"echelon delivery continue {intent.spec_id}"
+    elif n_failed:
+        next_step = f"echelon delivery run {intent.spec_id}"
+    elif n_converged and (landing is None or landing.status != "landed"):
+        next_step = f"echelon delivery land {intent.spec_id}"
     if landing is not None:
         landing_text = landing.status
         if landing.status == "blocked":
@@ -347,6 +357,31 @@ def _print_delivery_summary(
         elif landing.reason:
             landing_text += f" ({landing.reason})"
         fields.append(("landing", landing_text))
+
+    from harness.run_summary import RunSummaryContext, summarize_run_for_cli
+
+    worked_on = summarize_run_for_cli(
+        RunSummaryContext(
+            project_root=workspace_root,
+            command="echelon delivery run",
+            task=str(
+                getattr(intent, "task_description", "")
+                or f"Deliver spec {intent.spec_id}"
+            ),
+            status=(
+                "done"
+                if n_converged
+                and not (n_failed or n_checkpointed or n_provider_limited)
+                else "blocked"
+            ),
+            facts=tuple(summary_facts),
+            next_step=next_step,
+            inspect_paths=((spec_dir,) if spec_dir is not None else ()),
+        )
+    )
+    fields.append(("worked on", worked_on))
+    if next_step:
+        fields.append(("next", next_step))
 
     _banner("DELIVERY SUMMARY", fields, file=sys.stderr)
 

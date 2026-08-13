@@ -4503,6 +4503,7 @@ def _print_squad_summary(
     mode: str,
     message: str,
     implementation_targets: list[str] | None = None,
+    command: str = "echelon spec run",
 ) -> None:
     """Render a delivery-style Phase A/spec authoring summary."""
     import json as _json
@@ -4573,10 +4574,6 @@ def _print_squad_summary(
             fields.append(("provider", provider_message))
 
     if status in {"blocked", "interrupted", "budget_exhausted"}:
-        command = action.command or "echelon spec continue"
-        if command:
-            label = "answer" if action.kind == "human_resume" else "continue"
-            fields.append((label, command))
         if action.note:
             fields.append(("note", action.note))
         if status == "blocked" and (
@@ -4592,7 +4589,35 @@ def _print_squad_summary(
                 fields.extend(
                     _issue_resolution_screen_guidance(project_root, squad_dir, state)
                 )
-    fields.append(("result", _phase_a_result_line(status, state)))
+    result_line = _phase_a_result_line(status, state)
+    fields.append(("result", result_line))
+    next_step = ""
+    if status == "done" and spec_id:
+        next_step = f"echelon delivery run {spec_id}"
+    elif status in {"blocked", "interrupted", "budget_exhausted"}:
+        next_step = action.command or "echelon spec continue"
+
+    from harness.run_summary import RunSummaryContext, summarize_run_for_cli
+
+    facts = [_format_completed_phases(state), f"Result: {result_line}."]
+    if spec_dir:
+        facts.insert(1, f"Published specification: {spec_dir}.")
+    if stopped and stopped != "completed":
+        facts.append(f"Stopped: {stopped}.")
+    worked_on = summarize_run_for_cli(
+        RunSummaryContext(
+            project_root=project_root,
+            command=command,
+            task=message,
+            status=status,
+            facts=tuple(facts),
+            next_step=next_step,
+            inspect_paths=(squad_dir,) + ((Path(spec_dir),) if spec_dir else ()),
+        )
+    )
+    fields.append(("worked on", worked_on))
+    if next_step:
+        fields.append(("next", next_step))
     _banner("SQUAD SUMMARY", fields, subtitle=f"{icon} {status_text}")
 
 
@@ -6563,7 +6588,6 @@ def _cmd_run(
         message=run_message,
         implementation_targets=implementation_targets,
     )
-    _print_next_steps(project_root, result.status)
     if result.status != "done":
         sys.exit(1)
 
@@ -9297,14 +9321,19 @@ def _cmd_resume(
         mode=state.get("autonomy_mode") or state.get("mode", "semi"),
     )
 
-    _banner("SQUAD RESUMED", [
-        ("Phase resumed", state.get("phase", "?")),
-        ("Answer given", (answer[:60] + "…") if len(answer) > 60 else answer),
-        ("Status", result.status),
-        ("Current phase", result.phase),
-        ("Artifacts", str(squad_dir)),
-    ])
-    _print_next_steps(project_root, result.status)
+    _print_squad_summary(
+        project_root,
+        squad_dir,
+        result,
+        mode=state.get("autonomy_mode") or state.get("mode", "semi"),
+        message=state.get("user_message", ""),
+        implementation_targets=[
+            str(value)
+            for value in (state.get("implementation_targets") or [])
+            if str(value).strip()
+        ],
+        command="echelon spec resume",
+    )
 
 
 def _resolve_escalation_option(answer: str, options: object) -> dict | None:

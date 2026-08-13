@@ -7,6 +7,7 @@ import sys
 import types
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -434,6 +435,42 @@ def test_resume_terminal_block_delegates_to_continue(
     assert resumed["blocked_reason"] is None
     assert resumed["blocked_decision"]["status"] == "resolved"
     assert calls == [([], tmp_path, tmp_path / ".echelon/runtime")]
+
+
+def test_resume_that_runs_the_controller_ends_with_the_shared_squad_summary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _cmd_resume
+
+    _write_blocked_run(
+        tmp_path,
+        [
+            {
+                "id": "proceed",
+                "label": "Proceed",
+                "next_phase": "phase2-decide",
+            }
+        ],
+    )
+    _patch_resume_dependencies(monkeypatch)
+
+    with patch(
+        "harness.run_summary.summarize_run_for_cli",
+        return_value="Recorded the answer and continued the specification run.",
+    ):
+        _cmd_resume(
+            ["proceed"],
+            project_root=tmp_path,
+            ext_dir=tmp_path / ".echelon/runtime",
+        )
+
+    output = capsys.readouterr().out
+    assert output.count("SQUAD SUMMARY") == 1
+    assert "worked on" in output
+    assert "Recorded the answer and continued the specification run." in output
+    assert "NEXT STEP" not in output
 
 
 def test_resume_phase_dispatch_limit_requires_issue_resolution(

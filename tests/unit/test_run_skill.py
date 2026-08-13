@@ -642,6 +642,98 @@ class TestRunSkillAutoLand:
         assert "continue: echelon delivery continue 001-demo" in captured.err
         assert "0 converged, 0 failed, 1 checkpointed" in captured.err
 
+    def test_delivery_summary_includes_human_readable_worked_on_section(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from harness.run_intent import RunIntent
+        from harness.skills.run_skill import _print_delivery_summary
+
+        intent = RunIntent(spec_id="001-demo", mode="semi")
+        result = _make_converged_result()
+        comparison = {
+            "strategies": {
+                "default": {
+                    "status": result.status,
+                    "termination_reason": result.termination_reason,
+                    "converged": True,
+                    "outer_iterations": 1,
+                    "inner_iterations": 0,
+                    "branch": "001-demo",
+                }
+            },
+            "summary": {"converged": 1, "failed": 0, "total_tokens": 10_000},
+        }
+
+        with patch(
+            "harness.run_summary.summarize_run_for_cli",
+            return_value=(
+                "Implemented the requested delivery.\n"
+                "Verification passed and the branch is ready."
+            ),
+        ):
+            _print_delivery_summary(
+                intent,
+                {"default": result},
+                comparison,
+                tmp_path,
+                None,
+            )
+
+        output = capsys.readouterr().err
+        assert output.count("DELIVERY SUMMARY") == 1
+        assert "worked on" in output
+        assert "Implemented the requested delivery." in output
+
+    def test_delivery_summary_marks_mixed_strategy_outcome_blocked(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        from harness.run_intent import RunIntent
+        from harness.skills.run_skill import _print_delivery_summary
+
+        converged = _make_converged_result()
+        checkpointed = _make_checkpoint_result()
+        comparison = {
+            "strategies": {
+                "default": {
+                    "status": converged.status,
+                    "termination_reason": converged.termination_reason,
+                    "converged": True,
+                    "outer_iterations": 1,
+                    "inner_iterations": 0,
+                },
+                "backup": {
+                    "status": checkpointed.status,
+                    "termination_reason": checkpointed.termination_reason,
+                    "converged": False,
+                    "outer_iterations": checkpointed.outer_iterations,
+                    "inner_iterations": checkpointed.inner_iterations,
+                },
+            },
+            "summary": {"converged": 1, "failed": 1, "total_tokens": 10_000},
+        }
+        captured: dict[str, object] = {}
+
+        def summarize(context):
+            captured["context"] = context
+            return "One strategy completed while another needs continuation."
+
+        with patch(
+            "harness.run_summary.summarize_run_for_cli",
+            side_effect=summarize,
+        ):
+            _print_delivery_summary(
+                RunIntent(spec_id="001-demo", mode="semi"),
+                {"default": converged, "backup": checkpointed},
+                comparison,
+                tmp_path,
+                None,
+            )
+
+        assert captured["context"].status == "blocked"
+
     def test_delivery_summary_renders_provider_session_limit_as_block(
         self,
         capsys: pytest.CaptureFixture[str],

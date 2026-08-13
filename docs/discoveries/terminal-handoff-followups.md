@@ -66,6 +66,29 @@ and no duplicate next-step presentation.
 These tests should exercise externally visible command behavior without
 requiring every internal return path to know about terminal presentation.
 
+## 6. Proportional-spec loop budgets
+
+A live Hello World workspace correctly selected the proportional
+CARTOGRAPHER, but the shared quality loop still ran seven repair dispatches,
+took roughly an hour, and expanded the tiny specification substantially. Role
+selection alone does not make specification effort proportional.
+
+A future improvement should make validation thresholds, repair budgets, and
+escalation behavior proportional to the requested scope. This is a controller
+and quality-policy concern, independent of terminal summaries.
+
+## 7. Linked-worktree installation correctness
+
+Running `scripts/install.sh` from a linked worktree produced an editable Python
+path that targeted the repository's main checkout instead of the invoked
+worktree. That makes live branch testing ambiguous and can silently execute the
+wrong source tree.
+
+The installer should resolve and verify the current checkout path explicitly,
+with a regression test that installs from a linked worktree. Until then, live
+worktree checks should set `PYTHONPATH` explicitly or inspect the generated
+editable-install path before drawing conclusions.
+
 ## Ideas intentionally not preserved
 
 The following belong to the discarded implementation approach rather than the

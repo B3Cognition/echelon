@@ -49,6 +49,7 @@ class CodexCliBackend:
                 final_path = temp_file.name
 
         model = _codex_model_for_request(request)
+        allow_non_git_cwd = request.metadata.get("allow_non_git_cwd") is True
         cmd = build_llm_cli_command(
             "codex",
             self._bin,
@@ -56,6 +57,7 @@ class CodexCliBackend:
             self._config.llm.tool_policy,
             codex_json=True,
             codex_model=model,
+            codex_skip_git_repo_check=allow_non_git_cwd,
             output_last_message=final_path or None,
         )
         proc = subprocess.Popen(

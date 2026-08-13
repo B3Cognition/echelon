@@ -83,6 +83,39 @@ def test_codex_event_without_usage_keeps_usage_unavailable() -> None:
     assert event.token_usage is None
 
 
+def test_codex_backend_allows_explicit_non_git_working_directory(tmp_path) -> None:
+    backend = CodexCliBackend(_config("codex"))
+    captured = {}
+
+    class FakeProcess:
+        stdout = io.BytesIO(b"")
+        stderr = io.BytesIO(b"")
+        returncode = 0
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self) -> int:
+            return self.returncode
+
+    def fake_popen(command, **_kwargs):
+        captured["command"] = command
+        return FakeProcess()
+
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Summarize evidence.",
+        env={},
+        timeout_s=10,
+        metadata={"allow_non_git_cwd": True},
+    )
+
+    with patch("harness.ai_cli_backends.codex.subprocess.Popen", fake_popen):
+        backend.run_prompt(request)
+
+    assert "--skip-git-repo-check" in captured["command"]
+
+
 def test_cli_run_request_carries_prompt_and_timeout(tmp_path) -> None:
     request = CliRunRequest(
         cwd=str(tmp_path),

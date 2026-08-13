@@ -104,7 +104,6 @@ def test_cmd_run_exits_nonzero_when_squad_blocks(
     monkeypatch.setattr("echelon.cli._print_prior_knowledge", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.cli._print_staging_artifacts", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.cli._print_open_issues", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._print_next_steps", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("harness.config.load_config", lambda *_args, **_kwargs: object())
     monkeypatch.setattr("harness.config.get_full_resolved_config", lambda *_args, **_kwargs: {})
     monkeypatch.setattr("harness.squad_provider.SquadCliProvider", lambda *_args, **_kwargs: object())
@@ -128,6 +127,7 @@ def test_cmd_run_exits_nonzero_when_squad_blocks(
     assert "Understanding validation unavailable" in out
     assert "continue" in out
     assert "echelon spec continue" in out
+    assert "NEXT STEP" not in out
     assert "will retry the blocked phase; it was not marked complete" in out
     assert "blocked  ·  2m 31s  ·  $0.1234" in out
 

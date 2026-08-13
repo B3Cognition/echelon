@@ -2,7 +2,7 @@
 
 A multi-agent system for AI-assisted software development. Instead of one AI doing everything, specialized agents handle specific cognitive tasks — understanding, critiquing, planning, building, and learning.
 
-**Version 4.0.2** — 56 neutral Prosaic agent roles across the Echelon architecture, with 38 workflow-dispatched roles and 18 direct-use roles, a first-class independently resumable RE lifecycle, immutable published-RE snapshots for spec authoring, MemPalace requirements memory, endocrine context, journal contracts, Understanding quality gates, BUILD/QA workflow, and multi-LLM provider support (Claude, Codex, Copilot, Opencode)
+**Version 4.0.2** — 57 neutral Prosaic agent roles across the Echelon architecture, with 38 workflow-dispatched roles and 19 direct-use roles, a first-class independently resumable RE lifecycle, immutable published-RE snapshots for spec authoring, MemPalace requirements memory, endocrine context, journal contracts, Understanding quality gates, BUILD/QA workflow, and multi-LLM provider support (Claude, Codex, Copilot, Opencode)
 
 For the grounded role inventory, see [Agent Role Catalog](docs/agent-role-catalog.md).
 
@@ -596,6 +596,12 @@ current slice did not require a full fulfillment refresh, or no requirements wer
 deterministically impacted. In short: full fulfillment evidence is still required before convergence or land.
 
 Harness `run` and `resume` also print `HARNESS HISTORY`: tracked runs, checkpoint state, and token/cost totals for the same spec so repeated resumes do not feel like a black box.
+
+When a spec or delivery invocation actually runs Echelon work, its final
+`SQUAD SUMMARY` or `DELIVERY SUMMARY` includes a short `worked on` handoff. A
+dedicated fast, low-effort SUMMARIZER writes the human-readable narrative from
+bounded run facts; provider failure falls back silently to a deterministic
+summary. The agent runs once at the final banner, not at internal phase exits.
 
 ### Explicit scope deferrals
 
