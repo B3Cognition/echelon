@@ -36,6 +36,44 @@ def clean_provider_transcript(value: object) -> str:
     return _TRANSCRIPT_CONTROL_RE.sub(" ", text)
 
 
+def _has_unterminated_terminal_string(text: str) -> bool:
+    """Return whether a stream ends inside OSC, DCS, SOS, PM, or APC framing."""
+    mode = ""
+    index = 0
+    while index < len(text):
+        char = text[index]
+        following = text[index + 1] if index + 1 < len(text) else ""
+        if not mode:
+            if char == "\x1b" and following and following in "]PX^_":
+                mode = "osc" if following == "]" else "st"
+                index += 2
+                continue
+            if char == "\x9d":
+                mode = "osc"
+            elif char in "\x90\x98\x9e\x9f":
+                mode = "st"
+            index += 1
+            continue
+        if char == "\x9c" or (
+            char == "\x1b" and following == "\\"
+        ):
+            mode = ""
+            index += 2 if char == "\x1b" else 1
+            continue
+        if mode == "osc" and char == "\x07":
+            mode = ""
+        index += 1
+    return bool(mode)
+
+
+def clean_provider_transcript_streams(*values: object) -> tuple[str, ...]:
+    """Sanitize independent streams without manufacturing cross-stream framing."""
+    streams = tuple(str(value or "") for value in values)
+    if any(_has_unterminated_terminal_string(stream) for stream in streams):
+        return ()
+    return tuple(clean_provider_transcript(stream) for stream in streams)
+
+
 def _bounded_text(value: object, *, limit: int) -> str:
     text = clean_provider_transcript(value)
     text = _CONTROL_RE.sub(" ", text)

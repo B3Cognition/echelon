@@ -40,9 +40,10 @@ handoff bounds.
   the next to expose forged text.
 - Resolution: one shared `clean_provider_transcript()` removes complete OSC,
   DCS/SOS/PM/APC, CSI, non-CSI ESC, C0, DEL, and C1 sequences while preserving
-  line boundaries. All three extractor families sanitize their full joined
-  transcript before any search, split, or reset-hint extraction. Final messages
-  continue through the existing 240-character bound.
+  line boundaries. All three extractor families fail closed on ambiguous
+  framing, then sanitize and search each independent stream before any split or
+  reset-hint extraction. Final messages continue through the existing
+  240-character bound.
 
 ### 3. Lost verification failures
 
@@ -92,6 +93,50 @@ handoff bounds.
 - Python `compileall` — passed.
 - `git diff --check` — passed.
 - Independent post-fix re-review — no Critical, Important, or Minor findings.
+
+## Residual Fix Round 1/5 — Cross-stream Ordering
+
+The follow-up review showed that concatenating stdout before stderr fixed only
+one possible ordering. An unterminated OSC/DCS opener in stderr and forged limit
+text plus its terminator in stdout placed the fake text before the opener and
+made it searchable. The same flaw affected Squad, Ralph, and fulfillment.
+
+The shared provider boundary now scans every raw stream independently. If any
+stream ends inside OSC, DCS, SOS, PM, or APC framing, provider-limit extraction
+fails closed for the whole invocation. Otherwise each stream is cleaned and
+searched independently, so no fixed concatenation can manufacture framing.
+
+Exact TDD evidence:
+
+- RED:
+  `.venv/bin/pytest -q tests/unit/test_provider_limits.py
+  tests/unit/test_squad_provider.py tests/unit/test_ralph_outer.py
+  tests/unit/test_fulfillment_runner.py -k
+  'provider_stream_cleaner_rejects_cross_stream_string_payload or
+  rejects_cross_stream_terminal_payload_in_either_order or
+  extracts_limit_from_either_clean_stream'` — **10 failed, 12 passed, 247
+  deselected**. The failures were the absent shared boundary and the reversed
+  OSC/BEL and DCS/ST order in all three extractor families.
+- Secondary RED:
+  `.venv/bin/pytest -q
+  tests/unit/test_provider_limits.py::test_provider_stream_cleaner_preserves_safe_trailing_non_string_escape`
+  — **1 failed**. This caught a scanner edge where Python's empty-string
+  membership semantics misclassified a lone trailing ESC as a string opener.
+- GREEN:
+  `.venv/bin/pytest -q tests/unit/test_provider_limits.py
+  tests/unit/test_squad_provider.py tests/unit/test_ralph_outer.py
+  tests/unit/test_fulfillment_runner.py -k 'cross_stream or
+  safe_trailing_non_string_escape or preserves_safe_ordinary_reset_message or
+  extracts_limit_from_clean_stderr'` — **23 passed, 247 deselected**.
+
+Round verification:
+
+- Complete provider-limit extractor files — **271 passed** in 27.84s.
+- Exact prior residual regression suite — **26 passed** in 1.25s.
+- `./scripts/bash/dry-run.sh` — **9/9 checks passed**.
+- Python `compileall` and `git diff --check` — passed.
+- Independent read-only review found no code issue; its two documentation
+  mismatches were corrected before commit.
 
 ## Remaining Concerns
 

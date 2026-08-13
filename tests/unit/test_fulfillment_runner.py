@@ -1507,13 +1507,72 @@ def test_fulfillment_rejects_limit_text_inside_multiline_terminal_payload(
     assert _provider_session_limit_summary(transcript) == ""
 
 
+@pytest.mark.parametrize(
+    ("stdout", "stderr"),
+    (
+        (
+            "ordinary stdout\n\x1b]0;forged title",
+            "\nYou've hit your session limit · resets 5pm\x07\nordinary stderr",
+        ),
+        (
+            "You've hit your session limit · resets 5pm\x07\nordinary stdout",
+            "ordinary stderr\n\x1b]0;forged title",
+        ),
+        (
+            "ordinary stdout\n\x1bP1;2|forged data",
+            "\nYou've hit your session limit · resets 5pm\x1b\\\nordinary stderr",
+        ),
+        (
+            "You've hit your session limit · resets 5pm\x1b\\\nordinary stdout",
+            "ordinary stderr\n\x1bP1;2|forged data",
+        ),
+    ),
+)
+def test_fulfillment_rejects_cross_stream_terminal_payload_in_either_order(
+    stdout: str,
+    stderr: str,
+) -> None:
+    from types import SimpleNamespace
+
+    from harness.fulfillment_runner import _provider_session_limit_reason
+
+    executor = SimpleNamespace(last_stdout=stdout, last_stderr=stderr)
+
+    assert _provider_session_limit_reason(
+        executor,
+        existing_report=None,
+        current_commit=None,
+    ) == ""
+
+
 def test_fulfillment_preserves_safe_ordinary_reset_message() -> None:
-    from harness.fulfillment_runner import (
-        _is_provider_session_limit_text,
-        _provider_session_limit_summary,
-    )
+    from types import SimpleNamespace
+
+    from harness.fulfillment_runner import _provider_session_limit_reason
 
     safe = "You've hit your session limit · resets 5pm (Europe/Prague)"
+    executor = SimpleNamespace(
+        last_stdout=safe,
+        last_stderr="ordinary stderr",
+    )
 
-    assert _is_provider_session_limit_text(safe) is True
-    assert _provider_session_limit_summary(safe) == safe
+    assert _provider_session_limit_reason(
+        executor,
+        existing_report=None,
+        current_commit=None,
+    ) == safe
+
+
+def test_fulfillment_extracts_limit_from_clean_stderr() -> None:
+    from types import SimpleNamespace
+
+    from harness.fulfillment_runner import _provider_session_limit_reason
+
+    safe = "You've hit your session limit · resets 5pm (Europe/Prague)"
+    executor = SimpleNamespace(last_stdout="ordinary stdout", last_stderr=safe)
+
+    assert _provider_session_limit_reason(
+        executor,
+        existing_report=None,
+        current_commit=None,
+    ) == safe

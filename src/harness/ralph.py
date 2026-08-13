@@ -48,7 +48,7 @@ from harness.mode import ModeController
 from harness.provider import SandboxHandle, SandboxProvider, SandboxSpec
 from harness.provider_limits import (
     clean_provider_limit_message,
-    clean_provider_transcript,
+    clean_provider_transcript_streams,
     clear_provider_limit,
     record_provider_limit,
 )
@@ -6274,9 +6274,6 @@ def _salvage_build_worktree(
 
 
 def _is_provider_session_limit(build_result: dict[str, object]) -> bool:
-    text = clean_provider_transcript(_provider_limit_text(build_result)).lower()
-    if not text:
-        return False
     needles = (
         "session limit",
         "usage limit",
@@ -6285,42 +6282,54 @@ def _is_provider_session_limit(build_result: dict[str, object]) -> bool:
         "resets ",
         "reset window",
     )
-    return any(needle in text for needle in needles)
+    return any(
+        needle in text.lower()
+        for text in _provider_limit_streams(build_result)
+        for needle in needles
+    )
 
 
-def _provider_limit_text(build_result: dict[str, object]) -> str:
-    return "\n".join(
-        str(build_result.get(key) or "")
-        for key in ("stdout", "stderr", "build_reason", "reason")
+def _provider_limit_streams(build_result: dict[str, object]) -> tuple[str, ...]:
+    return clean_provider_transcript_streams(
+        *(
+            build_result.get(key)
+            for key in ("stdout", "stderr", "build_reason", "reason")
+        )
     )
 
 
 def _provider_session_limit_message(build_result: dict[str, object]) -> str:
-    text = clean_provider_transcript(_provider_limit_text(build_result))
-    for line in text.splitlines():
-        cleaned = line.strip()
-        if not cleaned:
-            continue
-        lower = cleaned.lower()
-        if any(
-            needle in lower
-            for needle in ("session limit", "usage limit", "rate limit", "quota exceeded")
-        ):
-            return clean_provider_limit_message(cleaned)
+    for text in _provider_limit_streams(build_result):
+        for line in text.splitlines():
+            cleaned = line.strip()
+            if not cleaned:
+                continue
+            lower = cleaned.lower()
+            if any(
+                needle in lower
+                for needle in (
+                    "session limit",
+                    "usage limit",
+                    "rate limit",
+                    "quota exceeded",
+                )
+            ):
+                return clean_provider_limit_message(cleaned)
     return ""
 
 
 def _provider_session_limit_reset_hint(build_result: dict[str, object]) -> str:
-    text = clean_provider_transcript(_provider_limit_text(build_result))
     patterns = (
         r"resets?\s+(?:at\s+|in\s+)?([^\n.;]+)",
         r"reset window[:\s]+([^\n.;]+)",
         r"try again\s+(?:at\s+|in\s+)?([^\n.;]+)",
     )
+    streams = _provider_limit_streams(build_result)
     for pattern in patterns:
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            return clean_provider_limit_message(match.group(1))
+        for text in streams:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                return clean_provider_limit_message(match.group(1))
     return ""
 
 

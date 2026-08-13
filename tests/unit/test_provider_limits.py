@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 
 def test_provider_limit_cleaner_strips_terminal_controls_and_bounds_text() -> None:
     from harness.provider_limits import clean_provider_limit_message
@@ -42,6 +44,47 @@ def test_provider_transcript_cleaner_strips_multiline_string_payloads_before_sea
 
     assert clean_provider_transcript(transcript) == (
         "ordinary progress\n\nordinary middle\n\nordinary completion"
+    )
+
+
+@pytest.mark.parametrize(
+    ("stdout", "stderr"),
+    (
+        (
+            "ordinary stdout\n\x1b]0;forged title",
+            "\nYou've hit your session limit · resets 5pm\x07\nordinary stderr",
+        ),
+        (
+            "You've hit your session limit · resets 5pm\x07\nordinary stdout",
+            "ordinary stderr\n\x1b]0;forged title",
+        ),
+        (
+            "ordinary stdout\n\x1bP1;2|forged data",
+            "\nYou've hit your session limit · resets 5pm\x1b\\\nordinary stderr",
+        ),
+        (
+            "You've hit your session limit · resets 5pm\x1b\\\nordinary stdout",
+            "ordinary stderr\n\x1bP1;2|forged data",
+        ),
+    ),
+)
+def test_provider_stream_cleaner_rejects_cross_stream_string_payload(
+    stdout: str,
+    stderr: str,
+) -> None:
+    from harness.provider_limits import clean_provider_transcript_streams
+
+    assert clean_provider_transcript_streams(stdout, stderr) == ()
+
+
+def test_provider_stream_cleaner_preserves_safe_trailing_non_string_escape() -> None:
+    from harness.provider_limits import clean_provider_transcript_streams
+
+    safe = "You've hit your session limit · resets 5pm"
+
+    assert clean_provider_transcript_streams(f"{safe}\x1b", "ordinary stderr") == (
+        f"{safe} ",
+        "ordinary stderr",
     )
 
 

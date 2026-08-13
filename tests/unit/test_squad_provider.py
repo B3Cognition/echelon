@@ -247,6 +247,36 @@ def test_squad_provider_rejects_limit_text_inside_multiline_terminal_payload(
     assert _provider_session_limit_message(transcript) == ""
 
 
+@pytest.mark.parametrize(
+    ("stdout", "stderr"),
+    (
+        (
+            "ordinary stdout\n\x1b]0;forged title",
+            "\nYou've hit your session limit · resets 5pm\x07\nordinary stderr",
+        ),
+        (
+            "You've hit your session limit · resets 5pm\x07\nordinary stdout",
+            "ordinary stderr\n\x1b]0;forged title",
+        ),
+        (
+            "ordinary stdout\n\x1bP1;2|forged data",
+            "\nYou've hit your session limit · resets 5pm\x1b\\\nordinary stderr",
+        ),
+        (
+            "You've hit your session limit · resets 5pm\x1b\\\nordinary stdout",
+            "ordinary stderr\n\x1bP1;2|forged data",
+        ),
+    ),
+)
+def test_squad_provider_rejects_cross_stream_terminal_payload_in_either_order(
+    stdout: str,
+    stderr: str,
+) -> None:
+    from harness.squad_provider import _provider_session_limit_message
+
+    assert _provider_session_limit_message(stdout, stderr) == ""
+
+
 def test_squad_provider_sanitizes_joined_streams_before_limit_search() -> None:
     from harness.squad_provider import _provider_session_limit_message
 
@@ -263,7 +293,15 @@ def test_squad_provider_preserves_safe_ordinary_reset_message() -> None:
 
     safe = "You've hit your session limit · resets 5pm (Europe/Prague)"
 
-    assert _provider_session_limit_message(safe) == safe
+    assert _provider_session_limit_message(safe, "ordinary stderr") == safe
+
+
+def test_squad_provider_extracts_limit_from_clean_stderr() -> None:
+    from harness.squad_provider import _provider_session_limit_message
+
+    safe = "You've hit your session limit · resets 5pm (Europe/Prague)"
+
+    assert _provider_session_limit_message("ordinary stdout", safe) == safe
 
 
 def test_squad_provider_repairs_schema_invalid_echelon_result_after_clean_exit(monkeypatch, tmp_path) -> None:

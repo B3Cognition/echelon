@@ -25,6 +25,7 @@ from harness.spec_frontmatter import find_spec_dir
 from harness.provider_limits import (
     clean_provider_limit_message,
     clean_provider_transcript,
+    clean_provider_transcript_streams,
 )
 from harness.verified_fulfillment_ledger import (
     VerifiedLedgerReusePlan,
@@ -1097,14 +1098,22 @@ def _provider_session_limit_reason(
     existing_report: Path | None,
     current_commit: str | None,
 ) -> str:
-    text = clean_provider_transcript(_provider_limit_text(prompt_executor))
-    if not _is_provider_session_limit_text(text):
+    streams = clean_provider_transcript_streams(
+        getattr(prompt_executor, "last_stdout", ""),
+        getattr(prompt_executor, "last_stderr", ""),
+    )
+    reason = next(
+        (
+            summary
+            for text in streams
+            if _is_provider_session_limit_text(text)
+            if (summary := _provider_session_limit_summary(text))
+        ),
+        "",
+    )
+    if not reason:
         return ""
 
-    reason = (
-        _provider_session_limit_summary(text)
-        or "LLM provider session limit reached during verify-spec"
-    )
     stale_detail = _existing_report_stale_detail(
         existing_report=existing_report,
         current_commit=current_commit,
