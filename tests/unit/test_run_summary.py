@@ -105,11 +105,44 @@ def test_summarize_run_falls_back_when_agent_fails(tmp_path: Path) -> None:
     summary = summarize_run(_context(project_root), provider=provider, agent=agent)
 
     assert summary == (
-        "Echelon finished echelon spec continue with status done.\n"
+        "Echelon completed the requested specification work.\n"
         "Published specs/123-run-handoff/spec.md.\n"
         "Verification passed: 42 tests.\n"
         "Next: echelon delivery run 123-run-handoff"
     )
+
+
+def test_delivery_fallback_prioritizes_outcome_and_verification_over_branch_noise(
+    tmp_path: Path,
+) -> None:
+    context = RunSummaryContext(
+        project_root=tmp_path,
+        command="echelon delivery continue",
+        task="Deliver spec 123.",
+        status="blocked",
+        facts=(
+            "default: branch: harness/123/default/iter-2",
+            "default: PR: not created",
+            "default: iterations: 2 outer, 3 inner retries",
+            "default: verify: ✗ failed (1 check)",
+            "default: stopped: checkpoint recovery needed",
+            "Delivery result: 0 converged, 0 failed, 1 checkpointed.",
+        ),
+        next_step="echelon delivery continue 123",
+    )
+    provider = _RecordingProvider(CliRunResult(exit_code=1, stdout="", stderr=""))
+
+    summary = summarize_run(
+        context,
+        provider=provider,
+        agent=SummaryAgent(prompt="Summarize.", metadata={}),
+    )
+
+    assert "Delivery result: 0 converged, 0 failed, 1 checkpointed." in summary
+    assert "Verification: ✗ failed (1 check)." in summary
+    assert "checkpoint recovery needed" in summary
+    assert "branch:" not in summary
+    assert "iterations:" not in summary
 
 
 def test_summarize_run_keeps_provider_progress_out_of_the_terminal(
@@ -152,7 +185,7 @@ def test_summarize_run_rejects_empty_model_output(tmp_path: Path) -> None:
 
     summary = summarize_run(_context(project_root), provider=provider, agent=agent)
 
-    assert summary.startswith("Echelon finished echelon spec continue")
+    assert summary.startswith("Echelon completed the requested specification work")
 
 
 def test_summarize_run_never_prints_raw_model_json(tmp_path: Path) -> None:
@@ -172,7 +205,7 @@ def test_summarize_run_never_prints_raw_model_json(tmp_path: Path) -> None:
 
     summary = summarize_run(_context(project_root), provider=provider, agent=agent)
 
-    assert summary.startswith("Echelon finished echelon spec continue")
+    assert summary.startswith("Echelon completed the requested specification work")
     assert "{" not in summary
 
 

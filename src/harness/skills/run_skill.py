@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -195,6 +196,7 @@ def _print_delivery_summary(
     spec_dir: Path | None,
     config: Any = None,
     landing: LandingOutcome | None = None,
+    summary_command: str = "echelon delivery run",
 ) -> None:
     """Print a structured delivery summary to stderr."""
     from echelon.ui import banner as _banner
@@ -358,30 +360,31 @@ def _print_delivery_summary(
             landing_text += f" ({landing.reason})"
         fields.append(("landing", landing_text))
 
-    from harness.run_summary import RunSummaryContext, summarize_run_for_cli
+    if not os.environ.get("ECHELON_SUPPRESS_RUN_SUMMARY"):
+        from harness.run_summary import RunSummaryContext, summarize_run_for_cli
 
-    worked_on = summarize_run_for_cli(
-        RunSummaryContext(
-            project_root=workspace_root,
-            command="echelon delivery run",
-            task=str(
-                getattr(intent, "task_description", "")
-                or f"Deliver spec {intent.spec_id}"
-            ),
-            status=(
-                "done"
-                if n_converged
-                and not (n_failed or n_checkpointed or n_provider_limited)
-                else "blocked"
-            ),
-            facts=tuple(summary_facts),
-            next_step=next_step,
-            inspect_paths=((spec_dir,) if spec_dir is not None else ()),
+        worked_on = summarize_run_for_cli(
+            RunSummaryContext(
+                project_root=workspace_root,
+                command=summary_command,
+                task=str(
+                    getattr(intent, "task_description", "")
+                    or f"Deliver spec {intent.spec_id}"
+                ),
+                status=(
+                    "done"
+                    if n_converged
+                    and not (n_failed or n_checkpointed or n_provider_limited)
+                    else "blocked"
+                ),
+                facts=tuple(summary_facts),
+                next_step=next_step,
+                inspect_paths=((spec_dir.resolve(),) if spec_dir is not None else ()),
+            )
         )
-    )
-    fields.append(("worked on", worked_on))
-    if next_step:
-        fields.append(("next", next_step))
+        fields.append(("worked on", worked_on))
+        if next_step:
+            fields.append(("next", next_step))
 
     _banner("DELIVERY SUMMARY", fields, file=sys.stderr)
 
@@ -457,6 +460,7 @@ def run(
     config: Any = None,
     resume_build_id: str | None = None,
     orchestration_root: str | Path | None = None,
+    summary_command: str = "echelon delivery run",
 ) -> DeliveryRunOutcome:
     """Execute an Echelon delivery run.
 
@@ -571,5 +575,6 @@ def run(
         spec_dir,
         config,
         landing,
+        summary_command,
     )
     return DeliveryRunOutcome(results=tuple(results), landing=landing)

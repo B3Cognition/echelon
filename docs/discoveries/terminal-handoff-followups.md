@@ -89,6 +89,26 @@ with a regression test that installs from a linked worktree. Until then, live
 worktree checks should set `PYTHONPATH` explicitly or inspect the generated
 editable-install path before drawing conclusions.
 
+## 8. Provider-neutral execution profiles
+
+Prosaic's `model_tier` and `effort` metadata are not enforced uniformly by all
+provider adapters. Claude and Codex map neutral model tiers, while reasoning
+effort and provider-specific fast-model selection have different levels of CLI
+support. The summarizer uses the existing policy rather than creating its own
+provider matrix.
+
+A future provider-runtime change should define supported neutral mappings,
+apply them consistently where each provider exposes controls, and report the
+effective model and effort. This belongs to all Echelon agents, not only the
+terminal summary.
+
+## 9. Auxiliary model-call telemetry
+
+The final summary is an auxiliary model call, so existing phase and delivery
+token totals do not include its usage or latency. Future telemetry could record
+auxiliary calls separately, keeping primary run budgets understandable while
+still exposing the small additional cost and fallback rate.
+
 ## Ideas intentionally not preserved
 
 The following belong to the discarded implementation approach rather than the

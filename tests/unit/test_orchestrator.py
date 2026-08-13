@@ -109,6 +109,44 @@ class TestRunMultiTarget:
             rc = run_multi_target("024", targets, [], echelon_bin="echelon")
         assert rc == 1
 
+    def test_workspace_delivery_uses_one_aggregate_summary(self, tmp_path: Path) -> None:
+        targets = [tmp_path / "a", tmp_path / "b"]
+        for target in targets:
+            target.mkdir()
+        child_envs: list[dict[str, str]] = []
+
+        def fake_popen(cmd, cwd, stdout, stderr, text, env=None):
+            child_envs.append(env)
+            mock = MagicMock()
+            mock.stdout = iter([])
+            mock.returncode = 0
+            mock.wait.return_value = None
+            return mock
+
+        with (
+            patch("subprocess.Popen", side_effect=fake_popen),
+            patch(
+                "harness.run_summary.summarize_run_for_cli",
+                return_value="Delivered both workspace targets successfully.",
+            ) as summarize,
+        ):
+            rc = run_multi_target(
+                "024",
+                targets,
+                [],
+                echelon_bin="echelon",
+                workspace_root=tmp_path,
+                command="continue",
+            )
+
+        assert rc == 0
+        assert len(child_envs) == 2
+        assert all(env["ECHELON_SUPPRESS_RUN_SUMMARY"] == "1" for env in child_envs)
+        assert summarize.call_count == 1
+        context = summarize.call_args.args[0]
+        assert context.command == "echelon delivery continue"
+        assert context.status == "done"
+
     def test_non_json_safe_canonical_contract_fails_before_launch(
         self,
         tmp_path: Path,

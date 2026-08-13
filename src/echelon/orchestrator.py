@@ -137,6 +137,10 @@ def run_multi_target(
     if echelon_bin is None:
         echelon_bin = shutil.which("echelon") or sys.argv[0]
     resolved_workspace_root = workspace_root.resolve() if workspace_root else None
+    aggregate_summary = (
+        resolved_workspace_root is not None
+        and command in {"run", "continue", "resume"}
+    )
     source_ids = source_ids or {}
     source_git_roles = source_git_roles or {}
 
@@ -248,6 +252,8 @@ def run_multi_target(
             env["ECHELON_SOURCE_GIT_ROLE"] = source_git_role
             env["ECHELON_IMPLEMENTATION_TARGET"] = _implementation_target(target)
             env["ECHELON_DECLARED_TARGETS"] = ",".join(declared_targets)
+            if aggregate_summary:
+                env["ECHELON_SUPPRESS_RUN_SUMMARY"] = "1"
             expected_contract_json = contract_json_by_path.get(
                 env["ECHELON_IMPLEMENTATION_TARGET"]
             )
@@ -315,7 +321,65 @@ def run_multi_target(
         if rc != 0:
             all_ok = False
 
+    if aggregate_summary:
+        _print_multi_target_summary(
+            spec_id=spec_id,
+            command=command,
+            workspace_root=resolved_workspace_root,
+            target_runs=target_runs,
+            results=results,
+            all_ok=all_ok,
+        )
+
     return 0 if all_ok else 1
+
+
+def _print_multi_target_summary(
+    *,
+    spec_id: str,
+    command: str,
+    workspace_root: Path,
+    target_runs: list[tuple[int, tuple[Path, str]]],
+    results: Mapping[int, int],
+    all_ok: bool,
+) -> None:
+    """Render one narrative for the parent multi-target CLI invocation."""
+    from echelon.ui import banner
+    from harness.run_summary import RunSummaryContext, summarize_run_for_cli
+
+    target_facts = tuple(
+        f"Target {label}: {'completed' if results.get(result_id, 1) == 0 else 'failed'}."
+        for result_id, (_target, label) in target_runs
+    )
+    next_step = (
+        f"echelon delivery land {spec_id}"
+        if all_ok
+        else f"echelon delivery continue {spec_id}"
+    )
+    worked_on = summarize_run_for_cli(
+        RunSummaryContext(
+            project_root=workspace_root,
+            command=f"echelon delivery {command}",
+            task=f"Deliver spec {spec_id} across its declared workspace targets.",
+            status="done" if all_ok else "blocked",
+            facts=target_facts,
+            next_step=next_step,
+            inspect_paths=(),
+        )
+    )
+    banner(
+        "DELIVERY SUMMARY",
+        [
+            ("targets", f"{len(target_runs)} total"),
+            ("worked on", worked_on),
+            ("next", next_step),
+        ],
+        subtitle=(
+            "Multi-target delivery completed."
+            if all_ok
+            else "Multi-target delivery stopped."
+        ),
+    )
 
 
 def _target_execution_plan(

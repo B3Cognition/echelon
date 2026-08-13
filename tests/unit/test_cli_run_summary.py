@@ -88,3 +88,25 @@ def test_squad_summary_keeps_invoked_command_distinct_from_recovery_command(
     context = captured["context"]
     assert context.command == "echelon spec resume"
     assert context.next_step == "echelon spec continue"
+
+
+def test_spec_continue_preserves_top_level_command_through_internal_run(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from echelon import cli
+
+    captured: dict[str, str] = {}
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "_installed_phase_runtime_or_exit", lambda _root: tmp_path)
+    monkeypatch.setattr(cli, "_require_provider_capability", lambda *_args, **_kwargs: None)
+
+    def continue_run(*_args, **_kwargs):
+        captured["command"] = cli._SPEC_SUMMARY_COMMAND.get()
+
+    monkeypatch.setattr(cli, "_cmd_continue", continue_run)
+
+    cli._cmd_spec_continue([])
+
+    assert captured["command"] == "echelon spec continue"
+    assert cli._SPEC_SUMMARY_COMMAND.get() == "echelon spec run"

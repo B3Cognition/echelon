@@ -128,11 +128,43 @@ def _clean_summary(raw: object) -> str:
 
 
 def _fallback_summary(context: RunSummaryContext) -> str:
-    lines = [
-        f"Echelon finished {context.command or 'the run'} with status "
-        f"{context.status or 'unknown'}."
-    ]
-    lines.extend(fact.strip() for fact in context.facts[:4] if fact.strip())
+    delivery = "delivery" in context.command.lower()
+    work = "delivery" if delivery else "specification work"
+    if context.status == "done":
+        lines = [f"Echelon completed the requested {work}."]
+    else:
+        lines = [f"Echelon worked on the requested {work}, but it is not complete."]
+
+    facts = [fact.strip() for fact in context.facts if fact.strip()]
+    outcome = next(
+        (fact for fact in facts if fact.startswith(("Delivery result:", "Result:"))),
+        "",
+    )
+    published = next(
+        (fact for fact in facts if fact.lower().startswith("published")),
+        "",
+    )
+    verification = next(
+        (fact for fact in facts if "verify:" in fact.lower()),
+        next((fact for fact in facts if "verification" in fact.lower()), ""),
+    )
+    stopped = next(
+        (fact for fact in facts if "stopped:" in fact.lower()),
+        "",
+    )
+
+    if outcome:
+        lines.append(outcome)
+    elif published:
+        lines.append(published)
+    if verification:
+        if "verify:" in verification.lower():
+            verification = verification[verification.lower().index("verify:") + 7 :]
+            verification = f"Verification: {verification.strip().rstrip('.')}."
+        lines.append(verification)
+    if stopped:
+        stopped = stopped[stopped.lower().index("stopped:") + 8 :]
+        lines.append(f"Stopped: {stopped.strip().rstrip('.')}.")
     if context.next_step.strip():
         lines.append(f"Next: {context.next_step.strip()}")
     return "\n".join(lines)

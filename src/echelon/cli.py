@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from contextlib import nullcontext
+from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -66,6 +67,10 @@ SKILL_MAP = {
 
 CLI_VERSION = "4.0.2"
 LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
+_SPEC_SUMMARY_COMMAND: ContextVar[str] = ContextVar(
+    "echelon_spec_summary_command",
+    default="echelon spec run",
+)
 
 from echelon.workspace_model import discover_workspace  # noqa: E402  (after stdlib imports)
 from echelon.ui import banner as _banner  # noqa: E402  (after stdlib imports)
@@ -2297,6 +2302,7 @@ def _cmd_harness_run(
             config=config,
             resume_build_id=delivery_build_id,
             orchestration_root=spec_search_root,
+            summary_command=command_prefix,
         )
     except Exception as exc:
         if _is_docker_unavailable_error(exc):
@@ -2943,6 +2949,7 @@ def _cmd_harness_resume(
                 config=config,
                 resume_build_id=build_id or None,
                 orchestration_root=spec_search_root,
+                summary_command=command_prefix,
             )
         except Exception as exc:
             if _is_docker_unavailable_error(exc):
@@ -3012,6 +3019,7 @@ def _cmd_harness_resume(
                 config=config,
                 resume_build_id=build_id or None,
                 orchestration_root=spec_search_root,
+                summary_command=command_prefix,
             )
         except Exception as exc:
             if _is_docker_unavailable_error(exc):
@@ -3100,6 +3108,7 @@ def _cmd_harness_resume(
                 config=config,
                 resume_build_id=build_id or None,
                 orchestration_root=spec_search_root,
+                summary_command=command_prefix,
             )
         except Exception as exc:
             if _is_docker_unavailable_error(exc):
@@ -3155,6 +3164,7 @@ def _cmd_harness_resume(
             config=config,
             resume_build_id=build_id or None,
             orchestration_root=spec_search_root,
+            summary_command=command_prefix,
         )
     except Exception as exc:
         if _is_docker_unavailable_error(exc):
@@ -4612,7 +4622,8 @@ def _print_squad_summary(
             status=status,
             facts=tuple(facts),
             next_step=next_step,
-            inspect_paths=(squad_dir,) + ((Path(spec_dir),) if spec_dir else ()),
+            inspect_paths=(squad_dir.resolve(),)
+            + ((Path(spec_dir).resolve(),) if spec_dir else ()),
         )
     )
     fields.append(("worked on", worked_on))
@@ -6587,6 +6598,7 @@ def _cmd_run(
         mode=mode,
         message=run_message,
         implementation_targets=implementation_targets,
+        command=_SPEC_SUMMARY_COMMAND.get(),
     )
     if result.status != "done":
         sys.exit(1)
@@ -10800,7 +10812,11 @@ def _cmd_spec_continue(args: list[str]) -> None:
     project_root = Path.cwd()
     ext_dir = _installed_phase_runtime_or_exit(project_root)
     _require_provider_capability("echelon spec continue", ProviderCapability.ARTIFACT, project_dir=project_root)
-    _cmd_continue(args, project_root=project_root, ext_dir=ext_dir)
+    token = _SPEC_SUMMARY_COMMAND.set("echelon spec continue")
+    try:
+        _cmd_continue(args, project_root=project_root, ext_dir=ext_dir)
+    finally:
+        _SPEC_SUMMARY_COMMAND.reset(token)
 
 
 def _cmd_spec_resume(args: list[str]) -> None:
@@ -10813,7 +10829,11 @@ def _cmd_spec_resume(args: list[str]) -> None:
     project_root = Path.cwd()
     ext_dir = _installed_phase_runtime_or_exit(project_root)
     _require_provider_capability("echelon spec resume", ProviderCapability.ARTIFACT, project_dir=project_root)
-    _cmd_resume(args, project_root=project_root, ext_dir=ext_dir)
+    token = _SPEC_SUMMARY_COMMAND.set("echelon spec resume")
+    try:
+        _cmd_resume(args, project_root=project_root, ext_dir=ext_dir)
+    finally:
+        _SPEC_SUMMARY_COMMAND.reset(token)
 
 
 def _cmd_spec_add_input(args: list[str]) -> None:

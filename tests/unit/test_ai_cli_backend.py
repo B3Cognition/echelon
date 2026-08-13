@@ -3025,6 +3025,40 @@ def test_claude_backend_uses_prompt_metadata_model(tmp_path) -> None:
     assert captured["cmd"][model_index + 1] == "claude-opus-4-1"
 
 
+def test_claude_backend_captures_native_stderr_for_quiet_requests(tmp_path) -> None:
+    backend = ClaudeCliBackend(_config("claude"))
+    captured = {}
+
+    class FakeProcess:
+        stdout = io.BytesIO(b"")
+        stderr = io.BytesIO(b"native provider warning\n")
+        returncode = 0
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self) -> int:
+            return self.returncode
+
+    def fake_popen(command, **kwargs):
+        captured["stderr"] = kwargs["stderr"]
+        return FakeProcess()
+
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Summarize this run.",
+        env={},
+        timeout_s=10,
+        metadata={"prompt_metadata": {"quiet": True}},
+    )
+
+    with patch("harness.ai_cli_backends.claude.subprocess.Popen", fake_popen):
+        result = backend.run_prompt(request)
+
+    assert captured["stderr"] is subprocess.PIPE
+    assert result.stderr == "native provider warning"
+
+
 @pytest.mark.parametrize(
     ("model_tier", "expected_model"),
     [

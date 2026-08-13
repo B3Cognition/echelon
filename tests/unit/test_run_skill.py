@@ -668,18 +668,18 @@ class TestRunSkillAutoLand:
 
         with patch(
             "harness.run_summary.summarize_run_for_cli",
-            return_value=(
-                "Implemented the requested delivery.\n"
-                "Verification passed and the branch is ready."
-            ),
-        ):
+            return_value="Implemented the requested delivery.",
+        ) as summarize:
             _print_delivery_summary(
                 intent,
                 {"default": result},
                 comparison,
                 tmp_path,
                 None,
+                summary_command="echelon delivery continue",
             )
+
+        assert summarize.call_args.args[0].command == "echelon delivery continue"
 
         output = capsys.readouterr().err
         assert output.count("DELIVERY SUMMARY") == 1
