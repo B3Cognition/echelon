@@ -15,6 +15,7 @@ import stat
 from typing import Mapping, MutableMapping, Sequence
 
 from echelon.git_helpers import GitHelperError, run_git
+from echelon.strict_json import loads_strict_json
 from echelon.spec_authoring import (
     PERFECTIONIST_MODE,
     PROPORTIONAL_MODE,
@@ -88,6 +89,128 @@ class QualityCandidateManifest:
     repair_number: int
     assessment_index: int
     eligibility_reasons: tuple[str, ...]
+
+
+def load_quality_candidate_manifest(path: Path) -> QualityCandidateManifest:
+    """Load one exact persisted candidate manifest for controller use."""
+    try:
+        payload = loads_strict_json(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise QualityCandidateIntegrityError(
+            "candidate manifest is missing or malformed"
+        ) from exc
+    expected = {
+        "schema_version",
+        "candidate_id",
+        "checkpoint_commit",
+        "owned_artifact_digests",
+        "run_artifact_root",
+        "understanding_evidence",
+        "understanding_evidence_digest",
+        "normalized_gates",
+        "sage_finding_routes",
+        "failed_gate_count",
+        "worst_gate_margin",
+        "overall_score",
+        "formal_statement_count",
+        "byte_count",
+        "repair_number",
+        "assessment_index",
+        "eligibility_reasons",
+    }
+    if type(payload) is not dict or set(payload) != expected:
+        raise QualityCandidateIntegrityError("candidate manifest is malformed")
+    owned = payload["owned_artifact_digests"]
+    raw_gates = payload["normalized_gates"]
+    if (
+        type(payload["schema_version"]) is not int
+        or payload["schema_version"] != SCHEMA_VERSION
+        or not _is_candidate_id(payload["candidate_id"])
+        or type(payload["checkpoint_commit"]) is not str
+        or not re.fullmatch(r"[0-9a-f]{40,64}", payload["checkpoint_commit"])
+        or type(owned) is not dict
+        or not owned
+        or any(
+            type(name) is not str or not _is_sha256(digest)
+            for name, digest in owned.items()
+        )
+        or type(payload["run_artifact_root"]) is not str
+        or not payload["run_artifact_root"].strip()
+        or type(payload["understanding_evidence"]) is not str
+        or not payload["understanding_evidence"].strip()
+        or not _is_sha256(payload["understanding_evidence_digest"])
+        or type(raw_gates) is not list
+    ):
+        raise QualityCandidateIntegrityError("candidate manifest is malformed")
+    gates: dict[str, dict[str, object]] = {}
+    for row in raw_gates:
+        if type(row) is not dict or set(row) != {
+            "name", "score", "threshold", "pass"
+        }:
+            raise QualityCandidateIntegrityError("candidate manifest is malformed")
+        name = row["name"]
+        if type(name) is not str or name in gates:
+            raise QualityCandidateIntegrityError("candidate manifest is malformed")
+        gates[name] = {
+            "score": row["score"],
+            "threshold": row["threshold"],
+            "pass": row["pass"],
+        }
+    normalized_gates = _normalize_candidate_gates(gates)
+    routes = _normalize_finding_routes(payload["sage_finding_routes"])
+    reasons = _normalize_eligibility_reasons(payload["eligibility_reasons"])
+    for key in (
+        "failed_gate_count",
+        "formal_statement_count",
+        "byte_count",
+        "repair_number",
+        "assessment_index",
+    ):
+        if type(payload[key]) is not int or payload[key] < 0:
+            raise QualityCandidateIntegrityError("candidate manifest is malformed")
+    for key in ("worst_gate_margin", "overall_score"):
+        if type(payload[key]) not in {int, float} or not math.isfinite(
+            float(payload[key])
+        ):
+            raise QualityCandidateIntegrityError("candidate manifest is malformed")
+    expected_assessment = int(payload["candidate_id"].rsplit("-", 1)[1])
+    scores = {
+        name: score
+        for name, score, _threshold, _passed in normalized_gates
+    }
+    if (
+        payload["assessment_index"] != expected_assessment
+        or payload["failed_gate_count"]
+        != sum(1 for *_prefix, passed in normalized_gates if not passed)
+        or float(payload["worst_gate_margin"])
+        != min(
+            score - threshold
+            for _name, score, threshold, _passed in normalized_gates
+        )
+        or float(payload["overall_score"]) != scores["overall"]
+    ):
+        raise QualityCandidateIntegrityError(
+            "candidate manifest ranking evidence is contradictory"
+        )
+    return QualityCandidateManifest(
+        schema_version=SCHEMA_VERSION,
+        candidate_id=payload["candidate_id"],
+        checkpoint_commit=payload["checkpoint_commit"],
+        owned_artifact_digests=tuple(sorted(owned.items())),
+        run_artifact_root=payload["run_artifact_root"],
+        understanding_evidence=payload["understanding_evidence"],
+        understanding_evidence_digest=payload["understanding_evidence_digest"],
+        normalized_gates=normalized_gates,
+        sage_finding_routes=routes,
+        failed_gate_count=payload["failed_gate_count"],
+        worst_gate_margin=float(payload["worst_gate_margin"]),
+        overall_score=float(payload["overall_score"]),
+        formal_statement_count=payload["formal_statement_count"],
+        byte_count=payload["byte_count"],
+        repair_number=payload["repair_number"],
+        assessment_index=payload["assessment_index"],
+        eligibility_reasons=reasons,
+    )
 
 
 def initialize_repair_state(

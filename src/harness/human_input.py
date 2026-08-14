@@ -723,6 +723,7 @@ def prepare_controller_proportional_quality_decision(
     repair_state: Mapping[str, object],
     recommendation_evidence: ProportionalQualityRecommendationEvidence,
     option_contract: tuple[HumanInputOption, ...],
+    no_artifact_progress: bool = False,
 ) -> PreparedHumanInput:
     """Prepare one quality-budget choice from sealed controller evidence.
 
@@ -754,6 +755,10 @@ def prepare_controller_proportional_quality_decision(
         raise HumanInputPolicyError(
             "recommendation evidence must be controller-validated"
         )
+    if type(no_artifact_progress) is not bool:
+        raise HumanInputPolicyError(
+            "no_artifact_progress must be Boolean"
+        )
 
     try:
         from harness.proportional_quality import validate_repair_state
@@ -763,7 +768,18 @@ def prepare_controller_proportional_quality_decision(
         raise HumanInputPolicyError(
             "proportional quality repair state is invalid"
         ) from exc
-    if validated_repair["automatic_consumed"] != validated_repair["automatic_limit"]:
+    automatic_no_progress = (
+        reason_code == "proportional_quality_budget_exhausted"
+        and no_artifact_progress
+        and validated_repair["extension_authorized"] == 0
+        and validated_repair["extension_consumed"] == 0
+    )
+    if (
+        reason_code == "proportional_quality_budget_exhausted"
+        and validated_repair["automatic_consumed"]
+        != validated_repair["automatic_limit"]
+        and not automatic_no_progress
+    ):
         raise HumanInputPolicyError(
             "proportional automatic quality budget is not exhausted"
         )

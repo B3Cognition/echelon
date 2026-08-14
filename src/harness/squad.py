@@ -27,6 +27,10 @@ from typing import Callable, Optional
 from echelon.artifact_index import write_artifact_index
 from echelon.context_builder import build_run_context
 from echelon.kb_proposals import accepted_kb_target_paths
+from echelon.spec_authoring import (
+    PROPORTIONAL_MODE,
+    normalize_spec_authoring_mode,
+)
 from echelon.spec_lifecycle import (
     PhaseAExecutionLock,
     SpecLifecycleLocked,
@@ -57,8 +61,10 @@ from harness.human_input import (
     HumanInputPolicyRegistry,
     HumanInputResolution,
     PreparedHumanInput,
+    ProportionalQualityRecommendationEvidence,
     gate_outcome_route_error,
     legacy_recovery_policy_alias,
+    prepare_controller_proportional_quality_decision,
     select_initial_decision_status,
 )
 from harness.phase_graph import PhaseGraph, PhaseNode
@@ -71,6 +77,18 @@ from harness.phase_checkpoints import create_phase_checkpoint
 from harness.phase1_quality import (
     build_phase1_quality_certificate,
     has_current_phase1_quality_certificate,
+)
+from harness.phase1_quality_debt import build_quality_debt_authorization
+from harness.proportional_quality import (
+    QualityCandidateIntegrityError,
+    QualityCandidateManifest,
+    capture_quality_candidate,
+    initialize_repair_state,
+    load_quality_candidate_manifest,
+    rank_quality_candidates,
+    record_what_outcome,
+    restore_quality_candidate,
+    validate_repair_state,
 )
 from harness.prepared_phase_result import (
     PreparedPhaseResult,
@@ -3156,13 +3174,20 @@ class SquadController:
         if dynamic_dispatch_cap:
             for option in options:
                 self._validate_dispatch_cap_option(option)
-        elif (
-            policy.source_kind != "provider_escalation"
-            and options != policy.options
-        ):
-            raise HumanInputPolicyError(
-                "sealed decision options do not match their registered policy"
+        elif policy.source_kind != "provider_escalation":
+            proportional_options = (
+                policy.resolution_handler == "proportional_quality_debt"
+                and len([option for option in options if option.recommended])
+                == 1
+                and tuple(
+                    replace(option, recommended=False) for option in options
+                )
+                == policy.options
             )
+            if options != policy.options and not proportional_options:
+                raise HumanInputPolicyError(
+                    "sealed decision options do not match their registered policy"
+                )
         if any(
             option.next_phase is not None
             and option.next_phase not in policy.allowed_target_phases
@@ -3212,13 +3237,23 @@ class SquadController:
                 )
             for option in request.options:
                 self._validate_dispatch_cap_option(option)
-        elif (
-            request.source_kind != "provider_escalation"
-            and request.options != policy.options
-        ):
-            raise HumanInputPolicyError(
-                "prepared request options do not match their registered policy"
+        elif request.source_kind != "provider_escalation":
+            proportional_options = (
+                request.resolution_handler == "proportional_quality_debt"
+                and len(
+                    [option for option in request.options if option.recommended]
+                )
+                == 1
+                and tuple(
+                    replace(option, recommended=False)
+                    for option in request.options
+                )
+                == policy.options
             )
+            if request.options != policy.options and not proportional_options:
+                raise HumanInputPolicyError(
+                    "prepared request options do not match their registered policy"
+                )
         if (
             not self._is_dynamic_dispatch_cap_policy(policy)
             and bool(request.options) == policy.allow_free_text
@@ -3233,7 +3268,12 @@ class SquadController:
         return request.source_kind == "provider_escalation" or (
             request.source_kind == "controller_safeguard"
             and request.producer_id
-            in {"consecutive_why_fails", "why2_metric_stagnation"}
+            in {
+                "consecutive_why_fails",
+                "why2_metric_stagnation",
+                "proportional_quality_budget_exhausted",
+                "proportional_quality_extension_exhausted",
+            }
         )
 
     def _intercept_human_gate(self, node: PhaseNode) -> bool:
@@ -3323,6 +3363,41 @@ class SquadController:
             )
             if receipt is None:
                 return False
+        return self.resume_pending_human_input()
+
+    def _seal_proportional_human_input_after_advance(
+        self,
+        request: PreparedHumanInput,
+    ) -> bool:
+        """Seal the WHY2-sourced no-progress decision after WHAT advances."""
+        policy = self._validate_prepared_human_input(request)
+        if request.producer_id != "proportional_quality_budget_exhausted":
+            raise HumanInputPolicyError(
+                "post-advance sealing is limited to proportional no-progress"
+            )
+        state = self._state_store.load()
+        if state.get("phase") != request.phase_id:
+            raise HumanInputPolicyError(
+                "post-advance human-input source phase is not current"
+            )
+        autonomy_mode = state.get("autonomy_mode")
+        if autonomy_mode not in {"guided", "semi", "banzai"}:
+            raise HumanInputPolicyError(
+                "persisted autonomy mode is invalid"
+            )
+        rebound = replace(
+            request,
+            source_state_revision=int(state.get("state_revision") or 0),
+        )
+        initial_status = select_initial_decision_status(
+            str(autonomy_mode),
+            policy,
+            rebound,
+        )
+        self._state_store.set_human_input_decision(
+            rebound,
+            initial_status=initial_status,
+        )
         return self.resume_pending_human_input()
 
     def _semi_human_input_resolution(
@@ -3742,6 +3817,152 @@ class SquadController:
             route=route,
         )
 
+    def _proportional_quality_debt_resolution(
+        self,
+        state: Mapping[str, object],
+        decision: Mapping[str, object],
+        policy: HumanInputPolicy,
+        selected: HumanInputOption | None,
+        resolution: HumanInputResolution,
+    ) -> _HumanInputResolutionEffects:
+        """Apply one sealed bounded-quality choice from controller evidence."""
+        if selected is None:
+            raise HumanInputPolicyError(
+                "proportional quality resolution requires a sealed option"
+            )
+        repair = validate_repair_state(state.get("phase1_quality_repair"))
+        evidence = state.get("proportional_quality_candidate_evidence")
+        if not isinstance(evidence, Mapping):
+            raise HumanInputPolicyError(
+                "selected proportional quality candidate evidence is missing"
+            )
+        selected_candidate_id = str(
+            evidence.get("selected_candidate_id") or ""
+        ).strip()
+        manifest_ref = str(evidence.get("candidate_manifest") or "").strip()
+        if not selected_candidate_id or not manifest_ref:
+            raise HumanInputPolicyError(
+                "selected proportional quality candidate evidence is invalid"
+            )
+        manifest_path = Path(manifest_ref)
+        if not manifest_path.is_absolute():
+            manifest_path = self._project_root / manifest_path
+        candidate = load_quality_candidate_manifest(manifest_path)
+        if candidate.candidate_id != selected_candidate_id:
+            raise HumanInputPolicyError(
+                "selected proportional quality candidate identity changed"
+            )
+
+        if selected.id == "extend_once":
+            if (
+                decision.get("reason_code")
+                != "proportional_quality_budget_exhausted"
+                or repair["extension_authorized"] != 0
+                or repair["extension_consumed"] != 0
+            ):
+                raise HumanInputPolicyError(
+                    "proportional quality extension is already unavailable"
+                )
+            repair["extension_authorized"] = repair["extension_limit"]
+            repair = validate_repair_state(repair)
+            route = self._validate_human_input_route(
+                selected.next_phase,
+                policy,
+            )
+            return _HumanInputResolutionEffects(
+                state_updates={
+                    "status": "running",
+                    "phase": route,
+                    "phase1_quality_repair": repair,
+                    "why_fail_count": 0,
+                    "why2_metric_stagnation_count": 0,
+                    "quality_gate_remediation": {
+                        "kind": "proportional_quality",
+                        "candidate_id": candidate.candidate_id,
+                        "evidence": state.get("understanding_evidence"),
+                        "baseline_spec_sha256": dict(
+                            candidate.owned_artifact_digests
+                        )["spec.md"],
+                        "attempt": (
+                            int(repair["automatic_consumed"])
+                            + int(repair["extension_consumed"])
+                            + 1
+                        ),
+                        "extension_active": True,
+                        "qualitative_findings": [
+                            dict(item)
+                            for item in candidate.sage_finding_routes
+                        ],
+                        "reason": (
+                            "Apply the single authorized proportional quality "
+                            "extension to the restored candidate."
+                        ),
+                    },
+                },
+                state_removals=frozenset(),
+                route=route,
+            )
+
+        if selected.id == "continue_with_debt":
+            if resolution.resolved_by not in {"user", "COMMANDER"}:
+                raise HumanInputPolicyError(
+                    "quality debt requires a human or COMMANDER resolver"
+                )
+            try:
+                authorization = build_quality_debt_authorization(
+                    project_root=self._project_root,
+                    spec_dir=self._proportional_spec_dir(state),
+                    candidate=candidate,
+                    candidate_manifest=manifest_path,
+                    repair_state=repair,
+                    decision_id=str(decision["id"]),
+                    resolved_by=resolution.resolved_by,
+                )
+            except (QualityCandidateIntegrityError, ValueError) as exc:
+                raise HumanInputPolicyError(
+                    "quality-debt authorization could not be constructed"
+                ) from exc
+            lexicon = self._lexicon_gate_config().get("lexicon_gate")
+            route = (
+                "phase1-lexicon-derive"
+                if isinstance(lexicon, Mapping)
+                and lexicon.get("spec_enabled") is True
+                else "checkpoint-assess"
+            )
+            route = self._validate_human_input_route(route, policy)
+            return _HumanInputResolutionEffects(
+                state_updates={
+                    "status": "running",
+                    "phase": route,
+                    "spec_quality_debt_authorization": authorization,
+                },
+                state_removals=frozenset({"quality_gate_remediation"}),
+                route=route,
+            )
+
+        if selected.id == "stop":
+            route = self._validate_human_input_route(
+                selected.next_phase,
+                policy,
+            )
+            return _HumanInputResolutionEffects(
+                state_updates={
+                    "status": "blocked",
+                    "phase": route,
+                    "blocked_reason": (
+                        "proportional_quality_debt_declined"
+                    ),
+                },
+                state_removals=frozenset({
+                    "quality_gate_remediation",
+                    "spec_quality_debt_authorization",
+                }),
+                route=route,
+            )
+        raise HumanInputPolicyError(
+            "proportional quality option is not registered"
+        )
+
     def _reset_why_fail_count_resolution(
         self,
         _state: Mapping[str, object],
@@ -3845,6 +4066,9 @@ class SquadController:
             "reset_why_fail_count": self._reset_why_fail_count_resolution,
             "reset_why2_stagnation": (
                 self._reset_why2_stagnation_resolution
+            ),
+            "proportional_quality_debt": (
+                self._proportional_quality_debt_resolution
             ),
         }
         handler = handlers.get(str(decision["resolution_handler"]))
@@ -4475,6 +4699,12 @@ class SquadController:
                     )
             else:
                 return self._unresolved_human_input_result(existing)
+
+        if (
+            existing_status == "blocked"
+            and blocked_reason == "proportional_quality_debt_declined"
+        ):
+            return SquadResult.from_state(existing)
 
         # ── Recovery: token budget bumped ─────────────────────────────────
         if existing_status == "blocked" and blocked_reason == "token_budget_exhausted":
@@ -8481,6 +8711,333 @@ class SquadController:
             return {}, None
         return {}, PHASE_TERMINAL_BLOCKED
 
+    @staticmethod
+    def _is_proportional_quality_state(
+        state: Mapping[str, object],
+    ) -> bool:
+        return (
+            normalize_spec_authoring_mode(state.get("spec_authoring_mode"))
+            == PROPORTIONAL_MODE
+        )
+
+    def _proportional_spec_dir(
+        self,
+        state: Mapping[str, object],
+    ) -> Path:
+        spec_ref = str(state.get("spec_dir") or "").strip()
+        if not spec_ref:
+            raise QualityCandidateIntegrityError(
+                "proportional quality specification root is missing"
+            )
+        spec_dir = Path(spec_ref)
+        if not spec_dir.is_absolute():
+            spec_dir = self._project_root / spec_dir
+        try:
+            spec_dir.resolve().relative_to(self._project_root.resolve())
+        except ValueError as exc:
+            raise QualityCandidateIntegrityError(
+                "proportional quality specification root escapes the project"
+            ) from exc
+        return spec_dir
+
+    @staticmethod
+    def _proportional_finding_routes(
+        prepared: PreparedPhaseResult,
+    ) -> tuple[Mapping[str, object], ...]:
+        finding_routes = prepared.state_updates.get("finding_routes")
+        findings = (
+            finding_routes.get("findings")
+            if isinstance(finding_routes, Mapping)
+            else None
+        )
+        if not isinstance(findings, list):
+            return ()
+        return tuple(
+            dict(finding)
+            for finding in findings
+            if isinstance(finding, Mapping)
+        )
+
+    @staticmethod
+    def _proportional_candidate_ineligibility(
+        eval_state: Mapping[str, object],
+        findings: tuple[Mapping[str, object], ...],
+    ) -> tuple[str, ...]:
+        reasons: list[str] = []
+        evidence_status = eval_state.get("evidence_resolution_status")
+        if evidence_status not in {None, "not_required", "validated"}:
+            reasons.append("unresolved_evidence_or_product_decision")
+        issues = eval_state.get("issues_log")
+        if isinstance(issues, list) and any(
+            isinstance(issue, Mapping)
+            and str(issue.get("severity") or "").upper() == "CRITICAL"
+            and issue.get("resolved") is not True
+            for issue in issues
+        ):
+            reasons.append("critical_sage_issue")
+        if any(
+            str(finding.get("severity") or "").upper() == "CRITICAL"
+            for finding in findings
+        ):
+            reasons.append("critical_sage_finding")
+        if any(
+            str(finding.get("route") or "").strip()
+            not in {"", "spec_repair"}
+            for finding in findings
+        ):
+            reasons.append("non_quality_finding_route")
+        if eval_state.get("product_input_mapping_repair"):
+            reasons.append("invalid_product_input_mapping")
+        return tuple(dict.fromkeys(reasons))
+
+    def _capture_proportional_quality_candidate(
+        self,
+        prepared: PreparedPhaseResult,
+        snapshot: RoutingStateSnapshot,
+        eval_state: Mapping[str, object],
+    ) -> tuple[QualityCandidateManifest, dict[str, object]] | None:
+        state = snapshot.state
+        if not self._is_proportional_quality_state(state) or not (
+            has_current_understanding_evidence(
+                eval_state,
+                project_root=self._project_root,
+                phase="phase1-why2",
+            )
+        ):
+            return None
+        repair = initialize_repair_state(state)
+        if repair is None:
+            return None
+        repair = validate_repair_state(repair)
+        evidence = eval_state.get("understanding_evidence")
+        if not isinstance(evidence, Mapping):
+            raise QualityCandidateIntegrityError(
+                "proportional Understanding evidence is missing"
+            )
+        evidence_ref = str(evidence.get("path") or "").strip()
+        evidence_path = Path(evidence_ref)
+        if not evidence_path.is_absolute():
+            evidence_path = self._project_root / evidence_path
+        try:
+            report = json.loads(evidence_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise QualityCandidateIntegrityError(
+                "proportional Understanding evidence is malformed"
+            ) from exc
+        raw_gates = report.get("gates") if isinstance(report, Mapping) else None
+        if not isinstance(raw_gates, Mapping):
+            raise QualityCandidateIntegrityError(
+                "proportional Understanding gates are malformed"
+            )
+        normalized_gates: dict[str, dict[str, object]] = {}
+        for name, raw_gate in raw_gates.items():
+            if not isinstance(name, str) or not isinstance(raw_gate, Mapping):
+                raise QualityCandidateIntegrityError(
+                    "proportional Understanding gates are malformed"
+                )
+            normalized_gates[name] = {
+                "score": raw_gate.get("score"),
+                "threshold": raw_gate.get("threshold"),
+                "pass": raw_gate.get("pass"),
+            }
+        findings = self._proportional_finding_routes(prepared)
+        candidate_id = f"quality-candidate-{len(repair['candidate_ids'])}"
+        spec_dir = self._proportional_spec_dir(state)
+        spec_id = _checkpoint_spec_id_from_state(dict(state), spec_dir)
+        manifest = capture_quality_candidate(
+            project_root=self._project_root,
+            spec_dir=spec_dir,
+            run_artifact_root=self._squad_dir,
+            run_id=str(state.get("run_id") or ""),
+            spec_id=spec_id,
+            candidate_id=candidate_id,
+            understanding_evidence=evidence_path,
+            normalized_gates=normalized_gates,
+            sage_finding_routes=findings,
+            formal_statement_count=int(report.get("requirement_count") or 0),
+            repair_number=(
+                int(repair["automatic_consumed"])
+                + int(repair["extension_consumed"])
+            ),
+            assessment_index=len(repair["candidate_ids"]),
+            eligibility_reasons=self._proportional_candidate_ineligibility(
+                eval_state,
+                findings,
+            ),
+            repair_state=repair,
+        )
+        previous_evidence = state.get(
+            "proportional_quality_candidate_evidence"
+        )
+        last_outcome = (
+            previous_evidence.get("last_repair_outcome")
+            if isinstance(previous_evidence, Mapping)
+            else None
+        )
+        return manifest, {
+            "phase1_quality_repair": repair,
+            "proportional_quality_candidate_evidence": {
+                "schema_version": 1,
+                "current_candidate_id": manifest.candidate_id,
+                "selected_candidate_id": None,
+                "candidate_manifest": str(
+                    self._squad_dir
+                    / "quality-candidates"
+                    / f"{manifest.candidate_id}.json"
+                ),
+                "eligibility_reasons": list(manifest.eligibility_reasons),
+                "last_repair_outcome": last_outcome,
+            },
+        }
+
+    def _load_proportional_candidates(
+        self,
+        repair_state: Mapping[str, object],
+    ) -> tuple[QualityCandidateManifest, ...]:
+        repair = validate_repair_state(repair_state)
+        return tuple(
+            load_quality_candidate_manifest(
+                self._squad_dir / "quality-candidates" / f"{candidate_id}.json"
+            )
+            for candidate_id in repair["candidate_ids"]
+        )
+
+    def _proportional_borderline_margin(self) -> float:
+        try:
+            from harness.config import get_full_resolved_config
+
+            config = get_full_resolved_config(self._project_root)
+            quality = config.get("quality_gates")
+            value = (
+                quality.get("borderline_margin")
+                if isinstance(quality, Mapping)
+                else None
+            )
+            if type(value) in {int, float} and float(value) >= 0:
+                return float(value)
+        except Exception:
+            pass
+        return 0.05
+
+    def _prepare_proportional_quality_decision(
+        self,
+        state: Mapping[str, object],
+        *,
+        repair_state: Mapping[str, object],
+        reason_code: str,
+        source_state_revision: int,
+        last_repair_outcome: object = None,
+    ) -> tuple[PreparedHumanInput, dict[str, object]]:
+        repair = validate_repair_state(repair_state)
+        candidates = self._load_proportional_candidates(repair)
+        ranked = rank_quality_candidates(candidates)
+        if not ranked:
+            raise QualityCandidateIntegrityError(
+                "no eligible proportional quality candidate is available"
+            )
+        selected = ranked[0]
+        spec_dir = self._proportional_spec_dir(state)
+        spec_id = _checkpoint_spec_id_from_state(dict(state), spec_dir)
+        restore_quality_candidate(
+            self._project_root,
+            spec_dir,
+            selected,
+            run_id=str(state.get("run_id") or ""),
+            spec_id=spec_id,
+        )
+        manifest_path = (
+            self._squad_dir
+            / "quality-candidates"
+            / f"{selected.candidate_id}.json"
+        )
+        manifest_sha = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+        evidence_path = Path(selected.understanding_evidence)
+        report = json.loads(evidence_path.read_text(encoding="utf-8"))
+        failing_gates = [
+            name
+            for name, _score, _threshold, passed in selected.normalized_gates
+            if not passed
+        ]
+        understanding_evidence = {
+            "phase": "phase1-why2",
+            "iteration": report["iteration"],
+            "status": "completed",
+            "path": str(evidence_path),
+            "digest": selected.understanding_evidence_digest,
+            "pass": report["pass"],
+            "failing_gates": failing_gates,
+            "error": None,
+        }
+        recommendation_current = candidates[-1]
+        recommendation_previous = (
+            candidates[-2] if len(candidates) > 1 else recommendation_current
+        )
+        policy = self._human_input_registry.lookup(
+            "controller_safeguard",
+            reason_code,
+            reason_code,
+        )
+        request = prepare_controller_proportional_quality_decision(
+            self._human_input_registry,
+            reason_code=reason_code,
+            phase_id="phase1-why2",
+            question=(
+                "The bounded proportional quality repair budget is exhausted. "
+                f"Candidate {selected.candidate_id} was restored with "
+                f"{selected.failed_gate_count} residual failed gate(s)."
+            ),
+            source_state_revision=source_state_revision,
+            repair_state=repair,
+            recommendation_evidence=ProportionalQualityRecommendationEvidence(
+                borderline_margin=self._proportional_borderline_margin(),
+                previous_gates=recommendation_previous.normalized_gates,
+                current_gates=recommendation_current.normalized_gates,
+                previous_formal_statement_count=(
+                    recommendation_previous.formal_statement_count
+                ),
+                formal_statement_count=(
+                    recommendation_current.formal_statement_count
+                ),
+            ),
+            option_contract=policy.options,
+            no_artifact_progress=(
+                last_repair_outcome == "no_artifact_progress"
+            ),
+        )
+        return request, {
+            "status": "blocked",
+            "blocked_reason": reason_code,
+            "why_fail_count": 0,
+            "why2_metric_stagnation_count": 0,
+            "understanding_evidence": understanding_evidence,
+            "proportional_quality_candidate_evidence": {
+                "schema_version": 1,
+                "current_candidate_id": selected.candidate_id,
+                "selected_candidate_id": selected.candidate_id,
+                "candidate_manifest": str(manifest_path),
+                "candidate_manifest_sha256": manifest_sha,
+                "selected_spec_sha256": dict(
+                    selected.owned_artifact_digests
+                )["spec.md"],
+                "failed_gates": [
+                    {
+                        "name": name,
+                        "score": score,
+                        "threshold": threshold,
+                        "pass": passed,
+                    }
+                    for name, score, threshold, passed
+                    in selected.normalized_gates
+                    if not passed
+                ],
+                "sage_finding_routes": [
+                    dict(item) for item in selected.sage_finding_routes
+                ],
+                "eligibility_reasons": [],
+                "last_repair_outcome": last_repair_outcome,
+            },
+        }
+
     def _controller_enrichment(
         self,
         node: PhaseNode,
@@ -8539,6 +9096,11 @@ class SquadController:
                 updates["spec_quality_certificate"] = certificate
         quality_remediation_override: str | None = None
         quality_remediation = state_copy.get("quality_gate_remediation")
+        proportional_what = (
+            isinstance(quality_remediation, Mapping)
+            and quality_remediation.get("kind") == "proportional_quality"
+            and self._is_proportional_quality_state(state_copy)
+        )
         if (
             node.id == "phase1-what"
             and (result.verdict or "").upper() == "DONE"
@@ -8548,7 +9110,11 @@ class SquadController:
                 quality_remediation.get("baseline_spec_sha256") or ""
             ).strip().lower()
             current_sha = self._spec_markdown_sha256(state_copy)
-            if baseline_sha and current_sha == baseline_sha:
+            if proportional_what:
+                # The exact counter update is finalized as a trusted routing
+                # effect after this prepared result passes its contracts.
+                quality_remediation_override = None
+            elif baseline_sha and current_sha == baseline_sha:
                 quality_remediation_override = PHASE_TERMINAL_BLOCKED
         state_removals: set[str] = set()
         if node.id == "phase2-decide":
@@ -8922,6 +9488,20 @@ class SquadController:
 
         if request is None:
             return None
+        if (
+            routing.human_input is request
+            and request.phase_id != decision.from_phase
+        ):
+            receipt = self._advance_prepared_result_or_block(
+                node,
+                decision,
+                prepared_publication=prepared_publication,
+            )
+            if receipt is None:
+                return False
+            return self._seal_proportional_human_input_after_advance(
+                request
+            )
         return self.handle_human_input(
             request,
             provider_advance=_ProviderHumanInputAdvance(
@@ -9238,6 +9818,51 @@ class SquadController:
             return {}
         state = snapshot.state
         updates: dict[str, object] = {}
+        quality_remediation = state.get("quality_gate_remediation")
+        if (
+            prepared.verdict.upper() == "DONE"
+            and isinstance(quality_remediation, Mapping)
+            and quality_remediation.get("kind") == "proportional_quality"
+            and self._is_proportional_quality_state(state)
+        ):
+            repair = validate_repair_state(
+                state.get("phase1_quality_repair")
+            )
+            baseline_sha = str(
+                quality_remediation.get("baseline_spec_sha256") or ""
+            ).strip().lower()
+            current_sha = self._spec_markdown_sha256(state)
+            valid_completion = (
+                re.fullmatch(r"[0-9a-f]{64}", baseline_sha) is not None
+                and re.fullmatch(
+                    r"[0-9a-f]{64}", str(current_sha or "")
+                )
+                is not None
+            )
+            extension_active = (
+                repair["extension_authorized"] == 1
+                and repair["extension_consumed"] == 0
+            )
+            outcome = record_what_outcome(
+                repair,
+                baseline_sha256=baseline_sha,
+                current_sha256=current_sha,
+                valid_completion=valid_completion,
+                extension_active=extension_active,
+            )
+            updates["phase1_quality_repair"] = outcome.repair_state
+            candidate_evidence = state.get(
+                "proportional_quality_candidate_evidence"
+            )
+            next_evidence = (
+                dict(candidate_evidence)
+                if isinstance(candidate_evidence, Mapping)
+                else {"schema_version": 1}
+            )
+            next_evidence["last_repair_outcome"] = outcome.outcome
+            updates[
+                "proportional_quality_candidate_evidence"
+            ] = next_evidence
         selected = str(state.get("selected_issue_resolution") or "").strip()
         ledger = state.get("issue_resolution_ledger")
         baseline = state.get("issue_resolution_repair_baseline")
@@ -9287,6 +9912,167 @@ class SquadController:
         return updates
 
     def _coordinate_why_transition_state(
+        self,
+        node: PhaseNode,
+        prepared: PreparedPhaseResult,
+        snapshot: RoutingStateSnapshot,
+    ) -> tuple[
+        str | None,
+        dict[str, object],
+        PreparedHumanInput | None,
+    ]:
+        """Run proportional WHY2 policy before the unchanged legacy guards."""
+        if (
+            node.id != "phase1-why2"
+            or not self._is_proportional_quality_state(snapshot.state)
+        ):
+            return self._coordinate_why_transition_state_legacy(
+                node,
+                prepared,
+                snapshot,
+            )
+        result, state, eval_state = self._transition_evaluation_inputs(
+            node,
+            prepared,
+            snapshot,
+        )
+        verdict_upper = (result.verdict or "").upper()
+        is_fail = (
+            self._evaluator.evaluate(
+                "quality_gates.fail",
+                eval_state,
+                result,
+            )
+            is True
+            or verdict_upper in ("FAIL", "BLOCKED")
+        )
+        try:
+            captured = self._capture_proportional_quality_candidate(
+                prepared,
+                snapshot,
+                eval_state,
+            )
+        except QualityCandidateIntegrityError:
+            if not is_fail:
+                return self._coordinate_why_transition_state_legacy(
+                    node,
+                    prepared,
+                    snapshot,
+                )
+            return PHASE_TERMINAL_BLOCKED, {
+                "status": "blocked",
+                "blocked_reason": (
+                    "proportional_quality_candidate_integrity_failed"
+                ),
+            }, None
+        if not is_fail:
+            legacy_route, legacy_updates, request = (
+                self._coordinate_why_transition_state_legacy(
+                    node,
+                    prepared,
+                    snapshot,
+                )
+            )
+            if captured is None:
+                return legacy_route, legacy_updates, request
+            _manifest, proportional_updates = captured
+            return legacy_route, {
+                **legacy_updates,
+                **proportional_updates,
+            }, request
+        if captured is None:
+            return self._coordinate_why_transition_state_legacy(
+                node,
+                prepared,
+                snapshot,
+            )
+        manifest, proportional_updates = captured
+        if manifest.eligibility_reasons:
+            legacy_route, legacy_updates, request = (
+                self._coordinate_why_transition_state_legacy(
+                    node,
+                    prepared,
+                    snapshot,
+                )
+            )
+            return legacy_route, {
+                **legacy_updates,
+                **proportional_updates,
+            }, request
+
+        repair = validate_repair_state(
+            proportional_updates["phase1_quality_repair"]
+        )
+        extension_active = (
+            repair["extension_authorized"] == repair["extension_limit"]
+            and repair["extension_consumed"] == 0
+        )
+        automatic_available = (
+            repair["automatic_consumed"] < repair["automatic_limit"]
+        )
+        if extension_active or automatic_available:
+            return "phase1-what", {
+                **proportional_updates,
+                "why_fail_count": 0,
+                "why2_metric_stagnation_count": 0,
+                "why_failure_baseline": None,
+                "quality_gate_remediation": {
+                    "kind": "proportional_quality",
+                    "candidate_id": manifest.candidate_id,
+                    "evidence": eval_state.get("understanding_evidence"),
+                    "baseline_spec_sha256": dict(
+                        manifest.owned_artifact_digests
+                    )["spec.md"],
+                    "attempt": (
+                        int(repair["automatic_consumed"])
+                        + int(repair["extension_consumed"])
+                        + 1
+                    ),
+                    "extension_active": extension_active,
+                    "qualitative_findings": [
+                        dict(item) for item in manifest.sage_finding_routes
+                    ],
+                    "reason": (
+                        "Repair the current certified proportional quality "
+                        "failures within the controller-owned bounded budget."
+                    ),
+                },
+            }, None
+
+        reason_code = (
+            "proportional_quality_extension_exhausted"
+            if repair["extension_authorized"] == repair["extension_limit"]
+            and repair["extension_consumed"] == repair["extension_limit"]
+            else "proportional_quality_budget_exhausted"
+        )
+        try:
+            request, decision_updates = (
+                self._prepare_proportional_quality_decision(
+                    {**state, **proportional_updates},
+                    repair_state=repair,
+                    reason_code=reason_code,
+                    source_state_revision=snapshot.state_revision,
+                    last_repair_outcome=(
+                        proportional_updates[
+                            "proportional_quality_candidate_evidence"
+                        ].get("last_repair_outcome")
+                    ),
+                )
+            )
+        except (QualityCandidateIntegrityError, HumanInputPolicyError):
+            return PHASE_TERMINAL_BLOCKED, {
+                **proportional_updates,
+                "status": "blocked",
+                "blocked_reason": (
+                    "proportional_quality_candidate_integrity_failed"
+                ),
+            }, None
+        return PHASE_TERMINAL_BLOCKED, {
+            **proportional_updates,
+            **decision_updates,
+        }, request
+
+    def _coordinate_why_transition_state_legacy(
         self,
         node: PhaseNode,
         prepared: PreparedPhaseResult,
@@ -9719,15 +10505,74 @@ class SquadController:
                 )
 
         merge_effects(dict(additional_state_updates or {}))
-        merge_effects(
-            self._coordinate_what_repair_cycle_updates(node, prepared, snapshot)
+        what_cycle_updates = self._coordinate_what_repair_cycle_updates(
+            node,
+            prepared,
+            snapshot,
         )
+        merge_effects(what_cycle_updates)
+        proportional_what_human_input: PreparedHumanInput | None = None
+        proportional_what_integrity_failure = False
+        quality_remediation = snapshot.state.get("quality_gate_remediation")
+        prepared_candidate_evidence = what_cycle_updates.get(
+            "proportional_quality_candidate_evidence"
+        )
+        prepared_repair = what_cycle_updates.get(
+            "phase1_quality_repair"
+        )
+        if (
+            node.id == "phase1-what"
+            and isinstance(quality_remediation, Mapping)
+            and quality_remediation.get("kind") == "proportional_quality"
+            and isinstance(prepared_candidate_evidence, Mapping)
+            and prepared_candidate_evidence.get("last_repair_outcome")
+            == "no_artifact_progress"
+            and isinstance(prepared_repair, Mapping)
+        ):
+            repair = validate_repair_state(prepared_repair)
+            if repair["extension_authorized"] == 0:
+                try:
+                    proportional_what_human_input, decision_updates = (
+                        self._prepare_proportional_quality_decision(
+                            {
+                                **snapshot.state,
+                                **what_cycle_updates,
+                            },
+                            repair_state=repair,
+                            reason_code=(
+                                "proportional_quality_budget_exhausted"
+                            ),
+                            source_state_revision=snapshot.state_revision,
+                            last_repair_outcome="no_artifact_progress",
+                        )
+                    )
+                    merge_effects(decision_updates)
+                except (
+                    QualityCandidateIntegrityError,
+                    HumanInputPolicyError,
+                ):
+                    proportional_what_integrity_failure = True
+                    merge_effects(
+                        {
+                            "status": "blocked",
+                            "blocked_reason": (
+                                "proportional_quality_candidate_integrity_failed"
+                            ),
+                        }
+                    )
         judgment_payloads: list[dict[str, object]] = []
         judgment_results: list[SquadAgentResult] = []
         source = "transition"
         transition_index: int | None = None
         routed_human_input: PreparedHumanInput | None = None
-        if prepared.routing_override:
+        if proportional_what_human_input is not None:
+            next_phase = "phase1-why2"
+            source = "proportional_quality_no_progress"
+            routed_human_input = proportional_what_human_input
+        elif proportional_what_integrity_failure:
+            next_phase = PHASE_TERMINAL_BLOCKED
+            source = "proportional_quality_integrity"
+        elif prepared.routing_override:
             next_phase = self._evaluate_transitions(
                 node,
                 prepared,

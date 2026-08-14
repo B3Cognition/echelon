@@ -30,8 +30,10 @@ from harness.controller_state_contracts import ControllerStateContractViolation
 import harness.squad as squad_module
 import harness.squad_completion as completion_module
 from harness.human_input import (
+    HumanInputPolicyError,
     HumanInputPolicy,
     HumanInputPolicyRegistry,
+    HumanInputResolution,
 )
 from harness.phase_graph import PhaseGraph, PhaseNode
 from harness.phase_checkpoints import PhaseCheckpointError
@@ -1741,14 +1743,20 @@ def _coordinate_prepared_result(
         human_input_collector=routed_human_input,
     )
     if routed_human_input:
-        ctrl.handle_human_input(
-            routed_human_input[0],
-            provider_advance=squad_module._ProviderHumanInputAdvance(
-                from_phase=decision.from_phase,
-                to_phase=decision.to_phase,
-                decision=decision,
-            ),
-        )
+        if routed_human_input[0].phase_id != decision.from_phase:
+            assert ctrl._advance_prepared_result_or_block(node, decision) is not None
+            ctrl._seal_proportional_human_input_after_advance(
+                routed_human_input[0]
+            )
+        else:
+            ctrl.handle_human_input(
+                routed_human_input[0],
+                provider_advance=squad_module._ProviderHumanInputAdvance(
+                    from_phase=decision.from_phase,
+                    to_phase=decision.to_phase,
+                    decision=decision,
+                ),
+            )
     else:
         assert ctrl._advance_prepared_result_or_block(node, decision) is not None
     return decision.to_phase
@@ -6441,6 +6449,667 @@ class TestSquadControllerBasics:
         store.save(state)
         result = ctrl.run("msg", "guided")
         assert result.status == "blocked"
+
+
+def _proportional_assessment_fixture(
+    ctrl: SquadController,
+    store: SquadStateStore,
+    assessment_index: int,
+    *,
+    score: float = 0.60,
+    spec_text: str | None = None,
+) -> tuple[dict[str, object], SquadAgentResult]:
+    """Materialize one immutable failing Understanding/SAGE assessment."""
+    spec_dir = ctrl._project_root / "runs" / "run-test" / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    content = spec_text or (
+        f"# Candidate {assessment_index}\n\n"
+        f"- FR-001: The system shall render candidate {assessment_index}.\n"
+    )
+    for name, artifact in {
+        "spec.md": content,
+        "requirements-overview.md": f"# Overview {assessment_index}\n",
+        "quality-gates.md": f"# Quality gates {assessment_index}\n",
+        "issues.md": f"# Residual quality debt {assessment_index}\n",
+    }.items():
+        (spec_dir / name).write_text(artifact, encoding="utf-8")
+
+    report = {
+        "schema_version": 1,
+        "status": "completed",
+        "phase": "phase1-why2",
+        "iteration": assessment_index,
+        "spec": {
+            "path": "runs/run-test/specs/001-demo/spec.md",
+            "sha256": hashlib.sha256(
+                (spec_dir / "spec.md").read_bytes()
+            ).hexdigest(),
+        },
+        "thresholds": {"overall": 0.80},
+        "scores": {"overall": score},
+        "gates": {
+            "overall": {
+                "score": score,
+                "threshold": 0.80,
+                "pass": False,
+                "numeric_pass": False,
+                "pass_basis": "numeric_threshold",
+            },
+        },
+        "pass": False,
+        "requirement_count": 1,
+    }
+    report_path = (
+        ctrl._squad_dir
+        / "evidence"
+        / "understanding"
+        / f"phase1-why2-iter-{assessment_index}.json"
+    )
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    report_digest = hashlib.sha256(report_path.read_bytes()).hexdigest()
+    evidence = {
+        "phase": "phase1-why2",
+        "iteration": assessment_index,
+        "status": "completed",
+        "path": str(report_path),
+        "digest": report_digest,
+        "pass": False,
+        "failing_gates": ["overall"],
+        "error": None,
+    }
+    score_history = list(store.load().get("quality_scores") or [])
+    score_history.append(
+        {
+            "pass": False,
+            "pass_id": f"WHY2-iter-{assessment_index}",
+            "source": "harness:understanding",
+            "evidence": str(report_path),
+            "evidence_digest": report_digest,
+            "overall": score,
+        }
+    )
+    why2_result = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "FAIL",
+            "state_updates": {
+                "evidence_resolution_status": "not_required",
+                "finding_routes": {
+                    "findings": [
+                        {
+                            "issue_id": f"ISS-QUALITY-{assessment_index}",
+                            "route": "spec_repair",
+                            "rationale": "The certified overall gate remains below threshold.",
+                        }
+                    ]
+                },
+            },
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    return {
+        "understanding_evidence": evidence,
+        "quality_scores": score_history,
+    }, why2_result
+
+
+def _start_proportional_quality_loop(
+    tmp_path: Path,
+    *,
+    automatic_consumed: int = 0,
+) -> tuple[SquadController, SquadStateStore]:
+    ctrl, store = _controller(tmp_path)
+    store.initialize(
+        "r",
+        "greenfield",
+        "msg",
+        0,
+        "phase1-why2",
+        max_iterations=10,
+        autonomy_mode="semi",
+        spec_authoring_mode="proportional",
+    )
+    state = store.load()
+    state.update(
+        {
+            "spec_id": "001-demo",
+            "spec_dir": "runs/run-test/specs/001-demo",
+        }
+    )
+    repair = dict(state["phase1_quality_repair"])
+    repair["automatic_consumed"] = automatic_consumed
+    state["phase1_quality_repair"] = repair
+    store.save(state)
+    return ctrl, store
+
+
+def _route_understanding_assessment(
+    ctrl: SquadController,
+    store: SquadStateStore,
+    assessment_updates: dict[str, object],
+) -> str:
+    return _coordinate_prepared_result(
+        ctrl,
+        ctrl._graph.get("phase1-understanding"),
+        SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "DONE",
+                "state_updates": assessment_updates,
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        ),
+    )
+
+
+class TestProportionalQualityController:
+    @pytest.mark.parametrize(
+        ("failure_kind", "expected_reason"),
+        [
+            ("timeout", "agent_timeout"),
+            ("provider_error", "agent_exit_code_7"),
+            (
+                "missing_envelope",
+                "controller_state_contract_validation_failed",
+            ),
+            ("invalid_mandatory_artifact", "missing_phase_outputs"),
+            (
+                "state_contract",
+                "controller_state_contract_validation_failed",
+            ),
+        ],
+    )
+    def test_operational_what_failures_leave_extension_recoverable(
+        self,
+        tmp_path: Path,
+        failure_kind: str,
+        expected_reason: str,
+    ) -> None:
+        provider = _mock_provider()
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize(
+            "r",
+            "greenfield",
+            "msg",
+            0,
+            "phase1-what",
+            max_iterations=10,
+            autonomy_mode="banzai",
+            spec_authoring_mode="proportional",
+        )
+        _mark_constitution_complete(tmp_path, store)
+        spec_dir = tmp_path / "runs/run-test/specs/001-demo"
+        spec_dir.mkdir(parents=True)
+        spec = spec_dir / "spec.md"
+        spec.write_text("# Extension candidate\n", encoding="utf-8")
+        if failure_kind != "invalid_mandatory_artifact":
+            (spec_dir / "requirements-overview.md").write_text(
+                "# Overview\n",
+                encoding="utf-8",
+            )
+        state = store.load()
+        repair = dict(state["phase1_quality_repair"])
+        repair.update(
+            {
+                "automatic_consumed": 3,
+                "extension_authorized": 1,
+                "extension_consumed": 0,
+            }
+        )
+        state.update(
+            {
+                "spec_id": "001-demo",
+                "spec_dir": "runs/run-test/specs/001-demo",
+                "phase1_quality_repair": repair,
+                "quality_gate_remediation": {
+                    "kind": "proportional_quality",
+                    "baseline_spec_sha256": hashlib.sha256(
+                        spec.read_bytes()
+                    ).hexdigest(),
+                    "extension_active": True,
+                },
+            }
+        )
+        store.save(state)
+        valid_payload: dict[str, object] | None = {
+            "verdict": "DONE",
+            "output_files": [
+                str(spec),
+                str(spec_dir / "requirements-overview.md"),
+            ],
+            "state_updates": {
+                "evidence_resolution_status": "not_required",
+            },
+        }
+        exit_code = 0
+        timed_out = False
+        if failure_kind == "timeout":
+            timed_out = True
+        elif failure_kind == "provider_error":
+            exit_code = 7
+        elif failure_kind == "missing_envelope":
+            valid_payload = None
+        elif failure_kind == "state_contract":
+            assert valid_payload is not None
+            valid_payload["state_updates"] = {
+                "evidence_resolution_status": "not_required",
+                "phase1_quality_repair": {"forged": True},
+            }
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=exit_code,
+            echelon_result=valid_payload,
+            raw_output="operational failure",
+            duration_ms=1,
+            timed_out=timed_out,
+        )
+        before = dict(repair)
+
+        result = ctrl.run("msg", "banzai")
+
+        blocked = store.load()
+        assert result.status == "blocked"
+        assert blocked["blocked_reason"] == expected_reason
+        assert blocked["phase1_quality_repair"] == before
+        assert "blocked_decision" not in blocked
+        assert "spec_quality_debt_authorization" not in blocked
+        assert not (spec_dir / "quality-debt.json").exists()
+
+    def test_initial_assessment_and_three_changed_repairs_restore_best_candidate(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        ctrl, store = _start_proportional_quality_loop(tmp_path)
+        initial_updates, why2 = _proportional_assessment_fixture(ctrl, store, 0)
+        state = store.load()
+        state.update(initial_updates)
+        store.save(state)
+
+        assert (
+            _coordinate_prepared_result(ctrl, ctrl._graph.get("phase1-why2"), why2)
+            == "phase1-what"
+        )
+        repair = store.load()["phase1_quality_repair"]
+        assert repair["automatic_consumed"] == 0
+        assert repair["candidate_ids"] == ["quality-candidate-0"]
+
+        routes: list[str] = []
+        for assessment_index in range(1, 4):
+            spec = (
+                f"# Candidate {assessment_index}\n\n"
+                f"- FR-001: The system shall render revision {assessment_index}.\n"
+            )
+            assessment_updates, why2 = _proportional_assessment_fixture(
+                ctrl,
+                store,
+                assessment_index,
+                score=0.60,
+                spec_text=spec,
+            )
+            routes.append(
+                _coordinate_prepared_result(
+                    ctrl,
+                    ctrl._graph.get("phase1-what"),
+                    SquadAgentResult(
+                        exit_code=0,
+                        echelon_result={
+                            "verdict": "DONE",
+                            "state_updates": {
+                                "evidence_resolution_status": "not_required",
+                            },
+                        },
+                        raw_output="",
+                        duration_ms=0,
+                        timed_out=False,
+                    ),
+                )
+            )
+            assert store.load()["phase1_quality_repair"][
+                "automatic_consumed"
+            ] == assessment_index
+            routes.append(
+                _route_understanding_assessment(ctrl, store, assessment_updates)
+            )
+            routes.append(
+                _coordinate_prepared_result(
+                    ctrl,
+                    ctrl._graph.get("phase1-why2"),
+                    why2,
+                )
+            )
+
+        assert routes[:8] == [
+            "phase1-understanding",
+            "phase1-why2",
+            "phase1-what",
+            "phase1-understanding",
+            "phase1-why2",
+            "phase1-what",
+            "phase1-understanding",
+            "phase1-why2",
+        ]
+        assert routes[-1] == "terminal-blocked"
+        blocked = store.load()
+        assert blocked["phase1_quality_repair"]["candidate_ids"] == [
+            "quality-candidate-0",
+            "quality-candidate-1",
+            "quality-candidate-2",
+            "quality-candidate-3",
+        ]
+        assert blocked["blocked_reason"] == (
+            "proportional_quality_budget_exhausted"
+        )
+        assert blocked["blocked_decision"]["reason_code"] == (
+            "proportional_quality_budget_exhausted"
+        )
+        assert blocked.get("why2_metric_stagnation_count", 0) == 0
+        assert (tmp_path / "runs/run-test/specs/001-demo/spec.md").read_text(
+            encoding="utf-8"
+        ).startswith("# Candidate 0")
+
+    def test_valid_unchanged_automatic_what_opens_no_progress_decision(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        ctrl, store = _start_proportional_quality_loop(tmp_path)
+        initial_updates, why2 = _proportional_assessment_fixture(ctrl, store, 0)
+        state = store.load()
+        state.update(initial_updates)
+        store.save(state)
+        _coordinate_prepared_result(ctrl, ctrl._graph.get("phase1-why2"), why2)
+
+        next_phase = _coordinate_prepared_result(
+            ctrl,
+            ctrl._graph.get("phase1-what"),
+            SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "DONE",
+                    "state_updates": {
+                        "evidence_resolution_status": "not_required",
+                    },
+                },
+                raw_output="",
+                duration_ms=0,
+                timed_out=False,
+            ),
+        )
+
+        assert next_phase == "phase1-why2"
+        blocked = store.load()
+        assert blocked["phase1_quality_repair"]["automatic_consumed"] == 0
+        assert blocked["blocked_reason"] == (
+            "proportional_quality_budget_exhausted"
+        )
+        assert blocked["proportional_quality_candidate_evidence"][
+            "last_repair_outcome"
+        ] == "no_artifact_progress"
+        assert blocked["blocked_decision"]["status"] == "awaiting_human"
+
+    def test_extension_is_authorized_and_consumed_once_even_when_unchanged(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        ctrl, store = _start_proportional_quality_loop(
+            tmp_path,
+            automatic_consumed=3,
+        )
+        initial_updates, why2 = _proportional_assessment_fixture(ctrl, store, 0)
+        state = store.load()
+        state.update(initial_updates)
+        store.save(state)
+        _coordinate_prepared_result(ctrl, ctrl._graph.get("phase1-why2"), why2)
+        budget = store.load()
+        first_decision_id = budget["blocked_decision"]["id"]
+
+        assert ctrl.resume_with_human_input("extend_once")
+        authorized = store.load()
+        assert authorized["phase"] == "phase1-what"
+        assert authorized["phase1_quality_repair"]["extension_authorized"] == 1
+        assert authorized["phase1_quality_repair"]["extension_consumed"] == 0
+
+        assert (
+            _coordinate_prepared_result(
+                ctrl,
+                ctrl._graph.get("phase1-what"),
+                SquadAgentResult(
+                    exit_code=0,
+                    echelon_result={
+                        "verdict": "DONE",
+                        "state_updates": {
+                            "evidence_resolution_status": "not_required",
+                        },
+                    },
+                    raw_output="",
+                    duration_ms=0,
+                    timed_out=False,
+                ),
+            )
+            == "phase1-understanding"
+        )
+        assert store.load()["phase1_quality_repair"]["extension_consumed"] == 1
+
+        extension_updates, why2 = _proportional_assessment_fixture(
+            ctrl,
+            store,
+            1,
+            spec_text=(
+                tmp_path / "runs/run-test/specs/001-demo/spec.md"
+            ).read_text(encoding="utf-8"),
+        )
+        assert (
+            _route_understanding_assessment(ctrl, store, extension_updates)
+            == "phase1-why2"
+        )
+        assert (
+            _coordinate_prepared_result(ctrl, ctrl._graph.get("phase1-why2"), why2)
+            == "terminal-blocked"
+        )
+        exhausted = store.load()
+        assert exhausted["blocked_reason"] == (
+            "proportional_quality_extension_exhausted"
+        )
+        assert [
+            option["id"] for option in exhausted["blocked_decision"]["options"]
+        ] == ["continue_with_debt", "stop"]
+        with pytest.raises(HumanInputPolicyError):
+            ctrl.apply_human_input_resolution(
+                first_decision_id,
+                expected_state_revision=exhausted["state_revision"],
+                resolution=HumanInputResolution(
+                    selected_option_id="extend_once",
+                    answer_text=None,
+                    resolved_by="user",
+                ),
+            )
+        assert store.load()["phase1_quality_repair"]["extension_authorized"] == 1
+
+    @pytest.mark.parametrize("lexicon_enabled", [True, False])
+    def test_continue_with_debt_builds_authorization_and_routes_conditionally(
+        self,
+        tmp_path: Path,
+        lexicon_enabled: bool,
+    ) -> None:
+        if not lexicon_enabled:
+            _disable_lexicon_gate(tmp_path)
+        ctrl, store = _start_proportional_quality_loop(
+            tmp_path,
+            automatic_consumed=3,
+        )
+        initial_updates, why2 = _proportional_assessment_fixture(ctrl, store, 0)
+        state = store.load()
+        state.update(initial_updates)
+        store.save(state)
+        _coordinate_prepared_result(ctrl, ctrl._graph.get("phase1-why2"), why2)
+        sealed_id = store.load()["blocked_decision"]["id"]
+
+        assert ctrl.resume_with_human_input("continue_with_debt")
+
+        accepted = store.load()
+        assert accepted["phase"] == (
+            "phase1-lexicon-derive" if lexicon_enabled else "checkpoint-assess"
+        )
+        authorization = accepted["spec_quality_debt_authorization"]
+        assert authorization["decision_id"] == sealed_id
+        assert authorization["resolved_by"] == "user"
+        assert authorization["status"] == "accepted_with_debt"
+        assert "spec_quality_certificate" not in accepted
+        assert (
+            tmp_path
+            / "runs/run-test/specs/001-demo/quality-debt.json"
+        ).is_file()
+
+    def test_stop_is_durable_and_ordinary_continue_cannot_reopen_it(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        ctrl, store = _start_proportional_quality_loop(
+            tmp_path,
+            automatic_consumed=3,
+        )
+        initial_updates, why2 = _proportional_assessment_fixture(ctrl, store, 0)
+        state = store.load()
+        state.update(initial_updates)
+        store.save(state)
+        _coordinate_prepared_result(ctrl, ctrl._graph.get("phase1-why2"), why2)
+
+        assert ctrl.resume_with_human_input("stop") is False
+        declined = store.load()
+        assert declined["blocked_reason"] == (
+            "proportional_quality_debt_declined"
+        )
+        assert declined["blocked_decision"]["status"] == "resolved"
+        assert "spec_quality_debt_authorization" not in declined
+
+        result = ctrl.run("ordinary continue", "semi", "phase1-what")
+
+        assert result.status == "blocked"
+        assert store.load()["blocked_reason"] == (
+            "proportional_quality_debt_declined"
+        )
+        assert store.load()["phase1_quality_repair"] == declined[
+            "phase1_quality_repair"
+        ]
+
+    def test_passing_assessment_still_captures_candidate_zero(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        ctrl, store = _start_proportional_quality_loop(tmp_path)
+        updates, _failure = _proportional_assessment_fixture(ctrl, store, 0)
+        evidence = dict(updates["understanding_evidence"])
+        report_path = Path(str(evidence["path"]))
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        report["scores"]["overall"] = 0.90
+        report["gates"]["overall"].update(
+            {
+                "score": 0.90,
+                "pass": True,
+                "numeric_pass": True,
+            }
+        )
+        report["pass"] = True
+        report_path.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        digest = hashlib.sha256(report_path.read_bytes()).hexdigest()
+        evidence.update(
+            {
+                "digest": digest,
+                "pass": True,
+                "failing_gates": [],
+            }
+        )
+        updates["understanding_evidence"] = evidence
+        updates["quality_scores"][-1].update(
+            {
+                "pass": True,
+                "overall": 0.90,
+                "evidence_digest": digest,
+            }
+        )
+        state = store.load()
+        state.update(updates)
+        store.save(state)
+
+        _coordinate_prepared_result(
+            ctrl,
+            ctrl._graph.get("phase1-why2"),
+            SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "PASS",
+                    "state_updates": {
+                        "evidence_resolution_status": "not_required",
+                        "finding_routes": {"findings": []},
+                    },
+                },
+                raw_output="",
+                duration_ms=0,
+                timed_out=False,
+            ),
+        )
+
+        persisted = store.load()
+        assert persisted["phase1_quality_repair"]["automatic_consumed"] == 0
+        assert persisted["phase1_quality_repair"]["candidate_ids"] == [
+            "quality-candidate-0"
+        ]
+
+    def test_perfectionist_why2_failure_keeps_legacy_route(self, tmp_path: Path) -> None:
+        ctrl, store = _controller(tmp_path)
+        store.initialize(
+            "r",
+            "greenfield",
+            "msg",
+            0,
+            "phase1-why2",
+            max_iterations=5,
+            autonomy_mode="semi",
+            spec_authoring_mode="perfectionist",
+        )
+        state = store.load()
+        state["quality_scores"] = [{"pass": False}]
+        store.save(state)
+
+        assert (
+            _coordinate_prepared_result(
+                ctrl,
+                ctrl._graph.get("phase1-why2"),
+                SquadAgentResult(
+                    exit_code=0,
+                    echelon_result={
+                        "verdict": "FAIL",
+                        "state_updates": {
+                            "evidence_resolution_status": "not_required",
+                            "finding_routes": {
+                                "findings": [
+                                    {
+                                        "issue_id": "ISS-LEGACY",
+                                        "route": "spec_repair",
+                                        "rationale": "Legacy quality repair is required.",
+                                    }
+                                ]
+                            },
+                        },
+                    },
+                    raw_output="",
+                    duration_ms=0,
+                    timed_out=False,
+                ),
+            )
+            == "phase1-what"
+        )
+        assert "phase1_quality_repair" not in store.load()
+        assert "proportional_quality_candidate_evidence" not in store.load()
 
 
 class TestHumanGateControllerInterception:

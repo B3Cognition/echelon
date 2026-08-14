@@ -193,6 +193,7 @@ TRUSTED_ROUTING_EFFECT_KEYS = frozenset(
     {
         "status",
         "blocked_reason",
+        "phase1_quality_repair",
         "controller_contract_error",
         "recovery_instruction",
         "blocked_decision",

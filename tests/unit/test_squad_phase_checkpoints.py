@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -12,7 +13,7 @@ from harness.controller_state_contracts import (
 from harness.phase_graph import PhaseGraph
 from harness.squad import SquadController
 from harness.squad_provider import SquadAgentResult
-from harness.squad_state import SquadStateStore
+from harness.squad_state import SquadStateStore, StateAdvanceError
 
 
 EXT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -336,6 +337,107 @@ def test_routing_construction_failure_never_reaches_checkpoint(
     assert result.phase == "phase3-tasks-lexicon"
     assert checkpoint_calls == []
     assert store.load()["completed_phases"] == []
+
+
+def test_proportional_extension_accounting_is_not_applied_when_checkpoint_prestate_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    squad_dir = tmp_path / "runs" / "run-test"
+    store = SquadStateStore(squad_dir)
+    store.initialize(
+        "run-test",
+        "greenfield",
+        "msg",
+        0,
+        "phase1-what",
+        max_iterations=10,
+        spec_authoring_mode="proportional",
+    )
+    controller = SquadController(
+        provider=MagicMock(),
+        state_store=store,
+        phase_graph=PhaseGraph(
+            DEFINITION,
+            prosaic_subagents_dir=PROSAIC_SUBAGENTS,
+        ),
+        ext_dir=EXT_ROOT / "runtime",
+        project_root=tmp_path,
+        squad_dir=squad_dir,
+    )
+    spec_dir = tmp_path / "runs/run-test/specs/001-demo"
+    spec_dir.mkdir(parents=True)
+    spec = spec_dir / "spec.md"
+    spec.write_text("# Before extension\n", encoding="utf-8")
+    baseline = hashlib.sha256(spec.read_bytes()).hexdigest()
+    (spec_dir / "requirements-overview.md").write_text(
+        "# Overview\n",
+        encoding="utf-8",
+    )
+    state = store.load()
+    repair = dict(state["phase1_quality_repair"])
+    repair.update(
+        {
+            "automatic_consumed": 3,
+            "extension_authorized": 1,
+            "extension_consumed": 0,
+        }
+    )
+    state.update(
+        {
+            "spec_id": "001-demo",
+            "spec_dir": "runs/run-test/specs/001-demo",
+            "phase1_quality_repair": repair,
+            "quality_gate_remediation": {
+                "kind": "proportional_quality",
+                "baseline_spec_sha256": baseline,
+                "extension_active": True,
+            },
+        }
+    )
+    store.save(state)
+    spec.write_text("# Changed extension\n", encoding="utf-8")
+    node = controller._graph.get("phase1-what")
+    snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+    prepared = controller._prepare_phase_result(
+        node,
+        SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "DONE",
+                "state_updates": {
+                    "evidence_resolution_status": "not_required",
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        ),
+        snapshot,
+    )
+    before = store.load()
+    monkeypatch.setattr(
+        controller,
+        "_completion_checkpoint_prestate",
+        MagicMock(
+            side_effect=StateAdvanceError(
+                "checkpoint unavailable",
+                validator="checkpoint_prestate",
+            )
+        ),
+    )
+
+    decision = controller._construct_routing_decision_or_block(
+        node,
+        prepared,
+        snapshot,
+    )
+
+    assert decision is None
+    assert store.load() == before
+    assert store.load()["phase1_quality_repair"]["extension_consumed"] == 0
+    assert "blocked_decision" not in store.load()
+    assert not (spec_dir / "quality-debt.json").exists()
 
 
 def test_squad_checkpoints_staging_spec_with_state_spec_id(

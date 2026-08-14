@@ -156,7 +156,19 @@ _HUMAN_INPUT_PAIR_AUTHORITY_KEYS = frozenset(
     {"blocked_decision", "recovery_instruction"}
 )
 _PROVIDER_ADVANCE_SAFEGUARD_PRODUCERS = frozenset(
-    {"consecutive_why_fails", "why2_metric_stagnation"}
+    {
+        "consecutive_why_fails",
+        "why2_metric_stagnation",
+        "proportional_quality_budget_exhausted",
+        "proportional_quality_extension_exhausted",
+    }
+)
+_SETTER_SAFEGUARD_PRODUCERS = frozenset(
+    {
+        "phase_dispatch_limit",
+        "agent_blocked",
+        "proportional_quality_budget_exhausted",
+    }
 )
 _HUMAN_INPUT_STATE_EFFECT_RESERVED_KEYS = frozenset(
     {
@@ -1032,7 +1044,7 @@ def _validate_human_input_seal_path(
             request.source_kind in {"human_gate", "legacy_recovery"}
             or (
                 request.source_kind == "controller_safeguard"
-                and request.producer_id in {"phase_dispatch_limit", "agent_blocked"}
+                and request.producer_id in _SETTER_SAFEGUARD_PRODUCERS
             )
         )
     if not accepted:
