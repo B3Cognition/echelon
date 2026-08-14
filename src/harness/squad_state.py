@@ -2185,6 +2185,7 @@ class SquadStateStore:
         state_removals: Iterable[str],
         token_usage_delta: int = 0,
         prepared_completion: PreparedControllerCompletion | None = None,
+        resolved_at: str | None = None,
     ) -> dict[str, Any]:
         if type(resolution) is not HumanInputResolution:
             raise StateAdvanceError(
@@ -2196,6 +2197,14 @@ class SquadStateStore:
             raise StateAdvanceError(
                 "human-input token usage delta is invalid",
                 json_path="$.token_usage_delta",
+                validator="type",
+            )
+        if resolved_at is not None and (
+            type(resolved_at) is not str or not resolved_at
+        ):
+            raise StateAdvanceError(
+                "human-input resolution timestamp is invalid",
+                json_path="$.resolved_at",
                 validator="type",
             )
         if not isinstance(state_updates, Mapping):
@@ -2290,7 +2299,11 @@ class SquadStateStore:
                     "answer_text": resolution.answer_text,
                     "resolved_by": resolution.resolved_by,
                     "failure_code": None,
-                    "resolved_at": datetime.now(timezone.utc).isoformat(),
+                    "resolved_at": (
+                        datetime.now(timezone.utc).isoformat()
+                        if resolved_at is None
+                        else resolved_at
+                    ),
                 }
             )
             desired = deepcopy(before)

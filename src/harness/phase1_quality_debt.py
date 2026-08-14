@@ -51,6 +51,12 @@ _AUTHORIZATION_KEYS = frozenset(
         "decision_id",
         "resolved_by",
         "accepted_at",
+        "resolved_decision",
+        "resolved_decision_sha256",
+        "understanding_state_sha256",
+        "candidate_evidence_state_sha256",
+        "resolution_completion",
+        "previous_debt_artifact_sha256",
     }
 )
 _DEBT_KEYS = frozenset(
@@ -71,6 +77,12 @@ _DEBT_KEYS = frozenset(
         "decision_id",
         "resolved_by",
         "accepted_at",
+        "resolved_decision",
+        "resolved_decision_sha256",
+        "understanding_state_sha256",
+        "candidate_evidence_state_sha256",
+        "resolution_completion",
+        "previous_debt_artifact_sha256",
     }
 )
 _CANDIDATE_ARTIFACTS = frozenset(
@@ -90,6 +102,31 @@ _DEBT_REASON_CODES = frozenset(
         "proportional_quality_extension_exhausted",
     }
 )
+_RESOLUTION_COMPLETION_KEYS = frozenset(
+    {"schema_version", "completion_id", "from_phase", "to_phase"}
+)
+
+
+def _canonical_json(value: object, *, newline: bool = True) -> bytes:
+    try:
+        encoded = json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+    except (TypeError, ValueError, UnicodeError) as exc:
+        raise QualityCandidateIntegrityError(
+            "quality-debt authority is not canonical JSON"
+        ) from exc
+    if newline:
+        encoded += "\n"
+    return encoded.encode("utf-8")
+
+
+def _canonical_sha256(value: object) -> str:
+    return hashlib.sha256(_canonical_json(value)).hexdigest()
 
 
 def _fsync_directory(path: Path) -> None:
@@ -114,8 +151,12 @@ def _sha256(path: Path) -> str:
 
 
 def _project_relative(path: Path, root: Path) -> str:
+    lexical = Path(path)
+    if not lexical.is_absolute():
+        lexical = root / lexical
+    lexical = lexical.parent.resolve() / lexical.name
     try:
-        return path.resolve().relative_to(root.resolve()).as_posix()
+        return lexical.relative_to(root.resolve()).as_posix()
     except ValueError as exc:
         raise QualityCandidateIntegrityError(
             "quality-debt path escapes the project root"
@@ -123,18 +164,27 @@ def _project_relative(path: Path, root: Path) -> str:
 
 
 def _resolve_project_reference(root: Path, value: object) -> Path:
-    if type(value) is not str or not value or Path(value).is_absolute():
+    if type(value) is not str or not value:
         raise QualityCandidateIntegrityError(
             "quality-debt project reference is invalid"
         )
-    path = (root / value).resolve()
+    reference = Path(value)
+    if (
+        reference.is_absolute()
+        or not reference.name
+        or any(part == ".." for part in reference.parts)
+    ):
+        raise QualityCandidateIntegrityError(
+            "quality-debt project reference is invalid"
+        )
+    parent = (root / reference.parent).resolve()
     try:
-        path.relative_to(root)
+        parent.relative_to(root)
     except ValueError as exc:
         raise QualityCandidateIntegrityError(
             "quality-debt path escapes the project root"
         ) from exc
-    return path
+    return parent / reference.name
 
 
 def _resolve_state_reference(root: Path, value: object) -> Path:
@@ -169,6 +219,27 @@ def _utc_timestamp(value: object) -> datetime:
             "quality-debt timestamp is not UTC"
         )
     return parsed
+
+
+def _regular_file_digest_or_missing(path: Path) -> str | None:
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise QualityCandidateIntegrityError(
+            "quality-debt artifact preimage could not be inspected"
+        ) from exc
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+        raise QualityCandidateIntegrityError(
+            "quality-debt artifact preimage is not a regular owned file"
+        )
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError as exc:
+        raise QualityCandidateIntegrityError(
+            "quality-debt artifact preimage could not be read"
+        ) from exc
 
 
 def _validate_debt_decision(
@@ -223,6 +294,64 @@ def _validate_debt_decision(
             "quality-debt decision is not sealed for resolution"
         )
     return decision
+
+
+def _resolved_debt_decision(
+    decision: Mapping[str, object],
+    *,
+    decision_id: str,
+    resolved_by: str,
+    resolved_at: str,
+) -> dict[str, object]:
+    active = _validate_debt_decision(
+        decision,
+        decision_id=decision_id,
+        resolved_by=resolved_by,
+        resolved=False,
+    )
+    _utc_timestamp(resolved_at)
+    try:
+        resolved = validate_blocked_decision_v2(
+            {
+                **active,
+                "status": "resolved",
+                "selected_option_id": "continue_with_debt",
+                "answer_text": None,
+                "resolved_by": resolved_by,
+                "failure_code": None,
+                "resolved_at": resolved_at,
+            }
+        )
+    except (BlockedDecisionError, TypeError, ValueError) as exc:
+        raise QualityCandidateIntegrityError(
+            "quality-debt resolved decision is invalid"
+        ) from exc
+    return resolved
+
+
+def _resolution_completion_binding(
+    *,
+    completion_id: str,
+    from_phase: str,
+    to_phase: str,
+) -> dict[str, object]:
+    if (
+        type(completion_id) is not str
+        or re.fullmatch(r"[0-9a-f]{32}", completion_id) is None
+        or type(from_phase) is not str
+        or not from_phase
+        or type(to_phase) is not str
+        or not to_phase
+    ):
+        raise QualityCandidateIntegrityError(
+            "quality-debt completion identity is invalid"
+        )
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "completion_id": completion_id,
+        "from_phase": from_phase,
+        "to_phase": to_phase,
+    }
 
 
 def _verify_restored_candidate(
@@ -379,7 +508,12 @@ def _failed_gates(
     return failed
 
 
-def _write_atomic_json(path: Path, payload: Mapping[str, object]) -> None:
+def _write_atomic_json(
+    path: Path,
+    payload: Mapping[str, object],
+    *,
+    expected_preimage_sha256: str | None,
+) -> None:
     content = (json.dumps(dict(payload), indent=2, sort_keys=True) + "\n").encode(
         "utf-8"
     )
@@ -402,6 +536,10 @@ def _write_atomic_json(path: Path, payload: Mapping[str, object]) -> None:
         os.fsync(descriptor)
         os.close(descriptor)
         descriptor = -1
+        if _regular_file_digest_or_missing(path) != expected_preimage_sha256:
+            raise QualityCandidateIntegrityError(
+                "quality-debt artifact preimage changed"
+            )
         os.replace(temporary, path)
         _fsync_directory(path.parent)
     except OSError as exc:
@@ -429,6 +567,9 @@ class PreparedQualityDebtAuthorization:
             "debt_path": self.debt_path,
             "debt": dict(self.debt),
             "authorization": dict(self.authorization),
+            "previous_debt_artifact_sha256": self.authorization[
+                "previous_debt_artifact_sha256"
+            ],
         }
 
 
@@ -439,9 +580,15 @@ def build_quality_debt_authorization(
     candidate: QualityCandidateManifest,
     candidate_manifest: Path,
     repair_state: Mapping[str, object],
+    understanding_state: Mapping[str, object],
+    candidate_evidence_state: Mapping[str, object],
     decision: Mapping[str, object],
     decision_id: str,
     resolved_by: str,
+    resolved_at: str,
+    completion_id: str,
+    from_phase: str,
+    to_phase: str,
 ) -> PreparedQualityDebtAuthorization:
     """Prepare schema-v1 debt and authorization without external effects."""
     if not isinstance(candidate, QualityCandidateManifest):
@@ -454,11 +601,29 @@ def build_quality_debt_authorization(
         raise QualityCandidateIntegrityError("quality-debt decision ID is invalid")
     if resolved_by not in {"user", "COMMANDER"}:
         raise QualityCandidateIntegrityError("quality-debt resolver is invalid")
-    _validate_debt_decision(
+    resolved_decision = _resolved_debt_decision(
         decision,
         decision_id=decision_id,
         resolved_by=resolved_by,
-        resolved=False,
+        resolved_at=resolved_at,
+    )
+    completion_binding = _resolution_completion_binding(
+        completion_id=completion_id,
+        from_phase=from_phase,
+        to_phase=to_phase,
+    )
+    if not isinstance(understanding_state, Mapping) or not isinstance(
+        candidate_evidence_state,
+        Mapping,
+    ):
+        raise QualityCandidateIntegrityError(
+            "quality-debt authorizing state is invalid"
+        )
+    understanding_state_digest = _canonical_sha256(
+        dict(understanding_state)
+    )
+    candidate_evidence_state_digest = _canonical_sha256(
+        dict(candidate_evidence_state)
     )
 
     validated_repair = validate_repair_state(repair_state)
@@ -480,12 +645,14 @@ def build_quality_debt_authorization(
     source_digest = _sha256(source_path)
     failed_gates = _failed_gates(candidate)
 
-    accepted_at = datetime.now(timezone.utc).isoformat()
+    accepted_at = resolved_at
     source_ref = _project_relative(source_path, root)
     evidence_ref = _project_relative(evidence_path, root)
     manifest_ref = _project_relative(manifest_path, root)
     debt_path = resolved_spec_dir / "quality-debt.json"
     debt_ref = _project_relative(debt_path, root)
+    previous_debt_digest = _regular_file_digest_or_missing(debt_path)
+    decision_digest = _canonical_sha256(resolved_decision)
     debt: dict[str, object] = {
         "schema_version": SCHEMA_VERSION,
         "status": "accepted_with_debt",
@@ -509,6 +676,12 @@ def build_quality_debt_authorization(
         "decision_id": decision_id,
         "resolved_by": resolved_by,
         "accepted_at": accepted_at,
+        "resolved_decision": resolved_decision,
+        "resolved_decision_sha256": decision_digest,
+        "understanding_state_sha256": understanding_state_digest,
+        "candidate_evidence_state_sha256": candidate_evidence_state_digest,
+        "resolution_completion": completion_binding,
+        "previous_debt_artifact_sha256": previous_debt_digest,
     }
     debt_content = (json.dumps(debt, indent=2, sort_keys=True) + "\n").encode(
         "utf-8"
@@ -530,6 +703,12 @@ def build_quality_debt_authorization(
         "decision_id": decision_id,
         "resolved_by": resolved_by,
         "accepted_at": accepted_at,
+        "resolved_decision": resolved_decision,
+        "resolved_decision_sha256": decision_digest,
+        "understanding_state_sha256": understanding_state_digest,
+        "candidate_evidence_state_sha256": candidate_evidence_state_digest,
+        "resolution_completion": completion_binding,
+        "previous_debt_artifact_sha256": previous_debt_digest,
     }
     return PreparedQualityDebtAuthorization(
         authorization=authorization,
@@ -584,27 +763,92 @@ def _validate_failed_gates(value: object) -> list[dict[str, object]]:
 
 def _validate_last_resolution_link(
     state: Mapping[str, object],
-    decision_id: str,
+    *,
+    authorization: Mapping[str, object],
+    debt: Mapping[str, object],
 ) -> None:
     completion = state.get("last_human_input_completion")
+    binding = authorization.get("resolution_completion")
+    if (
+        not isinstance(binding, Mapping)
+        or set(binding) != _RESOLUTION_COMPLETION_KEYS
+    ):
+        raise QualityCandidateIntegrityError(
+            "quality-debt completion binding is invalid"
+        )
+    expected_binding = _resolution_completion_binding(
+        completion_id=str(binding.get("completion_id") or ""),
+        from_phase=str(binding.get("from_phase") or ""),
+        to_phase=str(binding.get("to_phase") or ""),
+    )
+    if dict(binding) != expected_binding:
+        raise QualityCandidateIntegrityError(
+            "quality-debt completion binding changed"
+        )
+    effect_payload = {
+        "operation": "debt_write",
+        "debt_path": authorization["debt_artifact"],
+        "debt": dict(debt),
+        "authorization": dict(authorization),
+        "previous_debt_artifact_sha256": authorization[
+            "previous_debt_artifact_sha256"
+        ],
+    }
+    intent = {
+        "schema_version": SCHEMA_VERSION,
+        "completion_id": expected_binding["completion_id"],
+        "origin": "resolution",
+        "publication": {"kind": "none"},
+        "route": {
+            "kind": "resolution",
+            "decision_id": authorization["decision_id"],
+            "from_phase": expected_binding["from_phase"],
+            "to_phase": expected_binding["to_phase"],
+        },
+        "effect_plan": ["quality"],
+        "checkpoint_prestate": {"kind": "none"},
+        "quality_effect": {
+            "kind": "proportional_quality",
+            "operation": "debt_write",
+            "payload": effect_payload,
+        },
+        "context_reason": "human-input proportional quality resolution",
+        "mine_phase_a": False,
+        "judgment_payload_sha256": [],
+        "judgments": [],
+    }
+    debt_receipt = {
+        "schema_version": SCHEMA_VERSION,
+        "operation": "debt_write",
+        "debt_path": authorization["debt_artifact"],
+        "debt_artifact_sha256": authorization[
+            "debt_artifact_sha256"
+        ],
+        "previous_debt_artifact_sha256": authorization[
+            "previous_debt_artifact_sha256"
+        ],
+    }
+    receipts = {
+        "schema_version": SCHEMA_VERSION,
+        "completion_id": expected_binding["completion_id"],
+        "effects": {
+            "quality": {
+                "schema_version": SCHEMA_VERSION,
+                "operation": "debt_write",
+                "debt": debt_receipt,
+            }
+        },
+    }
+    expected_completion = {
+        "schema_version": SCHEMA_VERSION,
+        "completion_id": expected_binding["completion_id"],
+        "intent_sha256": _canonical_sha256(intent),
+        "receipts_sha256": _canonical_sha256(receipts),
+        "decision_id": authorization["decision_id"],
+    }
     if (
         not isinstance(completion, Mapping)
-        or set(completion)
-        != {
-            "schema_version",
-            "completion_id",
-            "intent_sha256",
-            "receipts_sha256",
-            "decision_id",
-        }
-        or completion.get("schema_version") != SCHEMA_VERSION
-        or type(completion.get("completion_id")) is not str
-        or re.fullmatch(r"[0-9a-f]{32}", str(completion["completion_id"])) is None
-        or _SHA256_RE.fullmatch(str(completion.get("intent_sha256") or ""))
-        is None
-        or _SHA256_RE.fullmatch(str(completion.get("receipts_sha256") or ""))
-        is None
-        or completion.get("decision_id") != decision_id
+        or dict(completion) != expected_completion
     ):
         raise QualityCandidateIntegrityError(
             "quality-debt completion linkage is invalid"
@@ -640,11 +884,23 @@ def _current_quality_debt_authorization(
         "understanding_evidence_sha256",
         "candidate_manifest_sha256",
         "debt_artifact_sha256",
+        "resolved_decision_sha256",
+        "understanding_state_sha256",
+        "candidate_evidence_state_sha256",
     ):
         if _SHA256_RE.fullmatch(str(authorization.get(key) or "")) is None:
             raise QualityCandidateIntegrityError(
                 "quality-debt authorization digest is invalid"
             )
+    previous_debt_digest = authorization.get(
+        "previous_debt_artifact_sha256"
+    )
+    if previous_debt_digest is not None and _SHA256_RE.fullmatch(
+        str(previous_debt_digest)
+    ) is None:
+        raise QualityCandidateIntegrityError(
+            "quality-debt preimage digest is invalid"
+        )
     source_path = _resolve_project_reference(root, authorization["source_path"])
     evidence_path = _resolve_project_reference(
         root,
@@ -712,6 +968,12 @@ def _current_quality_debt_authorization(
         "decision_id",
         "resolved_by",
         "accepted_at",
+        "resolved_decision",
+        "resolved_decision_sha256",
+        "understanding_state_sha256",
+        "candidate_evidence_state_sha256",
+        "resolution_completion",
+        "previous_debt_artifact_sha256",
     }
     if any(debt.get(key) != authorization.get(key) for key in shared):
         raise QualityCandidateIntegrityError(
@@ -771,6 +1033,8 @@ def _current_quality_debt_authorization(
     evidence = state.get("understanding_evidence")
     if (
         not isinstance(evidence, Mapping)
+        or _canonical_sha256(dict(evidence))
+        != authorization["understanding_state_sha256"]
         or evidence.get("phase") != "phase1-why2"
         or evidence.get("status") != "completed"
         or evidence.get("pass") is not False
@@ -796,6 +1060,8 @@ def _current_quality_debt_authorization(
     candidate_evidence = state.get("proportional_quality_candidate_evidence")
     if (
         not isinstance(candidate_evidence, Mapping)
+        or _canonical_sha256(dict(candidate_evidence))
+        != authorization["candidate_evidence_state_sha256"]
         or candidate_evidence.get("selected_candidate_id")
         != candidate.candidate_id
         or candidate_evidence.get("candidate_manifest_sha256")
@@ -831,6 +1097,16 @@ def _current_quality_debt_authorization(
         resolved_by=str(authorization["resolved_by"]),
         resolved=True,
     )
+    resolved_snapshot = authorization.get("resolved_decision")
+    if (
+        not isinstance(resolved_snapshot, Mapping)
+        or _canonical_sha256(dict(resolved_snapshot))
+        != authorization["resolved_decision_sha256"]
+        or decision != dict(resolved_snapshot)
+    ):
+        raise QualityCandidateIntegrityError(
+            "quality-debt resolved decision changed"
+        )
     resolved_at = _utc_timestamp(decision.get("resolved_at"))
     if accepted_at > resolved_at:
         raise QualityCandidateIntegrityError(
@@ -838,7 +1114,8 @@ def _current_quality_debt_authorization(
         )
     _validate_last_resolution_link(
         state,
-        str(authorization["decision_id"]),
+        authorization=authorization,
+        debt=debt,
     )
     return authorization
 
@@ -881,8 +1158,18 @@ def apply_or_verify_quality_debt_effect(
     if type(debt_ref) is not str or not debt_ref:
         raise QualityCandidateIntegrityError("quality-debt effect path is invalid")
     debt_path = _resolve_project_reference(root, debt_ref)
+    if debt_path.name != "quality-debt.json":
+        raise QualityCandidateIntegrityError(
+            "quality-debt effect is outside specification ownership"
+        )
     if operation == "debt_write":
-        if set(payload) != {"operation", "debt_path", "debt", "authorization"}:
+        if set(payload) != {
+            "operation",
+            "debt_path",
+            "debt",
+            "authorization",
+            "previous_debt_artifact_sha256",
+        }:
             raise QualityCandidateIntegrityError(
                 "quality-debt write effect is invalid"
             )
@@ -894,6 +1181,8 @@ def apply_or_verify_quality_debt_effect(
             or not isinstance(authorization, Mapping)
             or set(authorization) != _AUTHORIZATION_KEYS
             or authorization.get("debt_artifact") != debt_ref
+            or payload.get("previous_debt_artifact_sha256")
+            != authorization.get("previous_debt_artifact_sha256")
         ):
             raise QualityCandidateIntegrityError(
                 "quality-debt write effect is invalid"
@@ -914,35 +1203,46 @@ def apply_or_verify_quality_debt_effect(
             raise QualityCandidateIntegrityError(
                 "quality-debt authorization digest changed"
             )
-        if debt_path.exists():
-            try:
-                metadata = debt_path.lstat()
-                if not stat.S_ISREG(metadata.st_mode) or stat.S_ISLNK(
-                    metadata.st_mode
-                ):
-                    raise OSError("not a regular file")
-                if debt_path.read_bytes() != content:
-                    raise QualityCandidateIntegrityError(
-                        "quality-debt artifact conflicts with sealed authorization"
-                    )
-            except OSError as exc:
+        expected_preimage = payload.get("previous_debt_artifact_sha256")
+        if expected_preimage is not None and _SHA256_RE.fullmatch(
+            str(expected_preimage)
+        ) is None:
+            raise QualityCandidateIntegrityError(
+                "quality-debt artifact preimage is invalid"
+            )
+        observed_digest = _regular_file_digest_or_missing(debt_path)
+        if observed_digest != digest:
+            if observed_digest != expected_preimage:
                 raise QualityCandidateIntegrityError(
-                    "quality-debt artifact could not be verified"
-                ) from exc
-        else:
-            _write_atomic_json(debt_path, debt)
+                    "quality-debt artifact preimage changed"
+                )
+            _write_atomic_json(
+                debt_path,
+                debt,
+                expected_preimage_sha256=(
+                    str(expected_preimage)
+                    if expected_preimage is not None
+                    else None
+                ),
+            )
         receipt = {
             "schema_version": 1,
             "operation": operation,
             "debt_path": debt_ref,
             "debt_artifact_sha256": digest,
+            "previous_debt_artifact_sha256": expected_preimage,
         }
     elif operation == "debt_remove":
         if set(payload) != {"operation", "debt_path"}:
             raise QualityCandidateIntegrityError("quality-debt removal effect is invalid")
         try:
-            debt_path.unlink(missing_ok=True)
-            _fsync_directory(debt_path.parent)
+            try:
+                debt_path.lstat()
+            except FileNotFoundError:
+                pass
+            else:
+                debt_path.unlink()
+                _fsync_directory(debt_path.parent)
         except OSError as exc:
             raise QualityCandidateIntegrityError("quality-debt artifact removal failed") from exc
         receipt = {

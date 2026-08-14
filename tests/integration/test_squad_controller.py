@@ -11712,6 +11712,140 @@ class TestLexiconGateGuardDeterminism:
         assert not debt_path.exists()
         assert PENDING_CONTROLLER_COMPLETION_KEY not in store.load()
 
+    def test_what_debt_removal_unlinks_owned_symlink_without_following_target(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        ctrl, store = _start_proportional_quality_loop(
+            tmp_path,
+            automatic_consumed=3,
+        )
+        updates, why2 = _proportional_assessment_fixture(ctrl, store, 0)
+        state = store.load()
+        state.update(updates)
+        store.save(state)
+        _coordinate_prepared_result(ctrl, ctrl._graph.get("phase1-why2"), why2)
+        assert ctrl.resume_with_human_input("continue_with_debt")
+
+        spec_dir = tmp_path / "runs/run-test/specs/001-demo"
+        debt_path = spec_dir / "quality-debt.json"
+        debt_path.unlink()
+        target = spec_dir.parent.parent / "src" / "important.py"
+        target.parent.mkdir()
+        target.write_bytes(b"important bytes\n")
+        debt_path.symlink_to("../../src/important.py")
+        state = store.load()
+        state["phase"] = "phase1-what"
+        store.save(state)
+        (spec_dir / "spec.md").write_text(
+            "# Amended specification\n",
+            encoding="utf-8",
+        )
+
+        next_phase = _coordinate_prepared_result(
+            ctrl,
+            ctrl._graph.get("phase1-what"),
+            SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "DONE",
+                    "state_updates": {
+                        "evidence_resolution_status": "not_required",
+                    },
+                },
+                raw_output="",
+                duration_ms=0,
+                timed_out=False,
+            ),
+        )
+
+        assert next_phase == "phase1-understanding"
+        assert not debt_path.is_symlink()
+        assert target.read_bytes() == b"important bytes\n"
+        assert "spec_quality_debt_authorization" not in store.load()
+        assert PENDING_CONTROLLER_COMPLETION_KEY not in store.load()
+
+    def test_guard_then_fresh_debt_resolution_replaces_exact_stale_artifact(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store = _start_proportional_quality_loop(
+            tmp_path,
+            automatic_consumed=3,
+        )
+        updates, why2 = _proportional_assessment_fixture(ctrl, store, 0)
+        state = store.load()
+        state.update(updates)
+        store.save(state)
+        _coordinate_prepared_result(ctrl, ctrl._graph.get("phase1-why2"), why2)
+        assert ctrl.resume_with_human_input("continue_with_debt")
+
+        debt_path = tmp_path / "runs/run-test/specs/001-demo/quality-debt.json"
+        stale = debt_path.read_bytes() + b"\n"
+        debt_path.write_bytes(stale)
+        assert (
+            ctrl._guard_phase1_quality_evidence("checkpoint-assess")
+            == "phase1-understanding"
+        )
+        assert debt_path.read_bytes() == stale
+        assert "spec_quality_debt_authorization" not in store.load()
+
+        fresh_updates, fresh_why2 = _proportional_assessment_fixture(
+            ctrl,
+            store,
+            1,
+            score=0.61,
+        )
+        assert (
+            _route_understanding_assessment(ctrl, store, fresh_updates)
+            == "phase1-why2"
+        )
+        assert (
+            _coordinate_prepared_result(
+                ctrl,
+                ctrl._graph.get("phase1-why2"),
+                fresh_why2,
+            )
+            == "terminal-blocked"
+        )
+
+        real_effect = squad_module.apply_or_verify_proportional_quality_effect
+        failed_after_write = False
+
+        def write_then_fail_once(*args: object, **kwargs: object) -> object:
+            nonlocal failed_after_write
+            receipt = real_effect(*args, **kwargs)
+            if not failed_after_write:
+                failed_after_write = True
+                raise CompletionError("stage_io")
+            return receipt
+
+        monkeypatch.setattr(
+            squad_module,
+            "apply_or_verify_proportional_quality_effect",
+            write_then_fail_once,
+        )
+
+        assert ctrl.resume_with_human_input("continue_with_debt") is False
+        pending = store.load()
+        assert PENDING_CONTROLLER_COMPLETION_KEY in pending
+        assert debt_path.read_bytes() != stale
+
+        monkeypatch.setattr(
+            squad_module,
+            "apply_or_verify_proportional_quality_effect",
+            real_effect,
+        )
+        recovered = ctrl._drain_pending_controller_completion()
+
+        assert recovered.recovered is True
+        accepted = store.load()
+        assert PENDING_CONTROLLER_COMPLETION_KEY not in accepted
+        assert accepted["spec_quality_debt_authorization"][
+            "debt_artifact_sha256"
+        ] == hashlib.sha256(debt_path.read_bytes()).hexdigest()
+
     def test_spec_lexicon_node_certifies_valid_artifact_without_provider(self, tmp_path):
         provider = _mock_provider()
         ctrl, store = _controller(tmp_path, provider=provider)

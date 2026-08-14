@@ -6,6 +6,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -245,16 +246,53 @@ def _debt_fixture(
         "baseline_candidate_id": "quality-candidate-0",
         "candidate_ids": ["quality-candidate-0"],
     }
+    understanding_state = {
+        "phase": "phase1-why2",
+        "iteration": 0,
+        "status": "completed",
+        "path": str(evidence),
+        "digest": _sha256(evidence),
+        "pass": False,
+        "failing_gates": ["overall"],
+        "error": None,
+    }
+    candidate_evidence_state = {
+        "schema_version": 1,
+        "current_candidate_id": "quality-candidate-0",
+        "selected_candidate_id": "quality-candidate-0",
+        "candidate_manifest": str(manifest_path),
+        "candidate_manifest_sha256": _sha256(manifest_path),
+        "selected_spec_sha256": _sha256(spec_dir / "spec.md"),
+        "eligibility_reasons": [],
+        "failed_gates": [
+            {
+                "name": "overall",
+                "score": 0.70,
+                "threshold": 0.80,
+                "pass": False,
+            }
+        ],
+        "sage_finding_routes": [finding],
+        "last_repair_outcome": None,
+    }
     active_decision = _sealed_decision()
+    completion_id = "1" * 32
+    resolved_at = "2099-08-14T08:01:00+00:00"
     prepared = build_quality_debt_authorization(
         project_root=tmp_path,
         spec_dir=spec_dir,
         candidate=candidate,
         candidate_manifest=manifest_path,
         repair_state=repair_state,
+        understanding_state=understanding_state,
+        candidate_evidence_state=candidate_evidence_state,
         decision=active_decision,
         decision_id="dec-123",
         resolved_by="user",
+        resolved_at=resolved_at,
+        completion_id=completion_id,
+        from_phase="terminal-blocked",
+        to_phase="checkpoint-assess",
     )
     receipt = (
         apply_or_verify_quality_debt_effect(
@@ -268,16 +306,7 @@ def _debt_fixture(
     state: dict[str, object] = {
         "spec_dir": "specs/001-demo",
         "completed_phases": ["phase1-why2"],
-        "understanding_evidence": {
-            "phase": "phase1-why2",
-            "iteration": 0,
-            "status": "completed",
-            "path": str(evidence),
-            "digest": _sha256(evidence),
-            "pass": False,
-            "failing_gates": ["overall"],
-            "error": None,
-        },
+        "understanding_evidence": understanding_state,
         "quality_scores": [
             {
                 "pass": False,
@@ -288,34 +317,69 @@ def _debt_fixture(
             }
         ],
         "phase1_quality_repair": repair_state,
-        "proportional_quality_candidate_evidence": {
-            "schema_version": 1,
-            "current_candidate_id": "quality-candidate-0",
-            "selected_candidate_id": "quality-candidate-0",
-            "candidate_manifest": str(manifest_path),
-            "candidate_manifest_sha256": _sha256(manifest_path),
-            "selected_spec_sha256": _sha256(spec_dir / "spec.md"),
-            "eligibility_reasons": [],
-            "failed_gates": [
-                {
-                    "name": "overall",
-                    "score": 0.70,
-                    "threshold": 0.80,
-                    "pass": False,
-                }
-            ],
-            "sage_finding_routes": [finding],
-            "last_repair_outcome": None,
-        },
+        "proportional_quality_candidate_evidence": candidate_evidence_state,
         "blocked_decision": _sealed_decision(status="resolved"),
-        "last_human_input_completion": {
-            "schema_version": 1,
-            "completion_id": "1" * 32,
-            "intent_sha256": "2" * 64,
-            "receipts_sha256": "3" * 64,
-            "decision_id": "dec-123",
-        },
         "spec_quality_debt_authorization": authorization,
+    }
+    intent = {
+        "schema_version": 1,
+        "completion_id": completion_id,
+        "origin": "resolution",
+        "publication": {"kind": "none"},
+        "route": {
+            "kind": "resolution",
+            "decision_id": "dec-123",
+            "from_phase": "terminal-blocked",
+            "to_phase": "checkpoint-assess",
+        },
+        "effect_plan": ["quality"],
+        "checkpoint_prestate": {"kind": "none"},
+        "quality_effect": {
+            "kind": "proportional_quality",
+            "operation": "debt_write",
+            "payload": prepared.effect_payload(),
+        },
+        "context_reason": "human-input proportional quality resolution",
+        "mine_phase_a": False,
+        "judgment_payload_sha256": [],
+        "judgments": [],
+    }
+    debt_receipt = {
+        "schema_version": 1,
+        "operation": "debt_write",
+        "debt_path": prepared.debt_path,
+        "debt_artifact_sha256": authorization["debt_artifact_sha256"],
+        "previous_debt_artifact_sha256": authorization[
+            "previous_debt_artifact_sha256"
+        ],
+    }
+    receipts = {
+        "schema_version": 1,
+        "completion_id": completion_id,
+        "effects": {
+            "quality": {
+                "schema_version": 1,
+                "operation": "debt_write",
+                "debt": debt_receipt,
+            }
+        },
+    }
+    canonical = lambda value: (
+        json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        + "\n"
+    ).encode("utf-8")
+    state["last_human_input_completion"] = {
+        "schema_version": 1,
+        "completion_id": completion_id,
+        "intent_sha256": hashlib.sha256(canonical(intent)).hexdigest(),
+        "receipts_sha256": hashlib.sha256(canonical(receipts)).hexdigest(),
+        "decision_id": "dec-123",
     }
     paths = {
         "spec": spec_dir / "spec.md",
@@ -331,6 +395,21 @@ def _debt_fixture(
             "debt_artifact_sha256"
         ]
     return state, candidate, prepared, paths
+
+
+def _builder_authority_kwargs(
+    state: dict[str, object],
+) -> dict[str, object]:
+    return {
+        "understanding_state": state["understanding_evidence"],
+        "candidate_evidence_state": state[
+            "proportional_quality_candidate_evidence"
+        ],
+        "resolved_at": "2099-08-14T08:01:00+00:00",
+        "completion_id": "1" * 32,
+        "from_phase": "terminal-blocked",
+        "to_phase": "checkpoint-assess",
+    }
 
 
 def test_builder_prepares_complete_content_bound_schema_v1_debt(
@@ -457,6 +536,140 @@ def test_authorization_fails_closed_when_any_bound_input_changes(
 
 
 @pytest.mark.parametrize(
+    ("field", "replacement"),
+    [
+        ("question", "Accept a different residual debt decision?"),
+        ("source_state_revision", 5),
+        ("resolved_at", "2099-08-14T08:02:00+00:00"),
+    ],
+)
+def test_authorization_binds_every_resolved_decision_field(
+    tmp_path: Path,
+    field: str,
+    replacement: object,
+) -> None:
+    state, _candidate, _prepared, _paths = _debt_fixture(tmp_path)
+    decision = dict(state["blocked_decision"])
+    decision[field] = replacement
+    state["blocked_decision"] = decision
+
+    assert not has_current_quality_debt_authorization(
+        state,
+        project_root=tmp_path,
+    )
+
+
+def test_authorization_binds_exact_resolved_decision_options(
+    tmp_path: Path,
+) -> None:
+    state, _candidate, _prepared, _paths = _debt_fixture(tmp_path)
+    decision = dict(state["blocked_decision"])
+    options = [dict(option) for option in decision["options"]]
+    options[1]["description"] = "Accept a differently described debt."
+    decision["options"] = options
+    state["blocked_decision"] = decision
+
+    assert not has_current_quality_debt_authorization(
+        state,
+        project_root=tmp_path,
+    )
+
+
+def test_authorization_binds_exact_resolved_decision_status(
+    tmp_path: Path,
+) -> None:
+    state, _candidate, _prepared, _paths = _debt_fixture(tmp_path)
+    decision = dict(state["blocked_decision"])
+    decision.update(
+        {
+            "status": "failed",
+            "selected_option_id": None,
+            "resolved_by": None,
+            "resolved_at": None,
+            "failure_code": "provider_error",
+        }
+    )
+    state["blocked_decision"] = validate_blocked_decision_v2(decision)
+
+    assert not has_current_quality_debt_authorization(
+        state,
+        project_root=tmp_path,
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    [
+        ("completion_id", "4" * 32),
+        ("intent_sha256", "5" * 64),
+        ("receipts_sha256", "6" * 64),
+    ],
+)
+def test_authorization_binds_exact_durable_completion(
+    tmp_path: Path,
+    field: str,
+    replacement: str,
+) -> None:
+    state, _candidate, _prepared, _paths = _debt_fixture(tmp_path)
+    completion = dict(state["last_human_input_completion"])
+    completion[field] = replacement
+    state["last_human_input_completion"] = completion
+
+    assert not has_current_quality_debt_authorization(
+        state,
+        project_root=tmp_path,
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    [
+        ("iteration", 1),
+        ("failing_gates", ["overall", "traceability"]),
+        ("error", "valid-shaped but stale error"),
+    ],
+)
+def test_authorization_binds_exact_understanding_state(
+    tmp_path: Path,
+    field: str,
+    replacement: object,
+) -> None:
+    state, _candidate, _prepared, _paths = _debt_fixture(tmp_path)
+    evidence = dict(state["understanding_evidence"])
+    evidence[field] = replacement
+    state["understanding_evidence"] = evidence
+
+    assert not has_current_quality_debt_authorization(
+        state,
+        project_root=tmp_path,
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    [
+        ("schema_version", 2),
+        ("current_candidate_id", "quality-candidate-other"),
+        ("last_repair_outcome", "artifact_changed"),
+    ],
+)
+def test_authorization_binds_exact_candidate_evidence_state(
+    tmp_path: Path,
+    field: str,
+    replacement: object,
+) -> None:
+    state, _candidate, _prepared, _paths = _debt_fixture(tmp_path)
+    evidence = dict(state["proportional_quality_candidate_evidence"])
+    evidence[field] = replacement
+    state["proportional_quality_candidate_evidence"] = evidence
+
+    assert not has_current_quality_debt_authorization(
+        state,
+        project_root=tmp_path,
+    )
+
+
+@pytest.mark.parametrize(
     "hard_failure",
     [
         "critical_sage_issue",
@@ -491,6 +704,7 @@ def test_builder_rejects_every_hard_failure_class(
             decision=_sealed_decision(),
             decision_id="dec-123",
             resolved_by="user",
+            **_builder_authority_kwargs(state),
         )
 
 
@@ -510,6 +724,7 @@ def test_builder_rejects_missing_mandatory_candidate_artifact(
             decision=_sealed_decision(),
             decision_id="dec-123",
             resolved_by="user",
+            **_builder_authority_kwargs(state),
         )
 
 
@@ -563,6 +778,7 @@ def test_builder_rejects_authoritative_hard_sage_blocker_even_if_manifest_lies(
             decision=_sealed_decision(),
             decision_id="dec-123",
             resolved_by="user",
+            **_builder_authority_kwargs(state),
         )
 
 
@@ -585,6 +801,7 @@ def test_builder_requires_the_registered_sealed_debt_decision(
             decision=wrong_decision,
             decision_id="dec-123",
             resolved_by="user",
+            **_builder_authority_kwargs(state),
         )
 
 
@@ -609,6 +826,7 @@ def test_builder_accepts_a_claimed_commander_resolution(
         decision=commander_decision,
         decision_id="dec-123",
         resolved_by="COMMANDER",
+        **_builder_authority_kwargs(state),
     )
 
     assert prepared.authorization["resolved_by"] == "COMMANDER"
@@ -631,4 +849,143 @@ def test_builder_rejects_any_unregistered_resolver(
             decision=_sealed_decision(),
             decision_id="dec-123",
             resolved_by=resolver,
+            **_builder_authority_kwargs(state),
         )
+
+
+def test_debt_remove_unlinks_lexical_symlink_without_following_target(
+    tmp_path: Path,
+) -> None:
+    _state, _candidate, prepared, paths = _debt_fixture(
+        tmp_path,
+        apply_effect=False,
+    )
+    target = tmp_path / "src" / "important.py"
+    target.parent.mkdir()
+    target.write_bytes(b"important bytes\n")
+    paths["debt"].symlink_to(
+        os.path.relpath(target, start=paths["debt"].parent)
+    )
+
+    receipt = apply_or_verify_quality_debt_effect(
+        tmp_path,
+        {
+            "operation": "debt_remove",
+            "debt_path": prepared.debt_path,
+        },
+    )
+
+    assert receipt["removed"] is True
+    assert not paths["debt"].is_symlink()
+    assert target.read_bytes() == b"important bytes\n"
+
+
+def test_debt_write_rejects_lexical_symlink_without_touching_target(
+    tmp_path: Path,
+) -> None:
+    _state, _candidate, prepared, paths = _debt_fixture(
+        tmp_path,
+        apply_effect=False,
+    )
+    target = tmp_path / "src" / "important.py"
+    target.parent.mkdir()
+    target.write_bytes(b"important bytes\n")
+    paths["debt"].symlink_to(
+        os.path.relpath(target, start=paths["debt"].parent)
+    )
+
+    with pytest.raises(QualityCandidateIntegrityError):
+        apply_or_verify_quality_debt_effect(
+            tmp_path,
+            prepared.effect_payload(),
+        )
+
+    assert paths["debt"].is_symlink()
+    assert target.read_bytes() == b"important bytes\n"
+
+
+def test_currentness_rejects_lexical_debt_symlink_even_with_exact_target_bytes(
+    tmp_path: Path,
+) -> None:
+    state, _candidate, _prepared, paths = _debt_fixture(tmp_path)
+    target = tmp_path / "src" / "important.py"
+    target.parent.mkdir()
+    target.write_bytes(paths["debt"].read_bytes())
+    paths["debt"].unlink()
+    paths["debt"].symlink_to(
+        os.path.relpath(target, start=paths["debt"].parent)
+    )
+
+    assert not has_current_quality_debt_authorization(
+        state,
+        project_root=tmp_path,
+    )
+    assert target.read_bytes().startswith(b"{\n")
+
+
+def test_debt_write_replaces_only_the_exact_regular_preimage(
+    tmp_path: Path,
+) -> None:
+    state, candidate, _prepared, paths = _debt_fixture(
+        tmp_path,
+        apply_effect=False,
+    )
+    stale = b'{"stale":true}\n'
+    paths["debt"].write_bytes(stale)
+    prepared = build_quality_debt_authorization(
+        project_root=tmp_path,
+        spec_dir=paths["spec"].parent,
+        candidate=candidate,
+        candidate_manifest=paths["manifest"],
+        repair_state=state["phase1_quality_repair"],
+        decision=_sealed_decision(),
+        decision_id="dec-123",
+        resolved_by="user",
+        **_builder_authority_kwargs(state),
+    )
+
+    receipt = apply_or_verify_quality_debt_effect(
+        tmp_path,
+        prepared.effect_payload(),
+    )
+
+    assert paths["debt"].read_bytes() != stale
+    assert receipt["previous_debt_artifact_sha256"] == hashlib.sha256(
+        stale
+    ).hexdigest()
+    assert apply_or_verify_quality_debt_effect(
+        tmp_path,
+        prepared.effect_payload(),
+        expected_receipt=receipt,
+    ) == receipt
+
+
+def test_debt_write_rejects_regular_preimage_changed_after_preparation(
+    tmp_path: Path,
+) -> None:
+    state, candidate, _prepared, paths = _debt_fixture(
+        tmp_path,
+        apply_effect=False,
+    )
+    paths["debt"].write_bytes(b'{"stale":true}\n')
+    prepared = build_quality_debt_authorization(
+        project_root=tmp_path,
+        spec_dir=paths["spec"].parent,
+        candidate=candidate,
+        candidate_manifest=paths["manifest"],
+        repair_state=state["phase1_quality_repair"],
+        decision=_sealed_decision(),
+        decision_id="dec-123",
+        resolved_by="user",
+        **_builder_authority_kwargs(state),
+    )
+    changed = b'{"changed":true}\n'
+    paths["debt"].write_bytes(changed)
+
+    with pytest.raises(QualityCandidateIntegrityError, match="preimage"):
+        apply_or_verify_quality_debt_effect(
+            tmp_path,
+            prepared.effect_payload(),
+        )
+
+    assert paths["debt"].read_bytes() == changed

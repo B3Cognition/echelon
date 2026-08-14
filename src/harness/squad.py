@@ -841,6 +841,7 @@ class _HumanInputResolutionEffects:
     state_removals: frozenset[str]
     route: str
     completion: PreparedControllerCompletion | None = None
+    resolved_at: str | None = None
 
 
 class SquadController:
@@ -1452,6 +1453,7 @@ class SquadController:
         origin: str = "routed",
         quality_effect: Mapping[str, object] | None = None,
         resolution_decision_id: str | None = None,
+        completion_id: str | None = None,
     ) -> PreparedControllerCompletion:
         """Seal all post-dispatch work before its authorizing state save."""
         if origin == "terminal":
@@ -1545,7 +1547,11 @@ class SquadController:
             return prepare_controller_completion_stage(
                 self._project_root,
                 self._squad_dir,
-                completion_id=uuid.uuid4().hex,
+                completion_id=(
+                    uuid.uuid4().hex
+                    if completion_id is None
+                    else completion_id
+                ),
                 origin=origin,
                 publication=publication,
                 route=route,
@@ -3935,21 +3941,6 @@ class SquadController:
                 raise HumanInputPolicyError(
                     "quality debt requires a human or COMMANDER resolver"
                 )
-            try:
-                prepared_debt = build_quality_debt_authorization(
-                    project_root=self._project_root,
-                    spec_dir=self._proportional_spec_dir(state),
-                    candidate=candidate,
-                    candidate_manifest=manifest_path,
-                    repair_state=repair,
-                    decision=decision,
-                    decision_id=str(decision["id"]),
-                    resolved_by=resolution.resolved_by,
-                )
-            except (QualityCandidateIntegrityError, ValueError) as exc:
-                raise HumanInputPolicyError(
-                    "quality-debt authorization could not be constructed"
-                ) from exc
             lexicon = self._lexicon_gate_config().get("lexicon_gate")
             route = (
                 "phase1-lexicon-derive"
@@ -3958,6 +3949,33 @@ class SquadController:
                 else "checkpoint-assess"
             )
             route = self._validate_human_input_route(route, policy)
+            from datetime import datetime, timezone
+
+            resolved_at = datetime.now(timezone.utc).isoformat()
+            completion_id = uuid.uuid4().hex
+            try:
+                prepared_debt = build_quality_debt_authorization(
+                    project_root=self._project_root,
+                    spec_dir=self._proportional_spec_dir(state),
+                    candidate=candidate,
+                    candidate_manifest=manifest_path,
+                    repair_state=repair,
+                    understanding_state=state.get(
+                        "understanding_evidence"
+                    ),
+                    candidate_evidence_state=evidence,
+                    decision=decision,
+                    decision_id=str(decision["id"]),
+                    resolved_by=resolution.resolved_by,
+                    resolved_at=resolved_at,
+                    completion_id=completion_id,
+                    from_phase=str(state.get("phase") or ""),
+                    to_phase=route,
+                )
+            except (QualityCandidateIntegrityError, ValueError) as exc:
+                raise HumanInputPolicyError(
+                    "quality-debt authorization could not be constructed"
+                ) from exc
             snapshot = self._state_store.capture_routing_snapshot(
                 expected_phase=str(state.get("phase") or "")
             )
@@ -3971,6 +3989,7 @@ class SquadController:
                 publication_marker=None,
                 origin="resolution",
                 resolution_decision_id=str(decision["id"]),
+                completion_id=completion_id,
                 quality_effect={
                     "kind": "proportional_quality",
                     "operation": "debt_write",
@@ -3988,6 +4007,7 @@ class SquadController:
                 state_removals=frozenset({"quality_gate_remediation"}),
                 route=route,
                 completion=completion,
+                resolved_at=resolved_at,
             )
 
         if selected.id == "stop":
@@ -3996,7 +4016,7 @@ class SquadController:
                 policy,
             )
             spec_dir = self._proportional_spec_dir(state)
-            debt_ref = (spec_dir / "quality-debt.json").resolve().relative_to(
+            debt_ref = (spec_dir.resolve() / "quality-debt.json").relative_to(
                 self._project_root.resolve()
             ).as_posix()
             snapshot = self._state_store.capture_routing_snapshot(
@@ -4177,6 +4197,7 @@ class SquadController:
                 state_removals=effects.state_removals,
                 token_usage_delta=token_usage_delta,
                 prepared_completion=effects.completion,
+                resolved_at=effects.resolved_at,
             )
         except BaseException:
             if effects.completion is not None:
@@ -10017,6 +10038,7 @@ class SquadController:
             if (
                 "spec_quality_debt_authorization" in state
                 or debt_path.exists()
+                or debt_path.is_symlink()
             ):
                 updates["_proportional_quality_effect"] = {
                     "kind": "proportional_quality",
