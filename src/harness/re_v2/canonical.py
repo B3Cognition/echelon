@@ -6,7 +6,9 @@ import json
 
 def canonical_json_bytes(value: object) -> bytes:
     """Serialize a JSON-compatible value into canonical UTF-8 bytes."""
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8") + b"\n"
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+    ).encode("utf-8") + b"\n"
 
 
 def content_digest(value: bytes | object) -> str:

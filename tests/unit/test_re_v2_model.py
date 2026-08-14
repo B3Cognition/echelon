@@ -92,6 +92,20 @@ def test_canonical_json_and_digest_are_stable() -> None:
     assert content_digest(value) == content_digest(canonical_json_bytes(value))
 
 
+@pytest.mark.parametrize("non_finite", (float("nan"), float("inf"), float("-inf")))
+def test_canonical_json_rejects_non_finite_numbers(non_finite: float) -> None:
+    with pytest.raises(ValueError, match="Out of range float values"):
+        canonical_json_bytes({"value": non_finite})
+
+
+@pytest.mark.parametrize("non_finite", (float("nan"), float("inf"), float("-inf")))
+def test_manifest_rejects_nested_non_finite_provider_contract_value(non_finite: float) -> None:
+    raw = valid_run_manifest_dict()
+    raw["provider_contract"] = {"settings": {"threshold": non_finite}}
+    with pytest.raises(ReV2ModelError, match="provider_contract must contain JSON values"):
+        RunManifest.from_json_dict(raw)
+
+
 def test_artifact_identity_ignores_operational_budget() -> None:
     key = valid_artifact_key()
     assert key.identity == ArtifactKey.from_json_dict(key.to_json_dict()).identity
