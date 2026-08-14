@@ -2,11 +2,15 @@
 
 ## Status
 
-Approved for implementation planning on 2026-08-13 after architecture review.
-Execution is explicitly opt-in. The first release covers only `spec.md` repair
-in reverse engineering (RE) and normal Phase A specification authoring, plus the
-required controller-certified synchronization of Phase A's companion
-`requirements-overview.md` after repair convergence.
+Safety and certification invariants were approved on 2026-08-13 after
+architecture review. Implementation is deferred pending the RE execution-kernel,
+layering, convergence, and synthesis redesign tracked by EGR-164 through
+EGR-169. Before implementation planning, the RE adapter's state, routing,
+full-gate, budget, and publication integration must be revised against those
+interfaces. Execution remains explicitly opt-in. The intended first release
+covers only `spec.md` repair in reverse engineering (RE) and normal Phase A
+specification authoring, plus the required controller-certified synchronization
+of Phase A's companion `requirements-overview.md` after repair convergence.
 
 ## Problem
 

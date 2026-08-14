@@ -18,12 +18,10 @@ def analyze_re_run(run_dir: Path) -> RunAnalysis:
     outer = _read_object(run / "state.json")
     inner = _read_object(run / "re" / "state.json")
     manifest = _read_object(run / "telemetry" / "manifest.json")
-    profile = _profile(outer, inner, manifest)
+    profile, profile_source = _profile(outer, inner, manifest)
     spans, span_diagnostics = _spans(run, profile, manifest)
     tokens, known_dispatches, unknown_dispatches = _tokens(spans)
-    active_duration = _optional_nonnegative(
-        outer.get("active_duration_ms", inner.get("re_active_duration_ms"))
-    )
+    active_duration, active_duration_source = _active_duration(outer, inner)
     by_phase = _by_phase(spans)
     source_states = inner.get("re_source_states")
     sources = source_states if isinstance(source_states, Mapping) else {}
@@ -49,14 +47,7 @@ def analyze_re_run(run_dir: Path) -> RunAnalysis:
     repeated, blocking, non_blocking = _finding_summary(run, inner)
     audits = inner.get("re_semantic_domain_audits")
     audited_domains = len(audits) if isinstance(audits, Mapping) else 0
-    repaired_domains = sum(
-        1
-        for source_state in sources.values()
-        if isinstance(source_state, Mapping)
-        and isinstance(source_state.get("domain_repairs"), Mapping)
-        for count in source_state["domain_repairs"].values()
-        if _nonnegative(count) > 0
-    )
+    repaired_domains = _repaired_domain_count(sources, audits)
     validator_dispatches = by_phase.get("re-extract-5-validate", {}).get("dispatches", 0)
     audit_marker = inner.get("re_semantic_audit")
     semantic_status = (
@@ -75,7 +66,9 @@ def analyze_re_run(run_dir: Path) -> RunAnalysis:
         )
     if active_duration is None:
         diagnostics.append("active execution duration is unavailable")
-    wall_clock = _wall_clock_duration(run)
+    if audited_domains:
+        diagnostics.append("first-pass repair outcomes were not recorded")
+    wall_clock, wall_clock_source = _wall_clock_duration(outer, inner, spans)
     return RunAnalysis(
         schema_version=1,
         run_id=str(outer.get("run_id") or inner.get("run_id") or run.name),
@@ -98,9 +91,7 @@ def analyze_re_run(run_dir: Path) -> RunAnalysis:
         non_blocking_finding_count=non_blocking,
         audited_domain_count=audited_domains,
         repaired_domain_count=repaired_domains,
-        first_pass_repair_rate=(
-            repaired_domains / audited_domains if audited_domains else None
-        ),
+        first_pass_repair_rate=None,
         validator_dispatches_per_domain=(
             validator_dispatches / audited_domains if audited_domains else None
         ),
@@ -113,10 +104,10 @@ def analyze_re_run(run_dir: Path) -> RunAnalysis:
         ),
         compliance=compliance,
         provenance={
-            "profile": "telemetry/manifest.json" if manifest else "run state",
+            "profile": profile_source,
             "tokens": "telemetry/spans.jsonl" if spans else "unavailable",
-            "active_duration": "run state" if active_duration is not None else "unavailable",
-            "wall_clock_duration": "filesystem timestamps (approximate)",
+            "active_duration": active_duration_source,
+            "wall_clock_duration": wall_clock_source,
             "quality": "re/state.json and re/quality/sources",
         },
         diagnostics=tuple(diagnostics),
@@ -179,15 +170,31 @@ def _profile(
     outer: Mapping[str, object],
     inner: Mapping[str, object],
     manifest: Mapping[str, object],
-) -> dict[str, object]:
-    for raw in (
-        manifest.get("profile"),
-        outer.get("re_execution_profile"),
-        inner.get("re_execution_profile"),
+) -> tuple[dict[str, object], str]:
+    for raw, source in (
+        (inner.get("re_execution_profile"), "re/state.json"),
+        (outer.get("re_execution_profile"), "state.json"),
+        (manifest.get("profile"), "telemetry/manifest.json (creation snapshot)"),
     ):
         if isinstance(raw, Mapping):
-            return dict(raw)
-    return migrate_legacy_re_profile(inner).to_json_dict()
+            return dict(raw), source
+    return (
+        migrate_legacy_re_profile(inner).to_json_dict(),
+        "re/state.json (legacy migration)",
+    )
+
+
+def _active_duration(
+    outer: Mapping[str, object], inner: Mapping[str, object]
+) -> tuple[int | None, str]:
+    for raw, source in (
+        (inner.get("re_active_duration_ms"), "re/state.json"),
+        (outer.get("active_duration_ms"), "state.json"),
+    ):
+        value = _optional_nonnegative(raw)
+        if value is not None:
+            return value, source
+    return None, "unavailable"
 
 
 def _spans(
@@ -252,8 +259,31 @@ def _finding_summary(
     run: Path, inner: Mapping[str, object]
 ) -> tuple[dict[str, int], int, int]:
     messages: dict[str, int] = {}
+    aggregate = _read_object(run / "re/quality/semantic-quality-review.json")
+    failures = aggregate.get("failures")
+    if isinstance(failures, list):
+        for failure in failures:
+            if not isinstance(failure, Mapping):
+                continue
+            finding_records = failure.get("semantic_finding_records")
+            if isinstance(finding_records, list) and finding_records:
+                for finding in finding_records:
+                    if isinstance(finding, Mapping):
+                        _count_message(
+                            messages,
+                            finding.get("text")
+                            or finding.get("message")
+                            or finding.get("finding"),
+                        )
+                continue
+            raw_findings = failure.get("semantic_findings")
+            if isinstance(raw_findings, list):
+                for finding in raw_findings:
+                    _count_message(messages, finding)
+        repeated = {key: count for key, count in messages.items() if count > 1}
+        return dict(sorted(repeated.items())), len(failures), 0
+
     blocking = 0
-    non_blocking = 0
     audits = inner.get("re_semantic_domain_audits")
     records = audits.values() if isinstance(audits, Mapping) else ()
     for record in records:
@@ -263,38 +293,58 @@ def _finding_summary(
         findings = review.get("findings") if isinstance(review, Mapping) else None
         if not isinstance(findings, list):
             continue
+        if str(review.get("verdict") or "").upper() == "REPAIR":
+            blocking += 1
         for finding in findings:
             if isinstance(finding, str):
-                message = " ".join(finding.casefold().split())
-                severity = "non_blocking"
+                _count_message(messages, finding)
             elif isinstance(finding, Mapping):
-                raw_message = finding.get("message") or finding.get("finding") or finding.get("reason")
-                message = " ".join(str(raw_message or "unknown").casefold().split())
-                severity = str(finding.get("severity") or "non_blocking").casefold()
-            else:
-                continue
-            messages[message] = messages.get(message, 0) + 1
-            if severity in {"blocking", "critical", "error"}:
-                blocking += 1
-            else:
-                non_blocking += 1
-    aggregate = _read_object(run / "re/quality/semantic-quality-review.json")
-    failures = aggregate.get("failures")
-    if (not isinstance(audits, Mapping) or not audits) and isinstance(failures, list):
-        for failure in failures:
-            if not isinstance(failure, Mapping):
-                continue
-            raw_findings = failure.get("semantic_findings")
-            if not isinstance(raw_findings, list):
-                continue
-            for raw_finding in raw_findings:
-                message = " ".join(str(raw_finding).casefold().split())
-                if not message:
-                    continue
-                messages[message] = messages.get(message, 0) + 1
-                blocking += 1
+                _count_message(
+                    messages,
+                    finding.get("message")
+                    or finding.get("finding")
+                    or finding.get("reason"),
+                )
     repeated = {key: count for key, count in messages.items() if count > 1}
-    return dict(sorted(repeated.items())), blocking, non_blocking
+    return dict(sorted(repeated.items())), blocking, 0
+
+
+def _count_message(messages: dict[str, int], raw: object) -> None:
+    message = " ".join(str(raw or "").casefold().split())
+    if message:
+        messages[message] = messages.get(message, 0) + 1
+
+
+def _repaired_domain_count(
+    sources: Mapping[object, object], audits: object
+) -> int:
+    repaired: set[tuple[str, str]] = set()
+    for source_id, source_state in sources.items():
+        if not isinstance(source_state, Mapping):
+            continue
+        domain_repairs = source_state.get("domain_repairs")
+        if not isinstance(domain_repairs, Mapping):
+            continue
+        repaired.update(
+            (str(source_id), str(domain_id))
+            for domain_id, count in domain_repairs.items()
+            if _nonnegative(count) > 0
+        )
+    if not isinstance(audits, Mapping):
+        return len(repaired)
+
+    current: set[tuple[str, str]] = set()
+    for key, record in audits.items():
+        if isinstance(record, Mapping):
+            source_id = record.get("source_id")
+            domain_id = record.get("domain_id")
+            if isinstance(source_id, str) and isinstance(domain_id, str):
+                current.add((source_id, domain_id))
+                continue
+        if isinstance(key, str) and "/" in key:
+            source_id, domain_id = key.split("/", 1)
+            current.add((source_id, domain_id))
+    return len(repaired & current)
 
 
 def _compliance(
@@ -320,12 +370,57 @@ def _limit_status(value: int | None, limit: int | None) -> str:
     return "pass" if value <= limit else "exceeded"
 
 
-def _wall_clock_duration(run: Path) -> int | None:
-    paths = [path for path in run.rglob("*") if path.is_file()]
-    if not paths:
+def _wall_clock_duration(
+    outer: Mapping[str, object],
+    inner: Mapping[str, object],
+    spans: Iterable[ExecutionSpan],
+) -> tuple[int | None, str]:
+    for raw_intervals in (
+        inner.get("re_execution_intervals"),
+        outer.get("execution_intervals"),
+    ):
+        duration = _timestamp_range(raw_intervals, "started_at", "ended_at")
+        if duration is not None:
+            return duration, "RE lifecycle intervals"
+    duration = _timestamp_range(spans, "start_time", "end_time")
+    if duration is not None:
+        return duration, "telemetry span timestamps"
+    return None, "unavailable"
+
+
+def _timestamp_range(values: object, start_key: str, end_key: str) -> int | None:
+    if not isinstance(values, Iterable) or isinstance(
+        values, (str, bytes, Mapping)
+    ):
         return None
-    timestamps = [path.stat().st_mtime for path in paths]
-    return max(0, int((max(timestamps) - min(timestamps)) * 1000))
+    starts: list[datetime] = []
+    ends: list[datetime] = []
+    for value in values:
+        if isinstance(value, ExecutionSpan):
+            raw_start = getattr(value, start_key, None)
+            raw_end = getattr(value, end_key, None)
+        elif isinstance(value, Mapping):
+            raw_start = value.get(start_key)
+            raw_end = value.get(end_key)
+        else:
+            continue
+        start = _timestamp(raw_start)
+        end = _timestamp(raw_end)
+        if start is not None and end is not None:
+            starts.append(start)
+            ends.append(end)
+    if not starts:
+        return None
+    return max(0, int((max(ends) - min(starts)).total_seconds() * 1000))
+
+
+def _timestamp(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def _optional_nonnegative(value: object) -> int | None:

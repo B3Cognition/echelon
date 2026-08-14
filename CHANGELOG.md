@@ -34,6 +34,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-163 truthful RE analysis** — `echelon re analyze` now reads the
+  authoritative continued-run profile and active duration, reports canonical
+  semantic failures as blocking, intersects repair history with current audit
+  identities, leaves unavailable first-pass outcomes unset, and derives wall
+  clock from lifecycle intervals instead of copied-file timestamps. Token
+  summaries continue to expose known versus unknown dispatch coverage.
+
 - **RE transient provider recovery and terminal status** — Claude stream errors
   now preserve provider 5xx details even after earlier assistant output. A
   transient source-domain specification failure validates the staged artifact

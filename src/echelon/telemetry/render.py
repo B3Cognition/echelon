@@ -104,7 +104,7 @@ def render_analysis_text(analysis: RunAnalysis) -> str:
                 + (
                     f"{analysis.first_pass_repair_rate:.1%}"
                     if analysis.first_pass_repair_rate is not None
-                    else "not evaluated"
+                    else "unavailable"
                 ),
                 "Validator dispatches/domain: "
                 + (
