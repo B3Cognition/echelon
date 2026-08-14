@@ -366,6 +366,76 @@ class TestPhaseGraph:
                 frozenset({"phase1-why2"}), frozenset({"phase1-why2"}),
                 ("phase", "why_fail_count", "why2_metric_stagnation_count"), (), (),
             ),
+            (
+                "controller_safeguard",
+                "proportional_quality_budget_exhausted",
+                "proportional_quality_budget_exhausted",
+            ): (
+                "material", "require_human", "proportional_quality_debt", False,
+                frozenset({"phase1-why2"}),
+                frozenset({
+                    "phase1-what",
+                    "phase1-lexicon-derive",
+                    "checkpoint-assess",
+                    "terminal-blocked",
+                }),
+                (
+                    "phase",
+                    "phase1_quality_repair",
+                    "understanding_evidence",
+                    "proportional_quality_candidate_evidence",
+                ),
+                (),
+                (
+                    (
+                        "extend_once", "Extend once",
+                        "Authorize one final specification quality repair.",
+                        False, "medium", "phase1-what", None,
+                    ),
+                    (
+                        "continue_with_debt", "Continue with debt",
+                        "Accept the restored candidate with explicit quality debt.",
+                        False, "high", None, None,
+                    ),
+                    (
+                        "stop", "Stop",
+                        "Preserve the blocked run without accepting quality debt.",
+                        False, "low", "terminal-blocked", None,
+                    ),
+                ),
+            ),
+            (
+                "controller_safeguard",
+                "proportional_quality_extension_exhausted",
+                "proportional_quality_extension_exhausted",
+            ): (
+                "material", "require_human", "proportional_quality_debt", False,
+                frozenset({"phase1-why2"}),
+                frozenset({
+                    "phase1-lexicon-derive",
+                    "checkpoint-assess",
+                    "terminal-blocked",
+                }),
+                (
+                    "phase",
+                    "phase1_quality_repair",
+                    "understanding_evidence",
+                    "proportional_quality_candidate_evidence",
+                ),
+                (),
+                (
+                    (
+                        "continue_with_debt", "Continue with debt",
+                        "Accept the restored candidate with explicit quality debt.",
+                        False, "high", None, None,
+                    ),
+                    (
+                        "stop", "Stop",
+                        "Preserve the blocked run without accepting quality debt.",
+                        False, "low", "terminal-blocked", None,
+                    ),
+                ),
+            ),
             ("controller_safeguard", "agent_blocked", "agent_blocked"): (
                 "material", "require_human", "clarification_resume", True,
                 dispatch_phases, frozenset(),

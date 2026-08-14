@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 import json
+import math
 from types import MappingProxyType
 from typing import Any, Literal, Mapping
 
@@ -55,6 +56,7 @@ _RESOLUTION_HANDLERS = frozenset({
     "clarification_resume",
     "gate_outcome",
     "phase_dispatch_limit",
+    "proportional_quality_debt",
     "reset_why_fail_count",
     "reset_why2_stagnation",
 })
@@ -69,6 +71,9 @@ _CONTEXT_STATE_KEYS = frozenset({
     "phase_dispatch_limit_phase",
     "phase_dispatch_limit",
     "issue_resolution_ledger",
+    "phase1_quality_repair",
+    "understanding_evidence",
+    "proportional_quality_candidate_evidence",
 })
 _CONTEXT_ROOTS = ("{staging_dir}", "{spec_dir}", "{context_dir}", "{squad_dir}")
 _POLICY_FIELDS = frozenset({
@@ -528,6 +533,85 @@ class HumanInputResolution:
     resolved_by: Literal["user", "semi", "COMMANDER"]
 
 
+@dataclass(frozen=True)
+class ProportionalQualityRecommendationEvidence:
+    """Immutable score evidence for the bounded quality-budget recommendation."""
+
+    borderline_margin: float
+    previous_gates: tuple[tuple[str, float, float, bool], ...]
+    current_gates: tuple[tuple[str, float, float, bool], ...]
+    previous_formal_statement_count: int
+    formal_statement_count: int
+
+    def __post_init__(self) -> None:
+        margin = self.borderline_margin
+        if (
+            type(margin) not in {int, float}
+            or not math.isfinite(float(margin))
+            or margin < 0
+        ):
+            raise HumanInputPolicyError(
+                "borderline_margin must be a non-negative finite number"
+            )
+        object.__setattr__(self, "borderline_margin", float(margin))
+        for field in (
+            "previous_formal_statement_count",
+            "formal_statement_count",
+        ):
+            count = getattr(self, field)
+            if type(count) is not int or count < 0:
+                raise HumanInputPolicyError(
+                    f"{field} must be a non-negative integer"
+                )
+        previous = self._validate_gates(self.previous_gates, "previous_gates")
+        current = self._validate_gates(self.current_gates, "current_gates")
+        if {row[0] for row in previous} != {row[0] for row in current}:
+            raise HumanInputPolicyError(
+                "recommendation gate evidence must cover the same dimensions"
+            )
+        if not any(not row[3] for row in current):
+            raise HumanInputPolicyError(
+                "recommendation evidence requires a still-failing gate"
+            )
+        object.__setattr__(self, "previous_gates", previous)
+        object.__setattr__(self, "current_gates", current)
+
+    @staticmethod
+    def _validate_gates(
+        value: object,
+        field: str,
+    ) -> tuple[tuple[str, float, float, bool], ...]:
+        if type(value) is not tuple or not value:
+            raise HumanInputPolicyError(f"{field} must be a non-empty tuple")
+        normalized: list[tuple[str, float, float, bool]] = []
+        names: set[str] = set()
+        for index, row in enumerate(value):
+            if type(row) is not tuple or len(row) != 4:
+                raise HumanInputPolicyError(
+                    f"{field}[{index}] must be a complete gate tuple"
+                )
+            name, score, threshold, passed = row
+            if type(name) is not str or not name.strip() or name in names:
+                raise HumanInputPolicyError(
+                    f"{field} gate names must be non-empty and unique"
+                )
+            if (
+                type(score) not in {int, float}
+                or type(threshold) not in {int, float}
+                or not math.isfinite(float(score))
+                or not math.isfinite(float(threshold))
+                or type(passed) is not bool
+            ):
+                raise HumanInputPolicyError(
+                    f"{field}[{index}] contains malformed gate evidence"
+                )
+            names.add(name)
+            normalized.append(
+                (name, float(score), float(threshold), passed)
+            )
+        return tuple(normalized)
+
+
 class HumanInputPolicyRegistry:
     """An immutable registry addressed solely by exact policy triples."""
 
@@ -617,6 +701,120 @@ class HumanInputPolicyRegistry:
             resolution_handler=policy.resolution_handler,
             source_state_revision=source_state_revision,
         )
+
+
+def prepare_controller_proportional_quality_decision(
+    registry: HumanInputPolicyRegistry,
+    *,
+    reason_code: str,
+    phase_id: str,
+    question: str,
+    source_state_revision: int,
+    repair_state: Mapping[str, object],
+    recommendation_evidence: ProportionalQualityRecommendationEvidence,
+    option_contract: tuple[HumanInputOption, ...],
+) -> PreparedHumanInput:
+    """Prepare one quality-budget choice from sealed controller evidence.
+
+    The registered option tuple is validated in full before this helper changes
+    recommendation flags.  No provider-shaped options or recommendation inputs
+    enter this boundary.
+    """
+    if type(registry) is not HumanInputPolicyRegistry:
+        raise HumanInputPolicyError(
+            "proportional quality preparation requires a policy registry"
+        )
+    if reason_code not in {
+        "proportional_quality_budget_exhausted",
+        "proportional_quality_extension_exhausted",
+    }:
+        raise HumanInputPolicyError(
+            "reason_code is not a proportional quality decision"
+        )
+    policy = registry.lookup(
+        "controller_safeguard",
+        reason_code,
+        reason_code,
+    )
+    if type(option_contract) is not tuple or option_contract != policy.options:
+        raise HumanInputPolicyError(
+            "controller option contract does not match the registered policy"
+        )
+    if type(recommendation_evidence) is not ProportionalQualityRecommendationEvidence:
+        raise HumanInputPolicyError(
+            "recommendation evidence must be controller-validated"
+        )
+
+    try:
+        from harness.proportional_quality import validate_repair_state
+
+        validated_repair = validate_repair_state(repair_state)
+    except (TypeError, ValueError) as exc:
+        raise HumanInputPolicyError(
+            "proportional quality repair state is invalid"
+        ) from exc
+    if validated_repair["automatic_consumed"] != validated_repair["automatic_limit"]:
+        raise HumanInputPolicyError(
+            "proportional automatic quality budget is not exhausted"
+        )
+    if reason_code == "proportional_quality_budget_exhausted":
+        if (
+            validated_repair["extension_authorized"] != 0
+            or validated_repair["extension_consumed"] != 0
+        ):
+            raise HumanInputPolicyError(
+                "quality budget decision cannot be prepared after extension authorization"
+            )
+    elif (
+        validated_repair["extension_authorized"]
+        != validated_repair["extension_limit"]
+        or validated_repair["extension_consumed"]
+        != validated_repair["extension_limit"]
+    ):
+        raise HumanInputPolicyError(
+            "quality extension decision requires a consumed authorized extension"
+        )
+
+    current_failures = tuple(
+        row for row in recommendation_evidence.current_gates if not row[3]
+    )
+    previous_scores = {
+        name: score
+        for name, score, _threshold, _passed
+        in recommendation_evidence.previous_gates
+    }
+    should_extend = (
+        reason_code == "proportional_quality_budget_exhausted"
+        and all(
+            threshold - score <= recommendation_evidence.borderline_margin
+            for _name, score, threshold, _passed in current_failures
+        )
+        and all(
+            score > previous_scores[name]
+            for name, score, _threshold, _passed in current_failures
+        )
+        and recommendation_evidence.formal_statement_count
+        <= recommendation_evidence.previous_formal_statement_count
+    )
+    recommended_id = "extend_once" if should_extend else "continue_with_debt"
+    if recommended_id not in {option.id for option in policy.options}:
+        raise HumanInputPolicyError(
+            "registered policy does not contain the controller recommendation"
+        )
+
+    request = registry.prepare(
+        source_kind="controller_safeguard",
+        producer_id=reason_code,
+        phase_id=phase_id,
+        reason_code=reason_code,
+        question=question,
+        source_state_revision=source_state_revision,
+    )
+    prepared_options = tuple(
+        replace(option, recommended=option.id == recommended_id)
+        for option in option_contract
+    )
+    return replace(request, options=prepared_options)
 
 
 def legacy_recovery_policy_alias(
@@ -778,6 +976,110 @@ def controller_safeguard_policies() -> tuple[HumanInputPolicy, ...]:
             allowed_target_phases=frozenset({"phase1-why2"}),
             context_state_keys=("phase", "why_fail_count", "why2_metric_stagnation_count"),
             context_paths=(), options=(),
+        ),
+        HumanInputPolicy(
+            source_kind="controller_safeguard",
+            producer_id="proportional_quality_budget_exhausted",
+            reason_code="proportional_quality_budget_exhausted",
+            classification="material",
+            semi_policy="require_human",
+            resolution_handler="proportional_quality_debt",
+            allow_free_text=False,
+            allowed_phase_ids=frozenset({"phase1-why2"}),
+            allowed_target_phases=frozenset({
+                "phase1-what",
+                "phase1-lexicon-derive",
+                "checkpoint-assess",
+                "terminal-blocked",
+            }),
+            context_state_keys=(
+                "phase",
+                "phase1_quality_repair",
+                "understanding_evidence",
+                "proportional_quality_candidate_evidence",
+            ),
+            context_paths=(),
+            options=(
+                HumanInputOption(
+                    id="extend_once",
+                    label="Extend once",
+                    description=(
+                        "Authorize one final specification quality repair."
+                    ),
+                    recommended=False,
+                    risk_level="medium",
+                    next_phase="phase1-what",
+                    outcome=None,
+                ),
+                HumanInputOption(
+                    id="continue_with_debt",
+                    label="Continue with debt",
+                    description=(
+                        "Accept the restored candidate with explicit quality debt."
+                    ),
+                    recommended=False,
+                    risk_level="high",
+                    next_phase=None,
+                    outcome=None,
+                ),
+                HumanInputOption(
+                    id="stop",
+                    label="Stop",
+                    description=(
+                        "Preserve the blocked run without accepting quality debt."
+                    ),
+                    recommended=False,
+                    risk_level="low",
+                    next_phase="terminal-blocked",
+                    outcome=None,
+                ),
+            ),
+        ),
+        HumanInputPolicy(
+            source_kind="controller_safeguard",
+            producer_id="proportional_quality_extension_exhausted",
+            reason_code="proportional_quality_extension_exhausted",
+            classification="material",
+            semi_policy="require_human",
+            resolution_handler="proportional_quality_debt",
+            allow_free_text=False,
+            allowed_phase_ids=frozenset({"phase1-why2"}),
+            allowed_target_phases=frozenset({
+                "phase1-lexicon-derive",
+                "checkpoint-assess",
+                "terminal-blocked",
+            }),
+            context_state_keys=(
+                "phase",
+                "phase1_quality_repair",
+                "understanding_evidence",
+                "proportional_quality_candidate_evidence",
+            ),
+            context_paths=(),
+            options=(
+                HumanInputOption(
+                    id="continue_with_debt",
+                    label="Continue with debt",
+                    description=(
+                        "Accept the restored candidate with explicit quality debt."
+                    ),
+                    recommended=False,
+                    risk_level="high",
+                    next_phase=None,
+                    outcome=None,
+                ),
+                HumanInputOption(
+                    id="stop",
+                    label="Stop",
+                    description=(
+                        "Preserve the blocked run without accepting quality debt."
+                    ),
+                    recommended=False,
+                    risk_level="low",
+                    next_phase="terminal-blocked",
+                    outcome=None,
+                ),
+            ),
         ),
         HumanInputPolicy(
             source_kind="controller_safeguard", producer_id="agent_blocked",

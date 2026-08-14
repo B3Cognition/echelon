@@ -32,6 +32,9 @@ _V2_CLASSIFICATIONS = frozenset(
 )
 _V2_AUTONOMY_MODES = frozenset({"guided", "semi", "banzai"})
 _V2_RESOLVERS = frozenset({"user", "semi", "COMMANDER"})
+_V2_OPTION_REQUIRED_HANDLERS = frozenset(
+    {"phase_dispatch_limit", "proportional_quality_debt"}
+)
 _V2_OPTION_FIELDS = frozenset(
     {"id", "label", "description", "recommended", "risk_level", "next_phase", "outcome"}
 )
@@ -305,10 +308,10 @@ def validate_blocked_decision_v2(value: object) -> dict[str, object]:
         raise BlockedDecisionError("choice decisions cannot record answer_text")
     if (
         source_kind == "human_gate"
-        or value["resolution_handler"] == "phase_dispatch_limit"
+        or value["resolution_handler"] in _V2_OPTION_REQUIRED_HANDLERS
     ) and not options:
         raise BlockedDecisionError(
-            "human gate and phase dispatch decisions require at least one option"
+            "sealed choice decisions require at least one option"
         )
     if not options and selected_option_id is not None:
         raise BlockedDecisionError("free-text decisions cannot record selected_option_id")
