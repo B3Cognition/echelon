@@ -1,9 +1,21 @@
 """Behavioral contracts for canonical requirement projection."""
 
+from pathlib import Path
+
 import pytest
 
 from understanding.requirement_projection import project_requirements
-from understanding.service import parse_requirements
+from understanding.service import (
+    DEFAULT_QUALITY_GATES,
+    analyze_spec_bundle,
+    parse_requirements,
+)
+
+
+PROPORTIONAL_HELLO_WORLD_FIXTURE = (
+    Path(__file__).resolve().parents[1]
+    / "fixtures/understanding/proportional-hello-world-first-candidate.md"
+)
 
 
 SPEC = """# Requirements
@@ -42,6 +54,65 @@ def test_projection_separates_normative_text_constraints_and_traceability() -> N
     assert req.source_location.line_end == 4
     assert "Exit status" not in req.normative_text
     assert "AC-001" not in req.normative_text
+
+
+@pytest.mark.unit
+def test_retained_hello_world_candidate_has_consistent_explainable_quality_evidence() -> None:
+    """The retained live candidate cannot regain contradictory role evidence."""
+    spec_text = PROPORTIONAL_HELLO_WORLD_FIXTURE.read_text(encoding="utf-8")
+    projections = project_requirements(spec_text)
+
+    assert [projection.requirement_id for projection in projections] == [
+        "AC-001",
+        "AC-002",
+        "AC-003",
+        "AC-004",
+        "FR-001",
+        "FR-002",
+        "FR-003",
+        "FR-004",
+        "FR-005",
+        "FR-006",
+        "FR-007",
+        "FR-008",
+        "FR-009",
+    ]
+    assert all(
+        "User Story:" not in projection.normative_text
+        and "Priority:" not in projection.normative_text
+        for projection in projections
+    )
+
+    bundle = analyze_spec_bundle(
+        PROPORTIONAL_HELLO_WORLD_FIXTURE,
+        thresholds=DEFAULT_QUALITY_GATES,
+        enhanced=True,
+        use_nlp=False,
+    )
+
+    assert bundle.thresholds == {
+        "overall": 0.75,
+        "structure": 0.75,
+        "testability": 0.75,
+        "semantic": 0.65,
+        "cognitive": 0.65,
+        "readability": 0.55,
+        "depth": 0.40,
+        "behavioral": 0.55,
+    }
+    assert {
+        name for name, gate in bundle.gates.items() if not gate["pass"]
+    } == {"overall", "structure", "testability", "semantic"}
+
+    for evidence in bundle.per_requirement:
+        shared = evidence["shared_roles"]
+        semantic = evidence["semantic_roles"]
+        for singular, plural in (
+            ("actor", "actors"),
+            ("action", "actions"),
+            ("object", "objects"),
+        ):
+            assert bool(shared[singular]) is bool(semantic[plural])
 
 
 @pytest.mark.unit

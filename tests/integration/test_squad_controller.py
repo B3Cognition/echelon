@@ -76,6 +76,10 @@ from echelon.telemetry.spec_adapter import analyze_spec_run
 
 DEFINITION = EXT_ROOT / "runtime/workflow/definition.yaml"
 PROSAIC_SUBAGENTS = EXT_ROOT / "prosaic/subagents"
+PROPORTIONAL_HELLO_WORLD_FIXTURE = (
+    EXT_ROOT
+    / "tests/fixtures/understanding/proportional-hello-world-first-candidate.md"
+)
 
 
 _RAW_ATTESTATION_SECRET = "raw-attestation-secret"
@@ -7646,7 +7650,16 @@ class TestProportionalQualityController:
         tmp_path: Path,
     ) -> None:
         ctrl, store = _start_proportional_quality_loop(tmp_path)
-        initial_updates, why2 = _proportional_assessment_fixture(ctrl, store, 0)
+        retained_candidate = PROPORTIONAL_HELLO_WORLD_FIXTURE.read_text(
+            encoding="utf-8"
+        )
+        initial_updates, why2 = _proportional_assessment_fixture(
+            ctrl,
+            store,
+            0,
+            spec_text=retained_candidate,
+            requirement_count=13,
+        )
         state = store.load()
         state.update(initial_updates)
         store.save(state)
@@ -7666,7 +7679,7 @@ class TestProportionalQualityController:
                 + "".join(
                     f"- FR-{statement:03d}: The system shall render revision "
                     f"{assessment_index}, statement {statement}.\n"
-                    for statement in range(1, assessment_index + 2)
+                    for statement in range(1, assessment_index + 14)
                 )
             )
             assessment_updates, why2 = _proportional_assessment_fixture(
@@ -7675,7 +7688,7 @@ class TestProportionalQualityController:
                 assessment_index,
                 score=0.60,
                 spec_text=spec,
-                requirement_count=assessment_index + 1,
+                requirement_count=assessment_index + 13,
             )
             routes.append(
                 _coordinate_prepared_result(
@@ -7733,6 +7746,11 @@ class TestProportionalQualityController:
         assert blocked["blocked_decision"]["reason_code"] == (
             "proportional_quality_budget_exhausted"
         )
+        assert blocked["blocked_decision"]["status"] == "awaiting_human"
+        assert [
+            option["id"] for option in blocked["blocked_decision"]["options"]
+        ] == ["extend_once", "continue_with_debt", "stop"]
+        assert "spec_quality_certificate" not in blocked
         recommendation = blocked["proportional_quality_candidate_evidence"][
             "recommendation_evidence"
         ]
@@ -7752,8 +7770,8 @@ class TestProportionalQualityController:
                 / "quality-candidate-3.json"
             ).read_text(encoding="utf-8")
         )
-        assert recommendation["baseline_formal_statement_count"] == 1
-        assert recommendation["formal_statement_count"] == 4
+        assert recommendation["baseline_formal_statement_count"] == 13
+        assert recommendation["formal_statement_count"] == 16
         assert recommendation["formal_statement_growth"] == 3
         assert recommendation["baseline_byte_count"] == baseline_manifest["byte_count"]
         assert recommendation["byte_count"] == current_manifest["byte_count"]
@@ -7770,7 +7788,7 @@ class TestProportionalQualityController:
         assert blocked.get("why2_metric_stagnation_count", 0) == 0
         assert (tmp_path / "runs/run-test/specs/001-demo/spec.md").read_text(
             encoding="utf-8"
-        ).startswith("# Candidate 0")
+        ) == retained_candidate
 
     def test_valid_unchanged_automatic_what_opens_no_progress_decision(
         self,
