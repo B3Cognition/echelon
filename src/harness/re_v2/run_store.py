@@ -77,13 +77,16 @@ def create_run_store(run_dir: Path, manifest: RunManifest) -> ReV2Paths:
             os.fsync(fd)
         finally:
             os.close(fd)
-        if paths.manifest.exists() or paths.manifest.is_symlink():
-            raise ReV2RunStoreError(f"immutable v2 run manifest already exists: {paths.manifest}")
-        os.replace(temp_path, paths.manifest)
+        # Linking within this directory is an atomic no-clobber publication:
+        # unlike rename/replace, it cannot overwrite a competing creator.
+        os.link(temp_path, paths.manifest)
+        temp_path.unlink()
         temp_path = None
         _fsync_directory(paths.root)
     except ReV2RunStoreError:
         raise
+    except FileExistsError as exc:
+        raise ReV2RunStoreError(f"immutable v2 run manifest already exists: {paths.manifest}") from exc
     except OSError as exc:
         raise ReV2RunStoreError(f"cannot persist immutable v2 run manifest: {exc}") from exc
     finally:

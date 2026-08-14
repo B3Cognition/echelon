@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
 
 from harness.re_v2 import RE_V2_ENGINE, RE_V2_PROTOCOL
+from harness.re_v2.canonical import canonical_json_bytes
 from harness.re_v2.model import BudgetPolicy, RunManifest
 from harness.re_v2.run_store import (
     ReV2RunStoreError,
@@ -51,6 +53,31 @@ def test_run_manifest_is_create_once(tmp_path: Path) -> None:
     with pytest.raises(ReV2RunStoreError, match="already exists"):
         create_run_store(run_dir, first)
     assert load_run_manifest(run_dir) == first
+
+
+@pytest.mark.unit
+def test_interleaving_creator_cannot_overwrite_pinned_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A second creator that wins the final publish race keeps its own bytes."""
+    run_dir = tmp_path / "runs" / "re-1"
+    first = _manifest(run_id="re-1")
+    competing = RunManifest.from_json_dict(
+        {**first.to_json_dict(), "requested_goals": ["alternate-inventory"]}
+    )
+    real_link = os.link
+
+    def publish_competitor(source: str | bytes, destination: str | bytes, *args: object, **kwargs: object) -> None:
+        Path(destination).write_bytes(canonical_json_bytes(competing.to_json_dict()))
+        real_link(source, destination, *args, **kwargs)
+
+    monkeypatch.setattr("harness.re_v2.run_store.os.link", publish_competitor)
+
+    with pytest.raises(ReV2RunStoreError, match="already exists"):
+        create_run_store(run_dir, first)
+
+    assert load_run_manifest(run_dir) == competing
 
 
 @pytest.mark.unit
