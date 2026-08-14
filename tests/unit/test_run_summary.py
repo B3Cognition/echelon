@@ -299,6 +299,8 @@ def test_model_summary_rejects_success_wording_that_contradicts_accepted_debt(
         "There are zero quality failures.",
         "Specification quality reports an absence of deficiencies.",
         "The specification is concern-free.",
+        "Successfully fixed all specification quality issues.",
+        "Resolved every specification quality concern.",
     ),
 )
 def test_debt_mode_rejects_paraphrased_specification_quality_success_claims(
@@ -413,6 +415,9 @@ def test_debt_mode_preserves_non_verdict_work_and_debt_narration(
         "Implemented residual gates display in the CLI.",
         "Implemented handling when the specification is accepted with quality debt.",
         "Implemented provider session limit handling and reset messaging.",
+        "Documented residual gates in the CLI.",
+        "Displayed specs/001/quality-debt.json in status.",
+        "Handled provider session limit reset messaging.",
     ),
 )
 def test_authoritative_truth_dedup_preserves_genuine_action_narration(
@@ -463,6 +468,26 @@ def test_authoritative_truth_dedup_preserves_genuine_action_narration(
             "Wired planning",
             "absence of failures",
         ),
+        (
+            "Implemented downstream planning and it passed all checks.",
+            "Implemented downstream planning",
+            "passed all checks",
+        ),
+        (
+            "Added CLI status and certified the specification.",
+            "Added CLI status",
+            "certified the specification",
+        ),
+        (
+            "Implemented planning and met every quality standard.",
+            "Implemented planning",
+            "met every quality standard",
+        ),
+        (
+            "Updated CLI status and fixed all specification quality issues.",
+            "Updated CLI status",
+            "fixed all specification quality issues",
+        ),
     ),
 )
 def test_debt_mode_splits_action_narration_from_embedded_quality_verdict(
@@ -494,6 +519,42 @@ def test_debt_mode_splits_action_narration_from_embedded_quality_verdict(
     assert safe_action in summary
     assert forbidden_verdict not in summary.lower()
     assert "accepted with quality debt" in summary.lower()
+
+
+@pytest.mark.parametrize(
+    "narration",
+    (
+        "Implemented downstream planning and updated verification wiring.",
+        "Documented residual gates and provider reset behavior.",
+        "Added CLI status and surfaced debt evidence.",
+        "Tested planning and fixed CLI rendering.",
+    ),
+)
+def test_debt_mode_preserves_ordinary_coordinated_work_actions(
+    tmp_path: Path,
+    narration: str,
+) -> None:
+    context = RunSummaryContext(
+        project_root=tmp_path,
+        command="echelon spec run",
+        task="Prepare a proportional specification.",
+        status="done",
+        quality_debt_status="accepted_with_debt",
+        quality_debt_artifact="specs/001-demo/quality-debt.json",
+        quality_debt_failed_gates=("overall 0.70 < 0.80",),
+        quality_debt_resolved_by="COMMANDER",
+    )
+    provider = _RecordingProvider(
+        CliRunResult(exit_code=0, stdout=narration, stderr="")
+    )
+
+    summary = summarize_run(
+        context,
+        provider=provider,
+        agent=SummaryAgent(prompt="Summarize.", metadata={}),
+    )
+
+    assert narration in summary
 
 
 def test_session_limit_and_quality_debt_implementation_narration_are_deduplicated(
@@ -536,6 +597,39 @@ def test_session_limit_and_quality_debt_implementation_narration_are_deduplicate
     assert len(summary.splitlines()) <= 7
     assert len(summary) <= 1_200
     assert "accepted with quality debt" in summary.lower()
+
+
+def test_pure_debt_and_session_limit_truth_echoes_are_deduplicated(
+    tmp_path: Path,
+) -> None:
+    provider_message = "You've hit your session limit · resets 4am"
+    context = RunSummaryContext(
+        project_root=tmp_path,
+        command="echelon spec run",
+        task="Prepare a proportional specification.",
+        status="done",
+        quality_debt_status="accepted_with_debt",
+        quality_debt_artifact="specs/001-demo/quality-debt.json",
+        quality_debt_failed_gates=("overall 0.70 < 0.80",),
+        quality_debt_resolved_by="COMMANDER",
+        provider_limit_message=provider_message,
+    )
+    provider = _RecordingProvider(
+        CliRunResult(
+            exit_code=0,
+            stdout=f"Accepted with quality debt.\n{provider_message}",
+            stderr="",
+        )
+    )
+
+    summary = summarize_run(
+        context,
+        provider=provider,
+        agent=SummaryAgent(prompt="Summarize.", metadata={}),
+    )
+
+    assert summary.lower().count("accepted with quality debt") == 1
+    assert summary.count(provider_message) == 1
 
 
 def test_long_obedient_model_summary_is_bounded_and_truths_are_deduplicated(

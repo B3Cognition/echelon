@@ -207,13 +207,35 @@ def _asserts_specification_quality_success(clause: str) -> bool:
         clause,
         flags=re.IGNORECASE | re.DOTALL,
     )
-    return bool(domain and (positive_verdict or clean_bill or exhaustive))
+    exhaustive_resolution = re.search(
+        r"(?:\b(?:fix(?:ed)?|resolv(?:e|ed)|eliminat(?:e|ed)|remov(?:e|ed)|"
+        r"address(?:ed)?|clear(?:ed)?|clos(?:e|ed))\b.{0,40}\b(?:all|every)\b"
+        r".{0,100}\b(?:spec(?:ification)?|quality|gates?|checks?|issues?|"
+        r"defects?|deficiencies|concerns?|failures?|findings?|problems?|"
+        r"gaps?|debt)\b|\b(?:all|every)\b.{0,100}\b(?:issues?|defects?|"
+        r"deficiencies|concerns?|failures?|findings?|problems?|gaps?|debt)\b"
+        r".{0,40}\b(?:fix(?:ed)?|resolv(?:e|ed)|eliminat(?:e|ed)|"
+        r"remov(?:e|ed)|address(?:ed)?|clear(?:ed)?|clos(?:e|ed))\b)",
+        clause,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    return bool(
+        domain
+        and (
+            positive_verdict
+            or clean_bill
+            or exhaustive
+            or exhaustive_resolution
+        )
+    )
 
 
 def _is_work_action_clause(clause: str) -> bool:
+    """Recognize a completed-work predicate only at the start of one claim."""
     return bool(
         re.search(
-            r"\b(?:implemented|added|fixed|updated|wired|surfaced|preserved|tested)\b",
+            r"^\s*(?:(?:[a-z][a-z-]*ly)\s+)*(?!(?:accepted|reached|exceeded)\b)"
+            r"(?:[a-z][a-z-]*ed|built|wrote|made|ran|set|put)\b",
             clause,
             flags=re.IGNORECASE,
         )
@@ -221,18 +243,63 @@ def _is_work_action_clause(clause: str) -> bool:
 
 
 def _independent_claim_segments(sentence: str) -> list[str]:
-    return [
-        segment.strip()
-        for segment in re.split(
-            r"\s*,\s*(?=(?:while|but|although)\b)|"
-            r"\s+and\s+(?=(?:(?:the\s+)?spec(?:ification)?(?:\s+quality)?|"
-            r"quality|(?:all|every|no)\s+(?:spec(?:ification)?|quality|gates?|"
-            r"checks?))\b)",
-            sentence,
-            flags=re.IGNORECASE,
-        )
-        if segment.strip()
-    ]
+    contrast_parts = re.split(
+        r"\s*,\s*(?=(?:while|but|although)\b)",
+        sentence,
+        flags=re.IGNORECASE,
+    )
+    segments: list[str] = []
+    for part in contrast_parts:
+        remaining = part.strip()
+        while remaining:
+            split = next(
+                (
+                    match
+                    for match in re.finditer(
+                        r"\s+and\s+",
+                        remaining,
+                        flags=re.IGNORECASE,
+                    )
+                    if _starts_verdict_like_claim(remaining[match.end() :])
+                ),
+                None,
+            )
+            if split is None:
+                segments.append(remaining)
+                break
+            left = remaining[: split.start()].strip()
+            if left:
+                segments.append(left)
+            remaining = remaining[split.end() :].strip()
+    return segments
+
+
+def _starts_verdict_like_claim(value: str) -> bool:
+    direct_verdict = re.match(
+        r"\s*(?:(?:the\s+)?spec(?:ification)?(?:\s+quality)?\b|quality\b|"
+        r"(?:all|every|no)\s+(?:spec(?:ification)?|requirements?|quality|"
+        r"gates?|checks?|standards?|criteria|criterion)\b|"
+        r"(?:it|they|this|that)\s+(?:(?:has|have|had|is|are|was|were)\s+)?"
+        r"(?:pass|succeed|compli|certif|clear|clean|satisf|meet|met|validat|"
+        r"approv|exceed|surpass|achiev|fulfill|conform|flawless|perfect|"
+        r"good|ready)|"
+        r"(?:pass|succeed|compli|certif|clear|resolv|eliminat|satisf|meet|"
+        r"met|validat|approv|exceed|surpass|achiev|fulfill|conform)\w*\b|"
+        r"(?:is|are|was|were)\s+(?:clean|certified|compliant|successful|"
+        r"complete|debt-free|flawless|perfect|good|ready)\b)",
+        value,
+        flags=re.IGNORECASE,
+    )
+    exhaustive_resolution = re.match(
+        r"\s*(?:fix(?:ed)?|resolv(?:e|ed)|eliminat(?:e|ed)|remov(?:e|ed)|"
+        r"address(?:ed)?|clear(?:ed)?|clos(?:e|ed))\b.{0,40}\b(?:all|every)\b"
+        r".{0,100}\b(?:spec(?:ification)?|requirements?|quality|gates?|"
+        r"checks?|issues?|defects?|deficiencies|concerns?|failures?|findings?|"
+        r"problems?|gaps?|debt)\b",
+        value,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    return bool(direct_verdict or exhaustive_resolution)
 
 
 def _safe_debt_narrative_clauses(summary: str) -> list[str]:
