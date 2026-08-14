@@ -4,9 +4,12 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
+
 from harness.phase1_quality import (
     build_phase1_quality_certificate,
     has_current_phase1_quality_certificate,
+    has_current_phase1_quality_prerequisite,
 )
 
 
@@ -132,3 +135,34 @@ def test_phase1_quality_certificate_requires_passing_why2_completion(
         state,
         project_root=tmp_path,
     )
+
+
+@pytest.mark.parametrize(
+    ("passing_certificate", "current_debt", "expected"),
+    [
+        (True, False, True),
+        (False, True, True),
+        (True, True, True),
+        (False, False, False),
+    ],
+)
+def test_phase1_quality_prerequisite_is_the_explicit_certificate_or_debt_union(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    passing_certificate: bool,
+    current_debt: bool,
+    expected: bool,
+) -> None:
+    monkeypatch.setattr(
+        "harness.phase1_quality.has_current_phase1_quality_certificate",
+        lambda *_args, **_kwargs: passing_certificate,
+    )
+    monkeypatch.setattr(
+        "harness.phase1_quality.has_current_quality_debt_authorization",
+        lambda *_args, **_kwargs: current_debt,
+    )
+
+    assert has_current_phase1_quality_prerequisite(
+        {},
+        project_root=tmp_path,
+    ) is expected

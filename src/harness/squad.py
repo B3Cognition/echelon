@@ -76,7 +76,7 @@ from harness.phase_a_readiness import (
 from harness.phase_checkpoints import create_phase_checkpoint
 from harness.phase1_quality import (
     build_phase1_quality_certificate,
-    has_current_phase1_quality_certificate,
+    has_current_phase1_quality_prerequisite,
 )
 from harness.phase1_quality_debt import build_quality_debt_authorization
 from harness.proportional_quality import (
@@ -3942,6 +3942,7 @@ class SquadController:
                     candidate=candidate,
                     candidate_manifest=manifest_path,
                     repair_state=repair,
+                    decision=decision,
                     decision_id=str(decision["id"]),
                     resolved_by=resolution.resolved_by,
                 )
@@ -5481,7 +5482,7 @@ class SquadController:
         if phase not in protected:
             return phase
         state = self._state_store.load()
-        if has_current_phase1_quality_certificate(
+        if has_current_phase1_quality_prerequisite(
             state,
             project_root=self._project_root,
         ):
@@ -5507,6 +5508,7 @@ class SquadController:
                 if item not in invalidated
             }
         state.pop("spec_quality_certificate", None)
+        state.pop("spec_quality_debt_authorization", None)
         state["iteration"] = 0
         state["why_fail_count"] = 0
         state["convergence_forced"] = False
@@ -5516,7 +5518,7 @@ class SquadController:
         state["phase"] = "phase1-understanding"
         self._state_store.save(state)
         print(
-            f"[squad] {phase}: Phase 1 quality certificate missing or stale; "
+            f"[squad] {phase}: Phase 1 quality prerequisite missing or stale; "
             "routing through phase1-understanding",
             flush=True,
         )
@@ -9345,6 +9347,7 @@ class SquadController:
         }
         if node.id == "phase1-what":
             state_removals.add("spec_quality_certificate")
+            state_removals.add("spec_quality_debt_authorization")
             state_removals.update(lexicon_certification_fields)
             # A remediation is only complete when the canonical specification
             # actually changed. Keeping its controller context through a no-op
@@ -9987,6 +9990,42 @@ class SquadController:
             return {}
         state = snapshot.state
         updates: dict[str, object] = {}
+        spec_ref = str(state.get("spec_dir") or "").strip()
+        if "spec_quality_debt_authorization" in state and not spec_ref:
+            raise ControllerStateContractViolation(
+                "quality-debt amendment specification root is missing",
+                contract="routing",
+                json_path="$.spec_dir",
+                validator="required",
+            )
+        if spec_ref:
+            spec_dir = Path(spec_ref)
+            if not spec_dir.is_absolute():
+                spec_dir = self._project_root / spec_dir
+            debt_path = spec_dir.resolve() / "quality-debt.json"
+            try:
+                debt_ref = debt_path.relative_to(
+                    self._project_root.resolve()
+                ).as_posix()
+            except ValueError as exc:
+                raise ControllerStateContractViolation(
+                    "quality-debt amendment path escapes the project",
+                    contract="routing",
+                    json_path="$.spec_dir",
+                    validator="path_scope",
+                ) from exc
+            if (
+                "spec_quality_debt_authorization" in state
+                or debt_path.exists()
+            ):
+                updates["_proportional_quality_effect"] = {
+                    "kind": "proportional_quality",
+                    "operation": "debt_remove",
+                    "payload": {
+                        "operation": "debt_remove",
+                        "debt_path": debt_ref,
+                    },
+                }
         quality_remediation = state.get("quality_gate_remediation")
         if (
             prepared.verdict.upper() == "DONE"

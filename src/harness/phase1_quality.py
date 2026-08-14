@@ -8,6 +8,7 @@ import re
 from pathlib import Path
 from typing import Mapping
 
+from harness.phase1_quality_debt import has_current_quality_debt_authorization
 from harness.understanding_gate import has_current_understanding_evidence
 
 
@@ -94,6 +95,21 @@ def has_current_phase1_quality_certificate(
     if current is None:
         return False
     return dict(stored) == current
+
+
+def has_current_phase1_quality_prerequisite(
+    state: Mapping[str, object],
+    *,
+    project_root: Path,
+) -> bool:
+    """Accept an unchanged PASS certificate or explicit current debt authority."""
+    return has_current_phase1_quality_certificate(
+        state,
+        project_root=project_root,
+    ) or has_current_quality_debt_authorization(
+        state,
+        project_root=project_root,
+    )
 
 
 def _spec_path(

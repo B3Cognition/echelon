@@ -120,6 +120,7 @@ ROUTING_AND_HISTORY_IDENTITY_KEYS = frozenset(
 LIFECYCLE_AND_DIAGNOSTIC_KEYS = frozenset(
     {
         "phase1_quality_repair",
+        "spec_quality_debt_authorization",
         "status",
         "blocked_reason",
         "blocked_detail",
@@ -196,6 +197,7 @@ TRUSTED_ROUTING_EFFECT_KEYS = frozenset(
         "status",
         "blocked_reason",
         "phase1_quality_repair",
+        "spec_quality_debt_authorization",
         "controller_contract_error",
         "recovery_instruction",
         "blocked_decision",

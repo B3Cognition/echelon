@@ -7533,6 +7533,10 @@ class TestProportionalQualityController:
                 "state_contract",
                 "controller_state_contract_validation_failed",
             ),
+            (
+                "debt_state_contract",
+                "controller_state_contract_validation_failed",
+            ),
         ],
     )
     def test_operational_what_failures_leave_extension_recoverable(
@@ -7610,6 +7614,12 @@ class TestProportionalQualityController:
             valid_payload["state_updates"] = {
                 "evidence_resolution_status": "not_required",
                 "phase1_quality_repair": {"forged": True},
+            }
+        elif failure_kind == "debt_state_contract":
+            assert valid_payload is not None
+            valid_payload["state_updates"] = {
+                "evidence_resolution_status": "not_required",
+                "spec_quality_debt_authorization": {"forged": True},
             }
         provider.exec_agent.return_value = SquadAgentResult(
             exit_code=exit_code,
@@ -11360,7 +11370,7 @@ class TestLexiconGateGuardDeterminism:
             raw_output="", duration_ms=0, timed_out=False,
         )
 
-    def test_lexicon_derivation_requires_current_spec_quality_certificate(
+    def test_lexicon_derivation_requires_current_phase1_quality_prerequisite(
         self,
         tmp_path,
         monkeypatch,
@@ -11387,7 +11397,7 @@ class TestLexiconGateGuardDeterminism:
         )
         store.save(state)
         monkeypatch.setattr(
-            "harness.squad.has_current_phase1_quality_certificate",
+            "harness.squad.has_current_phase1_quality_prerequisite",
             lambda *_args, **_kwargs: False,
             raising=False,
         )
@@ -11402,7 +11412,7 @@ class TestLexiconGateGuardDeterminism:
         assert "phase1-why2" not in persisted["completed_phases"]
         assert "phase1-lexicon-derive" not in persisted["phase_dispatch_counts"]
 
-    def test_current_spec_quality_certificate_allows_lexicon_derivation(
+    def test_current_phase1_quality_prerequisite_allows_lexicon_derivation(
         self,
         tmp_path,
         monkeypatch,
@@ -11412,7 +11422,7 @@ class TestLexiconGateGuardDeterminism:
         state["phase"] = "phase1-lexicon-derive"
         store.save(state)
         monkeypatch.setattr(
-            "harness.squad.has_current_phase1_quality_certificate",
+            "harness.squad.has_current_phase1_quality_prerequisite",
             lambda *_args, **_kwargs: True,
             raising=False,
         )
@@ -11432,7 +11442,7 @@ class TestLexiconGateGuardDeterminism:
         state["phase"] = "phase3-plan"
         store.save(state)
         monkeypatch.setattr(
-            "harness.squad.has_current_phase1_quality_certificate",
+            "harness.squad.has_current_phase1_quality_prerequisite",
             lambda *_args, **_kwargs: False,
             raising=False,
         )
@@ -11482,7 +11492,7 @@ class TestLexiconGateGuardDeterminism:
 
         assert enrichment.updates["spec_quality_certificate"] == certificate
 
-    def test_spec_and_lexicon_writes_invalidate_only_owned_certificates(
+    def test_spec_and_lexicon_writes_invalidate_only_owned_quality_authority(
         self,
         tmp_path,
     ):
@@ -11510,7 +11520,9 @@ class TestLexiconGateGuardDeterminism:
         )
 
         assert "spec_quality_certificate" in what.state_removals
+        assert "spec_quality_debt_authorization" in what.state_removals
         assert "spec_quality_certificate" not in derive.state_removals
+        assert "spec_quality_debt_authorization" not in derive.state_removals
         assert {
             "lexicon_evaluation",
             "lexicon_pass",
@@ -11523,6 +11535,182 @@ class TestLexiconGateGuardDeterminism:
             "lexicon_findings",
             "lexicon_report",
         }.issubset(derive.state_removals)
+
+    def test_current_debt_authorization_allows_lexicon_derivation(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        ctrl, store = _start_proportional_quality_loop(
+            tmp_path,
+            automatic_consumed=3,
+        )
+        updates, why2 = _proportional_assessment_fixture(ctrl, store, 0)
+        state = store.load()
+        state.update(updates)
+        store.save(state)
+        _coordinate_prepared_result(ctrl, ctrl._graph.get("phase1-why2"), why2)
+        assert ctrl.resume_with_human_input("continue_with_debt")
+
+        assert (
+            ctrl._guard_phase1_quality_evidence("phase1-lexicon-derive")
+            == "phase1-lexicon-derive"
+        )
+
+    def test_invalid_debt_authorization_routes_through_understanding_fail_closed(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        ctrl, store = _start_proportional_quality_loop(
+            tmp_path,
+            automatic_consumed=3,
+        )
+        updates, why2 = _proportional_assessment_fixture(ctrl, store, 0)
+        state = store.load()
+        state.update(updates)
+        store.save(state)
+        _coordinate_prepared_result(ctrl, ctrl._graph.get("phase1-why2"), why2)
+        assert ctrl.resume_with_human_input("continue_with_debt")
+        debt_path = tmp_path / "runs/run-test/specs/001-demo/quality-debt.json"
+        debt_path.write_bytes(debt_path.read_bytes() + b"\n")
+
+        assert (
+            ctrl._guard_phase1_quality_evidence("checkpoint-assess")
+            == "phase1-understanding"
+        )
+        invalidated = store.load()
+        assert invalidated["phase"] == "phase1-understanding"
+        assert "spec_quality_debt_authorization" not in invalidated
+        assert debt_path.exists()
+
+    def test_what_amendment_removes_debt_only_after_recoverable_state_authority(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        ctrl, store = _start_proportional_quality_loop(
+            tmp_path,
+            automatic_consumed=3,
+        )
+        updates, why2 = _proportional_assessment_fixture(ctrl, store, 0)
+        state = store.load()
+        state.update(updates)
+        store.save(state)
+        _coordinate_prepared_result(ctrl, ctrl._graph.get("phase1-why2"), why2)
+        assert ctrl.resume_with_human_input("continue_with_debt")
+
+        debt_path = tmp_path / "runs/run-test/specs/001-demo/quality-debt.json"
+        spec_path = tmp_path / "runs/run-test/specs/001-demo/spec.md"
+        state = store.load()
+        state.update(
+            {
+                "phase": "phase1-what",
+                "spec_quality_certificate": {"stale": True},
+            }
+        )
+        store.save(state)
+        spec_path.write_text("# Amended specification\n", encoding="utf-8")
+        result = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "DONE",
+                "state_updates": {
+                    "evidence_resolution_status": "not_required",
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        node = ctrl._graph.get("phase1-what")
+        snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+        decision = ctrl._coordinate_transition_routing(
+            node,
+            ctrl._prepare_phase_result(node, result, snapshot),
+            snapshot,
+        )
+
+        before_authority = store.load()
+        assert debt_path.exists()
+        assert "spec_quality_debt_authorization" in before_authority
+        assert "spec_quality_certificate" in before_authority
+
+        assert ctrl._advance_prepared_result_or_block(node, decision) is not None
+        amended = store.load()
+        assert not debt_path.exists()
+        assert "spec_quality_debt_authorization" not in amended
+        assert "spec_quality_certificate" not in amended
+        assert PENDING_CONTROLLER_COMPLETION_KEY not in amended
+
+    def test_what_debt_removal_failure_recovers_before_downstream_dispatch(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store = _start_proportional_quality_loop(
+            tmp_path,
+            automatic_consumed=3,
+        )
+        updates, why2 = _proportional_assessment_fixture(ctrl, store, 0)
+        state = store.load()
+        state.update(updates)
+        store.save(state)
+        _coordinate_prepared_result(ctrl, ctrl._graph.get("phase1-why2"), why2)
+        assert ctrl.resume_with_human_input("continue_with_debt")
+
+        debt_path = tmp_path / "runs/run-test/specs/001-demo/quality-debt.json"
+        spec_path = tmp_path / "runs/run-test/specs/001-demo/spec.md"
+        state = store.load()
+        state["phase"] = "phase1-what"
+        store.save(state)
+        spec_path.write_text("# Amended specification\n", encoding="utf-8")
+        real_effect = squad_module.apply_or_verify_proportional_quality_effect
+
+        def fail_removal(*args: object, **kwargs: object) -> object:
+            raise CompletionError("stage_io")
+
+        monkeypatch.setattr(
+            squad_module,
+            "apply_or_verify_proportional_quality_effect",
+            fail_removal,
+        )
+        node = ctrl._graph.get("phase1-what")
+        snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+        decision = ctrl._coordinate_transition_routing(
+            node,
+            ctrl._prepare_phase_result(
+                node,
+                SquadAgentResult(
+                    exit_code=0,
+                    echelon_result={
+                        "verdict": "DONE",
+                        "state_updates": {
+                            "evidence_resolution_status": "not_required",
+                        },
+                    },
+                    raw_output="",
+                    duration_ms=0,
+                    timed_out=False,
+                ),
+                snapshot,
+            ),
+            snapshot,
+        )
+        assert ctrl._advance_prepared_result_or_block(node, decision) is None
+
+        pending = store.load()
+        assert debt_path.exists()
+        assert "spec_quality_debt_authorization" not in pending
+        assert PENDING_CONTROLLER_COMPLETION_KEY in pending
+        assert pending["blocked_reason"] == "controller_completion_pending"
+
+        monkeypatch.setattr(
+            squad_module,
+            "apply_or_verify_proportional_quality_effect",
+            real_effect,
+        )
+        recovered = ctrl._drain_pending_controller_completion()
+        assert recovered.recovered is True
+        assert not debt_path.exists()
+        assert PENDING_CONTROLLER_COMPLETION_KEY not in store.load()
 
     def test_spec_lexicon_node_certifies_valid_artifact_without_provider(self, tmp_path):
         provider = _mock_provider()
