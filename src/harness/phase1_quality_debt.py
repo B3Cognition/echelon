@@ -508,6 +508,323 @@ def _failed_gates(
     return failed
 
 
+def _atomic_exchange_files(
+    directory_fd: int,
+    first_name: str,
+    second_name: str,
+) -> None:
+    """Atomically exchange two entries within one pinned directory."""
+    import ctypes
+    import ctypes.util
+    import sys
+
+    library_name = ctypes.util.find_library("c")
+    if library_name is None:
+        raise OSError("atomic file exchange is unavailable")
+    libc = ctypes.CDLL(library_name, use_errno=True)
+    first = os.fsencode(first_name)
+    second = os.fsencode(second_name)
+    if sys.platform == "darwin" and hasattr(libc, "renameatx_np"):
+        function = libc.renameatx_np
+        function.argtypes = (
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        )
+        function.restype = ctypes.c_int
+        result = function(
+            directory_fd,
+            first,
+            directory_fd,
+            second,
+            0x00000002,  # RENAME_SWAP
+        )
+    elif hasattr(libc, "renameat2"):
+        function = libc.renameat2
+        function.argtypes = (
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        )
+        function.restype = ctypes.c_int
+        result = function(
+            directory_fd,
+            first,
+            directory_fd,
+            second,
+            0x00000002,  # RENAME_EXCHANGE
+        )
+    else:
+        raise OSError("atomic file exchange is unavailable")
+    if result != 0:
+        error_number = ctypes.get_errno()
+        raise OSError(error_number, os.strerror(error_number))
+
+
+def _pinned_replace_file(
+    path: Path,
+    content: bytes,
+    *,
+    expected_preimage_sha256: str | None,
+) -> None:
+    """Install bytes only across a pinned final-preimage exchange."""
+    expected = (
+        {"kind": "missing"}
+        if expected_preimage_sha256 is None
+        else {
+            "kind": "file",
+            "sha256": expected_preimage_sha256,
+        }
+    )
+    postimage = {
+        "kind": "file",
+        "sha256": hashlib.sha256(content).hexdigest(),
+    }
+    parent = path.parent
+    try:
+        parent_before = os.lstat(parent)
+        if stat.S_ISLNK(parent_before.st_mode) or not stat.S_ISDIR(
+            parent_before.st_mode
+        ):
+            raise OSError("quality-debt parent is not a directory")
+        parent_fd = os.open(
+            parent,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+        )
+    except OSError as exc:
+        raise QualityCandidateIntegrityError(
+            "quality-debt artifact persistence failed"
+        ) from exc
+
+    temporary_name = f".{path.name}-{secrets.token_hex(12)}.tmp"
+    temporary_fd: int | None = None
+    preserve_temporary = False
+
+    def mismatch() -> None:
+        raise QualityCandidateIntegrityError(
+            "quality-debt artifact preimage changed"
+        )
+
+    def entry_token_at(name: str) -> tuple[object, ...]:
+        try:
+            metadata = os.stat(
+                name,
+                dir_fd=parent_fd,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            return ("missing",)
+        return (
+            "entry",
+            stat.S_IFMT(metadata.st_mode),
+            metadata.st_mode,
+            metadata.st_dev,
+            metadata.st_ino,
+            metadata.st_nlink,
+            metadata.st_size,
+            metadata.st_mtime_ns,
+            getattr(metadata, "st_flags", None),
+            getattr(metadata, "st_gen", None),
+        )
+
+    def descriptor_at(name: str) -> dict[str, object]:
+        try:
+            metadata = os.stat(
+                name,
+                dir_fd=parent_fd,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            return {"kind": "missing"}
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(
+            metadata.st_mode
+        ):
+            mismatch()
+        try:
+            descriptor = os.open(
+                name,
+                os.O_RDONLY
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_NONBLOCK", 0),
+                dir_fd=parent_fd,
+            )
+        except OSError:
+            mismatch()
+        try:
+            opened = os.fstat(descriptor)
+            before = (
+                opened.st_dev,
+                opened.st_ino,
+                opened.st_size,
+                opened.st_mtime_ns,
+                opened.st_ctime_ns,
+            )
+            if not stat.S_ISREG(opened.st_mode) or before[:3] != (
+                metadata.st_dev,
+                metadata.st_ino,
+                metadata.st_size,
+            ):
+                mismatch()
+            remaining = opened.st_size
+            digest = hashlib.sha256()
+            while remaining:
+                chunk = os.read(descriptor, min(1_048_576, remaining))
+                if not chunk:
+                    mismatch()
+                digest.update(chunk)
+                remaining -= len(chunk)
+            after = os.fstat(descriptor)
+            if (
+                after.st_dev,
+                after.st_ino,
+                after.st_size,
+                after.st_mtime_ns,
+                after.st_ctime_ns,
+            ) != before:
+                mismatch()
+            try:
+                current = os.stat(
+                    name,
+                    dir_fd=parent_fd,
+                    follow_symlinks=False,
+                )
+            except OSError:
+                mismatch()
+            if (
+                current.st_dev,
+                current.st_ino,
+                current.st_size,
+                current.st_mtime_ns,
+                current.st_ctime_ns,
+            ) != before:
+                mismatch()
+            return {"kind": "file", "sha256": digest.hexdigest()}
+        finally:
+            os.close(descriptor)
+
+    try:
+        opened_parent = os.fstat(parent_fd)
+        if (
+            opened_parent.st_dev,
+            opened_parent.st_ino,
+        ) != (
+            parent_before.st_dev,
+            parent_before.st_ino,
+        ):
+            mismatch()
+        temporary_fd = os.open(
+            temporary_name,
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+            dir_fd=parent_fd,
+        )
+        view = memoryview(content)
+        while view:
+            written = os.write(temporary_fd, view)
+            if written <= 0:
+                raise OSError("short quality-debt write")
+            view = view[written:]
+        os.fsync(temporary_fd)
+        os.close(temporary_fd)
+        temporary_fd = None
+        postimage_token = entry_token_at(temporary_name)
+
+        current = descriptor_at(path.name)
+        if current != postimage:
+            if current != expected:
+                mismatch()
+            if expected["kind"] == "missing":
+                try:
+                    os.link(
+                        temporary_name,
+                        path.name,
+                        src_dir_fd=parent_fd,
+                        dst_dir_fd=parent_fd,
+                        follow_symlinks=False,
+                    )
+                except FileExistsError:
+                    if descriptor_at(path.name) != postimage:
+                        mismatch()
+            else:
+                captured_expected_token = entry_token_at(path.name)
+                if (
+                    descriptor_at(path.name) != expected
+                    or entry_token_at(path.name)
+                    != captured_expected_token
+                ):
+                    mismatch()
+                _atomic_exchange_files(
+                    parent_fd,
+                    temporary_name,
+                    path.name,
+                )
+                captured_token = entry_token_at(temporary_name)
+                try:
+                    captured_descriptor = descriptor_at(temporary_name)
+                except QualityCandidateIntegrityError:
+                    captured_descriptor = None
+                if (
+                    captured_token != captured_expected_token
+                    or captured_descriptor not in (expected, postimage)
+                ):
+                    candidate_token = captured_token
+                    target_expected_token = postimage_token
+                    for _ in range(8):
+                        if entry_token_at(path.name) != target_expected_token:
+                            mismatch()
+                        _atomic_exchange_files(
+                            parent_fd,
+                            temporary_name,
+                            path.name,
+                        )
+                        os.fsync(parent_fd)
+                        displaced_token = entry_token_at(temporary_name)
+                        if displaced_token == target_expected_token:
+                            if entry_token_at(path.name) != candidate_token:
+                                mismatch()
+                            mismatch()
+                        target_expected_token = candidate_token
+                        candidate_token = displaced_token
+                    preserve_temporary = True
+                    mismatch()
+                if descriptor_at(path.name) != postimage:
+                    mismatch()
+        parent_after = os.lstat(parent)
+        if (
+            parent_after.st_dev,
+            parent_after.st_ino,
+        ) != (
+            opened_parent.st_dev,
+            opened_parent.st_ino,
+        ):
+            mismatch()
+    except QualityCandidateIntegrityError:
+        raise
+    except OSError as exc:
+        raise QualityCandidateIntegrityError(
+            "quality-debt artifact persistence failed"
+        ) from exc
+    finally:
+        if temporary_fd is not None:
+            try:
+                os.close(temporary_fd)
+            except OSError:
+                pass
+        if not preserve_temporary:
+            try:
+                os.unlink(temporary_name, dir_fd=parent_fd)
+            except OSError:
+                pass
+        os.close(parent_fd)
+
+
 def _write_atomic_json(
     path: Path,
     payload: Mapping[str, object],
@@ -517,42 +834,11 @@ def _write_atomic_json(
     content = (json.dumps(dict(payload), indent=2, sort_keys=True) + "\n").encode(
         "utf-8"
     )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(
-        f".{path.name}.{os.getpid()}.{secrets.token_hex(8)}.tmp"
+    _pinned_replace_file(
+        path,
+        content,
+        expected_preimage_sha256=expected_preimage_sha256,
     )
-    descriptor = -1
-    try:
-        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
-        descriptor = os.open(temporary, flags, 0o600)
-        offset = 0
-        while offset < len(content):
-            written = os.write(descriptor, content[offset:])
-            if written <= 0:
-                raise OSError("short quality-debt write")
-            offset += written
-        os.fsync(descriptor)
-        os.close(descriptor)
-        descriptor = -1
-        if _regular_file_digest_or_missing(path) != expected_preimage_sha256:
-            raise QualityCandidateIntegrityError(
-                "quality-debt artifact preimage changed"
-            )
-        os.replace(temporary, path)
-        _fsync_directory(path.parent)
-    except OSError as exc:
-        raise QualityCandidateIntegrityError(
-            "quality-debt artifact persistence failed"
-        ) from exc
-    finally:
-        if descriptor >= 0:
-            os.close(descriptor)
-        try:
-            temporary.unlink()
-        except FileNotFoundError:
-            pass
 
 
 @dataclass(frozen=True)
@@ -1225,6 +1511,12 @@ def apply_or_verify_quality_debt_effect(
                     else None
                 ),
             )
+        try:
+            _fsync_directory(debt_path.parent)
+        except OSError as exc:
+            raise QualityCandidateIntegrityError(
+                "quality-debt artifact persistence failed"
+            ) from exc
         receipt = {
             "schema_version": 1,
             "operation": operation,
@@ -1242,7 +1534,7 @@ def apply_or_verify_quality_debt_effect(
                 pass
             else:
                 debt_path.unlink()
-                _fsync_directory(debt_path.parent)
+            _fsync_directory(debt_path.parent)
         except OSError as exc:
             raise QualityCandidateIntegrityError("quality-debt artifact removal failed") from exc
         receipt = {

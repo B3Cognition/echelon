@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+import harness.phase1_quality_debt as debt_module
+import harness.squad_completion as completion_module
 from harness.blocked_decision import (
     build_blocked_decision_v2,
     validate_blocked_decision_v2,
@@ -989,3 +991,168 @@ def test_debt_write_rejects_regular_preimage_changed_after_preparation(
         )
 
     assert paths["debt"].read_bytes() == changed
+
+
+@pytest.mark.parametrize("drift_kind", ["regular", "symlink", "directory"])
+def test_debt_write_final_exchange_preserves_last_moment_preimage_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    drift_kind: str,
+) -> None:
+    state, candidate, _prepared, paths = _debt_fixture(
+        tmp_path,
+        apply_effect=False,
+    )
+    paths["debt"].write_bytes(b'{"stale":true}\n')
+    prepared = build_quality_debt_authorization(
+        project_root=tmp_path,
+        spec_dir=paths["spec"].parent,
+        candidate=candidate,
+        candidate_manifest=paths["manifest"],
+        repair_state=state["phase1_quality_repair"],
+        decision=_sealed_decision(),
+        decision_id="dec-123",
+        resolved_by="user",
+        **_builder_authority_kwargs(state),
+    )
+    target = tmp_path / "src" / "important.py"
+    target.parent.mkdir()
+    target.write_bytes(b"important bytes\n")
+    injected = False
+
+    def inject_at_exchange(
+        directory_fd: int,
+        first_name: str,
+        second_name: str,
+    ) -> None:
+        nonlocal injected
+        if second_name == paths["debt"].name and not injected:
+            injected = True
+            paths["debt"].unlink()
+            if drift_kind == "regular":
+                paths["debt"].write_bytes(b"last-moment drift\n")
+            elif drift_kind == "symlink":
+                paths["debt"].symlink_to(
+                    os.path.relpath(target, start=paths["debt"].parent)
+                )
+            else:
+                paths["debt"].mkdir()
+        completion_module._atomic_exchange_files(
+            directory_fd,
+            first_name,
+            second_name,
+        )
+
+    monkeypatch.setattr(
+        debt_module,
+        "_atomic_exchange_files",
+        inject_at_exchange,
+        raising=False,
+    )
+
+    with pytest.raises(QualityCandidateIntegrityError, match="preimage"):
+        apply_or_verify_quality_debt_effect(
+            tmp_path,
+            prepared.effect_payload(),
+        )
+
+    assert injected
+    if drift_kind == "regular":
+        assert paths["debt"].read_bytes() == b"last-moment drift\n"
+    elif drift_kind == "symlink":
+        assert paths["debt"].is_symlink()
+        assert target.read_bytes() == b"important bytes\n"
+    else:
+        assert paths["debt"].is_dir()
+    assert not list(paths["debt"].parent.glob(".quality-debt.json-*.tmp"))
+
+
+def test_debt_write_retry_syncs_directory_after_postimage_fsync_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state, candidate, _prepared, paths = _debt_fixture(
+        tmp_path,
+        apply_effect=False,
+    )
+    paths["debt"].write_bytes(b'{"stale":true}\n')
+    prepared = build_quality_debt_authorization(
+        project_root=tmp_path,
+        spec_dir=paths["spec"].parent,
+        candidate=candidate,
+        candidate_manifest=paths["manifest"],
+        repair_state=state["phase1_quality_repair"],
+        decision=_sealed_decision(),
+        decision_id="dec-123",
+        resolved_by="user",
+        **_builder_authority_kwargs(state),
+    )
+    attempts = 0
+
+    def fail_first_sync(_path: Path) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OSError("injected post-replace directory fsync failure")
+
+    monkeypatch.setattr(debt_module, "_fsync_directory", fail_first_sync)
+
+    with pytest.raises(QualityCandidateIntegrityError, match="persistence"):
+        apply_or_verify_quality_debt_effect(
+            tmp_path,
+            prepared.effect_payload(),
+        )
+
+    assert _sha256(paths["debt"]) == prepared.authorization[
+        "debt_artifact_sha256"
+    ]
+    synced: list[Path] = []
+    monkeypatch.setattr(
+        debt_module,
+        "_fsync_directory",
+        lambda path: synced.append(path),
+    )
+
+    receipt = apply_or_verify_quality_debt_effect(
+        tmp_path,
+        prepared.effect_payload(),
+    )
+
+    assert receipt["debt_artifact_sha256"] == _sha256(paths["debt"])
+    assert synced == [paths["debt"].parent]
+
+
+def test_debt_remove_retry_syncs_directory_after_unlink_fsync_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _state, _candidate, prepared, paths = _debt_fixture(tmp_path)
+    attempts = 0
+
+    def fail_first_sync(_path: Path) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OSError("injected post-unlink directory fsync failure")
+
+    monkeypatch.setattr(debt_module, "_fsync_directory", fail_first_sync)
+    payload = {
+        "operation": "debt_remove",
+        "debt_path": prepared.debt_path,
+    }
+
+    with pytest.raises(QualityCandidateIntegrityError, match="removal"):
+        apply_or_verify_quality_debt_effect(tmp_path, payload)
+
+    assert not paths["debt"].exists()
+    synced: list[Path] = []
+    monkeypatch.setattr(
+        debt_module,
+        "_fsync_directory",
+        lambda path: synced.append(path),
+    )
+
+    receipt = apply_or_verify_quality_debt_effect(tmp_path, payload)
+
+    assert receipt["removed"] is True
+    assert synced == [paths["debt"].parent]
