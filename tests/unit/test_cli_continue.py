@@ -15,6 +15,7 @@ from echelon.cli import (
     _ensure_active_continue_spec_context,
     _next_continue_phase,
     _phase_a_readiness_candidate_dirs,
+    _print_squad_summary,
     _reset_quality_remediation_dispatch_counts,
     _supersede_quality_guard_decision,
 )
@@ -159,6 +160,91 @@ def _v2_continue_instruction(status: str) -> dict[str, object]:
         schema_version=2,
         decision_id="dec-cli-continue-side-effect",
     ).to_dict()
+
+
+def test_declined_quality_debt_cannot_be_reopened_by_ordinary_continue(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _write_run_state(
+        tmp_path,
+        {
+            "run_id": "spec-test",
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "proportional_quality_debt_declined",
+            "user_message": "prepare the release",
+            "autonomy_mode": "guided",
+            "spec_dir": "specs/001-demo",
+        },
+    )
+
+    _cmd_continue(
+        [],
+        project_root=tmp_path,
+        ext_dir=tmp_path / ".specify/extensions/echelon",
+    )
+
+    output = capsys.readouterr().out
+    assert "inspect the retained quality evidence" in output.lower()
+    assert "start a new or amended specification run" in output.lower()
+    assert "echelon spec continue" not in output
+
+
+def test_terminal_summary_keeps_quality_debt_and_provider_limit_independent(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_dir = tmp_path / "runs/spec-test"
+    spec_dir = tmp_path / "specs/001-demo"
+    run_dir.mkdir(parents=True)
+    spec_dir.mkdir(parents=True)
+    state = {
+        "run_id": "spec-test",
+        "spec_id": "001-demo",
+        "status": "done",
+        "phase": "DONE",
+        "spec_dir": "specs/001-demo",
+        "published_spec_dir": "specs/001-demo",
+        "provider_limit_message": "Provider limit reached; resets at 21:10.",
+        "spec_quality_debt_authorization": {
+            "status": "accepted_with_debt",
+            "debt_artifact": "specs/001-demo/quality-debt.json",
+            "debt_artifact_sha256": "a" * 64,
+            "resolved_by": "user",
+            "failed_gates": [
+                {"name": "overall", "score": 0.70, "threshold": 0.80, "margin": -0.10}
+            ],
+        },
+    }
+    (run_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    monkeypatch.setattr(
+        "harness.phase1_quality_debt.has_current_quality_debt_authorization",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        "harness.run_summary.summarize_run_for_cli",
+        lambda _context: "Continued with authorized quality debt.",
+    )
+
+    _print_squad_summary(
+        tmp_path,
+        run_dir,
+        SimpleNamespace(status="done", phase="DONE"),
+        mode="guided",
+        message="Prepare a proportional specification.",
+    )
+
+    output = capsys.readouterr().out
+    assert output.count("SQUAD SUMMARY") == 1
+    assert "accepted with quality debt" in output.lower()
+    assert "overall 0.70 < 0.80" in output
+    assert "debt resolver" in output.lower() and "user" in output
+    assert "quality-debt.json" in output
+    assert "provider limit" in output.lower()
+    assert "Provider limit reached" in output
+    assert "quality passed" not in output.lower()
 
 
 def test_continue_uses_sealed_v2_decision_mode_not_cli_override(

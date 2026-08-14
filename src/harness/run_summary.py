@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import io
 import json
 from pathlib import Path
+import re
 import tempfile
 from typing import Any, Mapping
 
@@ -20,6 +21,11 @@ class RunSummaryContext:
     facts: tuple[str, ...] = ()
     next_step: str = ""
     inspect_paths: tuple[Path, ...] = ()
+    quality_debt_status: str = ""
+    quality_debt_artifact: str = ""
+    quality_debt_failed_gates: tuple[str, ...] = ()
+    quality_debt_resolved_by: str = ""
+    provider_limit_message: str = ""
 
 
 @dataclass(frozen=True)
@@ -57,6 +63,11 @@ def summarize_run(
     if result.exit_code != 0 or result.timed_out:
         return _fallback_summary(context)
     summary = _clean_summary(result.stdout)
+    if (
+        context.quality_debt_status == "accepted_with_debt"
+        and _collapses_quality_debt_to_pass(summary)
+    ):
+        return _fallback_summary(context)
     return summary or _fallback_summary(context)
 
 
@@ -96,6 +107,13 @@ def _summary_prompt(context: RunSummaryContext, agent_prompt: str) -> str:
         "next_step": context.next_step[:500],
         "workspace": str(context.project_root),
         "inspect_paths": [str(path) for path in context.inspect_paths[:8]],
+        "quality_debt_status": context.quality_debt_status[:80],
+        "quality_debt_artifact": context.quality_debt_artifact[:500],
+        "quality_debt_failed_gates": [
+            gate[:160] for gate in context.quality_debt_failed_gates[:8]
+        ],
+        "quality_debt_resolved_by": context.quality_debt_resolved_by[:40],
+        "provider_limit_message": context.provider_limit_message[:500],
     }
     return (
         f"{agent_prompt.strip()}\n\n"
@@ -103,7 +121,10 @@ def _summary_prompt(context: RunSummaryContext, agent_prompt: str) -> str:
         "listed workspace paths when useful. Return only the final human-readable "
         "summary as three to seven short plain-text lines. Do not use bullets, a "
         "heading, JSON, or Markdown fences. Do not claim verification you did not "
-        "observe.\n\n"
+        "observe. If quality_debt_status is accepted_with_debt, say accepted with "
+        "quality debt, name the resolver and most important residual gates, and "
+        "never call specification quality passed or fully certified. Keep any "
+        "provider-limit fact independently visible.\n\n"
         f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
     )
 
@@ -125,6 +146,18 @@ def _clean_summary(raw: object) -> str:
             break
     text = "\n".join(lines)
     return text[:1_200].rstrip()
+
+
+def _collapses_quality_debt_to_pass(summary: str) -> bool:
+    return bool(
+        re.search(
+            r"(?:quality(?: gates?)? (?:all )?pass|"
+            r"pass(?:ed|es) all quality|fully certified|"
+            r"debt[- ]free|no quality debt|without quality debt)",
+            summary,
+            flags=re.IGNORECASE,
+        )
+    )
 
 
 def _fallback_summary(context: RunSummaryContext) -> str:
@@ -189,6 +222,24 @@ def _fallback_summary(context: RunSummaryContext) -> str:
     if stopped:
         stopped = stopped[stopped.lower().index("stopped:") + 8 :]
         lines.append(f"Stopped: {stopped.strip().rstrip('.')}.")
+    if context.quality_debt_status == "accepted_with_debt":
+        detail = "Specification quality: accepted with quality debt"
+        if context.quality_debt_resolved_by.strip():
+            detail += f" by {context.quality_debt_resolved_by.strip()}"
+        gates = [
+            gate.strip()
+            for gate in context.quality_debt_failed_gates[:8]
+            if gate.strip()
+        ]
+        if gates:
+            detail += "; residual gates: " + ", ".join(gates)
+        if context.quality_debt_artifact.strip():
+            detail += f"; evidence: {context.quality_debt_artifact.strip()}"
+        lines.append(detail + ".")
+    if context.provider_limit_message.strip():
+        lines.append(
+            f"Provider limit: {context.provider_limit_message.strip().rstrip('.')}."
+        )
     if context.next_step.strip():
         lines.append(f"Next: {context.next_step.strip()}")
     return "\n".join(lines)

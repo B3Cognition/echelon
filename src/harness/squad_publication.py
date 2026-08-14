@@ -8,7 +8,7 @@ import os
 import re
 import secrets
 import stat
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -2272,3 +2272,125 @@ def load_prepared_publication(
         return prepared
     finally:
         pinned.close()
+
+
+def add_verified_quality_debt_publication(
+    transaction: SquadPublicationTransaction,
+    *,
+    project_root: Path,
+    state: Mapping[str, object],
+    active_spec_dir: Path,
+    published_spec_dir: Path,
+    staged_spec_dir: Path,
+) -> int:
+    """Stage the exact current debt artifact as an explicit owned operation.
+
+    A stored authorization is not publication authority by itself.  The Task 6
+    currentness validator binds it to the live specification, Understanding
+    report, candidate, decision, completion, and artifact bytes.  Publication
+    then pins those same bytes in its own manifest.
+    """
+    if not isinstance(state, Mapping):
+        _raise("manifest_invalid")
+    root = _require_real_directory(
+        Path(project_root),
+        code="manifest_invalid",
+    )
+    active = _require_real_directory(
+        Path(active_spec_dir),
+        code="manifest_invalid",
+    )
+    published = Path(published_spec_dir)
+    staged = Path(staged_spec_dir)
+    try:
+        published_relative = published.absolute().relative_to(root)
+    except ValueError:
+        _raise("manifest_invalid")
+    target_relative = _normalize_relative_path(
+        (published_relative / "quality-debt.json").as_posix()
+    )
+    owned = {target_relative}
+    authorization = state.get("spec_quality_debt_authorization")
+    if authorization is None:
+        target = root / target_relative
+        if not target.exists() and not target.is_symlink():
+            return 0
+        transaction.add_delete(target_relative, owned_paths=owned)
+        return 1
+    if not isinstance(authorization, Mapping):
+        _raise("manifest_invalid")
+
+    from harness.phase1_quality_debt import (
+        has_current_quality_debt_authorization,
+    )
+
+    if not has_current_quality_debt_authorization(
+        state,
+        project_root=root,
+    ):
+        _raise("manifest_invalid")
+    if authorization.get("status") != "accepted_with_debt":
+        _raise("manifest_invalid")
+    debt_ref = authorization.get("debt_artifact")
+    expected_digest = authorization.get("debt_artifact_sha256")
+    if type(debt_ref) is not str or type(expected_digest) is not str:
+        _raise("manifest_invalid")
+    source_relative = _normalize_relative_path(debt_ref)
+    source = root / source_relative
+    expected_source = active / "quality-debt.json"
+    try:
+        source_metadata = os.lstat(source)
+        source_resolved = source.resolve(strict=True)
+        expected_resolved = expected_source.resolve(strict=True)
+    except (OSError, RuntimeError):
+        _raise("manifest_invalid")
+    if (
+        source_resolved != expected_resolved
+        or stat.S_ISLNK(source_metadata.st_mode)
+        or not stat.S_ISREG(source_metadata.st_mode)
+    ):
+        _raise("manifest_invalid")
+    source_fd = _open_regular(
+        source,
+        missing_code="manifest_invalid",
+        invalid_code="manifest_invalid",
+    )
+    try:
+        source_bytes = _read_fd_bytes(source_fd, code="manifest_invalid")
+    finally:
+        os.close(source_fd)
+    if hashlib.sha256(source_bytes).hexdigest() != expected_digest:
+        _raise("manifest_invalid")
+    staged_debt = staged / "quality-debt.json"
+    staged_metadata = _lstat(staged_debt, missing_code="manifest_invalid")
+    if (
+        stat.S_ISLNK(staged_metadata.st_mode)
+        or not stat.S_ISREG(staged_metadata.st_mode)
+    ):
+        _raise("manifest_invalid")
+    staged_fd = _open_regular(
+        staged_debt,
+        missing_code="manifest_invalid",
+        invalid_code="manifest_invalid",
+    )
+    try:
+        staged_bytes = _read_fd_bytes(staged_fd, code="manifest_invalid")
+    finally:
+        os.close(staged_fd)
+    if staged_bytes != source_bytes:
+        _raise("manifest_invalid")
+    operation_index = len(transaction._operations)
+    transaction.add_write(
+        target_relative,
+        staged_debt,
+        owned_paths=owned,
+    )
+    if len(transaction._operations) != operation_index + 1:
+        _raise("manifest_invalid")
+    postimage = transaction._operations[operation_index].get("postimage")
+    if (
+        not isinstance(postimage, Mapping)
+        or postimage.get("sha256") != expected_digest
+    ):
+        _raise("manifest_invalid")
+    return 1

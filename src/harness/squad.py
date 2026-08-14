@@ -158,6 +158,7 @@ from harness.squad_publication import (
     PreparedSquadPublication,
     PublicationError,
     SquadPublicationTransaction,
+    add_verified_quality_debt_publication,
     load_prepared_publication,
 )
 from echelon.telemetry.phase_timing import record_phase_finish, record_phase_start
@@ -382,6 +383,25 @@ _PRODUCT_INPUT_PATH_KEYS = frozenset(
         "reference_context",
         "traceability",
         "traceability_markdown",
+    }
+)
+_QUALITY_DEBT_DOWNSTREAM_PHASES = frozenset(
+    {
+        "phase2-decide",
+        "phase2-feasibility-structural",
+        "phase2-strategic-overview",
+        "phase2-tracker-alignment",
+        "phase2-intent-alignment-structural",
+        "phase3-how",
+        "phase3-specialists",
+        "phase3-sentinel",
+        "phase3-plan",
+        "phase3-tasks-lexicon",
+        "phase3-understanding",
+        "phase3-consensus",
+        "phase3-consensus-tasks-lexicon",
+        "checkpoint-plan",
+        "phase4-document",
     }
 )
 
@@ -4000,6 +4020,7 @@ class SquadController:
                 state_updates={
                     "status": "running",
                     "phase": route,
+                    "spec_status": "accepted_with_debt",
                     "spec_quality_debt_authorization": (
                         prepared_debt.authorization
                     ),
@@ -5530,6 +5551,10 @@ class SquadController:
             }
         state.pop("spec_quality_certificate", None)
         state.pop("spec_quality_debt_authorization", None)
+        if state.get("spec_status") == "accepted_with_debt":
+            state.pop("spec_status", None)
+        state.pop("spec_quality_status", None)
+        state.pop("spec_quality_debt_context", None)
         state["iteration"] = 0
         state["why_fail_count"] = 0
         state["convergence_forced"] = False
@@ -6615,6 +6640,14 @@ class SquadController:
         product_inputs_source: Path | None = None,
     ) -> tuple[int, PhaseAReadinessResult]:
         detached_state = dict(state)
+        debt_authorization = detached_state.get(
+            "spec_quality_debt_authorization"
+        )
+        if (
+            isinstance(debt_authorization, Mapping)
+            and debt_authorization.get("status") == "accepted_with_debt"
+        ):
+            detached_state["spec_status"] = "accepted_with_debt"
         active_spec_dir = self._active_phase_a_spec_dir(detached_state)
         if active_spec_dir is None or not active_spec_dir.exists():
             return (
@@ -6658,7 +6691,16 @@ class SquadController:
             active_spec_dir,
             exclude_echelon=True,
         )
+        active_spec_files = frozenset(
+            path
+            for path in active_spec_files
+            if path != Path("quality-debt.json")
+        )
         self._copy_spec_tree(active_spec_dir, virtual_spec_dir)
+        if not isinstance(debt_authorization, Mapping):
+            stale_virtual_debt = virtual_spec_dir / "quality-debt.json"
+            if stale_virtual_debt.exists():
+                stale_virtual_debt.unlink()
         targets = [
             str(value).strip()
             for value in (
@@ -6763,15 +6805,21 @@ class SquadController:
             | set(_PHASE_A_GENERATED_FILES)
             | published_kb_files
         )
-        return (
-            self._add_owned_file_diff(
-                transaction,
-                virtual_root=virtual_spec_dir,
-                target_root=published_spec_dir,
-                owned_relative_paths=owned_relative,
-            ),
-            readiness,
+        operation_count = self._add_owned_file_diff(
+            transaction,
+            virtual_root=virtual_spec_dir,
+            target_root=published_spec_dir,
+            owned_relative_paths=owned_relative,
         )
+        operation_count += add_verified_quality_debt_publication(
+            transaction,
+            project_root=self._project_root,
+            state=detached_state,
+            active_spec_dir=active_spec_dir,
+            published_spec_dir=published_spec_dir,
+            staged_spec_dir=virtual_spec_dir,
+        )
+        return operation_count, readiness
 
     def _stage_authenticated_phase_a_product_inputs(
         self,
@@ -7027,11 +7075,20 @@ class SquadController:
             detached_state,
             active_spec_dir,
         )
-        return {
+        updates = {
             "published_spec_dir": self._repo_relative_or_absolute(
                 published_spec_dir
             )
         }
+        authorization = detached_state.get(
+            "spec_quality_debt_authorization"
+        )
+        if (
+            isinstance(authorization, Mapping)
+            and authorization.get("status") == "accepted_with_debt"
+        ):
+            updates["spec_status"] = "accepted_with_debt"
+        return updates
 
     def _publish_terminal_phase_a_artifacts_if_available(
         self,
@@ -7850,6 +7907,64 @@ class SquadController:
             and node.lexicon_artifact == "tasks"
         ):
             self._materialize_implementation_targets()
+        if node.id not in _QUALITY_DEBT_DOWNSTREAM_PHASES:
+            return
+        state = self._state_store.load()
+        authorization = state.get("spec_quality_debt_authorization")
+        if not isinstance(authorization, Mapping):
+            return
+        from harness.phase1_quality_debt import (
+            has_current_quality_debt_authorization,
+        )
+
+        if not has_current_quality_debt_authorization(
+            state,
+            project_root=self._project_root,
+        ):
+            return
+        debt_ref = authorization.get("debt_artifact")
+        debt_digest = authorization.get("debt_artifact_sha256")
+        if type(debt_ref) is not str or type(debt_digest) is not str:
+            return
+        debt_path = Path(debt_ref)
+        if not debt_path.is_absolute():
+            debt_path = self._project_root / debt_path
+        try:
+            debt_bytes = debt_path.read_bytes()
+            debt = json.loads(debt_bytes)
+        except (OSError, json.JSONDecodeError):
+            return
+        if (
+            not isinstance(debt, Mapping)
+            or hashlib.sha256(debt_bytes).hexdigest() != debt_digest
+        ):
+            return
+        context_pack_item = "{spec_dir}/quality-debt.json"
+        if context_pack_item not in node.context_pack:
+            node.context_pack.append(context_pack_item)
+        if node.type == "staged_parallel":
+            for agent_entry in node.agents:
+                if not isinstance(agent_entry, dict):
+                    continue
+                agent_context = agent_entry.get("context_pack")
+                if not isinstance(agent_context, list):
+                    continue
+                if context_pack_item not in agent_context:
+                    agent_context.append(context_pack_item)
+        context = {
+            "status": "accepted_with_debt",
+            "artifact": debt_ref,
+            "artifact_sha256": debt_digest,
+            "resolved_by": authorization.get("resolved_by"),
+            "failed_gates": list(authorization.get("failed_gates") or []),
+        }
+        if (
+            state.get("spec_quality_status") != "accepted_with_debt"
+            or state.get("spec_quality_debt_context") != context
+        ):
+            state["spec_quality_status"] = "accepted_with_debt"
+            state["spec_quality_debt_context"] = context
+            self._state_store.save(state)
 
     def _apply_product_input_updates(
         self,
@@ -9369,6 +9484,10 @@ class SquadController:
         if node.id == "phase1-what":
             state_removals.add("spec_quality_certificate")
             state_removals.add("spec_quality_debt_authorization")
+            if state_copy.get("spec_status") == "accepted_with_debt":
+                state_removals.add("spec_status")
+            state_removals.add("spec_quality_status")
+            state_removals.add("spec_quality_debt_context")
             state_removals.update(lexicon_certification_fields)
             # A remediation is only complete when the canonical specification
             # actually changed. Keeping its controller context through a no-op

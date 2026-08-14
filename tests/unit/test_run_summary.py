@@ -112,6 +112,103 @@ def test_summarize_run_falls_back_when_agent_fails(tmp_path: Path) -> None:
     )
 
 
+def test_quality_debt_and_provider_limit_are_bounded_independent_summary_truths(
+    tmp_path: Path,
+) -> None:
+    context = RunSummaryContext(
+        project_root=tmp_path,
+        command="echelon spec continue",
+        task="Prepare a proportional specification.",
+        status="done",
+        facts=("Result: done.",),
+        next_step="echelon delivery run 001-demo",
+        quality_debt_status="accepted_with_debt",
+        quality_debt_artifact="specs/001-demo/quality-debt.json",
+        quality_debt_failed_gates=("overall 0.70 < 0.80", "atomicity 0.72 < 0.85"),
+        quality_debt_resolved_by="COMMANDER",
+        provider_limit_message="Provider limit reached; resets at 21:10.",
+    )
+    provider = _RecordingProvider(
+        CliRunResult(exit_code=1, stdout="", stderr="provider unavailable")
+    )
+
+    summary = summarize_run(
+        context,
+        provider=provider,
+        agent=SummaryAgent(prompt="Summarize.", metadata={}),
+    )
+
+    assert "accepted with quality debt" in summary.lower()
+    assert "overall 0.70 < 0.80" in summary
+    assert "atomicity 0.72 < 0.85" in summary
+    assert "COMMANDER" in summary
+    assert "quality-debt.json" in summary
+    assert "Provider limit reached" in summary
+    assert "quality passed" not in summary.lower()
+
+
+def test_summary_agent_receives_bounded_quality_debt_fields(tmp_path: Path) -> None:
+    context = RunSummaryContext(
+        project_root=tmp_path,
+        command="echelon spec run",
+        task="Prepare a proportional specification.",
+        status="done",
+        quality_debt_status="accepted_with_debt",
+        quality_debt_artifact="specs/001-demo/quality-debt.json",
+        quality_debt_failed_gates=tuple(f"gate-{index}" for index in range(12)),
+        quality_debt_resolved_by="user",
+    )
+    provider = _RecordingProvider(
+        CliRunResult(exit_code=0, stdout="Accepted with quality debt.", stderr="")
+    )
+
+    summarize_run(
+        context,
+        provider=provider,
+        agent=SummaryAgent(prompt="Summarize.", metadata={}),
+    )
+
+    prompt = provider.calls[0][1]
+    assert '"quality_debt_status": "accepted_with_debt"' in prompt
+    assert '"quality_debt_artifact": "specs/001-demo/quality-debt.json"' in prompt
+    assert '"quality_debt_resolved_by": "user"' in prompt
+    assert "gate-0" in prompt
+    assert "gate-7" in prompt
+    assert "gate-8" not in prompt
+
+
+def test_summary_agent_cannot_collapse_authorized_debt_into_quality_pass(
+    tmp_path: Path,
+) -> None:
+    context = RunSummaryContext(
+        project_root=tmp_path,
+        command="echelon spec run",
+        task="Prepare a proportional specification.",
+        status="done",
+        quality_debt_status="accepted_with_debt",
+        quality_debt_artifact="specs/001-demo/quality-debt.json",
+        quality_debt_failed_gates=("overall 0.70 < 0.80",),
+        quality_debt_resolved_by="user",
+    )
+    provider = _RecordingProvider(
+        CliRunResult(
+            exit_code=0,
+            stdout="Specification quality passed and is fully certified.",
+            stderr="",
+        )
+    )
+
+    summary = summarize_run(
+        context,
+        provider=provider,
+        agent=SummaryAgent(prompt="Summarize.", metadata={}),
+    )
+
+    assert "accepted with quality debt" in summary.lower()
+    assert "quality passed" not in summary.lower()
+    assert "fully certified" not in summary.lower()
+
+
 def test_delivery_fallback_prioritizes_outcome_and_verification_over_branch_noise(
     tmp_path: Path,
 ) -> None:

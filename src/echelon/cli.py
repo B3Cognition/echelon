@@ -3545,6 +3545,118 @@ def _v2_decision_recommendation(decision: dict[str, object]) -> str:
     return str(decision.get("recommended_answer") or "(none)")
 
 
+def _proportional_quality_decision_fields(
+    state: Mapping[str, object],
+    decision: Mapping[str, object],
+) -> list[tuple[str, str]]:
+    """Render sealed proportional budget evidence without inferring choices."""
+    if decision.get("resolution_handler") != "proportional_quality_debt":
+        return []
+    fields: list[tuple[str, str]] = []
+    repair = state.get("phase1_quality_repair")
+    if isinstance(repair, Mapping):
+        automatic = repair.get("automatic_consumed")
+        automatic_limit = repair.get("automatic_limit")
+        extension = repair.get("extension_consumed")
+        extension_limit = repair.get("extension_limit")
+        extension_authorized = repair.get("extension_authorized")
+        if type(automatic) is int and type(automatic_limit) is int:
+            fields.append(
+                (
+                    "Automatic repairs",
+                    f"{automatic} of {automatic_limit} consumed "
+                    f"({max(0, automatic_limit - automatic)} remaining)",
+                )
+            )
+        if type(extension) is int and type(extension_limit) is int:
+            authorization = (
+                f"; {extension_authorized} authorized"
+                if type(extension_authorized) is int
+                else ""
+            )
+            fields.append(
+                (
+                    "Extension repairs",
+                    f"{extension} of {extension_limit} consumed "
+                    f"({max(0, extension_limit - extension)} remaining"
+                    f"{authorization})",
+                )
+            )
+    evidence = state.get("proportional_quality_candidate_evidence")
+    if isinstance(evidence, Mapping):
+        candidate = str(evidence.get("selected_candidate_id") or "").strip()
+        if candidate:
+            fields.append(("Selected candidate", candidate))
+    options = decision.get("options")
+    if isinstance(options, list):
+        recommended = next(
+            (
+                option
+                for option in options
+                if isinstance(option, Mapping)
+                and option.get("recommended") is True
+            ),
+            None,
+        )
+        if isinstance(recommended, Mapping):
+            fields.append(
+                (
+                    "Quality recommendation",
+                    f"{recommended.get('id')} ({recommended.get('label')})",
+                )
+            )
+        choice_commands = [
+            f'echelon spec resume "{option.get("id")}"'
+            for option in options
+            if isinstance(option, Mapping)
+            and isinstance(option.get("id"), str)
+            and option.get("id")
+        ]
+        if choice_commands:
+            fields.append(("Choice syntax", "\n".join(choice_commands)))
+    return fields
+
+
+def _current_quality_debt_cli_facts(
+    state: Mapping[str, object],
+    project_root: Path,
+) -> dict[str, object] | None:
+    """Return bounded display facts only for Task 6-verified live authority."""
+    authorization = state.get("spec_quality_debt_authorization")
+    if not isinstance(authorization, Mapping):
+        return None
+    from harness.phase1_quality_debt import (
+        has_current_quality_debt_authorization,
+    )
+
+    if not has_current_quality_debt_authorization(
+        state,
+        project_root=project_root,
+    ):
+        return None
+    if authorization.get("status") != "accepted_with_debt":
+        return None
+    failed_gates: list[str] = []
+    raw_gates = authorization.get("failed_gates")
+    if isinstance(raw_gates, list):
+        for gate in raw_gates[:8]:
+            if not isinstance(gate, Mapping):
+                continue
+            name = str(gate.get("name") or "").strip()
+            score = gate.get("score")
+            threshold = gate.get("threshold")
+            if name and type(score) in {int, float} and type(threshold) in {int, float}:
+                failed_gates.append(
+                    f"{name} {float(score):.2f} < {float(threshold):.2f}"
+                )
+    return {
+        "status": "accepted_with_debt",
+        "artifact": str(authorization.get("debt_artifact") or "").strip(),
+        "resolved_by": str(authorization.get("resolved_by") or "").strip(),
+        "failed_gates": tuple(failed_gates),
+    }
+
+
 def _persisted_or_legacy_recovery_instruction(
     run_state: dict,
 ) -> RecoveryInstruction | None:
@@ -3786,6 +3898,21 @@ def _classify_run_recovery(
 
     if status != "blocked":
         return _RunRecoveryAction("advance")
+
+    if reason == "proportional_quality_debt_declined":
+        return _RunRecoveryAction(
+            "manual_recovery",
+            reason=reason,
+            command=(
+                "inspect the retained quality evidence, then start a new or "
+                "amended specification run"
+            ),
+            note=(
+                "The exhausted proportional repair loop was explicitly stopped. "
+                "Ordinary continue cannot reopen it; deliberately amend the request "
+                "or quality policy and start a new run."
+            ),
+        )
 
     ledger = run_state.get("issue_resolution_ledger")
     ledger_entries = (
@@ -4578,10 +4705,20 @@ def _print_squad_summary(
         stopped = "completed"
     if stopped:
         fields.append(("stopped", stopped))
-    if status == "blocked" and stopped == "provider_session_limit":
-        provider_message = str(state.get("provider_limit_message") or "").strip()
-        if provider_message:
-            fields.append(("provider", provider_message))
+    provider_message = str(state.get("provider_limit_message") or "").strip()
+    if provider_message:
+        fields.append(("provider limit", provider_message))
+
+    debt_facts = _current_quality_debt_cli_facts(state, project_root)
+    if debt_facts is not None:
+        fields.append(("specification quality", "accepted with quality debt"))
+        debt_gates = debt_facts["failed_gates"]
+        if debt_gates:
+            fields.append(("residual gates", ", ".join(debt_gates)))
+        if debt_facts["resolved_by"]:
+            fields.append(("debt resolver", str(debt_facts["resolved_by"])))
+        if debt_facts["artifact"]:
+            fields.append(("debt evidence", str(debt_facts["artifact"])))
 
     if status in {"blocked", "interrupted", "budget_exhausted"}:
         if action.note:
@@ -4599,6 +4736,14 @@ def _print_squad_summary(
                 fields.extend(
                     _issue_resolution_screen_guidance(project_root, squad_dir, state)
                 )
+    try:
+        summary_decision = _active_v2_decision(state)
+    except (RecoveryInstructionError, ValueError):
+        summary_decision = None
+    if summary_decision is not None:
+        fields.extend(
+            _proportional_quality_decision_fields(state, summary_decision)
+        )
     result_line = _phase_a_result_line(status, state)
     fields.append(("result", result_line))
     next_step = ""
@@ -4624,6 +4769,23 @@ def _print_squad_summary(
             next_step=next_step,
             inspect_paths=(squad_dir.resolve(),)
             + ((Path(spec_dir).resolve(),) if spec_dir else ()),
+            quality_debt_status=(
+                str(debt_facts["status"]) if debt_facts is not None else ""
+            ),
+            quality_debt_artifact=(
+                str(debt_facts["artifact"]) if debt_facts is not None else ""
+            ),
+            quality_debt_failed_gates=(
+                tuple(debt_facts["failed_gates"])
+                if debt_facts is not None
+                else ()
+            ),
+            quality_debt_resolved_by=(
+                str(debt_facts["resolved_by"])
+                if debt_facts is not None
+                else ""
+            ),
+            provider_limit_message=provider_message,
         )
     )
     fields.append(("worked on", worked_on))
@@ -7436,6 +7598,21 @@ def _cmd_status(project_root: Path) -> None:
             fields.append(("Task", snippet))
         if elapsed:
             fields.append(("Started", elapsed))
+        debt_facts = _current_quality_debt_cli_facts(state, project_root)
+        if debt_facts is not None:
+            fields.append(("Specification quality", "accepted with quality debt"))
+            failed_gates = debt_facts["failed_gates"]
+            if failed_gates:
+                fields.append(("Residual gates", ", ".join(failed_gates)))
+            if debt_facts["resolved_by"]:
+                fields.append(("Debt resolver", str(debt_facts["resolved_by"])))
+            if debt_facts["artifact"]:
+                fields.append(("Debt evidence", str(debt_facts["artifact"])))
+        provider_limit_message = str(
+            state.get("provider_limit_message") or ""
+        ).strip()
+        if provider_limit_message:
+            fields.append(("Provider limit", provider_limit_message))
         if run_status in ("running", "in_progress"):
             fields.append(("Next", "echelon spec continue"))
         elif run_status == "blocked":
@@ -7465,6 +7642,9 @@ def _cmd_status(project_root: Path) -> None:
                         ("Risk", str(decision.get("risk_level") or "(none)")),
                         ("Decision action", action.command),
                     ]
+                )
+                fields.extend(
+                    _proportional_quality_decision_fields(state, decision)
                 )
 
         _banner("RUN STATE", fields)
