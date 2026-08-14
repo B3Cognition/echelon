@@ -191,8 +191,8 @@ def test_clean_git_source_uses_pinned_detached_worktree_and_records_submodules(
             return "a" * 40 + "\n"
         if args[-4:] == ["status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"]:
             return ""
-        if args[-3:] == ["ls-files", "--stage", "-z"]:
-            return "160000 " + "b" * 40 + " 0\tmodules/example folder\0"
+        if "foreach" in args:
+            return "modules/example folder\0" + "b" * 40 + "\0"
         if "add" in args:
             worktree = Path(args[-2])
             worktree.mkdir(parents=True)
@@ -213,6 +213,72 @@ def test_clean_git_source_uses_pinned_detached_worktree_and_records_submodules(
     manifest = json.loads(captured.manifest_path.read_text(encoding="utf-8"))
     assert manifest["git"]["commit"] == "a" * 40
     assert manifest["git"]["submodules"] == [{"commit": "b" * 40, "path": "modules/example folder"}]
+
+
+@pytest.mark.unit
+def test_git_snapshot_physically_omits_tracked_excluded_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    commands: list[list[str]] = []
+
+    def fake_git(args: list[str]) -> str:
+        commands.append(args)
+        if args[-2:] == ["rev-parse", "--show-toplevel"]:
+            return str(source) + "\n"
+        if args[-2:] == ["rev-parse", "HEAD^{commit}"]:
+            return "a" * 40 + "\n"
+        if args[-1:] == ["--ignore-submodules=none"] or "foreach" in args:
+            return ""
+        if "add" in args:
+            worktree = Path(args[-2])
+            worktree.mkdir(parents=True)
+            (worktree / "keep.py").write_text("keep", encoding="utf-8")
+            (worktree / "secret.txt").write_text("excluded", encoding="utf-8")
+        if "move" in args:
+            Path(args[-2]).rename(Path(args[-1]))
+        return ""
+
+    monkeypatch.setattr("harness.re_v2.snapshot.run_git", fake_git)
+    captured = capture_source_snapshot(source, tmp_path / "snapshots", exclusions=("secret.txt",))
+
+    assert not (captured.read_root / "secret.txt").exists()
+    assert (captured.read_root / "keep.py").exists()
+    validate_source_snapshot(captured)
+
+
+@pytest.mark.unit
+def test_recursive_submodule_identities_include_nested_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+
+    def fake_git(args: list[str]) -> str:
+        if "foreach" in args:
+            return "modules/outer\0" + "b" * 40 + "\0modules/outer/nested folder\0" + "c" * 40 + "\0"
+        if args[-2:] == ["rev-parse", "--show-toplevel"]:
+            return str(source) + "\n"
+        if args[-2:] == ["rev-parse", "HEAD^{commit}"]:
+            return "a" * 40 + "\n"
+        if args[-1:] == ["--ignore-submodules=none"]:
+            return ""
+        if "add" in args:
+            worktree = Path(args[-2])
+            worktree.mkdir(parents=True)
+            (worktree / "api.py").write_text("VALUE = 1\n", encoding="utf-8")
+        if "move" in args:
+            Path(args[-2]).rename(Path(args[-1]))
+        return ""
+
+    monkeypatch.setattr("harness.re_v2.snapshot.run_git", fake_git)
+    captured = capture_source_snapshot(source, tmp_path / "snapshots", exclusions=())
+    manifest = json.loads(captured.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["git"]["submodules"] == [
+        {"commit": "b" * 40, "path": "modules/outer"},
+        {"commit": "c" * 40, "path": "modules/outer/nested folder"},
+    ]
 
 
 @pytest.mark.unit
@@ -263,7 +329,7 @@ def test_duplicate_clean_git_snapshot_removes_temporary_worktree(
             return "a" * 40 + "\n"
         if args[-4:] == ["status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"]:
             return ""
-        if args[-3:] == ["ls-files", "--stage", "-z"]:
+        if "foreach" in args:
             return ""
         if "add" in args:
             worktree = Path(args[-2])
@@ -296,7 +362,7 @@ def test_git_publish_failure_deregisters_and_removes_only_new_bundle(
             return str(source) + "\n"
         if args[-2:] == ["rev-parse", "HEAD^{commit}"]:
             return "a" * 40 + "\n"
-        if args[-1:] == ["--ignore-submodules=none"] or args[-3:] == ["ls-files", "--stage", "-z"]:
+        if args[-1:] == ["--ignore-submodules=none"] or "foreach" in args:
             return ""
         if "add" in args:
             worktree = Path(args[-2])
@@ -313,6 +379,39 @@ def test_git_publish_failure_deregisters_and_removes_only_new_bundle(
         capture_source_snapshot(source, tmp_path / "snapshots", exclusions=())
     assert any("remove" in command for command in commands)
     assert not list((tmp_path / "snapshots").glob("sha256:*"))
+
+
+@pytest.mark.unit
+def test_failed_git_deregistration_preserves_registered_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    commands: list[list[str]] = []
+
+    def fake_git(args: list[str]) -> str:
+        commands.append(args)
+        if args[-2:] == ["rev-parse", "--show-toplevel"]:
+            return str(source) + "\n"
+        if args[-2:] == ["rev-parse", "HEAD^{commit}"]:
+            return "a" * 40 + "\n"
+        if args[-1:] == ["--ignore-submodules=none"] or "foreach" in args:
+            return ""
+        if "add" in args:
+            worktree = Path(args[-2])
+            worktree.mkdir(parents=True)
+            (worktree / "api.py").write_text("VALUE = 1\n", encoding="utf-8")
+        if "move" in args:
+            Path(args[-2]).rename(Path(args[-1]))
+        if "remove" in args:
+            raise OSError("worktree still registered")
+        return ""
+
+    monkeypatch.setattr("harness.re_v2.snapshot.run_git", fake_git)
+    monkeypatch.setattr("harness.re_v2.snapshot._publish_manifest", lambda *_: (_ for _ in ()).throw(OSError("disk full")))
+    with pytest.raises(ReV2SnapshotError, match="cleanup failed"):
+        capture_source_snapshot(source, tmp_path / "snapshots", exclusions=())
+    assert list((tmp_path / "snapshots").glob("sha256:*/source/api.py"))
 
 
 @pytest.mark.unit

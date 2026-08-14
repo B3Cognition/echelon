@@ -127,10 +127,12 @@ def _capture_git_worktree(source: Path, destination: Path, exclusions: tuple[str
     registered: Path | None = None
     bundle: Path | None = None
     published = False
+    preserve_temporary = False
     try:
         run_git(["-C", str(source), "worktree", "add", "--detach", str(worktree), commit])
         registered = worktree
-        entries = _inventory(worktree, exclusions, allow_worktree_git=True)
+        _remove_excluded_paths(worktree, exclusions)
+        entries = _inventory(worktree, (), allow_worktree_git=True)
         manifest = _new_manifest("git-worktree", entries, exclusions, {"commit": commit, "submodules": _submodule_identities(source)})
         existing = _existing_snapshot(destination, manifest)
         if existing:
@@ -145,7 +147,8 @@ def _capture_git_worktree(source: Path, destination: Path, exclusions: tuple[str
         published = True
         return CapturedSnapshot(manifest.snapshot_id, manifest.kind, final_worktree, bundle / _MANIFEST_NAME)
     except Exception as exc:
-        cleanup_error = _cleanup_git_failure(source, registered, bundle)
+        cleanup_error, deregistered = _cleanup_git_failure(source, registered, bundle)
+        preserve_temporary = registered == worktree and not deregistered
         registered = None
         if cleanup_error:
             raise ReV2SnapshotError(f"snapshot capture failed: {exc}; cleanup failed: {cleanup_error}") from exc
@@ -156,23 +159,22 @@ def _capture_git_worktree(source: Path, destination: Path, exclusions: tuple[str
         if registered is not None and not published and not bundle:
             # existing-snapshot reuse path: remove the just-added temporary worktree.
             run_git(["-C", str(source), "worktree", "remove", "--force", str(registered)])
-        if temporary.exists():
+        if temporary.exists() and not preserve_temporary:
             _remove_tree(temporary)
 
 
-def _cleanup_git_failure(source: Path, registered: Path | None, bundle: Path | None) -> Exception | None:
-    errors: list[Exception] = []
+def _cleanup_git_failure(source: Path, registered: Path | None, bundle: Path | None) -> tuple[Exception | None, bool]:
     if registered is not None:
         try:
             run_git(["-C", str(source), "worktree", "remove", "--force", str(registered)])
         except Exception as exc:  # cleanup is an observable correctness failure
-            errors.append(exc)
+            return exc, False
     if bundle is not None and os.path.lexists(bundle):
         try:
             _remove_tree(bundle)
         except Exception as exc:
-            errors.append(exc)
-    return errors[0] if errors else None
+            return exc, True
+    return None, True
 
 
 def _publish_copy_bundle(temporary: Path, destination: Path, manifest: SnapshotManifest) -> CapturedSnapshot:
@@ -253,6 +255,22 @@ def _is_excluded(relative: str, exclusions: tuple[str, ...]) -> bool:
     return any(relative == item or relative.startswith(item + "/") for item in exclusions)
 
 
+def _remove_excluded_paths(root: Path, exclusions: tuple[str, ...]) -> None:
+    """Remove only caller-approved paths from an owned temporary worktree."""
+    for relative in exclusions:
+        path = root.joinpath(*relative.split("/"))
+        if root not in path.resolve(strict=False).parents:
+            raise ReV2SnapshotError(f"unsafe exclusion path: {relative!r}")
+        if not os.path.lexists(path):
+            continue
+        if path.is_symlink() or path.is_file():
+            path.unlink()
+        elif path.is_dir():
+            _remove_tree(path)
+        else:
+            raise ReV2SnapshotError(f"source snapshot rejects special file: {relative}")
+
+
 def _inventory(root: Path, exclusions: tuple[str, ...], *, allow_worktree_git: bool = False) -> tuple[SnapshotEntry, ...]:
     entries: list[SnapshotEntry] = []
     def visit(directory: Path, prefix: str = "") -> None:
@@ -325,15 +343,20 @@ def _clean_git_commit(source: Path) -> str | None:
 
 
 def _submodule_identities(source: Path) -> list[dict[str, str]]:
-    output = run_git(["-C", str(source), "ls-files", "--stage", "-z"])
+    output = run_git([
+        "-C", str(source), "submodule", "foreach", "--quiet", "--recursive",
+        "printf '%s\\0%s\\0' \"$sm_path\" \"$(git rev-parse HEAD^{commit})\"",
+    ])
     identities: list[dict[str, str]] = []
-    for record in output.split("\0"):
-        if not record or "\t" not in record:
-            continue
-        metadata, path = record.split("\t", 1)
-        mode, commit, _stage = metadata.split()
-        if mode == "160000":
-            identities.append({"commit": commit, "path": path})
+    fields = output.split("\0")
+    if fields and fields[-1] == "":
+        fields.pop()
+    if len(fields) % 2:
+        raise ReV2SnapshotError("invalid recursive submodule identity output")
+    for path, commit in zip(fields[::2], fields[1::2], strict=True):
+        if not path or len(commit) != 40:
+            raise ReV2SnapshotError("invalid recursive submodule identity output")
+        identities.append({"commit": commit, "path": path})
     return sorted(identities, key=lambda item: item["path"])
 
 
