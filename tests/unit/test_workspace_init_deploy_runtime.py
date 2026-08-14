@@ -18,6 +18,23 @@ def _write_workspace_config(project_dir, deploy_block: str) -> None:
     )
 
 
+def _assert_proportional_why2_policy(why2_instructions: str) -> None:
+    normalized = " ".join(why2_instructions.split())
+    required_policy_language = (
+        "Never authorize quality debt",
+        "change or infer controller repair counters",
+        "invent, rename, recommend, or select a sealed decision option",
+        "represent an accepted-with-debt candidate as PASS or certified",
+        "Never waive a CRITICAL issue or contradiction",
+        "unresolved evidence or human-policy request",
+        "invalid product input mapping or traceability contract",
+        "invalid mandatory artifact",
+        "provider, timeout, controller-contract, checkpoint, or state-integrity failure",
+        "other hard structural contract required for safe downstream consumption",
+    )
+    assert [anchor for anchor in required_policy_language if anchor not in normalized] == []
+
+
 def test_http_deploy_preflight_skips_when_docker_missing(capsys) -> None:
     ready = cli._preflight_deploy_runtime(
         {"type": "http"},
@@ -152,7 +169,7 @@ def test_workspace_init_deploys_proportional_why2_controller_contract(
         encoding="utf-8"
     )
     assert "Controller-Owned Proportional Quality Policy" in why2_instructions
-    assert "Never authorize quality debt" in why2_instructions
+    _assert_proportional_why2_policy(why2_instructions)
     workflow = yaml.safe_load(
         (runtime / "workflow/definition.yaml").read_text(encoding="utf-8")
     )

@@ -49,9 +49,10 @@ eligible specification-quality debt can be recorded as `accepted with quality
 debt`, with `quality-debt.json` preserved separately from a passing quality
 certificate.
 
-`echelon spec status` shows the full decision/debt evidence. `echelon spec resume`
-supplies an explicit human choice when requested; ordinary `echelon spec continue`
-cannot silently accept debt, add repairs, or reopen an exhausted or declined loop.
+`echelon spec status` shows the key bounded decision/debt evidence and the path
+to `quality-debt.json`; that artifact retains the full evidence. The explicit
+human choice uses `echelon spec resume`; ordinary `echelon spec continue` cannot
+silently accept debt, add repairs, or reopen a declined loop.
 
 ## Three-phase workflow
 

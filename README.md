@@ -1153,11 +1153,13 @@ planning.
 ### Proportional quality repair and debt decisions
 
 Proportional validation uses an **initial candidate plus three automatic repairs**.
-The initial Understanding/SAGE assessment is not a repair. A repair
-is consumed only by a valid, changed CARTOGRAPHER result; provider failures,
-timeouts, invalid results or artifacts, controller/state/checkpoint failures,
-and evidence or human-decision routes keep their existing recovery behavior
-without spending the proportional allowance.
+The initial Understanding/SAGE assessment is not a repair. An automatic repair
+is consumed only by a valid, changed CARTOGRAPHER result. The one authorized
+extension is consumed by any valid WHAT completion, including unchanged output,
+because that authorized attempt has concluded. Provider failures, timeouts,
+invalid results or artifacts, controller/state/checkpoint failures, and evidence
+or human-decision routes keep their existing recovery behavior without consuming
+either kind of attempt.
 
 If quality still fails, Echelon restores the best eligible candidate and stops
 at a sealed decision. Guided and semi runs require an explicit human choice;
@@ -1176,11 +1178,15 @@ and provider, timeout, controller-contract, checkpoint, or state-integrity
 failures.
 
 Use `echelon spec status` to inspect repair counts, failed gates, the restored
-candidate, recommendation, decision owner, and debt artifact. In guided or
-semi mode, use the exact choice syntax shown for `echelon spec resume`;
-ordinary `echelon spec continue` may recover operational work but cannot choose
-a pending debt decision, grant more repairs, or reopen an exhausted or declined
-loop. Continue and resume preserve the same run-local counters and evidence.
+candidate, recommendation, decision owner, and debt artifact. In guided or semi
+mode, use the exact choice syntax shown for `echelon spec resume`; ordinary
+`echelon spec continue` may recover operational work but cannot choose a pending
+debt decision or authorize the extension. In banzai mode, `echelon spec continue`
+resumes the persisted sealed decision so COMMANDER may select its declared
+`extend_once` option; the controller validates and applies that selection without
+bypassing policy. No ordinary continuation can reopen a resolved stop or the
+terminal `proportional_quality_debt_declined` state. Continue and resume preserve
+the same run-local counters and evidence.
 
 Each invocation that actually runs work prints one concise `SQUAD SUMMARY` on
 exit. It names accepted quality debt and the most important failed gates while

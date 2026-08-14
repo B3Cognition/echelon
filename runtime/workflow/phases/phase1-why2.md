@@ -35,8 +35,9 @@ accepted-with-debt candidate as PASS or certified. Never waive a CRITICAL issue
 or contradiction, unresolved evidence or human-policy request, invalid product
 input mapping or traceability contract, invalid mandatory artifact, or
 provider, timeout, controller-contract, checkpoint, or state-integrity
-failure. Those hard blockers keep their existing fail-closed routes in every
-autonomy mode.
+failure, or any other hard structural contract required for safe downstream
+consumption. Those hard blockers keep their existing fail-closed routes in
+every autonomy mode.
 In banzai mode COMMANDER may select only from the controller's sealed options;
 SAGE receives no additional authority.
 

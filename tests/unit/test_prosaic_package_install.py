@@ -148,7 +148,20 @@ workflow_path = runtime / "workflow/definition.yaml"
 assert workflow_path.is_file()
 why2_instructions = (runtime / "workflow/phases/phase1-why2.md").read_text(encoding="utf-8")
 assert "Controller-Owned Proportional Quality Policy" in why2_instructions
-assert "Never authorize quality debt" in why2_instructions
+normalized_why2 = " ".join(why2_instructions.split())
+required_policy_language = (
+    "Never authorize quality debt",
+    "change or infer controller repair counters",
+    "invent, rename, recommend, or select a sealed decision option",
+    "represent an accepted-with-debt candidate as PASS or certified",
+    "Never waive a CRITICAL issue or contradiction",
+    "unresolved evidence or human-policy request",
+    "invalid product input mapping or traceability contract",
+    "invalid mandatory artifact",
+    "provider, timeout, controller-contract, checkpoint, or state-integrity failure",
+    "other hard structural contract required for safe downstream consumption",
+)
+assert [anchor for anchor in required_policy_language if anchor not in normalized_why2] == []
 workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
 why2 = next(phase for phase in workflow["phases"] if phase["id"] == "phase1-why2")
 assert why2["controller_policy"]["proportional_quality"] == {
