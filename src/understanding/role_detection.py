@@ -10,9 +10,9 @@ _MODAL_RE = re.compile(r"\b(shall|must|should|will|can|may)\b", re.IGNORECASE)
 _WORD_RE = re.compile(r"[A-Za-z][A-Za-z'-]*")
 
 _INTERVENING_MODIFIERS = {
-    "a", "an", "always", "automatically", "be", "directly", "explicitly",
-    "immediately", "never", "not", "only", "quickly", "reliably", "safely",
-    "the", "to",
+    "a", "able", "an", "always", "automatically", "be", "directly",
+    "explicitly", "immediately", "never", "not", "only", "quickly",
+    "reliably", "required", "safely", "the", "to",
 }
 
 
