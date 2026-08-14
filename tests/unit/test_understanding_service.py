@@ -180,6 +180,18 @@ def test_parse_requirements_accepts_conventional_heading_statement_format() -> N
 
 
 @pytest.mark.unit
+def test_parse_requirements_is_compatibility_view_of_canonical_projection() -> None:
+    parsed = parse_requirements(
+        "- **FR-001**: The command SHALL emit the result. "
+        "Constraint: Exit status is zero. Verified by: AC-001.\n"
+    )
+
+    assert parsed["requirements"] == [
+        {"id": "FR-001", "text": "The command SHALL emit the result."}
+    ]
+
+
+@pytest.mark.unit
 def test_zero_requirements_is_a_completed_deterministic_failure(
     tmp_path: Path,
 ) -> None:

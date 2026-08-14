@@ -14,6 +14,8 @@ from typing import Mapping
 from kernel.quality_gates import evaluate_quality_thresholds
 
 from .constraint_metrics import ConstraintAnalyzer
+from .requirement_projection import RequirementProjection, project_requirements
+from .role_detection import detect_requirement_roles
 from .semantic_metrics import SemanticAnalyzer, classify_ears_pattern
 
 
@@ -60,59 +62,67 @@ class UnderstandingBundle:
 
 
 def parse_requirements(spec_text: str) -> dict[str, object]:
-    """Parse formal requirements from Lexicon or conventional Markdown specs."""
-    from .markdown_parser import extract_lexicon_requirements, is_lexicon_spec
-
-    if is_lexicon_spec(spec_text):
-        requirements = [
-            {"id": requirement_id, "text": text}
-            for requirement_id, text in extract_lexicon_requirements(spec_text)
-        ]
-    else:
-        # Acceptance criteria sometimes carry a parenthesized classifier before
-        # their colon (for example ``**AC-005** (Error): ...``).  It describes
-        # the criterion but must not make that criterion invisible to the
-        # quality gate.
-        pattern = re.compile(
-            r"^- \*\*([A-Z]{1,5}-\d{3,4})\*\*(?:\s*\([^)]*\))?\s*:(.+)$"
-        )
-        requirements = []
-        for line in spec_text.splitlines():
-            match = pattern.match(line.strip())
-            if match:
-                requirements.append(
-                    {"id": match.group(1), "text": match.group(2).strip()}
-                )
-        # Echelon's conventional Markdown template presents normative
-        # requirements as ``### FR-001: …`` followed by a ``Statement``
-        # field, rather than as a single bold-ID bullet. Recognize that
-        # first-class template as well so the quality gate does not silently
-        # score only acceptance criteria and ignore the actual FR/NFR set.
-        heading_pattern = re.compile(
-            r"^#{1,6}\s+((?:FR|NFR)-\d{3,4})\b", re.IGNORECASE
-        )
-        statement_pattern = re.compile(r"^- \*\*Statement\*\*:\s*(.+)$")
-        existing_ids = {
-            str(requirement["id"]).upper() for requirement in requirements
-        }
-        active_id: str | None = None
-        for line in spec_text.splitlines():
-            heading = heading_pattern.match(line.strip())
-            if heading:
-                active_id = heading.group(1).upper()
-                continue
-            statement = statement_pattern.match(line.strip())
-            if active_id and statement and active_id not in existing_ids:
-                requirements.append(
-                    {"id": active_id, "text": statement.group(1).strip()}
-                )
-                existing_ids.add(active_id)
-                active_id = None
+    """Return the legacy dictionary view of canonical requirement objects."""
+    projections = project_requirements(spec_text)
+    requirements = [
+        {"id": projection.requirement_id, "text": projection.normative_text}
+        for projection in projections
+    ]
     return {
         "requirements": requirements,
         "full_spec": spec_text,
         "count": len(requirements),
     }
+
+
+def _projected_scoring_text(projections: tuple[RequirementProjection, ...]) -> str:
+    return "\n".join(
+        f"- **{projection.requirement_id}**: {projection.normative_text}"
+        for projection in projections
+    )
+
+
+def _testability_text(projections: tuple[RequirementProjection, ...]) -> str:
+    return "\n".join(
+        " ".join((projection.normative_text, *projection.constraints)).strip()
+        for projection in projections
+    )
+
+
+def _depth_text(projections: tuple[RequirementProjection, ...]) -> str:
+    known_ids = {projection.requirement_id for projection in projections}
+    return "\n".join(
+        f"- **{projection.requirement_id}**: {' '.join(reference for reference in projection.traceability_references if reference in known_ids)}"
+        for projection in projections
+    )
+
+
+def _replace_category_metrics(
+    destination: dict[str, object], source: dict[str, object], category: str
+) -> None:
+    """Replace one independently calculated metric family in an analysis."""
+    destination_metrics = destination.get("metrics")
+    source_metrics = source.get("metrics")
+    if not isinstance(destination_metrics, dict) or not isinstance(source_metrics, dict):
+        return
+    destination_categories = destination_metrics.get("category_averages")
+    source_categories = source_metrics.get("category_averages")
+    if isinstance(destination_categories, dict) and isinstance(source_categories, dict):
+        destination_categories[category] = source_categories.get(category, 0.0)
+    destination_scores = destination_metrics.get("scores")
+    source_scores = source_metrics.get("scores")
+    if isinstance(destination_scores, list) and isinstance(source_scores, list):
+        destination_metrics["scores"] = [
+            score for score in destination_scores if isinstance(score, dict) and score.get("category") != category
+        ] + [
+            score for score in source_scores if isinstance(score, dict) and score.get("category") == category
+        ]
+    if isinstance(destination_metrics.get("scores"), list):
+        destination_metrics["overall_weighted_average"] = sum(
+            float(score.get("score", 0.0)) * float(score.get("weight", 0.0))
+            for score in destination_metrics["scores"]
+            if isinstance(score, dict)
+        )
 
 
 def analyze_text(
@@ -276,9 +286,11 @@ def analyze_spec_bundle(
 ) -> UnderstandingBundle:
     """Run complete deterministic analysis for the harness or CLI."""
     spec_text = spec_path.read_text(encoding="utf-8")
-    parsed = parse_requirements(spec_text)
-    requirements = parsed["requirements"]
-    assert isinstance(requirements, list)
+    projections = project_requirements(spec_text)
+    requirements = [
+        {"id": projection.requirement_id, "text": projection.normative_text}
+        for projection in projections
+    ]
 
     # Quality gates measure the formal requirements, not the surrounding
     # narrative.  A normal spec contains headings, rationale, architecture
@@ -288,11 +300,8 @@ def analyze_spec_bundle(
     # the aggregate gate must use the same canonical requirement set.
     scoring_text = spec_text
     scoring_basis = "full_spec_fallback"
-    if requirements:
-        scoring_text = "\n".join(
-            f"- **{requirement['id']}**: {requirement['text']}"
-            for requirement in requirements
-        )
+    if projections:
+        scoring_text = _projected_scoring_text(projections)
         scoring_basis = "formal_requirements"
     analysis = analyze_text(
         scoring_text,
@@ -308,11 +317,31 @@ def analyze_spec_bundle(
         else spec_path.stem
     )
     analysis["scoring_basis"] = scoring_basis
+    if projections and enhanced:
+        # Different metric families consume deliberately separate evidence:
+        # constraints are testability-only and relationship metadata is
+        # depth-only.  All prose-quality families continue to see normative
+        # text exclusively.
+        testability_analysis = analyze_text(
+            _testability_text(projections),
+            enhanced=True,
+            use_nlp=use_nlp,
+        )
+        depth_analysis = analyze_text(
+            _depth_text(projections),
+            enhanced=True,
+            use_nlp=use_nlp,
+        )
+        _replace_category_metrics(analysis, testability_analysis, "testability")
+        _replace_category_metrics(analysis, depth_analysis, "depth")
+        analysis["depth_analysis"] = depth_analysis.get("depth_analysis", {})
     per_requirement: list[dict[str, object]] = []
     semantic_analyzer = SemanticAnalyzer(use_spacy=use_nlp)
     constraint_analyzer = ConstraintAnalyzer()
-    for requirement in requirements:
-        requirement_text = str(requirement["text"])
+    for projection in projections:
+        requirement_text = projection.normative_text
+        testability_input = " ".join((requirement_text, *projection.constraints)).strip()
+        shared_roles = detect_requirement_roles(requirement_text)
         item = analyze_text(
             requirement_text,
             enhanced=enhanced,
@@ -322,15 +351,28 @@ def analyze_spec_bundle(
         )
         item.update(
             {
-                "requirement_id": str(requirement["id"]),
+                "requirement_id": projection.requirement_id,
                 "requirement_text": requirement_text,
+                "original_text": projection.original_text,
+                "normative_text": projection.normative_text,
+                "constraints": list(projection.constraints),
+                "traceability_references": list(projection.traceability_references),
+                "source_location": {
+                    "line_start": projection.source_location.line_start,
+                    "line_end": projection.source_location.line_end,
+                },
                 "ears_pattern": classify_ears_pattern(requirement_text),
                 "semantic_roles": semantic_analyzer.extract_roles_as_dict(
                     requirement_text
                 ),
-                "constraint_diagnostics": constraint_analyzer.diagnose_requirement(
-                    requirement_text
-                ),
+                "shared_roles": {
+                    "actor": shared_roles.actor,
+                    "action": shared_roles.action,
+                    "object": shared_roles.object,
+                    "detector_evidence": list(shared_roles.detector_evidence),
+                },
+                "detector_evidence": list(shared_roles.detector_evidence),
+                "constraint_diagnostics": constraint_analyzer.diagnose_requirement(testability_input),
             }
         )
         per_requirement.append(item)
@@ -377,7 +419,7 @@ def analyze_spec_bundle(
         scores=scores,
         gates=gates,
         passed=passed,
-        requirement_count=len(requirements),
+        requirement_count=len(projections),
         per_requirement=tuple(per_requirement),
         findings=tuple(findings),
         diagrams=diagrams,
