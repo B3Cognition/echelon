@@ -54,8 +54,8 @@ _GIT_OBJECT_ID_PATTERN = re.compile(
 _EFFECT_ORDER = (
     "journal",
     "timing",
-    "quality",
     "checkpoint",
+    "quality",
     "context",
     "mining",
     "retarget",

@@ -117,8 +117,8 @@ _CONTROLLER_COMPLETION_FAILURE_KEYS = frozenset(
 _COMPLETION_EFFECT_ORDER = (
     "journal",
     "timing",
-    "quality",
     "checkpoint",
+    "quality",
     "context",
     "mining",
     "retarget",

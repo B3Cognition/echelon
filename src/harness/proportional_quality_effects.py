@@ -31,12 +31,65 @@ def _inside_project(root: Path, reference: object) -> Path:
     return path
 
 
+def _routed_quality_checkpoint_context(
+    *,
+    route: Mapping[str, object],
+    completion_id: str,
+    sealed_prestate: object,
+    preceding_checkpoint_receipt: object,
+) -> tuple[str, dict[str, object]]:
+    """Bind a quality checkpoint to its routed completion and prior effect."""
+    if (
+        not isinstance(route, Mapping)
+        or route.get("kind") != "routed"
+        or type(route.get("from_phase")) is not str
+        or not route.get("from_phase")
+        or type(route.get("to_phase")) is not str
+        or not route.get("to_phase")
+        or type(sealed_prestate) is not dict
+    ):
+        raise QualityCandidateIntegrityError(
+            "quality checkpoint route is invalid"
+        )
+    if preceding_checkpoint_receipt is None:
+        return str(route["to_phase"]), dict(sealed_prestate)
+    if not isinstance(preceding_checkpoint_receipt, Mapping):
+        raise QualityCandidateIntegrityError(
+            "preceding routed checkpoint receipt is invalid"
+        )
+    receipt = dict(preceding_checkpoint_receipt)
+    if (
+        receipt.get("completion_id") != completion_id
+        or receipt.get("phase") != route["from_phase"]
+        or receipt.get("next_phase") != route["to_phase"]
+        or receipt.get("outcome") not in {"committed", "no_change"}
+    ):
+        raise QualityCandidateIntegrityError(
+            "preceding routed checkpoint receipt changed"
+        )
+    head_key = "commit" if receipt["outcome"] == "committed" else "head"
+    head = receipt.get(head_key)
+    if type(head) is not str:
+        raise QualityCandidateIntegrityError(
+            "preceding routed checkpoint receipt is invalid"
+        )
+    return str(route["to_phase"]), {"kind": "git_head", "head": head}
+
+
+def _quality_completion_id(completion_id: str, effect: str) -> str:
+    return hashlib.sha256(
+        f"{completion_id}:quality-{effect}".encode("utf-8")
+    ).hexdigest()[:32]
+
+
 def apply_or_verify_proportional_quality_effect(
     effect: Mapping[str, object],
     *,
     completion_id: str,
     project_root: Path,
     state: Mapping[str, object],
+    route: Mapping[str, object],
+    preceding_checkpoint_receipt: object = None,
     expected_receipt: object | None = None,
 ) -> dict[str, object]:
     """Apply or verify the exact state-authorized proportional quality effect."""
@@ -94,6 +147,16 @@ def apply_or_verify_proportional_quality_effect(
                 )
             if type(prestate) is not dict:
                 raise QualityCandidateIntegrityError("candidate checkpoint prestate is invalid")
+            next_phase, effective_prestate = (
+                _routed_quality_checkpoint_context(
+                    route=route,
+                    completion_id=completion_id,
+                    sealed_prestate=prestate,
+                    preceding_checkpoint_receipt=(
+                        preceding_checkpoint_receipt
+                    ),
+                )
+            )
             candidate_expected = expected.get("candidate") if expected else None
             restore_id = effect.get("restore_candidate_id")
             materialized, candidate_receipt = materialize_quality_candidate(
@@ -102,8 +165,12 @@ def apply_or_verify_proportional_quality_effect(
                 candidate=draft,
                 run_id=run_id,
                 spec_id=spec_id,
-                completion_id=completion_id,
-                checkpoint_prestate=prestate,
+                completion_id=_quality_completion_id(
+                    completion_id,
+                    "candidate",
+                ),
+                next_phase=next_phase,
+                checkpoint_prestate=effective_prestate,
                 require_current_artifacts=restore_id is None,
                 expected_receipt=candidate_expected,
             )
@@ -131,9 +198,10 @@ def apply_or_verify_proportional_quality_effect(
                         / f"{restore_id}.json"
                     )
                 )
-                restore_completion_id = hashlib.sha256(
-                    f"{completion_id}:quality-restore".encode("utf-8")
-                ).hexdigest()[:32]
+                restore_completion_id = _quality_completion_id(
+                    completion_id,
+                    "restore",
+                )
                 restore_receipt = materialize_quality_candidate_restore(
                     project_root=root,
                     spec_dir=spec_dir,
@@ -141,6 +209,7 @@ def apply_or_verify_proportional_quality_effect(
                     run_id=run_id,
                     spec_id=spec_id,
                     completion_id=restore_completion_id,
+                    next_phase=next_phase,
                     checkpoint_prestate={
                         "kind": "git_head",
                         "head": candidate_receipt["checkpoint"]["commit"],
@@ -190,6 +259,16 @@ def apply_or_verify_proportional_quality_effect(
                 raise QualityCandidateIntegrityError(
                     "candidate restore identity is invalid"
                 )
+            next_phase, effective_prestate = (
+                _routed_quality_checkpoint_context(
+                    route=route,
+                    completion_id=completion_id,
+                    sealed_prestate=prestate,
+                    preceding_checkpoint_receipt=(
+                        preceding_checkpoint_receipt
+                    ),
+                )
+            )
             manifest_ref = evidence.get("candidate_manifest")
             manifest_path = _inside_project(root, manifest_ref)
             candidate = load_quality_candidate_manifest(manifest_path)
@@ -199,8 +278,12 @@ def apply_or_verify_proportional_quality_effect(
                 candidate=candidate,
                 run_id=run_id,
                 spec_id=spec_id,
-                completion_id=completion_id,
-                checkpoint_prestate=prestate,
+                completion_id=_quality_completion_id(
+                    completion_id,
+                    "restore",
+                ),
+                next_phase=next_phase,
+                checkpoint_prestate=effective_prestate,
                 expected_receipt=(
                     expected.get("restore") if expected else None
                 ),

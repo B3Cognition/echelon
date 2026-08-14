@@ -1506,17 +1506,16 @@ class SquadController:
                     )
                 ):
                     effects.append("timing")
-                if quality_effect is not None:
-                    effects.append("quality")
                 active_spec_dir = self._active_phase_a_spec_dir(
                     snapshot.state
                 )
                 if (
-                    quality_effect is None
-                    and active_spec_dir is not None
+                    active_spec_dir is not None
                     and active_spec_dir.exists()
                 ):
                     effects.append("checkpoint")
+                if quality_effect is not None:
+                    effects.append("quality")
                 effects.append("context")
                 if from_phase == "phase4-document":
                     effects.append("mining")
@@ -1696,6 +1695,12 @@ class SquadController:
                 completion_id=prepared.marker.completion_id,
                 project_root=self._project_root,
                 state=state,
+                route=prepared.intent.route,
+                preceding_checkpoint_receipt=(
+                    prepared.receipts["effects"].get("checkpoint")
+                    if "checkpoint" in prepared.intent.effect_plan
+                    else None
+                ),
                 expected_receipt=existing,
             )
             persist_completion_effect_receipt(prepared, effect, receipt)
@@ -4097,6 +4102,10 @@ class SquadController:
                 "human-input token usage delta is invalid"
             )
         state = self._state_store.load()
+        if PENDING_CONTROLLER_COMPLETION_KEY in state:
+            raise HumanInputPolicyError(
+                "controller completion is pending human-input resolution"
+            )
         if (
             not isinstance(decision_id, str)
             or not decision_id

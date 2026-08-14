@@ -730,6 +730,7 @@ def materialize_quality_candidate(
     run_id: str,
     spec_id: str,
     completion_id: str,
+    next_phase: str,
     checkpoint_prestate: Mapping[str, object],
     require_current_artifacts: bool = True,
     expected_receipt: object | None = None,
@@ -798,7 +799,7 @@ def materialize_quality_candidate(
             project_root=root,
             spec_dir=resolved_spec,
             phase=f"phase1-{candidate.candidate_id}",
-            next_phase="phase1-what",
+            next_phase=next_phase,
             run_id=run_id,
             spec_id=spec_id,
             completion_id=completion_id,
@@ -895,6 +896,7 @@ def capture_quality_candidate(
             completion_id=hashlib.sha256(
                 f"legacy-candidate:{run_id}:{draft.candidate_id}".encode()
             ).hexdigest()[:32],
+            next_phase="phase1-what",
             checkpoint_prestate={"kind": "git_head", "head": head},
         )
     except BaseException:
@@ -1066,6 +1068,7 @@ def materialize_quality_candidate_restore(
     run_id: str,
     spec_id: str,
     completion_id: str,
+    next_phase: str,
     checkpoint_prestate: Mapping[str, object],
     expected_receipt: object | None = None,
 ) -> dict[str, object]:
@@ -1095,7 +1098,7 @@ def materialize_quality_candidate_restore(
             project_root=project_root,
             spec_dir=spec_dir,
             phase="phase1-quality-candidate-restored",
-            next_phase="phase1-lexicon",
+            next_phase=next_phase,
             run_id=run_id,
             spec_id=spec_id,
             completion_id=completion_id,

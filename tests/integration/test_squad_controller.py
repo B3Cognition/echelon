@@ -6757,6 +6757,94 @@ def _run_proportional_quality_loop(
 
 
 class TestProportionalQualityController:
+    def test_run_passing_candidate_keeps_routed_and_candidate_checkpoints(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        _disable_lexicon_gate(tmp_path)
+        provider = _mock_provider()
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize(
+            "r",
+            "greenfield",
+            "msg",
+            0,
+            "phase1-why2",
+            max_iterations=10,
+            autonomy_mode="semi",
+            spec_authoring_mode="proportional",
+        )
+        _mark_constitution_complete(tmp_path, store)
+        state = store.load()
+        state.update(
+            {
+                "spec_id": "001-demo",
+                "spec_dir": "runs/run-test/specs/001-demo",
+            }
+        )
+        store.save(state)
+        updates, _failure = _proportional_assessment_fixture(ctrl, store, 0)
+        evidence = dict(updates["understanding_evidence"])
+        report_path = Path(str(evidence["path"]))
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        report["scores"]["overall"] = 0.90
+        report["gates"]["overall"].update(
+            {
+                "score": 0.90,
+                "pass": True,
+                "numeric_pass": True,
+            }
+        )
+        report["pass"] = True
+        report_path.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        digest = hashlib.sha256(report_path.read_bytes()).hexdigest()
+        evidence.update({"digest": digest, "pass": True, "failing_gates": []})
+        updates["understanding_evidence"] = evidence
+        updates["quality_scores"][-1].update(
+            {"pass": True, "overall": 0.90, "evidence_digest": digest}
+        )
+        state = store.load()
+        state.update(updates)
+        store.save(state)
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "PASS",
+                "state_updates": {
+                    "evidence_resolution_status": "not_required",
+                    "finding_routes": {"findings": []},
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+
+        ctrl.run("msg", "semi")
+
+        ledger = json.loads(
+            (
+                tmp_path
+                / "runs/run-test/specs/001-demo/.echelon/checkpoints.json"
+            ).read_text(encoding="utf-8")
+        )
+        routed = [
+            row for row in ledger["checkpoints"]
+            if row["phase"] == "phase1-why2"
+        ]
+        candidate = [
+            row for row in ledger["checkpoints"]
+            if row["phase"] == "phase1-quality-candidate-0"
+        ]
+        assert len(routed) == 1
+        assert len(candidate) == 1
+        assert routed[0]["next_phase"] == "checkpoint-assess"
+        assert candidate[0]["next_phase"] == "checkpoint-assess"
+        assert routed[0]["completion_id"] != candidate[0]["completion_id"]
+
     def test_run_executes_three_changed_repairs_with_global_iteration_accounting(
         self,
         tmp_path: Path,
@@ -6942,6 +7030,9 @@ class TestProportionalQualityController:
         assert failed is True
         assert first.status == "blocked"
         assert state[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == "quality"
+        completion_id = state[PENDING_CONTROLLER_COMPLETION_KEY][
+            "completion_id"
+        ]
         assert state["phase1_quality_repair"]["candidate_ids"] == [
             "quality-candidate-0"
         ]
@@ -6964,6 +7055,27 @@ class TestProportionalQualityController:
             text=True,
         ).stdout
         assert log.count("Echelon-Checkpoint: phase1-quality-candidate-0") == 1
+        ledger = json.loads(
+            (
+                tmp_path
+                / "runs/run-test/specs/001-demo/.echelon/checkpoints.json"
+            ).read_text(encoding="utf-8")
+        )
+        routed = [
+            row for row in ledger["checkpoints"]
+            if row["completion_id"] == completion_id
+        ]
+        candidate_id = hashlib.sha256(
+            f"{completion_id}:quality-candidate".encode("utf-8")
+        ).hexdigest()[:32]
+        candidate = [
+            row for row in ledger["checkpoints"]
+            if row["completion_id"] == candidate_id
+        ]
+        assert len(routed) == 1
+        assert len(candidate) == 1
+        assert routed[0]["next_phase"] == "phase1-what"
+        assert candidate[0]["next_phase"] == "phase1-what"
 
     def test_run_restore_cas_failure_keeps_current_files_then_retry_restores_once(
         self,
@@ -7053,7 +7165,7 @@ class TestProportionalQualityController:
         ).stdout
         assert log.count("Echelon-Checkpoint: phase1-quality-candidate-1") == 1
 
-    def test_run_restore_effect_marker_failure_reconciles_exact_restore_once(
+    def test_pending_restore_rejects_direct_resolution_then_resume_reconciles_once(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -7121,14 +7233,48 @@ class TestProportionalQualityController:
         assert injected is True
         assert first.status == "blocked"
         assert pending[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == "quality"
+        completion_id = pending[PENDING_CONTROLLER_COMPLETION_KEY][
+            "completion_id"
+        ]
         assert spec.read_text(encoding="utf-8").startswith("# Best candidate")
         calls = ctrl._provider.exec_agent.call_count
+        decision = pending["blocked_decision"]
+        with pytest.raises(HumanInputPolicyError, match="completion.*pending"):
+            ctrl.apply_human_input_resolution(
+                decision["id"],
+                expected_state_revision=pending["state_revision"],
+                resolution=HumanInputResolution(
+                    selected_option_id="extend_once",
+                    answer_text=None,
+                    resolved_by="user",
+                ),
+            )
+        after_rejected = store.load()
+        assert after_rejected == pending
+        assert after_rejected["phase1_quality_repair"][
+            "extension_authorized"
+        ] == 0
+        assert after_rejected["blocked_decision"]["status"] == "awaiting_human"
 
-        retried = ctrl.run("must finish restore before routing", "semi")
+        reconciled = ctrl.run("reconcile the pending restore", "semi")
 
-        assert retried.status == "blocked"
+        after_reconcile = store.load()
+        assert reconciled.status == "blocked"
+        assert PENDING_CONTROLLER_COMPLETION_KEY not in after_reconcile
+        assert after_reconcile["phase1_quality_repair"][
+            "extension_authorized"
+        ] == 0
+        assert after_reconcile["blocked_decision"]["status"] == "awaiting_human"
         assert ctrl._provider.exec_agent.call_count == calls
-        assert PENDING_CONTROLLER_COMPLETION_KEY not in store.load()
+
+        assert ctrl.resume_with_human_input("extend_once") is True
+
+        assert ctrl._provider.exec_agent.call_count == calls
+        resolved = store.load()
+        assert PENDING_CONTROLLER_COMPLETION_KEY not in resolved
+        assert resolved["phase"] == "phase1-what"
+        assert resolved["phase1_quality_repair"]["extension_authorized"] == 1
+        assert resolved["blocked_decision"]["status"] == "resolved"
         log = subprocess.run(
             ["git", "log", "--format=%B"],
             cwd=tmp_path,
@@ -7137,6 +7283,28 @@ class TestProportionalQualityController:
             text=True,
         ).stdout
         assert log.count("Echelon-Checkpoint: phase1-quality-candidate-restored") == 1
+        ledger = json.loads(
+            (
+                tmp_path
+                / "runs/run-test/specs/001-demo/.echelon/checkpoints.json"
+            ).read_text(encoding="utf-8")
+        )
+        routed = [
+            row for row in ledger["checkpoints"]
+            if row["completion_id"] == completion_id
+        ]
+        restore_id = hashlib.sha256(
+            f"{completion_id}:quality-restore".encode("utf-8")
+        ).hexdigest()[:32]
+        restored = [
+            row for row in ledger["checkpoints"]
+            if row["completion_id"] == restore_id
+        ]
+        assert len(routed) == 1
+        assert len(restored) == 1
+        assert routed[0]["next_phase"] == "terminal-blocked"
+        assert restored[0]["next_phase"] == "terminal-blocked"
+        assert routed[0]["completion_id"] != restored[0]["completion_id"]
 
     @pytest.mark.parametrize(
         ("severity", "issue_type", "expected_reason"),
