@@ -3,6 +3,7 @@
 import pytest
 
 from understanding.requirement_projection import project_requirements
+from understanding.service import parse_requirements
 
 
 SPEC = """# Requirements
@@ -70,3 +71,55 @@ def test_projection_handles_statement_sections_and_folded_lexicon_fields() -> No
     assert lexicon.source_location.line_start == 13
     assert lexicon.source_location.line_end == 19
     assert "<=" not in lexicon.normative_text
+
+
+@pytest.mark.unit
+def test_projection_preserves_general_lexicon_identifiers_for_compatibility() -> None:
+    """Lexicon REQ identifiers are not limited to conventional FR prefixes."""
+    spec = """ARTIFACT: SPEC
+
+REQ: R1
+THEN: the greeting command MUST write a message
+
+REQ: TASK-07
+THEN: the greeting command MUST write an audit record
+
+REQ: REQ-001
+THEN: the greeting command MUST write a status record
+
+REQ: STORY-1
+THEN: the greeting command MUST write a story result
+"""
+
+    projections = project_requirements(spec)
+
+    assert [projection.requirement_id for projection in projections] == [
+        "R1",
+        "TASK-07",
+        "REQ-001",
+        "STORY-1",
+    ]
+    assert parse_requirements(spec)["count"] == 4
+
+
+@pytest.mark.unit
+def test_heading_projection_preserves_unknown_block_prose_and_original_text() -> None:
+    """Unknown block lines are evidence, not metadata to silently discard."""
+    spec = """### FR-001: Greeting
+- **Statement**: The greeting command MUST write a configured message.
+- **Implementation note**: The message includes the active locale.
+- **Constraint**: output_length <= 128 bytes.
+"""
+
+    projection = project_requirements(spec)[0]
+
+    assert projection.original_text == (
+        "- **Statement**: The greeting command MUST write a configured message.\n"
+        "- **Implementation note**: The message includes the active locale.\n"
+        "- **Constraint**: output_length <= 128 bytes."
+    )
+    assert projection.normative_text == (
+        "The greeting command MUST write a configured message. "
+        "- **Implementation note**: The message includes the active locale."
+    )
+    assert projection.constraints == ("output_length <= 128 bytes.",)

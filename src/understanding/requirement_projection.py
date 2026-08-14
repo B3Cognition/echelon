@@ -6,13 +6,14 @@ from dataclasses import dataclass
 import re
 
 
-_REQUIREMENT_ID = r"(?:FR|NFR|AC)-\d{3,4}"
-_REFERENCE_RE = re.compile(rf"\b({_REQUIREMENT_ID})\b", re.IGNORECASE)
+_CONVENTIONAL_REQUIREMENT_ID = r"(?:FR|NFR|AC)-\d{3,4}"
+_REFERENCE_ID = r"(?:[A-Z][A-Z0-9]*(?:-\d+)+|[A-Z]+\d+)"
+_REFERENCE_RE = re.compile(rf"\b({_REFERENCE_ID})\b", re.IGNORECASE)
 _BULLET_RE = re.compile(
-    rf"^\s*[-*+]\s+\*\*({_REQUIREMENT_ID})\*\*(?:\s*\([^)]*\))?\s*:\s*(.+\S)\s*$",
+    rf"^\s*[-*+]\s+\*\*({_CONVENTIONAL_REQUIREMENT_ID})\*\*(?:\s*\([^)]*\))?\s*:\s*(.+\S)\s*$",
     re.IGNORECASE,
 )
-_HEADING_RE = re.compile(rf"^\s*#{{1,6}}\s+({_REQUIREMENT_ID})\b", re.IGNORECASE)
+_HEADING_RE = re.compile(rf"^\s*#{{1,6}}\s+({_CONVENTIONAL_REQUIREMENT_ID})\b", re.IGNORECASE)
 _STATEMENT_RE = re.compile(r"^\s*[-*+]\s+\*\*Statement\*\*\s*:\s*(.+\S)\s*$", re.IGNORECASE)
 _FIELD_RE = re.compile(
     r"^\s*[-*+]\s+\*\*(Constraints?|Verified\s+by|Traceability|Depends)\*\*\s*:\s*(.+\S)\s*$",
@@ -22,7 +23,7 @@ _INLINE_METADATA_RE = re.compile(
     r"(?:^|\s)(Constraints?|Verified\s+by|Traceability|Depends)\s*:\s*",
     re.IGNORECASE,
 )
-_LEXICON_ID_RE = re.compile(rf"^\s*REQ:\s*({_REQUIREMENT_ID})\s*$", re.IGNORECASE)
+_LEXICON_ID_RE = re.compile(r"^\s*REQ:\s*(\S+)\s*$", re.IGNORECASE)
 _LEXICON_FIELD_RE = re.compile(
     r"^\s*(GIVEN|WHEN|THEN|OUTPUT|CONSTRAINT|CONSTRAINTS|VERIFIED\s+BY|TRACEABILITY|DEPENDS)\s*:\s*(.+\S)\s*$",
     re.IGNORECASE,
@@ -136,6 +137,7 @@ def _project_conventional(lines: list[str]) -> list[RequirementProjection]:
         statement: str | None = None
         fields: list[tuple[str, str]] = []
         field_indexes: list[int] = []
+        unknown_prose: list[str] = []
         for candidate_index in range(index + 1, len(lines)):
             candidate = lines[candidate_index]
             if _HEADING_RE.match(candidate):
@@ -151,19 +153,23 @@ def _project_conventional(lines: list[str]) -> list[RequirementProjection]:
             if field:
                 fields.append((field.group(1), field.group(2)))
                 field_indexes.append(candidate_index)
+            elif statement is not None and candidate.strip():
+                unknown_prose.append(_normalise_text(candidate))
+                field_indexes.append(candidate_index)
         if statement is None or statement_index is None:
             continue
         normative, inline_constraints, inline_metadata = _split_inline_metadata(statement)
         constraints = list(inline_constraints)
         metadata = [inline_metadata]
-        original_parts = [statement.strip()]
         for label, value in fields:
-            original_parts.append(f"{label}: {value}")
             if label.lower().startswith("constraint"):
                 constraints.append(_normalise_text(value))
             else:
                 metadata.append(value)
         source_end = max([statement_index, *field_indexes])
+        original_parts = lines[statement_index : source_end + 1]
+        if unknown_prose:
+            normative = " ".join([normative, *unknown_prose])
         projections.append(
             _make_projection(
                 requirement_id,
@@ -171,7 +177,7 @@ def _project_conventional(lines: list[str]) -> list[RequirementProjection]:
                 normative,
                 tuple(constraints),
                 SourceLocation(index + 1, source_end + 1),
-                " ".join([statement, *metadata]),
+                " ".join([statement, *metadata, *unknown_prose]),
             )
         )
         seen_ids.add(requirement_id)

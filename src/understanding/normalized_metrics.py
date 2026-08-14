@@ -476,7 +476,8 @@ class MetricsNormalizer:
 def analyze_with_normalized_metrics(
     text: str,
     custom_weights: Dict[str, Dict[str, float]] = None,
-    custom_category_weights: Dict[str, float] = None
+    custom_category_weights: Dict[str, float] = None,
+    metric_requirements: List[str] | None = None,
 ) -> Dict[str, Any]:
     """
     Convenience function to analyze requirements with normalized metrics.
@@ -491,7 +492,7 @@ def analyze_with_normalized_metrics(
     """
     # Get raw metrics
     analyzer = RequirementsAnalyzer()
-    raw_metrics = analyzer.analyze_requirements(text)
+    raw_metrics = analyzer.analyze_requirements(text, metric_requirements)
 
     # Normalize
     normalizer = MetricsNormalizer(custom_weights, custom_category_weights)

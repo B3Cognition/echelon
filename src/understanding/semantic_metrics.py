@@ -305,9 +305,9 @@ class SemanticAnalyzer:
         shared = detect_requirement_roles(text)
         roles = self.extract_semantic_roles(text)
         return {
-            "actors": [shared.actor] if shared.actor else roles.actors,
-            "actions": [shared.action] if shared.action else roles.actions,
-            "objects": [shared.object] if shared.object else roles.objects,
+            "actors": [shared.actor] if shared.actor else [],
+            "actions": [shared.action] if shared.action else [],
+            "objects": [shared.object] if shared.object else [],
             "outcomes": roles.outcomes,
             "triggers": roles.triggers,
             "detector_evidence": list(shared.detector_evidence),
@@ -334,13 +334,14 @@ class SemanticAnalyzer:
         trigger_count = 0
 
         for req in requirements:
+            shared = detect_requirement_roles(req)
             roles = self.extract_semantic_roles(req)
 
-            if roles.has_actor():
+            if shared.actor:
                 actor_count += 1
-            if roles.has_action():
+            if shared.action:
                 action_count += 1
-            if roles.has_object():
+            if shared.object:
                 object_count += 1
             if roles.has_outcome():
                 outcome_count += 1

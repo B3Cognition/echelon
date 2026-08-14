@@ -87,6 +87,7 @@ def analyze_with_enhanced_metrics(
     text: str,
     use_spacy: bool = True,
     mode: str = "standard",
+    metric_requirements: list[str] | None = None,
 ) -> Dict[str, Any]:
     """
     Analyze requirements with all 34 enhanced metrics.
@@ -100,11 +101,17 @@ def analyze_with_enhanced_metrics(
         Dictionary with 34 normalized metrics (0-1 range) across 7 categories
     """
     # Get base 18 metrics (readability, structure, cognitive)
-    base_result = analyze_with_normalized_metrics(text)
+    base_result = analyze_with_normalized_metrics(
+        text, metric_requirements=metric_requirements
+    )
     base_normalized = base_result["normalized_metrics"]
 
     # Extract requirements using markdown-aware parser (replaces broken re.split)
-    requirements = extract_requirements(text)
+    requirements = (
+        list(metric_requirements)
+        if metric_requirements is not None
+        else extract_requirements(text)
+    )
 
     # Create combined normalized metrics
     enhanced = NormalizedMetrics()

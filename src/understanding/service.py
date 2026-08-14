@@ -83,18 +83,28 @@ def _projected_scoring_text(projections: tuple[RequirementProjection, ...]) -> s
 
 
 def _testability_text(projections: tuple[RequirementProjection, ...]) -> str:
-    return "\n".join(
+    return "\n".join(_testability_requirements(projections))
+
+
+def _testability_requirements(
+    projections: tuple[RequirementProjection, ...],
+) -> list[str]:
+    return [
         " ".join((projection.normative_text, *projection.constraints)).strip()
         for projection in projections
-    )
+    ]
 
 
 def _depth_text(projections: tuple[RequirementProjection, ...]) -> str:
+    return "\n".join(_depth_requirements(projections))
+
+
+def _depth_requirements(projections: tuple[RequirementProjection, ...]) -> list[str]:
     known_ids = {projection.requirement_id for projection in projections}
-    return "\n".join(
+    return [
         f"- **{projection.requirement_id}**: {' '.join(reference for reference in projection.traceability_references if reference in known_ids)}"
         for projection in projections
-    )
+    ]
 
 
 def _replace_category_metrics(
@@ -132,18 +142,25 @@ def analyze_text(
     use_nlp: bool = False,
     extract_entities: bool = False,
     use_energy: bool = False,
+    metric_requirements: list[str] | None = None,
 ) -> dict[str, object]:
     """Analyze text without reading configuration or writing files."""
     if enhanced:
         from .enhanced_metrics import analyze_with_enhanced_metrics
 
-        result = analyze_with_enhanced_metrics(text, use_spacy=use_nlp)
+        result = analyze_with_enhanced_metrics(
+            text,
+            use_spacy=use_nlp,
+            metric_requirements=metric_requirements,
+        )
         metrics = result["enhanced_metrics"]
         metric_count = result.get("metric_count", {})
     else:
         from .normalized_metrics import analyze_with_normalized_metrics
 
-        result = analyze_with_normalized_metrics(text)
+        result = analyze_with_normalized_metrics(
+            text, metric_requirements=metric_requirements
+        )
         metrics = result["normalized_metrics"]
         metric_count = {"total": len(metrics["scores"])}
 
@@ -309,6 +326,9 @@ def analyze_spec_bundle(
         use_nlp=use_nlp,
         extract_entities=enhanced,
         use_energy=use_energy,
+        metric_requirements=[projection.normative_text for projection in projections]
+        if projections
+        else None,
     )
     analysis["spec_path"] = str(spec_path)
     analysis["spec_name"] = (
@@ -326,11 +346,13 @@ def analyze_spec_bundle(
             _testability_text(projections),
             enhanced=True,
             use_nlp=use_nlp,
+            metric_requirements=_testability_requirements(projections),
         )
         depth_analysis = analyze_text(
             _depth_text(projections),
             enhanced=True,
             use_nlp=use_nlp,
+            metric_requirements=_depth_requirements(projections),
         )
         _replace_category_metrics(analysis, testability_analysis, "testability")
         _replace_category_metrics(analysis, depth_analysis, "depth")
@@ -348,7 +370,16 @@ def analyze_spec_bundle(
             use_nlp=use_nlp,
             extract_entities=enhanced,
             use_energy=use_energy,
+            metric_requirements=[requirement_text],
         )
+        if enhanced:
+            testability_item = analyze_text(
+                testability_input,
+                enhanced=True,
+                use_nlp=use_nlp,
+                metric_requirements=[testability_input],
+            )
+            _replace_category_metrics(item, testability_item, "testability")
         item.update(
             {
                 "requirement_id": projection.requirement_id,

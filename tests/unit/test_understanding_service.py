@@ -192,6 +192,67 @@ def test_parse_requirements_is_compatibility_view_of_canonical_projection() -> N
 
 
 @pytest.mark.unit
+def test_bundle_uses_shared_roles_for_semantic_gate_and_every_identifier_family(
+    tmp_path: Path,
+) -> None:
+    spec = tmp_path / "spec.md"
+    spec.write_text(
+        "- **FR-001**: The greeting command must write the configured message.\n"
+        "- **AC-001**: No action is specified.\n",
+        encoding="utf-8",
+    )
+
+    bundle = analyze_spec_bundle(
+        spec,
+        thresholds=DEFAULT_QUALITY_GATES,
+        enhanced=True,
+        use_nlp=False,
+    ).to_dict()
+
+    semantic_scores = {
+        score["name"]: score["score"]
+        for score in bundle["analysis"]["metrics"]["scores"]
+        if score["category"] == "semantic"
+    }
+    assert bundle["requirement_count"] == 2
+    assert semantic_scores["actor_presence"] == 0.5
+    assert semantic_scores["action_presence"] == 0.5
+    assert semantic_scores["object_presence"] == 0.5
+
+
+@pytest.mark.unit
+def test_bundle_keeps_constraints_in_one_testability_requirement_unit(
+    tmp_path: Path,
+) -> None:
+    spec = tmp_path / "spec.md"
+    spec.write_text(
+        "- **FR-001**: The greeting command must write the configured message. "
+        "Constraint: output_length <= 128 bytes.\n",
+        encoding="utf-8",
+    )
+
+    bundle = analyze_spec_bundle(
+        spec,
+        thresholds=DEFAULT_QUALITY_GATES,
+        enhanced=True,
+        use_nlp=False,
+    ).to_dict()
+
+    testability_scores = {
+        score["name"]: score["raw_value"]
+        for score in bundle["analysis"]["metrics"]["scores"]
+        if score["category"] == "testability"
+    }
+    item_scores = {
+        score["name"]: score["raw_value"]
+        for score in bundle["per_requirement"][0]["metrics"]["scores"]
+        if score["category"] == "testability"
+    }
+    assert testability_scores["constraint_density"] == pytest.approx(0.9975212478)
+    assert item_scores["constraint_density"] == pytest.approx(0.9975212478)
+
+
+@pytest.mark.unit
 def test_zero_requirements_is_a_completed_deterministic_failure(
     tmp_path: Path,
 ) -> None:

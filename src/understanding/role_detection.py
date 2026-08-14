@@ -30,7 +30,15 @@ def detect_requirement_roles(text: str) -> RequirementRoles:
         subject = subject.rsplit(",", 1)[-1].strip()
     subject = re.sub(r"^(?:then\s+)", "", subject, flags=re.IGNORECASE)
     words = list(_WORD_RE.finditer(text[modal.end() :]))
-    action_match = next((word for word in words if word.group(0).lower() not in _LEADING_NON_ACTION), None)
+    action_match = next(
+        (
+            word
+            for word in words
+            if word.group(0).lower() not in _LEADING_NON_ACTION
+            and not word.group(0).lower().endswith("ly")
+        ),
+        None,
+    )
     if action_match is None:
         return RequirementRoles(
             subject.lower() or None,

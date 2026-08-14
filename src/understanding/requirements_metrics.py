@@ -206,7 +206,9 @@ class RequirementsAnalyzer:
     def __init__(self):
         pass
 
-    def analyze_requirements(self, text: str) -> RequirementQualityMetrics:
+    def analyze_requirements(
+        self, text: str, metric_requirements: List[str] | None = None
+    ) -> RequirementQualityMetrics:
         """
         Perform comprehensive analysis on requirements text.
 
@@ -227,7 +229,13 @@ class RequirementsAnalyzer:
         # canonical Lexicon extractor.
         from .markdown_parser import extract_lexicon_requirements, is_lexicon_spec
 
-        if is_lexicon_spec(text):
+        if metric_requirements is not None:
+            requirements = list(metric_requirements)
+            prose_text = ". ".join(r.rstrip(".") for r in requirements) + (
+                "." if requirements else ""
+            )
+            prose_text = _humanize_identifiers(prose_text)
+        elif is_lexicon_spec(text):
             # THEN-only (atomic) for structure/cognitive; join into terminated
             # sentences so readability sentence-counting works.
             requirements = [
