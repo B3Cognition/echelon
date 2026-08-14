@@ -13,6 +13,14 @@ _INLINE_REFERENCE_RE = re.compile(
     rf"\b({_CONVENTIONAL_REQUIREMENT_ID})\b", re.IGNORECASE
 )
 _METADATA_REFERENCE_RE = re.compile(rf"\b({_REFERENCE_ID})\b", re.IGNORECASE)
+_TRAILING_VERIFICATION_RE = re.compile(
+    rf",\s+verifying\s+(?P<references>"
+    rf"{_CONVENTIONAL_REQUIREMENT_ID}"
+    rf"(?:\s*,\s*{_CONVENTIONAL_REQUIREMENT_ID})*"
+    rf"(?:\s*,?\s+and\s+{_CONVENTIONAL_REQUIREMENT_ID})?"
+    rf")(?P<punctuation>[.!?])?\s*$",
+    re.IGNORECASE,
+)
 _BULLET_RE = re.compile(
     rf"^\s*[-*+]\s+\*\*({_CONVENTIONAL_REQUIREMENT_ID})\*\*(?:\s*\([^)]*\))?\s*:\s*(.+\S)\s*$",
     re.IGNORECASE,
@@ -52,6 +60,20 @@ class RequirementProjection:
 
 def _normalise_text(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
+
+
+def _split_trailing_verification_metadata(text: str) -> tuple[str, str]:
+    """Separate a standalone trailing requirement-verification clause."""
+    normalized = _normalise_text(text)
+    match = _TRAILING_VERIFICATION_RE.search(normalized)
+    if match is None:
+        return normalized, ""
+
+    normative = normalized[: match.start()].rstrip()
+    punctuation = match.group("punctuation") or ""
+    if punctuation and not normative.endswith((".", "!", "?")):
+        normative += punctuation
+    return normative, match.group("references")
 
 
 def _unique_references(
@@ -102,9 +124,25 @@ def _make_projection(
     metadata_reference_text: str = "",
 ) -> RequirementProjection:
     requirement_id = requirement_id.upper()
+    normative_text, trailing_metadata = _split_trailing_verification_metadata(
+        normative_text
+    )
+    reference_text, reference_trailing_metadata = (
+        _split_trailing_verification_metadata(reference_text)
+        if reference_text is not None
+        else (normative_text, "")
+    )
     references = _unique_references(
-        reference_text or normative_text,
-        metadata_reference_text,
+        reference_text,
+        " ".join(
+            part
+            for part in (
+                metadata_reference_text,
+                trailing_metadata,
+                reference_trailing_metadata,
+            )
+            if part
+        ),
         requirement_id,
     )
     return RequirementProjection(

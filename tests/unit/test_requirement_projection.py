@@ -82,6 +82,36 @@ def test_retained_hello_world_candidate_has_consistent_explainable_quality_evide
         and "Priority:" not in projection.normative_text
         for projection in projections
     )
+    assert projections[0].normative_text == (
+        "Given exactly 1 delivered script and an available Python runtime, "
+        "when the Invoker directly performs 1 Program invocation, then exactly "
+        "1 delivered artifact runs as a script through that Python runtime."
+    )
+    assert projections[0].traceability_references == ("FR-001",)
+    assert projections[1].normative_text == (
+        "Given the script required by FR-001 and observable execution-output "
+        "channels, when 1 Program invocation succeeds, then the Standard output "
+        "Greeting Output count equals 1, its visible content equals "
+        "`Hello, World!`, and application output on every other channel equals 0."
+    )
+    assert projections[1].traceability_references == (
+        "FR-001",
+        "FR-002",
+        "FR-003",
+        "FR-004",
+    )
+    assert projections[2].normative_text == (
+        "Given closed user input and monitored file, network, and retained-state "
+        "boundaries, when 1 Program invocation runs to completion, then user-input "
+        "read operations equal 0, file writes equal 0, network calls equal 0, and "
+        "retained execution-state items after termination equal 0."
+    )
+    assert projections[2].traceability_references == (
+        "FR-005",
+        "FR-006",
+        "FR-007",
+        "FR-008",
+    )
 
     bundle = analyze_spec_bundle(
         PROPORTIONAL_HELLO_WORLD_FIXTURE,
@@ -100,6 +130,16 @@ def test_retained_hello_world_candidate_has_consistent_explainable_quality_evide
         "depth": 0.40,
         "behavioral": 0.55,
     }
+    assert bundle.scores == {
+        "overall": 0.6978472499999999,
+        "structure": 0.7269,
+        "testability": 0.7356,
+        "semantic": 0.5126,
+        "cognitive": 0.7578,
+        "readability": 0.6996,
+        "depth": 0.7448,
+        "behavioral": 0.7157,
+    }
     assert {
         name for name, gate in bundle.gates.items() if not gate["pass"]
     } == {"overall", "structure", "testability", "semantic"}
@@ -113,6 +153,38 @@ def test_retained_hello_world_candidate_has_consistent_explainable_quality_evide
             ("object", "objects"),
         ):
             assert bool(shared[singular]) is bool(semantic[plural])
+
+
+@pytest.mark.unit
+def test_projection_strips_only_standalone_trailing_verification_metadata() -> None:
+    spec = """# Requirements
+
+- **AC-001**: The caller MUST observe output, verifying FR-001, FR-002, and FR-003.
+- **FR-001**: The verifier MUST finish verifying FR-002.
+- **FR-002**: The verifier MUST emit status, verifying FR-001 remains current.
+- **FR-003**: The verifier MUST compare status by verifying FR-001 against output.
+"""
+
+    projections = project_requirements(spec)
+
+    assert projections[0].normative_text == "The caller MUST observe output."
+    assert projections[0].traceability_references == (
+        "FR-001",
+        "FR-002",
+        "FR-003",
+    )
+    assert projections[1].normative_text == (
+        "The verifier MUST finish verifying FR-002."
+    )
+    assert projections[1].traceability_references == ("FR-002",)
+    assert projections[2].normative_text == (
+        "The verifier MUST emit status, verifying FR-001 remains current."
+    )
+    assert projections[2].traceability_references == ("FR-001",)
+    assert projections[3].normative_text == (
+        "The verifier MUST compare status by verifying FR-001 against output."
+    )
+    assert projections[3].traceability_references == ("FR-001",)
 
 
 @pytest.mark.unit
