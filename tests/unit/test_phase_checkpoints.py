@@ -16,6 +16,7 @@ from harness.phase_checkpoints import (
     create_phase_checkpoint,
     load_checkpoint_ledger,
     record_phase_checkpoint,
+    restore_checkpoint_artifacts,
     resolve_checkpoint,
 )
 from echelon.spec_retarget_history import (
@@ -2081,6 +2082,19 @@ def test_create_phase_checkpoint_rejects_spec_dir_outside_project(tmp_path: Path
         _git(repo, "diff", "--cached", "--name-only"),
     ) == position_before
     assert not (outside / ".echelon" / "checkpoints.json").exists()
+
+
+def test_restore_checkpoint_artifacts_rejects_missing_owned_blob(tmp_path: Path) -> None:
+    repo, spec_dir = _checkpoint_repo(tmp_path)
+    commit = _git(repo, "rev-parse", "HEAD")
+
+    with pytest.raises(PhaseCheckpointError, match="missing"):
+        restore_checkpoint_artifacts(
+            project_root=repo,
+            spec_dir=spec_dir,
+            checkpoint_commit=commit,
+            artifact_digests={"quality-gates.md": "a" * 64},
+        )
 
 
 def test_commit_manual_checkpoint_commits_only_active_spec_path(tmp_path: Path) -> None:

@@ -6,13 +6,23 @@ from copy import deepcopy
 from dataclasses import dataclass
 import hashlib
 import json
+import os
 from pathlib import Path
-from typing import Mapping
+import re
+import secrets
+from typing import Mapping, MutableMapping, Sequence
 
+from echelon.git_helpers import GitHelperError, run_git
 from echelon.spec_authoring import (
     PERFECTIONIST_MODE,
     PROPORTIONAL_MODE,
     normalize_spec_authoring_mode,
+)
+from harness.phase_checkpoints import (
+    PhaseCheckpoint,
+    PhaseCheckpointError,
+    create_phase_checkpoint,
+    restore_checkpoint_artifacts,
 )
 
 
@@ -30,8 +40,14 @@ _REPAIR_STATE_KEYS = frozenset(
         "extension_authorized",
         "extension_consumed",
         "migration_basis",
+        "baseline_candidate_id",
+        "candidate_ids",
     }
 )
+_PRE_CANDIDATE_REPAIR_STATE_KEYS = _REPAIR_STATE_KEYS - {
+    "baseline_candidate_id",
+    "candidate_ids",
+}
 _MIGRATION_BASES = frozenset(
     {"fresh", "why2_history", "iteration_fallback"}
 )
@@ -43,6 +59,30 @@ class RepairOutcome:
 
     repair_state: dict[str, object]
     outcome: str
+
+
+class QualityCandidateIntegrityError(RuntimeError):
+    """Raised when candidate evidence or restoration cannot be trusted."""
+
+
+@dataclass(frozen=True)
+class QualityCandidateManifest:
+    schema_version: int
+    candidate_id: str
+    checkpoint_commit: str
+    owned_artifact_digests: tuple[tuple[str, str], ...]
+    understanding_evidence: str
+    understanding_evidence_digest: str
+    normalized_gates: tuple[tuple[str, float, float, bool], ...]
+    sage_finding_routes: tuple[Mapping[str, object], ...]
+    failed_gate_count: int
+    worst_gate_margin: float
+    overall_score: float
+    formal_statement_count: int
+    byte_count: int
+    repair_number: int
+    assessment_index: int
+    eligibility_reasons: tuple[str, ...]
 
 
 def initialize_repair_state(
@@ -85,14 +125,22 @@ def initialize_repair_state(
         "extension_authorized": 0,
         "extension_consumed": 0,
         "migration_basis": migration_basis,
+        "baseline_candidate_id": None,
+        "candidate_ids": [],
     }
 
 
 def validate_repair_state(value: object) -> dict[str, object]:
     """Return one detached exact-schema repair record or fail closed."""
-    if type(value) is not dict or frozenset(value) != _REPAIR_STATE_KEYS:
+    if type(value) is not dict or frozenset(value) not in {
+        _REPAIR_STATE_KEYS,
+        _PRE_CANDIDATE_REPAIR_STATE_KEYS,
+    }:
         raise ValueError("proportional repair state has invalid fields")
     state = deepcopy(value)
+    if frozenset(state) == _PRE_CANDIDATE_REPAIR_STATE_KEYS:
+        state["baseline_candidate_id"] = None
+        state["candidate_ids"] = []
     if (
         type(state["schema_version"]) is not int
         or state["schema_version"] != SCHEMA_VERSION
@@ -122,7 +170,473 @@ def validate_repair_state(value: object) -> dict[str, object]:
         raise ValueError("proportional extension consumption is unauthorized")
     if state["migration_basis"] not in _MIGRATION_BASES:
         raise ValueError("proportional repair migration basis is invalid")
+    candidate_ids = state["candidate_ids"]
+    baseline_candidate_id = state["baseline_candidate_id"]
+    if (
+        type(candidate_ids) is not list
+        or any(not _is_candidate_id(item) for item in candidate_ids)
+        or len(set(candidate_ids)) != len(candidate_ids)
+        or candidate_ids
+        != [f"quality-candidate-{index}" for index in range(len(candidate_ids))]
+    ):
+        raise ValueError("proportional candidate IDs are invalid")
+    if baseline_candidate_id is not None and not _is_candidate_id(
+        baseline_candidate_id
+    ):
+        raise ValueError("proportional baseline candidate ID is invalid")
+    if (
+        baseline_candidate_id is None
+        and candidate_ids
+        or baseline_candidate_id is not None
+        and (not candidate_ids or candidate_ids[0] != baseline_candidate_id)
+    ):
+        raise ValueError("proportional baseline candidate membership is invalid")
     return state
+
+
+def capture_quality_candidate(
+    *,
+    project_root: Path,
+    spec_dir: Path,
+    run_artifact_root: Path,
+    run_id: str,
+    spec_id: str,
+    candidate_id: str,
+    understanding_evidence: Path,
+    normalized_gates: Mapping[str, Mapping[str, object]],
+    sage_finding_routes: Sequence[Mapping[str, object]],
+    formal_statement_count: int,
+    repair_number: int,
+    assessment_index: int,
+    eligibility_reasons: Sequence[str],
+    repair_state: MutableMapping[str, object],
+) -> QualityCandidateManifest:
+    """Checkpoint and atomically persist one completed WHY2 candidate."""
+    if not _is_candidate_id(candidate_id):
+        raise QualityCandidateIntegrityError("candidate ID is invalid")
+    validated_state = validate_repair_state(dict(repair_state))
+    if candidate_id in validated_state["candidate_ids"]:
+        raise QualityCandidateIntegrityError("candidate ID is already recorded")
+    for label, value in (
+        ("formal statement count", formal_statement_count),
+        ("repair number", repair_number),
+        ("assessment index", assessment_index),
+    ):
+        if type(value) is not int or value < 0:
+            raise QualityCandidateIntegrityError(f"candidate {label} is invalid")
+
+    root = Path(project_root).resolve()
+    resolved_spec = Path(spec_dir).resolve()
+    artifact_root = Path(run_artifact_root).resolve()
+    try:
+        resolved_spec.relative_to(root)
+        artifact_root.relative_to(root)
+    except ValueError as exc:
+        raise QualityCandidateIntegrityError("candidate paths escape project root") from exc
+    evidence_path = Path(understanding_evidence).resolve()
+    try:
+        evidence_path.relative_to(artifact_root)
+    except ValueError as exc:
+        raise QualityCandidateIntegrityError(
+            "Understanding evidence escapes the run artifact root"
+        ) from exc
+
+    artifact_names = (
+        "spec.md",
+        "requirements-overview.md",
+        "quality-gates.md",
+        "issues.md",
+    )
+    digests: list[tuple[str, str]] = []
+    contents: dict[str, bytes] = {}
+    for name in artifact_names:
+        path = resolved_spec / name
+        if name == "requirements-overview.md" and not path.exists():
+            continue
+        if not path.is_file():
+            raise QualityCandidateIntegrityError(f"candidate artifact is missing: {name}")
+        try:
+            content = path.read_bytes()
+            text = content.decode("utf-8")
+            if not text.strip():
+                raise ValueError("empty Markdown")
+        except (OSError, UnicodeDecodeError, ValueError) as exc:
+            raise QualityCandidateIntegrityError(
+                f"candidate artifact is malformed: {name}"
+            ) from exc
+        contents[name] = content
+        digests.append((name, hashlib.sha256(content).hexdigest()))
+
+    evidence_digest, evidence_payload = _verified_understanding_evidence(
+        evidence_path
+    )
+    evidence_spec = evidence_payload["spec"]
+    if evidence_spec.get("sha256") != dict(digests)["spec.md"]:
+        raise QualityCandidateIntegrityError(
+            "Understanding evidence describes a different spec"
+        )
+    normalized = _normalize_candidate_gates(normalized_gates)
+    routes = _normalize_finding_routes(sage_finding_routes)
+    reasons = _normalize_eligibility_reasons(eligibility_reasons)
+    checkpoint_phase = f"phase1-{candidate_id}"
+    try:
+        checkpoint = create_phase_checkpoint(
+            project_root=root,
+            spec_dir=resolved_spec,
+            phase=checkpoint_phase,
+            next_phase="phase1-what",
+            run_id=run_id,
+            spec_id=spec_id,
+            checkpoint_owned_paths=tuple(resolved_spec / name for name, _ in digests),
+            force_commit=True,
+        )
+    except (PhaseCheckpointError, OSError, ValueError) as exc:
+        raise QualityCandidateIntegrityError("candidate checkpoint failed") from exc
+
+    failed = sum(1 for _name, _score, _threshold, passed in normalized if not passed)
+    margins = tuple(
+        score - threshold
+        for _name, score, threshold, _passed in normalized
+    )
+    scores = {name: score for name, score, _threshold, _passed in normalized}
+    manifest = QualityCandidateManifest(
+        schema_version=SCHEMA_VERSION,
+        candidate_id=candidate_id,
+        checkpoint_commit=checkpoint.commit,
+        owned_artifact_digests=tuple(digests),
+        understanding_evidence=str(evidence_path),
+        understanding_evidence_digest=evidence_digest,
+        normalized_gates=normalized,
+        sage_finding_routes=routes,
+        failed_gate_count=failed,
+        worst_gate_margin=min(margins),
+        overall_score=scores["overall"],
+        formal_statement_count=formal_statement_count,
+        byte_count=len(contents["spec.md"]),
+        repair_number=repair_number,
+        assessment_index=assessment_index,
+        eligibility_reasons=reasons,
+    )
+    _persist_candidate_manifest(artifact_root, manifest)
+    updated_ids = [*validated_state["candidate_ids"], candidate_id]
+    validated_state["candidate_ids"] = updated_ids
+    if validated_state["baseline_candidate_id"] is None:
+        validated_state["baseline_candidate_id"] = candidate_id
+    repair_state.clear()
+    repair_state.update(validated_state)
+    return manifest
+
+
+def rank_quality_candidates(
+    candidates: Sequence[QualityCandidateManifest],
+) -> tuple[QualityCandidateManifest, ...]:
+    """Return eligible candidates ordered by the sealed policy tuple."""
+    eligible = [
+        candidate
+        for candidate in candidates
+        if isinstance(candidate, QualityCandidateManifest)
+        and not candidate.eligibility_reasons
+    ]
+    return tuple(
+        sorted(
+            eligible,
+            key=lambda candidate: (
+                candidate.failed_gate_count,
+                -candidate.worst_gate_margin,
+                -candidate.overall_score,
+                candidate.formal_statement_count,
+                candidate.assessment_index,
+            ),
+        )
+    )
+
+
+def restore_quality_candidate(
+    project_root: Path,
+    spec_dir: Path,
+    candidate: QualityCandidateManifest,
+    *,
+    run_id: str,
+    spec_id: str,
+) -> PhaseCheckpoint:
+    """Restore one verified candidate without rewinding repository state."""
+    if (
+        not isinstance(candidate, QualityCandidateManifest)
+        or candidate.schema_version != SCHEMA_VERSION
+        or not _is_candidate_id(candidate.candidate_id)
+    ):
+        raise QualityCandidateIntegrityError("candidate manifest is invalid")
+    actual_evidence_digest, _ = _verified_understanding_evidence(
+        Path(candidate.understanding_evidence)
+    )
+    if actual_evidence_digest != candidate.understanding_evidence_digest:
+        raise QualityCandidateIntegrityError("Understanding evidence digest mismatch")
+    artifact_digests = dict(candidate.owned_artifact_digests)
+    if len(artifact_digests) != len(candidate.owned_artifact_digests):
+        raise QualityCandidateIntegrityError("candidate artifact paths are duplicated")
+    allowed = {
+        "spec.md",
+        "requirements-overview.md",
+        "quality-gates.md",
+        "issues.md",
+    }
+    required = {"spec.md", "quality-gates.md", "issues.md"}
+    if not required <= set(artifact_digests) or not set(artifact_digests) <= allowed:
+        raise QualityCandidateIntegrityError("candidate artifact paths are unsafe")
+    _verify_candidate_checkpoint_identity(
+        project_root=Path(project_root),
+        candidate=candidate,
+        run_id=run_id,
+        spec_id=spec_id,
+    )
+    try:
+        previous = {
+            name: (Path(spec_dir) / name).read_bytes()
+            for name in artifact_digests
+        }
+    except OSError as exc:
+        raise QualityCandidateIntegrityError(
+            "current candidate artifacts could not be read"
+        ) from exc
+    try:
+        restore_checkpoint_artifacts(
+            project_root=project_root,
+            spec_dir=spec_dir,
+            checkpoint_commit=candidate.checkpoint_commit,
+            artifact_digests=artifact_digests,
+        )
+        return create_phase_checkpoint(
+            project_root=project_root,
+            spec_dir=spec_dir,
+            phase="phase1-quality-candidate-restored",
+            next_phase="phase1-lexicon",
+            run_id=run_id,
+            spec_id=spec_id,
+            checkpoint_owned_paths=tuple(
+                Path(spec_dir) / name for name in artifact_digests
+            ),
+            force_commit=True,
+        )
+    except (PhaseCheckpointError, OSError, ValueError) as exc:
+        try:
+            _replace_candidate_files(Path(spec_dir), previous)
+        except OSError as rollback_exc:
+            raise QualityCandidateIntegrityError(
+                "candidate restoration and rollback integrity failure"
+            ) from rollback_exc
+        raise QualityCandidateIntegrityError(
+            f"candidate restoration integrity failure: {exc}"
+        ) from exc
+
+
+def _normalize_candidate_gates(
+    gates: Mapping[str, Mapping[str, object]],
+) -> tuple[tuple[str, float, float, bool], ...]:
+    if not isinstance(gates, Mapping) or "overall" not in gates or not gates:
+        raise QualityCandidateIntegrityError("candidate gates are malformed")
+    normalized: list[tuple[str, float, float, bool]] = []
+    for name in sorted(gates):
+        gate = gates[name]
+        if type(name) is not str or not name or not isinstance(gate, Mapping):
+            raise QualityCandidateIntegrityError("candidate gates are malformed")
+        score = gate.get("score")
+        threshold = gate.get("threshold")
+        passed = gate.get("pass")
+        if (
+            type(score) not in {int, float}
+            or type(threshold) not in {int, float}
+            or type(passed) is not bool
+        ):
+            raise QualityCandidateIntegrityError("candidate gates are malformed")
+        normalized.append((name, float(score), float(threshold), passed))
+    return tuple(normalized)
+
+
+def _verify_candidate_checkpoint_identity(
+    *,
+    project_root: Path,
+    candidate: QualityCandidateManifest,
+    run_id: str,
+    spec_id: str,
+) -> None:
+    try:
+        result = run_git(
+            project_root,
+            "show",
+            "-s",
+            "--format=%B",
+            candidate.checkpoint_commit,
+            check=False,
+        )
+    except GitHelperError as exc:
+        raise QualityCandidateIntegrityError(
+            "candidate checkpoint identity could not be verified"
+        ) from exc
+    expected = (
+        f"Echelon-Checkpoint: phase1-{candidate.candidate_id}",
+        f"Echelon-Phase: phase1-{candidate.candidate_id}",
+        f"Echelon-Spec: {spec_id}",
+        f"Echelon-Run: {run_id}",
+    )
+    lines = result.stdout.splitlines()
+    if result.returncode != 0 or any(lines.count(item) != 1 for item in expected):
+        raise QualityCandidateIntegrityError("candidate checkpoint identity mismatch")
+
+
+def _normalize_finding_routes(
+    routes: Sequence[Mapping[str, object]],
+) -> tuple[Mapping[str, object], ...]:
+    if isinstance(routes, (str, bytes)) or not isinstance(routes, Sequence):
+        raise QualityCandidateIntegrityError("SAGE finding routes are malformed")
+    normalized: list[Mapping[str, object]] = []
+    for route in routes:
+        if not isinstance(route, Mapping):
+            raise QualityCandidateIntegrityError("SAGE finding routes are malformed")
+        try:
+            cloned = json.loads(json.dumps(dict(route), sort_keys=True))
+        except (TypeError, ValueError) as exc:
+            raise QualityCandidateIntegrityError(
+                "SAGE finding routes are malformed"
+            ) from exc
+        normalized.append(cloned)
+    return tuple(normalized)
+
+
+def _normalize_eligibility_reasons(reasons: Sequence[str]) -> tuple[str, ...]:
+    if isinstance(reasons, (str, bytes)) or not isinstance(reasons, Sequence):
+        raise QualityCandidateIntegrityError(
+            "candidate eligibility reasons are malformed"
+        )
+    values = tuple(reasons)
+    if any(type(reason) is not str or not reason.strip() for reason in values):
+        raise QualityCandidateIntegrityError(
+            "candidate eligibility reasons are malformed"
+        )
+    if len(set(values)) != len(values):
+        raise QualityCandidateIntegrityError(
+            "candidate eligibility reasons are duplicated"
+        )
+    return values
+
+
+def _verified_understanding_evidence(path: Path) -> tuple[str, Mapping[str, object]]:
+    try:
+        content = path.read_bytes()
+        payload = json.loads(content)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise QualityCandidateIntegrityError(
+            "Understanding evidence is missing or malformed"
+        ) from exc
+    if (
+        not isinstance(payload, Mapping)
+        or payload.get("schema_version") != 1
+        or payload.get("status") != "completed"
+        or payload.get("phase") != "phase1-why2"
+        or type(payload.get("iteration")) is not int
+        or not isinstance(payload.get("spec"), Mapping)
+        or not _is_sha256(payload["spec"].get("sha256"))
+        or not isinstance(payload.get("thresholds"), Mapping)
+        or not isinstance(payload.get("scores"), Mapping)
+        or not isinstance(payload.get("gates"), Mapping)
+        or type(payload.get("pass")) is not bool
+    ):
+        raise QualityCandidateIntegrityError("Understanding evidence is malformed")
+    return hashlib.sha256(content).hexdigest(), payload
+
+
+def _persist_candidate_manifest(root: Path, manifest: QualityCandidateManifest) -> None:
+    directory = root / "quality-candidates"
+    path = directory / f"{manifest.candidate_id}.json"
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        if path.exists():
+            raise QualityCandidateIntegrityError("candidate manifest already exists")
+        payload = {
+            "schema_version": manifest.schema_version,
+            "candidate_id": manifest.candidate_id,
+            "checkpoint_commit": manifest.checkpoint_commit,
+            "owned_artifact_digests": dict(manifest.owned_artifact_digests),
+            "understanding_evidence": manifest.understanding_evidence,
+            "understanding_evidence_digest": manifest.understanding_evidence_digest,
+            "normalized_gates": [
+                {"name": name, "score": score, "threshold": threshold, "pass": passed}
+                for name, score, threshold, passed in manifest.normalized_gates
+            ],
+            "sage_finding_routes": list(manifest.sage_finding_routes),
+            "failed_gate_count": manifest.failed_gate_count,
+            "worst_gate_margin": manifest.worst_gate_margin,
+            "overall_score": manifest.overall_score,
+            "formal_statement_count": manifest.formal_statement_count,
+            "byte_count": manifest.byte_count,
+            "repair_number": manifest.repair_number,
+            "assessment_index": manifest.assessment_index,
+            "eligibility_reasons": list(manifest.eligibility_reasons),
+        }
+        content = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode(
+            "utf-8"
+        )
+        temporary = directory / (
+            f".{path.name}.{os.getpid()}.{secrets.token_hex(8)}.tmp"
+        )
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        descriptor = os.open(temporary, flags, 0o600)
+        try:
+            offset = 0
+            while offset < len(content):
+                written = os.write(descriptor, content[offset:])
+                if written <= 0:
+                    raise OSError("short candidate manifest write")
+                offset += written
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        os.replace(temporary, path)
+    except QualityCandidateIntegrityError:
+        raise
+    except OSError as exc:
+        raise QualityCandidateIntegrityError("candidate manifest persistence failed") from exc
+    finally:
+        if "temporary" in locals():
+            try:
+                temporary.unlink()
+            except FileNotFoundError:
+                pass
+
+
+def _replace_candidate_files(spec_dir: Path, contents: Mapping[str, bytes]) -> None:
+    temporary_paths: list[tuple[Path, Path]] = []
+    try:
+        for name, content in contents.items():
+            destination = spec_dir / name
+            temporary = destination.with_name(
+                f".{destination.name}.{os.getpid()}.{secrets.token_hex(8)}.tmp"
+            )
+            descriptor = os.open(
+                temporary,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+            try:
+                offset = 0
+                while offset < len(content):
+                    written = os.write(descriptor, content[offset:])
+                    if written <= 0:
+                        raise OSError("short candidate rollback write")
+                    offset += written
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+            temporary_paths.append((temporary, destination))
+        for temporary, destination in temporary_paths:
+            os.replace(temporary, destination)
+    finally:
+        for temporary, _destination in temporary_paths:
+            try:
+                temporary.unlink()
+            except FileNotFoundError:
+                pass
 
 
 def record_what_outcome(
@@ -252,4 +766,11 @@ def _is_sha256(value: object) -> bool:
         type(value) is str
         and len(value) == 64
         and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _is_candidate_id(value: object) -> bool:
+    return (
+        type(value) is str
+        and re.fullmatch(r"quality-candidate-[0-9]+", value) is not None
     )

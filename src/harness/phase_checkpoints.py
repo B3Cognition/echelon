@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -2119,6 +2120,8 @@ def create_phase_checkpoint(
     spec_id: str = "",
     additional_spec_dirs: tuple[Path, ...] = (),
     additional_owned_paths: tuple[Path, ...] = (),
+    checkpoint_owned_paths: tuple[Path, ...] = (),
+    force_commit: bool = False,
 ) -> PhaseCheckpoint:
     spec_id = spec_id or _spec_id_from_dir(spec_dir)
     subject = f"echelon-checkpoint: {spec_id} {phase}"
@@ -2133,14 +2136,42 @@ def create_phase_checkpoint(
             checkpoint_id=phase,
         ),
     )
-    commit = _commit_spec_changes(
-        project_root,
-        (spec_dir, *additional_spec_dirs),
-        message,
-        additional_owned_paths,
-    )
+    if checkpoint_owned_paths:
+        commit = _commit_spec_changes(
+            project_root,
+            (),
+            message,
+            checkpoint_owned_paths,
+        )
+    else:
+        commit = _commit_spec_changes(
+            project_root,
+            (spec_dir, *additional_spec_dirs),
+            message,
+            additional_owned_paths,
+        )
     if commit is None:
         try:
+            if force_commit:
+                forced_pathspecs = _owned_pathspecs(
+                    project_root,
+                    (
+                        ()
+                        if checkpoint_owned_paths
+                        else (spec_dir, *additional_spec_dirs)
+                    ),
+                    checkpoint_owned_paths or additional_owned_paths,
+                )
+                run_git(
+                    project_root,
+                    "commit",
+                    "--allow-empty",
+                    "--only",
+                    "-m",
+                    message,
+                    "--",
+                    *forced_pathspecs,
+                )
             commit = run_git(project_root, "rev-parse", "HEAD^{commit}").stdout.strip()
         except GitHelperError as exc:
             raise PhaseCheckpointError(str(exc)) from exc
@@ -2157,6 +2188,120 @@ def create_phase_checkpoint(
     )
     record_phase_checkpoint(spec_dir, checkpoint)
     return checkpoint
+
+
+def restore_checkpoint_artifacts(
+    *,
+    project_root: Path,
+    spec_dir: Path,
+    checkpoint_commit: str,
+    artifact_digests: Mapping[str, str],
+) -> None:
+    """Restore a narrow, digest-bound set of spec files from one commit.
+
+    This intentionally reads individual blobs and never changes Git HEAD,
+    the index, or files outside the explicit candidate artifact allowlist.
+    """
+    allowed = frozenset(
+        {"spec.md", "requirements-overview.md", "quality-gates.md", "issues.md"}
+    )
+    required = frozenset({"spec.md", "quality-gates.md", "issues.md"})
+    if type(artifact_digests) is not dict:
+        raise PhaseCheckpointError("candidate artifact digests are malformed")
+    names = frozenset(artifact_digests)
+    if not required <= names or not names <= allowed:
+        raise PhaseCheckpointError("candidate artifact path is missing or unsafe")
+    if any(
+        type(name) is not str
+        or type(digest) is not str
+        or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+        for name, digest in artifact_digests.items()
+    ):
+        raise PhaseCheckpointError("candidate artifact digests are malformed")
+    if (
+        type(checkpoint_commit) is not str
+        or _GIT_OBJECT_ID_PATTERN.fullmatch(checkpoint_commit) is None
+    ):
+        raise PhaseCheckpointError("candidate checkpoint commit is invalid")
+
+    root = Path(project_root).resolve()
+    resolved_spec = Path(spec_dir).resolve()
+    try:
+        spec_relative = resolved_spec.relative_to(root)
+    except ValueError as exc:
+        raise PhaseCheckpointError("candidate spec directory escapes project root") from exc
+    if not resolved_spec.is_dir():
+        raise PhaseCheckpointError("candidate spec directory is missing")
+    relative_paths = tuple(
+        (spec_relative / name).as_posix() for name in sorted(names)
+    )
+    try:
+        commit_probe = run_git(
+            root, "cat-file", "-e", f"{checkpoint_commit}^{{commit}}", check=False
+        )
+        if commit_probe.returncode != 0:
+            raise PhaseCheckpointError("candidate checkpoint commit is missing")
+        dirty = run_git(
+            root, "status", "--porcelain", "--", *relative_paths, check=False
+        )
+        if dirty.returncode != 0 or dirty.stdout.strip():
+            raise PhaseCheckpointError("candidate artifact path is dirty")
+        restored: dict[str, bytes] = {}
+        for name, relative in zip(sorted(names), relative_paths, strict=True):
+            result = run_git(
+                root, "show", f"{checkpoint_commit}:{relative}", check=False
+            )
+            if result.returncode != 0:
+                raise PhaseCheckpointError(
+                    f"candidate owned artifact is missing: {name}"
+                )
+            content = result.stdout.encode("utf-8")
+            if hashlib.sha256(content).hexdigest() != artifact_digests[name]:
+                raise PhaseCheckpointError(f"candidate artifact digest mismatch: {name}")
+            restored[name] = content
+    except GitHelperError as exc:
+        raise PhaseCheckpointError(str(exc)) from exc
+
+    temporary_paths: list[Path] = []
+    try:
+        for name in sorted(restored):
+            destination = resolved_spec / name
+            temporary = destination.with_name(
+                f".{destination.name}.{os.getpid()}.{secrets.token_hex(8)}.tmp"
+            )
+            temporary_paths.append(temporary)
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            descriptor = os.open(temporary, flags, 0o600)
+            try:
+                offset = 0
+                content = restored[name]
+                while offset < len(content):
+                    written = os.write(descriptor, content[offset:])
+                    if written <= 0:
+                        raise OSError("short candidate artifact write")
+                    offset += written
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+        for name, temporary in zip(sorted(restored), temporary_paths, strict=True):
+            os.replace(temporary, resolved_spec / name)
+        _fsync_directory(resolved_spec)
+        for name, expected in artifact_digests.items():
+            if (
+                hashlib.sha256((resolved_spec / name).read_bytes()).hexdigest()
+                != expected
+            ):
+                raise PhaseCheckpointError(f"restored candidate digest mismatch: {name}")
+    except (OSError, ValueError) as exc:
+        raise PhaseCheckpointError("could not restore candidate artifacts") from exc
+    finally:
+        for temporary in temporary_paths:
+            try:
+                temporary.unlink()
+            except FileNotFoundError:
+                pass
 
 
 def accept_checkpoint_baseline(
