@@ -291,6 +291,12 @@ def test_model_summary_rejects_success_wording_that_contradicts_accepted_debt(
         "The specification earned a clean bill of health.",
         "All requirement concerns have been resolved.",
         "The specification is fully compliant.",
+        "No outstanding concerns remain in the specification.",
+        "The specification is free of deficiencies.",
+        "The specification looks good overall.",
+        "Specification deficiencies are absent.",
+        "The specification lacks unresolved concerns.",
+        "There are zero quality failures.",
     ),
 )
 def test_debt_mode_rejects_paraphrased_specification_quality_success_claims(
@@ -320,6 +326,120 @@ def test_debt_mode_rejects_paraphrased_specification_quality_success_claims(
     assert claim not in summary
     assert "accepted with quality debt by COMMANDER" in summary
     assert "overall 0.70 < 0.80" in summary
+
+
+def test_debt_mode_removes_only_contradictory_specification_clause(
+    tmp_path: Path,
+) -> None:
+    context = RunSummaryContext(
+        project_root=tmp_path,
+        command="echelon spec run",
+        task="Prepare a proportional specification.",
+        status="done",
+        quality_debt_status="accepted_with_debt",
+        quality_debt_artifact="specs/001-demo/quality-debt.json",
+        quality_debt_failed_gates=("overall 0.70 < 0.80",),
+        quality_debt_resolved_by="COMMANDER",
+    )
+    provider = _RecordingProvider(
+        CliRunResult(
+            exit_code=0,
+            stdout=(
+                "Successfully implemented downstream planning. "
+                "The specification continued with accepted quality debt."
+            ),
+            stderr="",
+        )
+    )
+
+    summary = summarize_run(
+        context,
+        provider=provider,
+        agent=SummaryAgent(prompt="Summarize.", metadata={}),
+    )
+
+    assert "Successfully implemented downstream planning." in summary
+    assert summary.lower().count("accepted with quality debt") == 1
+    assert "overall 0.70 < 0.80" in summary
+
+
+@pytest.mark.parametrize(
+    "narration",
+    (
+        "Successfully implemented downstream planning.",
+        "Implemented specification debt propagation across planning.",
+        "The specification remains below the overall quality threshold.",
+        "Recorded unresolved concerns in specification evidence.",
+        "No outstanding concerns remain in downstream planning.",
+    ),
+)
+def test_debt_mode_preserves_non_verdict_work_and_debt_narration(
+    tmp_path: Path,
+    narration: str,
+) -> None:
+    context = RunSummaryContext(
+        project_root=tmp_path,
+        command="echelon spec run",
+        task="Prepare a proportional specification.",
+        status="done",
+        quality_debt_status="accepted_with_debt",
+        quality_debt_artifact="specs/001-demo/quality-debt.json",
+        quality_debt_failed_gates=("overall 0.70 < 0.80",),
+        quality_debt_resolved_by="COMMANDER",
+    )
+    provider = _RecordingProvider(
+        CliRunResult(exit_code=0, stdout=narration, stderr="")
+    )
+
+    summary = summarize_run(
+        context,
+        provider=provider,
+        agent=SummaryAgent(prompt="Summarize.", metadata={}),
+    )
+
+    assert narration in summary
+
+
+def test_session_limit_and_quality_debt_implementation_narration_are_deduplicated(
+    tmp_path: Path,
+) -> None:
+    provider_message = "You've hit your session limit · resets 4am"
+    context = RunSummaryContext(
+        project_root=tmp_path,
+        command="echelon spec run",
+        task="Prepare a proportional specification.",
+        status="done",
+        quality_debt_status="accepted_with_debt",
+        quality_debt_artifact="specs/001-demo/quality-debt.json",
+        quality_debt_failed_gates=("overall 0.70 < 0.80",),
+        quality_debt_resolved_by="COMMANDER",
+        provider_limit_message=provider_message,
+    )
+    provider = _RecordingProvider(
+        CliRunResult(
+            exit_code=0,
+            stdout=(
+                "Implemented quality-debt propagation through planning and verification.\n"
+                f"{provider_message}"
+            ),
+            stderr="",
+        )
+    )
+
+    summary = summarize_run(
+        context,
+        provider=provider,
+        agent=SummaryAgent(prompt="Summarize.", metadata={}),
+    )
+
+    assert (
+        "Implemented quality-debt propagation through planning and verification."
+        in summary
+    )
+    assert summary.count(provider_message) == 1
+    assert len(summary.splitlines()) <= 7
+    assert len(summary) <= 1_200
+    assert "accepted with quality debt" in summary.lower()
 
 
 def test_long_obedient_model_summary_is_bounded_and_truths_are_deduplicated(

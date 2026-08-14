@@ -63,14 +63,14 @@ def summarize_run(
     if result.exit_code != 0 or result.timed_out:
         return _fallback_summary(context)
     summary = _clean_summary(result.stdout)
-    if (
-        context.quality_debt_status == "accepted_with_debt"
-        and _asserts_specification_quality_success(summary)
-    ):
-        return _fallback_summary(context)
     if not summary:
         return _fallback_summary(context)
-    return _compose_summary(summary.splitlines(), context)
+    narrative_lines = summary.splitlines()
+    if context.quality_debt_status == "accepted_with_debt":
+        narrative_lines = _safe_debt_narrative_clauses(summary)
+        if not narrative_lines:
+            return _fallback_summary(context)
+    return _compose_summary(narrative_lines, context)
 
 
 def summarize_run_for_cli(context: RunSummaryContext) -> str:
@@ -150,8 +150,8 @@ def _clean_summary(raw: object) -> str:
     return text[:1_200].rstrip()
 
 
-def _asserts_specification_quality_success(summary: str) -> bool:
-    """Fail closed on positive certification claims while debt is accepted.
+def _asserts_specification_quality_success(clause: str) -> bool:
+    """Fail closed on one specification-quality verdict clause.
 
     This deliberately classifies semantic subjects and predicates instead of
     enumerating complete forbidden phrases. A model may narrate work, but it
@@ -159,8 +159,8 @@ def _asserts_specification_quality_success(summary: str) -> bool:
     """
     domain = re.search(
         r"\b(?:spec(?:ification)?|requirements?|quality|gates?|checks?|"
-        r"standards?|criteria|criterion|assessment|review|defects?)\b",
-        summary,
+        r"standards?|criteria|criterion|assessment|review)\b",
+        clause,
         flags=re.IGNORECASE,
     )
     positive_verdict = re.search(
@@ -170,36 +170,87 @@ def _asserts_specification_quality_success(summary: str) -> bool:
         r"validat(?:e|ed|es|ion)|approv(?:e|ed|al)|flawless|perfect|"
         r"exceed(?:ed|s|ing)?|surpass(?:ed|es|ing)?|achiev(?:e|ed|es|ing)|"
         r"fulfill(?:ed|s|ing)?|resolv(?:e|ed|es|ing)|compli(?:ant|ance)|"
-        r"clean|green|sound|excellent|unconditional|ready)\b",
-        summary,
+        r"clean|green|good|great|healthy|strong|solid|acceptable|"
+        r"sound|excellent|unconditional|ready)\b",
+        clause,
         flags=re.IGNORECASE,
     )
     clean_bill = re.search(
-        r"\b(?:no|without)\s+(?:remaining\s+|outstanding\s+|unresolved\s+)?"
-        r"(?:issues?|defects?|failures?|gaps?|debt)\b",
-        summary,
+        r"(?:\b(?:no|without)\s+(?:remaining\s+|outstanding\s+|unresolved\s+)?"
+        r"(?:issues?|defects?|deficiencies|concerns?|failures?|findings?|"
+        r"problems?|gaps?|debt)\b|\bfree\s+of\s+(?:issues?|defects?|"
+        r"deficiencies|concerns?|failures?|findings?|problems?|gaps?|debt)\b|"
+        r"\b(?:issues?|defects?|deficiencies|concerns?|failures?|findings?|"
+        r"problems?|gaps?|debt)\b.{0,24}\b(?:absent|none)\b|"
+        r"\black(?:s|ing)?\b.{0,36}\b(?:issues?|defects?|deficiencies|"
+        r"concerns?|failures?|findings?|problems?|gaps?|debt)\b|"
+        r"\bzero\b.{0,36}\b(?:issues?|defects?|deficiencies|concerns?|"
+        r"failures?|findings?|problems?|gaps?|debt)\b)",
+        clause,
         flags=re.IGNORECASE,
     )
     exhaustive = re.search(
         r"\b(?:all|every)\b.{0,80}\b(?:pass|succeed|satisf|meet|met|clear)",
-        summary,
+        clause,
         flags=re.IGNORECASE | re.DOTALL,
     )
-    return bool((domain and positive_verdict) or clean_bill or exhaustive)
+    return bool(domain and (positive_verdict or clean_bill or exhaustive))
+
+
+def _safe_debt_narrative_clauses(summary: str) -> list[str]:
+    """Drop only contradictory debt-mode clauses and retain safe narration."""
+    safe: list[str] = []
+    for line in summary.splitlines():
+        clauses = re.split(r"(?<=[.!?])\s+|(?<=;)\s+", line.strip())
+        for clause in clauses:
+            clause = clause.strip()
+            if clause and not _asserts_specification_quality_success(clause):
+                safe.append(clause)
+    return safe
+
+
+def _normalized_truth_content(value: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", value.casefold()))
 
 
 def _duplicates_required_truth(line: str, context: RunSummaryContext) -> bool:
     lowered = line.casefold()
-    if context.quality_debt_status == "accepted_with_debt" and re.search(
-        r"(?:accepted_with_debt|quality[- ]debt|residual gates?|quality-debt\.json)",
-        lowered,
-    ):
-        return True
-    if context.provider_limit_message and re.search(
-        r"(?:provider|rate|usage)\s+limit|quota",
-        lowered,
-    ):
-        return True
+    if context.quality_debt_status == "accepted_with_debt":
+        accepted_outcome = re.search(
+            r"(?:\b(?:the\s+)?spec(?:ification)?(?:\s+quality)?\b.{0,100}"
+            r"\baccepted\s+with\s+(?:quality\s+)?debt\b|"
+            r"^accepted\s+with\s+(?:quality\s+)?debt\b|accepted_with_debt)",
+            lowered,
+        )
+        residual_truth = re.search(r"\bresidual\s+gates?\b", lowered)
+        artifact = _normalized_truth_content(context.quality_debt_artifact)
+        artifact_truth = bool(
+            artifact and artifact in _normalized_truth_content(line)
+        )
+        if accepted_outcome or residual_truth or artifact_truth:
+            return True
+    provider_message = context.provider_limit_message.strip()
+    if provider_message:
+        normalized_line = _normalized_truth_content(line)
+        normalized_provider = _normalized_truth_content(provider_message)
+        same_provider_fact = bool(
+            normalized_provider
+            and (
+                normalized_provider in normalized_line
+                or normalized_line in normalized_provider
+            )
+        )
+        semantic_limit_line = bool(
+            re.search(
+                r"\b(?:hit|reached|exceeded)\b.{0,50}"
+                r"\b(?:provider|session|rate|usage)\s+limit\b|"
+                r"\b(?:provider|session|rate|usage)\s+limit\b.{0,50}"
+                r"\b(?:reached|reset|resets)\b",
+                lowered,
+            )
+        )
+        if same_provider_fact or semantic_limit_line:
+            return True
     return False
 
 
