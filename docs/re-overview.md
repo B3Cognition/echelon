@@ -32,6 +32,27 @@ after:  echelon re run --re-policy changed --re-max-inner 10
         echelon spec run "Build dashboards"
 ```
 
+## Handoff to proportional specification authoring
+
+Published RE is immutable input to a later spec run; it does not acquire
+authority over specification quality policy. The default proportional Phase A
+flow evaluates an initial candidate plus three automatic repairs and may then
+offer plus one optional authorized repair. Guided and semi runs leave that
+material choice to the human; banzai leaves it to COMMANDER through the same
+sealed controller decision.
+
+Quality debt is not a substitute for missing brownfield evidence. An unresolved
+RE fact, conflicting primary evidence, unsupported product-input mapping,
+invalid traceability, CRITICAL contradiction, or invalid mandatory artifact
+keeps its normal evidence, clarification, or fail-closed route. Only residual
+eligible specification-quality debt can be recorded as `accepted with quality
+debt`, with `quality-debt.json` preserved separately from a passing quality
+certificate.
+
+`echelon spec status` shows the full decision/debt evidence. `echelon spec resume`
+supplies an explicit human choice when requested; ordinary `echelon spec continue`
+cannot silently accept debt, add repairs, or reopen an exhausted or declined loop.
+
 ## Three-phase workflow
 
 ```text

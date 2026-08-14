@@ -1150,6 +1150,44 @@ and traceability concern. This changes authoring depth only; it does not change
 autonomy, provider, model, effort, templates, validation gates, or downstream
 planning.
 
+### Proportional quality repair and debt decisions
+
+Proportional validation uses an **initial candidate plus three automatic repairs**.
+The initial Understanding/SAGE assessment is not a repair. A repair
+is consumed only by a valid, changed CARTOGRAPHER result; provider failures,
+timeouts, invalid results or artifacts, controller/state/checkpoint failures,
+and evidence or human-decision routes keep their existing recovery behavior
+without spending the proportional allowance.
+
+If quality still fails, Echelon restores the best eligible candidate and stops
+at a sealed decision. Guided and semi runs require an explicit human choice;
+banzai asks COMMANDER to choose from the same bounded evidence and options.
+The choices may include **plus one optional authorized repair**, continuation
+with recorded quality debt, or stopping. The extra repair can be authorized
+only once. Debt is never accepted automatically in any mode.
+
+A passing candidate receives the normal content-bound quality certificate.
+Choosing debt instead records `accepted with quality debt`, creates and
+references `quality-debt.json`, and does not turn the failed assessment into
+PASS or certification. Debt is unavailable for CRITICAL findings or
+contradictions, unresolved evidence or product-policy decisions, unsupported
+product inputs or invalid traceability, missing/invalid mandatory artifacts,
+and provider, timeout, controller-contract, checkpoint, or state-integrity
+failures.
+
+Use `echelon spec status` to inspect repair counts, failed gates, the restored
+candidate, recommendation, decision owner, and debt artifact. In guided or
+semi mode, use the exact choice syntax shown for `echelon spec resume`;
+ordinary `echelon spec continue` may recover operational work but cannot choose
+a pending debt decision, grant more repairs, or reopen an exhausted or declined
+loop. Continue and resume preserve the same run-local counters and evidence.
+
+Each invocation that actually runs work prints one concise `SQUAD SUMMARY` on
+exit. It names accepted quality debt and the most important failed gates while
+leaving full evidence to status and `quality-debt.json`. If a provider limit
+was also hit, the summary shows provider-limit and quality-debt facts
+independently rather than allowing either one to hide the other.
+
 ### delivery — build, verify, PR
 
 | Terminal | Purpose |

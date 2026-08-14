@@ -597,6 +597,48 @@ class TestPhaseGraph:
         assert set(why2.allowed_verdicts) == {"PASS", "FAIL", "STOP_AND_ASK"}
         assert why2.evidence_routing == "finding_routes"
 
+    def test_why2_declares_proportional_quality_policy_as_controller_owned(self):
+        workflow = yaml.safe_load(PROSAIC_RUNTIME_DEFINITION.read_text(encoding="utf-8"))
+        why2_definition = next(
+            phase for phase in workflow["phases"] if phase["id"] == "phase1-why2"
+        )
+        why2 = self.graph.get("phase1-why2")
+
+        assert why2_definition["controller_policy"]["proportional_quality"] == {
+            "owner": "controller",
+            "responsibilities": [
+                "repair_accounting",
+                "exhaustion_routing",
+                "decision_options",
+                "debt_authorization",
+            ],
+        }
+        assert {
+            "phase1_quality_repair",
+            "proportional_quality_candidate_evidence",
+            "spec_quality_debt_authorization",
+        }.isdisjoint(why2.allowed_state_updates or [])
+
+    def test_why2_keeps_global_iteration_routes_for_perfectionist_mode(self):
+        why2 = self.graph.get("phase1-why2")
+
+        assert why2.transitions[1:3] == [
+            {
+                "to": "phase1-what",
+                "condition": "verdict = FAIL AND iteration < max_iterations",
+                "action": "increment_iteration",
+            },
+            {
+                "to": "phase1-what",
+                "condition": "quality_gates.fail AND iteration < max_iterations",
+                "action": "increment_iteration",
+            },
+        ]
+        assert why2.transitions[-1] == {
+            "to": "terminal-blocked",
+            "condition": "iteration >= max_iterations",
+        }
+
     def test_phase_timing_windows_are_controller_metadata(self):
         decide = self.graph.get("phase2-decide")
         specialists = self.graph.get("phase3-specialists")

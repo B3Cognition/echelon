@@ -135,13 +135,31 @@ def test_built_wheel_installs_canonical_prosaic_bundles(tmp_path: Path) -> None:
 import sys
 from pathlib import Path
 
+import yaml
+
 sys.path.insert(0, sys.argv[1])
 from echelon.prosaic_packages import install_prosaic_bundle
 
 workspace = Path(sys.argv[2])
 install_prosaic_bundle(workspace, run=lambda *_args, **_kwargs: None)
 assert (workspace / ".echelon/packages/echelon-prose/commands").is_dir()
-assert (workspace / ".echelon/packages/echelon-runtime/workflow/definition.yaml").is_file()
+runtime = workspace / ".echelon/packages/echelon-runtime"
+workflow_path = runtime / "workflow/definition.yaml"
+assert workflow_path.is_file()
+why2_instructions = (runtime / "workflow/phases/phase1-why2.md").read_text(encoding="utf-8")
+assert "Controller-Owned Proportional Quality Policy" in why2_instructions
+assert "Never authorize quality debt" in why2_instructions
+workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+why2 = next(phase for phase in workflow["phases"] if phase["id"] == "phase1-why2")
+assert why2["controller_policy"]["proportional_quality"] == {
+    "owner": "controller",
+    "responsibilities": [
+        "repair_accounting",
+        "exhaustion_routing",
+        "decision_options",
+        "debt_authorization",
+    ],
+}
 """
     subprocess.run(
         [sys.executable, "-c", script, str(installed), str(workspace)],

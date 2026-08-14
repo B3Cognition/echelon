@@ -135,6 +135,31 @@ def test_workspace_init_seeds_config_without_spec_kit(
     assert not (tmp_path / ".specify").exists()
 
 
+def test_workspace_init_deploys_proportional_why2_controller_contract(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    _write_workspace_config(
+        tmp_path,
+        "  enabled: false\n  type: cli\n",
+    )
+    monkeypatch.setattr(cli, "_provision_wing", lambda _project_dir, _config: "test-wing")
+
+    cli._cmd_init(tmp_path)
+
+    runtime = tmp_path / ".echelon" / "runtime"
+    why2_instructions = (runtime / "workflow/phases/phase1-why2.md").read_text(
+        encoding="utf-8"
+    )
+    assert "Controller-Owned Proportional Quality Policy" in why2_instructions
+    assert "Never authorize quality debt" in why2_instructions
+    workflow = yaml.safe_load(
+        (runtime / "workflow/definition.yaml").read_text(encoding="utf-8")
+    )
+    why2 = next(phase for phase in workflow["phases"] if phase["id"] == "phase1-why2")
+    assert why2["controller_policy"]["proportional_quality"]["owner"] == "controller"
+
+
 def test_workspace_init_prefers_echelon_runtime_config_over_reference_template(
     tmp_path,
     monkeypatch,
