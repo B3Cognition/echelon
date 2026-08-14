@@ -60,6 +60,7 @@ from harness.state_transaction_namespace import (
     validate_pending_external_publication,
     validate_product_input_mutation,
 )
+from harness.proportional_quality import initialize_repair_state
 from echelon.spec_authoring import normalize_spec_authoring_mode
 from echelon.strict_json import loads_strict_json
 
@@ -2287,15 +2288,14 @@ class SquadStateStore:
             mode = "greenfield"
         logger.debug("squad init run_id=%s mode=%s entry_phase=%s", run_id, mode, entry_phase)
         ts = datetime.now(timezone.utc).isoformat()
+        authoring_mode = normalize_spec_authoring_mode(spec_authoring_mode)
         initial_state = {
             "run_id": run_id,
             "status": "running",
             "phase": entry_phase,
             "mode": mode,
             "autonomy_mode": autonomy_mode,
-            "spec_authoring_mode": normalize_spec_authoring_mode(
-                spec_authoring_mode
-            ),
+            "spec_authoring_mode": authoring_mode,
             "iteration": 0,
             "max_iterations": max_iterations,
             "token_usage": 0,
@@ -2321,6 +2321,11 @@ class SquadStateStore:
             "staging_dir": str(self._staging_dir),
             "context_dir": str(self._squad_dir / "context"),
         }
+        repair_state = initialize_repair_state(
+            {"spec_authoring_mode": authoring_mode}
+        )
+        if repair_state is not None:
+            initial_state["phase1_quality_repair"] = repair_state
         with self._lock(exclusive=True):
             self._save_unlocked(initial_state)
 

@@ -118,6 +118,7 @@ ROUTING_AND_HISTORY_IDENTITY_KEYS = frozenset(
 
 LIFECYCLE_AND_DIAGNOSTIC_KEYS = frozenset(
     {
+        "phase1_quality_repair",
         "status",
         "blocked_reason",
         "blocked_detail",
