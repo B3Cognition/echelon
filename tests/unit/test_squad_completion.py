@@ -265,6 +265,7 @@ def test_prepare_completion_seals_exact_canonical_intent_and_empty_receipts(
         "route": ROUTED_ROUTE,
         "effect_plan": [],
         "checkpoint_prestate": {"kind": "none"},
+        "quality_effect": {"kind": "none"},
         "context_reason": "routed phase completion",
         "mine_phase_a": False,
         "judgment_payload_sha256": [],
@@ -348,12 +349,33 @@ def test_prepare_completion_accepts_sha1_or_sha256_checkpoint_head(
             judgment_payload_sha256=(),
             judgments=(),
         )
-
         assert prepared.intent.checkpoint_prestate == {
             "kind": "git_head",
             "head": head,
         }
 
+
+def test_prepare_completion_binds_quality_effect_to_quality_plan(
+    tmp_path: Path,
+) -> None:
+    quality = {
+        "kind": "proportional_quality",
+        "operation": "debt_remove",
+        "payload": {"operation": "debt_remove", "debt_path": "spec/debt.json"},
+    }
+    _root, _squad, prepared = _prepare_minimal(
+        tmp_path,
+        effect_plan=("quality",),
+        quality_effect=quality,
+    )
+    assert prepared.intent.quality_effect == quality
+    assert prepared.intent.checkpoint_prestate == {"kind": "none"}
+
+    for plan, effect in (((), quality), (("quality",), {"kind": "none"})):
+        other = tmp_path / f"invalid-{len(plan)}-{effect['kind']}"
+        with pytest.raises(CompletionError) as raised:
+            _prepare_minimal(other, effect_plan=plan, quality_effect=effect)
+        assert raised.value.code == "intent_invalid"
 
 def test_prepare_completion_accepts_exact_external_publication_union(
     tmp_path: Path,

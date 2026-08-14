@@ -82,13 +82,17 @@ from harness.phase1_quality_debt import build_quality_debt_authorization
 from harness.proportional_quality import (
     QualityCandidateIntegrityError,
     QualityCandidateManifest,
-    capture_quality_candidate,
+    load_authoritative_sage_issues,
     initialize_repair_state,
     load_quality_candidate_manifest,
     rank_quality_candidates,
     record_what_outcome,
-    restore_quality_candidate,
+    prepare_quality_candidate,
+    quality_candidate_effect_payload,
     validate_repair_state,
+)
+from harness.proportional_quality_effects import (
+    apply_or_verify_proportional_quality_effect,
 )
 from harness.prepared_phase_result import (
     PreparedPhaseResult,
@@ -836,6 +840,7 @@ class _HumanInputResolutionEffects:
     state_updates: Mapping[str, object]
     state_removals: frozenset[str]
     route: str
+    completion: PreparedControllerCompletion | None = None
 
 
 class SquadController:
@@ -1445,6 +1450,8 @@ class SquadController:
         publication_marker: Mapping[str, object] | None,
         judgments: tuple[SquadAgentResult, ...] = (),
         origin: str = "routed",
+        quality_effect: Mapping[str, object] | None = None,
+        resolution_decision_id: str | None = None,
     ) -> PreparedControllerCompletion:
         """Seal all post-dispatch work before its authorizing state save."""
         if origin == "terminal":
@@ -1459,6 +1466,21 @@ class SquadController:
                 effects.append("retarget")
             effect_plan = tuple(effects)
             judgment_records: tuple[dict[str, object], ...] = ()
+        elif origin == "resolution":
+            if not resolution_decision_id or quality_effect is None:
+                raise StateAdvanceError(
+                    "human-input completion preparation is invalid",
+                    json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
+                    validator="completion_binding",
+                )
+            route = {
+                "kind": "resolution",
+                "decision_id": resolution_decision_id,
+                "from_phase": from_phase,
+                "to_phase": to_phase,
+            }
+            effect_plan = ("quality",)
+            judgment_records = ()
         else:
             route = {
                 "kind": "routed",
@@ -1484,11 +1506,14 @@ class SquadController:
                     )
                 ):
                     effects.append("timing")
+                if quality_effect is not None:
+                    effects.append("quality")
                 active_spec_dir = self._active_phase_a_spec_dir(
                     snapshot.state
                 )
                 if (
-                    active_spec_dir is not None
+                    quality_effect is None
+                    and active_spec_dir is not None
                     and active_spec_dir.exists()
                 ):
                     effects.append("checkpoint")
@@ -1530,6 +1555,8 @@ class SquadController:
                 context_reason=(
                     "terminal Phase A reconciliation"
                     if origin == "terminal"
+                    else "human-input proportional quality resolution"
+                    if origin == "resolution"
                     else (
                         f"{'manual ' if manual_phase_run else ''}"
                         f"{'skip ' if conditional_skip else ''}"
@@ -1539,6 +1566,11 @@ class SquadController:
                 mine_phase_a="mining" in effect_plan,
                 judgment_payload_sha256=judgment_digests,
                 judgments=judgment_records,
+                quality_effect=(
+                    dict(quality_effect)
+                    if quality_effect is not None
+                    else {"kind": "none"}
+                ),
             )
         except CompletionError as exc:
             raise StateAdvanceError(
@@ -1657,6 +1689,16 @@ class SquadController:
                 effect,
                 receipt,
             )
+            return
+        if effect == "quality":
+            receipt = apply_or_verify_proportional_quality_effect(
+                prepared.intent.quality_effect,
+                completion_id=prepared.marker.completion_id,
+                project_root=self._project_root,
+                state=state,
+                expected_receipt=existing,
+            )
+            persist_completion_effect_receipt(prepared, effect, receipt)
             return
         if effect == "checkpoint":
             receipt = create_or_recover_completion_checkpoint(
@@ -1794,7 +1836,7 @@ class SquadController:
                 and dispatch.get("completion_receipts_sha256")
                 == marker.receipts_sha256
             )
-        else:
+        elif marker.origin == "terminal":
             terminal = state.get("last_terminal_completion")
             proven = (
                 isinstance(terminal, Mapping)
@@ -1803,6 +1845,14 @@ class SquadController:
                 == marker.intent_sha256
                 and terminal.get("receipts_sha256")
                 == marker.receipts_sha256
+            )
+        else:
+            resolution = state.get("last_human_input_completion")
+            proven = (
+                isinstance(resolution, Mapping)
+                and resolution.get("completion_id") == marker.completion_id
+                and resolution.get("intent_sha256") == marker.intent_sha256
+                and resolution.get("receipts_sha256") == marker.receipts_sha256
             )
         if not proven:
             return
@@ -3326,8 +3376,15 @@ class SquadController:
                 raise HumanInputPolicyError(
                     "provider human-input advance is invalid"
                 )
+            source_matches = provider_advance.from_phase == request.phase_id or (
+                request.source_kind == "controller_safeguard"
+                and request.producer_id
+                == "proportional_quality_budget_exhausted"
+                and provider_advance.from_phase == "phase1-what"
+                and request.phase_id == "phase1-why2"
+            )
             if (
-                provider_advance.from_phase != request.phase_id
+                not source_matches
                 or provider_advance.decision.from_phase
                 != provider_advance.from_phase
                 or provider_advance.decision.to_phase
@@ -3363,41 +3420,6 @@ class SquadController:
             )
             if receipt is None:
                 return False
-        return self.resume_pending_human_input()
-
-    def _seal_proportional_human_input_after_advance(
-        self,
-        request: PreparedHumanInput,
-    ) -> bool:
-        """Seal the WHY2-sourced no-progress decision after WHAT advances."""
-        policy = self._validate_prepared_human_input(request)
-        if request.producer_id != "proportional_quality_budget_exhausted":
-            raise HumanInputPolicyError(
-                "post-advance sealing is limited to proportional no-progress"
-            )
-        state = self._state_store.load()
-        if state.get("phase") != request.phase_id:
-            raise HumanInputPolicyError(
-                "post-advance human-input source phase is not current"
-            )
-        autonomy_mode = state.get("autonomy_mode")
-        if autonomy_mode not in {"guided", "semi", "banzai"}:
-            raise HumanInputPolicyError(
-                "persisted autonomy mode is invalid"
-            )
-        rebound = replace(
-            request,
-            source_state_revision=int(state.get("state_revision") or 0),
-        )
-        initial_status = select_initial_decision_status(
-            str(autonomy_mode),
-            policy,
-            rebound,
-        )
-        self._state_store.set_human_input_decision(
-            rebound,
-            initial_status=initial_status,
-        )
         return self.resume_pending_human_input()
 
     def _semi_human_input_resolution(
@@ -3909,7 +3931,7 @@ class SquadController:
                     "quality debt requires a human or COMMANDER resolver"
                 )
             try:
-                authorization = build_quality_debt_authorization(
+                prepared_debt = build_quality_debt_authorization(
                     project_root=self._project_root,
                     spec_dir=self._proportional_spec_dir(state),
                     candidate=candidate,
@@ -3930,20 +3952,68 @@ class SquadController:
                 else "checkpoint-assess"
             )
             route = self._validate_human_input_route(route, policy)
+            snapshot = self._state_store.capture_routing_snapshot(
+                expected_phase=str(state.get("phase") or "")
+            )
+            completion = self._prepare_controller_completion(
+                from_phase=str(state.get("phase") or ""),
+                to_phase=route,
+                snapshot=snapshot,
+                manual_phase_run=False,
+                conditional_skip=False,
+                record_completion=True,
+                publication_marker=None,
+                origin="resolution",
+                resolution_decision_id=str(decision["id"]),
+                quality_effect={
+                    "kind": "proportional_quality",
+                    "operation": "debt_write",
+                    "payload": prepared_debt.effect_payload(),
+                },
+            )
             return _HumanInputResolutionEffects(
                 state_updates={
                     "status": "running",
                     "phase": route,
-                    "spec_quality_debt_authorization": authorization,
+                    "spec_quality_debt_authorization": (
+                        prepared_debt.authorization
+                    ),
                 },
                 state_removals=frozenset({"quality_gate_remediation"}),
                 route=route,
+                completion=completion,
             )
 
         if selected.id == "stop":
             route = self._validate_human_input_route(
                 selected.next_phase,
                 policy,
+            )
+            spec_dir = self._proportional_spec_dir(state)
+            debt_ref = (spec_dir / "quality-debt.json").resolve().relative_to(
+                self._project_root.resolve()
+            ).as_posix()
+            snapshot = self._state_store.capture_routing_snapshot(
+                expected_phase=str(state.get("phase") or "")
+            )
+            completion = self._prepare_controller_completion(
+                from_phase=str(state.get("phase") or ""),
+                to_phase=route,
+                snapshot=snapshot,
+                manual_phase_run=False,
+                conditional_skip=False,
+                record_completion=True,
+                publication_marker=None,
+                origin="resolution",
+                resolution_decision_id=str(decision["id"]),
+                quality_effect={
+                    "kind": "proportional_quality",
+                    "operation": "debt_remove",
+                    "payload": {
+                        "operation": "debt_remove",
+                        "debt_path": debt_ref,
+                    },
+                },
             )
             return _HumanInputResolutionEffects(
                 state_updates={
@@ -3958,6 +4028,7 @@ class SquadController:
                     "spec_quality_debt_authorization",
                 }),
                 route=route,
+                completion=completion,
             )
         raise HumanInputPolicyError(
             "proportional quality option is not registered"
@@ -4087,14 +4158,36 @@ class SquadController:
             raise HumanInputPolicyError(
                 "human-input handler returned an invalid route"
             )
-        resolved = self._state_store.apply_human_input_state_resolution(
-            decision_id,
-            expected_state_revision=expected_state_revision,
-            resolution=resolution,
-            state_updates=effects.state_updates,
-            state_removals=effects.state_removals,
-            token_usage_delta=token_usage_delta,
-        )
+        try:
+            resolved = self._state_store.apply_human_input_state_resolution(
+                decision_id,
+                expected_state_revision=expected_state_revision,
+                resolution=resolution,
+                state_updates=effects.state_updates,
+                state_removals=effects.state_removals,
+                token_usage_delta=token_usage_delta,
+                prepared_completion=effects.completion,
+            )
+        except BaseException:
+            if effects.completion is not None:
+                try:
+                    current = self._state_store.load()
+                    if current.get(PENDING_CONTROLLER_COMPLETION_KEY) != (
+                        effects.completion.marker.to_dict()
+                    ):
+                        effects.completion.discard()
+                except Exception:
+                    pass
+            raise
+        if effects.completion is not None:
+            recovery = self._drain_pending_controller_completion()
+            if (
+                not recovery.recovered
+                or recovery.completion_id
+                != effects.completion.marker.completion_id
+            ):
+                return False
+            resolved = self._state_store.load()
         return (
             resolved.get("status") == "running"
             and resolved.get("phase") not in TERMINAL_PHASES
@@ -4546,6 +4639,10 @@ class SquadController:
 
     def resume_pending_human_input(self) -> bool:
         """Recover an interrupted claim, then route one pending decision."""
+        pending = self._state_store.load()
+        if PENDING_CONTROLLER_COMPLETION_KEY in pending:
+            if not self._drain_pending_controller_completion().recovered:
+                return False
         state = self._state_store.recover_interrupted_human_input_decision()
         raw_decision = state.get("blocked_decision")
         if (
@@ -4588,6 +4685,10 @@ class SquadController:
         if not isinstance(answer, str) or not answer.strip():
             raise HumanInputPolicyError("human-input answer is required")
         state = self._state_store.load()
+        if PENDING_CONTROLLER_COMPLETION_KEY in state:
+            if not self._drain_pending_controller_completion().recovered:
+                return False
+            state = self._state_store.load()
         raw_decision = state.get("blocked_decision")
         if not isinstance(raw_decision, Mapping):
             raise HumanInputPolicyError("human-input decision is missing")
@@ -8762,24 +8863,22 @@ class SquadController:
     def _proportional_candidate_ineligibility(
         eval_state: Mapping[str, object],
         findings: tuple[Mapping[str, object], ...],
+        authoritative_issues: tuple[Mapping[str, object], ...],
     ) -> tuple[str, ...]:
         reasons: list[str] = []
         evidence_status = eval_state.get("evidence_resolution_status")
         if evidence_status not in {None, "not_required", "validated"}:
             reasons.append("unresolved_evidence_or_product_decision")
-        issues = eval_state.get("issues_log")
-        if isinstance(issues, list) and any(
-            isinstance(issue, Mapping)
-            and str(issue.get("severity") or "").upper() == "CRITICAL"
-            and issue.get("resolved") is not True
-            for issue in issues
+        if any(
+            issue.get("severity") == "CRITICAL"
+            for issue in authoritative_issues
         ):
             reasons.append("critical_sage_issue")
         if any(
-            str(finding.get("severity") or "").upper() == "CRITICAL"
-            for finding in findings
+            issue.get("type") == "contradiction"
+            for issue in authoritative_issues
         ):
-            reasons.append("critical_sage_finding")
+            reasons.append("sage_contradiction")
         if any(
             str(finding.get("route") or "").strip()
             not in {"", "spec_repair"}
@@ -8844,7 +8943,22 @@ class SquadController:
         candidate_id = f"quality-candidate-{len(repair['candidate_ids'])}"
         spec_dir = self._proportional_spec_dir(state)
         spec_id = _checkpoint_spec_id_from_state(dict(state), spec_dir)
-        manifest = capture_quality_candidate(
+        authoritative_issues = load_authoritative_sage_issues(
+            spec_dir / "issues.md"
+        )
+        issues_by_id = {
+            str(issue["issue_id"]): issue for issue in authoritative_issues
+        }
+        enriched_findings: list[dict[str, object]] = []
+        for finding in findings:
+            issue_id = str(finding.get("issue_id") or "")
+            issue = issues_by_id.get(issue_id)
+            if issue is None:
+                raise QualityCandidateIntegrityError(
+                    "SAGE finding routes do not match authoritative issues"
+                )
+            enriched_findings.append({**dict(finding), **dict(issue)})
+        manifest = prepare_quality_candidate(
             project_root=self._project_root,
             spec_dir=spec_dir,
             run_artifact_root=self._squad_dir,
@@ -8853,7 +8967,7 @@ class SquadController:
             candidate_id=candidate_id,
             understanding_evidence=evidence_path,
             normalized_gates=normalized_gates,
-            sage_finding_routes=findings,
+            sage_finding_routes=enriched_findings,
             formal_statement_count=int(report.get("requirement_count") or 0),
             repair_number=(
                 int(repair["automatic_consumed"])
@@ -8862,7 +8976,8 @@ class SquadController:
             assessment_index=len(repair["candidate_ids"]),
             eligibility_reasons=self._proportional_candidate_ineligibility(
                 eval_state,
-                findings,
+                tuple(enriched_findings),
+                authoritative_issues,
             ),
             repair_state=repair,
         )
@@ -8875,6 +8990,18 @@ class SquadController:
             else None
         )
         return manifest, {
+            "_proportional_quality_effect": {
+                "kind": "proportional_quality",
+                "operation": "candidate",
+                "spec_dir": spec_dir.resolve().relative_to(
+                    self._project_root.resolve()
+                ).as_posix(),
+                "run_id": str(state.get("run_id") or ""),
+                "spec_id": spec_id,
+                "candidate": quality_candidate_effect_payload(manifest),
+                "checkpoint_prestate": self._completion_checkpoint_prestate(),
+                "restore_candidate_id": None,
+            },
             "phase1_quality_repair": repair,
             "proportional_quality_candidate_evidence": {
                 "schema_version": 1,
@@ -8927,9 +9054,33 @@ class SquadController:
         reason_code: str,
         source_state_revision: int,
         last_repair_outcome: object = None,
+        current_candidate: QualityCandidateManifest | None = None,
     ) -> tuple[PreparedHumanInput, dict[str, object]]:
         repair = validate_repair_state(repair_state)
-        candidates = self._load_proportional_candidates(repair)
+        persisted_ids = list(repair["candidate_ids"])
+        if current_candidate is not None:
+            if (
+                not persisted_ids
+                or persisted_ids[-1] != current_candidate.candidate_id
+            ):
+                raise QualityCandidateIntegrityError(
+                    "current proportional candidate does not match repair state"
+                )
+            persisted_ids = persisted_ids[:-1]
+        candidates = (
+            self._load_proportional_candidates(
+                {
+                    **repair,
+                    "candidate_ids": persisted_ids,
+                    "baseline_candidate_id": (
+                        repair["baseline_candidate_id"]
+                        if persisted_ids
+                        else None
+                    ),
+                }
+            )
+            + ((current_candidate,) if current_candidate is not None else ())
+        )
         ranked = rank_quality_candidates(candidates)
         if not ranked:
             raise QualityCandidateIntegrityError(
@@ -8938,19 +9089,16 @@ class SquadController:
         selected = ranked[0]
         spec_dir = self._proportional_spec_dir(state)
         spec_id = _checkpoint_spec_id_from_state(dict(state), spec_dir)
-        restore_quality_candidate(
-            self._project_root,
-            spec_dir,
-            selected,
-            run_id=str(state.get("run_id") or ""),
-            spec_id=spec_id,
-        )
         manifest_path = (
             self._squad_dir
             / "quality-candidates"
             / f"{selected.candidate_id}.json"
         )
-        manifest_sha = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+        manifest_sha = (
+            hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+            if manifest_path.is_file()
+            else None
+        )
         evidence_path = Path(selected.understanding_evidence)
         report = json.loads(evidence_path.read_text(encoding="utf-8"))
         failing_gates = [
@@ -9004,7 +9152,33 @@ class SquadController:
                 last_repair_outcome == "no_artifact_progress"
             ),
         )
+        quality_effect: dict[str, object]
+        if current_candidate is not None:
+            raw_effect = state.get("_proportional_quality_effect")
+            if not isinstance(raw_effect, Mapping):
+                raise QualityCandidateIntegrityError(
+                    "candidate completion effect is missing"
+                )
+            quality_effect = dict(raw_effect)
+            quality_effect["restore_candidate_id"] = (
+                selected.candidate_id
+                if selected.candidate_id != current_candidate.candidate_id
+                else None
+            )
+        else:
+            quality_effect = {
+                "kind": "proportional_quality",
+                "operation": "restore",
+                "spec_dir": spec_dir.resolve().relative_to(
+                    self._project_root.resolve()
+                ).as_posix(),
+                "run_id": str(state.get("run_id") or ""),
+                "spec_id": spec_id,
+                "candidate_id": selected.candidate_id,
+                "checkpoint_prestate": self._completion_checkpoint_prestate(),
+            }
         return request, {
+            "_proportional_quality_effect": quality_effect,
             "status": "blocked",
             "blocked_reason": reason_code,
             "why_fail_count": 0,
@@ -9012,7 +9186,7 @@ class SquadController:
             "understanding_evidence": understanding_evidence,
             "proportional_quality_candidate_evidence": {
                 "schema_version": 1,
-                "current_candidate_id": selected.candidate_id,
+                "current_candidate_id": recommendation_current.candidate_id,
                 "selected_candidate_id": selected.candidate_id,
                 "candidate_manifest": str(manifest_path),
                 "candidate_manifest_sha256": manifest_sha,
@@ -9488,20 +9662,6 @@ class SquadController:
 
         if request is None:
             return None
-        if (
-            routing.human_input is request
-            and request.phase_id != decision.from_phase
-        ):
-            receipt = self._advance_prepared_result_or_block(
-                node,
-                decision,
-                prepared_publication=prepared_publication,
-            )
-            if receipt is None:
-                return False
-            return self._seal_proportional_human_input_after_advance(
-                request
-            )
         return self.handle_human_input(
             request,
             provider_advance=_ProviderHumanInputAdvance(
@@ -10057,6 +10217,7 @@ class SquadController:
                             "proportional_quality_candidate_evidence"
                         ].get("last_repair_outcome")
                     ),
+                    current_candidate=manifest,
                 )
             )
         except (QualityCandidateIntegrityError, HumanInputPolicyError):
@@ -10707,7 +10868,23 @@ class SquadController:
         increment_iteration = self._transition_increments_iteration(
             node,
             next_phase,
+        ) or (
+            node.id == "phase1-why2"
+            and next_phase == "phase1-what"
+            and source == "why_policy"
+            and self._is_proportional_quality_state(snapshot.state)
         )
+        quality_effect = queued_updates.pop(
+            "_proportional_quality_effect",
+            None,
+        )
+        if quality_effect is not None and not isinstance(quality_effect, Mapping):
+            raise ControllerStateContractViolation(
+                "proportional quality effect is invalid",
+                contract="routing",
+                json_path="$.state_updates._proportional_quality_effect",
+                validator="type",
+            )
         if PENDING_CONTROLLER_COMPLETION_KEY in transaction_updates:
             raise ControllerStateContractViolation(
                 "routing effects cannot provide completion authority",
@@ -10734,6 +10911,7 @@ class SquadController:
                 else None
             ),
             judgments=tuple(judgment_results),
+            quality_effect=quality_effect,
         )
         transaction_updates[PENDING_CONTROLLER_COMPLETION_KEY] = (
             completion.marker.to_dict()

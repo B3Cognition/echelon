@@ -1743,20 +1743,14 @@ def _coordinate_prepared_result(
         human_input_collector=routed_human_input,
     )
     if routed_human_input:
-        if routed_human_input[0].phase_id != decision.from_phase:
-            assert ctrl._advance_prepared_result_or_block(node, decision) is not None
-            ctrl._seal_proportional_human_input_after_advance(
-                routed_human_input[0]
-            )
-        else:
-            ctrl.handle_human_input(
-                routed_human_input[0],
-                provider_advance=squad_module._ProviderHumanInputAdvance(
-                    from_phase=decision.from_phase,
-                    to_phase=decision.to_phase,
-                    decision=decision,
-                ),
-            )
+        ctrl.handle_human_input(
+            routed_human_input[0],
+            provider_advance=squad_module._ProviderHumanInputAdvance(
+                from_phase=decision.from_phase,
+                to_phase=decision.to_phase,
+                decision=decision,
+            ),
+        )
     else:
         assert ctrl._advance_prepared_result_or_block(node, decision) is not None
     return decision.to_phase
@@ -6466,11 +6460,50 @@ def _proportional_assessment_fixture(
         f"# Candidate {assessment_index}\n\n"
         f"- FR-001: The system shall render candidate {assessment_index}.\n"
     )
+    issues = f"""# Issues — WHY2
+
+## Summary
+- **CRITICAL:** 0
+- **HIGH:** 0
+- **MEDIUM:** 0
+- **LOW:** 1
+- **Verdict:** FAIL
+
+## Issues
+
+### ISS-QUALITY-{assessment_index}: Residual quality debt
+- **Severity:** LOW
+- **Type:** incompleteness
+- **Description:** The certified overall gate remains below threshold.
+- **Affected artifact:** spec.md
+- **Affected section:** Requirements
+- **Evidence:** The immutable Understanding score is below threshold.
+- **Recommendation:** Repair the failing quality dimension.
+- **Responsible agent:** WHAT
+- **Action Required:** Amend the specification.
+
+### Resolution Guidance
+- **Decision required:** No user decision — agent repair
+- **Suggested option:** Repair the certified failing dimension.
+- **Evidence basis:** Immutable Understanding evidence.
+- **Values not inferable:** None
+- **Banzai eligible:** no
+
+## Pre-Mortem Findings
+
+| Risk | Likelihood | Impact | Affected Requirements |
+|------|-----------|--------|----------------------|
+
+## Cross-Artifact Consistency
+
+| Check | Status | Notes |
+|-------|--------|-------|
+"""
     for name, artifact in {
         "spec.md": content,
         "requirements-overview.md": f"# Overview {assessment_index}\n",
         "quality-gates.md": f"# Quality gates {assessment_index}\n",
-        "issues.md": f"# Residual quality debt {assessment_index}\n",
+        "issues.md": issues,
     }.items():
         (spec_dir / name).write_text(artifact, encoding="utf-8")
 
@@ -6610,7 +6643,714 @@ def _route_understanding_assessment(
     )
 
 
+def _run_proportional_quality_loop(
+    tmp_path: Path,
+    *,
+    change_what: bool = True,
+    automatic_consumed: int = 0,
+) -> tuple[SquadController, SquadStateStore, dict[str, int]]:
+    """Run the production dispatch loop with only the external agents faked."""
+    provider = _mock_provider()
+    ctrl, store = _controller(tmp_path, provider=provider)
+    store.initialize(
+        "r",
+        "greenfield",
+        "msg",
+        0,
+        "phase1-why2",
+        max_iterations=10,
+        autonomy_mode="semi",
+        spec_authoring_mode="proportional",
+    )
+    _mark_constitution_complete(tmp_path, store)
+    state = store.load()
+    state.update(
+        {
+            "spec_id": "001-demo",
+            "spec_dir": "runs/run-test/specs/001-demo",
+        }
+    )
+    repair = dict(state["phase1_quality_repair"])
+    repair["automatic_consumed"] = automatic_consumed
+    state["phase1_quality_repair"] = repair
+    store.save(state)
+    initial_updates, _why2 = _proportional_assessment_fixture(ctrl, store, 0)
+    state = store.load()
+    state.update(initial_updates)
+    store.save(state)
+    calls = {"why2": 0, "what": 0, "understanding": 0}
+
+    def exec_agent(_root: str, prompt: str, **_kwargs: object) -> SquadAgentResult:
+        if "# Phase: phase1-why2" in prompt:
+            calls["why2"] += 1
+            return SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "FAIL",
+                    "state_updates": {
+                        "evidence_resolution_status": "not_required",
+                        "finding_routes": {
+                            "findings": [
+                                {
+                                    "issue_id": f"ISS-QUALITY-{calls['understanding']}",
+                                    "route": "spec_repair",
+                                    "rationale": "Repair the residual quality debt.",
+                                }
+                            ]
+                        },
+                    },
+                },
+                raw_output="",
+                duration_ms=0,
+                timed_out=False,
+            )
+        if "# Phase: phase1-what" in prompt:
+            calls["what"] += 1
+            spec_dir = tmp_path / "runs/run-test/specs/001-demo"
+            if change_what:
+                (spec_dir / "spec.md").write_text(
+                    f"# Candidate repair {calls['what']}\n\n"
+                    f"- FR-001: The system shall render repair {calls['what']}.\n",
+                    encoding="utf-8",
+                )
+            return SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "DONE",
+                    "output_files": [
+                        str(spec_dir / "spec.md"),
+                        str(spec_dir / "requirements-overview.md"),
+                    ],
+                    "state_updates": {
+                        "evidence_resolution_status": "not_required",
+                    },
+                },
+                raw_output="",
+                duration_ms=0,
+                timed_out=False,
+            )
+        raise AssertionError("proportional test dispatched an unexpected agent phase")
+
+    provider.exec_agent.side_effect = exec_agent
+
+    def understanding_execute(_node: PhaseNode, _store: SquadStateStore) -> SquadAgentResult:
+        calls["understanding"] += 1
+        spec_path = tmp_path / "runs/run-test/specs/001-demo/spec.md"
+        updates, _result = _proportional_assessment_fixture(
+            ctrl,
+            store,
+            calls["understanding"],
+            spec_text=spec_path.read_text(encoding="utf-8"),
+        )
+        return SquadAgentResult(
+            exit_code=0,
+            echelon_result={"verdict": "DONE", "state_updates": updates},
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+
+    ctrl._executors["deterministic_understanding"] = SimpleNamespace(
+        execute=understanding_execute
+    )
+    return ctrl, store, calls
+
+
 class TestProportionalQualityController:
+    def test_run_executes_three_changed_repairs_with_global_iteration_accounting(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        ctrl, store, calls = _run_proportional_quality_loop(tmp_path)
+
+        result = ctrl.run("msg", "semi")
+
+        state = store.load()
+        assert result.status == "blocked"
+        assert state["blocked_reason"] == "proportional_quality_budget_exhausted"
+        assert state["iteration"] == 3
+        assert state["phase1_quality_repair"]["automatic_consumed"] == 3
+        assert state["phase1_quality_repair"]["candidate_ids"] == [
+            "quality-candidate-0",
+            "quality-candidate-1",
+            "quality-candidate-2",
+            "quality-candidate-3",
+        ]
+        assert calls == {"why2": 4, "what": 3, "understanding": 3}
+
+    def test_run_seals_no_progress_decision_without_the_post_advance_setter(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store, calls = _run_proportional_quality_loop(
+            tmp_path,
+            change_what=False,
+        )
+        forbidden = MagicMock(
+            side_effect=AssertionError("former post-advance decision gap reached")
+        )
+        monkeypatch.setattr(store, "set_human_input_decision", forbidden)
+
+        result = ctrl.run("msg", "semi")
+
+        state = store.load()
+        assert result.status == "blocked"
+        assert state["blocked_reason"] == "proportional_quality_budget_exhausted"
+        assert state["blocked_decision"]["status"] == "awaiting_human"
+        assert state["phase1_quality_repair"]["automatic_consumed"] == 0
+        assert calls == {"why2": 1, "what": 1, "understanding": 0}
+        forbidden.assert_not_called()
+
+    def test_run_authorizes_and_consumes_single_extension_then_reopens_decision(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        ctrl, store, calls = _run_proportional_quality_loop(
+            tmp_path,
+            automatic_consumed=3,
+        )
+
+        initial = ctrl.run("msg", "semi")
+        assert initial.status == "blocked"
+        assert ctrl.resume_with_human_input("extend_once") is True
+
+        residual = ctrl.run("run the authorized extension", "semi")
+
+        state = store.load()
+        assert residual.status == "blocked"
+        assert state["blocked_reason"] == (
+            "proportional_quality_extension_exhausted"
+        )
+        assert state["phase1_quality_repair"]["extension_authorized"] == 1
+        assert state["phase1_quality_repair"]["extension_consumed"] == 1
+        assert [
+            option["id"] for option in state["blocked_decision"]["options"]
+        ] == ["continue_with_debt", "stop"]
+        assert calls == {"why2": 2, "what": 1, "understanding": 1}
+
+    @pytest.mark.parametrize("answer", ["continue_with_debt", "stop"])
+    def test_run_budget_decision_resolves_debt_or_stop_through_public_path(
+        self,
+        tmp_path: Path,
+        answer: str,
+    ) -> None:
+        ctrl, store, calls = _run_proportional_quality_loop(
+            tmp_path,
+            automatic_consumed=3,
+        )
+        decision = ctrl.run("msg", "semi")
+        assert decision.status == "blocked"
+
+        resumed = ctrl.resume_with_human_input(answer)
+
+        state = store.load()
+        debt = tmp_path / "runs/run-test/specs/001-demo/quality-debt.json"
+        if answer == "continue_with_debt":
+            assert resumed is True
+            assert debt.is_file()
+            assert state["spec_quality_debt_authorization"]["status"] == (
+                "accepted_with_debt"
+            )
+        else:
+            assert resumed is False
+            assert not debt.exists()
+            assert state["blocked_reason"] == (
+                "proportional_quality_debt_declined"
+            )
+        assert PENDING_CONTROLLER_COMPLETION_KEY not in state
+        assert calls == {"why2": 1, "what": 0, "understanding": 0}
+
+    def test_run_candidate_capture_cas_failure_has_no_orphan_and_retry_converges(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store, _calls = _run_proportional_quality_loop(tmp_path)
+        real_advance = store.advance
+        failed = False
+
+        def fail_first_why2_advance(*args: object, **kwargs: object) -> object:
+            nonlocal failed
+            if not failed and args and args[0] == "phase1-why2":
+                failed = True
+                raise StateAdvanceError(
+                    "injected candidate authority CAS failure",
+                    validator="stale_state",
+                )
+            return real_advance(*args, **kwargs)
+
+        monkeypatch.setattr(store, "advance", fail_first_why2_advance)
+
+        first = ctrl.run("msg", "semi")
+
+        manifest = (
+            ctrl._squad_dir
+            / "quality-candidates/quality-candidate-0.json"
+        )
+        assert first.status == "blocked"
+        assert store.load()["phase1_quality_repair"]["candidate_ids"] == []
+        assert not manifest.exists()
+        assert "phase1-quality-candidate-0" not in subprocess.run(
+            ["git", "log", "--format=%B"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+
+        retried = ctrl.run("msg", "semi")
+
+        assert retried.status == "blocked"
+        assert store.load()["phase1_quality_repair"]["candidate_ids"] == [
+            "quality-candidate-0",
+            "quality-candidate-1",
+            "quality-candidate-2",
+            "quality-candidate-3",
+        ]
+        assert manifest.is_file()
+
+    def test_run_candidate_effect_marker_failure_reconciles_without_duplicate(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store, _calls = _run_proportional_quality_loop(tmp_path)
+        real_advance = store.advance_controller_completion
+        failed = False
+
+        def fail_after_quality_effect(prepared: object) -> None:
+            nonlocal failed
+            marker = getattr(prepared, "marker", None)
+            if not failed and getattr(marker, "step", None) == "quality":
+                failed = True
+                raise StateAdvanceError(
+                    "injected quality receipt state finalization failure",
+                    validator="stale_state",
+                )
+            real_advance(prepared)
+
+        monkeypatch.setattr(
+            store,
+            "advance_controller_completion",
+            fail_after_quality_effect,
+        )
+
+        first = ctrl.run("msg", "semi")
+
+        state = store.load()
+        assert failed is True
+        assert first.status == "blocked"
+        assert state[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == "quality"
+        assert state["phase1_quality_repair"]["candidate_ids"] == [
+            "quality-candidate-0"
+        ]
+        assert (
+            ctrl._squad_dir
+            / "quality-candidates/quality-candidate-0.json"
+        ).is_file()
+
+        retried = ctrl.run("msg", "semi")
+
+        assert retried.status == "blocked"
+        assert store.load()["blocked_reason"] == (
+            "proportional_quality_budget_exhausted"
+        )
+        log = subprocess.run(
+            ["git", "log", "--format=%B"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        assert log.count("Echelon-Checkpoint: phase1-quality-candidate-0") == 1
+
+    def test_run_restore_cas_failure_keeps_current_files_then_retry_restores_once(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store = _start_proportional_quality_loop(tmp_path)
+        _mark_constitution_complete(tmp_path, store)
+        baseline_updates, why2 = _proportional_assessment_fixture(
+            ctrl,
+            store,
+            0,
+            score=0.60,
+            spec_text="# Best candidate\n\n- FR-001: Best.\n",
+        )
+        state = store.load()
+        state.update(baseline_updates)
+        store.save(state)
+        _coordinate_prepared_result(ctrl, ctrl._graph.get("phase1-why2"), why2)
+        state = store.load()
+        repair = dict(state["phase1_quality_repair"])
+        repair["automatic_consumed"] = 3
+        state.update(
+            {
+                "phase": "phase1-why2",
+                "status": "running",
+                "phase1_quality_repair": repair,
+            }
+        )
+        state.pop("blocked_reason", None)
+        state.pop("quality_gate_remediation", None)
+        store.save(state)
+        current_text = "# Worse current candidate\n\n- FR-001: Worse.\n"
+        current_updates, _result = _proportional_assessment_fixture(
+            ctrl,
+            store,
+            1,
+            score=0.50,
+            spec_text=current_text,
+        )
+        state = store.load()
+        state.update(current_updates)
+        store.save(state)
+        provider = ctrl._provider
+        provider.exec_agent.side_effect = None
+        provider.exec_agent.return_value = _result
+        real_advance = store.advance
+        failed = False
+
+        def fail_once(*args: object, **kwargs: object) -> object:
+            nonlocal failed
+            if not failed:
+                failed = True
+                raise StateAdvanceError(
+                    "injected restore authority CAS failure",
+                    validator="stale_state",
+                )
+            return real_advance(*args, **kwargs)
+
+        monkeypatch.setattr(store, "advance", fail_once)
+
+        first = ctrl.run("msg", "semi")
+
+        spec = tmp_path / "runs/run-test/specs/001-demo/spec.md"
+        candidate_one = (
+            ctrl._squad_dir
+            / "quality-candidates/quality-candidate-1.json"
+        )
+        assert first.status == "blocked"
+        assert spec.read_text(encoding="utf-8") == current_text
+        assert not candidate_one.exists()
+
+        retried = ctrl.run("msg", "semi")
+
+        assert retried.status == "blocked"
+        assert store.load()["blocked_reason"] == (
+            "proportional_quality_budget_exhausted"
+        )
+        assert spec.read_text(encoding="utf-8").startswith("# Best candidate")
+        assert candidate_one.is_file()
+        log = subprocess.run(
+            ["git", "log", "--format=%B"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        assert log.count("Echelon-Checkpoint: phase1-quality-candidate-1") == 1
+
+    def test_run_restore_effect_marker_failure_reconciles_exact_restore_once(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store = _start_proportional_quality_loop(tmp_path)
+        _mark_constitution_complete(tmp_path, store)
+        baseline_updates, baseline = _proportional_assessment_fixture(
+            ctrl,
+            store,
+            0,
+            score=0.60,
+            spec_text="# Best candidate\n\n- FR-001: Best.\n",
+        )
+        state = store.load()
+        state.update(baseline_updates)
+        store.save(state)
+        _coordinate_prepared_result(ctrl, ctrl._graph.get("phase1-why2"), baseline)
+        state = store.load()
+        repair = dict(state["phase1_quality_repair"])
+        repair["automatic_consumed"] = 3
+        state.update({
+            "phase": "phase1-why2",
+            "status": "running",
+            "phase1_quality_repair": repair,
+        })
+        state.pop("blocked_reason", None)
+        state.pop("quality_gate_remediation", None)
+        store.save(state)
+        current_updates, current = _proportional_assessment_fixture(
+            ctrl,
+            store,
+            1,
+            score=0.50,
+            spec_text="# Worse candidate\n\n- FR-001: Worse.\n",
+        )
+        state = store.load()
+        state.update(current_updates)
+        store.save(state)
+        ctrl._provider.exec_agent.side_effect = None
+        ctrl._provider.exec_agent.return_value = current
+        real_advance = store.advance_controller_completion
+        injected = False
+
+        def fail_after_restore_effect(prepared: object) -> None:
+            nonlocal injected
+            marker = getattr(prepared, "marker", None)
+            if not injected and getattr(marker, "step", None) == "quality":
+                injected = True
+                raise StateAdvanceError(
+                    "injected restored receipt finalization failure",
+                    validator="stale_state",
+                )
+            real_advance(prepared)
+
+        monkeypatch.setattr(
+            store,
+            "advance_controller_completion",
+            fail_after_restore_effect,
+        )
+
+        first = ctrl.run("msg", "semi")
+
+        spec = tmp_path / "runs/run-test/specs/001-demo/spec.md"
+        pending = store.load()
+        assert injected is True
+        assert first.status == "blocked"
+        assert pending[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == "quality"
+        assert spec.read_text(encoding="utf-8").startswith("# Best candidate")
+        calls = ctrl._provider.exec_agent.call_count
+
+        retried = ctrl.run("must finish restore before routing", "semi")
+
+        assert retried.status == "blocked"
+        assert ctrl._provider.exec_agent.call_count == calls
+        assert PENDING_CONTROLLER_COMPLETION_KEY not in store.load()
+        log = subprocess.run(
+            ["git", "log", "--format=%B"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        assert log.count("Echelon-Checkpoint: phase1-quality-candidate-restored") == 1
+
+    @pytest.mark.parametrize(
+        ("severity", "issue_type", "expected_reason"),
+        [
+            ("CRITICAL", "incompleteness", "critical_sage_issue"),
+            ("LOW", "contradiction", "sage_contradiction"),
+        ],
+    )
+    def test_authoritative_issue_artifact_forbids_quality_debt(
+        self,
+        tmp_path: Path,
+        severity: str,
+        issue_type: str,
+        expected_reason: str,
+    ) -> None:
+        ctrl, store = _start_proportional_quality_loop(
+            tmp_path,
+            automatic_consumed=3,
+        )
+        updates, why2 = _proportional_assessment_fixture(ctrl, store, 0)
+        issues = tmp_path / "runs/run-test/specs/001-demo/issues.md"
+        content = issues.read_text(encoding="utf-8")
+        content = content.replace(
+            "- **CRITICAL:** 0",
+            f"- **CRITICAL:** {1 if severity == 'CRITICAL' else 0}",
+        ).replace(
+            "- **LOW:** 1",
+            f"- **LOW:** {0 if severity == 'CRITICAL' else 1}",
+        ).replace("- **Severity:** LOW", f"- **Severity:** {severity}").replace(
+            "- **Type:** incompleteness",
+            f"- **Type:** {issue_type}",
+        )
+        issues.write_text(content, encoding="utf-8")
+        state = store.load()
+        state.update(updates)
+        store.save(state)
+
+        next_phase = _coordinate_prepared_result(
+            ctrl,
+            ctrl._graph.get("phase1-why2"),
+            why2,
+        )
+
+        persisted = store.load()
+        assert next_phase == "phase1-what"
+        assert "blocked_decision" not in persisted
+        assert "spec_quality_debt_authorization" not in persisted
+        manifest = json.loads(
+            (
+                ctrl._squad_dir
+                / "quality-candidates/quality-candidate-0.json"
+            ).read_text(encoding="utf-8")
+        )
+        assert expected_reason in manifest["eligibility_reasons"]
+
+    def test_malformed_authoritative_issue_artifact_fails_closed_without_debt(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        ctrl, store = _start_proportional_quality_loop(
+            tmp_path,
+            automatic_consumed=3,
+        )
+        updates, why2 = _proportional_assessment_fixture(ctrl, store, 0)
+        (tmp_path / "runs/run-test/specs/001-demo/issues.md").write_text(
+            "# malformed issues without authoritative summary\n",
+            encoding="utf-8",
+        )
+        state = store.load()
+        state.update(updates)
+        store.save(state)
+
+        next_phase = _coordinate_prepared_result(
+            ctrl,
+            ctrl._graph.get("phase1-why2"),
+            why2,
+        )
+
+        persisted = store.load()
+        assert next_phase == "terminal-blocked"
+        assert persisted["blocked_reason"] == (
+            "proportional_quality_candidate_integrity_failed"
+        )
+        assert "blocked_decision" not in persisted
+        assert "spec_quality_debt_authorization" not in persisted
+
+    def test_debt_resolution_cas_failure_writes_nothing_and_retry_converges(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store = _start_proportional_quality_loop(
+            tmp_path,
+            automatic_consumed=3,
+        )
+        updates, why2 = _proportional_assessment_fixture(ctrl, store, 0)
+        state = store.load()
+        state.update(updates)
+        store.save(state)
+        _coordinate_prepared_result(ctrl, ctrl._graph.get("phase1-why2"), why2)
+        real_apply = store.apply_human_input_state_resolution
+        failed = False
+
+        def fail_once(*args: object, **kwargs: object) -> object:
+            nonlocal failed
+            if not failed:
+                failed = True
+                raise StateAdvanceError(
+                    "injected debt resolution CAS failure",
+                    validator="stale_state",
+                )
+            return real_apply(*args, **kwargs)
+
+        monkeypatch.setattr(
+            store,
+            "apply_human_input_state_resolution",
+            fail_once,
+        )
+        debt_path = tmp_path / "runs/run-test/specs/001-demo/quality-debt.json"
+
+        with pytest.raises(StateAdvanceError, match="injected debt"):
+            ctrl.resume_with_human_input("continue_with_debt")
+
+        assert not debt_path.exists()
+        assert store.load()["blocked_decision"]["status"] == "awaiting_human"
+        assert "spec_quality_debt_authorization" not in store.load()
+
+        assert ctrl.resume_with_human_input("continue_with_debt")
+        assert debt_path.is_file()
+        assert store.load()["spec_quality_debt_authorization"]["status"] == (
+            "accepted_with_debt"
+        )
+
+    def test_debt_write_failure_stays_pending_and_retry_reconciles_before_dispatch(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store = _start_proportional_quality_loop(
+            tmp_path,
+            automatic_consumed=3,
+        )
+        updates, why2 = _proportional_assessment_fixture(ctrl, store, 0)
+        state = store.load()
+        state.update(updates)
+        store.save(state)
+        _coordinate_prepared_result(ctrl, ctrl._graph.get("phase1-why2"), why2)
+        real_effect = getattr(
+            squad_module,
+            "apply_or_verify_proportional_quality_effect",
+            None,
+        )
+        effect_calls = 0
+
+        def fail_effect(*args: object, **kwargs: object) -> object:
+            nonlocal effect_calls
+            effect_calls += 1
+            raise CompletionError("stage_io")
+
+        monkeypatch.setattr(
+            squad_module,
+            "apply_or_verify_proportional_quality_effect",
+            fail_effect,
+            raising=False,
+        )
+        provider_calls = ctrl._provider.exec_agent.call_count
+
+        assert ctrl.resume_with_human_input("continue_with_debt") is False
+
+        debt_path = tmp_path / "runs/run-test/specs/001-demo/quality-debt.json"
+        pending = store.load()
+        assert not debt_path.exists()
+        assert PENDING_CONTROLLER_COMPLETION_KEY in pending
+        assert pending["blocked_reason"] == "controller_completion_pending"
+        ctrl.run("must reconcile before downstream", "semi")
+        assert ctrl._provider.exec_agent.call_count == provider_calls
+        assert effect_calls >= 2
+
+        assert real_effect is not None
+        monkeypatch.setattr(
+            squad_module,
+            "apply_or_verify_proportional_quality_effect",
+            real_effect,
+        )
+        recovered = ctrl._drain_pending_controller_completion()
+        assert recovered.recovered is True
+        assert debt_path.is_file()
+        assert PENDING_CONTROLLER_COMPLETION_KEY not in store.load()
+
+    def test_stop_removes_stale_debt_artifact_through_recoverable_effect(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        ctrl, store = _start_proportional_quality_loop(
+            tmp_path,
+            automatic_consumed=3,
+        )
+        updates, why2 = _proportional_assessment_fixture(ctrl, store, 0)
+        state = store.load()
+        state.update(updates)
+        store.save(state)
+        _coordinate_prepared_result(ctrl, ctrl._graph.get("phase1-why2"), why2)
+        debt_path = tmp_path / "runs/run-test/specs/001-demo/quality-debt.json"
+        debt_path.write_text('{"stale":true}\n', encoding="utf-8")
+
+        assert ctrl.resume_with_human_input("stop") is False
+
+        stopped = store.load()
+        assert stopped["blocked_reason"] == "proportional_quality_debt_declined"
+        assert not debt_path.exists()
+        assert "spec_quality_debt_authorization" not in stopped
+        assert PENDING_CONTROLLER_COMPLETION_KEY not in stopped
+
+
     @pytest.mark.parametrize(
         ("failure_kind", "expected_reason"),
         [
@@ -7108,8 +7848,10 @@ class TestProportionalQualityController:
             )
             == "phase1-what"
         )
-        assert "phase1_quality_repair" not in store.load()
-        assert "proportional_quality_candidate_evidence" not in store.load()
+        persisted = store.load()
+        assert persisted["iteration"] == 1
+        assert "phase1_quality_repair" not in persisted
+        assert "proportional_quality_candidate_evidence" not in persisted
 
 
 class TestHumanGateControllerInterception:

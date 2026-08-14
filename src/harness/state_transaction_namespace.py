@@ -48,12 +48,13 @@ _PRODUCT_INPUT_MUTATION_KEYS = frozenset(
         "duplicate_count",
     }
 )
-_COMPLETION_ORIGINS = frozenset({"routed", "terminal"})
+_COMPLETION_ORIGINS = frozenset({"routed", "terminal", "resolution"})
 _COMPLETION_STEPS = frozenset(
     {
         "awaiting_publication",
         "journal",
         "timing",
+        "quality",
         "checkpoint",
         "context",
         "mining",
@@ -126,6 +127,7 @@ LIFECYCLE_AND_DIAGNOSTIC_KEYS = frozenset(
         "controller_contract_error",
         "recovery_instruction",
         "blocked_decision",
+        "last_human_input_completion",
         "resume_metadata",
         "resume_answer",
         "escalation_resolved",

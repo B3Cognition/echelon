@@ -1244,6 +1244,7 @@ def create_or_recover_completion_checkpoint(
     checkpoint_prestate: Mapping[str, object],
     additional_spec_dirs: tuple[Path, ...] = (),
     additional_owned_paths: tuple[Path, ...] = (),
+    force_commit: bool = False,
     expected_receipt: object | None = None,
     fault_hook: Callable[[str], None] | None = None,
 ) -> dict[str, object]:
@@ -1266,6 +1267,8 @@ def create_or_recover_completion_checkpoint(
         checkpoint_prestate=checkpoint_prestate,
         fault_hook=fault_hook,
     )
+    if type(force_commit) is not bool:
+        raise PhaseCheckpointError("invalid completion checkpoint force flag")
     common = _checkpoint_receipt_common(
         completion_id=completion_value,
         run_id=run_value,
@@ -1279,6 +1282,8 @@ def create_or_recover_completion_checkpoint(
         spec_dir=spec_dir,
         checkpoint_head=checkpoint_head,
     )
+    if force_commit and expected is not None and expected.get("outcome") != "committed":
+        raise PhaseCheckpointError("checkpoint receipt mismatch")
     if spec_dir is None:
         receipt = {**common, "outcome": "not_applicable"}
         if expected is not None and expected != receipt:
@@ -1461,21 +1466,46 @@ def create_or_recover_completion_checkpoint(
             additional_owned_paths,
         )
         if commit is None:
-            try:
-                verified_head = run_git(
-                    root,
-                    "rev-parse",
-                    "HEAD^{commit}",
-                ).stdout.strip()
-            except GitHelperError as exc:
-                raise PhaseCheckpointError(str(exc)) from exc
-            if verified_head != checkpoint_head:
-                raise PhaseCheckpointError("checkpoint prestate mismatch")
-            return {
-                **common,
-                "outcome": "no_change",
-                "head": checkpoint_head,
-            }
+            if force_commit:
+                try:
+                    pathspecs = _owned_pathspecs(
+                        root,
+                        owned_spec_dirs,
+                        additional_owned_paths,
+                    )
+                    run_git(
+                        root,
+                        "commit",
+                        "--allow-empty",
+                        "--only",
+                        "-m",
+                        message,
+                        "--",
+                        *pathspecs,
+                    )
+                    commit = run_git(
+                        root,
+                        "rev-parse",
+                        "HEAD^{commit}",
+                    ).stdout.strip()
+                except GitHelperError as exc:
+                    raise PhaseCheckpointError(str(exc)) from exc
+            else:
+                try:
+                    verified_head = run_git(
+                        root,
+                        "rev-parse",
+                        "HEAD^{commit}",
+                    ).stdout.strip()
+                except GitHelperError as exc:
+                    raise PhaseCheckpointError(str(exc)) from exc
+                if verified_head != checkpoint_head:
+                    raise PhaseCheckpointError("checkpoint prestate mismatch")
+                return {
+                    **common,
+                    "outcome": "no_change",
+                    "head": checkpoint_head,
+                }
         if fault_hook is not None:
             fault_hook("after_commit")
         record = _show_completion_commit(root, commit)

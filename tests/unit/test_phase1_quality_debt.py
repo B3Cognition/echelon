@@ -4,11 +4,14 @@ import hashlib
 import json
 from pathlib import Path
 
-from harness.phase1_quality_debt import build_quality_debt_authorization
+from harness.phase1_quality_debt import (
+    apply_or_verify_quality_debt_effect,
+    build_quality_debt_authorization,
+)
 from harness.proportional_quality import QualityCandidateManifest
 
 
-def test_builder_writes_content_bound_schema_v1_debt_without_a_pass_certificate(
+def test_builder_prepares_content_bound_schema_v1_debt_without_side_effect(
     tmp_path: Path,
 ) -> None:
     spec_dir = tmp_path / "specs" / "001-demo"
@@ -69,7 +72,7 @@ def test_builder_writes_content_bound_schema_v1_debt_without_a_pass_certificate(
         "candidate_ids": ["quality-candidate-0"],
     }
 
-    authorization = build_quality_debt_authorization(
+    prepared = build_quality_debt_authorization(
         project_root=tmp_path,
         spec_dir=spec_dir,
         candidate=candidate,
@@ -80,6 +83,12 @@ def test_builder_writes_content_bound_schema_v1_debt_without_a_pass_certificate(
     )
 
     debt_path = spec_dir / "quality-debt.json"
+    assert not debt_path.exists()
+    authorization = prepared.authorization
+    receipt = apply_or_verify_quality_debt_effect(
+        tmp_path,
+        prepared.effect_payload(),
+    )
     debt = json.loads(debt_path.read_text(encoding="utf-8"))
     assert authorization["schema_version"] == 1
     assert authorization["status"] == "accepted_with_debt"
@@ -95,6 +104,9 @@ def test_builder_writes_content_bound_schema_v1_debt_without_a_pass_certificate(
     assert authorization["debt_artifact_sha256"] == hashlib.sha256(
         debt_path.read_bytes()
     ).hexdigest()
+    assert receipt["debt_artifact_sha256"] == authorization[
+        "debt_artifact_sha256"
+    ]
     assert authorization["decision_id"] == debt["decision_id"] == "dec-123"
     assert authorization["resolved_by"] == debt["resolved_by"] == "user"
     assert debt["selected_candidate_id"] == "quality-candidate-0"

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import json
 import math
@@ -25,6 +25,7 @@ from kernel.quality_gates import evaluate_quality_thresholds
 from harness.phase_checkpoints import (
     PhaseCheckpoint,
     PhaseCheckpointError,
+    create_or_recover_completion_checkpoint,
     create_phase_checkpoint,
     restore_checkpoint_artifacts,
     verify_checkpoint_artifact_digests,
@@ -91,15 +92,8 @@ class QualityCandidateManifest:
     eligibility_reasons: tuple[str, ...]
 
 
-def load_quality_candidate_manifest(path: Path) -> QualityCandidateManifest:
-    """Load one exact persisted candidate manifest for controller use."""
-    try:
-        payload = loads_strict_json(Path(path).read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        raise QualityCandidateIntegrityError(
-            "candidate manifest is missing or malformed"
-        ) from exc
-    expected = {
+_CANDIDATE_MANIFEST_KEYS = frozenset(
+    {
         "schema_version",
         "candidate_id",
         "checkpoint_commit",
@@ -118,7 +112,140 @@ def load_quality_candidate_manifest(path: Path) -> QualityCandidateManifest:
         "assessment_index",
         "eligibility_reasons",
     }
-    if type(payload) is not dict or set(payload) != expected:
+)
+
+
+_SAGE_SEVERITIES = ("CRITICAL", "HIGH", "MEDIUM", "LOW")
+_SAGE_ISSUE_TYPES = frozenset(
+    {
+        "ambiguity",
+        "incompleteness",
+        "inconsistency",
+        "untestability",
+        "missing-requirement",
+        "contradiction",
+    }
+)
+_SAGE_REQUIRED_ISSUE_FIELDS = (
+    "Description",
+    "Affected artifact",
+    "Affected section",
+    "Evidence",
+    "Recommendation",
+    "Responsible agent",
+    "Action Required",
+)
+
+
+def load_authoritative_sage_issues(
+    path: Path,
+) -> tuple[dict[str, str], ...]:
+    """Parse the required current WHY2 issues artifact or fail closed."""
+    issue_path = Path(path)
+    try:
+        metadata = issue_path.lstat()
+        content = issue_path.read_bytes()
+        text = content.decode("utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise QualityCandidateIntegrityError(
+            "authoritative SAGE issues are missing or malformed"
+        ) from exc
+    if not stat.S_ISREG(metadata.st_mode) or not text.strip():
+        raise QualityCandidateIntegrityError(
+            "authoritative SAGE issues are missing or malformed"
+        )
+    counts: dict[str, int] = {}
+    for severity in _SAGE_SEVERITIES:
+        matches = re.findall(
+            rf"(?m)^-?\s*\*\*{severity}:\*\*\s*(\d+)\s*$",
+            text,
+        )
+        if len(matches) != 1:
+            raise QualityCandidateIntegrityError(
+                "authoritative SAGE issue summary is malformed"
+            )
+        counts[severity] = int(matches[0])
+    verdicts = re.findall(
+        r"(?m)^-?\s*\*\*Verdict:\*\*\s*(PASS|FAIL)\s*$",
+        text,
+    )
+    if len(verdicts) != 1:
+        raise QualityCandidateIntegrityError(
+            "authoritative SAGE issue verdict is malformed"
+        )
+    headings = list(
+        re.finditer(
+            r"(?m)^###\s+(ISS-[A-Za-z0-9-]+):\s*([^\n]+)\s*$",
+            text,
+        )
+    )
+    issues: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for index, heading in enumerate(headings):
+        issue_id = heading.group(1)
+        if issue_id in seen:
+            raise QualityCandidateIntegrityError(
+                "authoritative SAGE issue IDs are duplicated"
+            )
+        seen.add(issue_id)
+        end = (
+            headings[index + 1].start()
+            if index + 1 < len(headings)
+            else len(text)
+        )
+        body = text[heading.end():end]
+        severity_matches = re.findall(
+            r"(?m)^-?\s*\*\*Severity:\*\*\s*(CRITICAL|HIGH|MEDIUM|LOW)\s*$",
+            body,
+        )
+        type_matches = re.findall(
+            r"(?m)^-?\s*\*\*Type:\*\*\s*([a-z-]+)\s*$",
+            body,
+        )
+        required_fields = {
+            label: re.findall(
+                rf"(?m)^-?\s*\*\*{re.escape(label)}:\*\*\s*(\S[^\n]*)$",
+                body,
+            )
+            for label in _SAGE_REQUIRED_ISSUE_FIELDS
+        }
+        if (
+            len(severity_matches) != 1
+            or len(type_matches) != 1
+            or type_matches[0] not in _SAGE_ISSUE_TYPES
+            or any(len(matches) != 1 for matches in required_fields.values())
+        ):
+            raise QualityCandidateIntegrityError(
+                "authoritative SAGE issue entry is malformed"
+            )
+        issues.append(
+            {
+                "issue_id": issue_id,
+                "title": heading.group(2).strip(),
+                "severity": severity_matches[0],
+                "type": type_matches[0],
+            }
+        )
+    observed = {
+        severity: sum(1 for issue in issues if issue["severity"] == severity)
+        for severity in _SAGE_SEVERITIES
+    }
+    if observed != counts or sum(counts.values()) != len(issues):
+        raise QualityCandidateIntegrityError(
+            "authoritative SAGE issue counts are contradictory"
+        )
+    return tuple(issues)
+
+
+def load_quality_candidate_manifest(path: Path) -> QualityCandidateManifest:
+    """Load one exact persisted candidate manifest for controller use."""
+    try:
+        payload = loads_strict_json(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise QualityCandidateIntegrityError(
+            "candidate manifest is missing or malformed"
+        ) from exc
+    if type(payload) is not dict or set(payload) != _CANDIDATE_MANIFEST_KEYS:
         raise QualityCandidateIntegrityError("candidate manifest is malformed")
     owned = payload["owned_artifact_digests"]
     raw_gates = payload["normalized_gates"]
@@ -211,6 +338,134 @@ def load_quality_candidate_manifest(path: Path) -> QualityCandidateManifest:
         assessment_index=payload["assessment_index"],
         eligibility_reasons=reasons,
     )
+
+
+def quality_candidate_effect_payload(
+    candidate: QualityCandidateManifest,
+) -> dict[str, object]:
+    """Return the canonical serializable draft used by the completion outbox."""
+    if (
+        not isinstance(candidate, QualityCandidateManifest)
+        or candidate.checkpoint_commit != "0" * 40
+    ):
+        raise QualityCandidateIntegrityError("candidate effect draft is invalid")
+    return _candidate_manifest_payload(candidate)
+
+
+def quality_candidate_from_effect_payload(
+    payload: object,
+) -> QualityCandidateManifest:
+    """Validate and reconstruct a completion-bound candidate draft."""
+    if (
+        type(payload) is not dict
+        or payload.get("checkpoint_commit") != "0" * 40
+    ):
+        raise QualityCandidateIntegrityError("candidate effect payload is invalid")
+    # Reuse the persisted manifest validator without weakening its on-disk
+    # checkpoint rule: validate fields directly through the same normalizers.
+    if set(payload) != _CANDIDATE_MANIFEST_KEYS:
+        raise QualityCandidateIntegrityError("candidate effect payload is invalid")
+    owned = payload.get("owned_artifact_digests")
+    raw_gates = payload.get("normalized_gates")
+    if (
+        payload.get("schema_version") != 1
+        or not _is_candidate_id(payload.get("candidate_id"))
+        or type(owned) is not dict
+        or not owned
+        or any(
+            type(name) is not str or not _is_sha256(digest)
+            for name, digest in owned.items()
+        )
+        or type(raw_gates) is not list
+        or not isinstance(payload.get("sage_finding_routes"), list)
+        or not isinstance(payload.get("eligibility_reasons"), list)
+    ):
+        raise QualityCandidateIntegrityError("candidate effect payload is invalid")
+    gates: dict[str, dict[str, object]] = {}
+    for row in raw_gates:
+        if type(row) is not dict or set(row) != {
+            "name",
+            "score",
+            "threshold",
+            "pass",
+        }:
+            raise QualityCandidateIntegrityError("candidate effect payload is invalid")
+        name = row.get("name")
+        if type(name) is not str or name in gates:
+            raise QualityCandidateIntegrityError("candidate effect payload is invalid")
+        gates[name] = {
+            "score": row.get("score"),
+            "threshold": row.get("threshold"),
+            "pass": row.get("pass"),
+        }
+    normalized = _normalize_candidate_gates(gates)
+    integer_fields = (
+        "failed_gate_count",
+        "formal_statement_count",
+        "byte_count",
+        "repair_number",
+        "assessment_index",
+    )
+    if any(
+        type(payload.get(key)) is not int or int(payload[key]) < 0
+        for key in integer_fields
+    ):
+        raise QualityCandidateIntegrityError("candidate effect payload is invalid")
+    for key in ("worst_gate_margin", "overall_score"):
+        value = payload.get(key)
+        if type(value) not in {int, float} or not math.isfinite(float(value)):
+            raise QualityCandidateIntegrityError("candidate effect payload is invalid")
+    if (
+        type(payload.get("run_artifact_root")) is not str
+        or not str(payload["run_artifact_root"]).strip()
+        or type(payload.get("understanding_evidence")) is not str
+        or not str(payload["understanding_evidence"]).strip()
+        or not _is_sha256(payload.get("understanding_evidence_digest"))
+    ):
+        raise QualityCandidateIntegrityError("candidate effect payload is invalid")
+    candidate = QualityCandidateManifest(
+        schema_version=1,
+        candidate_id=str(payload["candidate_id"]),
+        checkpoint_commit="0" * 40,
+        owned_artifact_digests=tuple(sorted(owned.items())),
+        run_artifact_root=str(payload.get("run_artifact_root") or ""),
+        understanding_evidence=str(payload.get("understanding_evidence") or ""),
+        understanding_evidence_digest=str(
+            payload.get("understanding_evidence_digest") or ""
+        ),
+        normalized_gates=normalized,
+        sage_finding_routes=_normalize_finding_routes(
+            payload["sage_finding_routes"]
+        ),
+        failed_gate_count=int(payload["failed_gate_count"]),
+        worst_gate_margin=float(payload.get("worst_gate_margin")),
+        overall_score=float(payload.get("overall_score")),
+        formal_statement_count=int(payload["formal_statement_count"]),
+        byte_count=int(payload["byte_count"]),
+        repair_number=int(payload["repair_number"]),
+        assessment_index=int(payload["assessment_index"]),
+        eligibility_reasons=_normalize_eligibility_reasons(
+            payload["eligibility_reasons"]
+        ),
+    )
+    scores = {
+        name: score for name, score, _threshold, _passed in normalized
+    }
+    if (
+        candidate.assessment_index
+        != int(candidate.candidate_id.rsplit("-", 1)[1])
+        or candidate.failed_gate_count
+        != sum(1 for *_prefix, passed in normalized if not passed)
+        or candidate.worst_gate_margin
+        != min(
+            score - threshold
+            for _name, score, threshold, _passed in normalized
+        )
+        or candidate.overall_score != scores["overall"]
+        or quality_candidate_effect_payload(candidate) != payload
+    ):
+        raise QualityCandidateIntegrityError("candidate effect payload is contradictory")
+    return candidate
 
 
 def initialize_repair_state(
@@ -322,7 +577,7 @@ def validate_repair_state(value: object) -> dict[str, object]:
     return state
 
 
-def capture_quality_candidate(
+def prepare_quality_candidate(
     *,
     project_root: Path,
     spec_dir: Path,
@@ -339,7 +594,7 @@ def capture_quality_candidate(
     eligibility_reasons: Sequence[str],
     repair_state: MutableMapping[str, object],
 ) -> QualityCandidateManifest:
-    """Checkpoint and atomically persist one completed WHY2 candidate."""
+    """Validate and describe one WHY2 candidate without external effects."""
     if not _is_candidate_id(candidate_id):
         raise QualityCandidateIntegrityError("candidate ID is invalid")
     validated_state = validate_repair_state(dict(repair_state))
@@ -430,33 +685,6 @@ def capture_quality_candidate(
         )
     routes = _normalize_finding_routes(sage_finding_routes)
     reasons = _normalize_eligibility_reasons(eligibility_reasons)
-    checkpoint_phase = f"phase1-{candidate_id}"
-    try:
-        checkpoint = create_phase_checkpoint(
-            project_root=root,
-            spec_dir=resolved_spec,
-            phase=checkpoint_phase,
-            next_phase="phase1-what",
-            run_id=run_id,
-            spec_id=spec_id,
-            checkpoint_owned_paths=tuple(resolved_spec / name for name, _ in digests),
-            force_commit=True,
-        )
-    except (PhaseCheckpointError, OSError, ValueError) as exc:
-        raise QualityCandidateIntegrityError("candidate checkpoint failed") from exc
-
-    try:
-        verify_checkpoint_artifact_digests(
-            project_root=root,
-            spec_dir=resolved_spec,
-            checkpoint_commit=checkpoint.commit,
-            artifact_digests=dict(digests),
-        )
-    except PhaseCheckpointError as exc:
-        raise QualityCandidateIntegrityError(
-            f"candidate checkpoint artifact digest mismatch: {exc}"
-        ) from exc
-
     failed = sum(1 for _name, _score, _threshold, passed in normalized if not passed)
     margins = tuple(
         score - threshold
@@ -466,7 +694,9 @@ def capture_quality_candidate(
     manifest = QualityCandidateManifest(
         schema_version=SCHEMA_VERSION,
         candidate_id=candidate_id,
-        checkpoint_commit=checkpoint.commit,
+        # A draft is ranked before the state transaction authorizes its Git
+        # effect.  Materialization replaces this sentinel with the bound commit.
+        checkpoint_commit="0" * 40,
         owned_artifact_digests=tuple(digests),
         run_artifact_root=str(artifact_root),
         understanding_evidence=str(evidence_path),
@@ -487,10 +717,191 @@ def capture_quality_candidate(
     if validated_state["baseline_candidate_id"] is None:
         validated_state["baseline_candidate_id"] = candidate_id
     validated_state = validate_repair_state(validated_state)
-    _persist_candidate_manifest(artifact_root, manifest)
     repair_state.clear()
     repair_state.update(validated_state)
     return manifest
+
+
+def materialize_quality_candidate(
+    *,
+    project_root: Path,
+    spec_dir: Path,
+    candidate: QualityCandidateManifest,
+    run_id: str,
+    spec_id: str,
+    completion_id: str,
+    checkpoint_prestate: Mapping[str, object],
+    require_current_artifacts: bool = True,
+    expected_receipt: object | None = None,
+) -> tuple[QualityCandidateManifest, dict[str, object]]:
+    """Apply or verify an authorized candidate checkpoint and manifest."""
+    root = Path(project_root).resolve()
+    resolved_spec = Path(spec_dir).resolve()
+    artifact_root = Path(candidate.run_artifact_root).resolve()
+    evidence_path = Path(candidate.understanding_evidence).resolve()
+    try:
+        resolved_spec.relative_to(root)
+        artifact_root.relative_to(root)
+        evidence_path.relative_to(artifact_root)
+    except ValueError as exc:
+        raise QualityCandidateIntegrityError(
+            "candidate materialization path escapes its authority"
+        ) from exc
+    if candidate.checkpoint_commit != "0" * 40:
+        raise QualityCandidateIntegrityError("candidate draft is invalid")
+    expected = (
+        expected_receipt
+        if isinstance(expected_receipt, Mapping)
+        else None
+    )
+    checkpoint_expected = (
+        expected.get("checkpoint") if expected is not None else None
+    )
+    evidence_digest, evidence_payload = _verified_understanding_evidence(
+        evidence_path
+    )
+    if (
+        evidence_digest != candidate.understanding_evidence_digest
+        or evidence_payload["spec"].get("sha256")
+        != dict(candidate.owned_artifact_digests).get("spec.md")
+        or _authoritative_gates(evidence_payload) != candidate.normalized_gates
+        or evidence_payload.get("requirement_count")
+        != candidate.formal_statement_count
+    ):
+        raise QualityCandidateIntegrityError(
+            "candidate evidence changed before materialization"
+        )
+    manifest_path = (
+        artifact_root / "quality-candidates" / f"{candidate.candidate_id}.json"
+    )
+    existing_manifest: QualityCandidateManifest | None = None
+    if manifest_path.exists():
+        existing_manifest = load_quality_candidate_manifest(manifest_path)
+        if replace(existing_manifest, checkpoint_commit="0" * 40) != candidate:
+            raise QualityCandidateIntegrityError("candidate manifest identity drift")
+    if existing_manifest is None or require_current_artifacts:
+        for name, digest in candidate.owned_artifact_digests:
+            try:
+                actual = hashlib.sha256(
+                    (resolved_spec / name).read_bytes()
+                ).hexdigest()
+            except OSError as exc:
+                raise QualityCandidateIntegrityError(
+                    "candidate artifacts changed before materialization"
+                ) from exc
+            if actual != digest:
+                raise QualityCandidateIntegrityError(
+                    "candidate artifacts changed before materialization"
+                )
+    try:
+        checkpoint_receipt = create_or_recover_completion_checkpoint(
+            project_root=root,
+            spec_dir=resolved_spec,
+            phase=f"phase1-{candidate.candidate_id}",
+            next_phase="phase1-what",
+            run_id=run_id,
+            spec_id=spec_id,
+            completion_id=completion_id,
+            checkpoint_prestate=checkpoint_prestate,
+            force_commit=True,
+            expected_receipt=checkpoint_expected,
+        )
+    except (PhaseCheckpointError, OSError, ValueError) as exc:
+        raise QualityCandidateIntegrityError("candidate checkpoint failed") from exc
+    commit = checkpoint_receipt.get("commit")
+    if type(commit) is not str:
+        raise QualityCandidateIntegrityError("candidate checkpoint failed")
+    materialized = replace(candidate, checkpoint_commit=commit)
+    try:
+        verify_checkpoint_artifact_digests(
+            project_root=root,
+            spec_dir=resolved_spec,
+            checkpoint_commit=commit,
+            artifact_digests=dict(candidate.owned_artifact_digests),
+        )
+    except PhaseCheckpointError as exc:
+        raise QualityCandidateIntegrityError(
+            f"candidate checkpoint artifact digest mismatch: {exc}"
+        ) from exc
+    try:
+        _persist_candidate_manifest(artifact_root, materialized, recover=True)
+    except (OSError, ValueError) as exc:
+        raise QualityCandidateIntegrityError(
+            "candidate manifest materialization failed"
+        ) from exc
+    receipt = {
+        "schema_version": 1,
+        "candidate_id": candidate.candidate_id,
+        "checkpoint": checkpoint_receipt,
+        "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+    }
+    if expected is not None and dict(expected) != receipt:
+        raise QualityCandidateIntegrityError("candidate receipt mismatch")
+    return materialized, receipt
+
+
+def capture_quality_candidate(
+    *,
+    project_root: Path,
+    spec_dir: Path,
+    run_artifact_root: Path,
+    run_id: str,
+    spec_id: str,
+    candidate_id: str,
+    understanding_evidence: Path,
+    normalized_gates: Mapping[str, Mapping[str, object]],
+    sage_finding_routes: Sequence[Mapping[str, object]],
+    formal_statement_count: int,
+    repair_number: int,
+    assessment_index: int,
+    eligibility_reasons: Sequence[str],
+    repair_state: MutableMapping[str, object],
+) -> QualityCandidateManifest:
+    """Compatibility seam: synchronously capture outside controller routing."""
+    original_repair = deepcopy(dict(repair_state))
+    draft = prepare_quality_candidate(
+        project_root=project_root,
+        spec_dir=spec_dir,
+        run_artifact_root=run_artifact_root,
+        run_id=run_id,
+        spec_id=spec_id,
+        candidate_id=candidate_id,
+        understanding_evidence=understanding_evidence,
+        normalized_gates=normalized_gates,
+        sage_finding_routes=sage_finding_routes,
+        formal_statement_count=formal_statement_count,
+        repair_number=repair_number,
+        assessment_index=assessment_index,
+        eligibility_reasons=eligibility_reasons,
+        repair_state=repair_state,
+    )
+    try:
+        head = run_git(
+            project_root,
+            "rev-parse",
+            "HEAD^{commit}",
+        ).stdout.strip()
+    except GitHelperError as exc:
+        repair_state.clear()
+        repair_state.update(original_repair)
+        raise QualityCandidateIntegrityError("candidate checkpoint failed") from exc
+    try:
+        materialized, _receipt = materialize_quality_candidate(
+            project_root=project_root,
+            spec_dir=spec_dir,
+            candidate=draft,
+            run_id=run_id,
+            spec_id=spec_id,
+            completion_id=hashlib.sha256(
+                f"legacy-candidate:{run_id}:{draft.candidate_id}".encode()
+            ).hexdigest()[:32],
+            checkpoint_prestate={"kind": "git_head", "head": head},
+        )
+    except BaseException:
+        repair_state.clear()
+        repair_state.update(original_repair)
+        raise
+    return materialized
 
 
 def rank_quality_candidates(
@@ -517,15 +928,13 @@ def rank_quality_candidates(
     )
 
 
-def restore_quality_candidate(
+def _validate_restore_candidate(
     project_root: Path,
-    spec_dir: Path,
     candidate: QualityCandidateManifest,
     *,
     run_id: str,
     spec_id: str,
-) -> PhaseCheckpoint:
-    """Restore one verified candidate without rewinding repository state."""
+) -> dict[str, str]:
     if (
         not isinstance(candidate, QualityCandidateManifest)
         or candidate.schema_version != SCHEMA_VERSION
@@ -591,6 +1000,24 @@ def restore_quality_candidate(
         run_id=run_id,
         spec_id=spec_id,
     )
+    return artifact_digests
+
+
+def restore_quality_candidate(
+    project_root: Path,
+    spec_dir: Path,
+    candidate: QualityCandidateManifest,
+    *,
+    run_id: str,
+    spec_id: str,
+) -> PhaseCheckpoint:
+    """Restore one verified candidate without rewinding repository state."""
+    artifact_digests = _validate_restore_candidate(
+        project_root,
+        candidate,
+        run_id=run_id,
+        spec_id=spec_id,
+    )
     try:
         previous = {
             name: (Path(spec_dir) / name).read_bytes()
@@ -629,6 +1056,65 @@ def restore_quality_candidate(
         raise QualityCandidateIntegrityError(
             f"candidate restoration integrity failure: {exc}"
         ) from exc
+
+
+def materialize_quality_candidate_restore(
+    *,
+    project_root: Path,
+    spec_dir: Path,
+    candidate: QualityCandidateManifest,
+    run_id: str,
+    spec_id: str,
+    completion_id: str,
+    checkpoint_prestate: Mapping[str, object],
+    expected_receipt: object | None = None,
+) -> dict[str, object]:
+    """Apply or recover a state-authorized best-candidate restoration."""
+    artifact_digests = _validate_restore_candidate(
+        project_root,
+        candidate=candidate,
+        run_id=run_id,
+        spec_id=spec_id,
+    )
+    expected = (
+        expected_receipt
+        if isinstance(expected_receipt, Mapping)
+        else None
+    )
+    checkpoint_expected = (
+        expected.get("checkpoint") if expected is not None else None
+    )
+    try:
+        restore_checkpoint_artifacts(
+            project_root=project_root,
+            spec_dir=spec_dir,
+            checkpoint_commit=candidate.checkpoint_commit,
+            artifact_digests=artifact_digests,
+        )
+        checkpoint_receipt = create_or_recover_completion_checkpoint(
+            project_root=project_root,
+            spec_dir=spec_dir,
+            phase="phase1-quality-candidate-restored",
+            next_phase="phase1-lexicon",
+            run_id=run_id,
+            spec_id=spec_id,
+            completion_id=completion_id,
+            checkpoint_prestate=checkpoint_prestate,
+            force_commit=True,
+            expected_receipt=checkpoint_expected,
+        )
+    except (PhaseCheckpointError, OSError, ValueError) as exc:
+        raise QualityCandidateIntegrityError(
+            f"candidate restoration integrity failure: {exc}"
+        ) from exc
+    receipt = {
+        "schema_version": 1,
+        "candidate_id": candidate.candidate_id,
+        "checkpoint": checkpoint_receipt,
+    }
+    if expected is not None and dict(expected) != receipt:
+        raise QualityCandidateIntegrityError("candidate restoration receipt mismatch")
+    return receipt
 
 
 def _normalize_candidate_gates(
@@ -831,38 +1317,51 @@ def _verified_understanding_evidence(path: Path) -> tuple[str, Mapping[str, obje
     return hashlib.sha256(content).hexdigest(), payload
 
 
-def _persist_candidate_manifest(root: Path, manifest: QualityCandidateManifest) -> None:
+def _candidate_manifest_payload(
+    manifest: QualityCandidateManifest,
+) -> dict[str, object]:
+    return {
+        "schema_version": manifest.schema_version,
+        "candidate_id": manifest.candidate_id,
+        "checkpoint_commit": manifest.checkpoint_commit,
+        "owned_artifact_digests": dict(manifest.owned_artifact_digests),
+        "run_artifact_root": manifest.run_artifact_root,
+        "understanding_evidence": manifest.understanding_evidence,
+        "understanding_evidence_digest": manifest.understanding_evidence_digest,
+        "normalized_gates": [
+            {"name": name, "score": score, "threshold": threshold, "pass": passed}
+            for name, score, threshold, passed in manifest.normalized_gates
+        ],
+        "sage_finding_routes": list(manifest.sage_finding_routes),
+        "failed_gate_count": manifest.failed_gate_count,
+        "worst_gate_margin": manifest.worst_gate_margin,
+        "overall_score": manifest.overall_score,
+        "formal_statement_count": manifest.formal_statement_count,
+        "byte_count": manifest.byte_count,
+        "repair_number": manifest.repair_number,
+        "assessment_index": manifest.assessment_index,
+        "eligibility_reasons": list(manifest.eligibility_reasons),
+    }
+
+
+def _persist_candidate_manifest(
+    root: Path,
+    manifest: QualityCandidateManifest,
+    *,
+    recover: bool = False,
+) -> None:
     directory = root / "quality-candidates"
     path = directory / f"{manifest.candidate_id}.json"
     try:
         directory.mkdir(parents=True, exist_ok=True)
-        if path.exists():
-            raise QualityCandidateIntegrityError("candidate manifest already exists")
-        payload = {
-            "schema_version": manifest.schema_version,
-            "candidate_id": manifest.candidate_id,
-            "checkpoint_commit": manifest.checkpoint_commit,
-            "owned_artifact_digests": dict(manifest.owned_artifact_digests),
-            "run_artifact_root": manifest.run_artifact_root,
-            "understanding_evidence": manifest.understanding_evidence,
-            "understanding_evidence_digest": manifest.understanding_evidence_digest,
-            "normalized_gates": [
-                {"name": name, "score": score, "threshold": threshold, "pass": passed}
-                for name, score, threshold, passed in manifest.normalized_gates
-            ],
-            "sage_finding_routes": list(manifest.sage_finding_routes),
-            "failed_gate_count": manifest.failed_gate_count,
-            "worst_gate_margin": manifest.worst_gate_margin,
-            "overall_score": manifest.overall_score,
-            "formal_statement_count": manifest.formal_statement_count,
-            "byte_count": manifest.byte_count,
-            "repair_number": manifest.repair_number,
-            "assessment_index": manifest.assessment_index,
-            "eligibility_reasons": list(manifest.eligibility_reasons),
-        }
+        payload = _candidate_manifest_payload(manifest)
         content = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode(
             "utf-8"
         )
+        if path.exists():
+            if recover and path.read_bytes() == content:
+                return
+            raise QualityCandidateIntegrityError("candidate manifest already exists")
         temporary = directory / (
             f".{path.name}.{os.getpid()}.{secrets.token_hex(8)}.tmp"
         )
@@ -881,6 +1380,14 @@ def _persist_candidate_manifest(root: Path, manifest: QualityCandidateManifest) 
         finally:
             os.close(descriptor)
         os.replace(temporary, path)
+        directory_descriptor = os.open(
+            directory,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+        )
+        try:
+            os.fsync(directory_descriptor)
+        finally:
+            os.close(directory_descriptor)
     except QualityCandidateIntegrityError:
         raise
     except OSError as exc:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from dataclasses import dataclass
 from decimal import Decimal
 import hashlib
 import json
@@ -19,6 +20,15 @@ from harness.proportional_quality import (
 
 
 SCHEMA_VERSION = 1
+
+
+def _fsync_directory(path: Path) -> None:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    descriptor = os.open(path, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def _sha256(path: Path) -> str:
@@ -63,6 +73,7 @@ def _write_atomic_json(path: Path, payload: Mapping[str, object]) -> None:
         os.close(descriptor)
         descriptor = -1
         os.replace(temporary, path)
+        _fsync_directory(path.parent)
     except OSError as exc:
         raise QualityCandidateIntegrityError(
             "quality-debt artifact persistence failed"
@@ -76,6 +87,21 @@ def _write_atomic_json(path: Path, payload: Mapping[str, object]) -> None:
             pass
 
 
+@dataclass(frozen=True)
+class PreparedQualityDebtAuthorization:
+    authorization: dict[str, object]
+    debt: dict[str, object]
+    debt_path: str
+
+    def effect_payload(self) -> dict[str, object]:
+        return {
+            "operation": "debt_write",
+            "debt_path": self.debt_path,
+            "debt": dict(self.debt),
+            "authorization": dict(self.authorization),
+        }
+
+
 def build_quality_debt_authorization(
     *,
     project_root: Path,
@@ -85,8 +111,8 @@ def build_quality_debt_authorization(
     repair_state: Mapping[str, object],
     decision_id: str,
     resolved_by: str,
-) -> dict[str, object]:
-    """Write ``quality-debt.json`` and return its schema-v1 authorization.
+) -> PreparedQualityDebtAuthorization:
+    """Prepare schema-v1 debt and authorization without external effects.
 
     This deliberately narrow Task 5 seam constructs debt only from an eligible,
     still-failing restored candidate.  Task 6 adds exhaustive currentness checks
@@ -171,8 +197,10 @@ def build_quality_debt_authorization(
         "resolved_by": resolved_by,
         "accepted_at": accepted_at,
     }
-    _write_atomic_json(debt_path, debt)
-    return {
+    debt_content = (json.dumps(debt, indent=2, sort_keys=True) + "\n").encode(
+        "utf-8"
+    )
+    authorization = {
         "schema_version": SCHEMA_VERSION,
         "status": "accepted_with_debt",
         "source_path": source_ref,
@@ -182,7 +210,7 @@ def build_quality_debt_authorization(
         "candidate_manifest": manifest_ref,
         "candidate_manifest_sha256": manifest_digest,
         "debt_artifact": debt_ref,
-        "debt_artifact_sha256": _sha256(debt_path),
+        "debt_artifact_sha256": hashlib.sha256(debt_content).hexdigest(),
         "selected_candidate_id": candidate.candidate_id,
         "failed_gates": failed_gates,
         "qualitative_debt": [dict(item) for item in candidate.sage_finding_routes],
@@ -190,3 +218,87 @@ def build_quality_debt_authorization(
         "resolved_by": resolved_by,
         "accepted_at": accepted_at,
     }
+    return PreparedQualityDebtAuthorization(
+        authorization=authorization,
+        debt=debt,
+        debt_path=debt_ref,
+    )
+
+
+def apply_or_verify_quality_debt_effect(
+    project_root: Path,
+    payload: Mapping[str, object],
+    *,
+    expected_receipt: object | None = None,
+) -> dict[str, object]:
+    """Idempotently apply one sealed debt write/removal operation."""
+    root = Path(project_root).resolve()
+    if not isinstance(payload, Mapping):
+        raise QualityCandidateIntegrityError("quality-debt effect is invalid")
+    operation = payload.get("operation")
+    debt_ref = payload.get("debt_path")
+    if type(debt_ref) is not str or not debt_ref:
+        raise QualityCandidateIntegrityError("quality-debt effect path is invalid")
+    debt_path = (root / debt_ref).resolve()
+    try:
+        debt_path.relative_to(root)
+    except ValueError as exc:
+        raise QualityCandidateIntegrityError(
+            "quality-debt path escapes project root"
+        ) from exc
+    if operation == "debt_write":
+        if set(payload) != {"operation", "debt_path", "debt", "authorization"}:
+            raise QualityCandidateIntegrityError(
+                "quality-debt write effect is invalid"
+            )
+        debt = payload.get("debt")
+        authorization = payload.get("authorization")
+        if not isinstance(debt, Mapping) or not isinstance(authorization, Mapping):
+            raise QualityCandidateIntegrityError(
+                "quality-debt write effect is invalid"
+            )
+        content = (
+            json.dumps(dict(debt), indent=2, sort_keys=True) + "\n"
+        ).encode("utf-8")
+        digest = hashlib.sha256(content).hexdigest()
+        if authorization.get("debt_artifact_sha256") != digest:
+            raise QualityCandidateIntegrityError(
+                "quality-debt authorization digest changed"
+            )
+        if debt_path.exists():
+            try:
+                if debt_path.read_bytes() != content:
+                    raise QualityCandidateIntegrityError(
+                        "quality-debt artifact conflicts with sealed authorization"
+                    )
+            except OSError as exc:
+                raise QualityCandidateIntegrityError(
+                    "quality-debt artifact could not be verified"
+                ) from exc
+        else:
+            _write_atomic_json(debt_path, debt)
+        receipt = {
+            "schema_version": 1,
+            "operation": operation,
+            "debt_path": debt_ref,
+            "debt_artifact_sha256": digest,
+        }
+    elif operation == "debt_remove":
+        if set(payload) != {"operation", "debt_path"}:
+            raise QualityCandidateIntegrityError("quality-debt removal effect is invalid")
+        try:
+            debt_path.unlink(missing_ok=True)
+            _fsync_directory(debt_path.parent)
+        except OSError as exc:
+            raise QualityCandidateIntegrityError("quality-debt artifact removal failed") from exc
+        receipt = {
+            "schema_version": 1,
+            "operation": operation,
+            "debt_path": debt_ref,
+            "removed": True,
+        }
+    else:
+        raise QualityCandidateIntegrityError("quality-debt effect operation is invalid")
+    if expected_receipt is not None and expected_receipt != receipt:
+        raise QualityCandidateIntegrityError("quality-debt effect receipt mismatch")
+    return receipt
