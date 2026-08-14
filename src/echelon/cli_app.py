@@ -955,6 +955,62 @@ def re_publish(
     _legacy_cli()._cmd_re_publish(args)
 
 
+@re_app.command("finalize")
+def re_finalize(
+    run_id: Optional[str] = typer.Argument(
+        None,
+        help="Blocked RE run id below runs/; defaults to the active RE run.",
+    ),
+    allow_partial: bool = typer.Option(
+        False,
+        "--allow-partial",
+        help="Acknowledge unresolved debt and finalize as partial.",
+    ),
+) -> None:
+    """Finalize a structurally publishable blocked RE run with explicit debt."""
+    args: list[str] = []
+    if run_id:
+        args.append(run_id)
+    if allow_partial:
+        args.append("--allow-partial")
+    _legacy_cli()._cmd_re_finalize(args)
+
+
+@re_app.command("synthesize")
+def re_synthesize(
+    run_id: Optional[str] = typer.Argument(
+        None,
+        help="Finalized partial RE run id; defaults to the active RE run.",
+    ),
+    allow_partial: bool = typer.Option(
+        False,
+        "--allow-partial",
+        help="Use accepted partial source results as synthesis inputs.",
+    ),
+    re_token_limit: Optional[int] = typer.Option(
+        None,
+        "--re-token-limit",
+        min=1,
+        help="Raise the run token ceiling for the synthesis dispatch.",
+    ),
+    re_time_limit_minutes: Optional[int] = typer.Option(
+        None,
+        "--re-time-limit-minutes",
+        min=1,
+        help="Raise the run active-time ceiling for the synthesis dispatch.",
+    ),
+) -> None:
+    """Regenerate workspace synthesis from finalized partial source results."""
+    args: list[str] = []
+    if run_id:
+        args.append(run_id)
+    if allow_partial:
+        args.append("--allow-partial")
+    _extend_option(args, "--re-token-limit", re_token_limit)
+    _extend_option(args, "--re-time-limit-minutes", re_time_limit_minutes)
+    _legacy_cli()._cmd_re_synthesize(args)
+
+
 @re_app.command("analyze", hidden=True)
 def re_analyze(
     runs_dir: Path = typer.Argument(

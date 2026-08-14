@@ -130,6 +130,11 @@ class ClaudeCliBackend:
         error_chunks: list[str] = []
         timed_out = False
         token_usage = 0
+        observed_token_usage = 0
+        max_token_usage = _prompt_metadata_positive_int(
+            request, "max_token_usage"
+        )
+        token_budget_exhausted = False
         cost_usd = 0.0
         response_model = ""
         printer = StreamEventPrinter()
@@ -171,6 +176,14 @@ class ClaudeCliBackend:
                         raw_model = message.get("model")
                         if isinstance(raw_model, str) and raw_model.strip():
                             response_model = raw_model.strip()
+                        observed_token_usage += _extract_token_usage(message)
+                        if (
+                            max_token_usage is not None
+                            and observed_token_usage >= max_token_usage
+                            and not token_budget_exhausted
+                        ):
+                            token_budget_exhausted = True
+                            proc.terminate()
                         for block in message.get("content", []):
                             if block.get("type") == "text":
                                 text = block.get("text", "")
@@ -203,16 +216,23 @@ class ClaudeCliBackend:
             timer.cancel()
 
         stdout = "".join(text_chunks).strip() or "\n".join(captured_lines)
+        token_usage = max(token_usage, observed_token_usage)
+        metadata: dict[str, object] = {}
+        if response_model:
+            metadata["response_model"] = response_model
+        stderr = "\n".join(dict.fromkeys(error_chunks))
+        if token_budget_exhausted:
+            metadata["token_budget_exhausted"] = True
+            budget_message = "RE token budget exhausted during provider invocation"
+            stderr = "\n".join(part for part in (stderr, budget_message) if part)
         return CliRunResult(
             exit_code=-1 if timed_out else int(proc.returncode),
             stdout=stdout,
-            stderr="\n".join(dict.fromkeys(error_chunks)),
+            stderr=stderr,
             token_usage=token_usage,
             cost_usd=cost_usd,
             timed_out=timed_out,
-            metadata=(
-                {"response_model": response_model} if response_model else {}
-            ),
+            metadata=metadata,
         )
 
 
@@ -253,6 +273,19 @@ def _prompt_metadata_str(request: CliRunRequest, key: str) -> str:
         return ""
     value = metadata.get(key)
     return value.strip() if isinstance(value, str) else ""
+
+
+def _prompt_metadata_positive_int(
+    request: CliRunRequest, key: str
+) -> int | None:
+    metadata = request.metadata.get("prompt_metadata")
+    if not isinstance(metadata, Mapping):
+        return None
+    value = metadata.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    parsed = int(value)
+    return parsed if parsed > 0 else None
 
 
 def _execution_profile(request: CliRunRequest) -> str:

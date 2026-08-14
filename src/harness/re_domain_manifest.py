@@ -51,7 +51,6 @@ _IGNORED_PARTS = frozenset(
 _NON_DOMAIN_ROOTS = frozenset(
     {
         "__mocks__",
-        "__tests__",
         "certificates",
         "docs",
         "generated",
@@ -59,9 +58,7 @@ _NON_DOMAIN_ROOTS = frozenset(
         "public",
         "specs",
         "styles",
-        "test",
         "test-helpers",
-        "tests",
     }
 )
 _LOGICAL_DOMAIN_MIN_FILES = 2
@@ -69,7 +66,8 @@ _LOGICAL_DOMAIN_MAX_LEAVES = 12
 _LOGICAL_DOMAIN_MAX_DEPTH = 3
 _MAX_DOMAIN_SOURCE_FILES = 96
 _MAX_DOMAIN_SOURCE_LINES = 6_400
-DOMAIN_PARTITION_VERSION = 3
+_TEST_ROOT_PARTS = frozenset({"__tests__", "test", "tests"})
+DOMAIN_PARTITION_VERSION = 5
 _SAFE_SLUG = re.compile(r"[^a-z0-9]+")
 
 
@@ -176,7 +174,7 @@ def discover_source_domains(source: RePlanSource) -> ReDomainManifest:
     source_root = Path(source.absolute_path).resolve()
     domain_roots = _component_roots(source_root)
     domains: list[ReDomain] = []
-    for index, root in enumerate(domain_roots, start=1):
+    for index, root in enumerate(sorted(domain_roots, key=_domain_root_sort_key), start=1):
         files = _source_files(source_root / root) if root != "." else _source_files(source_root)
         if not files:
             continue
@@ -287,7 +285,11 @@ def _refine_oversized_roots(source_root: Path, roots: set[str]) -> list[str]:
     """Recursively partition safe oversized roots from an initial component set."""
     domains: set[str] = set()
     for root in sorted(roots):
-        if _domain_root_exceeds_capacity(source_root, root):
+        if not _domain_root_exceeds_capacity(source_root, root):
+            domains.add(root)
+        elif _is_test_domain_root(root):
+            domains.update(_refine_oversized_root(source_root, root))
+        else:
             domains.update(
                 _split_logical_domain_root(
                     source_root,
@@ -296,9 +298,23 @@ def _refine_oversized_roots(source_root: Path, roots: set[str]) -> list[str]:
                     preserve_direct_source_files=True,
                 )
             )
-        else:
-            domains.add(root)
     return sorted(domains)
+
+
+def _refine_oversized_root(source_root: Path, root: str) -> set[str]:
+    if not _domain_root_exceeds_capacity(source_root, root):
+        return {root}
+    children = _split_logical_domain_root(source_root, root, depth=0)
+    if children == {root}:
+        return {root}
+    domains: set[str] = set()
+    for child in children:
+        domains.update(_refine_oversized_root(source_root, child))
+    return domains
+
+
+def _is_test_domain_root(root: str) -> bool:
+    return any(part.lower() in _TEST_ROOT_PARTS for part in Path(root).parts)
 
 
 def _domain_root_exceeds_capacity(source_root: Path, root: str) -> bool:
@@ -319,10 +335,9 @@ def _split_logical_domain_root(
     component_path = source_root if root == "." else source_root / root
     if depth >= _LOGICAL_DOMAIN_MAX_DEPTH or not component_path.is_dir():
         return {root}
-    # Capacity refinement must retain a root that owns direct source files.
-    # Splitting its children would otherwise drop those files or create
-    # overlapping source ownership. Initial logical discovery keeps the
-    # established workspace behavior and can still descend through a root.
+    # Test-tree setup files remain source-level supporting artifacts so they
+    # do not force hundreds of descendant tests back into one domain. Existing
+    # production-component boundaries retain direct-file ownership.
     if preserve_direct_source_files and any(
         path.parent == component_path for path in _source_files(component_path)
     ):
@@ -467,6 +482,18 @@ def _slug(root: str) -> str:
     value = "root" if root == "." else root.lower().replace("_", "-")
     value = _SAFE_SLUG.sub("-", value).strip("-")
     return value or "root"
+
+
+def _domain_root_sort_key(root: str) -> tuple[bool, str]:
+    """Append newly discovered test-only domains after production domains.
+
+    Keeping production roots in their established order prevents a partition
+    protocol upgrade from renumbering and regenerating otherwise unchanged
+    domain specs merely because previously-unowned tests became first-class.
+    """
+    parts = Path(root).parts
+    is_test_root = any(part in {"__tests__", "test", "tests"} for part in parts)
+    return is_test_root, root
 
 
 def _safe_relative_root(value: str) -> bool:

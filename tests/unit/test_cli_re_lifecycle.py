@@ -52,6 +52,160 @@ def test_re_run_help_exposes_clean_reconstruction_switch() -> None:
 
 
 @pytest.mark.unit
+def test_re_finalize_allow_partial_transitions_active_blocked_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.cli_app import app
+
+    run_dir = tmp_path / "runs" / "re-20260814-100000-000001"
+    re_dir = run_dir / "re"
+    (re_dir / "quality").mkdir(parents=True)
+    (tmp_path / "runs" / ".current-re").write_text(
+        run_dir.name + "\n", encoding="utf-8"
+    )
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_dir.name,
+                "run_kind": "re",
+                "status": "blocked",
+                "phase": "re-extract-2-specify",
+                "blocked_reason": "re_token_budget_exhausted",
+                "extraction_complete": False,
+                "publication_pending": True,
+                "publication_complete": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (re_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "phase": "re-extract-2-specify",
+                "blocked_reason": "re_token_budget_exhausted",
+                "re_workspace_synthesis_complete": False,
+                "re_source_states": {
+                    "api": {
+                        "status": "passed",
+                        "re_quality_debt_semantic_failures": [
+                            {
+                                "domain_id": "001-re-domain",
+                                "reason": "semantic_quality_incomplete",
+                            }
+                        ],
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (re_dir / "quality" / "semantic-quality-review.json").write_text(
+        json.dumps(
+            {
+                "quality_contract_version": 2,
+                "passed": False,
+                "failures": [
+                    {
+                        "source_id": "api",
+                        "domain_id": "001-re-domain",
+                        "reason": "semantic_quality_incomplete",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    import harness.re_finalization as re_finalization
+
+    monkeypatch.setattr(
+        re_finalization,
+        "validate_re_run",
+        lambda *_args, **_kwargs: SimpleNamespace(status="partial"),
+    )
+    monkeypatch.chdir(tmp_path)
+
+    result = CliRunner().invoke(app, ["re", "finalize", "--allow-partial"])
+
+    assert result.exit_code == 0, result.output
+    assert "FINAL STATE — PARTIAL" in result.output
+    assert f"echelon re publish {run_dir.name} --allow-partial" in result.output
+    outer = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    inner = json.loads((re_dir / "state.json").read_text(encoding="utf-8"))
+    debt = json.loads(
+        (re_dir / "quality" / "partial-finalization.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert outer["status"] == "done"
+    assert outer["golddigger_status"] == "partial"
+    assert outer["finalized_partial"] is True
+    assert "blocked_reason" not in outer
+    assert inner["status"] == "done"
+    assert inner["publication_status"] == "partial"
+    assert inner["re_workspace_synthesis_complete"] is False
+    assert debt["finalized_from"]["blocked_reason"] == "re_token_budget_exhausted"
+    assert debt["debt"]["semantic_failure_sources"] == {
+        "api": ["001-re-domain"]
+    }
+
+    outer["publication_pending"] = False
+    outer["publication_complete"] = True
+    outer["generation"] = 2
+    (run_dir / "state.json").write_text(json.dumps(outer), encoding="utf-8")
+    status_result = CliRunner().invoke(app, ["re", "status"])
+    assert status_result.exit_code == 0
+    assert "finalized and published as partial" in status_result.output
+    assert "No continuation is required" in status_result.output
+    assert "semantic debt" in status_result.output
+    assert "1 finding across api" in status_result.output
+    assert "Raise --re-max-inner" not in status_result.output
+
+
+@pytest.mark.unit
+def test_re_finalize_requires_explicit_partial_acknowledgement() -> None:
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(app, ["re", "finalize"])
+
+    assert result.exit_code == 2
+    assert "--allow-partial is required" in result.output
+
+
+@pytest.mark.unit
+def test_re_finalize_rejects_a_running_controller_without_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.cli_app import app
+
+    run_dir = tmp_path / "runs" / "re-20260814-100000-000002"
+    re_dir = run_dir / "re"
+    re_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current-re").write_text(
+        run_dir.name + "\n", encoding="utf-8"
+    )
+    outer = {
+        "run_id": run_dir.name,
+        "run_kind": "re",
+        "status": "running",
+    }
+    inner = {"status": "in_progress"}
+    (run_dir / "state.json").write_text(json.dumps(outer), encoding="utf-8")
+    (re_dir / "state.json").write_text(json.dumps(inner), encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    result = CliRunner().invoke(app, ["re", "finalize", "--allow-partial"])
+
+    assert result.exit_code == 1
+    assert "not blocked" in result.output
+    assert json.loads((run_dir / "state.json").read_text()) == outer
+    assert json.loads((re_dir / "state.json").read_text()) == inner
+    assert not (re_dir / "quality" / "partial-finalization.json").exists()
+
+
+@pytest.mark.unit
 def test_re_refresh_help_requires_one_source_selector() -> None:
     from echelon.cli_app import app
 

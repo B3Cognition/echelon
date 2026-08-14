@@ -31,7 +31,7 @@ NEVER edit deterministic metadata or workspace synthesis.
 
 ## Protocol
 
-Set `RE_OUTPUT_DIR = state.output_dir`. For each `$RE_OUTPUT_DIR/quality/{source-id}/coverage-report.md` below threshold:
+Set `RE_OUTPUT_DIR = state.output_dir`. For each `$RE_OUTPUT_DIR/quality/sources/{source-id}.json` below threshold:
 
 1. Read the report and the matching source's staged analysis.
 2. Group high-confidence orphan clusters within that source only.

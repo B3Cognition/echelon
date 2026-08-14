@@ -128,6 +128,9 @@ Commands:
                                             Continue the active RE run.
   re resume <answer> [--re-max-inner <n>] [--re-token-limit <n>] [--re-time-limit-minutes <n>]
                                             Resume blocked RE with a human answer.
+  re finalize [<run-id>] --allow-partial    Accept recorded debt and stop a blocked RE run.
+  re synthesize [<run-id>] --allow-partial [--re-token-limit <n>]
+                                            Build workspace synthesis from partial source results.
   re publish <run-id> [--allow-partial] [--commit]
                                             Publish validated workspace RE output.
 
@@ -9747,6 +9750,18 @@ def _cmd_re_status(args: list[str]) -> None:
         status == "partial_quality_debt" for status in source_statuses
     )
     nonpassed_count = sum(status != "passed" for status in source_statuses)
+    finalized_partial = (
+        outer.get("finalized_partial") is True
+        and outer.get("golddigger_status") == "partial"
+    )
+    publication_complete = outer.get("publication_complete") is True
+    synthesis_status = (
+        "complete"
+        if inner.get("re_workspace_synthesis_complete") is True
+        else "incomplete (accepted partial debt)"
+        if finalized_partial
+        else "pending"
+    )
     fields = [
         ("run", run_dir.name),
         ("controller", controller_status),
@@ -9754,9 +9769,34 @@ def _cmd_re_status(args: list[str]) -> None:
         ("phase", f"{phase} — {phase_label}"),
         ("policy", str(outer.get("re_policy") or "unknown")),
         ("sources", _re_source_progress(display_inner)),
-        ("synthesis", "complete" if inner.get("re_workspace_synthesis_complete") is True else "pending"),
+        ("synthesis", synthesis_status),
         ("token budget", _format_re_token_budget(inner, outer)),
     ]
+    if finalized_partial:
+        raw_finalization = outer.get("re_partial_finalization")
+        finalization = raw_finalization if isinstance(raw_finalization, dict) else {}
+        semantic_count = int(finalization.get("semantic_failure_count") or 0)
+        raw_semantic_sources = finalization.get("semantic_failure_sources")
+        semantic_sources = (
+            [value for value in raw_semantic_sources if isinstance(value, str)]
+            if isinstance(raw_semantic_sources, list)
+            else []
+        )
+        fields.append(
+            (
+                "semantic debt",
+                f"{semantic_count} finding{'s' if semantic_count != 1 else ''} across "
+                + (", ".join(semantic_sources) or "no named source"),
+            )
+        )
+    if publication_complete:
+        fields.append(
+            (
+                "publication",
+                f"generation {int(outer.get('generation') or 0)} "
+                f"({outer.get('golddigger_status') or 'unknown'})",
+            )
+        )
     if controller_status == "blocked":
         fields.extend(
             (
@@ -9779,7 +9819,17 @@ def _cmd_re_status(args: list[str]) -> None:
         print("  source                                 status                 coverage / debt")
         print("  ─────────────────────────────────────  ─────────────────────  ─────────────────")
         print("\n".join(source_rows))
-    if controller_status == "in_progress":
+    if finalized_partial and publication_complete:
+        action = (
+            "This run is finalized and published as partial; debt remains explicit. "
+            "No continuation is required."
+        )
+    elif finalized_partial:
+        action = (
+            f"This run is finalized as partial. Publish it with `echelon re publish "
+            f"{run_dir.name} --allow-partial`."
+        )
+    elif controller_status == "in_progress":
         action = "Do not start another continuation while the controller is active."
     elif controller_status == "blocked":
         action = (
@@ -10211,18 +10261,167 @@ def _cmd_re_resume(args: list[str]) -> None:
         raise SystemExit(2) from exc
     _print_re_lifecycle_result(result)
 
+
+def _cmd_re_finalize(args: list[str]) -> None:
+    """Explicitly acknowledge debt and terminalize a blocked RE run as partial."""
+    from harness.re_finalization import ReFinalizationError, finalize_partial_re_run
+
+    allow_partial = False
+    positional: list[str] = []
+    for arg in args:
+        if arg == "--allow-partial":
+            allow_partial = True
+        elif arg.startswith("-"):
+            print(f"echelon re finalize: unknown argument '{arg}'", file=sys.stderr)
+            raise SystemExit(2)
+        else:
+            positional.append(arg)
+    if not allow_partial:
+        print(
+            "echelon re finalize: --allow-partial is required; "
+            "this transition accepts unresolved RE debt",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    if len(positional) > 1:
+        print(
+            "Usage: echelon re finalize [<run-id>] --allow-partial",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    try:
+        result = finalize_partial_re_run(
+            Path.cwd(),
+            run_id=positional[0] if positional else None,
+        )
+    except (ReFinalizationError, OSError, ValueError) as exc:
+        print(f"echelon re finalize: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+    publish_command = f"echelon re publish {result.run_id} --allow-partial"
+    print(
+        f"RE run {result.run_id} finalized as partial; unresolved debt remains."
+    )
+    _banner(
+        "RE FINAL STATE — PARTIAL",
+        [
+            ("run", result.run_id),
+            ("status", "partial (debt accepted, not full quality)"),
+            ("stopped because", result.blocked_reason),
+            ("partial sources", ", ".join(result.partial_sources) or "workspace-level only"),
+            ("semantic findings", str(result.semantic_failure_count)),
+            (
+                "workspace synthesis",
+                "incomplete" if result.workspace_synthesis_incomplete else "present",
+            ),
+            ("debt manifest", str(result.debt_manifest)),
+            ("next step", publish_command),
+        ],
+        subtitle="The run is terminal and publishable only with --allow-partial.",
+    )
+
+
+def _cmd_re_synthesize(args: list[str]) -> None:
+    """Regenerate only workspace synthesis from accepted partial source results."""
+    from harness.config import load_config
+    from harness.re_finalization import (
+        ReFinalizationError,
+        synthesize_partial_re_run,
+    )
+    from harness.squad_provider import SquadCliProvider
+
+    allow_partial = False
+    token_limit: int | None = None
+    time_limit_minutes: int | None = None
+    positional: list[str] = []
+    index = 0
+    try:
+        while index < len(args):
+            arg = args[index]
+            if arg == "--allow-partial":
+                allow_partial = True
+                index += 1
+            elif arg in {"--re-token-limit", "--re-time-limit-minutes"}:
+                if index + 1 >= len(args):
+                    raise ValueError(f"{arg} requires a positive integer")
+                try:
+                    value = int(args[index + 1])
+                except ValueError as exc:
+                    raise ValueError(f"{arg} requires a positive integer") from exc
+                if value < 1:
+                    raise ValueError(f"{arg} requires a positive integer")
+                if arg == "--re-token-limit":
+                    token_limit = value
+                else:
+                    time_limit_minutes = value
+                index += 2
+            elif arg.startswith("--re-token-limit="):
+                token_limit = int(arg.split("=", 1)[1])
+                index += 1
+            elif arg.startswith("--re-time-limit-minutes="):
+                time_limit_minutes = int(arg.split("=", 1)[1])
+                index += 1
+            elif arg.startswith("-"):
+                raise ValueError(f"unknown argument {arg!r}")
+            else:
+                positional.append(arg)
+                index += 1
+        if not allow_partial:
+            raise ValueError(
+                "--allow-partial is required; synthesis will use sources with accepted debt"
+            )
+        if len(positional) > 1:
+            raise ValueError(
+                "usage: echelon re synthesize [<run-id>] --allow-partial "
+                "[--re-token-limit <n>]"
+            )
+        project_root = Path.cwd()
+        runtime_root, prosaic_subagents_dir = _installed_re_runtime_or_exit(
+            project_root
+        )
+        config = load_config(project_root, squad_only=True)
+        result = synthesize_partial_re_run(
+            project_root,
+            run_id=positional[0] if positional else None,
+            provider=SquadCliProvider(config),
+            extension_root=runtime_root,
+            prosaic_subagents_dir=prosaic_subagents_dir,
+            hard_token_limit=token_limit,
+            hard_active_minutes=time_limit_minutes,
+        )
+    except (ReFinalizationError, OSError, ValueError) as exc:
+        print(f"echelon re synthesize: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+    publish_command = f"echelon re publish {result.run_id} --allow-partial"
+    print(f"Workspace synthesis completed for partial RE run {result.run_id}.")
+    _banner(
+        "RE WORKSPACE SYNTHESIS — COMPLETE",
+        [
+            ("run", result.run_id),
+            ("source quality", "partial debt accepted"),
+            ("workspace synthesis", "complete"),
+            ("token usage", str(result.token_usage)),
+            ("next step", publish_command),
+        ],
+        subtitle="Only workspace synthesis ran; source repair and semantic revalidation stayed closed.",
+    )
+
+
 def _cmd_re_publish(args: list[str]) -> None:
     """Publish one validated run into the canonical workspace RE registry."""
     import json
     import re
 
     from echelon.git_helpers import GitHelperError, run_git
+    from harness.re_artifacts import ReArtifactCatalogError
     from harness.re_lock import (
         RePublicationActiveRun,
         RePublishLocked,
         RePublishRecoveryRequired,
     )
     from harness.re_migration import import_legacy_re_cache
+    from harness.re_finalization import mark_re_run_published
     from harness.re_publication import RePublicationError, publish_re_run
 
     allow_partial = False
@@ -10269,10 +10468,16 @@ def _cmd_re_publish(args: list[str]) -> None:
             expected_generation=int(lifecycle_state.get("expected_generation") or 0),
             allow_same_run_republish=True,
         )
+        mark_re_run_published(
+            run_dir,
+            status=result.status,
+            generation=result.generation,
+        )
         if commit:
             _commit_re_publication(project_root, result.generation, run_git)
     except (
         RePublicationError,
+        ReArtifactCatalogError,
         RePublicationActiveRun,
         RePublishLocked,
         RePublishRecoveryRequired,

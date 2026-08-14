@@ -160,7 +160,7 @@ class TestAICodingCliProvider:
         [
             ("claude", True),
             ("openai-compatible", True),
-            ("codex", False),
+            ("codex", True),
             ("copilot", False),
             ("opencode", False),
         ],
@@ -197,6 +197,14 @@ class TestAICodingCliProvider:
             return_value=False,
         ):
             provider = AICodingCliProvider(_config(cli="claude"))
+            assert provider.enforces_workspace_synthesis_boundary is False
+
+    def test_codex_provider_requires_host_workspace_boundary(self):
+        with patch(
+            "harness.llm_provider.host_workspace_synthesis_boundary_available",
+            return_value=False,
+        ):
+            provider = AICodingCliProvider(_config(cli="codex"))
             assert provider.enforces_workspace_synthesis_boundary is False
 
     def test_provider_has_no_verify_spec_orchestration_method(self):

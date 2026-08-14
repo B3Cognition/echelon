@@ -27,6 +27,18 @@ def test_no_dispatch_starts_at_token_ceiling() -> None:
     assert decision.reason == "re_token_budget_exhausted"
 
 
+def test_no_dispatch_starts_without_required_token_headroom() -> None:
+    decision = evaluate_re_budget(
+        _state(tokens=4_900_001),
+        minimum_dispatch_tokens=100_000,
+    )
+
+    assert decision.allowed is False
+    assert decision.reason == "re_token_budget_exhausted"
+    assert decision.limit == 5_000_000
+    assert decision.consumed == 4_900_001
+
+
 def test_no_dispatch_starts_at_active_time_ceiling() -> None:
     decision = evaluate_re_budget(_state(active_ms=180 * 60_000))
 

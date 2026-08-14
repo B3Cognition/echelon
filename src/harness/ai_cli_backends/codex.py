@@ -6,9 +6,15 @@ import shutil
 import subprocess
 import tempfile
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Mapping
 
 from harness.ai_cli_backend import CliRunRequest, CliRunResult
+from harness.ai_cli_backends.claude import (
+    _sandbox_exec_path,
+    _workspace_sandbox_profile,
+)
 from harness.config import HarnessConfig
 from harness.llm_tool_policy import build_llm_cli_command
 
@@ -58,6 +64,37 @@ class CodexCliBackend:
             codex_model=model,
             output_last_message=final_path or None,
         )
+        raw_prompt_metadata = request.metadata.get("prompt_metadata")
+        if isinstance(raw_prompt_metadata, Mapping):
+            forbidden_roots = _prompt_scope_paths(
+                request, raw_prompt_metadata, "tool_forbidden_roots"
+            )
+            if forbidden_roots:
+                sandbox_exec = _sandbox_exec_path()
+                if sandbox_exec is None:
+                    _unlink_if_present(final_path)
+                    return CliRunResult(
+                        exit_code=125,
+                        stdout="",
+                        stderr="workspace synthesis host boundary is unavailable",
+                        metadata={"workspace_synthesis_boundary": "unavailable"},
+                    )
+                read_roots = _prompt_scope_paths(
+                    request, raw_prompt_metadata, "tool_read_roots"
+                )
+                write_paths = _prompt_scope_paths(
+                    request, raw_prompt_metadata, "tool_write_paths"
+                )
+                cmd = [
+                    sandbox_exec,
+                    "-p",
+                    _workspace_sandbox_profile(
+                        forbidden_roots,
+                        read_roots=read_roots,
+                        write_paths=write_paths,
+                    ),
+                    *cmd,
+                ]
         proc = subprocess.Popen(
             cmd,
             cwd=request.cwd,
@@ -71,6 +108,7 @@ class CodexCliBackend:
         timed_out = False
         saw_task_complete = False
         token_usage: int | None = None
+        token_usage_details: dict[str, int] = {}
 
         def kill() -> None:
             nonlocal timed_out
@@ -95,6 +133,7 @@ class CodexCliBackend:
                 event = _codex_event(line)
                 if event.token_usage is not None:
                     token_usage = event.token_usage
+                    token_usage_details = dict(event.token_usage_details)
                 if event.text:
                     stdout_chunks.append(event.text)
                     print(event.text, flush=True)
@@ -113,10 +152,16 @@ class CodexCliBackend:
                 final_text = handle.read()
             if final_text.strip() and final_text not in stdout_chunks:
                 stdout_chunks.append(final_text)
-            try:
-                os.unlink(final_path)
-            except OSError:
-                pass
+            _unlink_if_present(final_path)
+
+        metadata: dict[str, object] = {
+            "task_complete": saw_task_complete,
+            # Codex JSON events do not reliably include a response model.
+            # Preserve the explicitly requested model for durable telemetry.
+            "request_model": model or "",
+        }
+        if token_usage_details:
+            metadata["token_usage_details"] = token_usage_details
 
         return CliRunResult(
             exit_code=(
@@ -126,12 +171,7 @@ class CodexCliBackend:
             stderr="\n".join(chunk for chunk in stderr_chunks if chunk),
             token_usage=token_usage,
             timed_out=timed_out,
-            metadata={
-                "task_complete": saw_task_complete,
-                # Codex JSON events do not reliably include a response model.
-                # Preserve the explicitly requested model for durable telemetry.
-                "request_model": model or "",
-            },
+            metadata=metadata,
         )
 
 
@@ -145,11 +185,41 @@ def _codex_model_for_request(request: CliRunRequest) -> str | None:
     return _MODEL_TIER_TO_CODEX_MODEL.get(tier.strip().lower())
 
 
+def _prompt_scope_paths(
+    request: CliRunRequest,
+    metadata: Mapping[object, object],
+    key: str,
+) -> tuple[str, ...]:
+    raw = metadata.get(key)
+    if not isinstance(raw, list):
+        return ()
+    cwd = Path(request.cwd).resolve()
+    paths: set[str] = set()
+    for value in raw:
+        if not isinstance(value, str) or not value.strip():
+            continue
+        candidate = Path(value).expanduser()
+        if not candidate.is_absolute():
+            candidate = cwd / candidate
+        paths.add(str(candidate.resolve(strict=False)))
+    return tuple(sorted(paths))
+
+
+def _unlink_if_present(path: str) -> None:
+    if not path:
+        return
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
 @dataclass(frozen=True)
 class _CodexEvent:
     text: str
     task_complete: bool = False
     token_usage: int | None = None
+    token_usage_details: dict[str, int] = field(default_factory=dict)
 
 
 def _codex_event(line: str) -> _CodexEvent:
@@ -172,8 +242,20 @@ def _codex_event(line: str) -> _CodexEvent:
                 task_complete=True,
             )
         if payload_type == "token_count":
-            usage = _extract_token_usage(payload.get("info"))
-            return _CodexEvent("", token_usage=usage)
+            details = _extract_token_usage_details(payload.get("info"))
+            return _CodexEvent(
+                "",
+                token_usage=details.get("total_tokens"),
+                token_usage_details=details,
+            )
+
+    if event.get("type") == "turn.completed":
+        details = _extract_token_usage_details(event.get("usage"))
+        return _CodexEvent(
+            "",
+            token_usage=details.get("total_tokens"),
+            token_usage_details=details,
+        )
 
     return _CodexEvent(_codex_event_text_from_json(event))
 
@@ -285,16 +367,31 @@ def _debug_llm_enabled() -> bool:
     return value in {"1", "true", "yes", "on"}
 
 
-def _extract_token_usage(info: object) -> int:
+def _extract_token_usage_details(info: object) -> dict[str, int]:
     if not isinstance(info, dict):
-        return 0
-    total = info.get("total_token_usage")
-    if not isinstance(total, dict):
-        return 0
-    try:
-        return int(total.get("total_tokens") or 0)
-    except (TypeError, ValueError):
-        return 0
+        return {}
+    nested = info.get("total_token_usage")
+    usage = nested if isinstance(nested, dict) else info
+    details: dict[str, int] = {}
+    for key in (
+        "input_tokens",
+        "cached_input_tokens",
+        "cache_write_input_tokens",
+        "output_tokens",
+        "reasoning_output_tokens",
+        "total_tokens",
+    ):
+        value = usage.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        details[key] = max(0, int(value))
+    if "total_tokens" not in details and (
+        "input_tokens" in details or "output_tokens" in details
+    ):
+        details["total_tokens"] = details.get("input_tokens", 0) + details.get(
+            "output_tokens", 0
+        )
+    return details
 
 
 def _stop_completed_process(proc: subprocess.Popen) -> None:

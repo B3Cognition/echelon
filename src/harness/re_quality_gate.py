@@ -453,6 +453,154 @@ def validate_staged_re_domain_quality(
     return ReQualityReport(passed=failure is None, failures=() if failure is None else (failure,))
 
 
+def repair_staged_re_domain_evidence(
+    run_re_dir: Path,
+    plan: ReExecutionPlan,
+    source_id: str,
+    domain_id: str,
+) -> int:
+    """Normalize safe, mechanically recoverable staged-domain citations.
+
+    Model file readers commonly display a trailing blank line that is not part
+    of the gate's physical line count. Only that exact +1 discrepancy is
+    repaired. A Java `:1-1` package-only citation is expanded to the owning type
+    declaration through EOF because the cited file is already explicit and the
+    package clause itself cannot support a behavioral claim. Broader or
+    structurally invalid evidence remains agent work.
+    """
+    source = next((item for item in plan.refresh_sources if item.id == source_id), None)
+    if source is None:
+        return 0
+    try:
+        manifest = load_domain_manifest(domain_manifest_path(run_re_dir, source.id))
+    except ValueError:
+        return 0
+    domain = next((item for item in manifest.domains if item.domain_id == domain_id), None)
+    if domain is None:
+        return 0
+    spec_path = run_re_dir / "sources" / source.id / "specs" / domain.domain_id / "spec.md"
+    return _repair_staged_evidence_file(
+        spec_path,
+        source_root=Path(source.absolute_path),
+        domain_root=domain.root,
+    )
+
+
+def repair_staged_re_source_support_evidence(
+    run_re_dir: Path,
+    plan: ReExecutionPlan,
+    source_id: str,
+) -> int:
+    """Clamp safe one-line EOF overruns in a source support register."""
+    source = next((item for item in plan.refresh_sources if item.id == source_id), None)
+    if source is None:
+        return 0
+    return _repair_staged_evidence_file(
+        run_re_dir / "sources" / source.id / "supporting-artifacts.md",
+        source_root=Path(source.absolute_path),
+        domain_root=None,
+    )
+
+
+def _repair_staged_evidence_file(
+    artifact_path: Path,
+    *,
+    source_root: Path,
+    domain_root: str | None,
+) -> int:
+    """Apply safe citation normalizations shared by staged evidence artifacts."""
+    if not artifact_path.is_file():
+        return 0
+
+    text = artifact_path.read_text(encoding="utf-8")
+    root = source_root.resolve()
+    replacements: list[tuple[int, int, str]] = []
+    for match in source_reference_matches(text):
+        raw_path = match.group("path").strip()
+        relative = Path(raw_path)
+        ranges = source_reference_ranges(match)
+        if not raw_path or relative.is_absolute() or ".." in relative.parts:
+            continue
+        if domain_root is None:
+            candidate = (root / relative).resolve()
+            try:
+                candidate.relative_to(root)
+            except ValueError:
+                continue
+            if not candidate.is_file():
+                continue
+        else:
+            candidate = _resolve_domain_evidence_path(
+                relative, source_root=root, domain_root=domain_root
+            )
+        if candidate is None:
+            continue
+        line_count = _line_count(candidate)
+        if _is_java_package_declaration_only(candidate, ranges):
+            declaration_line = _java_declaration_line(candidate)
+            start = declaration_line or 1
+            rendered = str(start) if start == line_count else f"{start}-{line_count}"
+            replacements.append(
+                (match.start(), match.end(), f"`{raw_path}:{rendered}`")
+            )
+            continue
+        if (
+            line_count < 1
+            or any(end < start or start > line_count for start, end in ranges)
+            or not any(end == line_count + 1 for _start, end in ranges)
+            or any(end > line_count + 1 for _start, end in ranges)
+        ):
+            continue
+        repaired_ranges = tuple(
+            (start, min(end, line_count)) for start, end in ranges
+        )
+        rendered_ranges = ", ".join(
+            str(start) if start == end else f"{start}-{end}"
+            for start, end in repaired_ranges
+        )
+        replacements.append(
+            (match.start(), match.end(), f"`{raw_path}:{rendered_ranges}`")
+        )
+
+    if not replacements:
+        return 0
+    for start, end, replacement in reversed(replacements):
+        text = text[:start] + replacement + text[end:]
+    fd, temporary = tempfile.mkstemp(
+        dir=str(artifact_path.parent),
+        prefix=f".{artifact_path.name}-",
+        suffix=".tmp",
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        Path(temporary).replace(artifact_path)
+    except Exception:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
+    return len(replacements)
+
+
+def _java_declaration_line(candidate: Path) -> int | None:
+    try:
+        lines = candidate.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    declaration = re.compile(r"\b(?:class|interface|enum|record)\b")
+    for index, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if stripped.startswith(("//", "/*", "*")):
+            continue
+        if declaration.search(stripped):
+            return index
+    return None
+
+
 def measure_source_quality(
     run_re_dir: Path,
     plan: ReExecutionPlan,
@@ -732,8 +880,25 @@ def _validated_source_evidence(
         ):
             invalid.add(reference)
             continue
+        if _is_java_package_declaration_only(candidate, ranges):
+            invalid.add(reference)
+            continue
         valid.add(reference)
     return valid, invalid
+
+
+def _is_java_package_declaration_only(
+    candidate: Path, ranges: tuple[tuple[int, int], ...]
+) -> bool:
+    """Reject Java evidence whose complete scope is only line 1's package clause."""
+    if candidate.suffix.casefold() != ".java" or ranges != ((1, 1),):
+        return False
+    try:
+        with candidate.open(encoding="utf-8", errors="replace") as handle:
+            first_line = handle.readline()
+    except OSError:
+        return False
+    return bool(re.match(r"^\s*package\s+[\w.]+\s*;\s*$", first_line))
 
 
 def _covered_source_paths(

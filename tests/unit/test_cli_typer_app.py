@@ -28,6 +28,49 @@ def test_re_publish_routes_explicit_flags(monkeypatch):
 
 
 @pytest.mark.unit
+def test_re_finalize_routes_explicit_partial_acknowledgement(monkeypatch):
+    from echelon.cli_app import run
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_re_finalize",
+        lambda args: calls.append(args),
+        raising=False,
+    )
+
+    run(["re", "finalize", "re-123", "--allow-partial"])
+
+    assert calls == [["re-123", "--allow-partial"]]
+
+
+@pytest.mark.unit
+def test_re_synthesize_routes_partial_acknowledgement_and_budget(monkeypatch):
+    from echelon.cli_app import run
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_re_synthesize",
+        lambda args: calls.append(args),
+        raising=False,
+    )
+
+    run(
+        [
+            "re",
+            "synthesize",
+            "re-123",
+            "--allow-partial",
+            "--re-token-limit",
+            "1325000000",
+        ]
+    )
+
+    assert calls == [
+        ["re-123", "--allow-partial", "--re-token-limit", "1325000000"]
+    ]
+
+
+@pytest.mark.unit
 def test_re_execute_run_routes_to_deterministic_controller(monkeypatch):
     from echelon.cli_app import run
 

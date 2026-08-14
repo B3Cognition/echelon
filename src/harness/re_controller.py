@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import tempfile
 import hashlib
@@ -28,6 +29,7 @@ from harness.re_domain_manifest import (
     discover_source_domains,
     domain_manifest_path,
     load_domain_manifest,
+    source_files,
     write_domain_manifest,
 )
 from harness.re_planner import ReExecutionPlan
@@ -43,6 +45,8 @@ from harness.re_quality_gate import (
     ReSpecQualityFailure,
     ReSourceQualityReport,
     quality_target_for_domain,
+    repair_staged_re_domain_evidence,
+    repair_staged_re_source_support_evidence,
     validate_semantic_quality_review,
     validate_staged_re_domain_quality,
     validate_staged_re_quality,
@@ -52,13 +56,19 @@ from harness.re_quality_gate import (
     write_re_quality_report,
     measure_source_quality,
 )
+
+
 from kernel.re_state import complete_dispatch, init_re_state, write_last_dispatch
 from echelon.telemetry.model import ExecutionSpan, TokenUsage
 from echelon.telemetry.store import TelemetryStore
-from harness.re_budget import evaluate_re_budget
+from harness.re_budget import evaluate_re_budget, remaining_re_tokens
 from harness.re_repair_packet import ReRepairFinding, ReRepairPacket
+from harness.re_source_evidence import source_references
 from harness.prompt_markdown import read_prompt_markdown
 from harness.squad_executors import _canonical_echelon_result_contract
+
+
+_SPECIFICATION_FILE_INVENTORY_LIMIT = 96
 
 
 class ReAgentProvider(Protocol):
@@ -81,6 +91,11 @@ _PHASES = {
     "re-extract-6-checklist": "checklister",
     "re-extract-7-constitute": "constituter",
 }
+
+# Provider usage is reported after a model turn. Do not launch a fresh turn with
+# only a trivial remainder; the provider also receives the exact allowance and
+# stops as soon as streamed usage reaches it.
+_MINIMUM_DISPATCH_TOKEN_HEADROOM = 100_000
 _PHASE_SPECS = {
     "re-extract-1-analyze": "re-extract-1-analyze.md",
     "re-extract-2-specify": "re-extract-2-specify.md",
@@ -103,9 +118,13 @@ _ARCHITECTURE_OVERLAY_OUTPUTS = frozenset(
         "workspace/domain-catalog.md",
     }
 )
-_TARGET_QUALITY_PROTOCOL_VERSION = 1
-_SEMANTIC_QUALITY_REVIEW_PROTOCOL_VERSION = 2
+_TARGET_QUALITY_PROTOCOL_VERSION = 5
+_TARGET_COVERAGE_DEBT_PROTOCOL_VERSION = 1
+_EVIDENCE_EOF_REPAIR_PROTOCOL_VERSION = 5
+_EXACT_COVERAGE_REPAIR_PROTOCOL_VERSION = 2
+_SEMANTIC_QUALITY_REVIEW_PROTOCOL_VERSION = 3
 _SEMANTIC_DOMAIN_AUDIT_PROTOCOL_VERSION = 1
+_SEMANTIC_REPAIR_BUDGET_PROTOCOL_VERSION = 1
 _SEMANTIC_RESULT_CONTRACT_RETRY_LIMIT = 1
 _WORKSPACE_SYNTHESIS_SCOPE_PROTOCOL_VERSION = 1
 _WORKSPACE_SYNTHESIS_REPAIR_LIMIT = 1
@@ -168,6 +187,7 @@ class ReExtractionController:
         run_dir: Path,
         extension_root: Path,
         prosaic_subagents_dir: Path | None = None,
+        stop_after_workspace_synthesis: bool = False,
     ) -> None:
         self._provider = provider
         self._project_root = project_root.resolve()
@@ -181,6 +201,9 @@ class ReExtractionController:
         ).resolve()
         self._reported_source_id: str | None = None
         self._invocation_started_monotonic = 0.0
+        self._stop_after_workspace_synthesis = stop_after_workspace_synthesis
+        self._workspace_synthesis_outputs_invalidated = False
+        self._workspace_synthesis_output_snapshot: dict[Path, bytes | None] | None = None
 
     def run(self) -> ReControllerResult:
         self._invocation_started_monotonic = time.monotonic()
@@ -191,7 +214,14 @@ class ReExtractionController:
                 self._run_dir,
             ):
                 try:
-                    return self._run_locked()
+                    outcome = self._run_locked()
+                    if self._stop_after_workspace_synthesis and not outcome.completed:
+                        self._restore_workspace_synthesis_outputs()
+                    return outcome
+                except Exception:
+                    if self._stop_after_workspace_synthesis:
+                        self._restore_workspace_synthesis_outputs()
+                    raise
                 finally:
                     self._finish_active_interval()
         except ReExtractLocked:
@@ -211,12 +241,19 @@ class ReExtractionController:
             self._save_state(state)
         if self._upgrade_source_coverage_repair_protocol(state, plan):
             self._save_state(state)
+        if self._upgrade_target_coverage_debt_protocol(state, plan):
+            self._save_state(state)
+        if self._upgrade_evidence_eof_repair_protocol(state, plan):
+            self._save_state(state)
+        if self._upgrade_exact_coverage_repair_protocol(state, plan):
+            self._save_state(state)
         if self._upgrade_semantic_quality_review_protocol(state):
             self._save_state(state)
         if self._apply_re_budget_override(state, plan):
             self._save_state(state)
         if (
-            state.get("phase") == "re-extract-2-specify"
+            state.get("phase")
+            not in {"re-extract-0-preflight", "re-extract-1-analyze"}
             and state.get("re_domain_partition_version") != DOMAIN_PARTITION_VERSION
         ):
             changed_sources, manifest_error = self._synchronize_domain_manifests(plan)
@@ -274,6 +311,11 @@ class ReExtractionController:
                         return next_result
                     state = self._load_state()
                     continue
+                if self._accept_passing_staged_specification_target(
+                    state, plan, target
+                ):
+                    self._save_state(state)
+                    continue
                 target_error = self._prepare_specification_target(state, target)
                 if target_error is not None:
                     return self._block(state, target_error)
@@ -323,6 +365,7 @@ class ReExtractionController:
             budget = evaluate_re_budget(
                 state,
                 current_invocation_ms=self._current_invocation_ms(),
+                minimum_dispatch_tokens=_MINIMUM_DISPATCH_TOKEN_HEADROOM,
             )
             if not budget.allowed:
                 state["re_budget_limit"] = {
@@ -339,6 +382,9 @@ class ReExtractionController:
                         phase
                     )
                 prompt_metadata = self._agent_prompt_metadata(phase)
+                token_allowance = remaining_re_tokens(state)
+                if token_allowance is not None:
+                    prompt_metadata["max_token_usage"] = token_allowance
                 if isinstance(target, dict) and target.get("kind") == "workspace-synthesis":
                     if (
                         getattr(
@@ -380,6 +426,20 @@ class ReExtractionController:
                     state["re_workspace_synthesis_scope_protocol_version"] = (
                         _WORKSPACE_SYNTHESIS_SCOPE_PROTOCOL_VERSION
                     )
+                    if (
+                        self._stop_after_workspace_synthesis
+                        and not self._workspace_synthesis_outputs_invalidated
+                    ):
+                        try:
+                            self._invalidate_workspace_synthesis_outputs(plan, state)
+                        except OSError as exc:
+                            state["re_agent_result_detail"] = (
+                                "workspace synthesis outputs could not be invalidated: "
+                                f"{exc}"
+                            )
+                            return self._block(
+                                state, "re_workspace_synthesis_inputs_invalid"
+                            )
 
             state = write_last_dispatch(state, phase, _PHASES[phase])
             self._save_state(state)
@@ -419,6 +479,15 @@ class ReExtractionController:
                     state["re_agent_result_detail"] = f"telemetry write failed: {exc}"
                     return self._block(state, "re_telemetry_write_failed")
                 self._save_state(state)
+                if getattr(result, "token_budget_exhausted", False):
+                    profile = state.get("re_execution_profile")
+                    profile_dict = profile if isinstance(profile, dict) else {}
+                    state["re_budget_limit"] = {
+                        "reason": "re_token_budget_exhausted",
+                        "limit": profile_dict.get("hard_token_limit"),
+                        "consumed": state.get("re_token_usage", 0),
+                    }
+                    return self._block(state, "re_token_budget_exhausted")
                 if phase == "re-extract-2-specify" and target is not None:
                     cleanup_error = self._clean_noncanonical_target_artifacts(
                         state, target, stage="post-dispatch"
@@ -502,11 +571,20 @@ class ReExtractionController:
                     self._save_state(state)
                     continue
                 return self._block(state, "re_agent_result_invalid")
-            self._clear_semantic_result_contract_retry(
+            recovery_error = self._semantic_result_contract_recovery_conflict(
                 state,
                 phase=phase,
                 semantic_target=semantic_target,
+                payload=payload,
             )
+            if recovery_error is not None:
+                state["re_agent_result_detail"] = recovery_error
+                try:
+                    state = complete_dispatch(state, {"state_updates": {}})
+                except (KeyError, ValueError) as exc:
+                    state["re_agent_result_detail"] = str(exc)
+                    return self._block(state, "re_agent_result_invalid")
+                return self._block(state, "re_semantic_result_contract_conflict")
             if payload.get("verdict") == "BLOCKED":
                 agent_block_detail = self._agent_block_detail(payload)
                 state["re_agent_result_detail"] = agent_block_detail
@@ -586,6 +664,14 @@ class ReExtractionController:
                 )
                 if target_result is not None:
                     return target_result
+                if (
+                    self._stop_after_workspace_synthesis
+                    and target.get("kind") == "workspace-synthesis"
+                    and state.get("re_workspace_synthesis_complete") is True
+                ):
+                    state["status"] = "done"
+                    self._save_state(state)
+                    return ReControllerResult(completed=True)
                 self._save_state(state)
                 continue
             if phase == "re-extract-5-validate":
@@ -619,6 +705,11 @@ class ReExtractionController:
                 raw_review = payload["semantic_quality_review"]["domains"][0]
                 self._store_semantic_domain_audit(
                     state, plan, semantic_target, raw_review
+                )
+                self._clear_semantic_result_contract_retry(
+                    state,
+                    phase=phase,
+                    semantic_target=semantic_target,
                 )
                 self._save_state(state)
                 continue
@@ -766,11 +857,22 @@ class ReExtractionController:
         return profile.get("semantic_audit_mode", "all") != "none"
 
     def _semantic_repair_limit(self, state: dict) -> int:
+        profile_limit: int | None = None
         profile = state.get("re_execution_profile")
         if isinstance(profile, dict):
             value = profile.get("max_semantic_repair_rounds")
             if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
-                return value
+                profile_limit = value
+        override = state.get("re_source_budget_override")
+        if (
+            self._source_convergence_enabled(state)
+            and isinstance(override, int)
+            and not isinstance(override, bool)
+            and override >= 0
+        ):
+            return max(profile_limit or 0, override)
+        if profile_limit is not None:
+            return profile_limit
         if self._source_convergence_enabled(state):
             return self._source_budget(state, "max_domain_repairs")
         return self._metric(state, "max_verify_expand_iterations")
@@ -868,7 +970,7 @@ class ReExtractionController:
 
     @staticmethod
     def _upgrade_semantic_quality_review_protocol(state: dict) -> bool:
-        """Clear stale validator-format failures after the evidence contract changes."""
+        """Upgrade semantic review validation without trusting legacy retry PASSes."""
         if state.get("re_semantic_quality_review_protocol_version") == (
             _SEMANTIC_QUALITY_REVIEW_PROTOCOL_VERSION
         ):
@@ -876,9 +978,21 @@ class ReExtractionController:
         state["re_semantic_quality_review_protocol_version"] = (
             _SEMANTIC_QUALITY_REVIEW_PROTOCOL_VERSION
         )
+        retries = state.get("re_semantic_result_contract_retries")
+        audits = state.get("re_semantic_domain_audits")
+        if isinstance(retries, dict) and isinstance(audits, dict):
+            # Protocol v2 cleanly redispatched a fresh audit after a result-only
+            # formatting repair failed. That second audit could return PASS and
+            # erase a substantive REPAIR verdict from the completed first audit.
+            # Re-audit only domains that passed through that unsafe path.
+            for key in retries:
+                if isinstance(key, str):
+                    audits.pop(key, None)
         for key in (
             "re_semantic_review_invalid_attempts",
             "re_semantic_review_invalid_error",
+            "re_semantic_result_contract_retry_pending",
+            "re_semantic_result_contract_retry_context",
             "re_agent_result_detail",
         ):
             state.pop(key, None)
@@ -904,6 +1018,15 @@ class ReExtractionController:
             )
         state["re_source_order"] = [source.id for source in plan.refresh_sources]
         state["re_source_coverage_repair_protocol_version"] = 1
+        state["re_target_coverage_debt_protocol_version"] = (
+            _TARGET_COVERAGE_DEBT_PROTOCOL_VERSION
+        )
+        state["re_evidence_eof_repair_protocol_version"] = (
+            _EVIDENCE_EOF_REPAIR_PROTOCOL_VERSION
+        )
+        state["re_exact_coverage_repair_protocol_version"] = (
+            _EXACT_COVERAGE_REPAIR_PROTOCOL_VERSION
+        )
         state.pop("re_active_source_id", None)
         state["re_specification_targets"] = []
         self._activate_next_source(state, plan)
@@ -919,6 +1042,13 @@ class ReExtractionController:
         override = outer_state.get("re_max_inner")
         if not isinstance(override, int) or isinstance(override, bool) or override < 1:
             return False
+        existing_override = state.get("re_source_budget_override")
+        if (
+            isinstance(existing_override, int)
+            and not isinstance(existing_override, bool)
+            and existing_override > override
+        ):
+            override = existing_override
         budgets = state.get("re_source_budgets")
         if not isinstance(budgets, dict):
             budgets = {}
@@ -934,10 +1064,210 @@ class ReExtractionController:
             if override > current:
                 budgets[key] = override
                 changed = True
+        protocol_upgrade = (
+            state.get("re_semantic_repair_budget_protocol_version")
+            != _SEMANTIC_REPAIR_BUDGET_PROTOCOL_VERSION
+        )
+        if protocol_upgrade:
+            state["re_semantic_repair_budget_protocol_version"] = (
+                _SEMANTIC_REPAIR_BUDGET_PROTOCOL_VERSION
+            )
+            changed = True
         if changed:
             state["re_source_budget_override"] = override
             self._reclaim_quality_debt_for_budget_override(state, plan)
         return changed
+
+    def _upgrade_target_coverage_debt_protocol(
+        self, state: dict, plan: ReExecutionPlan
+    ) -> bool:
+        """Narrow stale orphan lists in interrupted source-repair queues once."""
+        if (
+            not self._source_convergence_enabled(state)
+            or state.get("re_target_coverage_debt_protocol_version")
+            == _TARGET_COVERAGE_DEBT_PROTOCOL_VERSION
+        ):
+            return False
+        targets = state.get("re_specification_targets")
+        if isinstance(targets, list):
+            for target in targets:
+                if isinstance(target, dict) and "orphan_paths" in target:
+                    self._refresh_target_coverage_debt(state, plan, target)
+        state["re_target_coverage_debt_protocol_version"] = (
+            _TARGET_COVERAGE_DEBT_PROTOCOL_VERSION
+        )
+        return True
+
+    def _upgrade_evidence_eof_repair_protocol(
+        self, state: dict, plan: ReExecutionPlan
+    ) -> bool:
+        """Repair safe EOF overruns in queues interrupted before this protocol."""
+        if (
+            state.get("re_evidence_eof_repair_protocol_version")
+            == _EVIDENCE_EOF_REPAIR_PROTOCOL_VERSION
+        ):
+            return False
+        repaired = 0
+        resolved_support_targets: list[dict[str, object]] = []
+        targets = state.get("re_specification_targets")
+        if isinstance(targets, list):
+            for target in targets:
+                if not isinstance(target, dict):
+                    continue
+                source_id = target.get("source_id")
+                domain_id = target.get("domain_id")
+                kind = target.get("kind")
+                if (
+                    kind == "source-domain"
+                    and isinstance(source_id, str)
+                    and isinstance(domain_id, str)
+                ):
+                    target_repairs = repair_staged_re_domain_evidence(
+                        self._run_re_dir, plan, source_id, domain_id
+                    )
+                    repaired += target_repairs
+                    if (
+                        "orphan_paths" in target
+                        and self._source_convergence_enabled(state)
+                    ):
+                        self._refresh_target_coverage_debt(state, plan, target)
+                    target_report = self._target_quality_report(plan, target)
+                    report_path = (
+                        self._run_re_dir
+                        / "quality"
+                        / "targets"
+                        / source_id
+                        / f"{domain_id}.json"
+                    )
+                    if target_report is not None and not target_report.passed:
+                        write_re_target_quality_report(
+                            self._run_re_dir,
+                            source_id,
+                            domain_id,
+                            target_report,
+                        )
+                    elif target_report is not None:
+                        report_path.unlink(missing_ok=True)
+                elif kind == "source-support" and isinstance(source_id, str):
+                    target_repairs = repair_staged_re_source_support_evidence(
+                        self._run_re_dir, plan, source_id
+                    )
+                    repaired += target_repairs
+                    if self._source_convergence_enabled(state):
+                        report = measure_source_quality(
+                            self._run_re_dir,
+                            plan,
+                            source_id,
+                            coverage_threshold=self._metric(
+                                state, "coverage_threshold"
+                            ),
+                        )
+                        report_path = write_re_source_quality_report(
+                            self._run_re_dir, report
+                        )
+                        source_state = self._source_state(state, source_id)
+                        source_state["quality_report"] = str(report_path)
+                        source_state["coverage_pct"] = report.coverage_pct
+                        support_targets = [
+                            item
+                            for item in self._source_repair_targets(
+                                plan,
+                                source_id,
+                                report.orphan_paths,
+                                report.domain_failures,
+                            )
+                            if item.get("kind") == "source-support"
+                        ]
+                        if support_targets:
+                            target["orphan_paths"] = support_targets[0][
+                                "orphan_paths"
+                            ]
+                        else:
+                            resolved_support_targets.append(target)
+        if isinstance(targets, list) and resolved_support_targets:
+            resolved_ids = {id(target) for target in resolved_support_targets}
+            targets[:] = [target for target in targets if id(target) not in resolved_ids]
+        state["re_evidence_eof_repair_protocol_version"] = (
+            _EVIDENCE_EOF_REPAIR_PROTOCOL_VERSION
+        )
+        if repaired:
+            print(
+                f"[re] normalized {repaired} one-line EOF evidence overrun(s) "
+                "from interrupted targets",
+                flush=True,
+            )
+        return True
+
+    def _upgrade_exact_coverage_repair_protocol(
+        self, state: dict, plan: ReExecutionPlan
+    ) -> bool:
+        """Reclaim repaired sources that regressed below exact coverage."""
+        if (
+            state.get("re_exact_coverage_repair_protocol_version")
+            == _EXACT_COVERAGE_REPAIR_PROTOCOL_VERSION
+        ):
+            return False
+        state["re_exact_coverage_repair_protocol_version"] = (
+            _EXACT_COVERAGE_REPAIR_PROTOCOL_VERSION
+        )
+        if not self._source_convergence_enabled(state):
+            return True
+        source_states = state.get("re_source_states")
+        order = state.get("re_source_order")
+        if not isinstance(source_states, dict) or not isinstance(order, list):
+            return True
+
+        pending_repairs = state.get("re_pending_source_repair_targets")
+        if not isinstance(pending_repairs, dict):
+            pending_repairs = {}
+        reclaimed: list[str] = []
+        for source_id in order:
+            if not isinstance(source_id, str):
+                continue
+            source_state = source_states.get(source_id)
+            if not isinstance(source_state, dict) or source_state.get("status") != "passed":
+                continue
+            repairs = source_state.get("domain_repairs")
+            was_repaired = self._source_counter(source_state, "source_cycles") > 0 or (
+                isinstance(repairs, dict) and bool(repairs)
+            )
+            if not was_repaired:
+                continue
+            report = measure_source_quality(
+                self._run_re_dir,
+                plan,
+                source_id,
+                coverage_threshold=self._metric(state, "coverage_threshold"),
+            )
+            report_path = write_re_source_quality_report(self._run_re_dir, report)
+            source_state["quality_report"] = str(report_path)
+            source_state["coverage_pct"] = report.coverage_pct
+            if not report.orphan_paths:
+                continue
+            targets = self._source_repair_targets(
+                plan, source_id, report.orphan_paths, report.domain_failures
+            )
+            if not targets:
+                continue
+            source_state["status"] = "pending"
+            source_state["exact_coverage_repair_required"] = True
+            pending_repairs[source_id] = targets
+            reclaimed.append(source_id)
+
+        if not reclaimed:
+            return True
+        state["re_pending_source_repair_targets"] = pending_repairs
+        state["re_specification_targets"] = []
+        state.pop("re_active_source_id", None)
+        state.pop("re_workspace_synthesis_complete", None)
+        self._activate_next_source(state, plan)
+        print(
+            "[re] exact coverage recovery: "
+            + ", ".join(reclaimed)
+            + " - repairing residual or regressed coverage before synthesis",
+            flush=True,
+        )
+        return True
 
     def _reclaim_quality_debt_for_budget_override(
         self, state: dict, plan: ReExecutionPlan
@@ -1061,7 +1391,12 @@ class ReExtractionController:
             source_state["quality_report"] = str(report_path)
             source_state["coverage_pct"] = report.coverage_pct
             self._report_source_measurement(report)
-            if report.passed:
+            exact_coverage_required = bool(
+                source_state.get("exact_coverage_repair_required")
+            )
+            if report.passed and not (
+                exact_coverage_required and report.orphan_paths
+            ):
                 source_state["status"] = "passed"
                 self._report_source_ready(report, active_source_id, plan)
                 state.pop("re_active_source_id", None)
@@ -1078,6 +1413,8 @@ class ReExtractionController:
                 return None
 
             source_state["source_cycles"] = cycles + 1
+            if report.orphan_paths:
+                source_state["exact_coverage_repair_required"] = True
             state["re_specification_targets"] = self._source_repair_targets(
                 plan, active_source_id, report.orphan_paths, report.domain_failures
             )
@@ -1627,12 +1964,33 @@ class ReExtractionController:
             return None
 
         report = validate_staged_re_quality(self._run_re_dir, plan)
+        unexpected = tuple(
+            failure
+            for failure in report.failures
+            if failure.reason == "unexpected_domain_spec"
+        )
+        if unexpected:
+            cleanup_error = self._remove_unexpected_domain_specs(plan, unexpected)
+            if cleanup_error is not None:
+                return cleanup_error
+            report = validate_staged_re_quality(self._run_re_dir, plan)
         report_path = write_re_quality_report(self._run_re_dir, report)
         state["re_quality_gate_report"] = str(report_path)
         if not report.passed:
             targets = self._repair_specification_targets(report)
             if targets is None:
                 return "re_domain_manifest_invalid"
+            for target in targets:
+                target["accept_if_passing"] = True
+            for failure in report.failures:
+                if not failure.domain_id:
+                    continue
+                write_re_target_quality_report(
+                    self._run_re_dir,
+                    failure.source_id,
+                    failure.domain_id,
+                    ReQualityReport(passed=False, failures=(failure,)),
+                )
             state["re_specification_targets"] = targets
             state["re_workspace_synthesis_complete"] = False
             # This is a protocol migration, not a failed repair pass. Reset
@@ -1640,10 +1998,41 @@ class ReExtractionController:
             # protocol gets one bounded chance to correct legacy output.
             state.pop("re_domain_quality_attempts", None)
             state.pop("re_target_quality_repair_snapshot", None)
+        else:
+            existing_targets = state.get("re_specification_targets")
+            if isinstance(existing_targets, list):
+                for target in existing_targets:
+                    if (
+                        isinstance(target, dict)
+                        and target.get("kind") == "source-domain"
+                    ):
+                        target["accept_if_passing"] = True
         state["re_target_quality_protocol_version"] = (
             _TARGET_QUALITY_PROTOCOL_VERSION
         )
         self._save_state(state)
+        return None
+
+    def _remove_unexpected_domain_specs(
+        self,
+        plan: ReExecutionPlan,
+        failures: tuple[ReSpecQualityFailure, ...],
+    ) -> str | None:
+        """Remove obsolete generated specs that are not owned by a live manifest."""
+        source_ids = {source.id for source in plan.refresh_sources}
+        try:
+            for failure in failures:
+                if failure.source_id not in source_ids or not failure.domain_id:
+                    return "re_unexpected_domain_spec_cleanup_failed"
+                specs_root = (
+                    self._run_re_dir / "sources" / failure.source_id / "specs"
+                ).resolve()
+                stale_dir = failure.spec_path.parent.resolve()
+                if stale_dir.parent != specs_root or not stale_dir.is_dir():
+                    return "re_unexpected_domain_spec_cleanup_failed"
+                shutil.rmtree(stale_dir)
+        except OSError:
+            return "re_unexpected_domain_spec_cleanup_failed"
         return None
 
     def _schedule_quality_repair(
@@ -1868,6 +2257,11 @@ class ReExtractionController:
                 "Include exactly one `semantic_quality_review` object for the "
                 "requested domain; the controller validates it before routing."
             )
+            lines.append(
+                "Within its domain record, `findings` and `source_evidence` are "
+                "sibling YAML lists and every list item is a string; never nest "
+                "`source_evidence` beneath a finding item."
+            )
         return "\n".join(lines) + "\n"
 
     def _prompt_for(
@@ -1918,6 +2312,11 @@ class ReExtractionController:
             if semantic_target is None:
                 raise ValueError("semantic validation target is required")
             prompt += self._semantic_domain_inventory_prompt(semantic_target)
+            recovery_prompt = self._semantic_result_contract_recovery_prompt(
+                state, semantic_target
+            )
+            if recovery_prompt:
+                prompt += recovery_prompt
             semantic_error = state.get("re_semantic_review_invalid_error")
             if isinstance(semantic_error, str) and semantic_error:
                 prompt += (
@@ -2028,19 +2427,48 @@ class ReExtractionController:
         plan: ReExecutionPlan,
         changed_sources: set[str],
     ) -> str | None:
-        """Replace obsolete staged specs when domain ownership has changed."""
+        """Reconcile staged specs when domain ownership has changed.
+
+        Specs whose controller-owned domain ID still exists remain valid. Only
+        obsolete directories are removed and only newly discovered domains are
+        queued. This keeps an additive partition upgrade from regenerating an
+        entire already-converged source.
+        """
         try:
+            refreshed_targets: list[dict[str, object]] = []
             for source_id in changed_sources:
+                manifest = load_domain_manifest(
+                    domain_manifest_path(self._run_re_dir, source_id)
+                )
+                expected_ids = {domain.domain_id for domain in manifest.domains}
                 specs_root = self._run_re_dir / "sources" / source_id / "specs"
-                if specs_root.exists():
-                    shutil.rmtree(specs_root)
-            refreshed_targets = [
-                target
-                for target in self._initial_specification_targets(plan)
-                if target.get("source_id") in changed_sources
-            ]
+                if specs_root.is_dir():
+                    for staged in specs_root.iterdir():
+                        if staged.is_dir() and staged.name not in expected_ids:
+                            shutil.rmtree(staged)
+                for domain in manifest.domains:
+                    spec_path = specs_root / domain.domain_id / "spec.md"
+                    if not spec_path.is_file():
+                        refreshed_targets.append(
+                            {
+                                "kind": "source-domain",
+                                "source_id": source_id,
+                                "domain_id": domain.domain_id,
+                                "root": domain.root,
+                            }
+                        )
         except (OSError, ValueError) as exc:
             return f"domain manifest migration failed: {exc}"
+
+        try:
+            architecture = build_re_architecture_map(
+                plan, run_re_dir=self._run_re_dir
+            )
+            map_path, catalog_path = write_re_architecture_catalog(
+                self._run_re_dir, architecture
+            )
+        except (OSError, ValueError) as exc:
+            return f"architecture catalog generation failed: {exc}"
 
         existing_targets = state.get("re_specification_targets")
         remaining_targets = (
@@ -2057,6 +2485,8 @@ class ReExtractionController:
         )
         state["re_specification_targets"] = refreshed_targets + remaining_targets
         state["re_workspace_synthesis_complete"] = False
+        state["re_architecture_map"] = str(map_path)
+        state["re_domain_catalog"] = str(catalog_path)
         state["phase"] = "re-extract-2-specify"
         for key in (
             "re_quality_repair_pending",
@@ -2325,6 +2755,42 @@ class ReExtractionController:
         )
         return tuple(sorted(write_paths))
 
+    def _invalidate_workspace_synthesis_outputs(
+        self,
+        plan: ReExecutionPlan,
+        state: dict,
+    ) -> None:
+        """Require synthesis-only runs to prove every selected output was rewritten."""
+        removed: list[str] = []
+        outputs = self._workspace_synthesis_output_paths(plan, state)
+        self._workspace_synthesis_output_snapshot = {
+            path: path.read_bytes() if path.is_file() and not path.is_symlink() else None
+            for path in outputs
+        }
+        for path in outputs:
+            if path.exists():
+                path.unlink()
+                removed.append(path.relative_to(self._run_re_dir).as_posix())
+        state["re_workspace_synthesis_forced_rewrite"] = {
+            "invalidated_at": datetime.now(timezone.utc).isoformat(),
+            "outputs": removed,
+        }
+        self._workspace_synthesis_outputs_invalidated = True
+        self._save_state(state)
+
+    def _restore_workspace_synthesis_outputs(self) -> None:
+        """Roll back a failed synthesis-only rewrite to the last publishable files."""
+        snapshot = self._workspace_synthesis_output_snapshot
+        if snapshot is None:
+            return
+        for path, content in snapshot.items():
+            if path.is_symlink() or path.exists():
+                path.unlink()
+            if content is not None:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
+        self._workspace_synthesis_output_snapshot = None
+
     def _workspace_synthesis_dirty_targets(
         self,
         plan: ReExecutionPlan,
@@ -2512,13 +2978,45 @@ class ReExtractionController:
                     return None
                 return self._block(state, "re_workspace_synthesis_incomplete")
 
+        if target.get("kind") == "source-support":
+            source_id = target.get("source_id")
+            if isinstance(source_id, str):
+                self._merge_source_support_baseline(source_id)
+                repaired = repair_staged_re_source_support_evidence(
+                    self._run_re_dir, plan, source_id
+                )
+                if repaired:
+                    print(
+                        "[re] normalized "
+                        f"{repaired} one-line EOF evidence overrun(s): "
+                        f"{source_id}/supporting-artifacts",
+                        flush=True,
+                    )
+
         target_report = self._target_quality_report(plan, target)
+        if target_report is not None and not target_report.passed:
+            source_id = target.get("source_id")
+            domain_id = target.get("domain_id")
+            if isinstance(source_id, str) and isinstance(domain_id, str):
+                repaired = repair_staged_re_domain_evidence(
+                    self._run_re_dir, plan, source_id, domain_id
+                )
+                if repaired:
+                    print(
+                        "[re] normalized "
+                        f"{repaired} one-line EOF evidence overrun(s): "
+                        f"{source_id}/{domain_id}",
+                        flush=True,
+                    )
+                    target_report = self._target_quality_report(plan, target)
         if target_report is not None and not target_report.passed:
             source_id = str(target["source_id"])
             domain_id = str(target["domain_id"])
             report_path = write_re_target_quality_report(
                 self._run_re_dir, source_id, domain_id, target_report
             )
+            if self._source_convergence_enabled(state):
+                self._refresh_target_coverage_debt(state, plan, target)
             attempts = self._record_target_quality_failure(state, target, target_report)
             repair_limit = self._target_quality_repair_limit(state, target_report)
             state["re_target_quality_gate_report"] = str(report_path)
@@ -2567,6 +3065,36 @@ class ReExtractionController:
         self._complete_specification_target(state, target)
         return None
 
+    def _refresh_target_coverage_debt(
+        self,
+        state: dict,
+        plan: ReExecutionPlan,
+        target: dict[str, object],
+    ) -> None:
+        """Remove newly covered files from a focused target's next repair prompt."""
+        raw_orphans = target.get("orphan_paths")
+        source_id = target.get("source_id")
+        if not isinstance(raw_orphans, list) or not isinstance(source_id, str):
+            return
+        if any(not isinstance(path, str) or not path for path in raw_orphans):
+            return
+        report = measure_source_quality(
+            self._run_re_dir,
+            plan,
+            source_id,
+            coverage_threshold=self._metric(state, "coverage_threshold"),
+        )
+        report_path = write_re_source_quality_report(self._run_re_dir, report)
+        source_state = self._source_state(state, source_id)
+        source_state["quality_report"] = str(report_path)
+        source_state["coverage_pct"] = report.coverage_pct
+        remaining = set(report.orphan_paths)
+        unresolved = [path for path in raw_orphans if path in remaining]
+        if unresolved:
+            target["orphan_paths"] = unresolved
+        else:
+            target.pop("orphan_paths", None)
+
     def _run_specification_target_post_dispatch(
         self,
         state: dict,
@@ -2582,6 +3110,43 @@ class ReExtractionController:
             target,
             agent_block_detail=agent_block_detail,
         )
+
+    def _accept_passing_staged_specification_target(
+        self,
+        state: dict,
+        plan: ReExecutionPlan,
+        target: dict[str, object],
+    ) -> bool:
+        """Consume a queued source-domain target that already passes deterministically."""
+        if (
+            target.get("kind") != "source-domain"
+            or target.get("accept_if_passing") is not True
+        ):
+            return False
+        source_id = target.get("source_id")
+        domain_id = target.get("domain_id")
+        if not isinstance(source_id, str) or not isinstance(domain_id, str):
+            return False
+        repaired = repair_staged_re_domain_evidence(
+            self._run_re_dir, plan, source_id, domain_id
+        )
+        report = self._target_quality_report(plan, target)
+        if report is None or not report.passed:
+            return False
+        if repaired:
+            print(
+                f"[re] normalized {repaired} recoverable citation(s): "
+                f"{source_id}/{domain_id}",
+                flush=True,
+            )
+        self._clear_target_quality_failure(state, target)
+        self._complete_specification_target(state, target)
+        print(
+            f"[re] accepted passing staged target without provider dispatch: "
+            f"{source_id}/{domain_id}",
+            flush=True,
+        )
+        return True
 
     @staticmethod
     def _dispatch_failure_detail(
@@ -2682,7 +3247,110 @@ class ReExtractionController:
         )
         retries[key] = attempts + 1
         state["re_semantic_result_contract_retry_pending"] = key
+        raw_output = getattr(result, "raw_output", "")
+        if not isinstance(raw_output, str):
+            raw_output = ""
+        marker = raw_output.rfind("echelon_result:")
+        excerpt = raw_output[marker:] if marker >= 0 else raw_output[-32000:]
+        excerpt = excerpt[:32000]
+        required_verdict = (
+            "REPAIR" if self._raw_semantic_repair_verdict(excerpt) else None
+        )
+        state["re_semantic_result_contract_retry_context"] = {
+            "key": key,
+            "validation_reason": str(
+                getattr(result, "echelon_result_validation_reason", "") or ""
+            )[:2000],
+            "required_verdict": required_verdict,
+            "raw_output": excerpt,
+        }
         return key, _SEMANTIC_RESULT_CONTRACT_RETRY_LIMIT
+
+    @staticmethod
+    def _raw_semantic_repair_verdict(raw_output: str) -> bool:
+        return bool(
+            re.search(
+                r"(?mi)^\s*verdict\s*:\s*(?:['\"])?REPAIR(?:['\"])?\s*(?:#.*)?$",
+                raw_output,
+            )
+            or re.search(
+                r"(?i)['\"]verdict['\"]\s*:\s*['\"]REPAIR['\"]",
+                raw_output,
+            )
+        )
+
+    def _semantic_result_contract_recovery_prompt(
+        self,
+        state: dict,
+        semantic_target: dict[str, str],
+    ) -> str:
+        key = self._semantic_result_contract_target_key(semantic_target)
+        context = state.get("re_semantic_result_contract_retry_context")
+        if (
+            key is None
+            or state.get("re_semantic_result_contract_retry_pending") != key
+            or not isinstance(context, dict)
+            or context.get("key") != key
+        ):
+            return ""
+        raw_output = context.get("raw_output")
+        if not isinstance(raw_output, str):
+            raw_output = ""
+        required = context.get("required_verdict")
+        required_line = (
+            "The prior completed audit returned REPAIR. Preserve REPAIR exactly; "
+            "a PASS result is a contract conflict and will be rejected.\n"
+            if required == "REPAIR"
+            else "Preserve the prior audit's semantic verdict exactly.\n"
+        )
+        return (
+            "\n## Semantic Result Contract Recovery\n"
+            "The prior audit completed, but its final YAML control payload was "
+            "malformed. This dispatch repairs only that payload shape. Do not run "
+            "a fresh audit and do not change, discard, or reinterpret its findings.\n"
+            f"{required_line}"
+            "In the domain record, use `findings: [string, ...]` and a separate "
+            "sibling `source_evidence: [string, ...]`; never attach evidence to a "
+            "finding list item.\n\n"
+            "### Prior completed audit output\n"
+            f"{raw_output}\n"
+        )
+
+    def _semantic_result_contract_recovery_conflict(
+        self,
+        state: dict,
+        *,
+        phase: str,
+        semantic_target: dict[str, str] | None,
+        payload: dict,
+    ) -> str | None:
+        if phase != "re-extract-5-validate":
+            return None
+        key = self._semantic_result_contract_target_key(semantic_target)
+        context = state.get("re_semantic_result_contract_retry_context")
+        if (
+            key is None
+            or state.get("re_semantic_result_contract_retry_pending") != key
+            or not isinstance(context, dict)
+            or context.get("key") != key
+            or context.get("required_verdict") != "REPAIR"
+        ):
+            return None
+        review = payload.get("semantic_quality_review")
+        domains = review.get("domains") if isinstance(review, dict) else None
+        if not isinstance(domains, list):
+            return None
+        for domain in domains:
+            if not isinstance(domain, dict):
+                continue
+            domain_key = f"{domain.get('source_id')}/{domain.get('domain_id')}"
+            if domain_key == key and domain.get("verdict") == "PASS":
+                return (
+                    f"semantic result contract recovery for {key} cannot downgrade "
+                    "REPAIR to PASS; the prior completed audit's substantive verdict "
+                    "must survive payload-format repair"
+                )
+        return None
 
     def _clear_semantic_result_contract_retry(
         self,
@@ -2698,6 +3366,7 @@ class ReExtractionController:
             "re_semantic_result_contract_retry_pending"
         ) == key:
             state.pop("re_semantic_result_contract_retry_pending", None)
+            state.pop("re_semantic_result_contract_retry_context", None)
 
     @staticmethod
     def _agent_block_detail(payload: dict) -> str:
@@ -2986,6 +3655,19 @@ class ReExtractionController:
             raise ValueError(f"unknown controller specification source: {source_id}")
         source_root = Path(source.absolute_path).resolve()
         absolute_domain_root = (source_root / root).resolve()
+        owned_files = source_files(absolute_domain_root)
+        owned_file_inventory = ""
+        if len(owned_files) <= _SPECIFICATION_FILE_INVENTORY_LIMIT:
+            entries = "\n".join(
+                f"- `{path.relative_to(absolute_domain_root).as_posix()}`"
+                for path in owned_files
+            )
+            owned_file_inventory = (
+                f"Owned source file inventory ({len(owned_files)} files):\n"
+                f"{entries}\n"
+                "Treat this controller-generated list as exhaustive for the owned root; "
+                "do not guess additional filenames.\n"
+            )
         quality_failure_guidance = self._target_quality_failure_guidance(target_report)
         orphan_paths = target.get("orphan_paths")
         coverage_repair = ""
@@ -3052,7 +3734,8 @@ class ReExtractionController:
             f"Owned source root: `{root}`\n"
             f"Source repository root: `{source_root}`\n"
             f"Absolute owned domain root: `{absolute_domain_root}`\n"
-            f"RE output directory: `{self._run_re_dir.resolve()}`\n"
+            + owned_file_inventory
+            + f"RE output directory: `{self._run_re_dir.resolve()}`\n"
             f"Domain manifest: `{manifest}`\n"
             "Do not look for source code below the RE output directory; it contains "
             "artifacts and analysis, not a staged repository copy. When the provider "
@@ -3114,7 +3797,14 @@ class ReExtractionController:
                     self._run_re_dir, architecture
                 )
             else:
-                load_re_architecture_map(map_path)
+                architecture = load_re_architecture_map(map_path)
+                current = build_re_architecture_map(
+                    plan, run_re_dir=self._run_re_dir
+                )
+                if architecture != current:
+                    map_path, catalog_path = write_re_architecture_catalog(
+                        self._run_re_dir, current
+                    )
             snapshot_error = self._refresh_repair_snapshots_for_architecture_overlay(
                 state
             )
@@ -3174,6 +3864,11 @@ class ReExtractionController:
             path = self._run_re_dir / "sources" / source_id / "supporting-artifacts.md"
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
+            if kind == "source-support" and path.is_file():
+                baseline = self._source_support_baseline_path(source_id)
+                if not baseline.exists():
+                    baseline.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(path, baseline)
             cleanup_error = self._clean_noncanonical_target_artifacts(
                 state, target, stage="pre-dispatch"
             )
@@ -3183,6 +3878,53 @@ class ReExtractionController:
         except OSError as exc:
             return f"re_specification_target_prepare_failed: {exc}"
         return None
+
+    def _source_support_baseline_path(self, source_id: str) -> Path:
+        return (
+            self._run_re_dir
+            / "quality"
+            / "support-baselines"
+            / source_id
+            / "supporting-artifacts.md"
+        )
+
+    def _merge_source_support_baseline(self, source_id: str) -> None:
+        """Restore prior support evidence when an agent rewrites the register."""
+        baseline_path = self._source_support_baseline_path(source_id)
+        support_path = (
+            self._run_re_dir / "sources" / source_id / "supporting-artifacts.md"
+        )
+        if not baseline_path.is_file() or not support_path.is_file():
+            return
+        baseline = baseline_path.read_text(encoding="utf-8")
+        current = support_path.read_text(encoding="utf-8")
+        baseline_references = set(source_references(baseline))
+        current_references = set(source_references(current))
+        if not baseline_references.issubset(current_references):
+            merged = (
+                current.rstrip()
+                + "\n\n## Preserved Supporting Evidence\n\n"
+                + baseline.strip()
+                + "\n"
+            )
+            fd, temporary = tempfile.mkstemp(
+                dir=str(support_path.parent),
+                prefix=f".{support_path.name}-",
+                suffix=".tmp",
+            )
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    handle.write(merged)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                Path(temporary).replace(support_path)
+            except Exception:
+                try:
+                    os.unlink(temporary)
+                except OSError:
+                    pass
+                raise
+        baseline_path.unlink(missing_ok=True)
 
     def _clean_noncanonical_target_artifacts(
         self,

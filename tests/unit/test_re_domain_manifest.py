@@ -172,6 +172,83 @@ def test_discovery_splits_an_oversized_component_before_deep_specification(
 
 
 @pytest.mark.unit
+def test_discovery_owns_tests_when_splitting_an_oversized_component(
+    tmp_path: Path,
+) -> None:
+    source = _source(tmp_path)
+    root = Path(source.absolute_path)
+    component = root / "apps" / "api"
+    component.mkdir(parents=True)
+    (component / "pom.xml").write_text("<project/>\n", encoding="utf-8")
+    web = root / "apps" / "web"
+    web.mkdir(parents=True)
+    (web / "package.json").write_text("{}\n", encoding="utf-8")
+    (web / "main.ts").write_text("export {};\n", encoding="utf-8")
+    for tree in ("src/main/java", "src/test/java"):
+        directory = component / tree
+        directory.mkdir(parents=True)
+        for number in range(2):
+            (directory / f"File{number}.java").write_text(
+                "class Example {}\n" * 2_000,
+                encoding="utf-8",
+            )
+
+    manifest = discover_source_domains(source)
+
+    assert [(domain.domain_id, domain.root) for domain in manifest.domains] == [
+        ("001-re-apps-api-src-main-java", "apps/api/src/main/java"),
+        ("002-re-apps-web", "apps/web"),
+        ("003-re-apps-api-src-test-java", "apps/api/src/test/java"),
+    ]
+
+
+@pytest.mark.unit
+def test_discovery_recursively_splits_an_oversized_test_root_with_direct_setup_files(
+    tmp_path: Path,
+) -> None:
+    source = _source(tmp_path)
+    root = Path(source.absolute_path)
+    (root / "package.json").write_text("{}\n", encoding="utf-8")
+    tests = root / "tests"
+    tests.mkdir()
+    (tests / "setup.ts").write_text("export {};\n", encoding="utf-8")
+    graphql = tests / "graphql"
+    graphql.mkdir()
+    for child_number in range(13):
+        directory = graphql / f"query-{child_number:02d}"
+        directory.mkdir()
+        for file_number in range(2):
+            (directory / f"file-{file_number}.ts").write_text(
+                "export const value = true;\n" * 300,
+                encoding="utf-8",
+            )
+    services = tests / "services"
+    services.mkdir()
+    for file_number in range(2):
+        (services / f"file-{file_number}.ts").write_text(
+            "export const value = true;\n" * 2_000,
+            encoding="utf-8",
+        )
+    # Force the initial root partition to retain top-level boundaries. The
+    # capacity-refinement pass must still split the oversized tests root.
+    for number in range(11):
+        directory = root / f"peer-{number:02d}"
+        directory.mkdir()
+        for file_number in range(2):
+            (directory / f"file-{file_number}.ts").write_text(
+                "export {};\n",
+                encoding="utf-8",
+            )
+
+    manifest = discover_source_domains(source)
+
+    roots = {domain.root for domain in manifest.domains}
+    assert "tests" not in roots
+    assert "tests/graphql" not in roots
+    assert {"tests/graphql/query-00", "tests/services"} <= roots
+
+
+@pytest.mark.unit
 def test_discovery_excludes_hidden_directories_and_root_tooling_from_component_domains(
     tmp_path: Path,
 ) -> None:

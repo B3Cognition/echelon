@@ -10,6 +10,8 @@ from harness.re_planner import ReExecutionPlan
 from harness.re_quality_gate import (
     measure_source_quality,
     quality_target_for_domain,
+    repair_staged_re_domain_evidence,
+    repair_staged_re_source_support_evidence,
     validate_semantic_quality_review,
     validate_staged_re_domain_quality,
     validate_staged_re_quality,
@@ -109,6 +111,125 @@ def test_gate_accepts_domain_relative_source_evidence(tmp_path: Path) -> None:
     report = validate_staged_re_quality(run_dir / "re", _plan(run_dir))
 
     assert report.passed
+
+
+@pytest.mark.unit
+def test_gate_rejects_java_package_declaration_only_evidence(tmp_path: Path) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    source_file = tmp_path / "sources/api/src/PackageOnly.java"
+    source_file.write_text(
+        "package example;\n\npublic final class PackageOnly {}\n",
+        encoding="utf-8",
+    )
+    spec = run_dir / "re/sources/api/specs/001-re-domain/spec.md"
+    spec.write_text(
+        spec.read_text(encoding="utf-8")
+        + "\nUnsupported claim: `src/PackageOnly.java:1-1`.\n",
+        encoding="utf-8",
+    )
+
+    report = validate_staged_re_quality(run_dir / "re", _plan(run_dir))
+
+    assert not report.passed
+    assert "`src/PackageOnly.java:1-1`" in report.failures[0].invalid_source_evidence
+
+
+@pytest.mark.unit
+def test_gate_accepts_java_evidence_that_includes_behavior_lines(tmp_path: Path) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    source_file = tmp_path / "sources/api/src/PackageOnly.java"
+    source_file.write_text(
+        "package example;\n\npublic final class PackageOnly {}\n",
+        encoding="utf-8",
+    )
+    spec = run_dir / "re/sources/api/specs/001-re-domain/spec.md"
+    spec.write_text(
+        spec.read_text(encoding="utf-8")
+        + "\nSupported claim: `src/PackageOnly.java:1-3`.\n",
+        encoding="utf-8",
+    )
+
+    report = validate_staged_re_quality(run_dir / "re", _plan(run_dir))
+
+    assert report.passed
+
+
+@pytest.mark.unit
+def test_repair_expands_java_package_only_evidence_to_declaration_body(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    source_file = tmp_path / "sources/api/src/PackageOnly.java"
+    source_file.write_text(
+        "package example;\n\npublic final class PackageOnly {\n"
+        "    public boolean enabled() { return true; }\n}\n",
+        encoding="utf-8",
+    )
+    spec = run_dir / "re/sources/api/specs/001-re-domain/spec.md"
+    spec.write_text(
+        spec.read_text(encoding="utf-8")
+        + "\nSupported claim: `src/PackageOnly.java:1-1`.\n",
+        encoding="utf-8",
+    )
+
+    repaired = repair_staged_re_domain_evidence(
+        run_dir / "re", _plan(run_dir), "api", "001-re-domain"
+    )
+
+    assert repaired == 1
+    assert "`src/PackageOnly.java:3-5`" in spec.read_text(encoding="utf-8")
+    assert validate_staged_re_quality(run_dir / "re", _plan(run_dir)).passed
+
+
+@pytest.mark.unit
+def test_repair_clamps_only_one_line_eof_evidence_overruns(tmp_path: Path) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    spec = run_dir / "re" / "sources" / "api" / "specs" / "001-re-domain" / "spec.md"
+    (tmp_path / "sources" / "api" / "src" / "eof.ts").write_text(
+        "export const eof = true;\n", encoding="utf-8"
+    )
+    text = spec.read_text(encoding="utf-8")
+    text += (
+        "\nRepair: `src/eof.ts:1-2`. Too far: `src/file-2.ts:1-4`. "
+        "Bad start: `src/file-3.ts:3`.\n"
+    )
+    spec.write_text(text, encoding="utf-8")
+
+    repaired = repair_staged_re_domain_evidence(
+        run_dir / "re", _plan(run_dir), "api", "001-re-domain"
+    )
+
+    assert repaired == 1
+    repaired_text = spec.read_text(encoding="utf-8")
+    assert "`src/eof.ts:1`" in repaired_text
+    assert "`src/eof.ts:1-2`" not in repaired_text
+    assert "`src/file-2.ts:1-4`" in repaired_text
+    assert "`src/file-3.ts:3`" in repaired_text
+
+
+@pytest.mark.unit
+def test_repair_clamps_one_line_eof_overrun_in_source_support_evidence(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    source_root = tmp_path / "sources" / "api"
+    (source_root / "root-support.ts").write_text(
+        "export const support = true;\n", encoding="utf-8"
+    )
+    support = run_dir / "re/sources/api/supporting-artifacts.md"
+    support.write_text(
+        "# Supporting Artifacts\n\nEvidence: `root-support.ts:1-2`.\n",
+        encoding="utf-8",
+    )
+
+    repaired = repair_staged_re_source_support_evidence(
+        run_dir / "re", _plan(run_dir), "api"
+    )
+
+    assert repaired == 1
+    assert "`root-support.ts:1`" in support.read_text(encoding="utf-8")
+    report = measure_source_quality(run_dir / "re", _plan(run_dir), "api")
+    assert report.orphan_paths == ()
 
 
 @pytest.mark.unit

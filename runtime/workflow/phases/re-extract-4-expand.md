@@ -5,7 +5,7 @@
 
 - `{state.output_dir}/state.json`
 - `{state.output_dir}/re-source-index.json`
-- `{state.output_dir}/quality/{source-id}/coverage-report.md`
+- `{state.output_dir}/quality/sources/{source-id}.json`
 - `{state.output_dir}/sources/{source-id}/analysis.json`
 - `{state.output_dir}/sources/{source-id}/specs/{domain-id}/spec.md`
 
