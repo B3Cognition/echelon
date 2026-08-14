@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+import hashlib
+import json
+from pathlib import Path
 from typing import Mapping
 
 from echelon.spec_authoring import (
@@ -90,13 +93,22 @@ def validate_repair_state(value: object) -> dict[str, object]:
     if type(value) is not dict or frozenset(value) != _REPAIR_STATE_KEYS:
         raise ValueError("proportional repair state has invalid fields")
     state = deepcopy(value)
-    if state["schema_version"] != SCHEMA_VERSION:
+    if (
+        type(state["schema_version"]) is not int
+        or state["schema_version"] != SCHEMA_VERSION
+    ):
         raise ValueError("proportional repair state schema version is invalid")
     if state["authoring_mode"] != PROPORTIONAL_MODE:
         raise ValueError("proportional repair state authoring mode is invalid")
-    if state["automatic_limit"] != AUTOMATIC_REPAIR_LIMIT:
+    if (
+        type(state["automatic_limit"]) is not int
+        or state["automatic_limit"] != AUTOMATIC_REPAIR_LIMIT
+    ):
         raise ValueError("proportional automatic repair limit is invalid")
-    if state["extension_limit"] != EXTENSION_REPAIR_LIMIT:
+    if (
+        type(state["extension_limit"]) is not int
+        or state["extension_limit"] != EXTENSION_REPAIR_LIMIT
+    ):
         raise ValueError("proportional extension repair limit is invalid")
     for key, limit in (
         ("automatic_consumed", AUTOMATIC_REPAIR_LIMIT),
@@ -171,16 +183,61 @@ def _certified_why2_assessment_count(state: Mapping[str, object]) -> int | None:
     scores = state.get("quality_scores")
     if not isinstance(scores, list):
         return None
-    assessment_ids = {
-        score["pass_id"]
-        for score in scores
-        if isinstance(score, Mapping)
-        and score.get("source") == "harness:understanding"
-        and isinstance(score.get("pass_id"), str)
-        and type(score.get("pass")) is bool
-        and score["pass_id"].startswith("WHY2-")
-    }
+    assessment_ids: set[str] = set()
+    for score in scores:
+        if not isinstance(score, Mapping) or score.get(
+            "source"
+        ) != "harness:understanding":
+            continue
+        assessment_id = _certified_why2_assessment_id(score)
+        if assessment_id is None:
+            return None
+        assessment_ids.add(assessment_id)
     return len(assessment_ids) if assessment_ids else None
+
+
+def _certified_why2_assessment_id(score: Mapping[str, object]) -> str | None:
+    """Return one WHY2 identity only when its immutable report verifies."""
+    pass_id = score.get("pass_id")
+    passed = score.get("pass")
+    evidence = score.get("evidence")
+    evidence_digest = score.get("evidence_digest")
+    if (
+        type(pass_id) is not str
+        or type(passed) is not bool
+        or type(evidence) is not str
+        or not evidence.strip()
+        or not _is_sha256(evidence_digest)
+    ):
+        return None
+    try:
+        report_path = Path(evidence).expanduser()
+        content = report_path.read_bytes()
+        if hashlib.sha256(content).hexdigest() != evidence_digest:
+            return None
+        report = json.loads(content)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(report, Mapping):
+        return None
+    iteration = report.get("iteration")
+    report_spec = report.get("spec")
+    if (
+        type(report.get("schema_version")) is not int
+        or report.get("schema_version") != 1
+        or report.get("status") != "completed"
+        or report.get("phase") != "phase1-why2"
+        or type(iteration) is not int
+        or iteration < 0
+        or pass_id != f"WHY2-iter-{iteration}"
+        or report.get("pass") is not passed
+        or not isinstance(report_spec, Mapping)
+        or type(report_spec.get("path")) is not str
+        or not report_spec.get("path").strip()
+        or not _is_sha256(report_spec.get("sha256"))
+    ):
+        return None
+    return pass_id
 
 
 def _legacy_iteration(state: Mapping[str, object]) -> int:

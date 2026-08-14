@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+from pathlib import Path
+
 import pytest
 
 from harness.proportional_quality import (
@@ -57,14 +61,54 @@ def test_existing_valid_state_round_trips_detached_on_resume() -> None:
     assert existing["automatic_consumed"] == 2
 
 
-def test_legacy_history_counts_completed_certified_why2_assessments() -> None:
+def _certified_why2_score(
+    tmp_path: Path,
+    *,
+    iteration: int,
+    passed: bool,
+) -> dict[str, object]:
+    report_path = tmp_path / f"phase1-why2-iter-{iteration}.json"
+    report_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "status": "completed",
+                "phase": "phase1-why2",
+                "iteration": iteration,
+                "spec": {"path": "specs/001/spec.md", "sha256": "a" * 64},
+                "pass": passed,
+            }
+        ),
+        encoding="utf-8",
+    )
+    digest = hashlib.sha256(report_path.read_bytes()).hexdigest()
+    return {
+        "pass": passed,
+        "pass_id": f"WHY2-iter-{iteration}",
+        "source": "harness:understanding",
+        "evidence": str(report_path),
+        "evidence_digest": digest,
+        "overall": 0.9,
+        "structure": 0.9,
+        "readability": 0.9,
+        "cognitive": 0.9,
+        "semantic": 0.9,
+        "testability": 0.9,
+        "behavioral": 0.9,
+        "depth": 0.9,
+    }
+
+
+def test_legacy_history_counts_completed_certified_why2_assessments(
+    tmp_path: Path,
+) -> None:
     repair = initialize_repair_state(
         {
             "quality_scores": [
-                {"source": "harness:understanding", "pass_id": "WHY2-iter-0", "pass": False},
-                {"source": "harness:understanding", "pass_id": "WHY2-iter-1", "pass": True},
-                {"source": "harness:understanding", "pass_id": "WHY2-iter-2", "pass": False},
-                {"source": "harness:understanding", "pass_id": "WHY2-iter-3", "pass": True},
+                _certified_why2_score(tmp_path, iteration=0, passed=False),
+                _certified_why2_score(tmp_path, iteration=1, passed=True),
+                _certified_why2_score(tmp_path, iteration=2, passed=False),
+                _certified_why2_score(tmp_path, iteration=3, passed=True),
                 {"source": "agent", "pass_id": "WHY2-iter-99", "pass": True},
             ],
             "iteration": 0,
@@ -74,6 +118,31 @@ def test_legacy_history_counts_completed_certified_why2_assessments() -> None:
     assert repair is not None
     assert repair["automatic_consumed"] == 3
     assert repair["migration_basis"] == "why2_history"
+
+
+@pytest.mark.parametrize(
+    "mutate_score",
+    [
+        lambda score: score.pop("evidence_digest"),
+        lambda score: score.update(evidence_digest="f" * 64),
+        lambda score: score.update(pass_id="WHY2-iter-9"),
+        lambda score: score.update(source="harness:forged"),
+    ],
+)
+def test_partial_or_forged_why2_history_falls_back_to_global_iteration(
+    tmp_path: Path,
+    mutate_score,
+) -> None:
+    score = _certified_why2_score(tmp_path, iteration=0, passed=False)
+    mutate_score(score)
+
+    repair = initialize_repair_state(
+        {"quality_scores": [score], "iteration": 2}
+    )
+
+    assert repair is not None
+    assert repair["automatic_consumed"] == 2
+    assert repair["migration_basis"] == "iteration_fallback"
 
 
 def test_history_free_legacy_run_uses_capped_global_iteration() -> None:
@@ -184,6 +253,31 @@ def test_invalid_or_agent_authored_repair_state_fails_closed(
 ) -> None:
     with pytest.raises(ValueError):
         validate_repair_state(_repair_state(**override))
+
+
+@pytest.mark.parametrize(
+    ("field", "malformed"),
+    [
+        ("schema_version", True),
+        ("schema_version", 1.0),
+        ("automatic_limit", True),
+        ("automatic_limit", 3.0),
+        ("extension_limit", True),
+        ("extension_limit", 1.0),
+        ("automatic_consumed", True),
+        ("automatic_consumed", 0.0),
+        ("extension_authorized", True),
+        ("extension_authorized", 0.0),
+        ("extension_consumed", True),
+        ("extension_consumed", 0.0),
+    ],
+)
+def test_repair_state_rejects_boolean_and_equal_valued_float_numbers(
+    field: str,
+    malformed: object,
+) -> None:
+    with pytest.raises(ValueError):
+        validate_repair_state(_repair_state(**{field: malformed}))
 
 
 def test_persisted_repair_key_cannot_be_replaced_with_agent_authored_null() -> None:
