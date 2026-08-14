@@ -143,6 +143,7 @@ def analyze_text(
     extract_entities: bool = False,
     use_energy: bool = False,
     metric_requirements: list[str] | None = None,
+    depth_requirement_ids: set[str] | None = None,
 ) -> dict[str, object]:
     """Analyze text without reading configuration or writing files."""
     if enhanced:
@@ -152,6 +153,7 @@ def analyze_text(
             text,
             use_spacy=use_nlp,
             metric_requirements=metric_requirements,
+            depth_requirement_ids=depth_requirement_ids,
         )
         metrics = result["enhanced_metrics"]
         metric_count = result.get("metric_count", {})
@@ -353,6 +355,7 @@ def analyze_spec_bundle(
             enhanced=True,
             use_nlp=use_nlp,
             metric_requirements=_depth_requirements(projections),
+            depth_requirement_ids={projection.requirement_id for projection in projections},
         )
         _replace_category_metrics(analysis, testability_analysis, "testability")
         _replace_category_metrics(analysis, depth_analysis, "depth")

@@ -36,6 +36,9 @@ def test_shared_detector_skips_intervening_adverbs_before_the_action() -> None:
         ("The command must immediately write the message.", "write", "the message"),
         ("The command must always write the message.", "write", "the message"),
         ("The command must apply the policy.", "apply", "the policy"),
+        ("The command must archive the record.", "archive", "the record"),
+        ("The command must route the request.", "route", "the request"),
+        ("The command must replicate the state.", "replicate", "the state"),
     ],
 )
 def test_shared_detector_selects_known_action_verbs(

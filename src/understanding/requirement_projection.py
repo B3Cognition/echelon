@@ -7,6 +7,7 @@ import re
 
 
 _CONVENTIONAL_REQUIREMENT_ID = r"[A-Z]{1,5}-\d{3,4}"
+_HEADING_REQUIREMENT_ID = r"(?:FR|NFR)-\d{3,4}"
 _REFERENCE_ID = r"(?:[A-Z][A-Z0-9]*(?:-\d+)+|[A-Z]+\d+)"
 _INLINE_REFERENCE_RE = re.compile(
     rf"\b({_CONVENTIONAL_REQUIREMENT_ID})\b", re.IGNORECASE
@@ -16,7 +17,7 @@ _BULLET_RE = re.compile(
     rf"^\s*[-*+]\s+\*\*({_CONVENTIONAL_REQUIREMENT_ID})\*\*(?:\s*\([^)]*\))?\s*:\s*(.+\S)\s*$",
     re.IGNORECASE,
 )
-_HEADING_RE = re.compile(rf"^\s*#{{1,6}}\s+({_CONVENTIONAL_REQUIREMENT_ID})\b", re.IGNORECASE)
+_HEADING_RE = re.compile(rf"^\s*#{{1,6}}\s+({_HEADING_REQUIREMENT_ID})\b", re.IGNORECASE)
 _STATEMENT_RE = re.compile(r"^\s*[-*+]\s+\*\*Statement\*\*\s*:\s*(.+\S)\s*$", re.IGNORECASE)
 _FIELD_RE = re.compile(
     r"^\s*[-*+]\s+\*\*(Constraints?|Verified\s+by|Traceability|Depends)\*\*\s*:\s*(.+\S)\s*$",

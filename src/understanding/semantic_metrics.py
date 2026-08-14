@@ -23,7 +23,7 @@ import re
 from typing import Dict, List, Set, Tuple
 from dataclasses import dataclass
 
-from .role_detection import ACTION_VERBS, detect_requirement_roles
+from .role_detection import detect_requirement_roles
 
 # spaCy is loaded lazily on first use to avoid slow startup
 _nlp = None
@@ -103,7 +103,19 @@ class SemanticAnalyzer:
     ]
 
     # Action verbs (common in requirements)
-    ACTION_VERBS = ACTION_VERBS
+    ACTION_VERBS = [
+        'validate', 'verify', 'check', 'confirm', 'ensure',
+        'create', 'generate', 'produce', 'build', 'make',
+        'update', 'modify', 'change', 'edit', 'revise',
+        'delete', 'remove', 'destroy', 'clear', 'purge',
+        'display', 'show', 'present', 'render', 'visualize',
+        'send', 'transmit', 'emit', 'notify', 'alert',
+        'store', 'save', 'persist', 'record', 'log',
+        'retrieve', 'fetch', 'get', 'load', 'read',
+        'process', 'handle', 'manage', 'execute', 'perform',
+        'allow', 'enable', 'permit', 'authorize', 'grant',
+        'prevent', 'block', 'deny', 'reject', 'refuse',
+    ]
 
     # Object patterns (what is acted upon)
     OBJECT_PATTERNS = [

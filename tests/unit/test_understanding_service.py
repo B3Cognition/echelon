@@ -281,6 +281,18 @@ def test_bundle_depth_uses_generic_lexicon_ids_from_explicit_projection(
 
 
 @pytest.mark.unit
+def test_direct_enhanced_depth_does_not_treat_technical_tokens_as_ids() -> None:
+    from understanding.enhanced_metrics import analyze_with_enhanced_metrics
+
+    result = analyze_with_enhanced_metrics(
+        "FR-001: The command MUST store SHA256 and TLS1 values.",
+        use_spacy=False,
+    )
+
+    assert result["dependency_graph"] == {"FR-001": []}
+
+
+@pytest.mark.unit
 def test_zero_requirements_is_a_completed_deterministic_failure(
     tmp_path: Path,
 ) -> None:

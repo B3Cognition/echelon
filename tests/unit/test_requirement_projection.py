@@ -144,3 +144,24 @@ def test_projection_excludes_technical_tokens_from_traceability() -> None:
     projection = project_requirements(spec)[0]
 
     assert projection.traceability_references == ("FR-002", "AC-001")
+
+
+@pytest.mark.unit
+def test_heading_projection_rejects_generic_requirement_prefixes() -> None:
+    spec = """### ADR-001: Decision
+- **Statement**: This must not become a requirement.
+
+### A-001: Note
+- **Statement**: This must not become a requirement.
+
+### FR-001: Requirement
+- **Statement**: The command MUST write a message.
+
+### NFR-001: Performance
+- **Statement**: The command MUST finish within 200 ms.
+"""
+
+    assert [projection.requirement_id for projection in project_requirements(spec)] == [
+        "FR-001",
+        "NFR-001",
+    ]
