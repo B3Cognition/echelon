@@ -118,6 +118,8 @@ def apply_or_verify_proportional_quality_effect(
                 "candidate",
                 "checkpoint_prestate",
                 "restore_candidate_id",
+                "restore_candidate_manifest_sha256",
+                "restore_artifact_preimage_digests",
             }:
                 raise QualityCandidateIntegrityError("candidate effect is invalid")
             repair = validate_repair_state(state.get("phase1_quality_repair"))
@@ -159,6 +161,12 @@ def apply_or_verify_proportional_quality_effect(
             )
             candidate_expected = expected.get("candidate") if expected else None
             restore_id = effect.get("restore_candidate_id")
+            restore_manifest_sha = effect.get(
+                "restore_candidate_manifest_sha256"
+            )
+            restore_preimages = effect.get(
+                "restore_artifact_preimage_digests"
+            )
             materialized, candidate_receipt = materialize_quality_candidate(
                 project_root=root,
                 spec_dir=spec_dir,
@@ -179,12 +187,17 @@ def apply_or_verify_proportional_quality_effect(
                 if (
                     type(restore_id) is not str
                     or restore_id not in repair["candidate_ids"]
+                    or type(restore_manifest_sha) is not str
+                    or len(restore_manifest_sha) != 64
+                    or type(restore_preimages) is not dict
                 ):
                     raise QualityCandidateIntegrityError(
                         "candidate restore lacks state authority"
                     )
                 if (
                     evidence.get("selected_candidate_id") != restore_id
+                    or evidence.get("candidate_manifest_sha256")
+                    != restore_manifest_sha
                 ):
                     raise QualityCandidateIntegrityError(
                         "candidate restore selection changed"
@@ -195,9 +208,15 @@ def apply_or_verify_proportional_quality_effect(
                     else load_quality_candidate_manifest(
                         Path(materialized.run_artifact_root)
                         / "quality-candidates"
-                        / f"{restore_id}.json"
+                        / f"{restore_id}.json",
+                        expected_sha256=restore_manifest_sha,
+                        expected_candidate_id=restore_id,
                     )
                 )
+                if selected.candidate_id != restore_id:
+                    raise QualityCandidateIntegrityError(
+                        "candidate restore identity changed"
+                    )
                 restore_completion_id = _quality_completion_id(
                     completion_id,
                     "restore",
@@ -214,6 +233,7 @@ def apply_or_verify_proportional_quality_effect(
                         "kind": "git_head",
                         "head": candidate_receipt["checkpoint"]["commit"],
                     },
+                    artifact_preimage_digests=restore_preimages,
                     expected_receipt=(
                         expected.get("restore") if expected else None
                     ),
@@ -232,17 +252,28 @@ def apply_or_verify_proportional_quality_effect(
                 "run_id",
                 "spec_id",
                 "candidate_id",
+                "candidate_manifest_sha256",
+                "artifact_preimage_digests",
                 "checkpoint_prestate",
             }:
                 raise QualityCandidateIntegrityError("candidate restore effect is invalid")
             repair = validate_repair_state(state.get("phase1_quality_repair"))
             candidate_id = effect.get("candidate_id")
+            candidate_manifest_sha = effect.get(
+                "candidate_manifest_sha256"
+            )
+            artifact_preimages = effect.get("artifact_preimage_digests")
             evidence = state.get("proportional_quality_candidate_evidence")
             if (
                 type(candidate_id) is not str
                 or candidate_id not in repair["candidate_ids"]
+                or type(candidate_manifest_sha) is not str
+                or len(candidate_manifest_sha) != 64
+                or type(artifact_preimages) is not dict
                 or not isinstance(evidence, Mapping)
                 or evidence.get("selected_candidate_id") != candidate_id
+                or evidence.get("candidate_manifest_sha256")
+                != candidate_manifest_sha
             ):
                 raise QualityCandidateIntegrityError("candidate restore lacks state authority")
             spec_dir = _inside_project(root, effect.get("spec_dir"))
@@ -271,7 +302,11 @@ def apply_or_verify_proportional_quality_effect(
             )
             manifest_ref = evidence.get("candidate_manifest")
             manifest_path = _inside_project(root, manifest_ref)
-            candidate = load_quality_candidate_manifest(manifest_path)
+            candidate = load_quality_candidate_manifest(
+                manifest_path,
+                expected_sha256=candidate_manifest_sha,
+                expected_candidate_id=candidate_id,
+            )
             restore_receipt = materialize_quality_candidate_restore(
                 project_root=root,
                 spec_dir=spec_dir,
@@ -284,6 +319,7 @@ def apply_or_verify_proportional_quality_effect(
                 ),
                 next_phase=next_phase,
                 checkpoint_prestate=effective_prestate,
+                artifact_preimage_digests=artifact_preimages,
                 expected_receipt=(
                     expected.get("restore") if expected else None
                 ),

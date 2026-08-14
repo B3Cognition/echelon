@@ -138,6 +138,7 @@ class CompletionIntent:
     _checkpoint_prestate_json: bytes = field(repr=False)
     _quality_effect_json: bytes = field(repr=False)
     _judgments_json: bytes = field(repr=False)
+    _sealed_intent_json: bytes = field(repr=False)
 
     @property
     def publication(self) -> dict[str, object]:
@@ -160,22 +161,10 @@ class CompletionIntent:
         return tuple(_decode_snapshot(self._judgments_json))
 
     def to_dict(self) -> dict[str, object]:
-        return {
-            "schema_version": _SCHEMA_VERSION,
-            "completion_id": self.completion_id,
-            "origin": self.origin,
-            "publication": self.publication,
-            "route": self.route,
-            "effect_plan": list(self.effect_plan),
-            "checkpoint_prestate": self.checkpoint_prestate,
-            "quality_effect": self.quality_effect,
-            "context_reason": self.context_reason,
-            "mine_phase_a": self.mine_phase_a,
-            "judgment_payload_sha256": list(
-                self.judgment_payload_sha256
-            ),
-            "judgments": list(self.judgments),
-        }
+        value = _decode_snapshot(self._sealed_intent_json)
+        if type(value) is not dict:
+            raise AssertionError("invalid internal completion intent snapshot")
+        return value
 
 
 @dataclass(frozen=True)
@@ -531,26 +520,43 @@ def _validate_judgments(
     return judgments, digests
 
 
-def _validate_intent(value: object) -> dict[str, object]:
-    record = _validate_exact_dict(
-        value,
-        frozenset(
-            {
-                "schema_version",
-                "completion_id",
-                "origin",
-                "publication",
-                "route",
-                "effect_plan",
-                "checkpoint_prestate",
-                "quality_effect",
-                "context_reason",
-                "mine_phase_a",
-                "judgment_payload_sha256",
-                "judgments",
-            }
-        ),
+_INTENT_KEYS = frozenset(
+    {
+        "schema_version",
+        "completion_id",
+        "origin",
+        "publication",
+        "route",
+        "effect_plan",
+        "checkpoint_prestate",
+        "quality_effect",
+        "context_reason",
+        "mine_phase_a",
+        "judgment_payload_sha256",
+        "judgments",
+    }
+)
+_PRE_QUALITY_V1_INTENT_KEYS = _INTENT_KEYS - {"quality_effect"}
+
+
+def _validate_intent(
+    value: object,
+    *,
+    allow_pre_quality_v1: bool = False,
+) -> dict[str, object]:
+    if type(value) is not dict:
+        _raise("intent_invalid")
+    keys = frozenset(value)
+    legacy_pre_quality = (
+        allow_pre_quality_v1 and keys == _PRE_QUALITY_V1_INTENT_KEYS
     )
+    if keys == _INTENT_KEYS:
+        record = _validate_exact_dict(value, _INTENT_KEYS)
+    elif legacy_pre_quality:
+        record = dict(_validate_exact_dict(value, _PRE_QUALITY_V1_INTENT_KEYS))
+        record["quality_effect"] = {"kind": "none"}
+    else:
+        _raise("intent_invalid")
     schema_version = dict.__getitem__(record, "schema_version")
     if type(schema_version) is not int or schema_version != _SCHEMA_VERSION:
         _raise("intent_invalid")
@@ -572,6 +578,8 @@ def _validate_intent(value: object) -> dict[str, object]:
     effect_plan = _validate_effect_plan(
         dict.__getitem__(record, "effect_plan")
     )
+    if legacy_pre_quality and "quality" in effect_plan:
+        _raise("intent_invalid")
     if (
         origin == "routed"
         and route["record_completion"] is False
@@ -667,7 +675,12 @@ def _validate_receipts(
     }
 
 
-def _intent_view(value: dict[str, object]) -> CompletionIntent:
+def _intent_view(
+    value: dict[str, object],
+    *,
+    sealed_value: dict[str, object] | None = None,
+) -> CompletionIntent:
+    sealed = value if sealed_value is None else sealed_value
     return CompletionIntent(
         completion_id=str(value["completion_id"]),
         origin=str(value["origin"]),
@@ -692,6 +705,10 @@ def _intent_view(value: dict[str, object]) -> CompletionIntent:
         ),
         _judgments_json=_canonical_json(
             value["judgments"],
+            newline=False,
+        ),
+        _sealed_intent_json=_canonical_json(
+            sealed,
             newline=False,
         ),
     )
@@ -1318,15 +1335,17 @@ def load_prepared_controller_completion(
     ):
         _raise("receipts_mismatch")
     try:
-        intent = _validate_intent(
-            _detach_loaded_json(
-                _decode_canonical(
-                    intent_bytes,
-                    code="intent_invalid",
-                ),
-                root_path="$.controller_completion",
+        sealed_intent = _detach_loaded_json(
+            _decode_canonical(
+                intent_bytes,
                 code="intent_invalid",
-            )
+            ),
+            root_path="$.controller_completion",
+            code="intent_invalid",
+        )
+        intent = _validate_intent(
+            sealed_intent,
+            allow_pre_quality_v1=True,
         )
     except CompletionError:
         raise
@@ -1412,7 +1431,7 @@ def load_prepared_controller_completion(
         _raise("stage_corrupt")
     return PreparedControllerCompletion(
         marker=expected_marker,
-        intent=_intent_view(intent),
+        intent=_intent_view(intent, sealed_value=sealed_intent),
         _project_root=project,
         _squad_dir=squad,
         _transaction_root=transaction_root,

@@ -243,19 +243,68 @@ def test_status_shows_sealed_proportional_choice_evidence_and_exact_resume_synta
                         {
                             "issue_id": "ISS-QUALITY-7",
                             "severity": "MEDIUM",
-                            "issue_type": "incompleteness",
+                            "type": "incompleteness",
                             "rationale": "The failure path is not observable.",
                         }
                     ],
                     "recommendation_evidence": {
                         "baseline_candidate_id": "quality-candidate-0",
                         "current_candidate_id": "quality-candidate-2",
+                        "comparison_previous_candidate_id": (
+                            "quality-candidate-1"
+                        ),
+                        "comparison_current_candidate_id": (
+                            "quality-candidate-2"
+                        ),
                         "baseline_formal_statement_count": 8,
                         "formal_statement_count": 14,
                         "formal_statement_growth": 6,
                         "baseline_byte_count": 700,
                         "byte_count": 1320,
                         "byte_growth": 620,
+                        "score_history": [
+                            {
+                                "repair_number": 0,
+                                "candidate_id": "quality-candidate-0",
+                                "scores": [
+                                    {
+                                        "name": "overall",
+                                        "score": 0.68,
+                                        "threshold": 0.80,
+                                        "pass": False,
+                                    }
+                                ],
+                                "formal_statement_count": 8,
+                                "byte_count": 700,
+                            },
+                            {
+                                "repair_number": 1,
+                                "candidate_id": "quality-candidate-2",
+                                "scores": [
+                                    {
+                                        "name": "overall",
+                                        "score": 0.70,
+                                        "threshold": 0.80,
+                                        "pass": False,
+                                    }
+                                ],
+                                "formal_statement_count": 14,
+                                "byte_count": 1320,
+                            },
+                        ],
+                        "per_repair_deltas": [
+                            {
+                                "repair_number": 1,
+                                "previous_repair_number": 0,
+                                "previous_candidate_id": "quality-candidate-0",
+                                "current_candidate_id": "quality-candidate-2",
+                                "score_deltas": [
+                                    {"name": "overall", "delta": 0.02}
+                                ],
+                                "formal_statement_delta": 6,
+                                "byte_delta": 620,
+                            }
+                        ],
                         "recommended_option_id": "extend_once",
                         "rationale": (
                             "Residual gates improved within the borderline margin."
@@ -281,6 +330,13 @@ def test_status_shows_sealed_proportional_choice_evidence_and_exact_resume_synta
     assert "MEDIUM/incompleteness" in output
     assert "The failure path is not observable." in output
     assert "quality-candidate-0 → quality-candidate-2" in output
+    assert "Repair comparison" in output
+    assert "quality-candidate-1 → quality-candidate-2" in output
+    assert "Score history" in output
+    assert "repair 0 quality-candidate-0: overall 0.68/0.80" in output
+    assert "repair 1 quality-candidate-2: overall 0.70/0.80" in output
+    assert "Per-repair deltas" in output
+    assert "repair 1: overall +0.02; statements +6; bytes +620" in output
     assert "8 → 14 (+6)" in output
     assert "700 → 1,320 (+620 bytes)" in output
     assert "Residual gates improved within the borderline margin." in output

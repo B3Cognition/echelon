@@ -655,25 +655,27 @@ def _validate_prepared_controller_completion(
             json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
             validator="completion_intent",
         ) from exc
+    current_intent_keys = frozenset(
+        {
+            "schema_version",
+            "completion_id",
+            "origin",
+            "publication",
+            "route",
+            "effect_plan",
+            "checkpoint_prestate",
+            "quality_effect",
+            "context_reason",
+            "mine_phase_a",
+            "judgment_payload_sha256",
+            "judgments",
+        }
+    )
+    legacy_intent_keys = current_intent_keys - {"quality_effect"}
+    intent_keys = frozenset(dict.keys(intent)) if type(intent) is dict else frozenset()
     if (
         type(intent) is not dict
-        or frozenset(dict.keys(intent))
-        != frozenset(
-            {
-                "schema_version",
-                "completion_id",
-                "origin",
-                "publication",
-                "route",
-                "effect_plan",
-                "checkpoint_prestate",
-                "quality_effect",
-                "context_reason",
-                "mine_phase_a",
-                "judgment_payload_sha256",
-                "judgments",
-            }
-        )
+        or intent_keys not in {current_intent_keys, legacy_intent_keys}
         or type(intent["schema_version"]) is not int
         or intent["schema_version"] != 1
         or intent["completion_id"] != marker["completion_id"]
@@ -746,6 +748,12 @@ def _validate_prepared_controller_completion(
     if indexes != tuple(sorted(set(indexes))):
         raise StateAdvanceError(
             "controller completion effect plan is not monotonic",
+            json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}.step",
+            validator="completion_step",
+        )
+    if intent_keys == legacy_intent_keys and "quality" in plan:
+        raise StateAdvanceError(
+            "legacy controller completion cannot contain a quality effect",
             json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}.step",
             validator="completion_step",
         )
@@ -4203,6 +4211,8 @@ class SquadStateStore:
                         and isinstance(evidence, Mapping)
                         and candidate_receipt.get("candidate_id")
                         == evidence.get("current_candidate_id")
+                        and evidence.get("selected_candidate_id")
+                        in {None, evidence.get("current_candidate_id")}
                         and _valid_completion_sha256(
                             candidate_receipt.get("manifest_sha256")
                         )

@@ -129,6 +129,39 @@ def test_legacy_history_counts_completed_certified_why2_assessments(
 
 
 @pytest.mark.parametrize(
+    ("assessment_iterations", "expected_repairs"),
+    [
+        ((0,), 0),
+        ((0, 1), 1),
+        ((0, 1, 2), 2),
+        ((0, 1, 2, 3), 3),
+    ],
+)
+def test_legacy_history_excludes_initial_assessment_from_repairs(
+    tmp_path: Path,
+    assessment_iterations: tuple[int, ...],
+    expected_repairs: int,
+) -> None:
+    repair = initialize_repair_state(
+        {
+            "quality_scores": [
+                _certified_why2_score(
+                    tmp_path,
+                    iteration=iteration,
+                    passed=False,
+                )
+                for iteration in assessment_iterations
+            ],
+            "iteration": 3,
+        }
+    )
+
+    assert repair is not None
+    assert repair["automatic_consumed"] == expected_repairs
+    assert repair["migration_basis"] == "why2_history"
+
+
+@pytest.mark.parametrize(
     "mutate_score",
     [
         lambda score: score.pop("evidence_digest"),

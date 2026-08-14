@@ -20,6 +20,7 @@ from collections.abc import Mapping
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
+from decimal import Decimal
 from pathlib import Path
 from types import MappingProxyType
 from typing import Callable, Optional
@@ -82,6 +83,7 @@ from harness.phase1_quality_debt import build_quality_debt_authorization
 from harness.proportional_quality import (
     QualityCandidateIntegrityError,
     QualityCandidateManifest,
+    candidate_artifact_preimage_digests,
     load_authoritative_sage_issues,
     initialize_repair_state,
     load_quality_candidate_manifest,
@@ -3909,11 +3911,21 @@ class SquadController:
         manifest_path = Path(manifest_ref)
         if not manifest_path.is_absolute():
             manifest_path = self._project_root / manifest_path
-        candidate = load_quality_candidate_manifest(manifest_path)
-        if candidate.candidate_id != selected_candidate_id:
+        manifest_sha = evidence.get("candidate_manifest_sha256")
+        if type(manifest_sha) is not str:
+            raise HumanInputPolicyError(
+                "selected proportional quality candidate digest is missing"
+            )
+        try:
+            candidate = load_quality_candidate_manifest(
+                manifest_path,
+                expected_sha256=manifest_sha,
+                expected_candidate_id=selected_candidate_id,
+            )
+        except QualityCandidateIntegrityError as exc:
             raise HumanInputPolicyError(
                 "selected proportional quality candidate identity changed"
-            )
+            ) from exc
 
         if selected.id == "extend_once":
             if (
@@ -9206,6 +9218,17 @@ class SquadController:
         issues_by_id = {
             str(issue["issue_id"]): issue for issue in authoritative_issues
         }
+        finding_issue_ids = [
+            str(finding.get("issue_id") or "") for finding in findings
+        ]
+        requires_debt_coverage = report.get("pass") is False
+        if requires_debt_coverage and (
+            len(set(finding_issue_ids)) != len(finding_issue_ids)
+            or set(finding_issue_ids) != set(issues_by_id)
+        ):
+            raise QualityCandidateIntegrityError(
+                "SAGE finding routes do not exactly cover authoritative issues"
+            )
         enriched_findings: list[dict[str, object]] = []
         for finding in findings:
             issue_id = str(finding.get("issue_id") or "")
@@ -9258,6 +9281,8 @@ class SquadController:
                 "candidate": quality_candidate_effect_payload(manifest),
                 "checkpoint_prestate": self._completion_checkpoint_prestate(),
                 "restore_candidate_id": None,
+                "restore_candidate_manifest_sha256": None,
+                "restore_artifact_preimage_digests": None,
             },
             "phase1_quality_repair": repair,
             "proportional_quality_candidate_evidence": {
@@ -9373,10 +9398,85 @@ class SquadController:
             "failing_gates": failing_gates,
             "error": None,
         }
-        recommendation_current = candidates[-1]
-        recommendation_previous = (
-            candidates[-2] if len(candidates) > 1 else recommendation_current
+        candidates_by_repair: dict[int, QualityCandidateManifest] = {}
+        for candidate in candidates:
+            candidates_by_repair[candidate.repair_number] = candidate
+        repair_history = tuple(
+            candidates_by_repair[repair_number]
+            for repair_number in sorted(candidates_by_repair)
         )
+        recommendation_current = repair_history[-1]
+        recommendation_previous = (
+            repair_history[-2]
+            if len(repair_history) > 1
+            else recommendation_current
+        )
+        score_history = [
+            {
+                "repair_number": candidate.repair_number,
+                "candidate_id": candidate.candidate_id,
+                "scores": [
+                    {
+                        "name": name,
+                        "score": score,
+                        "threshold": threshold,
+                        "pass": passed,
+                    }
+                    for name, score, threshold, passed
+                    in candidate.normalized_gates
+                ],
+                "formal_statement_count": candidate.formal_statement_count,
+                "byte_count": candidate.byte_count,
+            }
+            for candidate in repair_history
+        ]
+        per_repair_deltas: list[dict[str, object]] = []
+        for previous_candidate, current_history_candidate in zip(
+            repair_history,
+            repair_history[1:],
+        ):
+            previous_scores = {
+                name: score
+                for name, score, _threshold, _passed
+                in previous_candidate.normalized_gates
+            }
+            current_scores = {
+                name: score
+                for name, score, _threshold, _passed
+                in current_history_candidate.normalized_gates
+            }
+            if set(previous_scores) != set(current_scores):
+                raise QualityCandidateIntegrityError(
+                    "proportional quality history gate dimensions changed"
+                )
+            per_repair_deltas.append(
+                {
+                    "repair_number": current_history_candidate.repair_number,
+                    "previous_repair_number": previous_candidate.repair_number,
+                    "previous_candidate_id": previous_candidate.candidate_id,
+                    "current_candidate_id": (
+                        current_history_candidate.candidate_id
+                    ),
+                    "score_deltas": [
+                        {
+                            "name": name,
+                            "delta": float(
+                                Decimal(str(current_scores[name]))
+                                - Decimal(str(previous_scores[name]))
+                            ),
+                        }
+                        for name in sorted(current_scores)
+                    ],
+                    "formal_statement_delta": (
+                        current_history_candidate.formal_statement_count
+                        - previous_candidate.formal_statement_count
+                    ),
+                    "byte_delta": (
+                        current_history_candidate.byte_count
+                        - previous_candidate.byte_count
+                    ),
+                }
+            )
         baseline_candidate_id = repair["baseline_candidate_id"]
         if type(baseline_candidate_id) is not str:
             raise QualityCandidateIntegrityError(
@@ -9462,6 +9562,16 @@ class SquadController:
                 if selected.candidate_id != current_candidate.candidate_id
                 else None
             )
+            quality_effect["restore_candidate_manifest_sha256"] = (
+                manifest_sha
+                if selected.candidate_id != current_candidate.candidate_id
+                else None
+            )
+            quality_effect["restore_artifact_preimage_digests"] = (
+                candidate_artifact_preimage_digests(spec_dir, selected)
+                if selected.candidate_id != current_candidate.candidate_id
+                else None
+            )
         else:
             quality_effect = {
                 "kind": "proportional_quality",
@@ -9472,6 +9582,10 @@ class SquadController:
                 "run_id": str(state.get("run_id") or ""),
                 "spec_id": spec_id,
                 "candidate_id": selected.candidate_id,
+                "candidate_manifest_sha256": manifest_sha,
+                "artifact_preimage_digests": (
+                    candidate_artifact_preimage_digests(spec_dir, selected)
+                ),
                 "checkpoint_prestate": self._completion_checkpoint_prestate(),
             }
         return request, {
@@ -9509,6 +9623,12 @@ class SquadController:
                         recommendation_baseline.candidate_id
                     ),
                     "current_candidate_id": recommendation_current.candidate_id,
+                    "comparison_previous_candidate_id": (
+                        recommendation_previous.candidate_id
+                    ),
+                    "comparison_current_candidate_id": (
+                        recommendation_current.candidate_id
+                    ),
                     "baseline_formal_statement_count": (
                         recommendation_baseline.formal_statement_count
                     ),
@@ -9525,6 +9645,8 @@ class SquadController:
                         recommendation_current.byte_count
                         - recommendation_baseline.byte_count
                     ),
+                    "score_history": score_history,
+                    "per_repair_deltas": per_repair_deltas,
                     "recommended_option_id": recommended_option_id,
                     "rationale": recommendation_rationale,
                 },

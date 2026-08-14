@@ -3614,7 +3614,7 @@ def _proportional_quality_decision_fields(
                     continue
                 issue_id = str(finding.get("issue_id") or "").strip()
                 severity = str(finding.get("severity") or "").strip()
-                issue_type = str(finding.get("issue_type") or "").strip()
+                issue_type = str(finding.get("type") or "").strip()
                 rationale = str(finding.get("rationale") or "").strip()
                 identity = issue_id or "SAGE finding"
                 classification = "/".join(
@@ -3641,6 +3641,23 @@ def _proportional_quality_decision_fields(
                     (
                         "Growth comparison",
                         f"{baseline_candidate} → {current_candidate}",
+                    )
+                )
+            comparison_previous = str(
+                recommendation_evidence.get(
+                    "comparison_previous_candidate_id"
+                ) or ""
+            ).strip()[:128]
+            comparison_current = str(
+                recommendation_evidence.get(
+                    "comparison_current_candidate_id"
+                ) or ""
+            ).strip()[:128]
+            if comparison_previous and comparison_current:
+                fields.append(
+                    (
+                        "Repair comparison",
+                        f"{comparison_previous} → {comparison_current}",
                     )
                 )
             baseline_statements = recommendation_evidence.get(
@@ -3675,6 +3692,87 @@ def _proportional_quality_decision_fields(
                         f"({byte_growth:+,} bytes)",
                     )
                 )
+            score_history_lines: list[str] = []
+            raw_score_history = recommendation_evidence.get("score_history")
+            if isinstance(raw_score_history, list):
+                for entry in raw_score_history[:5]:
+                    if not isinstance(entry, Mapping):
+                        continue
+                    repair_number = entry.get("repair_number")
+                    candidate_id = str(
+                        entry.get("candidate_id") or ""
+                    ).strip()[:128]
+                    scores = entry.get("scores")
+                    if (
+                        type(repair_number) is not int
+                        or repair_number < 0
+                        or not candidate_id
+                        or not isinstance(scores, list)
+                    ):
+                        continue
+                    rendered_scores: list[str] = []
+                    for score_entry in scores[:8]:
+                        if not isinstance(score_entry, Mapping):
+                            continue
+                        name = str(
+                            score_entry.get("name") or ""
+                        ).strip()[:80]
+                        score = score_entry.get("score")
+                        threshold = score_entry.get("threshold")
+                        if (
+                            name
+                            and type(score) in {int, float}
+                            and type(threshold) in {int, float}
+                        ):
+                            rendered_scores.append(
+                                f"{name} {float(score):.2f}/{float(threshold):.2f}"
+                            )
+                    if rendered_scores:
+                        score_history_lines.append(
+                            f"repair {repair_number} {candidate_id}: "
+                            + ", ".join(rendered_scores)
+                        )
+            if score_history_lines:
+                fields.append(("Score history", "\n".join(score_history_lines)))
+            delta_lines: list[str] = []
+            raw_deltas = recommendation_evidence.get("per_repair_deltas")
+            if isinstance(raw_deltas, list):
+                for entry in raw_deltas[:4]:
+                    if not isinstance(entry, Mapping):
+                        continue
+                    repair_number = entry.get("repair_number")
+                    statement_delta = entry.get("formal_statement_delta")
+                    byte_delta = entry.get("byte_delta")
+                    score_deltas = entry.get("score_deltas")
+                    if (
+                        type(repair_number) is not int
+                        or repair_number < 0
+                        or type(statement_delta) is not int
+                        or type(byte_delta) is not int
+                        or not isinstance(score_deltas, list)
+                    ):
+                        continue
+                    rendered_deltas: list[str] = []
+                    for score_delta in score_deltas[:8]:
+                        if not isinstance(score_delta, Mapping):
+                            continue
+                        name = str(
+                            score_delta.get("name") or ""
+                        ).strip()[:80]
+                        delta = score_delta.get("delta")
+                        if name and type(delta) in {int, float}:
+                            rendered_deltas.append(
+                                f"{name} {float(delta):+.2f}"
+                            )
+                    if rendered_deltas:
+                        delta_lines.append(
+                            f"repair {repair_number}: "
+                            + ", ".join(rendered_deltas)
+                            + f"; statements {statement_delta:+d}"
+                            + f"; bytes {byte_delta:+d}"
+                        )
+            if delta_lines:
+                fields.append(("Per-repair deltas", "\n".join(delta_lines)))
             rationale = str(
                 recommendation_evidence.get("rationale") or ""
             ).strip()

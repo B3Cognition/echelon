@@ -237,11 +237,45 @@ def load_authoritative_sage_issues(
     return tuple(issues)
 
 
-def load_quality_candidate_manifest(path: Path) -> QualityCandidateManifest:
+def load_quality_candidate_manifest(
+    path: Path,
+    *,
+    expected_sha256: str | None = None,
+    expected_candidate_id: str | None = None,
+) -> QualityCandidateManifest:
     """Load one exact persisted candidate manifest for controller use."""
     try:
-        payload = loads_strict_json(Path(path).read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
+        manifest_path = Path(path)
+        metadata_before = manifest_path.lstat()
+        if stat.S_ISLNK(metadata_before.st_mode) or not stat.S_ISREG(
+            metadata_before.st_mode
+        ):
+            raise OSError("candidate manifest is not a regular file")
+        content = manifest_path.read_bytes()
+        metadata_after = manifest_path.lstat()
+        if (
+            metadata_before.st_dev,
+            metadata_before.st_ino,
+            metadata_before.st_size,
+            metadata_before.st_mtime_ns,
+        ) != (
+            metadata_after.st_dev,
+            metadata_after.st_ino,
+            metadata_after.st_size,
+            metadata_after.st_mtime_ns,
+        ):
+            raise OSError("candidate manifest changed while reading")
+        if expected_sha256 is not None and (
+            not _is_sha256(expected_sha256)
+            or hashlib.sha256(content).hexdigest() != expected_sha256
+        ):
+            raise QualityCandidateIntegrityError(
+                "candidate manifest digest mismatch"
+            )
+        payload = loads_strict_json(content.decode("utf-8"))
+    except QualityCandidateIntegrityError:
+        raise
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
         raise QualityCandidateIntegrityError(
             "candidate manifest is missing or malformed"
         ) from exc
@@ -319,7 +353,7 @@ def load_quality_candidate_manifest(path: Path) -> QualityCandidateManifest:
         raise QualityCandidateIntegrityError(
             "candidate manifest ranking evidence is contradictory"
         )
-    return QualityCandidateManifest(
+    candidate = QualityCandidateManifest(
         schema_version=SCHEMA_VERSION,
         candidate_id=payload["candidate_id"],
         checkpoint_commit=payload["checkpoint_commit"],
@@ -338,6 +372,14 @@ def load_quality_candidate_manifest(path: Path) -> QualityCandidateManifest:
         assessment_index=payload["assessment_index"],
         eligibility_reasons=reasons,
     )
+    if expected_candidate_id is not None and (
+        not _is_candidate_id(expected_candidate_id)
+        or candidate.candidate_id != expected_candidate_id
+    ):
+        raise QualityCandidateIntegrityError(
+            "candidate manifest identity mismatch"
+        )
+    return candidate
 
 
 def quality_candidate_effect_payload(
@@ -494,7 +536,7 @@ def initialize_repair_state(
         consumed = min(_legacy_iteration(state), AUTOMATIC_REPAIR_LIMIT)
         migration_basis = "iteration_fallback"
     else:
-        consumed = min(history_count, AUTOMATIC_REPAIR_LIMIT)
+        consumed = min(max(history_count - 1, 0), AUTOMATIC_REPAIR_LIMIT)
         migration_basis = "why2_history"
     if not _is_legacy_state(state):
         consumed = 0
@@ -1060,6 +1102,139 @@ def restore_quality_candidate(
         ) from exc
 
 
+def candidate_artifact_preimage_digests(
+    spec_dir: Path,
+    candidate: QualityCandidateManifest,
+) -> dict[str, str]:
+    """Seal the exact regular-file preimages for a later durable restore."""
+    if not isinstance(candidate, QualityCandidateManifest):
+        raise QualityCandidateIntegrityError("candidate manifest is invalid")
+    artifact_digests = dict(candidate.owned_artifact_digests)
+    if len(artifact_digests) != len(candidate.owned_artifact_digests):
+        raise QualityCandidateIntegrityError("candidate artifact paths are duplicated")
+    preimages: dict[str, str] = {}
+    for name in sorted(artifact_digests):
+        path = Path(spec_dir) / name
+        try:
+            metadata_before = path.lstat()
+            if stat.S_ISLNK(metadata_before.st_mode) or not stat.S_ISREG(
+                metadata_before.st_mode
+            ):
+                raise OSError("candidate preimage is not a regular file")
+            content = path.read_bytes()
+            metadata_after = path.lstat()
+        except OSError as exc:
+            raise QualityCandidateIntegrityError(
+                f"candidate artifact preimage is unavailable: {name}"
+            ) from exc
+        if (
+            metadata_before.st_dev,
+            metadata_before.st_ino,
+            metadata_before.st_size,
+            metadata_before.st_mtime_ns,
+        ) != (
+            metadata_after.st_dev,
+            metadata_after.st_ino,
+            metadata_after.st_size,
+            metadata_after.st_mtime_ns,
+        ):
+            raise QualityCandidateIntegrityError(
+                f"candidate artifact preimage changed while reading: {name}"
+            )
+        preimages[name] = hashlib.sha256(content).hexdigest()
+    return preimages
+
+
+def _validated_restore_preimages(
+    value: object,
+    *,
+    artifact_digests: Mapping[str, str],
+) -> dict[str, str]:
+    if (
+        type(value) is not dict
+        or set(value) != set(artifact_digests)
+        or any(
+            type(name) is not str or not _is_sha256(digest)
+            for name, digest in value.items()
+        )
+    ):
+        raise QualityCandidateIntegrityError(
+            "candidate artifact preimages are malformed"
+        )
+    return dict(value)
+
+
+def _candidate_checkpoint_contents(
+    *,
+    project_root: Path,
+    spec_dir: Path,
+    checkpoint_commit: str,
+    artifact_digests: Mapping[str, str],
+) -> dict[str, bytes]:
+    root = Path(project_root).resolve()
+    resolved_spec = Path(spec_dir).resolve()
+    try:
+        spec_relative = resolved_spec.relative_to(root)
+    except ValueError as exc:
+        raise QualityCandidateIntegrityError(
+            "candidate spec directory escapes project root"
+        ) from exc
+    contents: dict[str, bytes] = {}
+    try:
+        for name in sorted(artifact_digests):
+            relative = (spec_relative / name).as_posix()
+            result = run_git(
+                root,
+                "show",
+                f"{checkpoint_commit}:{relative}",
+                check=False,
+            )
+            if result.returncode != 0:
+                raise QualityCandidateIntegrityError(
+                    f"candidate owned artifact is missing: {name}"
+                )
+            content = result.stdout.encode("utf-8")
+            if hashlib.sha256(content).hexdigest() != artifact_digests[name]:
+                raise QualityCandidateIntegrityError(
+                    f"candidate artifact digest mismatch: {name}"
+                )
+            contents[name] = content
+    except GitHelperError as exc:
+        raise QualityCandidateIntegrityError(
+            "candidate checkpoint artifacts could not be read"
+        ) from exc
+    return contents
+
+
+def _replace_candidate_artifact_pinned(
+    path: Path,
+    content: bytes,
+    *,
+    expected_preimage_sha256: str,
+) -> None:
+    # The debt exchange is the established controller-owned final-component
+    # compare-and-exchange primitive.  Import lazily because that module also
+    # consumes candidate validation from this module.
+    from harness.phase1_quality_debt import _pinned_replace_file
+
+    _pinned_replace_file(
+        path,
+        content,
+        expected_preimage_sha256=expected_preimage_sha256,
+    )
+
+
+def _fsync_candidate_directory(path: Path) -> None:
+    descriptor = os.open(
+        path,
+        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+    )
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def materialize_quality_candidate_restore(
     *,
     project_root: Path,
@@ -1070,6 +1245,7 @@ def materialize_quality_candidate_restore(
     completion_id: str,
     next_phase: str,
     checkpoint_prestate: Mapping[str, object],
+    artifact_preimage_digests: Mapping[str, str],
     expected_receipt: object | None = None,
 ) -> dict[str, object]:
     """Apply or recover a state-authorized best-candidate restoration."""
@@ -1078,6 +1254,16 @@ def materialize_quality_candidate_restore(
         candidate=candidate,
         run_id=run_id,
         spec_id=spec_id,
+    )
+    preimages = _validated_restore_preimages(
+        artifact_preimage_digests,
+        artifact_digests=artifact_digests,
+    )
+    contents = _candidate_checkpoint_contents(
+        project_root=project_root,
+        spec_dir=spec_dir,
+        checkpoint_commit=candidate.checkpoint_commit,
+        artifact_digests=artifact_digests,
     )
     expected = (
         expected_receipt
@@ -1088,12 +1274,39 @@ def materialize_quality_candidate_restore(
         expected.get("checkpoint") if expected is not None else None
     )
     try:
-        restore_checkpoint_artifacts(
-            project_root=project_root,
-            spec_dir=spec_dir,
-            checkpoint_commit=candidate.checkpoint_commit,
-            artifact_digests=artifact_digests,
-        )
+        resolved_spec = Path(spec_dir).resolve()
+        for name in sorted(artifact_digests):
+            path = resolved_spec / name
+            try:
+                metadata = path.lstat()
+                if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(
+                    metadata.st_mode
+                ):
+                    raise OSError("candidate artifact is not a regular file")
+                observed = hashlib.sha256(path.read_bytes()).hexdigest()
+            except OSError as exc:
+                raise QualityCandidateIntegrityError(
+                    f"candidate restoration preimage is unavailable: {name}"
+                ) from exc
+            postimage = artifact_digests[name]
+            if observed == postimage:
+                continue
+            if observed != preimages[name]:
+                raise QualityCandidateIntegrityError(
+                    f"candidate restoration preimage changed: {name}"
+                )
+            _replace_candidate_artifact_pinned(
+                path,
+                contents[name],
+                expected_preimage_sha256=preimages[name],
+            )
+        _fsync_candidate_directory(resolved_spec)
+        for name, postimage in artifact_digests.items():
+            path = resolved_spec / name
+            if hashlib.sha256(path.read_bytes()).hexdigest() != postimage:
+                raise QualityCandidateIntegrityError(
+                    f"restored candidate digest mismatch: {name}"
+                )
         checkpoint_receipt = create_or_recover_completion_checkpoint(
             project_root=project_root,
             spec_dir=spec_dir,
@@ -1106,6 +1319,8 @@ def materialize_quality_candidate_restore(
             force_commit=True,
             expected_receipt=checkpoint_expected,
         )
+    except QualityCandidateIntegrityError:
+        raise
     except (PhaseCheckpointError, OSError, ValueError) as exc:
         raise QualityCandidateIntegrityError(
             f"candidate restoration integrity failure: {exc}"
@@ -1113,6 +1328,8 @@ def materialize_quality_candidate_restore(
     receipt = {
         "schema_version": 1,
         "candidate_id": candidate.candidate_id,
+        "artifact_preimage_digests": dict(sorted(preimages.items())),
+        "artifact_postimage_digests": dict(sorted(artifact_digests.items())),
         "checkpoint": checkpoint_receipt,
     }
     if expected is not None and dict(expected) != receipt:
@@ -1505,7 +1722,15 @@ def _certified_why2_assessment_count(state: Mapping[str, object]) -> int | None:
         if assessment_id is None:
             return None
         assessment_ids.add(assessment_id)
-    return len(assessment_ids) if assessment_ids else None
+    if not assessment_ids:
+        return None
+    iterations = sorted(
+        int(assessment_id.rsplit("-", 1)[1])
+        for assessment_id in assessment_ids
+    )
+    if iterations != list(range(len(iterations))):
+        return None
+    return len(iterations)
 
 
 def _certified_why2_assessment_id(score: Mapping[str, object]) -> str | None:

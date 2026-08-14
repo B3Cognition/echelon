@@ -811,6 +811,7 @@ def prepare_controller_proportional_quality_decision(
     }
     should_extend = (
         reason_code == "proportional_quality_budget_exhausted"
+        and not no_artifact_progress
         and all(
             _within_inclusive_decimal_margin(
                 score,

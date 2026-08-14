@@ -1052,6 +1052,81 @@ def test_load_completion_rejects_missing_intent_or_receipts(
         )
 
 
+@pytest.mark.parametrize("origin", ["routed", "terminal"])
+def test_load_previous_release_schema_v1_intent_without_quality_effect(
+    tmp_path: Path,
+    origin: str,
+) -> None:
+    route = (
+        ROUTED_ROUTE
+        if origin == "routed"
+        else {"kind": "terminal", "terminal_phase": "DONE"}
+    )
+    project_root, squad_dir, prepared = _prepare_minimal(
+        tmp_path,
+        origin=origin,
+        route=route,
+    )
+    intent_path = prepared._transaction_root / "intent.json"
+    legacy_intent = json.loads(intent_path.read_bytes())
+    assert legacy_intent.pop("quality_effect") == {"kind": "none"}
+    legacy_bytes = (
+        json.dumps(legacy_intent, sort_keys=True, separators=(",", ":"))
+        + "\n"
+    ).encode("utf-8")
+    intent_path.write_bytes(legacy_bytes)
+    marker = replace(
+        prepared.marker,
+        intent_sha256=hashlib.sha256(legacy_bytes).hexdigest(),
+        origin=origin,
+    )
+
+    loaded = load_prepared_controller_completion(
+        project_root,
+        squad_dir,
+        marker,
+    )
+
+    assert loaded.intent.quality_effect == {"kind": "none"}
+    assert "quality_effect" not in loaded.intent.to_dict()
+    assert loaded.marker.intent_sha256 == hashlib.sha256(legacy_bytes).hexdigest()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda intent: intent.update(effect_plan=["quality"]),
+        lambda intent: intent.update(extra=True),
+    ],
+)
+def test_load_does_not_reinterpret_malformed_schema_v1_without_quality_effect(
+    tmp_path: Path,
+    mutation,
+) -> None:
+    project_root, squad_dir, prepared = _prepare_minimal(tmp_path)
+    intent_path = prepared._transaction_root / "intent.json"
+    intent = json.loads(intent_path.read_bytes())
+    intent.pop("quality_effect")
+    mutation(intent)
+    content = (
+        json.dumps(intent, sort_keys=True, separators=(",", ":")) + "\n"
+    ).encode("utf-8")
+    intent_path.write_bytes(content)
+    marker = replace(
+        prepared.marker,
+        intent_sha256=hashlib.sha256(content).hexdigest(),
+    )
+
+    _assert_completion_error(
+        "intent_invalid",
+        lambda: load_prepared_controller_completion(
+            project_root,
+            squad_dir,
+            marker,
+        ),
+    )
+
+
 @pytest.mark.parametrize(
     ("filename", "marker_field", "expected_code"),
     [
