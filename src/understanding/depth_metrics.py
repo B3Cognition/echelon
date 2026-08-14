@@ -38,7 +38,10 @@ class DepthAnalyzer:
     """Analyzes specification depth across three dimensions."""
 
     # Requirement ID pattern for cross-reference detection
-    REQ_ID_PATTERN = re.compile(r'(?:[A-Z]+-)?(?:FR|REQ|NFR|AC|SC)-\d+')
+    # Service-level projection supplies this analyzer only known requirement
+    # identifiers and explicit dependencies, so Lexicon's generic `R1` and
+    # `TASK-07` forms are safe to recognise here.
+    REQ_ID_PATTERN = re.compile(r'(?:[A-Z][A-Z0-9]*(?:-\d+)+|[A-Z]+\d+)')
 
     def extract_dependency_graph(self, requirements: List[str]) -> Dict[str, List[str]]:
         """

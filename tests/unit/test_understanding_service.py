@@ -253,6 +253,34 @@ def test_bundle_keeps_constraints_in_one_testability_requirement_unit(
 
 
 @pytest.mark.unit
+def test_bundle_depth_uses_generic_lexicon_ids_from_explicit_projection(
+    tmp_path: Path,
+) -> None:
+    spec = tmp_path / "spec.md"
+    spec.write_text(
+        "ARTIFACT: SPEC\n\n"
+        "REQ: R1\n"
+        "THEN: the greeting command MUST write a message\n"
+        "DEPENDS: TASK-07\n\n"
+        "REQ: TASK-07\n"
+        "THEN: the greeting command MUST write an audit record\n",
+        encoding="utf-8",
+    )
+
+    bundle = analyze_spec_bundle(
+        spec,
+        thresholds=DEFAULT_QUALITY_GATES,
+        enhanced=True,
+        use_nlp=False,
+    ).to_dict()
+
+    assert bundle["analysis"]["depth_analysis"]["dependency_graph"] == {
+        "R1": ["TASK-07"],
+        "TASK-07": [],
+    }
+
+
+@pytest.mark.unit
 def test_zero_requirements_is_a_completed_deterministic_failure(
     tmp_path: Path,
 ) -> None:

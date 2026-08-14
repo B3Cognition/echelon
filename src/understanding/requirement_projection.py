@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import re
 
 
-_CONVENTIONAL_REQUIREMENT_ID = r"(?:FR|NFR|AC)-\d{3,4}"
+_CONVENTIONAL_REQUIREMENT_ID = r"[A-Z]{1,5}-\d{3,4}"
 _REFERENCE_ID = r"(?:[A-Z][A-Z0-9]*(?:-\d+)+|[A-Z]+\d+)"
-_REFERENCE_RE = re.compile(rf"\b({_REFERENCE_ID})\b", re.IGNORECASE)
+_INLINE_REFERENCE_RE = re.compile(
+    rf"\b({_CONVENTIONAL_REQUIREMENT_ID})\b", re.IGNORECASE
+)
+_METADATA_REFERENCE_RE = re.compile(rf"\b({_REFERENCE_ID})\b", re.IGNORECASE)
 _BULLET_RE = re.compile(
     rf"^\s*[-*+]\s+\*\*({_CONVENTIONAL_REQUIREMENT_ID})\*\*(?:\s*\([^)]*\))?\s*:\s*(.+\S)\s*$",
     re.IGNORECASE,
@@ -50,13 +53,19 @@ def _normalise_text(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def _unique_references(text: str, requirement_id: str) -> tuple[str, ...]:
+def _unique_references(
+    inline_text: str, metadata_text: str, requirement_id: str
+) -> tuple[str, ...]:
     own_id = requirement_id.upper()
     references: list[str] = []
-    for match in _REFERENCE_RE.finditer(text):
-        reference = match.group(1).upper()
-        if reference != own_id and reference not in references:
-            references.append(reference)
+    for pattern, text in (
+        (_INLINE_REFERENCE_RE, inline_text),
+        (_METADATA_REFERENCE_RE, metadata_text),
+    ):
+        for match in pattern.finditer(text):
+            reference = match.group(1).upper()
+            if reference != own_id and reference not in references:
+                references.append(reference)
     return tuple(references)
 
 
@@ -89,9 +98,14 @@ def _make_projection(
     constraints: tuple[str, ...],
     source_location: SourceLocation,
     reference_text: str | None = None,
+    metadata_reference_text: str = "",
 ) -> RequirementProjection:
     requirement_id = requirement_id.upper()
-    references = _unique_references(reference_text or original_text, requirement_id)
+    references = _unique_references(
+        reference_text or normative_text,
+        metadata_reference_text,
+        requirement_id,
+    )
     return RequirementProjection(
         requirement_id=requirement_id,
         original_text=original_text,
@@ -121,7 +135,8 @@ def _project_conventional(lines: list[str]) -> list[RequirementProjection]:
                 normative,
                 constraints,
                 SourceLocation(index + 1, index + 1),
-                f"{body} {metadata}",
+                normative,
+                metadata,
             )
         )
         seen_ids.add(requirement_id)
@@ -177,7 +192,8 @@ def _project_conventional(lines: list[str]) -> list[RequirementProjection]:
                 normative,
                 tuple(constraints),
                 SourceLocation(index + 1, source_end + 1),
-                " ".join([statement, *metadata, *unknown_prose]),
+                normative,
+                " ".join(metadata),
             )
         )
         seen_ids.add(requirement_id)
@@ -222,6 +238,12 @@ def _project_lexicon(lines: list[str]) -> list[RequirementProjection]:
                 normative,
                 constraints,
                 SourceLocation(start + 1, end + 1),
+                normative,
+                " ".join(
+                    value
+                    for name in ("VERIFIED BY", "TRACEABILITY", "DEPENDS")
+                    for value in fields.get(name, [])
+                ),
             )
         )
     return projections
@@ -232,4 +254,15 @@ def project_requirements(spec_text: str) -> tuple[RequirementProjection, ...]:
     lines = spec_text.splitlines()
     projections = _project_conventional(lines) + _project_lexicon(lines)
     projections.sort(key=lambda projection: projection.source_location.line_start)
-    return tuple(projections)
+    known_ids = {projection.requirement_id for projection in projections}
+    return tuple(
+        replace(
+            projection,
+            traceability_references=tuple(
+                reference
+                for reference in projection.traceability_references
+                if reference in known_ids or _INLINE_REFERENCE_RE.fullmatch(reference)
+            ),
+        )
+        for projection in projections
+    )

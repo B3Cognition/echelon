@@ -123,3 +123,24 @@ def test_heading_projection_preserves_unknown_block_prose_and_original_text() ->
         "- **Implementation note**: The message includes the active locale."
     )
     assert projection.constraints == ("output_length <= 128 bytes.",)
+
+
+@pytest.mark.unit
+def test_projection_preserves_conventional_req_identifier_compatibility() -> None:
+    spec = "- **REQ-001**: The greeting command MUST write a message.\n"
+
+    assert parse_requirements(spec)["requirements"] == [
+        {"id": "REQ-001", "text": "The greeting command MUST write a message."}
+    ]
+
+
+@pytest.mark.unit
+def test_projection_excludes_technical_tokens_from_traceability() -> None:
+    spec = (
+        "- **FR-001**: The command MUST store SHA256, TLS1, and ISO-27001 "
+        "alongside FR-002. Verified by: AC-001.\n"
+    )
+
+    projection = project_requirements(spec)[0]
+
+    assert projection.traceability_references == ("FR-002", "AC-001")
