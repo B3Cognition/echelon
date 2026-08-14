@@ -234,7 +234,33 @@ def test_status_shows_sealed_proportional_choice_evidence_and_exact_resume_synta
                     "extension_consumed": 0,
                 },
                 "proportional_quality_candidate_evidence": {
-                    "selected_candidate_id": "quality-candidate-2"
+                    "selected_candidate_id": "quality-candidate-2",
+                    "failed_gates": [
+                        {"name": "overall", "score": 0.70, "threshold": 0.80},
+                        {"name": "atomicity", "score": 0.72, "threshold": 0.85},
+                    ],
+                    "sage_finding_routes": [
+                        {
+                            "issue_id": "ISS-QUALITY-7",
+                            "severity": "MEDIUM",
+                            "issue_type": "incompleteness",
+                            "rationale": "The failure path is not observable.",
+                        }
+                    ],
+                    "recommendation_evidence": {
+                        "previous_candidate_id": "quality-candidate-1",
+                        "current_candidate_id": "quality-candidate-2",
+                        "previous_formal_statement_count": 12,
+                        "formal_statement_count": 14,
+                        "formal_statement_growth": 2,
+                        "previous_byte_count": 1000,
+                        "byte_count": 1320,
+                        "byte_growth": 320,
+                        "recommended_option_id": "extend_once",
+                        "rationale": (
+                            "Residual gates improved within the borderline margin."
+                        ),
+                    },
                 },
             }
         ),
@@ -249,6 +275,14 @@ def test_status_shows_sealed_proportional_choice_evidence_and_exact_resume_synta
     assert "Extension repairs" in output and "0 of 1" in output
     assert "1 remaining; 0 authorized" in output
     assert "quality-candidate-2" in output
+    assert "overall 0.70 < 0.80" in output
+    assert "atomicity 0.72 < 0.85" in output
+    assert "ISS-QUALITY-7" in output
+    assert "MEDIUM/incompleteness" in output
+    assert "The failure path is not observable." in output
+    assert "12 → 14 (+2)" in output
+    assert "1,000 → 1,320 (+320 bytes)" in output
+    assert "Residual gates improved within the borderline margin." in output
     assert "extend_once: Extend once" in output
     assert "continue_with_debt: Continue with debt" in output
     assert "stop: Stop" in output

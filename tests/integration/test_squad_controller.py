@@ -7727,6 +7727,18 @@ class TestProportionalQualityController:
         assert blocked["blocked_decision"]["reason_code"] == (
             "proportional_quality_budget_exhausted"
         )
+        recommendation = blocked["proportional_quality_candidate_evidence"][
+            "recommendation_evidence"
+        ]
+        assert recommendation["previous_candidate_id"] == "quality-candidate-2"
+        assert recommendation["current_candidate_id"] == "quality-candidate-3"
+        assert recommendation["recommended_option_id"] in {
+            "extend_once",
+            "continue_with_debt",
+        }
+        assert type(recommendation["formal_statement_growth"]) is int
+        assert type(recommendation["byte_growth"]) is int
+        assert recommendation["rationale"]
         assert blocked.get("why2_metric_stagnation_count", 0) == 0
         assert (tmp_path / "runs/run-test/specs/001-demo/spec.md").read_text(
             encoding="utf-8"
@@ -11432,14 +11444,22 @@ class TestLexiconGateGuardDeterminism:
             == "phase1-lexicon-derive"
         )
 
-    def test_quality_guard_does_not_rewind_a_later_phase_resume(
+    def test_quality_guard_rewinds_a_later_phase_with_invalid_debt_authority(
         self,
         tmp_path,
         monkeypatch,
     ):
         ctrl, store = _controller(tmp_path)
         state = store.load()
-        state["phase"] = "phase3-plan"
+        state.update(
+            {
+                "phase": "phase3-plan",
+                "spec_quality_debt_authorization": {
+                    "status": "accepted_with_debt"
+                },
+                "spec_status": "accepted_with_debt",
+            }
+        )
         store.save(state)
         monkeypatch.setattr(
             "harness.squad.has_current_phase1_quality_prerequisite",
@@ -11447,8 +11467,14 @@ class TestLexiconGateGuardDeterminism:
             raising=False,
         )
 
-        assert ctrl._guard_phase1_quality_evidence("phase3-plan") == "phase3-plan"
-        assert store.load()["phase"] == "phase3-plan"
+        assert (
+            ctrl._guard_phase1_quality_evidence("phase3-plan")
+            == "phase1-understanding"
+        )
+        invalidated = store.load()
+        assert invalidated["phase"] == "phase1-understanding"
+        assert "spec_quality_debt_authorization" not in invalidated
+        assert "spec_status" not in invalidated
 
     def test_passing_why2_creates_controller_quality_certificate(
         self,
@@ -11555,6 +11581,141 @@ class TestLexiconGateGuardDeterminism:
             ctrl._guard_phase1_quality_evidence("phase1-lexicon-derive")
             == "phase1-lexicon-derive"
         )
+
+    @pytest.mark.parametrize("tamper", ["source", "evidence", "decision", "debt"])
+    def test_sealed_debt_publication_reauthenticates_before_apply_and_recovery(
+        self,
+        tmp_path: Path,
+        tamper: str,
+    ) -> None:
+        ctrl, store = _start_proportional_quality_loop(
+            tmp_path,
+            automatic_consumed=3,
+        )
+        active = tmp_path / "runs/run-test/specs/001-demo"
+        active.mkdir(parents=True, exist_ok=True)
+        _write_phase_a_build_inputs(active, prefix="accepted ", include_fr=True)
+        spec_text = (active / "spec.md").read_text(encoding="utf-8")
+        updates, why2 = _proportional_assessment_fixture(
+            ctrl,
+            store,
+            0,
+            spec_text=spec_text,
+        )
+        state = store.load()
+        state.update(updates)
+        store.save(state)
+        _coordinate_prepared_result(ctrl, ctrl._graph.get("phase1-why2"), why2)
+        assert ctrl.resume_with_human_input("continue_with_debt")
+
+        _mark_constitution_complete(tmp_path, store)
+        published = tmp_path / "specs/001-demo"
+        published.mkdir(parents=True)
+        state = store.load()
+        state.update(
+            {
+                "phase": "phase4-document",
+                "status": "running",
+                "published_spec_dir": "specs/001-demo",
+            }
+        )
+        store.save(state)
+        kb_report = tmp_path / "runs" / "r" / "kb-apply-report.yaml"
+        kb_report.parent.mkdir(parents=True, exist_ok=True)
+        kb_report.write_text("status: degraded\n", encoding="utf-8")
+        result = SquadAgentResult(
+            exit_code=0,
+            echelon_result={"verdict": "DONE", "state_updates": {}},
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        prepared = ctrl._prepare_external_phase_effects(
+            result,
+            "phase4-document",
+            store.load(),
+            manual_phase_run=False,
+        )
+        assert prepared is not None
+        marker = _install_publication_marker(store, prepared)
+
+        current = store.load()
+        authorization = current["spec_quality_debt_authorization"]
+        if tamper == "source":
+            (active / "spec.md").write_text(
+                spec_text + "\nchanged after sealing\n",
+                encoding="utf-8",
+            )
+        elif tamper == "evidence":
+            evidence = Path(authorization["understanding_evidence"])
+            if not evidence.is_absolute():
+                evidence = tmp_path / evidence
+            evidence.write_bytes(evidence.read_bytes() + b"\n")
+        elif tamper == "decision":
+            mutated_authorization = dict(authorization)
+            decision = dict(mutated_authorization["resolved_decision"])
+            decision["question"] = "Mutated after publication sealing."
+            mutated_authorization["resolved_decision"] = decision
+            current["spec_quality_debt_authorization"] = mutated_authorization
+            store.save(current)
+        else:
+            debt = Path(authorization["debt_artifact"])
+            if not debt.is_absolute():
+                debt = tmp_path / debt
+            debt.write_bytes(debt.read_bytes() + b"\n")
+
+        assert ctrl._publish_and_finalize(prepared, marker) is False
+        assert not (published / "quality-debt.json").exists()
+        assert PENDING_EXTERNAL_PUBLICATION_KEY in store.load()
+
+        del ctrl
+        fresh, _ = _controller(tmp_path)
+        assert fresh._recover_pending_external_publication() is False
+        assert not (published / "quality-debt.json").exists()
+        assert PENDING_EXTERNAL_PUBLICATION_KEY in store.load()
+
+    def test_phase3_specialists_receive_pinned_debt_without_graph_path_mutation(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        ctrl, store = _start_proportional_quality_loop(
+            tmp_path,
+            automatic_consumed=3,
+        )
+        updates, why2 = _proportional_assessment_fixture(ctrl, store, 0)
+        state = store.load()
+        state.update(updates)
+        store.save(state)
+        _coordinate_prepared_result(ctrl, ctrl._graph.get("phase1-why2"), why2)
+        assert ctrl.resume_with_human_input("continue_with_debt")
+        state = store.load()
+        state["guardian_mode"] = "always_on"
+        store.save(state)
+
+        graph_node = ctrl._graph.get("phase3-specialists")
+        original_agent_contexts = copy.deepcopy(graph_node.agents)
+        dispatched = ctrl._materialize_controller_phase_inputs(graph_node)
+        authorization = store.load()["spec_quality_debt_authorization"]
+        debt_path = tmp_path / authorization["debt_artifact"]
+        accepted_bytes = debt_path.read_bytes()
+        debt_path.write_text('{"status":"tampered"}\n', encoding="utf-8")
+        ctrl._provider.exec_agent.reset_mock()
+        ctrl._provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={"verdict": "DONE", "state_updates": {}},
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+
+        ctrl._executors["conditional_sequential"].execute(dispatched, store)
+
+        prompts = [call.args[1] for call in ctrl._provider.exec_agent.call_args_list]
+        assert prompts
+        assert all(accepted_bytes.decode("utf-8") in prompt for prompt in prompts)
+        assert all('"status":"tampered"' not in prompt for prompt in prompts)
+        assert graph_node.agents == original_agent_contexts
+        assert graph_node.controller_context == ""
 
     def test_invalid_debt_authorization_routes_through_understanding_fail_closed(
         self,

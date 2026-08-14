@@ -68,7 +68,10 @@ def summarize_run(
         and _collapses_quality_debt_to_pass(summary)
     ):
         return _fallback_summary(context)
-    return summary or _fallback_summary(context)
+    if not summary:
+        return _fallback_summary(context)
+    required = _required_outcome_truth_lines(context)
+    return "\n".join((summary, *required)) if required else summary
 
 
 def summarize_run_for_cli(context: RunSummaryContext) -> str:
@@ -153,11 +156,36 @@ def _collapses_quality_debt_to_pass(summary: str) -> bool:
         re.search(
             r"(?:quality(?: gates?)? (?:all )?pass|"
             r"pass(?:ed|es) all quality|fully certified|"
-            r"debt[- ]free|no quality debt|without quality debt)",
+            r"debt[- ]free|no quality debt|without quality debt|"
+            r"all (?:specification )?quality (?:checks |gates )?succeed(?:ed|s)?)",
             summary,
             flags=re.IGNORECASE,
         )
     )
+
+
+def _required_outcome_truth_lines(context: RunSummaryContext) -> list[str]:
+    lines: list[str] = []
+    if context.quality_debt_status == "accepted_with_debt":
+        detail = "Specification quality: accepted with quality debt"
+        resolver = context.quality_debt_resolved_by.strip()[:40]
+        if resolver:
+            detail += f" by {resolver}"
+        gates = [
+            gate.strip()[:160]
+            for gate in context.quality_debt_failed_gates[:8]
+            if gate.strip()
+        ]
+        if gates:
+            detail += "; residual gates: " + ", ".join(gates)
+        artifact = context.quality_debt_artifact.strip()[:500]
+        if artifact:
+            detail += f"; evidence: {artifact}"
+        lines.append(detail + ".")
+    provider = context.provider_limit_message.strip()[:500]
+    if provider:
+        lines.append(f"Provider limit: {provider.rstrip('.')}.")
+    return lines
 
 
 def _fallback_summary(context: RunSummaryContext) -> str:
@@ -222,24 +250,7 @@ def _fallback_summary(context: RunSummaryContext) -> str:
     if stopped:
         stopped = stopped[stopped.lower().index("stopped:") + 8 :]
         lines.append(f"Stopped: {stopped.strip().rstrip('.')}.")
-    if context.quality_debt_status == "accepted_with_debt":
-        detail = "Specification quality: accepted with quality debt"
-        if context.quality_debt_resolved_by.strip():
-            detail += f" by {context.quality_debt_resolved_by.strip()}"
-        gates = [
-            gate.strip()
-            for gate in context.quality_debt_failed_gates[:8]
-            if gate.strip()
-        ]
-        if gates:
-            detail += "; residual gates: " + ", ".join(gates)
-        if context.quality_debt_artifact.strip():
-            detail += f"; evidence: {context.quality_debt_artifact.strip()}"
-        lines.append(detail + ".")
-    if context.provider_limit_message.strip():
-        lines.append(
-            f"Provider limit: {context.provider_limit_message.strip().rstrip('.')}."
-        )
+    lines.extend(_required_outcome_truth_lines(context))
     if context.next_step.strip():
         lines.append(f"Next: {context.next_step.strip()}")
     return "\n".join(lines)

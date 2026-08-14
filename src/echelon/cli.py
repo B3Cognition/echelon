@@ -3587,6 +3587,86 @@ def _proportional_quality_decision_fields(
         candidate = str(evidence.get("selected_candidate_id") or "").strip()
         if candidate:
             fields.append(("Selected candidate", candidate))
+        failed_gates: list[str] = []
+        raw_gates = evidence.get("failed_gates")
+        if isinstance(raw_gates, list):
+            for gate in raw_gates[:8]:
+                if not isinstance(gate, Mapping):
+                    continue
+                name = str(gate.get("name") or "").strip()
+                score = gate.get("score")
+                threshold = gate.get("threshold")
+                if (
+                    name
+                    and type(score) in {int, float}
+                    and type(threshold) in {int, float}
+                ):
+                    failed_gates.append(
+                        f"{name} {float(score):.2f} < {float(threshold):.2f}"
+                    )
+        if failed_gates:
+            fields.append(("Residual gate evidence", ", ".join(failed_gates)))
+        sage_findings: list[str] = []
+        raw_findings = evidence.get("sage_finding_routes")
+        if isinstance(raw_findings, list):
+            for finding in raw_findings[:5]:
+                if not isinstance(finding, Mapping):
+                    continue
+                issue_id = str(finding.get("issue_id") or "").strip()
+                severity = str(finding.get("severity") or "").strip()
+                issue_type = str(finding.get("issue_type") or "").strip()
+                rationale = str(finding.get("rationale") or "").strip()
+                identity = issue_id or "SAGE finding"
+                classification = "/".join(
+                    value for value in (severity, issue_type) if value
+                )
+                rendered = (
+                    f"{identity} [{classification}]" if classification else identity
+                )
+                if rationale:
+                    rendered += f": {rationale[:240]}"
+                sage_findings.append(rendered)
+        if sage_findings:
+            fields.append(("Material SAGE findings", "\n".join(sage_findings)))
+        recommendation_evidence = evidence.get("recommendation_evidence")
+        if isinstance(recommendation_evidence, Mapping):
+            previous_statements = recommendation_evidence.get(
+                "previous_formal_statement_count"
+            )
+            statements = recommendation_evidence.get("formal_statement_count")
+            statement_growth = recommendation_evidence.get(
+                "formal_statement_growth"
+            )
+            if all(
+                type(value) is int
+                for value in (previous_statements, statements, statement_growth)
+            ):
+                fields.append(
+                    (
+                        "Formal statements",
+                        f"{previous_statements:,} → {statements:,} "
+                        f"({statement_growth:+,})",
+                    )
+                )
+            previous_bytes = recommendation_evidence.get("previous_byte_count")
+            byte_count = recommendation_evidence.get("byte_count")
+            byte_growth = recommendation_evidence.get("byte_growth")
+            if all(
+                type(value) is int
+                for value in (previous_bytes, byte_count, byte_growth)
+            ):
+                fields.append(
+                    (
+                        "Specification bytes",
+                        f"{previous_bytes:,} → {byte_count:,} "
+                        f"({byte_growth:+,} bytes)",
+                    )
+                )
+            rationale = str(
+                recommendation_evidence.get("rationale") or ""
+            ).strip()
+            if rationale:
+                fields.append(("Recommendation rationale", rationale[:500]))
     options = decision.get("options")
     if isinstance(options, list):
         recommended = next(

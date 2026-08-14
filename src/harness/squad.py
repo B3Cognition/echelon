@@ -159,6 +159,7 @@ from harness.squad_publication import (
     PublicationError,
     SquadPublicationTransaction,
     add_verified_quality_debt_publication,
+    authenticate_prepared_quality_debt_publication,
     load_prepared_publication,
 )
 from echelon.telemetry.phase_timing import record_phase_finish, record_phase_start
@@ -2054,6 +2055,10 @@ class SquadController:
                                 staged_publication,
                                 state,
                             )
+                        self._authenticate_quality_debt_publication_stage(
+                            staged_publication,
+                            state,
+                        )
                         authenticate_pending_product_input_mutation(
                             self._project_root,
                             state,
@@ -2352,6 +2357,10 @@ class SquadController:
             return False
         try:
             state = self._state_store.load()
+            self._authenticate_quality_debt_publication_stage(
+                prepared,
+                state,
+            )
             authenticate_pending_product_input_mutation(
                 self._project_root,
                 state,
@@ -5296,9 +5305,9 @@ class SquadController:
                     continue
                 return SquadResult.from_state(self._state_store.load())
 
-            self._materialize_controller_phase_inputs(node)
             executor = self._executors.get(node.type)
             try:
+                node = self._materialize_controller_phase_inputs(node)
                 if executor is None:
                     result = self._judgment_dispatch(
                         f"Unknown phase type {node.type!r} for phase {phase!r}",
@@ -5512,18 +5521,26 @@ class SquadController:
     def _guard_phase1_quality_evidence(self, phase: str) -> str:
         """Prevent Phase 1 certification from advancing on an uncertified spec.
 
-        Later-phase resumes are deliberately not rewound here.  Normal graph
-        execution can enter those phases only through checkpoint-assess, while
-        manual replay is explicitly a single-node diagnostic facility.
+        A later-phase resume carrying debt authority is also protected: the
+        authority may have become stale while the run was stopped.
         """
         protected = {
             "phase1-lexicon-derive",
             "phase1-lexicon",
             "checkpoint-assess",
         }
-        if phase not in protected:
-            return phase
         state = self._state_store.load()
+        debt_claimed = (
+            "spec_quality_debt_authorization" in state
+            or state.get("spec_status") == "accepted_with_debt"
+            or state.get("spec_quality_status") == "accepted_with_debt"
+            or isinstance(state.get("spec_quality_debt_context"), Mapping)
+        )
+        invalid_downstream_debt = (
+            phase in _QUALITY_DEBT_DOWNSTREAM_PHASES and debt_claimed
+        )
+        if phase not in protected and not invalid_downstream_debt:
+            return phase
         if has_current_phase1_quality_prerequisite(
             state,
             project_root=self._project_root,
@@ -5537,6 +5554,8 @@ class SquadController:
             "phase1-lexicon",
             "checkpoint-assess",
         }
+        if invalid_downstream_debt:
+            invalidated.update(_QUALITY_DEBT_DOWNSTREAM_PHASES)
         completed = state.get("completed_phases")
         if isinstance(completed, list):
             state["completed_phases"] = [
@@ -5781,9 +5800,9 @@ class SquadController:
             self._intercept_human_gate(node)
             return SquadResult.from_state(self._state_store.load())
 
-        self._materialize_controller_phase_inputs(node)
         executor = self._executors.get(node.type)
         try:
+            node = self._materialize_controller_phase_inputs(node)
             if executor is None:
                 result = self._judgment_dispatch(
                     f"Unknown phase type {node.type!r} for phase {phase!r}",
@@ -6647,7 +6666,15 @@ class SquadController:
             isinstance(debt_authorization, Mapping)
             and debt_authorization.get("status") == "accepted_with_debt"
         ):
-            detached_state["spec_status"] = "accepted_with_debt"
+            from harness.phase1_quality_debt import (
+                has_current_quality_debt_authorization,
+            )
+
+            if has_current_quality_debt_authorization(
+                detached_state,
+                project_root=self._project_root,
+            ):
+                detached_state["spec_status"] = "accepted_with_debt"
         active_spec_dir = self._active_phase_a_spec_dir(detached_state)
         if active_spec_dir is None or not active_spec_dir.exists():
             return (
@@ -6921,6 +6948,47 @@ class SquadController:
                 "staged Phase 4 published evidence changed"
             )
 
+    def _authenticate_quality_debt_publication_stage(
+        self,
+        prepared: PreparedSquadPublication,
+        state: Mapping[str, object],
+    ) -> None:
+        """Bind any durable publication replay to live Task 6 debt authority."""
+        active_spec_dir = self._active_phase_a_spec_dir(dict(state))
+        if active_spec_dir is None:
+            operations = prepared._manifest.get("operations")
+            writes_debt = isinstance(operations, list) and any(
+                isinstance(operation, Mapping)
+                and operation.get("action") == "write"
+                and str(operation.get("target") or "").endswith(
+                    "/quality-debt.json"
+                )
+                for operation in operations
+            )
+            stale_debt_claim = (
+                state.get("spec_status") == "accepted_with_debt"
+                or state.get("spec_quality_status") == "accepted_with_debt"
+                or isinstance(state.get("spec_quality_debt_context"), Mapping)
+            )
+            if (
+                "spec_quality_debt_authorization" in state
+                or stale_debt_claim
+                or writes_debt
+            ):
+                raise PublicationError("manifest_invalid")
+            return
+        published_spec_dir = self._published_phase_a_spec_dir(
+            dict(state),
+            active_spec_dir,
+        )
+        authenticate_prepared_quality_debt_publication(
+            prepared,
+            project_root=self._project_root,
+            state=state,
+            active_spec_dir=active_spec_dir,
+            published_spec_dir=published_spec_dir,
+        )
+
     def _prepare_external_phase_effects(
         self,
         result: SquadAgentResult,
@@ -7087,7 +7155,15 @@ class SquadController:
             isinstance(authorization, Mapping)
             and authorization.get("status") == "accepted_with_debt"
         ):
-            updates["spec_status"] = "accepted_with_debt"
+            from harness.phase1_quality_debt import (
+                has_current_quality_debt_authorization,
+            )
+
+            if has_current_quality_debt_authorization(
+                detached_state,
+                project_root=self._project_root,
+            ):
+                updates["spec_status"] = "accepted_with_debt"
         return updates
 
     def _publish_terminal_phase_a_artifacts_if_available(
@@ -7900,19 +7976,30 @@ class SquadController:
         except (OSError, ValueError) as exc:
             logger.warning("Could not materialize implementation targets: %s", exc)
 
-    def _materialize_controller_phase_inputs(self, node: PhaseNode) -> None:
-        """Materialize controller-owned metadata required by a deterministic node."""
+    def _materialize_controller_phase_inputs(self, node: PhaseNode) -> PhaseNode:
+        """Return one dispatch-local node with controller-pinned debt context."""
         if (
             node.type == "deterministic_lexicon"
             and node.lexicon_artifact == "tasks"
         ):
             self._materialize_implementation_targets()
         if node.id not in _QUALITY_DEBT_DOWNSTREAM_PHASES:
-            return
+            return node
         state = self._state_store.load()
         authorization = state.get("spec_quality_debt_authorization")
         if not isinstance(authorization, Mapping):
-            return
+            if (
+                state.get("spec_status") == "accepted_with_debt"
+                or state.get("spec_quality_status") == "accepted_with_debt"
+                or isinstance(state.get("spec_quality_debt_context"), Mapping)
+            ):
+                raise ControllerStateContractViolation(
+                    "quality-debt status has no current authorization",
+                    contract="phase1_quality_debt",
+                    json_path="$.spec_quality_debt_authorization",
+                    validator="required",
+                )
+            return node
         from harness.phase1_quality_debt import (
             has_current_quality_debt_authorization,
         )
@@ -7921,36 +8008,58 @@ class SquadController:
             state,
             project_root=self._project_root,
         ):
-            return
+            raise ControllerStateContractViolation(
+                "quality-debt authorization is stale or invalid",
+                contract="phase1_quality_debt",
+                json_path="$.spec_quality_debt_authorization",
+                validator="currentness",
+            )
         debt_ref = authorization.get("debt_artifact")
         debt_digest = authorization.get("debt_artifact_sha256")
         if type(debt_ref) is not str or type(debt_digest) is not str:
-            return
+            raise ControllerStateContractViolation(
+                "quality-debt artifact binding is invalid",
+                contract="phase1_quality_debt",
+                json_path="$.spec_quality_debt_authorization.debt_artifact",
+                validator="binding",
+            )
         debt_path = Path(debt_ref)
         if not debt_path.is_absolute():
             debt_path = self._project_root / debt_path
         try:
+            metadata = os.lstat(debt_path)
             debt_bytes = debt_path.read_bytes()
             debt = json.loads(debt_bytes)
-        except (OSError, json.JSONDecodeError):
-            return
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ControllerStateContractViolation(
+                "quality-debt artifact cannot be pinned for dispatch",
+                contract="phase1_quality_debt",
+                json_path="$.spec_quality_debt_authorization.debt_artifact",
+                validator="artifact",
+            ) from exc
         if (
-            not isinstance(debt, Mapping)
+            stat.S_ISLNK(metadata.st_mode)
+            or not stat.S_ISREG(metadata.st_mode)
+            or not isinstance(debt, Mapping)
             or hashlib.sha256(debt_bytes).hexdigest() != debt_digest
         ):
-            return
-        context_pack_item = "{spec_dir}/quality-debt.json"
-        if context_pack_item not in node.context_pack:
-            node.context_pack.append(context_pack_item)
-        if node.type == "staged_parallel":
-            for agent_entry in node.agents:
-                if not isinstance(agent_entry, dict):
-                    continue
-                agent_context = agent_entry.get("context_pack")
-                if not isinstance(agent_context, list):
-                    continue
-                if context_pack_item not in agent_context:
-                    agent_context.append(context_pack_item)
+            raise ControllerStateContractViolation(
+                "quality-debt artifact changed before dispatch",
+                contract="phase1_quality_debt",
+                json_path="$.spec_quality_debt_authorization.debt_artifact_sha256",
+                validator="digest",
+            )
+        dispatched = deepcopy(node)
+        dispatched.controller_context = (
+            "\n## Verified Specification Quality Debt (Controller-Pinned)\n"
+            "Status: accepted_with_debt\n"
+            f"Artifact: {debt_ref}\n"
+            f"SHA-256: {debt_digest}\n"
+            "The following exact verified quality-debt.json bytes are immutable "
+            "context for this dispatch. The recorded failures remain unresolved; "
+            "do not translate them into PASS.\n"
+            f"{debt_bytes.decode('utf-8')}\n"
+        )
         context = {
             "status": "accepted_with_debt",
             "artifact": debt_ref,
@@ -7965,6 +8074,7 @@ class SquadController:
             state["spec_quality_status"] = "accepted_with_debt"
             state["spec_quality_debt_context"] = context
             self._state_store.save(state)
+        return dispatched
 
     def _apply_product_input_updates(
         self,
@@ -9299,6 +9409,29 @@ class SquadController:
                 last_repair_outcome == "no_artifact_progress"
             ),
         )
+        recommended_option_id = next(
+            option.id for option in request.options if option.recommended
+        )
+        if recommended_option_id == "extend_once":
+            recommendation_rationale = (
+                "Residual gates improved within the configured borderline margin "
+                "without formal-statement growth, so one final repair is favored."
+            )
+        elif reason_code == "proportional_quality_extension_exhausted":
+            recommendation_rationale = (
+                "The single authorized extension is consumed and quality still "
+                "fails, so the remaining non-stop choice is explicit debt acceptance."
+            )
+        elif last_repair_outcome == "no_artifact_progress":
+            recommendation_rationale = (
+                "The repair produced no artifact progress, so another automatic "
+                "attempt is not favored over explicit debt acceptance."
+            )
+        else:
+            recommendation_rationale = (
+                "At least one residual gate is outside the improving borderline "
+                "case or formal statements grew, so explicit debt acceptance is favored."
+            )
         quality_effect: dict[str, object]
         if current_candidate is not None:
             raw_effect = state.get("_proportional_quality_effect")
@@ -9354,6 +9487,30 @@ class SquadController:
                 "sage_finding_routes": [
                     dict(item) for item in selected.sage_finding_routes
                 ],
+                "recommendation_evidence": {
+                    "previous_candidate_id": (
+                        recommendation_previous.candidate_id
+                    ),
+                    "current_candidate_id": recommendation_current.candidate_id,
+                    "previous_formal_statement_count": (
+                        recommendation_previous.formal_statement_count
+                    ),
+                    "formal_statement_count": (
+                        recommendation_current.formal_statement_count
+                    ),
+                    "formal_statement_growth": (
+                        recommendation_current.formal_statement_count
+                        - recommendation_previous.formal_statement_count
+                    ),
+                    "previous_byte_count": recommendation_previous.byte_count,
+                    "byte_count": recommendation_current.byte_count,
+                    "byte_growth": (
+                        recommendation_current.byte_count
+                        - recommendation_previous.byte_count
+                    ),
+                    "recommended_option_id": recommended_option_id,
+                    "rationale": recommendation_rationale,
+                },
                 "eligibility_reasons": [],
                 "last_repair_outcome": last_repair_outcome,
             },

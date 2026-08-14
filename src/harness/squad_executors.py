@@ -1860,6 +1860,7 @@ class PhaseExecutor(ABC):
             f"{_render_published_re_context(state)}"
             f"{_render_certified_understanding_context(state, node.id)}"
             f"{_render_active_spec_roots_context(spec_dir_ref, state, self._project_root)}"
+            f"{getattr(node, 'controller_context', '')}"
             f"{self._extension_path_context()}"
             f"{render_quality_gate_context(self._quality_gate_thresholds())}"
         )
@@ -2559,6 +2560,7 @@ class StagedParallelExecutor(PhaseExecutor):
         state_update_enums: object = None,
         allowed_verdicts: object = None,
         phase_id: str = "phase3-consensus",
+        controller_context: str = "",
     ) -> str:
         """Build a prompt for a single staged agent.
 
@@ -2667,6 +2669,7 @@ class StagedParallelExecutor(PhaseExecutor):
             f"{_render_controller_repair_context(state)}"
             f"{_render_certified_understanding_context(state, mode_label)}"
             f"{_render_active_spec_roots_context(spec_dir_ref, state, self._project_root)}"
+            f"{controller_context}"
             f"{render_quality_gate_context(self._quality_gate_thresholds())}"
             f"Operate in **{mode_label}** mode.\n\n"
         )
@@ -2743,6 +2746,7 @@ class StagedParallelExecutor(PhaseExecutor):
                     state_update_enums=result_contract.state_update_enums,
                     allowed_verdicts=result_contract.allowed_verdicts,
                     phase_id=node.id,
+                    controller_context=getattr(node, "controller_context", ""),
                 )
                 futures[pool.submit(
                     self._exec_agent_with_contract, prompt, result_contract
@@ -2824,6 +2828,7 @@ class StagedParallelExecutor(PhaseExecutor):
                 state_update_enums=result_contract.state_update_enums,
                 allowed_verdicts=result_contract.allowed_verdicts,
                 phase_id=node.id,
+                controller_context=getattr(node, "controller_context", ""),
             )
             stage2_result = self._exec_agent_with_contract(prompt, result_contract)
             stage2_result = self._validate_result_state_updates(
@@ -2887,6 +2892,7 @@ class ConditionalSequentialExecutor(PhaseExecutor):
                         + path.read_text()
                         + _render_product_input_context(state)
                         + _render_controller_repair_context(state)
+                        + getattr(node, "controller_context", "")
                         + _allowed_state_updates_contract(
                             result_contract.allowed_state_update_keys,
                             required_state_updates=result_contract.required_state_update_keys,

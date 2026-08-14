@@ -209,6 +209,73 @@ def test_summary_agent_cannot_collapse_authorized_debt_into_quality_pass(
     assert "fully certified" not in summary.lower()
 
 
+def test_model_summary_cannot_omit_required_debt_and_provider_facts(
+    tmp_path: Path,
+) -> None:
+    context = RunSummaryContext(
+        project_root=tmp_path,
+        command="echelon spec run",
+        task="Prepare a proportional specification.",
+        status="done",
+        quality_debt_status="accepted_with_debt",
+        quality_debt_artifact="specs/001-demo/quality-debt.json",
+        quality_debt_failed_gates=("overall 0.70 < 0.80", "atomicity 0.72 < 0.85"),
+        quality_debt_resolved_by="COMMANDER",
+        provider_limit_message="Provider limit reached; resets at 21:10.",
+    )
+    provider = _RecordingProvider(
+        CliRunResult(
+            exit_code=0,
+            stdout="Implemented the requested specification and prepared delivery.",
+            stderr="",
+        )
+    )
+
+    summary = summarize_run(
+        context,
+        provider=provider,
+        agent=SummaryAgent(prompt="Summarize.", metadata={}),
+    )
+
+    assert "accepted with quality debt" in summary.lower()
+    assert "COMMANDER" in summary
+    assert "overall 0.70 < 0.80" in summary
+    assert "atomicity 0.72 < 0.85" in summary
+    assert "specs/001-demo/quality-debt.json" in summary
+    assert "Provider limit reached; resets at 21:10" in summary
+
+
+def test_model_summary_rejects_success_wording_that_contradicts_accepted_debt(
+    tmp_path: Path,
+) -> None:
+    context = RunSummaryContext(
+        project_root=tmp_path,
+        command="echelon spec run",
+        task="Prepare a proportional specification.",
+        status="done",
+        quality_debt_status="accepted_with_debt",
+        quality_debt_artifact="specs/001-demo/quality-debt.json",
+        quality_debt_failed_gates=("overall 0.70 < 0.80",),
+        quality_debt_resolved_by="user",
+    )
+    provider = _RecordingProvider(
+        CliRunResult(
+            exit_code=0,
+            stdout="All specification quality checks succeeded; the work is ready.",
+            stderr="",
+        )
+    )
+
+    summary = summarize_run(
+        context,
+        provider=provider,
+        agent=SummaryAgent(prompt="Summarize.", metadata={}),
+    )
+
+    assert "all specification quality checks succeeded" not in summary.lower()
+    assert "accepted with quality debt" in summary.lower()
+
+
 def test_delivery_fallback_prioritizes_outcome_and_verification_over_branch_noise(
     tmp_path: Path,
 ) -> None:

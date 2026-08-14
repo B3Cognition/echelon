@@ -2394,3 +2394,88 @@ def add_verified_quality_debt_publication(
     ):
         _raise("manifest_invalid")
     return 1
+
+
+def authenticate_prepared_quality_debt_publication(
+    prepared: PreparedSquadPublication,
+    *,
+    project_root: Path,
+    state: Mapping[str, object],
+    active_spec_dir: Path,
+    published_spec_dir: Path,
+) -> None:
+    """Reauthenticate live debt authority against one sealed publication stage."""
+    if not isinstance(prepared, PreparedSquadPublication) or not isinstance(
+        state, Mapping
+    ):
+        _raise("manifest_invalid")
+    root = _require_real_directory(Path(project_root), code="manifest_invalid")
+    active = _require_real_directory(
+        Path(active_spec_dir), code="manifest_invalid"
+    )
+    try:
+        published_relative = Path(published_spec_dir).absolute().relative_to(root)
+    except ValueError:
+        _raise("manifest_invalid")
+    target = _normalize_relative_path(
+        (published_relative / "quality-debt.json").as_posix()
+    ).as_posix()
+    raw_operations = prepared._manifest.get("operations")
+    if not isinstance(raw_operations, list):
+        _raise("manifest_invalid")
+    debt_operations = [
+        operation
+        for operation in raw_operations
+        if isinstance(operation, Mapping) and operation.get("target") == target
+    ]
+    authorization = state.get("spec_quality_debt_authorization")
+    if authorization is None:
+        stale_debt_claim = (
+            state.get("spec_status") == "accepted_with_debt"
+            or state.get("spec_quality_status") == "accepted_with_debt"
+            or isinstance(state.get("spec_quality_debt_context"), Mapping)
+        )
+        if stale_debt_claim or any(
+            operation.get("action") == "write" for operation in debt_operations
+        ):
+            _raise("manifest_invalid")
+        return
+    if not isinstance(authorization, Mapping):
+        _raise("manifest_invalid")
+
+    from harness.phase1_quality_debt import (
+        has_current_quality_debt_authorization,
+    )
+
+    if not has_current_quality_debt_authorization(
+        state,
+        project_root=root,
+    ):
+        _raise("manifest_invalid")
+    debt_ref = authorization.get("debt_artifact")
+    debt_digest = authorization.get("debt_artifact_sha256")
+    if type(debt_ref) is not str or type(debt_digest) is not str:
+        _raise("manifest_invalid")
+    debt_source = Path(debt_ref)
+    if not debt_source.is_absolute():
+        debt_source = root / debt_source
+    try:
+        if debt_source.resolve(strict=True) != (active / "quality-debt.json").resolve(
+            strict=True
+        ):
+            _raise("manifest_invalid")
+    except (OSError, RuntimeError):
+        _raise("manifest_invalid")
+    if not debt_operations:
+        return
+    if len(debt_operations) != 1:
+        _raise("manifest_invalid")
+    operation = debt_operations[0]
+    postimage = operation.get("postimage")
+    if (
+        operation.get("action") != "write"
+        or not isinstance(postimage, Mapping)
+        or postimage.get("kind") != "file"
+        or postimage.get("sha256") != debt_digest
+    ):
+        _raise("manifest_invalid")
