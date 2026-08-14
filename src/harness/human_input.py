@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from decimal import Decimal
 import json
 import math
 from types import MappingProxyType
@@ -703,6 +704,15 @@ class HumanInputPolicyRegistry:
         )
 
 
+def _within_inclusive_decimal_margin(
+    score: float,
+    threshold: float,
+    margin: float,
+) -> bool:
+    """Compare decimal-domain quality inputs without binary subtraction drift."""
+    return Decimal(str(threshold)) - Decimal(str(score)) <= Decimal(str(margin))
+
+
 def prepare_controller_proportional_quality_decision(
     registry: HumanInputPolicyRegistry,
     *,
@@ -786,7 +796,11 @@ def prepare_controller_proportional_quality_decision(
     should_extend = (
         reason_code == "proportional_quality_budget_exhausted"
         and all(
-            threshold - score <= recommendation_evidence.borderline_margin
+            _within_inclusive_decimal_margin(
+                score,
+                threshold,
+                recommendation_evidence.borderline_margin,
+            )
             for _name, score, threshold, _passed in current_failures
         )
         and all(

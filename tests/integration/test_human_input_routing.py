@@ -4137,6 +4137,44 @@ def test_proportional_budget_recommends_one_extension_only_for_bounded_progress(
 
 
 @pytest.mark.parametrize(
+    ("current_depth", "expected_recommendation"),
+    (
+        (0.70, "extend_once"),
+        (0.699999999999, "continue_with_debt"),
+    ),
+    ids=("exact_inclusive_boundary", "just_outside_boundary"),
+)
+def test_proportional_budget_borderline_margin_is_stably_inclusive(
+    current_depth: float,
+    expected_recommendation: str,
+) -> None:
+    registry = HumanInputPolicyRegistry(controller_safeguard_policies())
+    policy = registry.lookup(
+        "controller_safeguard",
+        "proportional_quality_budget_exhausted",
+        "proportional_quality_budget_exhausted",
+    )
+
+    request = prepare_controller_proportional_quality_decision(
+        registry,
+        reason_code="proportional_quality_budget_exhausted",
+        phase_id="phase1-why2",
+        question="Choose how to resolve the exhausted proportional quality budget.",
+        source_state_revision=12,
+        repair_state=_proportional_repair_state(),
+        recommendation_evidence=_proportional_recommendation_evidence(
+            current_depth=current_depth,
+            previous_depth=0.69,
+        ),
+        option_contract=policy.options,
+    )
+
+    assert [option.id for option in request.options if option.recommended] == [
+        expected_recommendation
+    ]
+
+
+@pytest.mark.parametrize(
     "evidence",
     [
         _proportional_recommendation_evidence(current_depth=0.69),
