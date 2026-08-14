@@ -297,6 +297,8 @@ def test_model_summary_rejects_success_wording_that_contradicts_accepted_debt(
         "Specification deficiencies are absent.",
         "The specification lacks unresolved concerns.",
         "There are zero quality failures.",
+        "Specification quality reports an absence of deficiencies.",
+        "The specification is concern-free.",
     ),
 )
 def test_debt_mode_rejects_paraphrased_specification_quality_success_claims(
@@ -371,6 +373,11 @@ def test_debt_mode_removes_only_contradictory_specification_clause(
         "The specification remains below the overall quality threshold.",
         "Recorded unresolved concerns in specification evidence.",
         "No outstanding concerns remain in downstream planning.",
+        "Successfully implemented quality-debt propagation through planning.",
+        (
+            "Successfully implemented downstream planning, while specification "
+            "quality remains below threshold."
+        ),
     ),
 )
 def test_debt_mode_preserves_non_verdict_work_and_debt_narration(
@@ -398,6 +405,95 @@ def test_debt_mode_preserves_non_verdict_work_and_debt_narration(
     )
 
     assert narration in summary
+
+
+@pytest.mark.parametrize(
+    "narration",
+    (
+        "Implemented residual gates display in the CLI.",
+        "Implemented handling when the specification is accepted with quality debt.",
+        "Implemented provider session limit handling and reset messaging.",
+    ),
+)
+def test_authoritative_truth_dedup_preserves_genuine_action_narration(
+    tmp_path: Path,
+    narration: str,
+) -> None:
+    context = RunSummaryContext(
+        project_root=tmp_path,
+        command="echelon spec run",
+        task="Prepare a proportional specification.",
+        status="done",
+        quality_debt_status="accepted_with_debt",
+        quality_debt_artifact="specs/001-demo/quality-debt.json",
+        quality_debt_failed_gates=("overall 0.70 < 0.80",),
+        quality_debt_resolved_by="COMMANDER",
+        provider_limit_message="You've hit your session limit · resets 4am",
+    )
+    provider = _RecordingProvider(
+        CliRunResult(exit_code=0, stdout=narration, stderr="")
+    )
+
+    summary = summarize_run(
+        context,
+        provider=provider,
+        agent=SummaryAgent(prompt="Summarize.", metadata={}),
+    )
+
+    assert narration in summary
+    assert "accepted with quality debt" in summary.lower()
+    assert summary.count("You've hit your session limit · resets 4am") == 1
+
+
+@pytest.mark.parametrize(
+    ("model_line", "safe_action", "forbidden_verdict"),
+    (
+        (
+            "Implemented downstream planning and the specification passed every quality gate.",
+            "Implemented downstream planning",
+            "passed every quality gate",
+        ),
+        (
+            "Added CLI status, but the specification is free of deficiencies.",
+            "Added CLI status",
+            "free of deficiencies",
+        ),
+        (
+            "Wired planning, although specification quality reports an absence of failures.",
+            "Wired planning",
+            "absence of failures",
+        ),
+    ),
+)
+def test_debt_mode_splits_action_narration_from_embedded_quality_verdict(
+    tmp_path: Path,
+    model_line: str,
+    safe_action: str,
+    forbidden_verdict: str,
+) -> None:
+    context = RunSummaryContext(
+        project_root=tmp_path,
+        command="echelon spec run",
+        task="Prepare a proportional specification.",
+        status="done",
+        quality_debt_status="accepted_with_debt",
+        quality_debt_artifact="specs/001-demo/quality-debt.json",
+        quality_debt_failed_gates=("overall 0.70 < 0.80",),
+        quality_debt_resolved_by="COMMANDER",
+    )
+    provider = _RecordingProvider(
+        CliRunResult(exit_code=0, stdout=model_line, stderr="")
+    )
+
+    summary = summarize_run(
+        context,
+        provider=provider,
+        agent=SummaryAgent(prompt="Summarize.", metadata={}),
+    )
+
+    assert safe_action in summary
+    assert forbidden_verdict not in summary.lower()
+    assert "accepted with quality debt" in summary.lower()
 
 
 def test_session_limit_and_quality_debt_implementation_narration_are_deduplicated(

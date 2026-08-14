@@ -164,7 +164,7 @@ def _asserts_specification_quality_success(clause: str) -> bool:
         flags=re.IGNORECASE,
     )
     positive_verdict = re.search(
-        r"\b(?:pass(?:ed|es|ing)?|succeed(?:ed|s|ing)?|success(?:ful(?:ly)?)?|"
+        r"\b(?:pass(?:ed|es|ing)?|succeed(?:ed|s|ing)?|"
         r"certif(?:y|ied|ies|ication)|satisf(?:y|ied|ies|action)|"
         r"meet(?:s|ing)?|met|clear(?:ed|s)?|conform(?:s|ed|ant)?|"
         r"validat(?:e|ed|es|ion)|approv(?:e|ed|al)|flawless|perfect|"
@@ -174,6 +174,15 @@ def _asserts_specification_quality_success(clause: str) -> bool:
         r"sound|excellent|unconditional|ready)\b",
         clause,
         flags=re.IGNORECASE,
+    )
+    generic_success = re.search(
+        r"\bsuccess(?:ful(?:ly)?)?\b",
+        clause,
+        flags=re.IGNORECASE,
+    )
+    action_narration = _is_work_action_clause(clause)
+    positive_verdict = bool(
+        positive_verdict or (generic_success and not action_narration)
     )
     clean_bill = re.search(
         r"(?:\b(?:no|without)\s+(?:remaining\s+|outstanding\s+|unresolved\s+)?"
@@ -185,7 +194,11 @@ def _asserts_specification_quality_success(clause: str) -> bool:
         r"\black(?:s|ing)?\b.{0,36}\b(?:issues?|defects?|deficiencies|"
         r"concerns?|failures?|findings?|problems?|gaps?|debt)\b|"
         r"\bzero\b.{0,36}\b(?:issues?|defects?|deficiencies|concerns?|"
-        r"failures?|findings?|problems?|gaps?|debt)\b)",
+        r"failures?|findings?|problems?|gaps?|debt)\b|"
+        r"\babsence\s+of\s+(?:issues?|defects?|deficiencies|concerns?|"
+        r"failures?|findings?|problems?|gaps?|debt)\b|"
+        r"\b(?:issue|defect|deficiency|concern|failure|finding|problem|gap|"
+        r"debt)[- ]free\b)",
         clause,
         flags=re.IGNORECASE,
     )
@@ -197,15 +210,58 @@ def _asserts_specification_quality_success(clause: str) -> bool:
     return bool(domain and (positive_verdict or clean_bill or exhaustive))
 
 
+def _is_work_action_clause(clause: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(?:implemented|added|fixed|updated|wired|surfaced|preserved|tested)\b",
+            clause,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _independent_claim_segments(sentence: str) -> list[str]:
+    return [
+        segment.strip()
+        for segment in re.split(
+            r"\s*,\s*(?=(?:while|but|although)\b)|"
+            r"\s+and\s+(?=(?:(?:the\s+)?spec(?:ification)?(?:\s+quality)?|"
+            r"quality|(?:all|every|no)\s+(?:spec(?:ification)?|quality|gates?|"
+            r"checks?))\b)",
+            sentence,
+            flags=re.IGNORECASE,
+        )
+        if segment.strip()
+    ]
+
+
 def _safe_debt_narrative_clauses(summary: str) -> list[str]:
     """Drop only contradictory debt-mode clauses and retain safe narration."""
     safe: list[str] = []
     for line in summary.splitlines():
-        clauses = re.split(r"(?<=[.!?])\s+|(?<=;)\s+", line.strip())
-        for clause in clauses:
-            clause = clause.strip()
-            if clause and not _asserts_specification_quality_success(clause):
-                safe.append(clause)
+        sentences = re.split(r"(?<=[.!?;])\s+", line.strip())
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if not sentence:
+                continue
+            claims = _independent_claim_segments(sentence)
+            accepted = [
+                claim
+                for claim in claims
+                if not _asserts_specification_quality_success(claim)
+            ]
+            if len(accepted) == len(claims):
+                safe.append(sentence)
+                continue
+            for claim in accepted:
+                cleaned = re.sub(
+                    r"^(?:while|but|although|and)\s+",
+                    "",
+                    claim.rstrip(", "),
+                    flags=re.IGNORECASE,
+                )
+                if cleaned:
+                    safe.append(cleaned)
     return safe
 
 
@@ -214,6 +270,8 @@ def _normalized_truth_content(value: str) -> str:
 
 
 def _duplicates_required_truth(line: str, context: RunSummaryContext) -> bool:
+    if _is_work_action_clause(line):
+        return False
     lowered = line.casefold()
     if context.quality_debt_status == "accepted_with_debt":
         accepted_outcome = re.search(
