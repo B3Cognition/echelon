@@ -2097,6 +2097,24 @@ def test_restore_checkpoint_artifacts_rejects_missing_owned_blob(tmp_path: Path)
         )
 
 
+def test_create_phase_checkpoint_rejects_symlink_owned_file(tmp_path: Path) -> None:
+    repo, spec_dir = _checkpoint_repo(tmp_path)
+    target = repo / "target.md"
+    target.write_text("# Target\n", encoding="utf-8")
+    link = repo / "owned-link.md"
+    link.symlink_to(target)
+
+    with pytest.raises(PhaseCheckpointError, match="regular|symlink"):
+        create_phase_checkpoint(
+            project_root=repo,
+            spec_dir=spec_dir,
+            phase="phase1-quality-candidate-0",
+            next_phase="phase1-what",
+            run_id="run-1",
+            checkpoint_owned_paths=(link,),
+        )
+
+
 def test_commit_manual_checkpoint_commits_only_active_spec_path(tmp_path: Path) -> None:
     repo, spec_dir = _checkpoint_repo(tmp_path)
     (spec_dir / "tasks.md").write_text("# Manual tasks\n", encoding="utf-8")

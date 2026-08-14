@@ -625,18 +625,31 @@ def _owned_pathspecs(
         )
     seen_paths: set[Path] = set()
     for owned_path in additional_owned_paths:
-        resolved_path = Path(owned_path).resolve()
-        if resolved_path in seen_paths:
+        lexical_path = Path(os.path.abspath(owned_path))
+        if lexical_path in seen_paths:
             continue
         try:
-            relative = resolved_path.relative_to(root)
+            relative = lexical_path.relative_to(root)
         except ValueError as exc:
             raise PhaseCheckpointError(
                 "additional owned path must be inside the project root"
             ) from exc
-        if relative == Path(".") or not resolved_path.is_file():
-            raise PhaseCheckpointError("additional owned path must be an existing file")
-        seen_paths.add(resolved_path)
+        try:
+            metadata = lexical_path.lstat()
+            canonical_path = lexical_path.resolve(strict=True)
+        except OSError as exc:
+            raise PhaseCheckpointError(
+                "additional owned path must be an existing regular file"
+            ) from exc
+        if (
+            relative == Path(".")
+            or not stat.S_ISREG(metadata.st_mode)
+            or canonical_path != lexical_path
+        ):
+            raise PhaseCheckpointError(
+                "additional owned path must be a regular non-symlink file"
+            )
+        seen_paths.add(lexical_path)
         pathspecs.append(relative.as_posix())
     if not pathspecs:
         raise PhaseCheckpointError("at least one owned path is required")
@@ -2302,6 +2315,72 @@ def restore_checkpoint_artifacts(
                 temporary.unlink()
             except FileNotFoundError:
                 pass
+
+
+def verify_checkpoint_artifact_digests(
+    *,
+    project_root: Path,
+    spec_dir: Path,
+    checkpoint_commit: str,
+    artifact_digests: Mapping[str, str],
+) -> None:
+    """Verify literal candidate-owned blobs in a recorded checkpoint commit."""
+    allowed = frozenset(
+        {"spec.md", "requirements-overview.md", "quality-gates.md", "issues.md"}
+    )
+    required = frozenset({"spec.md", "quality-gates.md", "issues.md"})
+    if type(artifact_digests) is not dict:
+        raise PhaseCheckpointError("candidate artifact digests are malformed")
+    names = frozenset(artifact_digests)
+    if not required <= names or not names <= allowed:
+        raise PhaseCheckpointError("candidate artifact path is missing or unsafe")
+    if any(
+        type(name) is not str
+        or type(digest) is not str
+        or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+        for name, digest in artifact_digests.items()
+    ):
+        raise PhaseCheckpointError("candidate artifact digests are malformed")
+    if (
+        type(checkpoint_commit) is not str
+        or _GIT_OBJECT_ID_PATTERN.fullmatch(checkpoint_commit) is None
+    ):
+        raise PhaseCheckpointError("candidate checkpoint commit is invalid")
+
+    root = Path(project_root).resolve()
+    resolved_spec = Path(spec_dir).resolve()
+    try:
+        spec_relative = resolved_spec.relative_to(root)
+    except ValueError as exc:
+        raise PhaseCheckpointError(
+            "candidate spec directory escapes project root"
+        ) from exc
+    commit_probe = run_git(
+        root,
+        "cat-file",
+        "-e",
+        f"{checkpoint_commit}^{{commit}}",
+        check=False,
+    )
+    if commit_probe.returncode != 0:
+        raise PhaseCheckpointError("candidate checkpoint commit is missing")
+    for name in sorted(names):
+        relative = (spec_relative / name).as_posix()
+        result = run_git(
+            root,
+            "show",
+            f"{checkpoint_commit}:{relative}",
+            check=False,
+        )
+        if result.returncode != 0:
+            raise PhaseCheckpointError(
+                f"candidate owned artifact is missing: {name}"
+            )
+        actual = hashlib.sha256(result.stdout.encode("utf-8")).hexdigest()
+        if actual != artifact_digests[name]:
+            raise PhaseCheckpointError(
+                f"candidate checkpoint artifact digest mismatch: {name}"
+            )
 
 
 def accept_checkpoint_baseline(

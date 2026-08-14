@@ -313,6 +313,7 @@ def _candidate(
         candidate_id=candidate_id,
         checkpoint_commit="a" * 40,
         owned_artifact_digests=(("spec.md", "b" * 64),),
+        run_artifact_root="/run",
         understanding_evidence="/run/evidence/understanding.json",
         understanding_evidence_digest="c" * 64,
         normalized_gates=(("overall", overall, 0.8, overall >= 0.8),),
@@ -387,9 +388,17 @@ def _candidate_repo(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
                     "path": "runs/run-1/specs/001-demo/spec.md",
                     "sha256": hashlib.sha256(b"# Candidate zero\n").hexdigest(),
                 },
-                "thresholds": {"overall": 0.8, "semantic": 0.75},
-                "scores": {"overall": 0.7, "semantic": 0.8},
-                "gates": {"overall": {"pass": False}, "semantic": {"pass": True}},
+                "thresholds": {"overall": 0.8},
+                "scores": {"overall": 0.7},
+                "gates": {
+                    "overall": {
+                        "score": 0.7,
+                        "threshold": 0.8,
+                        "pass": False,
+                        "numeric_pass": False,
+                        "pass_basis": "numeric_threshold",
+                    }
+                },
                 "pass": False,
                 "requirement_count": 2,
             }
@@ -426,7 +435,6 @@ def test_capture_persists_manifest_after_unique_checkpoint_and_updates_repair_st
         understanding_evidence=evidence,
         normalized_gates={
             "overall": {"score": 0.7, "threshold": 0.8, "pass": False},
-            "semantic": {"score": 0.8, "threshold": 0.75, "pass": True},
         },
         sage_finding_routes=({"issue_id": "SAGE-1", "route": "phase1-what"},),
         formal_statement_count=2,
@@ -642,4 +650,266 @@ def test_restore_rejects_commit_without_the_candidate_checkpoint_identity(
     )
 
     with pytest.raises(QualityCandidateIntegrityError, match="identity"):
+        restore_quality_candidate(repo, spec_dir, forged, run_id="run-1", spec_id="001-demo")
+
+
+@pytest.mark.parametrize(
+    "normalized_gates",
+    [
+        {"overall": {"score": 1.0, "threshold": 0.8, "pass": True}},
+        {"overall": {"score": 0.7, "threshold": 0.1, "pass": True}},
+        {"overall": {"score": 0.7, "threshold": 0.8, "pass": True}},
+        {
+            "overall": {"score": 0.7, "threshold": 0.8, "pass": False},
+            "invented": {"score": 1.0, "threshold": 0.0, "pass": True},
+        },
+        {
+            "overall": {
+                "score": 0.7,
+                "threshold": 0.8,
+                "pass": False,
+                "unbound_margin": 1.0,
+            }
+        },
+    ],
+)
+def test_capture_rejects_caller_gate_data_that_conflicts_with_immutable_evidence(
+    tmp_path: Path,
+    normalized_gates: dict[str, dict[str, object]],
+) -> None:
+    repo, spec_dir, artifact_root, evidence = _candidate_repo(tmp_path)
+    repair = _repair_state()
+    head_before = _git(repo, "rev-parse", "HEAD")
+
+    with pytest.raises(QualityCandidateIntegrityError, match="gate"):
+        capture_quality_candidate(
+            project_root=repo, spec_dir=spec_dir, run_artifact_root=artifact_root,
+            run_id="run-1", spec_id="001-demo", candidate_id="quality-candidate-0",
+            understanding_evidence=evidence, normalized_gates=normalized_gates,
+            sage_finding_routes=(), formal_statement_count=2, repair_number=0,
+            assessment_index=0, eligibility_reasons=(), repair_state=repair,
+        )
+
+    assert repair == _repair_state()
+    assert _git(repo, "rev-parse", "HEAD") == head_before
+    assert not (artifact_root / "quality-candidates" / "quality-candidate-0.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("score", float("nan")), ("score", float("inf")), ("threshold", float("-inf"))],
+)
+def test_capture_rejects_nonfinite_gate_evidence(
+    tmp_path: Path, field: str, value: float
+) -> None:
+    repo, spec_dir, artifact_root, evidence = _candidate_repo(tmp_path)
+    report = json.loads(evidence.read_text(encoding="utf-8"))
+    report[field + "s"]["overall"] = value
+    report["gates"]["overall"][field] = value
+    evidence.write_text(json.dumps(report) + "\n", encoding="utf-8")
+
+    with pytest.raises(QualityCandidateIntegrityError, match="gate"):
+        capture_quality_candidate(
+            project_root=repo, spec_dir=spec_dir, run_artifact_root=artifact_root,
+            run_id="run-1", spec_id="001-demo", candidate_id="quality-candidate-0",
+            understanding_evidence=evidence,
+            normalized_gates={"overall": {"score": 0.7, "threshold": 0.8, "pass": False}},
+            sage_finding_routes=(), formal_statement_count=2, repair_number=0,
+            assessment_index=0, eligibility_reasons=(), repair_state=_repair_state(),
+        )
+
+
+def test_capture_rejects_internally_contradictory_evidence_verdict(tmp_path: Path) -> None:
+    repo, spec_dir, artifact_root, evidence = _candidate_repo(tmp_path)
+    report = json.loads(evidence.read_text(encoding="utf-8"))
+    report["gates"]["overall"]["pass"] = True
+    report["pass"] = True
+    evidence.write_text(json.dumps(report) + "\n", encoding="utf-8")
+
+    with pytest.raises(QualityCandidateIntegrityError, match="gate"):
+        capture_quality_candidate(
+            project_root=repo, spec_dir=spec_dir, run_artifact_root=artifact_root,
+            run_id="run-1", spec_id="001-demo", candidate_id="quality-candidate-0",
+            understanding_evidence=evidence,
+            normalized_gates={"overall": {"score": 0.7, "threshold": 0.8, "pass": True}},
+            sage_finding_routes=(), formal_statement_count=2, repair_number=0,
+            assessment_index=0, eligibility_reasons=(), repair_state=_repair_state(),
+        )
+
+
+def test_capture_rejects_formal_count_that_improves_ranking_tiebreak(
+    tmp_path: Path,
+) -> None:
+    repo, spec_dir, artifact_root, evidence = _candidate_repo(tmp_path)
+
+    with pytest.raises(QualityCandidateIntegrityError, match="formal statement"):
+        capture_quality_candidate(
+            project_root=repo, spec_dir=spec_dir, run_artifact_root=artifact_root,
+            run_id="run-1", spec_id="001-demo", candidate_id="quality-candidate-0",
+            understanding_evidence=evidence,
+            normalized_gates={"overall": {"score": 0.7, "threshold": 0.8, "pass": False}},
+            sage_finding_routes=(), formal_statement_count=0, repair_number=0,
+            assessment_index=0, eligibility_reasons=(), repair_state=_repair_state(),
+        )
+
+
+@pytest.mark.parametrize(
+    ("candidate_id", "assessment_index", "existing_ids"),
+    [
+        ("quality-candidate-5", 0, []),
+        ("quality-candidate-1", 0, ["quality-candidate-0"]),
+    ],
+)
+def test_capture_rejects_falsified_candidate_sequence_or_assessment_order(
+    tmp_path: Path,
+    candidate_id: str,
+    assessment_index: int,
+    existing_ids: list[str],
+) -> None:
+    repo, spec_dir, artifact_root, evidence = _candidate_repo(tmp_path)
+    repair = _repair_state(
+        candidate_ids=existing_ids,
+        baseline_candidate_id=(existing_ids[0] if existing_ids else None),
+    )
+    original = json.loads(json.dumps(repair))
+
+    with pytest.raises(QualityCandidateIntegrityError, match="sequence|assessment"):
+        capture_quality_candidate(
+            project_root=repo, spec_dir=spec_dir, run_artifact_root=artifact_root,
+            run_id="run-1", spec_id="001-demo", candidate_id=candidate_id,
+            understanding_evidence=evidence,
+            normalized_gates={"overall": {"score": 0.7, "threshold": 0.8, "pass": False}},
+            sage_finding_routes=(), formal_statement_count=2, repair_number=0,
+            assessment_index=assessment_index, eligibility_reasons=(), repair_state=repair,
+        )
+
+    assert repair == original
+    assert not (artifact_root / "quality-candidates" / f"{candidate_id}.json").exists()
+
+
+def test_capture_rejects_symlink_candidate_artifact(tmp_path: Path) -> None:
+    repo, spec_dir, artifact_root, evidence = _candidate_repo(tmp_path)
+    target = repo / "outside-spec.md"
+    target.write_text("# Symlink target\n", encoding="utf-8")
+    (spec_dir / "spec.md").unlink()
+    (spec_dir / "spec.md").symlink_to(target)
+
+    with pytest.raises(QualityCandidateIntegrityError, match="regular"):
+        capture_quality_candidate(
+            project_root=repo, spec_dir=spec_dir, run_artifact_root=artifact_root,
+            run_id="run-1", spec_id="001-demo", candidate_id="quality-candidate-0",
+            understanding_evidence=evidence,
+            normalized_gates={"overall": {"score": 0.7, "threshold": 0.8, "pass": False}},
+            sage_finding_routes=(), formal_statement_count=2, repair_number=0,
+            assessment_index=0, eligibility_reasons=(), repair_state=_repair_state(),
+        )
+
+
+def test_capture_rejects_checkpoint_blob_changed_by_git_clean_filter(tmp_path: Path) -> None:
+    repo, spec_dir, artifact_root, evidence = _candidate_repo(tmp_path)
+    _git(repo, "config", "filter.candidate-clean.clean", "sed s/Candidate/Committed/")
+    _git(repo, "config", "filter.candidate-clean.smudge", "cat")
+    attributes = repo / ".gitattributes"
+    relative_spec = (spec_dir / "spec.md").relative_to(repo).as_posix()
+    attributes.write_text(f"{relative_spec} filter=candidate-clean\n", encoding="utf-8")
+    _git(repo, "add", ".gitattributes")
+    _git(repo, "commit", "-m", "configure candidate clean filter")
+    (spec_dir / "spec.md").write_text("# Candidate filtered\n", encoding="utf-8")
+    report = json.loads(evidence.read_text(encoding="utf-8"))
+    report["spec"]["sha256"] = hashlib.sha256(
+        b"# Candidate filtered\n"
+    ).hexdigest()
+    evidence.write_text(json.dumps(report) + "\n", encoding="utf-8")
+    repair = _repair_state()
+    original_repair = json.loads(json.dumps(repair))
+
+    with pytest.raises(QualityCandidateIntegrityError, match="checkpoint.*digest"):
+        capture_quality_candidate(
+            project_root=repo, spec_dir=spec_dir, run_artifact_root=artifact_root,
+            run_id="run-1", spec_id="001-demo", candidate_id="quality-candidate-0",
+            understanding_evidence=evidence,
+            normalized_gates={"overall": {"score": 0.7, "threshold": 0.8, "pass": False}},
+            sage_finding_routes=(), formal_statement_count=2, repair_number=0,
+            assessment_index=0, eligibility_reasons=(), repair_state=repair,
+        )
+
+    assert not (artifact_root / "quality-candidates" / "quality-candidate-0.json").exists()
+    assert repair == original_repair
+
+
+def test_restore_rejects_understanding_reference_outside_recorded_run_root(
+    tmp_path: Path,
+) -> None:
+    repo, spec_dir, artifact_root, evidence = _candidate_repo(tmp_path)
+    candidate = capture_quality_candidate(
+        project_root=repo, spec_dir=spec_dir, run_artifact_root=artifact_root,
+        run_id="run-1", spec_id="001-demo", candidate_id="quality-candidate-0",
+        understanding_evidence=evidence,
+        normalized_gates={"overall": {"score": 0.7, "threshold": 0.8, "pass": False}},
+        sage_finding_routes=(), formal_statement_count=2, repair_number=0,
+        assessment_index=0, eligibility_reasons=(), repair_state=_repair_state(),
+    )
+    outside = repo / "outside-evidence.json"
+    outside.write_bytes(evidence.read_bytes())
+    forged = QualityCandidateManifest(
+        **{
+            **candidate.__dict__,
+            "understanding_evidence": str(outside),
+            "understanding_evidence_digest": hashlib.sha256(outside.read_bytes()).hexdigest(),
+        }
+    )
+
+    with pytest.raises(QualityCandidateIntegrityError, match="run artifact root"):
+        restore_quality_candidate(repo, spec_dir, forged, run_id="run-1", spec_id="001-demo")
+
+
+def test_restore_rejects_reconstructed_evidence_for_different_manifest_spec(
+    tmp_path: Path,
+) -> None:
+    repo, spec_dir, artifact_root, evidence = _candidate_repo(tmp_path)
+    candidate = capture_quality_candidate(
+        project_root=repo, spec_dir=spec_dir, run_artifact_root=artifact_root,
+        run_id="run-1", spec_id="001-demo", candidate_id="quality-candidate-0",
+        understanding_evidence=evidence,
+        normalized_gates={"overall": {"score": 0.7, "threshold": 0.8, "pass": False}},
+        sage_finding_routes=(), formal_statement_count=2, repair_number=0,
+        assessment_index=0, eligibility_reasons=(), repair_state=_repair_state(),
+    )
+    report = json.loads(evidence.read_text(encoding="utf-8"))
+    report["spec"]["sha256"] = "f" * 64
+    evidence.write_text(json.dumps(report) + "\n", encoding="utf-8")
+    forged = QualityCandidateManifest(
+        **{
+            **candidate.__dict__,
+            "understanding_evidence_digest": hashlib.sha256(evidence.read_bytes()).hexdigest(),
+        }
+    )
+
+    with pytest.raises(QualityCandidateIntegrityError, match="different spec"):
+        restore_quality_candidate(repo, spec_dir, forged, run_id="run-1", spec_id="001-demo")
+
+
+def test_restore_rejects_reconstructed_malformed_understanding_report(
+    tmp_path: Path,
+) -> None:
+    repo, spec_dir, artifact_root, evidence = _candidate_repo(tmp_path)
+    candidate = capture_quality_candidate(
+        project_root=repo, spec_dir=spec_dir, run_artifact_root=artifact_root,
+        run_id="run-1", spec_id="001-demo", candidate_id="quality-candidate-0",
+        understanding_evidence=evidence,
+        normalized_gates={"overall": {"score": 0.7, "threshold": 0.8, "pass": False}},
+        sage_finding_routes=(), formal_statement_count=2, repair_number=0,
+        assessment_index=0, eligibility_reasons=(), repair_state=_repair_state(),
+    )
+    report = json.loads(evidence.read_text(encoding="utf-8"))
+    report["spec"].pop("path")
+    evidence.write_text(json.dumps(report) + "\n", encoding="utf-8")
+    forged = QualityCandidateManifest(
+        **{
+            **candidate.__dict__,
+            "understanding_evidence_digest": hashlib.sha256(evidence.read_bytes()).hexdigest(),
+        }
+    )
+
+    with pytest.raises(QualityCandidateIntegrityError, match="malformed"):
         restore_quality_candidate(repo, spec_dir, forged, run_id="run-1", spec_id="001-demo")

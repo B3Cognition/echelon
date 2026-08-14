@@ -6,10 +6,12 @@ from copy import deepcopy
 from dataclasses import dataclass
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
 import secrets
+import stat
 from typing import Mapping, MutableMapping, Sequence
 
 from echelon.git_helpers import GitHelperError, run_git
@@ -18,11 +20,13 @@ from echelon.spec_authoring import (
     PROPORTIONAL_MODE,
     normalize_spec_authoring_mode,
 )
+from kernel.quality_gates import evaluate_quality_thresholds
 from harness.phase_checkpoints import (
     PhaseCheckpoint,
     PhaseCheckpointError,
     create_phase_checkpoint,
     restore_checkpoint_artifacts,
+    verify_checkpoint_artifact_digests,
 )
 
 
@@ -71,6 +75,7 @@ class QualityCandidateManifest:
     candidate_id: str
     checkpoint_commit: str
     owned_artifact_digests: tuple[tuple[str, str], ...]
+    run_artifact_root: str
     understanding_evidence: str
     understanding_evidence_digest: str
     normalized_gates: tuple[tuple[str, float, float, bool], ...]
@@ -215,8 +220,9 @@ def capture_quality_candidate(
     if not _is_candidate_id(candidate_id):
         raise QualityCandidateIntegrityError("candidate ID is invalid")
     validated_state = validate_repair_state(dict(repair_state))
-    if candidate_id in validated_state["candidate_ids"]:
-        raise QualityCandidateIntegrityError("candidate ID is already recorded")
+    expected_index = len(validated_state["candidate_ids"])
+    if candidate_id != f"quality-candidate-{expected_index}":
+        raise QualityCandidateIntegrityError("candidate sequence is invalid")
     for label, value in (
         ("formal statement count", formal_statement_count),
         ("repair number", repair_number),
@@ -224,6 +230,8 @@ def capture_quality_candidate(
     ):
         if type(value) is not int or value < 0:
             raise QualityCandidateIntegrityError(f"candidate {label} is invalid")
+    if assessment_index != expected_index:
+        raise QualityCandidateIntegrityError("candidate assessment index is invalid")
 
     root = Path(project_root).resolve()
     resolved_spec = Path(spec_dir).resolve()
@@ -251,10 +259,22 @@ def capture_quality_candidate(
     contents: dict[str, bytes] = {}
     for name in artifact_names:
         path = resolved_spec / name
-        if name == "requirements-overview.md" and not path.exists():
-            continue
-        if not path.is_file():
-            raise QualityCandidateIntegrityError(f"candidate artifact is missing: {name}")
+        try:
+            metadata = path.lstat()
+        except FileNotFoundError:
+            if name == "requirements-overview.md":
+                continue
+            raise QualityCandidateIntegrityError(
+                f"candidate artifact is missing: {name}"
+            ) from None
+        except OSError as exc:
+            raise QualityCandidateIntegrityError(
+                f"candidate artifact could not be inspected: {name}"
+            ) from exc
+        if not stat.S_ISREG(metadata.st_mode):
+            raise QualityCandidateIntegrityError(
+                f"candidate artifact must be a regular file: {name}"
+            )
         try:
             content = path.read_bytes()
             text = content.decode("utf-8")
@@ -275,7 +295,16 @@ def capture_quality_candidate(
         raise QualityCandidateIntegrityError(
             "Understanding evidence describes a different spec"
         )
+    if formal_statement_count != evidence_payload.get("requirement_count"):
+        raise QualityCandidateIntegrityError(
+            "candidate formal statement count conflicts with Understanding evidence"
+        )
+    authoritative_gates = _authoritative_gates(evidence_payload)
     normalized = _normalize_candidate_gates(normalized_gates)
+    if normalized != authoritative_gates:
+        raise QualityCandidateIntegrityError(
+            "candidate gate data conflicts with immutable Understanding evidence"
+        )
     routes = _normalize_finding_routes(sage_finding_routes)
     reasons = _normalize_eligibility_reasons(eligibility_reasons)
     checkpoint_phase = f"phase1-{candidate_id}"
@@ -293,6 +322,18 @@ def capture_quality_candidate(
     except (PhaseCheckpointError, OSError, ValueError) as exc:
         raise QualityCandidateIntegrityError("candidate checkpoint failed") from exc
 
+    try:
+        verify_checkpoint_artifact_digests(
+            project_root=root,
+            spec_dir=resolved_spec,
+            checkpoint_commit=checkpoint.commit,
+            artifact_digests=dict(digests),
+        )
+    except PhaseCheckpointError as exc:
+        raise QualityCandidateIntegrityError(
+            f"candidate checkpoint artifact digest mismatch: {exc}"
+        ) from exc
+
     failed = sum(1 for _name, _score, _threshold, passed in normalized if not passed)
     margins = tuple(
         score - threshold
@@ -304,6 +345,7 @@ def capture_quality_candidate(
         candidate_id=candidate_id,
         checkpoint_commit=checkpoint.commit,
         owned_artifact_digests=tuple(digests),
+        run_artifact_root=str(artifact_root),
         understanding_evidence=str(evidence_path),
         understanding_evidence_digest=evidence_digest,
         normalized_gates=normalized,
@@ -317,11 +359,12 @@ def capture_quality_candidate(
         assessment_index=assessment_index,
         eligibility_reasons=reasons,
     )
-    _persist_candidate_manifest(artifact_root, manifest)
     updated_ids = [*validated_state["candidate_ids"], candidate_id]
     validated_state["candidate_ids"] = updated_ids
     if validated_state["baseline_candidate_id"] is None:
         validated_state["baseline_candidate_id"] = candidate_id
+    validated_state = validate_repair_state(validated_state)
+    _persist_candidate_manifest(artifact_root, manifest)
     repair_state.clear()
     repair_state.update(validated_state)
     return manifest
@@ -366,8 +409,18 @@ def restore_quality_candidate(
         or not _is_candidate_id(candidate.candidate_id)
     ):
         raise QualityCandidateIntegrityError("candidate manifest is invalid")
-    actual_evidence_digest, _ = _verified_understanding_evidence(
-        Path(candidate.understanding_evidence)
+    root = Path(project_root).resolve()
+    artifact_root = Path(candidate.run_artifact_root).resolve()
+    evidence_path = Path(candidate.understanding_evidence).resolve()
+    try:
+        artifact_root.relative_to(root)
+        evidence_path.relative_to(artifact_root)
+    except ValueError as exc:
+        raise QualityCandidateIntegrityError(
+            "Understanding evidence escapes the recorded run artifact root"
+        ) from exc
+    actual_evidence_digest, evidence_payload = _verified_understanding_evidence(
+        evidence_path
     )
     if actual_evidence_digest != candidate.understanding_evidence_digest:
         raise QualityCandidateIntegrityError("Understanding evidence digest mismatch")
@@ -383,6 +436,32 @@ def restore_quality_candidate(
     required = {"spec.md", "quality-gates.md", "issues.md"}
     if not required <= set(artifact_digests) or not set(artifact_digests) <= allowed:
         raise QualityCandidateIntegrityError("candidate artifact paths are unsafe")
+    evidence_spec = evidence_payload["spec"]
+    if evidence_spec.get("sha256") != artifact_digests["spec.md"]:
+        raise QualityCandidateIntegrityError(
+            "Understanding evidence describes a different spec"
+        )
+    authoritative_gates = _authoritative_gates(evidence_payload)
+    margins = tuple(
+        score - threshold
+        for _name, score, threshold, _passed in authoritative_gates
+    )
+    authoritative_scores = {
+        name: score
+        for name, score, _threshold, _passed in authoritative_gates
+    }
+    if (
+        candidate.normalized_gates != authoritative_gates
+        or candidate.failed_gate_count
+        != sum(1 for *_prefix, passed in authoritative_gates if not passed)
+        or candidate.worst_gate_margin != min(margins)
+        or candidate.overall_score != authoritative_scores["overall"]
+        or candidate.formal_statement_count
+        != evidence_payload.get("requirement_count")
+    ):
+        raise QualityCandidateIntegrityError(
+            "candidate ranking data conflicts with immutable gate evidence"
+        )
     _verify_candidate_checkpoint_identity(
         project_root=Path(project_root),
         candidate=candidate,
@@ -437,7 +516,12 @@ def _normalize_candidate_gates(
     normalized: list[tuple[str, float, float, bool]] = []
     for name in sorted(gates):
         gate = gates[name]
-        if type(name) is not str or not name or not isinstance(gate, Mapping):
+        if (
+            type(name) is not str
+            or not name
+            or type(gate) is not dict
+            or set(gate) != {"score", "threshold", "pass"}
+        ):
             raise QualityCandidateIntegrityError("candidate gates are malformed")
         score = gate.get("score")
         threshold = gate.get("threshold")
@@ -446,9 +530,85 @@ def _normalize_candidate_gates(
             type(score) not in {int, float}
             or type(threshold) not in {int, float}
             or type(passed) is not bool
+            or not math.isfinite(float(score))
+            or not math.isfinite(float(threshold))
         ):
             raise QualityCandidateIntegrityError("candidate gates are malformed")
         normalized.append((name, float(score), float(threshold), passed))
+    return tuple(normalized)
+
+
+def _authoritative_gates(
+    evidence: Mapping[str, object],
+) -> tuple[tuple[str, float, float, bool], ...]:
+    raw_scores = evidence.get("scores")
+    raw_thresholds = evidence.get("thresholds")
+    raw_gates = evidence.get("gates")
+    if (
+        type(raw_scores) is not dict
+        or type(raw_thresholds) is not dict
+        or type(raw_gates) is not dict
+        or not raw_scores
+        or set(raw_scores) != set(raw_thresholds)
+        or set(raw_scores) != set(raw_gates)
+        or "overall" not in raw_scores
+    ):
+        raise QualityCandidateIntegrityError(
+            "Understanding gate evidence is malformed"
+        )
+    scores: dict[str, float] = {}
+    thresholds: dict[str, float] = {}
+    for name in raw_scores:
+        score = raw_scores[name]
+        threshold = raw_thresholds[name]
+        if (
+            type(name) is not str
+            or not name
+            or type(score) not in {int, float}
+            or type(threshold) not in {int, float}
+            or not math.isfinite(float(score))
+            or not math.isfinite(float(threshold))
+        ):
+            raise QualityCandidateIntegrityError(
+                "Understanding gate evidence is malformed"
+            )
+        scores[name] = float(score)
+        thresholds[name] = float(threshold)
+    decision = evaluate_quality_thresholds(scores, thresholds)
+    normalized: list[tuple[str, float, float, bool]] = []
+    for name in sorted(scores):
+        gate = raw_gates[name]
+        if not isinstance(gate, Mapping):
+            raise QualityCandidateIntegrityError(
+                "Understanding gate evidence is malformed"
+            )
+        expected_keys = {"score", "threshold", "pass"}
+        if name == "overall":
+            expected_keys |= {"numeric_pass", "pass_basis"}
+        if (
+            set(gate) != expected_keys
+            or type(gate.get("pass")) is not bool
+            or gate.get("score") != scores[name]
+            or gate.get("threshold") != thresholds[name]
+            or gate.get("pass") is not decision.effective_passes[name]
+        ):
+            raise QualityCandidateIntegrityError(
+                "Understanding gate evidence is internally contradictory"
+            )
+        if name == "overall" and (
+            gate.get("numeric_pass") is not decision.numeric_passes[name]
+            or gate.get("pass_basis") != decision.overall_pass_basis
+        ):
+            raise QualityCandidateIntegrityError(
+                "Understanding overall gate evidence is internally contradictory"
+            )
+        normalized.append(
+            (name, scores[name], thresholds[name], decision.effective_passes[name])
+        )
+    if evidence.get("pass") is not decision.passed:
+        raise QualityCandidateIntegrityError(
+            "Understanding aggregate gate verdict is internally contradictory"
+        )
     return tuple(normalized)
 
 
@@ -534,11 +694,15 @@ def _verified_understanding_evidence(path: Path) -> tuple[str, Mapping[str, obje
         or payload.get("phase") != "phase1-why2"
         or type(payload.get("iteration")) is not int
         or not isinstance(payload.get("spec"), Mapping)
+        or type(payload["spec"].get("path")) is not str
+        or not payload["spec"].get("path").strip()
         or not _is_sha256(payload["spec"].get("sha256"))
         or not isinstance(payload.get("thresholds"), Mapping)
         or not isinstance(payload.get("scores"), Mapping)
         or not isinstance(payload.get("gates"), Mapping)
         or type(payload.get("pass")) is not bool
+        or type(payload.get("requirement_count")) is not int
+        or payload.get("requirement_count") < 0
     ):
         raise QualityCandidateIntegrityError("Understanding evidence is malformed")
     return hashlib.sha256(content).hexdigest(), payload
@@ -556,6 +720,7 @@ def _persist_candidate_manifest(root: Path, manifest: QualityCandidateManifest) 
             "candidate_id": manifest.candidate_id,
             "checkpoint_commit": manifest.checkpoint_commit,
             "owned_artifact_digests": dict(manifest.owned_artifact_digests),
+            "run_artifact_root": manifest.run_artifact_root,
             "understanding_evidence": manifest.understanding_evidence,
             "understanding_evidence_digest": manifest.understanding_evidence_digest,
             "normalized_gates": [
