@@ -1860,7 +1860,6 @@ class PhaseExecutor(ABC):
             f"{_render_published_re_context(state)}"
             f"{_render_certified_understanding_context(state, node.id)}"
             f"{_render_active_spec_roots_context(spec_dir_ref, state, self._project_root)}"
-            f"{getattr(node, 'controller_context', '')}"
             f"{self._extension_path_context()}"
             f"{render_quality_gate_context(self._quality_gate_thresholds())}"
         )
@@ -1888,6 +1887,7 @@ class PhaseExecutor(ABC):
         prompt = prompt.replace("{squad_dir}", squad_dir_str)
         prompt = prompt.replace("{context_dir}", context_dir_str)
         prompt = prompt.replace("{staging_dir}", staging_dir_str)
+        prompt += getattr(node, "controller_context", "")
 
         # Append harness routing contract so agents know exactly what
         # state_updates fields the harness needs for transition evaluation.
@@ -2669,15 +2669,16 @@ class StagedParallelExecutor(PhaseExecutor):
             f"{_render_controller_repair_context(state)}"
             f"{_render_certified_understanding_context(state, mode_label)}"
             f"{_render_active_spec_roots_context(spec_dir_ref, state, self._project_root)}"
-            f"{controller_context}"
             f"{render_quality_gate_context(self._quality_gate_thresholds())}"
             f"Operate in **{mode_label}** mode.\n\n"
         )
 
         prompt = "\n\n".join(static_parts + [preamble] + dynamic_parts)
         prompt = prompt.replace("{spec_dir}", spec_dir_ref)
+        prompt = prompt.replace("{squad_dir}", squad_dir_str)
         prompt = prompt.replace("{context_dir}", context_dir_str)
         prompt = prompt.replace("{staging_dir}", staging_dir_str)
+        prompt += controller_context
 
         report = build_context_budget_report(
             phase_id=phase_id,
@@ -2887,11 +2888,33 @@ class ConditionalSequentialExecutor(PhaseExecutor):
                 path = self._ext_dir / rel
                 if path.exists():
                     result_contract = self._result_contract(node, agent_entry)
+                    squad_dir_str = str(
+                        state.get("squad_dir") or self._squad_dir
+                    )
+                    staging_dir_str = str(
+                        state.get("staging_dir")
+                        or self._squad_dir / "staging"
+                    )
+                    context_dir_str = str(
+                        state.get("context_dir")
+                        or self._squad_dir / "context"
+                    )
+                    spec_dir_ref = _normalize_spec_dir_ref(
+                        str(state.get("spec_dir") or "").strip(),
+                        self._project_root,
+                    )
                     prompt = (
                         _shared_agent_contract()
                         + path.read_text()
                         + _render_product_input_context(state)
                         + _render_controller_repair_context(state)
+                    )
+                    prompt = prompt.replace("{spec_dir}", spec_dir_ref)
+                    prompt = prompt.replace("{squad_dir}", squad_dir_str)
+                    prompt = prompt.replace("{context_dir}", context_dir_str)
+                    prompt = prompt.replace("{staging_dir}", staging_dir_str)
+                    prompt = (
+                        prompt
                         + getattr(node, "controller_context", "")
                         + _allowed_state_updates_contract(
                             result_contract.allowed_state_update_keys,

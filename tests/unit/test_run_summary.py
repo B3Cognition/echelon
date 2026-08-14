@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 
+import pytest
+
 from harness.ai_cli_backend import CliRunResult
 from harness.prosaic_prompt_loader import ProsaicCommandArtifact
 from harness.run_summary import (
@@ -274,6 +276,105 @@ def test_model_summary_rejects_success_wording_that_contradicts_accepted_debt(
 
     assert "all specification quality checks succeeded" not in summary.lower()
     assert "accepted with quality debt" in summary.lower()
+
+
+@pytest.mark.parametrize(
+    "claim",
+    (
+        "The specification cleared every quality bar.",
+        "Quality review found no remaining issues.",
+        "The spec meets all required standards.",
+        "Every acceptance criterion has been satisfied.",
+        "The requirements are validated and ready for unconditional approval.",
+        "No defects remain in the specification assessment.",
+        "The quality gates exceeded every benchmark.",
+        "The specification earned a clean bill of health.",
+        "All requirement concerns have been resolved.",
+        "The specification is fully compliant.",
+    ),
+)
+def test_debt_mode_rejects_paraphrased_specification_quality_success_claims(
+    tmp_path: Path,
+    claim: str,
+) -> None:
+    context = RunSummaryContext(
+        project_root=tmp_path,
+        command="echelon spec run",
+        task="Prepare a proportional specification.",
+        status="done",
+        quality_debt_status="accepted_with_debt",
+        quality_debt_artifact="specs/001-demo/quality-debt.json",
+        quality_debt_failed_gates=("overall 0.70 < 0.80",),
+        quality_debt_resolved_by="COMMANDER",
+    )
+    provider = _RecordingProvider(
+        CliRunResult(exit_code=0, stdout=claim, stderr="")
+    )
+
+    summary = summarize_run(
+        context,
+        provider=provider,
+        agent=SummaryAgent(prompt="Summarize.", metadata={}),
+    )
+
+    assert claim not in summary
+    assert "accepted with quality debt by COMMANDER" in summary
+    assert "overall 0.70 < 0.80" in summary
+
+
+def test_long_obedient_model_summary_is_bounded_and_truths_are_deduplicated(
+    tmp_path: Path,
+) -> None:
+    context = RunSummaryContext(
+        project_root=tmp_path,
+        command="echelon spec run",
+        task="Prepare a proportional specification.",
+        status="done",
+        quality_debt_status="accepted_with_debt",
+        quality_debt_artifact="specs/001-demo/quality-debt.json",
+        quality_debt_failed_gates=(
+            "overall 0.70 < 0.80",
+            "atomicity 0.72 < 0.85",
+        ),
+        quality_debt_resolved_by="COMMANDER",
+        provider_limit_message="Provider limit reached; resets at 21:10.",
+    )
+    narrative = "Implemented proportional authoring behavior " + ("carefully " * 30)
+    provider = _RecordingProvider(
+        CliRunResult(
+            exit_code=0,
+            stdout="\n".join(
+                (
+                    narrative,
+                    (
+                        "Specification quality was accepted with quality debt by "
+                        "COMMANDER; residual gate overall remains below threshold."
+                    ),
+                    "Provider limit reached; resets at 21:10.",
+                    narrative,
+                    narrative,
+                    narrative,
+                    narrative,
+                )
+            ),
+            stderr="",
+        )
+    )
+
+    summary = summarize_run(
+        context,
+        provider=provider,
+        agent=SummaryAgent(prompt="Summarize.", metadata={}),
+    )
+
+    assert len(summary.splitlines()) <= 7
+    assert len(summary) <= 1_200
+    assert summary.lower().count("accepted with quality debt") == 1
+    assert summary.lower().count("provider limit") == 1
+    assert "COMMANDER" in summary
+    assert "overall 0.70 < 0.80" in summary
+    assert "atomicity 0.72 < 0.85" in summary
+    assert "quality-debt.json" in summary
 
 
 def test_delivery_fallback_prioritizes_outcome_and_verification_over_branch_noise(

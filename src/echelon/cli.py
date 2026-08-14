@@ -3630,8 +3630,21 @@ def _proportional_quality_decision_fields(
             fields.append(("Material SAGE findings", "\n".join(sage_findings)))
         recommendation_evidence = evidence.get("recommendation_evidence")
         if isinstance(recommendation_evidence, Mapping):
-            previous_statements = recommendation_evidence.get(
-                "previous_formal_statement_count"
+            baseline_candidate = str(
+                recommendation_evidence.get("baseline_candidate_id") or ""
+            ).strip()
+            current_candidate = str(
+                recommendation_evidence.get("current_candidate_id") or ""
+            ).strip()
+            if baseline_candidate and current_candidate:
+                fields.append(
+                    (
+                        "Growth comparison",
+                        f"{baseline_candidate} → {current_candidate}",
+                    )
+                )
+            baseline_statements = recommendation_evidence.get(
+                "baseline_formal_statement_count"
             )
             statements = recommendation_evidence.get("formal_statement_count")
             statement_growth = recommendation_evidence.get(
@@ -3639,26 +3652,26 @@ def _proportional_quality_decision_fields(
             )
             if all(
                 type(value) is int
-                for value in (previous_statements, statements, statement_growth)
+                for value in (baseline_statements, statements, statement_growth)
             ):
                 fields.append(
                     (
                         "Formal statements",
-                        f"{previous_statements:,} → {statements:,} "
+                        f"{baseline_statements:,} → {statements:,} "
                         f"({statement_growth:+,})",
                     )
                 )
-            previous_bytes = recommendation_evidence.get("previous_byte_count")
+            baseline_bytes = recommendation_evidence.get("baseline_byte_count")
             byte_count = recommendation_evidence.get("byte_count")
             byte_growth = recommendation_evidence.get("byte_growth")
             if all(
                 type(value) is int
-                for value in (previous_bytes, byte_count, byte_growth)
+                for value in (baseline_bytes, byte_count, byte_growth)
             ):
                 fields.append(
                     (
                         "Specification bytes",
-                        f"{previous_bytes:,} → {byte_count:,} "
+                        f"{baseline_bytes:,} → {byte_count:,} "
                         f"({byte_growth:+,} bytes)",
                     )
                 )

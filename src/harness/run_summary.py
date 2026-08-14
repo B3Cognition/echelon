@@ -65,13 +65,12 @@ def summarize_run(
     summary = _clean_summary(result.stdout)
     if (
         context.quality_debt_status == "accepted_with_debt"
-        and _collapses_quality_debt_to_pass(summary)
+        and _asserts_specification_quality_success(summary)
     ):
         return _fallback_summary(context)
     if not summary:
         return _fallback_summary(context)
-    required = _required_outcome_truth_lines(context)
-    return "\n".join((summary, *required)) if required else summary
+    return _compose_summary(summary.splitlines(), context)
 
 
 def summarize_run_for_cli(context: RunSummaryContext) -> str:
@@ -151,17 +150,82 @@ def _clean_summary(raw: object) -> str:
     return text[:1_200].rstrip()
 
 
-def _collapses_quality_debt_to_pass(summary: str) -> bool:
-    return bool(
-        re.search(
-            r"(?:quality(?: gates?)? (?:all )?pass|"
-            r"pass(?:ed|es) all quality|fully certified|"
-            r"debt[- ]free|no quality debt|without quality debt|"
-            r"all (?:specification )?quality (?:checks |gates )?succeed(?:ed|s)?)",
-            summary,
-            flags=re.IGNORECASE,
-        )
+def _asserts_specification_quality_success(summary: str) -> bool:
+    """Fail closed on positive certification claims while debt is accepted.
+
+    This deliberately classifies semantic subjects and predicates instead of
+    enumerating complete forbidden phrases. A model may narrate work, but it
+    may not issue its own clean specification-quality verdict.
+    """
+    domain = re.search(
+        r"\b(?:spec(?:ification)?|requirements?|quality|gates?|checks?|"
+        r"standards?|criteria|criterion|assessment|review|defects?)\b",
+        summary,
+        flags=re.IGNORECASE,
     )
+    positive_verdict = re.search(
+        r"\b(?:pass(?:ed|es|ing)?|succeed(?:ed|s|ing)?|success(?:ful(?:ly)?)?|"
+        r"certif(?:y|ied|ies|ication)|satisf(?:y|ied|ies|action)|"
+        r"meet(?:s|ing)?|met|clear(?:ed|s)?|conform(?:s|ed|ant)?|"
+        r"validat(?:e|ed|es|ion)|approv(?:e|ed|al)|flawless|perfect|"
+        r"exceed(?:ed|s|ing)?|surpass(?:ed|es|ing)?|achiev(?:e|ed|es|ing)|"
+        r"fulfill(?:ed|s|ing)?|resolv(?:e|ed|es|ing)|compli(?:ant|ance)|"
+        r"clean|green|sound|excellent|unconditional|ready)\b",
+        summary,
+        flags=re.IGNORECASE,
+    )
+    clean_bill = re.search(
+        r"\b(?:no|without)\s+(?:remaining\s+|outstanding\s+|unresolved\s+)?"
+        r"(?:issues?|defects?|failures?|gaps?|debt)\b",
+        summary,
+        flags=re.IGNORECASE,
+    )
+    exhaustive = re.search(
+        r"\b(?:all|every)\b.{0,80}\b(?:pass|succeed|satisf|meet|met|clear)",
+        summary,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    return bool((domain and positive_verdict) or clean_bill or exhaustive)
+
+
+def _duplicates_required_truth(line: str, context: RunSummaryContext) -> bool:
+    lowered = line.casefold()
+    if context.quality_debt_status == "accepted_with_debt" and re.search(
+        r"(?:accepted_with_debt|quality[- ]debt|residual gates?|quality-debt\.json)",
+        lowered,
+    ):
+        return True
+    if context.provider_limit_message and re.search(
+        r"(?:provider|rate|usage)\s+limit|quota",
+        lowered,
+    ):
+        return True
+    return False
+
+
+def _compose_summary(
+    narrative_lines: list[str],
+    context: RunSummaryContext,
+) -> str:
+    """Retain authoritative truths inside the final seven-line/1,200-char cap."""
+    required = _required_outcome_truth_lines(context)
+    selected: list[str] = []
+    line_limit = max(0, 7 - len(required))
+    required_text = "\n".join(required)
+    for raw_line in narrative_lines:
+        line = raw_line.strip()
+        if not line or _duplicates_required_truth(line, context):
+            continue
+        if len(selected) >= line_limit:
+            break
+        separators = len(selected) + len(required)
+        remaining = 1_200 - len(required_text) - separators - sum(
+            len(item) for item in selected
+        )
+        if remaining <= 0:
+            break
+        selected.append(line[:remaining].rstrip())
+    return "\n".join((*selected, *required))
 
 
 def _required_outcome_truth_lines(context: RunSummaryContext) -> list[str]:
@@ -172,19 +236,23 @@ def _required_outcome_truth_lines(context: RunSummaryContext) -> list[str]:
         if resolver:
             detail += f" by {resolver}"
         gates = [
-            gate.strip()[:160]
+            gate.strip()[:60]
             for gate in context.quality_debt_failed_gates[:8]
             if gate.strip()
         ]
         if gates:
             detail += "; residual gates: " + ", ".join(gates)
-        artifact = context.quality_debt_artifact.strip()[:500]
+        artifact = context.quality_debt_artifact.strip()[:220]
         if artifact:
             detail += f"; evidence: {artifact}"
         lines.append(detail + ".")
-    provider = context.provider_limit_message.strip()[:500]
+    provider = context.provider_limit_message.strip()[:240]
     if provider:
-        lines.append(f"Provider limit: {provider.rstrip('.')}.")
+        provider = provider.rstrip(".")
+        if re.match(r"provider\s+limit\b", provider, flags=re.IGNORECASE):
+            lines.append(provider + ".")
+        else:
+            lines.append(f"Provider limit: {provider}.")
     return lines
 
 
@@ -250,7 +318,6 @@ def _fallback_summary(context: RunSummaryContext) -> str:
     if stopped:
         stopped = stopped[stopped.lower().index("stopped:") + 8 :]
         lines.append(f"Stopped: {stopped.strip().rstrip('.')}.")
-    lines.extend(_required_outcome_truth_lines(context))
     if context.next_step.strip():
         lines.append(f"Next: {context.next_step.strip()}")
-    return "\n".join(lines)
+    return _compose_summary(lines, context)

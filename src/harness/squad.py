@@ -9377,6 +9377,23 @@ class SquadController:
         recommendation_previous = (
             candidates[-2] if len(candidates) > 1 else recommendation_current
         )
+        baseline_candidate_id = repair["baseline_candidate_id"]
+        if type(baseline_candidate_id) is not str:
+            raise QualityCandidateIntegrityError(
+                "proportional quality baseline candidate is missing"
+            )
+        recommendation_baseline = next(
+            (
+                candidate
+                for candidate in candidates
+                if candidate.candidate_id == baseline_candidate_id
+            ),
+            None,
+        )
+        if recommendation_baseline is None:
+            raise QualityCandidateIntegrityError(
+                "proportional quality baseline candidate manifest is missing"
+            )
         policy = self._human_input_registry.lookup(
             "controller_safeguard",
             reason_code,
@@ -9488,25 +9505,25 @@ class SquadController:
                     dict(item) for item in selected.sage_finding_routes
                 ],
                 "recommendation_evidence": {
-                    "previous_candidate_id": (
-                        recommendation_previous.candidate_id
+                    "baseline_candidate_id": (
+                        recommendation_baseline.candidate_id
                     ),
                     "current_candidate_id": recommendation_current.candidate_id,
-                    "previous_formal_statement_count": (
-                        recommendation_previous.formal_statement_count
+                    "baseline_formal_statement_count": (
+                        recommendation_baseline.formal_statement_count
                     ),
                     "formal_statement_count": (
                         recommendation_current.formal_statement_count
                     ),
                     "formal_statement_growth": (
                         recommendation_current.formal_statement_count
-                        - recommendation_previous.formal_statement_count
+                        - recommendation_baseline.formal_statement_count
                     ),
-                    "previous_byte_count": recommendation_previous.byte_count,
+                    "baseline_byte_count": recommendation_baseline.byte_count,
                     "byte_count": recommendation_current.byte_count,
                     "byte_growth": (
                         recommendation_current.byte_count
-                        - recommendation_previous.byte_count
+                        - recommendation_baseline.byte_count
                     ),
                     "recommended_option_id": recommended_option_id,
                     "rationale": recommendation_rationale,

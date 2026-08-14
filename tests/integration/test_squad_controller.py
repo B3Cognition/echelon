@@ -6452,6 +6452,7 @@ def _proportional_assessment_fixture(
     *,
     score: float = 0.60,
     spec_text: str | None = None,
+    requirement_count: int = 1,
 ) -> tuple[dict[str, object], SquadAgentResult]:
     """Materialize one immutable failing Understanding/SAGE assessment."""
     spec_dir = ctrl._project_root / "runs" / "run-test" / "specs" / "001-demo"
@@ -6530,7 +6531,7 @@ def _proportional_assessment_fixture(
             },
         },
         "pass": False,
-        "requirement_count": 1,
+        "requirement_count": requirement_count,
     }
     report_path = (
         ctrl._squad_dir
@@ -7662,7 +7663,11 @@ class TestProportionalQualityController:
         for assessment_index in range(1, 4):
             spec = (
                 f"# Candidate {assessment_index}\n\n"
-                f"- FR-001: The system shall render revision {assessment_index}.\n"
+                + "".join(
+                    f"- FR-{statement:03d}: The system shall render revision "
+                    f"{assessment_index}, statement {statement}.\n"
+                    for statement in range(1, assessment_index + 2)
+                )
             )
             assessment_updates, why2 = _proportional_assessment_fixture(
                 ctrl,
@@ -7670,6 +7675,7 @@ class TestProportionalQualityController:
                 assessment_index,
                 score=0.60,
                 spec_text=spec,
+                requirement_count=assessment_index + 1,
             )
             routes.append(
                 _coordinate_prepared_result(
@@ -7730,8 +7736,30 @@ class TestProportionalQualityController:
         recommendation = blocked["proportional_quality_candidate_evidence"][
             "recommendation_evidence"
         ]
-        assert recommendation["previous_candidate_id"] == "quality-candidate-2"
+        assert recommendation["baseline_candidate_id"] == "quality-candidate-0"
         assert recommendation["current_candidate_id"] == "quality-candidate-3"
+        baseline_manifest = json.loads(
+            (
+                ctrl._squad_dir
+                / "quality-candidates"
+                / "quality-candidate-0.json"
+            ).read_text(encoding="utf-8")
+        )
+        current_manifest = json.loads(
+            (
+                ctrl._squad_dir
+                / "quality-candidates"
+                / "quality-candidate-3.json"
+            ).read_text(encoding="utf-8")
+        )
+        assert recommendation["baseline_formal_statement_count"] == 1
+        assert recommendation["formal_statement_count"] == 4
+        assert recommendation["formal_statement_growth"] == 3
+        assert recommendation["baseline_byte_count"] == baseline_manifest["byte_count"]
+        assert recommendation["byte_count"] == current_manifest["byte_count"]
+        assert recommendation["byte_growth"] == (
+            current_manifest["byte_count"] - baseline_manifest["byte_count"]
+        )
         assert recommendation["recommended_option_id"] in {
             "extend_once",
             "continue_with_debt",

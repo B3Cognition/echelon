@@ -248,14 +248,14 @@ def test_status_shows_sealed_proportional_choice_evidence_and_exact_resume_synta
                         }
                     ],
                     "recommendation_evidence": {
-                        "previous_candidate_id": "quality-candidate-1",
+                        "baseline_candidate_id": "quality-candidate-0",
                         "current_candidate_id": "quality-candidate-2",
-                        "previous_formal_statement_count": 12,
+                        "baseline_formal_statement_count": 8,
                         "formal_statement_count": 14,
-                        "formal_statement_growth": 2,
-                        "previous_byte_count": 1000,
+                        "formal_statement_growth": 6,
+                        "baseline_byte_count": 700,
                         "byte_count": 1320,
-                        "byte_growth": 320,
+                        "byte_growth": 620,
                         "recommended_option_id": "extend_once",
                         "rationale": (
                             "Residual gates improved within the borderline margin."
@@ -280,8 +280,9 @@ def test_status_shows_sealed_proportional_choice_evidence_and_exact_resume_synta
     assert "ISS-QUALITY-7" in output
     assert "MEDIUM/incompleteness" in output
     assert "The failure path is not observable." in output
-    assert "12 → 14 (+2)" in output
-    assert "1,000 → 1,320 (+320 bytes)" in output
+    assert "quality-candidate-0 → quality-candidate-2" in output
+    assert "8 → 14 (+6)" in output
+    assert "700 → 1,320 (+620 bytes)" in output
     assert "Residual gates improved within the borderline margin." in output
     assert "extend_once: Extend once" in output
     assert "continue_with_debt: Continue with debt" in output
