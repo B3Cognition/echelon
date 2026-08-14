@@ -543,6 +543,7 @@ class ProportionalQualityRecommendationEvidence:
     current_gates: tuple[tuple[str, float, float, bool], ...]
     previous_formal_statement_count: int
     formal_statement_count: int
+    qualitative_failure_count: int = 0
 
     def __post_init__(self) -> None:
         margin = self.borderline_margin
@@ -558,6 +559,7 @@ class ProportionalQualityRecommendationEvidence:
         for field in (
             "previous_formal_statement_count",
             "formal_statement_count",
+            "qualitative_failure_count",
         ):
             count = getattr(self, field)
             if type(count) is not int or count < 0:
@@ -570,9 +572,12 @@ class ProportionalQualityRecommendationEvidence:
             raise HumanInputPolicyError(
                 "recommendation gate evidence must cover the same dimensions"
             )
-        if not any(not row[3] for row in current):
+        if (
+            not any(not row[3] for row in current)
+            and self.qualitative_failure_count == 0
+        ):
             raise HumanInputPolicyError(
-                "recommendation evidence requires a still-failing gate"
+                "recommendation evidence requires residual quality debt"
             )
         object.__setattr__(self, "previous_gates", previous)
         object.__setattr__(self, "current_gates", current)
@@ -812,6 +817,7 @@ def prepare_controller_proportional_quality_decision(
     should_extend = (
         reason_code == "proportional_quality_budget_exhausted"
         and not no_artifact_progress
+        and bool(current_failures)
         and all(
             _within_inclusive_decimal_margin(
                 score,

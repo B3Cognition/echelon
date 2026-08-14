@@ -3840,11 +3840,26 @@ def _current_quality_debt_cli_facts(
                 failed_gates.append(
                     f"{name} {float(score):.2f} < {float(threshold):.2f}"
                 )
+    qualitative_issues: list[str] = []
+    raw_qualitative = authorization.get("qualitative_debt")
+    if isinstance(raw_qualitative, list):
+        for finding in raw_qualitative[:8]:
+            if not isinstance(finding, Mapping):
+                continue
+            issue_id = str(finding.get("issue_id") or "").strip()
+            title = str(finding.get("title") or "").strip()
+            if issue_id and title:
+                qualitative_issues.append(
+                    f"{issue_id[:80]}: {title[:120]}"
+                )
+            elif issue_id:
+                qualitative_issues.append(issue_id[:80])
     return {
         "status": "accepted_with_debt",
         "artifact": str(authorization.get("debt_artifact") or "").strip(),
         "resolved_by": str(authorization.get("resolved_by") or "").strip(),
         "failed_gates": tuple(failed_gates),
+        "qualitative_issues": tuple(qualitative_issues),
     }
 
 
@@ -4906,6 +4921,9 @@ def _print_squad_summary(
         debt_gates = debt_facts["failed_gates"]
         if debt_gates:
             fields.append(("residual gates", ", ".join(debt_gates)))
+        debt_issues = debt_facts["qualitative_issues"]
+        if debt_issues:
+            fields.append(("residual SAGE", ", ".join(debt_issues)))
         if debt_facts["resolved_by"]:
             fields.append(("debt resolver", str(debt_facts["resolved_by"])))
         if debt_facts["artifact"]:
@@ -4968,6 +4986,11 @@ def _print_squad_summary(
             ),
             quality_debt_failed_gates=(
                 tuple(debt_facts["failed_gates"])
+                if debt_facts is not None
+                else ()
+            ),
+            quality_debt_qualitative_issues=(
+                tuple(debt_facts["qualitative_issues"])
                 if debt_facts is not None
                 else ()
             ),
@@ -7795,6 +7818,11 @@ def _cmd_status(project_root: Path) -> None:
             failed_gates = debt_facts["failed_gates"]
             if failed_gates:
                 fields.append(("Residual gates", ", ".join(failed_gates)))
+            qualitative_issues = debt_facts["qualitative_issues"]
+            if qualitative_issues:
+                fields.append(
+                    ("Residual SAGE", ", ".join(qualitative_issues))
+                )
             if debt_facts["resolved_by"]:
                 fields.append(("Debt resolver", str(debt_facts["resolved_by"])))
             if debt_facts["artifact"]:

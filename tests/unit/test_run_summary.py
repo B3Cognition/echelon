@@ -149,6 +149,37 @@ def test_quality_debt_and_provider_limit_are_bounded_independent_summary_truths(
     assert "quality passed" not in summary.lower()
 
 
+def test_qualitative_only_quality_debt_names_residual_sage_findings(
+    tmp_path: Path,
+) -> None:
+    context = RunSummaryContext(
+        project_root=tmp_path,
+        command="echelon spec continue",
+        task="Prepare a proportional specification.",
+        status="done",
+        quality_debt_status="accepted_with_debt",
+        quality_debt_artifact="specs/001-demo/quality-debt.json",
+        quality_debt_failed_gates=(),
+        quality_debt_qualitative_issues=(
+            "ISS-QUALITY-0: Residual quality debt",
+        ),
+        quality_debt_resolved_by="user",
+    )
+    provider = _RecordingProvider(
+        CliRunResult(exit_code=1, stdout="", stderr="provider unavailable")
+    )
+
+    summary = summarize_run(
+        context,
+        provider=provider,
+        agent=SummaryAgent(prompt="Summarize.", metadata={}),
+    )
+
+    assert "accepted with quality debt" in summary.lower()
+    assert "ISS-QUALITY-0: Residual quality debt" in summary
+    assert "quality passed" not in summary.lower()
+
+
 def test_summary_agent_receives_bounded_quality_debt_fields(tmp_path: Path) -> None:
     context = RunSummaryContext(
         project_root=tmp_path,

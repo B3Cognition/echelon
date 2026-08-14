@@ -92,6 +92,14 @@ class QualityCandidateManifest:
     eligibility_reasons: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class QualityCandidateSnapshot:
+    """One parsed candidate and the digest of those exact pinned bytes."""
+
+    manifest: QualityCandidateManifest
+    sha256: str
+
+
 _CANDIDATE_MANIFEST_KEYS = frozenset(
     {
         "schema_version",
@@ -137,9 +145,9 @@ _SAGE_REQUIRED_ISSUE_FIELDS = (
 )
 
 
-def load_authoritative_sage_issues(
+def load_authoritative_sage_assessment(
     path: Path,
-) -> tuple[dict[str, str], ...]:
+) -> tuple[str, tuple[dict[str, str], ...]]:
     """Parse the required current WHY2 issues artifact or fail closed."""
     issue_path = Path(path)
     try:
@@ -234,40 +242,40 @@ def load_authoritative_sage_issues(
         raise QualityCandidateIntegrityError(
             "authoritative SAGE issue counts are contradictory"
         )
-    return tuple(issues)
+    return verdicts[0], tuple(issues)
 
 
-def load_quality_candidate_manifest(
+def load_authoritative_sage_issues(
+    path: Path,
+) -> tuple[dict[str, str], ...]:
+    """Compatibility view over the authoritative verdict and issue snapshot."""
+    _verdict, issues = load_authoritative_sage_assessment(path)
+    return issues
+
+
+def load_quality_candidate_snapshot(
     path: Path,
     *,
     expected_sha256: str | None = None,
     expected_candidate_id: str | None = None,
-) -> QualityCandidateManifest:
+) -> QualityCandidateSnapshot:
     """Load one exact persisted candidate manifest for controller use."""
+    parent_descriptor: int | None = None
     try:
         manifest_path = Path(path)
-        metadata_before = manifest_path.lstat()
-        if stat.S_ISLNK(metadata_before.st_mode) or not stat.S_ISREG(
-            metadata_before.st_mode
-        ):
-            raise OSError("candidate manifest is not a regular file")
-        content = manifest_path.read_bytes()
-        metadata_after = manifest_path.lstat()
-        if (
-            metadata_before.st_dev,
-            metadata_before.st_ino,
-            metadata_before.st_size,
-            metadata_before.st_mtime_ns,
-        ) != (
-            metadata_after.st_dev,
-            metadata_after.st_ino,
-            metadata_after.st_size,
-            metadata_after.st_mtime_ns,
-        ):
-            raise OSError("candidate manifest changed while reading")
+        parent_descriptor = _open_pinned_candidate_directory(
+            manifest_path.parent
+        )
+        snapshot = _candidate_entry_snapshot(
+            parent_descriptor,
+            manifest_path.name,
+        )
+        if snapshot is None:
+            raise OSError("candidate manifest is missing")
+        digest, content, _token, _mode = snapshot
         if expected_sha256 is not None and (
             not _is_sha256(expected_sha256)
-            or hashlib.sha256(content).hexdigest() != expected_sha256
+            or digest != expected_sha256
         ):
             raise QualityCandidateIntegrityError(
                 "candidate manifest digest mismatch"
@@ -279,6 +287,9 @@ def load_quality_candidate_manifest(
         raise QualityCandidateIntegrityError(
             "candidate manifest is missing or malformed"
         ) from exc
+    finally:
+        if parent_descriptor is not None:
+            os.close(parent_descriptor)
     if type(payload) is not dict or set(payload) != _CANDIDATE_MANIFEST_KEYS:
         raise QualityCandidateIntegrityError("candidate manifest is malformed")
     owned = payload["owned_artifact_digests"]
@@ -379,7 +390,21 @@ def load_quality_candidate_manifest(
         raise QualityCandidateIntegrityError(
             "candidate manifest identity mismatch"
         )
-    return candidate
+    return QualityCandidateSnapshot(manifest=candidate, sha256=digest)
+
+
+def load_quality_candidate_manifest(
+    path: Path,
+    *,
+    expected_sha256: str | None = None,
+    expected_candidate_id: str | None = None,
+) -> QualityCandidateManifest:
+    """Compatibility view over the exact persisted manifest snapshot."""
+    return load_quality_candidate_snapshot(
+        path,
+        expected_sha256=expected_sha256,
+        expected_candidate_id=expected_candidate_id,
+    ).manifest
 
 
 def quality_candidate_effect_payload(
@@ -1206,33 +1231,271 @@ def _candidate_checkpoint_contents(
     return contents
 
 
-def _replace_candidate_artifact_pinned(
-    path: Path,
-    content: bytes,
-    *,
-    expected_preimage_sha256: str,
-) -> None:
-    # The debt exchange is the established controller-owned final-component
-    # compare-and-exchange primitive.  Import lazily because that module also
-    # consumes candidate validation from this module.
-    from harness.phase1_quality_debt import _pinned_replace_file
-
-    _pinned_replace_file(
-        path,
-        content,
-        expected_preimage_sha256=expected_preimage_sha256,
-    )
+_RESTORE_EXCHANGE_KIND = "quality_candidate_restore_exchange"
+_RESTORE_EXCHANGE_DIRECTORY = "quality-restore-exchanges"
+_RESTORE_EXCHANGE_TEMP_PREFIX = ".echelon-quality-restore-"
 
 
-def _fsync_candidate_directory(path: Path) -> None:
+def _open_pinned_candidate_directory(path: Path) -> int:
+    metadata = os.lstat(path)
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+        raise OSError("candidate restore parent is not a directory")
     descriptor = os.open(
         path,
-        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+    )
+    opened = os.fstat(descriptor)
+    if (
+        not stat.S_ISDIR(opened.st_mode)
+        or (opened.st_dev, opened.st_ino)
+        != (metadata.st_dev, metadata.st_ino)
+    ):
+        os.close(descriptor)
+        raise OSError("candidate restore parent changed while opening")
+    return descriptor
+
+
+def _candidate_entry_snapshot(
+    directory_fd: int,
+    name: str,
+    *,
+    missing_ok: bool = False,
+) -> tuple[str, bytes, tuple[object, ...], int] | None:
+    """Read one regular entry through its pinned no-follow descriptor."""
+    try:
+        metadata = os.stat(
+            name,
+            dir_fd=directory_fd,
+            follow_symlinks=False,
+        )
+    except FileNotFoundError:
+        if missing_ok:
+            return None
+        raise
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+        raise OSError("candidate restore entry is not a regular file")
+    descriptor = os.open(
+        name,
+        os.O_RDONLY
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0),
+        dir_fd=directory_fd,
     )
     try:
+        opened = os.fstat(descriptor)
+        token = (
+            stat.S_IFMT(opened.st_mode),
+            opened.st_mode,
+            opened.st_dev,
+            opened.st_ino,
+            opened.st_nlink,
+            opened.st_size,
+            opened.st_mtime_ns,
+            opened.st_ctime_ns,
+            getattr(opened, "st_flags", None),
+            getattr(opened, "st_gen", None),
+        )
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or (opened.st_dev, opened.st_ino, opened.st_size)
+            != (metadata.st_dev, metadata.st_ino, metadata.st_size)
+        ):
+            raise OSError("candidate restore entry changed while opening")
+        remaining = opened.st_size
+        chunks: list[bytes] = []
+        while remaining:
+            chunk = os.read(descriptor, min(1_048_576, remaining))
+            if not chunk:
+                raise OSError("short candidate restore read")
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        content = b"".join(chunks)
+        after = os.fstat(descriptor)
+        after_token = (
+            stat.S_IFMT(after.st_mode),
+            after.st_mode,
+            after.st_dev,
+            after.st_ino,
+            after.st_nlink,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+            getattr(after, "st_flags", None),
+            getattr(after, "st_gen", None),
+        )
+        current = os.stat(
+            name,
+            dir_fd=directory_fd,
+            follow_symlinks=False,
+        )
+        current_token = (
+            stat.S_IFMT(current.st_mode),
+            current.st_mode,
+            current.st_dev,
+            current.st_ino,
+            current.st_nlink,
+            current.st_size,
+            current.st_mtime_ns,
+            current.st_ctime_ns,
+            getattr(current, "st_flags", None),
+            getattr(current, "st_gen", None),
+        )
+        if after_token != token or current_token != token:
+            raise OSError("candidate restore entry changed while reading")
+        return (
+            hashlib.sha256(content).hexdigest(),
+            content,
+            token,
+            stat.S_IMODE(opened.st_mode),
+        )
+    finally:
+        os.close(descriptor)
+
+
+def _write_pinned_candidate_entry(
+    directory_fd: int,
+    name: str,
+    content: bytes,
+    *,
+    mode: int,
+) -> None:
+    descriptor = os.open(
+        name,
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_NOFOLLOW", 0),
+        mode,
+        dir_fd=directory_fd,
+    )
+    try:
+        view = memoryview(content)
+        while view:
+            written = os.write(descriptor, view)
+            if written <= 0:
+                raise OSError("short candidate restore write")
+            view = view[written:]
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
+    os.fsync(directory_fd)
+
+
+def _restore_exchange_temp_name(completion_id: str, artifact: str) -> str:
+    token = hashlib.sha256(
+        f"{completion_id}:{artifact}".encode("utf-8")
+    ).hexdigest()[:24]
+    return f"{_RESTORE_EXCHANGE_TEMP_PREFIX}{token}.tmp"
+
+
+def _restore_exchange_payload(
+    *,
+    project_root: Path,
+    spec_dir: Path,
+    candidate: QualityCandidateManifest,
+    completion_id: str,
+    preimages: Mapping[str, str],
+    postimages: Mapping[str, str],
+) -> dict[str, object]:
+    relative_spec = spec_dir.relative_to(project_root).as_posix()
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "kind": _RESTORE_EXCHANGE_KIND,
+        "completion_id": completion_id,
+        "candidate_id": candidate.candidate_id,
+        "spec_dir": relative_spec,
+        "entries": [
+            {
+                "artifact": name,
+                "preimage_sha256": preimages[name],
+                "postimage_sha256": postimages[name],
+                "temp_name": _restore_exchange_temp_name(
+                    completion_id,
+                    name,
+                ),
+            }
+            for name in sorted(postimages)
+        ],
+    }
+
+
+def _canonical_restore_exchange_bytes(
+    payload: Mapping[str, object],
+) -> bytes:
+    return (
+        json.dumps(
+            dict(payload),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        + "\n"
+    ).encode("utf-8")
+
+
+def _reconcile_candidate_artifact_exchange(
+    directory_fd: int,
+    *,
+    artifact: str,
+    content: bytes,
+    preimage_sha256: str,
+    postimage_sha256: str,
+    temp_name: str,
+) -> None:
+    current = _candidate_entry_snapshot(directory_fd, artifact)
+    if current is None:
+        raise OSError("candidate restore artifact disappeared")
+    temporary = _candidate_entry_snapshot(
+        directory_fd,
+        temp_name,
+        missing_ok=True,
+    )
+    if current[0] == postimage_sha256:
+        if temporary is None:
+            return
+        if temporary[0] != preimage_sha256:
+            raise OSError("candidate restore exchange residue changed")
+        os.unlink(temp_name, dir_fd=directory_fd)
+        os.fsync(directory_fd)
+        return
+    if current[0] != preimage_sha256:
+        raise OSError("candidate restore preimage changed")
+    if temporary is None:
+        _write_pinned_candidate_entry(
+            directory_fd,
+            temp_name,
+            content,
+            mode=current[3],
+        )
+        temporary = _candidate_entry_snapshot(directory_fd, temp_name)
+    if temporary is None or temporary[0] != postimage_sha256:
+        raise OSError("candidate restore exchange postimage changed")
+    if (
+        _candidate_entry_snapshot(directory_fd, artifact) != current
+        or _candidate_entry_snapshot(directory_fd, temp_name) != temporary
+    ):
+        raise OSError("candidate restore exchange entries changed")
+    # Import lazily because the debt module consumes candidate validation from
+    # this module and already owns the platform-specific atomic swap primitive.
+    from harness.phase1_quality_debt import _atomic_exchange_files
+
+    _atomic_exchange_files(directory_fd, temp_name, artifact)
+    os.fsync(directory_fd)
+    restored = _candidate_entry_snapshot(directory_fd, artifact)
+    displaced = _candidate_entry_snapshot(directory_fd, temp_name)
+    if (
+        restored is None
+        or restored[0] != postimage_sha256
+        or displaced is None
+        or displaced[0] != preimage_sha256
+        or displaced[2][2:4] != current[2][2:4]
+    ):
+        raise OSError("candidate restore atomic exchange changed")
+    os.unlink(temp_name, dir_fd=directory_fd)
+    os.fsync(directory_fd)
 
 
 def materialize_quality_candidate_restore(
@@ -1273,40 +1536,114 @@ def materialize_quality_candidate_restore(
     checkpoint_expected = (
         expected.get("checkpoint") if expected is not None else None
     )
+    spec_descriptor: int | None = None
+    journal_descriptor: int | None = None
     try:
+        root = Path(project_root).resolve()
         resolved_spec = Path(spec_dir).resolve()
-        for name in sorted(artifact_digests):
-            path = resolved_spec / name
-            try:
-                metadata = path.lstat()
-                if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(
-                    metadata.st_mode
-                ):
-                    raise OSError("candidate artifact is not a regular file")
-                observed = hashlib.sha256(path.read_bytes()).hexdigest()
-            except OSError as exc:
-                raise QualityCandidateIntegrityError(
-                    f"candidate restoration preimage is unavailable: {name}"
-                ) from exc
-            postimage = artifact_digests[name]
-            if observed == postimage:
-                continue
-            if observed != preimages[name]:
-                raise QualityCandidateIntegrityError(
-                    f"candidate restoration preimage changed: {name}"
-                )
-            _replace_candidate_artifact_pinned(
-                path,
-                contents[name],
-                expected_preimage_sha256=preimages[name],
+        resolved_spec.relative_to(root)
+        exchange_payload = _restore_exchange_payload(
+            project_root=root,
+            spec_dir=resolved_spec,
+            candidate=candidate,
+            completion_id=completion_id,
+            preimages=preimages,
+            postimages=artifact_digests,
+        )
+        exchange_content = _canonical_restore_exchange_bytes(
+            exchange_payload
+        )
+        entries = exchange_payload["entries"]
+        if not isinstance(entries, list):
+            raise AssertionError("restore exchange entries are malformed")
+        spec_descriptor = _open_pinned_candidate_directory(resolved_spec)
+        snapshots = {
+            name: _candidate_entry_snapshot(spec_descriptor, name)
+            for name in sorted(artifact_digests)
+        }
+        if any(snapshot is None for snapshot in snapshots.values()):
+            raise OSError("candidate restore artifact disappeared")
+
+        artifact_root = Path(candidate.run_artifact_root).resolve()
+        journal_dir = artifact_root / _RESTORE_EXCHANGE_DIRECTORY
+        journal_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        journal_descriptor = _open_pinned_candidate_directory(journal_dir)
+        journal_name = f"{completion_id}.json"
+        existing_journal = _candidate_entry_snapshot(
+            journal_descriptor,
+            journal_name,
+            missing_ok=True,
+        )
+        unexpected_temp = any(
+            _candidate_entry_snapshot(
+                spec_descriptor,
+                str(entry["temp_name"]),
+                missing_ok=True,
             )
-        _fsync_candidate_directory(resolved_spec)
+            is not None
+            for entry in entries
+        )
+        restore_required = any(
+            snapshot is not None
+            and snapshot[0] != artifact_digests[name]
+            for name, snapshot in snapshots.items()
+        )
+        if existing_journal is None and unexpected_temp:
+            raise OSError("candidate restore exchange journal is missing")
+        if existing_journal is not None:
+            if existing_journal[1] != exchange_content:
+                raise OSError("candidate restore exchange journal changed")
+        elif restore_required:
+            _write_pinned_candidate_entry(
+                journal_descriptor,
+                journal_name,
+                exchange_content,
+                mode=0o600,
+            )
+            existing_journal = _candidate_entry_snapshot(
+                journal_descriptor,
+                journal_name,
+            )
+            if existing_journal is None or existing_journal[1] != exchange_content:
+                raise OSError("candidate restore exchange journal changed")
+
+        if existing_journal is not None:
+            for entry in entries:
+                name = str(entry["artifact"])
+                _reconcile_candidate_artifact_exchange(
+                    spec_descriptor,
+                    artifact=name,
+                    content=contents[name],
+                    preimage_sha256=str(entry["preimage_sha256"]),
+                    postimage_sha256=str(entry["postimage_sha256"]),
+                    temp_name=str(entry["temp_name"]),
+                )
+            for entry in entries:
+                if _candidate_entry_snapshot(
+                    spec_descriptor,
+                    str(entry["temp_name"]),
+                    missing_ok=True,
+                ) is not None:
+                    raise OSError("candidate restore exchange residue remains")
+            os.unlink(journal_name, dir_fd=journal_descriptor)
+            os.fsync(journal_descriptor)
+
+        if any(
+            name.startswith(_RESTORE_EXCHANGE_TEMP_PREFIX)
+            for name in os.listdir(spec_descriptor)
+        ):
+            raise OSError("candidate restore exchange residue remains")
         for name, postimage in artifact_digests.items():
-            path = resolved_spec / name
-            if hashlib.sha256(path.read_bytes()).hexdigest() != postimage:
+            snapshot = _candidate_entry_snapshot(spec_descriptor, name)
+            if snapshot is None or snapshot[0] != postimage:
                 raise QualityCandidateIntegrityError(
                     f"restored candidate digest mismatch: {name}"
                 )
+        os.fsync(spec_descriptor)
+        os.close(spec_descriptor)
+        spec_descriptor = None
+        os.close(journal_descriptor)
+        journal_descriptor = None
         checkpoint_receipt = create_or_recover_completion_checkpoint(
             project_root=project_root,
             spec_dir=spec_dir,
@@ -1325,6 +1662,11 @@ def materialize_quality_candidate_restore(
         raise QualityCandidateIntegrityError(
             f"candidate restoration integrity failure: {exc}"
         ) from exc
+    finally:
+        if spec_descriptor is not None:
+            os.close(spec_descriptor)
+        if journal_descriptor is not None:
+            os.close(journal_descriptor)
     receipt = {
         "schema_version": 1,
         "candidate_id": candidate.candidate_id,

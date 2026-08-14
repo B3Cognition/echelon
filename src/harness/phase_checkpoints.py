@@ -621,6 +621,10 @@ def _owned_pathspecs(
                     f"{(relative / CHECKPOINT_LEDGER_REL.parent).as_posix()}"
                     "/.checkpoints.json.*.tmp"
                 ),
+                (
+                    f":(exclude){relative.as_posix()}"
+                    "/.echelon-quality-restore-*.tmp"
+                ),
             ]
         )
     seen_paths: set[Path] = set()
@@ -2396,6 +2400,24 @@ def verify_checkpoint_artifact_digests(
         raise PhaseCheckpointError("candidate checkpoint commit is missing")
     for name in sorted(names):
         relative = (spec_relative / name).as_posix()
+        mode_result = run_git(
+            root,
+            "ls-tree",
+            checkpoint_commit,
+            "--",
+            relative,
+            check=False,
+        )
+        mode_fields = mode_result.stdout.split(None, 3)
+        if (
+            mode_result.returncode != 0
+            or len(mode_fields) != 4
+            or mode_fields[0] not in {"100644", "100755"}
+            or mode_fields[1] != "blob"
+        ):
+            raise PhaseCheckpointError(
+                f"candidate owned artifact is not a regular blob: {name}"
+            )
         result = run_git(
             root,
             "show",
@@ -2411,6 +2433,23 @@ def verify_checkpoint_artifact_digests(
             raise PhaseCheckpointError(
                 f"candidate checkpoint artifact digest mismatch: {name}"
             )
+    tree = run_git(
+        root,
+        "ls-tree",
+        "-r",
+        "--name-only",
+        checkpoint_commit,
+        "--",
+        spec_relative.as_posix(),
+        check=False,
+    )
+    if tree.returncode != 0 or any(
+        Path(name).name.startswith(".echelon-quality-restore-")
+        for name in tree.stdout.splitlines()
+    ):
+        raise PhaseCheckpointError(
+            "candidate checkpoint contains restore exchange residue"
+        )
 
 
 def accept_checkpoint_baseline(

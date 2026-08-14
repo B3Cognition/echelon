@@ -36,8 +36,9 @@ def test_verified_quality_debt_is_an_explicit_exact_publication_operation(
     active.mkdir(parents=True)
     published.mkdir(parents=True)
     debt_bytes = (
-        b'{"failed_gates":[{"name":"overall","score":0.7,'
-        b'"threshold":0.8}],"resolved_by":"COMMANDER",'
+        b'{"failed_gates":[],"qualitative_debt":['
+        b'{"issue_id":"ISS-QUALITY-0","route":"spec_repair",'
+        b'"title":"Residual quality debt"}],"resolved_by":"COMMANDER",'
         b'"status":"accepted_with_debt"}\n'
     )
     (active / "quality-debt.json").write_bytes(debt_bytes)
@@ -194,6 +195,13 @@ def test_downstream_planning_context_receives_exact_verified_debt_artifact(
         "failed_gates": [
             {"name": "overall", "score": 0.7, "threshold": 0.8, "margin": -0.1}
         ],
+        "qualitative_debt": [
+            {
+                "issue_id": "ISS-QUALITY-0",
+                "route": "spec_repair",
+                "title": "Residual quality debt",
+            }
+        ],
     }
     debt_bytes = (json.dumps(debt, sort_keys=True) + "\n").encode("utf-8")
     (spec_dir / "quality-debt.json").write_bytes(debt_bytes)
@@ -205,6 +213,7 @@ def test_downstream_planning_context_receives_exact_verified_debt_artifact(
             "debt_artifact_sha256": hashlib.sha256(debt_bytes).hexdigest(),
             "resolved_by": "user",
             "failed_gates": debt["failed_gates"],
+            "qualitative_debt": debt["qualitative_debt"],
         },
     }
     saved: list[dict[str, object]] = []
@@ -239,6 +248,7 @@ def test_downstream_planning_context_receives_exact_verified_debt_artifact(
         "artifact_sha256": hashlib.sha256(debt_bytes).hexdigest(),
         "resolved_by": "user",
         "failed_gates": debt["failed_gates"],
+        "qualitative_debt": debt["qualitative_debt"],
     }
 
 

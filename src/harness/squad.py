@@ -83,10 +83,12 @@ from harness.phase1_quality_debt import build_quality_debt_authorization
 from harness.proportional_quality import (
     QualityCandidateIntegrityError,
     QualityCandidateManifest,
+    QualityCandidateSnapshot,
     candidate_artifact_preimage_digests,
-    load_authoritative_sage_issues,
+    load_authoritative_sage_assessment,
     initialize_repair_state,
     load_quality_candidate_manifest,
+    load_quality_candidate_snapshot,
     rank_quality_candidates,
     record_what_outcome,
     prepare_quality_candidate,
@@ -8079,6 +8081,11 @@ class SquadController:
             "resolved_by": authorization.get("resolved_by"),
             "failed_gates": list(authorization.get("failed_gates") or []),
         }
+        qualitative_debt = list(
+            authorization.get("qualitative_debt") or []
+        )
+        if qualitative_debt:
+            context["qualitative_debt"] = qualitative_debt
         if (
             state.get("spec_quality_status") != "accepted_with_debt"
             or state.get("spec_quality_debt_context") != context
@@ -9163,6 +9170,8 @@ class SquadController:
         prepared: PreparedPhaseResult,
         snapshot: RoutingStateSnapshot,
         eval_state: Mapping[str, object],
+        *,
+        proportional_failure: bool,
     ) -> tuple[QualityCandidateManifest, dict[str, object]] | None:
         state = snapshot.state
         if not self._is_proportional_quality_state(state) or not (
@@ -9212,7 +9221,7 @@ class SquadController:
         candidate_id = f"quality-candidate-{len(repair['candidate_ids'])}"
         spec_dir = self._proportional_spec_dir(state)
         spec_id = _checkpoint_spec_id_from_state(dict(state), spec_dir)
-        authoritative_issues = load_authoritative_sage_issues(
+        sage_verdict, authoritative_issues = load_authoritative_sage_assessment(
             spec_dir / "issues.md"
         )
         issues_by_id = {
@@ -9221,9 +9230,10 @@ class SquadController:
         finding_issue_ids = [
             str(finding.get("issue_id") or "") for finding in findings
         ]
-        requires_debt_coverage = report.get("pass") is False
-        if requires_debt_coverage and (
-            len(set(finding_issue_ids)) != len(finding_issue_ids)
+        if proportional_failure and (
+            sage_verdict != "FAIL"
+            or not authoritative_issues
+            or len(set(finding_issue_ids)) != len(finding_issue_ids)
             or set(finding_issue_ids) != set(issues_by_id)
         ):
             raise QualityCandidateIntegrityError(
@@ -9299,13 +9309,13 @@ class SquadController:
             },
         }
 
-    def _load_proportional_candidates(
+    def _load_proportional_candidate_snapshots(
         self,
         repair_state: Mapping[str, object],
-    ) -> tuple[QualityCandidateManifest, ...]:
+    ) -> tuple[QualityCandidateSnapshot, ...]:
         repair = validate_repair_state(repair_state)
         return tuple(
-            load_quality_candidate_manifest(
+            load_quality_candidate_snapshot(
                 self._squad_dir / "quality-candidates" / f"{candidate_id}.json"
             )
             for candidate_id in repair["candidate_ids"]
@@ -9349,18 +9359,19 @@ class SquadController:
                     "current proportional candidate does not match repair state"
                 )
             persisted_ids = persisted_ids[:-1]
+        persisted_snapshots = self._load_proportional_candidate_snapshots(
+            {
+                **repair,
+                "candidate_ids": persisted_ids,
+                "baseline_candidate_id": (
+                    repair["baseline_candidate_id"]
+                    if persisted_ids
+                    else None
+                ),
+            }
+        )
         candidates = (
-            self._load_proportional_candidates(
-                {
-                    **repair,
-                    "candidate_ids": persisted_ids,
-                    "baseline_candidate_id": (
-                        repair["baseline_candidate_id"]
-                        if persisted_ids
-                        else None
-                    ),
-                }
-            )
+            tuple(snapshot.manifest for snapshot in persisted_snapshots)
             + ((current_candidate,) if current_candidate is not None else ())
         )
         ranked = rank_quality_candidates(candidates)
@@ -9369,6 +9380,13 @@ class SquadController:
                 "no eligible proportional quality candidate is available"
             )
         selected = ranked[0]
+        if (
+            selected.failed_gate_count == 0
+            and not selected.sage_finding_routes
+        ):
+            raise QualityCandidateIntegrityError(
+                "selected proportional candidate has no residual quality debt"
+            )
         spec_dir = self._proportional_spec_dir(state)
         spec_id = _checkpoint_spec_id_from_state(dict(state), spec_dir)
         manifest_path = (
@@ -9376,9 +9394,17 @@ class SquadController:
             / "quality-candidates"
             / f"{selected.candidate_id}.json"
         )
+        selected_snapshot = next(
+            (
+                snapshot
+                for snapshot in persisted_snapshots
+                if snapshot.manifest.candidate_id == selected.candidate_id
+            ),
+            None,
+        )
         manifest_sha = (
-            hashlib.sha256(manifest_path.read_bytes()).hexdigest()
-            if manifest_path.is_file()
+            selected_snapshot.sha256
+            if selected_snapshot is not None
             else None
         )
         evidence_path = Path(selected.understanding_evidence)
@@ -9427,6 +9453,13 @@ class SquadController:
                 ],
                 "formal_statement_count": candidate.formal_statement_count,
                 "byte_count": candidate.byte_count,
+                "qualitative_failure_count": len(
+                    candidate.sage_finding_routes
+                ),
+                "qualitative_issue_ids": [
+                    str(route.get("issue_id") or "")
+                    for route in candidate.sage_finding_routes
+                ],
             }
             for candidate in repair_history
         ]
@@ -9506,7 +9539,8 @@ class SquadController:
             question=(
                 "The bounded proportional quality repair budget is exhausted. "
                 f"Candidate {selected.candidate_id} was restored with "
-                f"{selected.failed_gate_count} residual failed gate(s)."
+                f"{selected.failed_gate_count} residual failed gate(s) and "
+                f"{len(selected.sage_finding_routes)} residual SAGE issue(s)."
             ),
             source_state_revision=source_state_revision,
             repair_state=repair,
@@ -9519,6 +9553,9 @@ class SquadController:
                 ),
                 formal_statement_count=(
                     recommendation_current.formal_statement_count
+                ),
+                qualitative_failure_count=len(
+                    recommendation_current.sage_finding_routes
                 ),
             ),
             option_contract=policy.options,
@@ -9543,6 +9580,12 @@ class SquadController:
             recommendation_rationale = (
                 "The repair produced no artifact progress, so another automatic "
                 "attempt is not favored over explicit debt acceptance."
+            )
+        elif recommendation_current.failed_gate_count == 0:
+            recommendation_rationale = (
+                "Numeric gates pass, but authoritative non-critical SAGE "
+                "findings remain; extension is not inferred from an empty "
+                "numeric comparison, so explicit debt acceptance is favored."
             )
         else:
             recommendation_rationale = (
@@ -9647,6 +9690,13 @@ class SquadController:
                     ),
                     "score_history": score_history,
                     "per_repair_deltas": per_repair_deltas,
+                    "qualitative_failure_count": len(
+                        recommendation_current.sage_finding_routes
+                    ),
+                    "qualitative_issue_ids": [
+                        str(route.get("issue_id") or "")
+                        for route in recommendation_current.sage_finding_routes
+                    ],
                     "recommended_option_id": recommended_option_id,
                     "rationale": recommendation_rationale,
                 },
@@ -10596,6 +10646,7 @@ class SquadController:
                 prepared,
                 snapshot,
                 eval_state,
+                proportional_failure=is_fail,
             )
         except QualityCandidateIntegrityError:
             if not is_fail:

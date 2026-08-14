@@ -4245,6 +4245,42 @@ def test_proportional_extension_exhaustion_never_recommends_another_extension(
     ]
 
 
+def test_qualitative_only_failure_never_vacuously_recommends_extension() -> None:
+    registry = HumanInputPolicyRegistry(controller_safeguard_policies())
+    policy = registry.lookup(
+        "controller_safeguard",
+        "proportional_quality_budget_exhausted",
+        "proportional_quality_budget_exhausted",
+    )
+    passing = (
+        ("overall", 0.90, 0.80, True),
+        ("structure", 0.85, 0.80, True),
+    )
+    evidence = ProportionalQualityRecommendationEvidence(
+        borderline_margin=0.05,
+        previous_gates=passing,
+        current_gates=passing,
+        previous_formal_statement_count=8,
+        formal_statement_count=8,
+        qualitative_failure_count=1,
+    )
+
+    request = prepare_controller_proportional_quality_decision(
+        registry,
+        reason_code="proportional_quality_budget_exhausted",
+        phase_id="phase1-why2",
+        question="Resolve the qualitative-only SAGE failure.",
+        source_state_revision=12,
+        repair_state=_proportional_repair_state(),
+        recommendation_evidence=evidence,
+        option_contract=policy.options,
+    )
+
+    assert [option.id for option in request.options if option.recommended] == [
+        "continue_with_debt"
+    ]
+
+
 def test_proportional_budget_policy_cannot_be_prepared_after_extension_authorization(
 ) -> None:
     registry = HumanInputPolicyRegistry(controller_safeguard_policies())

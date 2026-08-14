@@ -24,6 +24,7 @@ class RunSummaryContext:
     quality_debt_status: str = ""
     quality_debt_artifact: str = ""
     quality_debt_failed_gates: tuple[str, ...] = ()
+    quality_debt_qualitative_issues: tuple[str, ...] = ()
     quality_debt_resolved_by: str = ""
     provider_limit_message: str = ""
 
@@ -114,6 +115,10 @@ def _summary_prompt(context: RunSummaryContext, agent_prompt: str) -> str:
         "quality_debt_failed_gates": [
             gate[:160] for gate in context.quality_debt_failed_gates[:8]
         ],
+        "quality_debt_qualitative_issues": [
+            issue[:200]
+            for issue in context.quality_debt_qualitative_issues[:8]
+        ],
         "quality_debt_resolved_by": context.quality_debt_resolved_by[:40],
         "provider_limit_message": context.provider_limit_message[:500],
     }
@@ -124,7 +129,8 @@ def _summary_prompt(context: RunSummaryContext, agent_prompt: str) -> str:
         "summary as three to seven short plain-text lines. Do not use bullets, a "
         "heading, JSON, or Markdown fences. Do not claim verification you did not "
         "observe. If quality_debt_status is accepted_with_debt, say accepted with "
-        "quality debt, name the resolver and most important residual gates, and "
+        "quality debt, name the resolver and most important residual gates or "
+        "SAGE findings, and "
         "never call specification quality passed or fully certified. Keep any "
         "provider-limit fact independently visible.\n\n"
         f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
@@ -418,6 +424,13 @@ def _required_outcome_truth_lines(context: RunSummaryContext) -> list[str]:
         ]
         if gates:
             detail += "; residual gates: " + ", ".join(gates)
+        qualitative = [
+            issue.strip()[:80]
+            for issue in context.quality_debt_qualitative_issues[:2]
+            if issue.strip()
+        ]
+        if qualitative:
+            detail += "; residual SAGE findings: " + ", ".join(qualitative)
         artifact = context.quality_debt_artifact.strip()[:220]
         if artifact:
             detail += f"; evidence: {artifact}"

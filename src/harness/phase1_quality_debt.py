@@ -24,7 +24,7 @@ from echelon.strict_json import loads_strict_json
 from harness.proportional_quality import (
     QualityCandidateManifest,
     QualityCandidateIntegrityError,
-    load_authoritative_sage_issues,
+    load_authoritative_sage_assessment,
     load_quality_candidate_manifest,
     validate_repair_state,
 )
@@ -405,7 +405,7 @@ def _verify_restored_candidate(
                 f"quality-debt candidate artifact digest mismatch: {name}"
             )
 
-    authoritative_issues = load_authoritative_sage_issues(
+    sage_verdict, authoritative_issues = load_authoritative_sage_assessment(
         spec_dir / "issues.md"
     )
     if any(
@@ -425,6 +425,10 @@ def _verify_restored_candidate(
     }:
         raise QualityCandidateIntegrityError(
             "quality-debt SAGE findings changed"
+        )
+    if sage_verdict != "FAIL" or not candidate.sage_finding_routes:
+        raise QualityCandidateIntegrityError(
+            "quality-debt candidate lacks authoritative SAGE failure debt"
         )
     for route in candidate.sage_finding_routes:
         issue = issues_by_id.get(str(route.get("issue_id") or ""))
@@ -457,7 +461,7 @@ def _verify_restored_candidate(
         or report.get("schema_version") != SCHEMA_VERSION
         or report.get("status") != "completed"
         or report.get("phase") != "phase1-why2"
-        or report.get("pass") is not False
+        or report.get("pass") is not (candidate.failed_gate_count == 0)
         or report.get("requirement_count") != candidate.formal_statement_count
         or not isinstance(report_spec, Mapping)
         or report_spec.get("sha256") != artifact_digests["spec.md"]
@@ -501,7 +505,7 @@ def _failed_gates(
         for name, score, threshold, passed in candidate.normalized_gates
         if not passed
     ]
-    if not failed:
+    if not failed and not candidate.sage_finding_routes:
         raise QualityCandidateIntegrityError(
             "passing candidates cannot create quality debt"
         )
@@ -1004,7 +1008,7 @@ def build_quality_debt_authorization(
 
 
 def _validate_failed_gates(value: object) -> list[dict[str, object]]:
-    if not isinstance(value, list) or not value:
+    if not isinstance(value, list):
         raise QualityCandidateIntegrityError(
             "quality-debt failed gates are invalid"
         )
@@ -1269,7 +1273,7 @@ def _current_quality_debt_authorization(
     qualitative = authorization.get("qualitative_debt")
     if not isinstance(qualitative, list) or any(
         not isinstance(item, Mapping) for item in qualitative
-    ):
+    ) or (not failed_gates and not qualitative):
         raise QualityCandidateIntegrityError(
             "quality-debt qualitative evidence is invalid"
         )
@@ -1323,7 +1327,7 @@ def _current_quality_debt_authorization(
         != authorization["understanding_state_sha256"]
         or evidence.get("phase") != "phase1-why2"
         or evidence.get("status") != "completed"
-        or evidence.get("pass") is not False
+        or evidence.get("pass") is not (candidate.failed_gate_count == 0)
         or evidence.get("digest") != authorization["understanding_evidence_sha256"]
         or _resolve_state_reference(root, evidence.get("path")) != evidence_path
     ):

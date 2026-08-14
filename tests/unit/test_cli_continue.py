@@ -12,6 +12,7 @@ import pytest
 from echelon.cli import (
     _classify_run_recovery,
     _cmd_continue,
+    _current_quality_debt_cli_facts,
     _ensure_active_continue_spec_context,
     _next_continue_phase,
     _phase_a_readiness_candidate_dirs,
@@ -245,6 +246,39 @@ def test_terminal_summary_keeps_quality_debt_and_provider_limit_independent(
     assert "provider limit" in output.lower()
     assert "Provider limit reached" in output
     assert "quality passed" not in output.lower()
+
+
+def test_cli_quality_debt_facts_preserve_qualitative_only_findings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = {
+        "spec_quality_debt_authorization": {
+            "status": "accepted_with_debt",
+            "debt_artifact": "specs/001-demo/quality-debt.json",
+            "resolved_by": "COMMANDER",
+            "failed_gates": [],
+            "qualitative_debt": [
+                {
+                    "issue_id": "ISS-QUALITY-0",
+                    "title": "Residual quality debt",
+                    "route": "spec_repair",
+                }
+            ],
+        }
+    }
+    monkeypatch.setattr(
+        "harness.phase1_quality_debt.has_current_quality_debt_authorization",
+        lambda *_args, **_kwargs: True,
+    )
+
+    facts = _current_quality_debt_cli_facts(state, tmp_path)
+
+    assert facts is not None
+    assert facts["failed_gates"] == ()
+    assert facts["qualitative_issues"] == (
+        "ISS-QUALITY-0: Residual quality debt",
+    )
 
 
 def test_continue_uses_sealed_v2_decision_mode_not_cli_override(
