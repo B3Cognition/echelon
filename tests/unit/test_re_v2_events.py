@@ -1,0 +1,293 @@
+from __future__ import annotations
+
+from concurrent.futures import ThreadPoolExecutor
+import json
+import os
+from pathlib import Path
+
+import pytest
+
+from harness.re_v2.canonical import canonical_json_bytes, content_digest
+from harness.re_v2.events import EventStore, ReV2EventError
+
+
+NOW = "2026-08-14T12:00:00Z"
+
+
+def digest(value: str) -> str:
+    return content_digest(value.encode())
+
+
+def event_store(tmp_path: Path) -> EventStore:
+    return EventStore(tmp_path / "events.jsonl")
+
+
+def replace_jsonl_record(
+    path: Path, *, index: int, field: str, value: object
+) -> None:
+    records = [json.loads(line) for line in path.read_bytes().splitlines()]
+    records[index][field] = value
+    path.write_bytes(b"".join(canonical_json_bytes(record) for record in records))
+
+
+def test_append_builds_a_canonical_hash_chain(tmp_path: Path) -> None:
+    store = event_store(tmp_path)
+    first = store.append(
+        "run_created", {"run_manifest_id": digest("run")}, occurred_at=NOW
+    )
+    second = store.append(
+        "work_planned", {"work_item_ids": [digest("work")]}, occurred_at=NOW
+    )
+
+    assert (first.seq, first.previous_event_hash) == (1, None)
+    assert (second.seq, second.previous_event_hash) == (2, first.event_hash)
+    assert store.replay() == (first, second)
+    assert store.path.read_bytes() == b"".join(
+        canonical_json_bytes(event.to_json_dict()) for event in (first, second)
+    )
+
+
+def test_event_chain_rejects_a_modified_middle_record(tmp_path: Path) -> None:
+    store = event_store(tmp_path)
+    store.append("run_created", {"run_manifest_id": digest("run")}, occurred_at=NOW)
+    store.append(
+        "work_planned", {"work_item_ids": [digest("work")]}, occurred_at=NOW
+    )
+    replace_jsonl_record(store.path, index=0, field="type", value="tampered")
+
+    with pytest.raises(ReV2EventError, match="event hash"):
+        store.replay()
+
+
+@pytest.mark.parametrize(
+    ("bytes_to_append", "message"),
+    [
+        (b'{"schema_version":1', "partial"),
+        (b"not-json\n", "JSON"),
+        (b"\n", "JSON"),
+    ],
+)
+def test_replay_fails_closed_on_torn_or_invalid_records(
+    tmp_path: Path, bytes_to_append: bytes, message: str
+) -> None:
+    store = event_store(tmp_path)
+    store.append("run_created", {"run_manifest_id": digest("run")}, occurred_at=NOW)
+    with store.path.open("ab") as stream:
+        stream.write(bytes_to_append)
+
+    before = store.path.read_bytes()
+    with pytest.raises(ReV2EventError, match=message):
+        store.replay()
+    assert store.path.read_bytes() == before
+
+
+def test_append_rejects_noncanonical_payload_values_and_exact_schema_violations(
+    tmp_path: Path,
+) -> None:
+    store = event_store(tmp_path)
+
+    with pytest.raises(ReV2EventError, match="unknown fields"):
+        store.append(
+            "run_created",
+            {"run_manifest_id": digest("run"), "mutable_status": "running"},
+            occurred_at=NOW,
+        )
+    with pytest.raises(ReV2EventError, match="JSON"):
+        store.append(
+            "run_created", {"run_manifest_id": {digest("run")}}, occurred_at=NOW
+        )
+    with pytest.raises(ReV2EventError, match="RFC3339"):
+        store.append(
+            "run_created", {"run_manifest_id": digest("run")}, occurred_at="today"
+        )
+    assert not store.path.exists()
+
+
+def test_replay_rejects_noncanonical_json_even_with_a_valid_hash(tmp_path: Path) -> None:
+    store = event_store(tmp_path)
+    event = store.append(
+        "run_created", {"run_manifest_id": digest("run")}, occurred_at=NOW
+    )
+    noncanonical = json.dumps(event.to_json_dict(), sort_keys=False).encode() + b"\n"
+    store.path.write_bytes(noncanonical)
+
+    with pytest.raises(ReV2EventError, match="canonical"):
+        store.replay()
+
+
+def test_state_machine_rejects_out_of_order_work_events(tmp_path: Path) -> None:
+    store = event_store(tmp_path)
+    store.append("run_created", {"run_manifest_id": digest("run")}, occurred_at=NOW)
+
+    with pytest.raises(ReV2EventError, match="dispatch_started"):
+        store.append(
+            "dispatch_started",
+            {"dispatch_id": "dispatch-1", "work_item_id": digest("work")},
+            occurred_at=NOW,
+        )
+
+
+def test_checkpoint_consumes_the_matching_acceptance_exactly_once(tmp_path: Path) -> None:
+    store = event_store(tmp_path)
+    work_item_id = digest("work")
+    certification_id = digest("certification")
+    artifact_hash = digest("artifact")
+    store.append("run_created", {"run_manifest_id": digest("run")}, occurred_at=NOW)
+    store.append(
+        "dispatch_leased",
+        {"dispatch_id": "dispatch-1", "work_item_id": work_item_id},
+        occurred_at=NOW,
+    )
+    store.append(
+        "dispatch_started",
+        {"dispatch_id": "dispatch-1", "work_item_id": work_item_id},
+        occurred_at=NOW,
+    )
+    store.append(
+        "dispatch_observed",
+        {
+            "dispatch_id": "dispatch-1",
+            "observation": {
+                "duration_ms": 1,
+                "ended_at": NOW,
+                "exit_code": 0,
+                "model_name": "fixture-model",
+                "output_truncated": False,
+                "provider_name": "fixture",
+                "result_contract_valid": True,
+                "started_at": NOW,
+                "stderr_digest": None,
+                "timed_out": False,
+                "token_usage": 1,
+            },
+            "work_item_id": work_item_id,
+        },
+        occurred_at=NOW,
+    )
+    store.append(
+        "candidate_persisted",
+        {
+            "candidate_id": "candidate-1",
+            "dispatch_id": "dispatch-1",
+            "work_item_id": work_item_id,
+        },
+        occurred_at=NOW,
+    )
+    store.append(
+        "candidate_certified",
+        {
+            "candidate_id": "candidate-1",
+            "certification_id": certification_id,
+            "work_item_id": work_item_id,
+        },
+        occurred_at=NOW,
+    )
+    store.append(
+        "artifact_accepted",
+        {
+            "artifact_hash": artifact_hash,
+            "artifact_key_id": digest("artifact-key"),
+            "certification_id": certification_id,
+            "work_item_id": work_item_id,
+        },
+        occurred_at=NOW,
+    )
+    checkpoint = {
+        "artifact_hash": artifact_hash,
+        "certification_id": certification_id,
+        "work_item_id": work_item_id,
+    }
+    store.append("checkpoint_recorded", checkpoint, occurred_at=NOW)
+
+    with pytest.raises(ReV2EventError, match="checkpoint_recorded"):
+        store.append("checkpoint_recorded", checkpoint, occurred_at=NOW)
+
+
+def test_terminal_run_is_immutable(tmp_path: Path) -> None:
+    store = event_store(tmp_path)
+    store.append("run_created", {"run_manifest_id": digest("run")}, occurred_at=NOW)
+    store.append("run_completed", {"reason": "goals_satisfied"}, occurred_at=NOW)
+
+    with pytest.raises(ReV2EventError, match="terminal"):
+        store.append(
+            "work_planned", {"work_item_ids": [digest("work")]}, occurred_at=NOW
+        )
+
+
+def test_paused_run_requires_control_then_resume_and_executes_no_work(
+    tmp_path: Path,
+) -> None:
+    store = event_store(tmp_path)
+    store.append("run_created", {"run_manifest_id": digest("run")}, occurred_at=NOW)
+    store.append(
+        "run_paused",
+        {"reason": "token ceiling exhausted", "reason_code": "tokens_exhausted"},
+        occurred_at=NOW,
+    )
+
+    with pytest.raises(ReV2EventError, match="paused"):
+        store.append(
+            "dispatch_leased",
+            {"dispatch_id": "dispatch-1", "work_item_id": digest("work")},
+            occurred_at=NOW,
+        )
+    with pytest.raises(ReV2EventError, match="authorization or operator action"):
+        store.append("run_resumed", {"reason": "retry"}, occurred_at=NOW)
+
+    store.append(
+        "budget_authorized",
+        {
+            "authorized_by": "operator",
+            "dimension": "tokens",
+            "new_value": 200,
+            "old_value": 100,
+            "reason": "continue pinned run",
+        },
+        occurred_at=NOW,
+    )
+    store.append("run_resumed", {"reason": "budget increased"}, occurred_at=NOW)
+    store.append(
+        "dispatch_leased",
+        {"dispatch_id": "dispatch-1", "work_item_id": digest("work")},
+        occurred_at=NOW,
+    )
+    assert store.replay()[-1].type == "dispatch_leased"
+
+
+def test_concurrent_appenders_get_one_consecutive_chain(tmp_path: Path) -> None:
+    path = tmp_path / "events.jsonl"
+    EventStore(path).append(
+        "run_created", {"run_manifest_id": digest("run")}, occurred_at=NOW
+    )
+
+    def append(index: int) -> None:
+        EventStore(path).append(
+            "work_planned",
+            {"work_item_ids": [digest(f"work-{index:02d}")]},
+            occurred_at=NOW,
+        )
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        tuple(executor.map(append, range(24)))
+
+    replayed = EventStore(path).replay()
+    assert tuple(event.seq for event in replayed) == tuple(range(1, 26))
+    assert len({event.event_hash for event in replayed}) == 25
+
+
+def test_append_write_loop_survives_short_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import harness.re_v2.events as events_module
+
+    real_write = os.write
+
+    def short_write(fd: int, payload: bytes) -> int:
+        return real_write(fd, payload[:7])
+
+    monkeypatch.setattr(events_module.os, "write", short_write)
+    store = event_store(tmp_path)
+    appended = store.append(
+        "run_created", {"run_manifest_id": digest("run")}, occurred_at=NOW
+    )
+    assert store.replay() == (appended,)
