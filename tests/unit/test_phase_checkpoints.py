@@ -11,6 +11,7 @@ from harness.phase_checkpoints import (
     CheckpointLedger,
     PhaseCheckpointError,
     PhaseCheckpoint,
+    build_phase_checkpoint_message,
     commit_manual_checkpoint,
     commit_retarget_checkpoint,
     create_phase_checkpoint,
@@ -29,6 +30,23 @@ from echelon.spec_retarget_history import (
 
 COMPLETION_A = "a" * 32
 COMPLETION_B = "b" * 32
+
+
+def test_phase_checkpoint_message_builder_preserves_ordinary_identity() -> None:
+    assert build_phase_checkpoint_message(
+        spec_id="001-demo",
+        phase="phase1-what",
+        run_id="squad-1",
+    ) == (
+        "echelon-checkpoint: 001-demo phase1-what\n\n"
+        "Co-authored-by: Echelon <echelon@b3cognition.dev>\n"
+        "Echelon-Origin: phase-a\n"
+        "Echelon-Action: checkpoint\n"
+        "Echelon-Spec: 001-demo\n"
+        "Echelon-Run: squad-1\n"
+        "Echelon-Phase: phase1-what\n"
+        "Echelon-Checkpoint: phase1-what"
+    )
 
 
 def test_checkpoint_ledger_round_trips_under_spec_dir(tmp_path: Path) -> None:

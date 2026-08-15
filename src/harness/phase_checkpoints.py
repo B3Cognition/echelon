@@ -2171,17 +2171,10 @@ def create_phase_checkpoint(
     force_commit: bool = False,
 ) -> PhaseCheckpoint:
     spec_id = spec_id or _spec_id_from_dir(spec_dir)
-    subject = f"echelon-checkpoint: {spec_id} {phase}"
-    message = build_echelon_commit_message(
-        subject,
-        EchelonCommitMetadata(
-            origin="phase-a",
-            action="checkpoint",
-            spec_id=spec_id,
-            run_id=run_id,
-            phase=phase,
-            checkpoint_id=phase,
-        ),
+    message = build_phase_checkpoint_message(
+        spec_id=spec_id,
+        phase=phase,
+        run_id=run_id,
     )
     if checkpoint_owned_paths:
         commit = _commit_spec_changes(
@@ -2235,6 +2228,20 @@ def create_phase_checkpoint(
     )
     record_phase_checkpoint(spec_dir, checkpoint)
     return checkpoint
+
+
+def build_phase_checkpoint_message(*, spec_id: str, phase: str, run_id: str) -> str:
+    return build_echelon_commit_message(
+        f"echelon-checkpoint: {spec_id} {phase}",
+        EchelonCommitMetadata(
+            origin="phase-a",
+            action="checkpoint",
+            spec_id=spec_id,
+            run_id=run_id,
+            phase=phase,
+            checkpoint_id=phase,
+        ),
+    )
 
 
 def restore_checkpoint_artifacts(
