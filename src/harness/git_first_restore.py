@@ -8,6 +8,7 @@ import hashlib
 import os
 from pathlib import Path
 import re
+import stat
 import subprocess
 import tempfile
 from typing import Iterator, Mapping
@@ -45,6 +46,9 @@ class RestoreCommitEntry:
 class GitFirstRestorePlan:
     schema_version: int
     completion_id: str
+    run_id: str
+    spec_id: str
+    next_phase: str
     ref_name: str
     base_commit: str
     base_tree: str
@@ -67,6 +71,16 @@ def _git(
     check: bool = True,
 ) -> subprocess.CompletedProcess[bytes]:
     process_env = os.environ.copy()
+    process_env.update(
+        {
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_SYSTEM": os.devnull,
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_COUNT": "0",
+            "GIT_NO_REPLACE_OBJECTS": "1",
+            "GIT_OPTIONAL_LOCKS": "0",
+        }
+    )
     if env is not None:
         process_env.update(env)
     try:
@@ -141,6 +155,7 @@ def _tree_entries(
         project_root,
         "ls-tree",
         "-r",
+        "-t",
         "-z",
         commit_or_tree,
     ).stdout
@@ -285,22 +300,41 @@ def _restore_checkpoint_message(
 
 
 def _base_commit_date(project_root: Path, base_commit: str) -> str:
-    raw = _git(
-        project_root,
-        "show",
-        "-s",
-        "--format=%ct%x00%ci",
-        base_commit,
-    ).stdout.rstrip(b"\n")
+    raw = _git(project_root, "cat-file", "commit", base_commit).stdout
     try:
-        epoch_raw, display_raw = raw.split(b"\0", 1)
-        epoch = epoch_raw.decode("ascii")
-        timezone = display_raw.decode("ascii").rsplit(" ", 1)[1]
-    except (ValueError, UnicodeDecodeError, IndexError) as exc:
+        header = raw.split(b"\n\n", 1)[0]
+        committer_lines = tuple(
+            line for line in header.splitlines() if line.startswith(b"committer ")
+        )
+        if len(committer_lines) != 1:
+            raise ValueError
+        match = re.search(rb" ([0-9]+) ([+-][0-9]{4})$", committer_lines[0])
+        if match is None:
+            raise ValueError
+        epoch = match.group(1).decode("ascii")
+        timezone = match.group(2).decode("ascii")
+    except (ValueError, UnicodeDecodeError) as exc:
         raise GitFirstRestoreError("could not read base commit timestamp") from exc
     if not epoch.isdigit() or re.fullmatch(r"[+-][0-9]{4}", timezone) is None:
         raise GitFirstRestoreError("could not read base commit timestamp")
     return f"{epoch} {timezone}"
+
+
+def _deterministic_commit_bytes(
+    *,
+    target_tree: str,
+    parent: str,
+    message: str,
+    timestamp: str,
+) -> bytes:
+    identity = "Echelon <echelon@local>"
+    return (
+        f"tree {target_tree}\n"
+        f"parent {parent}\n"
+        f"author {identity} {timestamp}\n"
+        f"committer {identity} {timestamp}\n"
+        f"\n{message}\n"
+    ).encode("utf-8")
 
 
 def _commit_tree_deterministically(
@@ -311,54 +345,84 @@ def _commit_tree_deterministically(
     message: str,
     timestamp: str,
 ) -> str:
-    identity = {
-        "GIT_AUTHOR_NAME": "Echelon",
-        "GIT_AUTHOR_EMAIL": "echelon@local",
-        "GIT_COMMITTER_NAME": "Echelon",
-        "GIT_COMMITTER_EMAIL": "echelon@local",
-        "GIT_AUTHOR_DATE": timestamp,
-        "GIT_COMMITTER_DATE": timestamp,
-    }
+    raw_commit = _deterministic_commit_bytes(
+        target_tree=target_tree,
+        parent=parent,
+        message=message,
+        timestamp=timestamp,
+    )
     commit = _stdout_text(
         _git(
             project_root,
-            "commit-tree",
-            target_tree,
-            "-p",
-            parent,
-            stdin=message.encode("utf-8"),
-            env=identity,
+            "hash-object",
+            "-t",
+            "commit",
+            "-w",
+            "--stdin",
+            stdin=raw_commit,
         )
     )
     return _validate_oid(commit, field="target commit")
 
 
-def _commit_parts(
-    project_root: Path,
-    commit: str,
-) -> tuple[str, tuple[str, ...], str]:
-    raw = _git(project_root, "cat-file", "commit", commit).stdout
+def _active_ref(project_root: Path) -> str:
+    result = _git(
+        project_root,
+        "symbolic-ref",
+        "--quiet",
+        "HEAD",
+        check=False,
+    )
+    if result.returncode != 0:
+        raise GitFirstRestoreError("restore requires an active branch ref")
+    ref_name = _stdout_text(result)
+    if not ref_name.startswith("refs/heads/"):
+        raise GitFirstRestoreError("restore requires an active branch ref")
+    return ref_name
+
+
+def _active_index_snapshot(project_root: Path) -> tuple[int, int, int, int, int, str]:
+    raw_path = _stdout_text(_git(project_root, "rev-parse", "--git-path", "index"))
+    index_path = Path(raw_path)
+    if not index_path.is_absolute():
+        index_path = project_root / index_path
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
     try:
-        header, body = raw.split(b"\n\n", 1)
-        lines = header.splitlines()
-        tree = next(line.split(b" ", 1)[1] for line in lines if line.startswith(b"tree "))
-        parents = tuple(
-            line.split(b" ", 1)[1].decode("ascii")
-            for line in lines
-            if line.startswith(b"parent ")
+        descriptor = os.open(index_path, flags)
+    except OSError as exc:
+        raise GitFirstRestoreError("active index is unavailable") from exc
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise GitFirstRestoreError("active index is not a regular file")
+        digest = hashlib.sha256()
+        while True:
+            chunk = os.read(descriptor, 64 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+        after = os.fstat(descriptor)
+        if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+        ):
+            raise GitFirstRestoreError("active index changed while reading")
+        return (
+            after.st_dev,
+            after.st_ino,
+            stat.S_IMODE(after.st_mode),
+            after.st_size,
+            after.st_mtime_ns,
+            digest.hexdigest(),
         )
-        message = body.decode("utf-8").rstrip("\n")
-        return tree.decode("ascii"), parents, message
-    except (StopIteration, ValueError, UnicodeDecodeError) as exc:
-        raise GitFirstRestoreError("could not parse target commit") from exc
-
-
-def _message_value(message: str, key: str) -> str:
-    prefix = f"{key}: "
-    values = [line.removeprefix(prefix) for line in message.splitlines() if line.startswith(prefix)]
-    if len(values) != 1 or not values[0]:
-        raise GitFirstRestoreError("target restore commit message mismatch")
-    return values[0]
+    except OSError as exc:
+        raise GitFirstRestoreError("active index could not be read") from exc
+    finally:
+        os.close(descriptor)
 
 
 def _plan_spec_id(plan: GitFirstRestorePlan) -> str:
@@ -409,18 +473,14 @@ def build_git_first_restore_commit(
     current_head = _stdout_text(_git(root, "rev-parse", "HEAD^{commit}"))
     if current_head != base:
         raise GitFirstRestoreError("base commit does not match HEAD")
-    ref_result = _git(root, "symbolic-ref", "--quiet", "HEAD", check=False)
-    if ref_result.returncode != 0:
-        raise GitFirstRestoreError("restore requires an active branch ref")
-    ref_name = _stdout_text(ref_result)
-    if not ref_name.startswith("refs/heads/"):
-        raise GitFirstRestoreError("restore requires an active branch ref")
+    ref_name = _active_ref(root)
+    index_snapshot = _active_index_snapshot(root)
     dirty = _git(root, "status", "--porcelain", "-z").stdout
     if dirty:
         raise GitFirstRestoreError("base worktree and index must be clean")
     base_tree = _stdout_text(_git(root, "rev-parse", f"{base}^{{tree}}"))
-    if _stdout_text(_git(root, "write-tree")) != base_tree:
-        raise GitFirstRestoreError("base worktree and index must be clean")
+    if _active_index_snapshot(root) != index_snapshot:
+        raise GitFirstRestoreError("active index changed while checking base")
 
     normalized = _validated_selected_entries(
         root,
@@ -486,6 +546,9 @@ def build_git_first_restore_commit(
     plan = GitFirstRestorePlan(
         schema_version=1,
         completion_id=completion,
+        run_id=run,
+        spec_id=spec,
+        next_phase=following_phase,
         ref_name=ref_name,
         base_commit=base,
         base_tree=base_tree,
@@ -496,12 +559,16 @@ def build_git_first_restore_commit(
         entries=tuple(plan_entries),
     )
     verify_git_first_restore_commit(root, plan)
-    if (
-        _stdout_text(_git(root, "rev-parse", "HEAD^{commit}")) != base
-        or _stdout_text(_git(root, "write-tree")) != base_tree
-        or _git(root, "status", "--porcelain", "-z").stdout
-    ):
+    if _active_ref(root) != ref_name:
+        raise GitFirstRestoreError("active ref changed while building restore commit")
+    if _stdout_text(_git(root, "rev-parse", "HEAD^{commit}")) != base:
         raise GitFirstRestoreError("base authority changed while building restore commit")
+    if _active_index_snapshot(root) != index_snapshot:
+        raise GitFirstRestoreError("active index changed while building restore commit")
+    if _git(root, "status", "--porcelain", "-z").stdout:
+        raise GitFirstRestoreError("base authority changed while building restore commit")
+    if _active_index_snapshot(root) != index_snapshot:
+        raise GitFirstRestoreError("active index changed while building restore commit")
     return plan
 
 
@@ -514,6 +581,9 @@ def verify_git_first_restore_commit(
     if not isinstance(plan, GitFirstRestorePlan) or plan.schema_version != 1:
         raise GitFirstRestoreError("invalid restore plan")
     _validate_safe_id(plan.completion_id, field="completion ID")
+    run_id = _validate_metadata(plan.run_id, field="run ID")
+    spec_id = _validate_safe_id(plan.spec_id, field="spec ID")
+    next_phase = _validate_metadata(plan.next_phase, field="next phase")
     _validate_safe_id(plan.selected_candidate_id, field="selected candidate ID")
     _validate_sha256(
         plan.selected_manifest_sha256,
@@ -537,7 +607,8 @@ def verify_git_first_restore_commit(
     ):
         raise GitFirstRestoreError("invalid restore plan entries")
 
-    spec_id = _plan_spec_id(plan)
+    if _plan_spec_id(plan) != spec_id:
+        raise GitFirstRestoreError("restore plan spec ID mismatch")
     names = {Path(entry.path).name for entry in plan.entries}
     if (
         len(names) != len(plan.entries)
@@ -548,13 +619,6 @@ def verify_git_first_restore_commit(
     base_tree = _stdout_text(_git(root, "rev-parse", f"{plan.base_commit}^{{tree}}"))
     if base_tree != plan.base_tree:
         raise GitFirstRestoreError("restore plan base tree mismatch")
-    target_tree, parents, message = _commit_parts(root, plan.target_commit)
-    if parents != (plan.base_commit,):
-        raise GitFirstRestoreError("target restore commit parent mismatch")
-    if target_tree != plan.target_tree:
-        raise GitFirstRestoreError("target restore commit tree mismatch")
-    run_id = _message_value(message, "Echelon-Run")
-    next_phase = _message_value(message, "Echelon-Next-Phase")
     expected_message = _restore_checkpoint_message(
         spec_id=spec_id,
         run_id=run_id,
@@ -563,17 +627,31 @@ def verify_git_first_restore_commit(
         selected_candidate_id=plan.selected_candidate_id,
         selected_manifest_sha256=plan.selected_manifest_sha256,
     )
-    if message != expected_message:
-        raise GitFirstRestoreError("target restore commit message mismatch")
+    expected_commit = _deterministic_commit_bytes(
+        target_tree=plan.target_tree,
+        parent=plan.base_commit,
+        message=expected_message,
+        timestamp=_base_commit_date(root, plan.base_commit),
+    )
+    actual_commit = _git(root, "cat-file", "commit", plan.target_commit).stdout
+    if actual_commit != expected_commit:
+        raise GitFirstRestoreError(
+            "target restore commit exact authority or message mismatch"
+        )
 
     base_entries = _tree_entries(root, plan.base_tree)
     target_entries = _tree_entries(root, plan.target_tree)
     owned: set[bytes] = set()
+    owned_ancestors: set[bytes] = set()
     for entry in plan.entries:
         path = entry.path.encode("utf-8")
         if path in owned:
             raise GitFirstRestoreError("duplicate restore plan entry")
         owned.add(path)
+        parts = path.split(b"/")
+        owned_ancestors.update(
+            b"/".join(parts[:offset]) for offset in range(1, len(parts))
+        )
         for field, oid in (
             ("base blob object ID", entry.base_blob_oid),
             ("target blob object ID", entry.target_blob_oid),
@@ -606,7 +684,15 @@ def verify_git_first_restore_commit(
         if _blob_sha256(root, entry.target_blob_oid) != entry.target_sha256:
             raise GitFirstRestoreError("target owned artifact digest mismatch")
     if (
-        {path: value for path, value in base_entries.items() if path not in owned}
-        != {path: value for path, value in target_entries.items() if path not in owned}
+        {
+            path: value
+            for path, value in base_entries.items()
+            if path not in owned and path not in owned_ancestors
+        }
+        != {
+            path: value
+            for path, value in target_entries.items()
+            if path not in owned and path not in owned_ancestors
+        }
     ):
         raise GitFirstRestoreError("target restore commit has an unowned tree change")
