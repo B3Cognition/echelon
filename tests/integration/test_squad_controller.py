@@ -7614,12 +7614,10 @@ class TestProportionalQualityController:
         assert tree.startswith("100644 ")
         assert victim.read_bytes() == b"../victim"
 
-    @pytest.mark.parametrize("mode_tampered", [False, True])
-    def test_restore_retry_reconciles_only_exact_legacy_exchange_journal(
+    def test_pending_legacy_restore_fails_closed_before_mutation_with_guidance(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        mode_tampered: bool,
     ) -> None:
         ctrl, store, _current_text = _older_best_proportional_quality_loop(
             tmp_path
@@ -7725,14 +7723,81 @@ class TestProportionalQualityController:
         )
         target.write_bytes(postimage_content)
         displaced.write_bytes(preimage_content)
-        if mode_tampered:
-            displaced.chmod(0o755)
 
         monkeypatch.setattr(
             quality_effects_module,
             "materialize_quality_candidate_restore",
             real_materialize,
         )
+
+        def file_snapshot(root: Path) -> dict[str, tuple[int, bytes]]:
+            return {
+                path.relative_to(root).as_posix(): (
+                    path.lstat().st_mode,
+                    path.read_bytes(),
+                )
+                for path in root.rglob("*")
+                if path.is_file()
+            }
+
+        head_before = subprocess.run(
+            ["git", "rev-parse", "HEAD^{commit}"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        index_before = subprocess.run(
+            ["git", "write-tree"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        git_objects_before = file_snapshot(tmp_path / ".git/objects")
+        run_before = file_snapshot(ctrl._squad_dir)
+        spec_before = file_snapshot(spec_dir)
+        journal_before = journal.read_bytes()
+
+        with pytest.raises(CompletionError) as failure:
+            quality_effects_module.apply_or_verify_proportional_quality_effect(
+                effect,
+                completion_id=prepared.intent.completion_id,
+                project_root=tmp_path,
+                state=store.load(),
+                route=prepared.intent.route,
+                preceding_checkpoint_receipt=(
+                    prepared.receipts["effects"].get("checkpoint")
+                ),
+            )
+
+        causes: list[str] = []
+        cause: BaseException | None = failure.value
+        while cause is not None:
+            causes.append(str(cause))
+            cause = cause.__cause__
+        assert any(
+            "legacy candidate restore recovery required" in message
+            for message in causes
+        )
+        assert subprocess.run(
+            ["git", "rev-parse", "HEAD^{commit}"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip() == head_before
+        assert subprocess.run(
+            ["git", "write-tree"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip() == index_before
+        assert file_snapshot(tmp_path / ".git/objects") == git_objects_before
+        assert file_snapshot(ctrl._squad_dir) == run_before
+        assert file_snapshot(spec_dir) == spec_before
+
         del ctrl
         fresh, fresh_store = _controller(tmp_path)
 
@@ -7740,46 +7805,235 @@ class TestProportionalQualityController:
 
         recovered = fresh_store.load()
         assert result.status == "blocked"
-        if mode_tampered:
-            assert recovered[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == (
-                "quality"
-            )
-            assert recovered["controller_completion_failure"]["code"] == (
-                "receipts_mismatch"
-            )
-            assert journal.exists()
-            assert displaced.exists()
-            return
-        assert PENDING_CONTROLLER_COMPLETION_KEY not in recovered
-        assert not journal.exists()
-        assert not list(spec_dir.glob(".echelon-quality-restore-*.tmp"))
-        ledger = json.loads(
-            (spec_dir / ".echelon/checkpoints.json").read_text(
-                encoding="utf-8"
-            )
+        assert recovered[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == "quality"
+        assert recovered["controller_completion_failure"]["code"] == (
+            "receipts_mismatch"
         )
-        restored = [
+        assert journal.read_bytes() == journal_before
+        assert displaced.exists()
+        assert target.read_bytes() == postimage_content
+        assert displaced.read_bytes() == preimage_content
+        assert subprocess.run(
+            ["git", "rev-parse", "HEAD^{commit}"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip() == head_before
+        assert subprocess.run(
+            ["git", "write-tree"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip() == index_before
+        assert file_snapshot(tmp_path / ".git/objects") == git_objects_before
+        assert file_snapshot(spec_dir) == spec_before
+
+    @pytest.mark.parametrize(
+        "receipt_case",
+        (
+            "exact_legacy",
+            "mixed",
+            "unknown_protocol",
+            "extra_nested",
+            "wrong_type",
+            "extra_outer",
+        ),
+    )
+    def test_pending_restore_preflights_receipt_union_before_mutation(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        receipt_case: str,
+    ) -> None:
+        ctrl, store, _current_text = _older_best_proportional_quality_loop(
+            tmp_path
+        )
+        spec_dir = tmp_path / "runs/run-test/specs/001-demo"
+        real_materialize = (
+            quality_effects_module.materialize_quality_candidate_restore
+        )
+
+        def interrupt_before_restore(*_args: object, **_kwargs: object):
+            raise KeyboardInterrupt("simulate process death before restore")
+
+        monkeypatch.setattr(
+            quality_effects_module,
+            "materialize_quality_candidate_restore",
+            interrupt_before_restore,
+        )
+        with pytest.raises(KeyboardInterrupt, match="process death"):
+            ctrl.run("prepare receipt discrimination", "semi")
+        monkeypatch.setattr(
+            quality_effects_module,
+            "materialize_quality_candidate_restore",
+            real_materialize,
+        )
+
+        marker = store.load()[PENDING_CONTROLLER_COMPLETION_KEY]
+        prepared = load_prepared_controller_completion(
+            tmp_path,
+            ctrl._squad_dir,
+            marker,
+        )
+        effect = prepared.intent.quality_effect
+        draft = effect["candidate"]
+        assert isinstance(draft, dict)
+        draft_id = str(draft["candidate_id"])
+        candidate_completion_id = hashlib.sha256(
+            (
+                f"{prepared.intent.completion_id}:quality-candidate"
+            ).encode("utf-8")
+        ).hexdigest()[:32]
+        ledger = json.loads(
+            (spec_dir / ".echelon/checkpoints.json").read_text(encoding="utf-8")
+        )
+        candidate_checkpoint = next(
             row
             for row in ledger["checkpoints"]
-            if row["phase"] == "phase1-quality-candidate-restored"
-        ]
-        assert len(restored) == 1
-        tree = subprocess.run(
-            [
-                "git",
-                "ls-tree",
-                "-r",
-                "--name-only",
-                restored[0]["commit"],
-                "--",
-                "runs/run-test/specs/001-demo",
-            ],
+            if row.get("completion_id") == candidate_completion_id
+        )
+        candidate_manifest = (
+            ctrl._squad_dir / "quality-candidates" / f"{draft_id}.json"
+        )
+        candidate_receipt = {
+            "schema_version": 1,
+            "candidate_id": draft_id,
+            "checkpoint": {
+                "schema_version": 1,
+                "completion_id": candidate_completion_id,
+                "run_id": str(effect["run_id"]),
+                "spec_id": str(effect["spec_id"]),
+                "phase": f"phase1-{draft_id}",
+                "next_phase": str(prepared.intent.route["to_phase"]),
+                "outcome": "committed",
+                "commit": candidate_checkpoint["commit"],
+            },
+            "manifest_sha256": hashlib.sha256(
+                candidate_manifest.read_bytes()
+            ).hexdigest(),
+        }
+        legacy_restore = {
+            "schema_version": 1,
+            "candidate_id": str(effect["restore_candidate_id"]),
+            "artifact_preimage_digests": dict(
+                effect["restore_artifact_preimage_digests"]
+            ),
+            "artifact_postimage_digests": dict(
+                json.loads(
+                    (
+                        ctrl._squad_dir
+                        / "quality-candidates"
+                        / f"{effect['restore_candidate_id']}.json"
+                    ).read_text(encoding="utf-8")
+                )["owned_artifact_digests"]
+            ),
+            "checkpoint": {
+                "schema_version": 1,
+                "completion_id": "f" * 32,
+                "run_id": str(effect["run_id"]),
+                "spec_id": str(effect["spec_id"]),
+                "phase": "phase1-quality-candidate-restored",
+                "next_phase": str(prepared.intent.route["to_phase"]),
+                "outcome": "committed",
+                "commit": "a" * 40,
+            },
+        }
+        git_restore = {
+            **legacy_restore,
+            "restore_protocol": "git_first_v1",
+            "plan_sha256": "b" * 64,
+            "target_commit": "a" * 40,
+        }
+        restore_receipt: object = git_restore
+        outer_extra = False
+        if receipt_case == "exact_legacy":
+            restore_receipt = legacy_restore
+        elif receipt_case == "mixed":
+            restore_receipt = {**legacy_restore, "restore_protocol": "git_first_v1"}
+        elif receipt_case == "unknown_protocol":
+            restore_receipt = {**git_restore, "restore_protocol": "git_first_v2"}
+        elif receipt_case == "extra_nested":
+            restore_receipt = {**git_restore, "unexpected": True}
+        elif receipt_case == "wrong_type":
+            restore_receipt = {**git_restore, "plan_sha256": 7}
+        else:
+            outer_extra = True
+            restore_receipt = None
+        expected = {
+            "schema_version": 1,
+            "operation": "candidate",
+            "candidate": candidate_receipt,
+            "restore": restore_receipt,
+        }
+        if outer_extra:
+            expected["unexpected"] = True
+
+        def file_snapshot(root: Path) -> dict[str, tuple[int, bytes]]:
+            return {
+                path.relative_to(root).as_posix(): (
+                    path.lstat().st_mode,
+                    path.read_bytes(),
+                )
+                for path in root.rglob("*")
+                if path.is_file()
+            }
+
+        head_before = subprocess.run(
+            ["git", "rev-parse", "HEAD^{commit}"],
             cwd=tmp_path,
-            text=True,
-            capture_output=True,
             check=True,
-        ).stdout.splitlines()
-        assert all(".echelon-quality-restore-" not in name for name in tree)
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        index_before = subprocess.run(
+            ["git", "write-tree"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        git_objects_before = file_snapshot(tmp_path / ".git/objects")
+        run_before = file_snapshot(ctrl._squad_dir)
+        spec_before = file_snapshot(spec_dir)
+
+        with pytest.raises(CompletionError) as failure:
+            quality_effects_module.apply_or_verify_proportional_quality_effect(
+                effect,
+                completion_id=prepared.intent.completion_id,
+                project_root=tmp_path,
+                state=store.load(),
+                route=prepared.intent.route,
+                preceding_checkpoint_receipt=(
+                    prepared.receipts["effects"].get("checkpoint")
+                ),
+                expected_receipt=expected,
+            )
+
+        if receipt_case == "exact_legacy":
+            assert "legacy candidate restore recovery required" in str(
+                failure.value.__cause__
+            )
+        else:
+            assert "receipt" in str(failure.value.__cause__)
+        assert subprocess.run(
+            ["git", "rev-parse", "HEAD^{commit}"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip() == head_before
+        assert subprocess.run(
+            ["git", "write-tree"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip() == index_before
+        assert file_snapshot(tmp_path / ".git/objects") == git_objects_before
+        assert file_snapshot(ctrl._squad_dir) == run_before
+        assert file_snapshot(spec_dir) == spec_before
 
     def test_standalone_restore_rejects_manifest_replacement_before_artifacts(
         self,

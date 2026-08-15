@@ -1460,6 +1460,29 @@ def apply_or_recover_git_first_restore(
         plan=plan,
         plan_sha256=plan_sha256,
     )
+    from harness.phase_checkpoints import (
+        PhaseCheckpointError,
+        preflight_prebuilt_completion_checkpoint,
+        record_prebuilt_completion_checkpoint,
+    )
+
+    checkpoint_expected = expected.get("checkpoint") if expected is not None else None
+    try:
+        preflight_prebuilt_completion_checkpoint(
+            project_root=root,
+            spec_dir=lexical_spec,
+            phase=_RESTORE_PHASE,
+            next_phase=next_phase,
+            run_id=run_id,
+            spec_id=spec_id,
+            completion_id=plan.completion_id,
+            expected_parent=plan.base_commit,
+            commit=plan.target_commit,
+            expected_entries=plan.entries,
+            expected_receipt=checkpoint_expected,
+        )
+    except PhaseCheckpointError as exc:
+        raise GitFirstRestoreError("restore checkpoint preflight failed") from exc
     current_ref = _current_ref_commit(root, plan.ref_name)
     if current_ref not in {plan.base_commit, plan.target_commit}:
         raise GitFirstRestoreError("restore ref authority changed")
@@ -1665,12 +1688,6 @@ def apply_or_recover_git_first_restore(
         if journal_fd is not None:
             os.close(journal_fd)
 
-    from harness.phase_checkpoints import (
-        PhaseCheckpointError,
-        record_prebuilt_completion_checkpoint,
-    )
-
-    checkpoint_expected = expected.get("checkpoint") if expected is not None else None
     try:
         checkpoint = record_prebuilt_completion_checkpoint(
             project_root=root,

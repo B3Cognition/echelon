@@ -15,9 +15,14 @@ from harness.git_first_restore import (
 )
 from harness.phase1_quality_debt import apply_or_verify_quality_debt_effect
 from harness.proportional_quality import (
+    _LEGACY_RESTORE_GUIDANCE,
     QualityCandidateIntegrityError,
+    _is_candidate_id,
+    _is_sha256,
     _legacy_restore_authority_present,
+    _validate_committed_checkpoint_receipt_shape,
     _validate_restore_candidate,
+    classify_quality_candidate_restore_receipt,
     materialize_quality_candidate,
     materialize_quality_candidate_restore,
     preflight_quality_candidate_restore,
@@ -89,6 +94,81 @@ def _quality_completion_id(completion_id: str, effect: str) -> str:
     return hashlib.sha256(
         f"{completion_id}:quality-{effect}".encode("utf-8")
     ).hexdigest()[:32]
+
+
+def _validate_candidate_effect_receipt(value: object) -> dict[str, object]:
+    if type(value) is not dict or frozenset(value) != frozenset(
+        {"schema_version", "candidate_id", "checkpoint", "manifest_sha256"}
+    ):
+        raise QualityCandidateIntegrityError("candidate effect receipt shape mismatch")
+    _validate_committed_checkpoint_receipt_shape(value.get("checkpoint"))
+    if (
+        type(value.get("schema_version")) is not int
+        or value.get("schema_version") != 1
+        or not _is_candidate_id(value.get("candidate_id"))
+        or not _is_sha256(value.get("manifest_sha256"))
+    ):
+        raise QualityCandidateIntegrityError("candidate effect receipt shape mismatch")
+    return dict(value)
+
+
+def _preflight_quality_effect_receipt(
+    effect: Mapping[str, object],
+    operation: object,
+    value: object | None,
+) -> Mapping[str, object] | None:
+    if value is None:
+        return None
+    if type(value) is not dict:
+        raise QualityCandidateIntegrityError("quality effect receipt shape mismatch")
+    if operation == "candidate":
+        if frozenset(value) != frozenset(
+            {"schema_version", "operation", "candidate", "restore"}
+        ):
+            raise QualityCandidateIntegrityError(
+                "quality effect receipt shape mismatch"
+            )
+        _validate_candidate_effect_receipt(value.get("candidate"))
+        restore_planned = effect.get("restore_candidate_id") is not None
+        if restore_planned:
+            kind, _receipt = classify_quality_candidate_restore_receipt(
+                value.get("restore")
+            )
+            if kind == "legacy":
+                raise QualityCandidateIntegrityError(_LEGACY_RESTORE_GUIDANCE)
+            if kind != "git_first":
+                raise QualityCandidateIntegrityError(
+                    "quality effect restore receipt shape mismatch"
+                )
+        elif value.get("restore") is not None:
+            raise QualityCandidateIntegrityError(
+                "quality effect restore receipt shape mismatch"
+            )
+    elif operation == "restore":
+        if frozenset(value) != frozenset(
+            {"schema_version", "operation", "restore"}
+        ):
+            raise QualityCandidateIntegrityError(
+                "quality effect receipt shape mismatch"
+            )
+        kind, _receipt = classify_quality_candidate_restore_receipt(
+            value.get("restore")
+        )
+        if kind == "legacy":
+            raise QualityCandidateIntegrityError(_LEGACY_RESTORE_GUIDANCE)
+        if kind != "git_first":
+            raise QualityCandidateIntegrityError(
+                "quality effect restore receipt shape mismatch"
+            )
+    else:
+        return value
+    if (
+        type(value.get("schema_version")) is not int
+        or value.get("schema_version") != 1
+        or value.get("operation") != operation
+    ):
+        raise QualityCandidateIntegrityError("quality effect receipt shape mismatch")
+    return value
 
 
 def _git_first_selected_entries(
@@ -183,10 +263,10 @@ def apply_or_verify_proportional_quality_effect(
             )
         operation = effect.get("operation")
         root = Path(project_root).resolve()
-        expected = (
-            expected_receipt
-            if isinstance(expected_receipt, Mapping)
-            else None
+        expected = _preflight_quality_effect_receipt(
+            effect,
+            operation,
+            expected_receipt,
         )
         if operation == "candidate":
             if set(effect) != {
@@ -284,6 +364,20 @@ def apply_or_verify_proportional_quality_effect(
                     run_id=run_id,
                     spec_id=spec_id,
                 )
+                selected = selected_restore.snapshot.manifest
+                restore_completion_id = _quality_completion_id(
+                    completion_id,
+                    "restore",
+                )
+                if _legacy_restore_authority_present(
+                    spec_dir=spec_dir,
+                    candidate=selected,
+                    completion_id=restore_completion_id,
+                    expected_receipt=None,
+                ):
+                    raise QualityCandidateIntegrityError(
+                        _LEGACY_RESTORE_GUIDANCE
+                    )
             materialized, candidate_receipt = materialize_quality_candidate(
                 project_root=root,
                 spec_dir=spec_dir,
@@ -321,23 +415,16 @@ def apply_or_verify_proportional_quality_effect(
                     raise QualityCandidateIntegrityError(
                         "current candidate checkpoint authority changed"
                     )
-                restore_plan = None
-                if not _legacy_restore_authority_present(
+                restore_plan = _build_git_first_plan(
+                    project_root=root,
                     spec_dir=spec_dir,
-                    candidate=selected,
+                    selected_restore=selected_restore,
                     completion_id=restore_completion_id,
-                    expected_receipt=restore_expected,
-                ):
-                    restore_plan = _build_git_first_plan(
-                        project_root=root,
-                        spec_dir=spec_dir,
-                        selected_restore=selected_restore,
-                        completion_id=restore_completion_id,
-                        base_commit=str(candidate_checkpoint["commit"]),
-                        run_id=run_id,
-                        spec_id=spec_id,
-                        next_phase=next_phase,
-                    )
+                    base_commit=str(candidate_checkpoint["commit"]),
+                    run_id=run_id,
+                    spec_id=spec_id,
+                    next_phase=next_phase,
+                )
                 restore_receipt = materialize_quality_candidate_restore(
                     project_root=root,
                     spec_dir=spec_dir,
@@ -440,23 +527,25 @@ def apply_or_verify_proportional_quality_effect(
             restore_expected = (
                 expected.get("restore") if expected else None
             )
-            restore_plan = None
-            if not _legacy_restore_authority_present(
+            if _legacy_restore_authority_present(
                 spec_dir=spec_dir,
                 candidate=candidate,
                 completion_id=restore_completion_id,
-                expected_receipt=restore_expected,
+                expected_receipt=None,
             ):
-                restore_plan = _build_git_first_plan(
-                    project_root=root,
-                    spec_dir=spec_dir,
-                    selected_restore=selected_restore,
-                    completion_id=restore_completion_id,
-                    base_commit=str(effective_prestate["head"]),
-                    run_id=run_id,
-                    spec_id=spec_id,
-                    next_phase=next_phase,
+                raise QualityCandidateIntegrityError(
+                    _LEGACY_RESTORE_GUIDANCE
                 )
+            restore_plan = _build_git_first_plan(
+                project_root=root,
+                spec_dir=spec_dir,
+                selected_restore=selected_restore,
+                completion_id=restore_completion_id,
+                base_commit=str(effective_prestate["head"]),
+                run_id=run_id,
+                spec_id=spec_id,
+                next_phase=next_phase,
+            )
             restore_receipt = materialize_quality_candidate_restore(
                 project_root=root,
                 spec_dir=spec_dir,

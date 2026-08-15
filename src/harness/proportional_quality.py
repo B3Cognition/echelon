@@ -1374,9 +1374,138 @@ def _preflighted_checkpoint_contents(
     return artifact_digests, contents
 
 
-_RESTORE_EXCHANGE_KIND = "quality_candidate_restore_exchange"
 _RESTORE_EXCHANGE_DIRECTORY = "quality-restore-exchanges"
 _RESTORE_EXCHANGE_TEMP_PREFIX = ".echelon-quality-restore-"
+_LEGACY_RESTORE_GUIDANCE = (
+    "legacy candidate restore recovery required: pending pre-Git-first restore "
+    "authority requires operator intervention"
+)
+_LEGACY_RESTORE_RECEIPT_KEYS = frozenset(
+    {
+        "schema_version",
+        "candidate_id",
+        "artifact_preimage_digests",
+        "artifact_postimage_digests",
+        "checkpoint",
+    }
+)
+_GIT_FIRST_RESTORE_RECEIPT_KEYS = _LEGACY_RESTORE_RECEIPT_KEYS | {
+    "restore_protocol",
+    "plan_sha256",
+    "target_commit",
+}
+_COMMITTED_CHECKPOINT_RECEIPT_KEYS = frozenset(
+    {
+        "schema_version",
+        "completion_id",
+        "run_id",
+        "spec_id",
+        "phase",
+        "next_phase",
+        "outcome",
+        "commit",
+    }
+)
+
+
+def _validate_committed_checkpoint_receipt_shape(value: object) -> dict[str, object]:
+    if type(value) is not dict or frozenset(value) != _COMMITTED_CHECKPOINT_RECEIPT_KEYS:
+        raise QualityCandidateIntegrityError(
+            "candidate restoration checkpoint receipt shape mismatch"
+        )
+    if (
+        type(value.get("schema_version")) is not int
+        or value.get("schema_version") != 1
+        or type(value.get("completion_id")) is not str
+        or re.fullmatch(r"[0-9a-f]{32}", str(value.get("completion_id"))) is None
+        or any(
+            type(value.get(key)) is not str or not value.get(key)
+            for key in ("run_id", "spec_id", "phase", "next_phase")
+        )
+        or value.get("outcome") != "committed"
+        or type(value.get("commit")) is not str
+        or re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", str(value.get("commit")))
+        is None
+    ):
+        raise QualityCandidateIntegrityError(
+            "candidate restoration checkpoint receipt shape mismatch"
+        )
+    return dict(value)
+
+
+def _validate_restore_receipt_digest_map(value: object) -> dict[str, str]:
+    allowed = {
+        "spec.md",
+        "requirements-overview.md",
+        "quality-gates.md",
+        "issues.md",
+    }
+    required = {"spec.md", "quality-gates.md", "issues.md"}
+    if (
+        type(value) is not dict
+        or not required <= set(value)
+        or not set(value) <= allowed
+        or any(type(name) is not str or not _is_sha256(digest) for name, digest in value.items())
+    ):
+        raise QualityCandidateIntegrityError(
+            "candidate restoration receipt digest map mismatch"
+        )
+    return dict(value)
+
+
+def classify_quality_candidate_restore_receipt(
+    value: object | None,
+) -> tuple[str, dict[str, object] | None]:
+    """Discriminate the exact schema-v1 legacy/Git-first receipt union."""
+
+    if value is None:
+        return "none", None
+    if type(value) is not dict:
+        raise QualityCandidateIntegrityError(
+            "candidate restoration receipt shape mismatch"
+        )
+    keys = frozenset(value)
+    if keys == _LEGACY_RESTORE_RECEIPT_KEYS:
+        kind = "legacy"
+    elif keys == _GIT_FIRST_RESTORE_RECEIPT_KEYS:
+        kind = "git_first"
+    else:
+        raise QualityCandidateIntegrityError(
+            "candidate restoration receipt shape mismatch"
+        )
+    preimages = _validate_restore_receipt_digest_map(
+        value.get("artifact_preimage_digests")
+    )
+    postimages = _validate_restore_receipt_digest_map(
+        value.get("artifact_postimage_digests")
+    )
+    checkpoint = _validate_committed_checkpoint_receipt_shape(
+        value.get("checkpoint")
+    )
+    if (
+        type(value.get("schema_version")) is not int
+        or value.get("schema_version") != 1
+        or not _is_candidate_id(value.get("candidate_id"))
+        or set(preimages) != set(postimages)
+    ):
+        raise QualityCandidateIntegrityError(
+            "candidate restoration receipt shape mismatch"
+        )
+    if kind == "git_first" and (
+        value.get("restore_protocol") != "git_first_v1"
+        or not _is_sha256(value.get("plan_sha256"))
+        or type(value.get("target_commit")) is not str
+        or re.fullmatch(
+            r"[0-9a-f]{40}|[0-9a-f]{64}",
+            str(value.get("target_commit")),
+        )
+        is None
+        or value.get("target_commit") != checkpoint["commit"]
+    ):
+        raise QualityCandidateIntegrityError(
+            "candidate restoration receipt protocol mismatch"
+        )
+    return kind, dict(value)
 
 
 def _open_pinned_candidate_directory(path: Path) -> int:
@@ -1497,338 +1626,6 @@ def _candidate_entry_snapshot(
         os.close(descriptor)
 
 
-def _write_pinned_candidate_entry(
-    directory_fd: int,
-    name: str,
-    content: bytes,
-    *,
-    mode: int,
-) -> None:
-    descriptor = os.open(
-        name,
-        os.O_WRONLY
-        | os.O_CREAT
-        | os.O_EXCL
-        | getattr(os, "O_NOFOLLOW", 0),
-        mode,
-        dir_fd=directory_fd,
-    )
-    try:
-        view = memoryview(content)
-        while view:
-            written = os.write(descriptor, view)
-            if written <= 0:
-                raise OSError("short candidate restore write")
-            view = view[written:]
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-    os.fsync(directory_fd)
-
-
-def _restore_exchange_temp_name(completion_id: str, artifact: str) -> str:
-    token = hashlib.sha256(
-        f"{completion_id}:{artifact}".encode("utf-8")
-    ).hexdigest()[:24]
-    return f"{_RESTORE_EXCHANGE_TEMP_PREFIX}{token}.tmp"
-
-
-def _restore_exchange_payload(
-    *,
-    project_root: Path,
-    spec_dir: Path,
-    candidate: QualityCandidateManifest,
-    completion_id: str,
-    preimages: Mapping[str, str],
-    postimages: Mapping[str, str],
-) -> dict[str, object]:
-    relative_spec = spec_dir.relative_to(project_root).as_posix()
-    return {
-        "schema_version": SCHEMA_VERSION,
-        "kind": _RESTORE_EXCHANGE_KIND,
-        "completion_id": completion_id,
-        "candidate_id": candidate.candidate_id,
-        "spec_dir": relative_spec,
-        "entries": [
-            {
-                "artifact": name,
-                "preimage_sha256": preimages[name],
-                "postimage_sha256": postimages[name],
-                "temp_name": _restore_exchange_temp_name(
-                    completion_id,
-                    name,
-                ),
-            }
-            for name in sorted(postimages)
-        ],
-    }
-
-
-def _canonical_restore_exchange_bytes(
-    payload: Mapping[str, object],
-) -> bytes:
-    return (
-        json.dumps(
-            dict(payload),
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
-            allow_nan=False,
-        )
-        + "\n"
-    ).encode("utf-8")
-
-
-def _reconcile_candidate_artifact_exchange(
-    directory_fd: int,
-    *,
-    artifact: str,
-    content: bytes,
-    preimage_sha256: str,
-    postimage_sha256: str,
-    temp_name: str,
-) -> None:
-    current = _candidate_entry_snapshot(directory_fd, artifact)
-    if current is None:
-        raise OSError("candidate restore artifact disappeared")
-    temporary = _candidate_entry_snapshot(
-        directory_fd,
-        temp_name,
-        missing_ok=True,
-    )
-    if current[0] == postimage_sha256:
-        if temporary is None:
-            return
-        if temporary[0] != preimage_sha256:
-            raise OSError("candidate restore exchange residue changed")
-        os.unlink(temp_name, dir_fd=directory_fd)
-        os.fsync(directory_fd)
-        return
-    if current[0] != preimage_sha256:
-        raise OSError("candidate restore preimage changed")
-    if temporary is None:
-        _write_pinned_candidate_entry(
-            directory_fd,
-            temp_name,
-            content,
-            mode=current[3],
-        )
-        temporary = _candidate_entry_snapshot(directory_fd, temp_name)
-    if temporary is None or temporary[0] != postimage_sha256:
-        raise OSError("candidate restore exchange postimage changed")
-    if (
-        _candidate_entry_snapshot(directory_fd, artifact) != current
-        or _candidate_entry_snapshot(directory_fd, temp_name) != temporary
-    ):
-        raise OSError("candidate restore exchange entries changed")
-    # Import lazily because the debt module consumes candidate validation from
-    # this module and already owns the platform-specific atomic swap primitive.
-    from harness.phase1_quality_debt import _atomic_exchange_files
-
-    _atomic_exchange_files(directory_fd, temp_name, artifact)
-    os.fsync(directory_fd)
-    restored = _candidate_entry_snapshot(directory_fd, artifact)
-    displaced = _candidate_entry_snapshot(directory_fd, temp_name)
-    if (
-        restored is None
-        or restored[0] != postimage_sha256
-        or displaced is None
-        or displaced[0] != preimage_sha256
-        or displaced[2][2:4] != current[2][2:4]
-    ):
-        raise OSError("candidate restore atomic exchange changed")
-    os.unlink(temp_name, dir_fd=directory_fd)
-    os.fsync(directory_fd)
-
-
-def _materialize_legacy_quality_candidate_restore(
-    *,
-    project_root: Path,
-    spec_dir: Path,
-    candidate: QualityCandidateManifest,
-    run_id: str,
-    spec_id: str,
-    completion_id: str,
-    next_phase: str,
-    checkpoint_prestate: Mapping[str, object],
-    artifact_preimage_digests: Mapping[str, str],
-    preflighted_restore: PreflightedCandidateRestore | None = None,
-    expected_receipt: object | None = None,
-) -> dict[str, object]:
-    """Apply or recover a state-authorized best-candidate restoration."""
-    if preflighted_restore is None:
-        artifact_digests = _validate_restore_candidate(
-            project_root,
-            candidate=candidate,
-            run_id=run_id,
-            spec_id=spec_id,
-        )
-        entries = load_candidate_checkpoint_entries(
-            project_root,
-            spec_dir,
-            candidate,
-        )
-        contents = {entry.path: entry.content for entry in entries}
-    else:
-        artifact_digests, contents = _preflighted_checkpoint_contents(
-            preflighted_restore,
-            candidate,
-        )
-    preimages = _validated_restore_preimages(
-        artifact_preimage_digests,
-        artifact_digests=artifact_digests,
-    )
-    expected = (
-        expected_receipt
-        if isinstance(expected_receipt, Mapping)
-        else None
-    )
-    checkpoint_expected = (
-        expected.get("checkpoint") if expected is not None else None
-    )
-    spec_descriptor: int | None = None
-    journal_descriptor: int | None = None
-    try:
-        root = Path(project_root).resolve()
-        resolved_spec = Path(spec_dir).resolve()
-        resolved_spec.relative_to(root)
-        exchange_payload = _restore_exchange_payload(
-            project_root=root,
-            spec_dir=resolved_spec,
-            candidate=candidate,
-            completion_id=completion_id,
-            preimages=preimages,
-            postimages=artifact_digests,
-        )
-        exchange_content = _canonical_restore_exchange_bytes(
-            exchange_payload
-        )
-        entries = exchange_payload["entries"]
-        if not isinstance(entries, list):
-            raise AssertionError("restore exchange entries are malformed")
-        spec_descriptor = _open_pinned_candidate_directory(resolved_spec)
-        snapshots = {
-            name: _candidate_entry_snapshot(spec_descriptor, name)
-            for name in sorted(artifact_digests)
-        }
-        if any(snapshot is None for snapshot in snapshots.values()):
-            raise OSError("candidate restore artifact disappeared")
-
-        artifact_root = Path(candidate.run_artifact_root).resolve()
-        journal_dir = artifact_root / _RESTORE_EXCHANGE_DIRECTORY
-        journal_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-        journal_descriptor = _open_pinned_candidate_directory(journal_dir)
-        journal_name = f"{completion_id}.json"
-        existing_journal = _candidate_entry_snapshot(
-            journal_descriptor,
-            journal_name,
-            missing_ok=True,
-        )
-        unexpected_temp = any(
-            _candidate_entry_snapshot(
-                spec_descriptor,
-                str(entry["temp_name"]),
-                missing_ok=True,
-            )
-            is not None
-            for entry in entries
-        )
-        restore_required = any(
-            snapshot is not None
-            and snapshot[0] != artifact_digests[name]
-            for name, snapshot in snapshots.items()
-        )
-        if existing_journal is None and unexpected_temp:
-            raise OSError("candidate restore exchange journal is missing")
-        if existing_journal is not None:
-            if existing_journal[1] != exchange_content:
-                raise OSError("candidate restore exchange journal changed")
-        elif restore_required:
-            _write_pinned_candidate_entry(
-                journal_descriptor,
-                journal_name,
-                exchange_content,
-                mode=0o600,
-            )
-            existing_journal = _candidate_entry_snapshot(
-                journal_descriptor,
-                journal_name,
-            )
-            if existing_journal is None or existing_journal[1] != exchange_content:
-                raise OSError("candidate restore exchange journal changed")
-
-        if existing_journal is not None:
-            for entry in entries:
-                name = str(entry["artifact"])
-                _reconcile_candidate_artifact_exchange(
-                    spec_descriptor,
-                    artifact=name,
-                    content=contents[name],
-                    preimage_sha256=str(entry["preimage_sha256"]),
-                    postimage_sha256=str(entry["postimage_sha256"]),
-                    temp_name=str(entry["temp_name"]),
-                )
-            for entry in entries:
-                if _candidate_entry_snapshot(
-                    spec_descriptor,
-                    str(entry["temp_name"]),
-                    missing_ok=True,
-                ) is not None:
-                    raise OSError("candidate restore exchange residue remains")
-            os.unlink(journal_name, dir_fd=journal_descriptor)
-            os.fsync(journal_descriptor)
-
-        if any(
-            name.startswith(_RESTORE_EXCHANGE_TEMP_PREFIX)
-            for name in os.listdir(spec_descriptor)
-        ):
-            raise OSError("candidate restore exchange residue remains")
-        for name, postimage in artifact_digests.items():
-            snapshot = _candidate_entry_snapshot(spec_descriptor, name)
-            if snapshot is None or snapshot[0] != postimage:
-                raise QualityCandidateIntegrityError(
-                    f"restored candidate digest mismatch: {name}"
-                )
-        os.fsync(spec_descriptor)
-        os.close(spec_descriptor)
-        spec_descriptor = None
-        os.close(journal_descriptor)
-        journal_descriptor = None
-        checkpoint_receipt = create_or_recover_completion_checkpoint(
-            project_root=project_root,
-            spec_dir=spec_dir,
-            phase="phase1-quality-candidate-restored",
-            next_phase=next_phase,
-            run_id=run_id,
-            spec_id=spec_id,
-            completion_id=completion_id,
-            checkpoint_prestate=checkpoint_prestate,
-            force_commit=True,
-            expected_receipt=checkpoint_expected,
-        )
-    except QualityCandidateIntegrityError:
-        raise
-    except (PhaseCheckpointError, OSError, ValueError) as exc:
-        raise QualityCandidateIntegrityError(
-            f"candidate restoration integrity failure: {exc}"
-        ) from exc
-    finally:
-        if spec_descriptor is not None:
-            os.close(spec_descriptor)
-        if journal_descriptor is not None:
-            os.close(journal_descriptor)
-    receipt = {
-        "schema_version": 1,
-        "candidate_id": candidate.candidate_id,
-        "artifact_preimage_digests": dict(sorted(preimages.items())),
-        "artifact_postimage_digests": dict(sorted(artifact_digests.items())),
-        "checkpoint": checkpoint_receipt,
-    }
-    if expected is not None and dict(expected) != receipt:
-        raise QualityCandidateIntegrityError("candidate restoration receipt mismatch")
-    return receipt
-
-
 def _legacy_restore_authority_present(
     *,
     spec_dir: Path,
@@ -1838,10 +1635,11 @@ def _legacy_restore_authority_present(
 ) -> bool:
     """Classify only exact schema-v1 file-first authority as legacy."""
 
-    if isinstance(expected_receipt, Mapping):
-        if expected_receipt.get("restore_protocol") == "git_first_v1":
-            return False
-        return True
+    receipt_kind, _receipt = classify_quality_candidate_restore_receipt(
+        expected_receipt
+    )
+    if receipt_kind != "none":
+        return receipt_kind == "legacy"
     artifact_root = Path(candidate.run_artifact_root).resolve()
     journal_dir = artifact_root / _RESTORE_EXCHANGE_DIRECTORY
     journal = journal_dir / f"{completion_id}.json"
@@ -1901,154 +1699,6 @@ def _legacy_restore_authority_present(
     return False
 
 
-def _validate_exact_legacy_restore_recovery(
-    *,
-    project_root: Path,
-    spec_dir: Path,
-    candidate: QualityCandidateManifest,
-    completion_id: str,
-    checkpoint_prestate: Mapping[str, object],
-    artifact_preimage_digests: Mapping[str, str],
-    preflighted_restore: PreflightedCandidateRestore | None,
-) -> None:
-    if preflighted_restore is None:
-        raise QualityCandidateIntegrityError(
-            "legacy candidate restore recovery required: sealed preflight is missing"
-        )
-    artifact_digests, _contents = _preflighted_checkpoint_contents(
-        preflighted_restore,
-        candidate,
-    )
-    preimages = _validated_restore_preimages(
-        artifact_preimage_digests,
-        artifact_digests=artifact_digests,
-    )
-    if (
-        type(checkpoint_prestate) is not dict
-        or set(checkpoint_prestate) != {"kind", "head"}
-        or checkpoint_prestate.get("kind") != "git_head"
-        or type(checkpoint_prestate.get("head")) is not str
-        or re.fullmatch(
-            r"[0-9a-f]{40}|[0-9a-f]{64}",
-            str(checkpoint_prestate.get("head")),
-        )
-        is None
-    ):
-        raise QualityCandidateIntegrityError(
-            "legacy candidate restore recovery required: base authority is invalid"
-        )
-    root = Path(project_root).resolve()
-    resolved_spec = Path(os.path.abspath(spec_dir))
-    try:
-        spec_relative = resolved_spec.relative_to(root)
-    except ValueError as exc:
-        raise QualityCandidateIntegrityError(
-            "legacy candidate restore recovery required: spec escapes project"
-        ) from exc
-    selected = {entry.path: entry for entry in preflighted_restore.entries}
-    base_modes: dict[str, int] = {}
-    for name in sorted(artifact_digests):
-        relative = (spec_relative / name).as_posix()
-        try:
-            result = subprocess.run(
-                [
-                    "git",
-                    "ls-tree",
-                    "-z",
-                    str(checkpoint_prestate["head"]),
-                    "--",
-                    relative,
-                ],
-                cwd=root,
-                check=False,
-                capture_output=True,
-                timeout=120,
-            )
-        except (OSError, subprocess.SubprocessError) as exc:
-            raise QualityCandidateIntegrityError(
-                "legacy candidate restore recovery required: base tree is unreadable"
-            ) from exc
-        rows = tuple(row for row in result.stdout.split(b"\0") if row)
-        if result.returncode != 0 or len(rows) != 1 or b"\t" not in rows[0]:
-            raise QualityCandidateIntegrityError(
-                "legacy candidate restore recovery required: base tree changed"
-            )
-        header, raw_path = rows[0].split(b"\t", 1)
-        fields = header.split()
-        if (
-            len(fields) != 3
-            or fields[0] not in {b"100644", b"100755"}
-            or fields[1] != b"blob"
-            or raw_path != relative.encode("utf-8")
-        ):
-            raise QualityCandidateIntegrityError(
-                "legacy candidate restore recovery required: base mode is unsafe"
-            )
-        base_modes[name] = int(fields[0][-3:], 8)
-    payload = _restore_exchange_payload(
-        project_root=root,
-        spec_dir=resolved_spec,
-        candidate=candidate,
-        completion_id=completion_id,
-        preimages=preimages,
-        postimages=artifact_digests,
-    )
-    payload_entries = payload.get("entries")
-    if not isinstance(payload_entries, list):  # pragma: no cover - local contract
-        raise QualityCandidateIntegrityError(
-            "legacy candidate restore recovery required: journal is malformed"
-        )
-    descriptor: int | None = None
-    try:
-        descriptor = _open_pinned_candidate_directory(resolved_spec)
-        for raw_entry in payload_entries:
-            if not isinstance(raw_entry, Mapping):
-                raise OSError("legacy restore entry is malformed")
-            name = str(raw_entry["artifact"])
-            current = _candidate_entry_snapshot(descriptor, name)
-            temporary = _candidate_entry_snapshot(
-                descriptor,
-                str(raw_entry["temp_name"]),
-                missing_ok=True,
-            )
-            if current is None:  # pragma: no cover - missing_ok is false
-                raise OSError("legacy restore artifact disappeared")
-            target_mode = int(selected[name].mode[-3:], 8)
-            current_is_base = (
-                current[0] == preimages[name]
-                and current[3] == base_modes[name]
-            )
-            current_is_target = (
-                current[0] == artifact_digests[name]
-                and current[3] == target_mode
-            )
-            if not current_is_base and not current_is_target:
-                raise OSError("legacy restore worktree authority changed")
-            if current_is_base:
-                if temporary is None:
-                    if base_modes[name] != target_mode:
-                        raise OSError(
-                            "legacy restore cannot recover a mode transition"
-                        )
-                elif not (
-                    temporary[0] == artifact_digests[name]
-                    and temporary[3] == target_mode
-                ):
-                    raise OSError("legacy restore target residue changed")
-            elif temporary is not None and not (
-                temporary[0] == preimages[name]
-                and temporary[3] == base_modes[name]
-            ):
-                raise OSError("legacy restore displaced residue changed")
-    except (KeyError, OSError) as exc:
-        raise QualityCandidateIntegrityError(
-            f"legacy candidate restore recovery required: {exc}"
-        ) from exc
-    finally:
-        if descriptor is not None:
-            os.close(descriptor)
-
-
 def materialize_quality_candidate_restore(
     *,
     project_root: Path,
@@ -2064,41 +1714,18 @@ def materialize_quality_candidate_restore(
     restore_plan: "GitFirstRestorePlan | None" = None,
     expected_receipt: object | None = None,
 ) -> dict[str, object]:
-    """Apply current Git-first restore authority or exact legacy residue."""
+    """Apply current Git-first authority; legacy recovery is fail-closed."""
 
-    if _legacy_restore_authority_present(
+    receipt_kind, expected = classify_quality_candidate_restore_receipt(
+        expected_receipt
+    )
+    if receipt_kind == "legacy" or _legacy_restore_authority_present(
         spec_dir=spec_dir,
         candidate=candidate,
         completion_id=completion_id,
-        expected_receipt=expected_receipt,
+        expected_receipt=None,
     ):
-        _validate_exact_legacy_restore_recovery(
-            project_root=project_root,
-            spec_dir=spec_dir,
-            candidate=candidate,
-            completion_id=completion_id,
-            checkpoint_prestate=checkpoint_prestate,
-            artifact_preimage_digests=artifact_preimage_digests,
-            preflighted_restore=preflighted_restore,
-        )
-        try:
-            return _materialize_legacy_quality_candidate_restore(
-                project_root=project_root,
-                spec_dir=spec_dir,
-                candidate=candidate,
-                run_id=run_id,
-                spec_id=spec_id,
-                completion_id=completion_id,
-                next_phase=next_phase,
-                checkpoint_prestate=checkpoint_prestate,
-                artifact_preimage_digests=artifact_preimage_digests,
-                preflighted_restore=preflighted_restore,
-                expected_receipt=expected_receipt,
-            )
-        except QualityCandidateIntegrityError as exc:
-            raise QualityCandidateIntegrityError(
-                f"legacy candidate restore recovery required: {exc}"
-            ) from exc
+        raise QualityCandidateIntegrityError(_LEGACY_RESTORE_GUIDANCE)
     if restore_plan is None:
         raise QualityCandidateIntegrityError(
             "git-first candidate restore plan is missing"
@@ -2150,7 +1777,6 @@ def materialize_quality_candidate_restore(
             raise QualityCandidateIntegrityError(
                 "git-first candidate restore plan changed"
             )
-    expected = expected_receipt if isinstance(expected_receipt, Mapping) else None
     git_expected: dict[str, object] | None = None
     if expected is not None:
         git_expected = {

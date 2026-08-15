@@ -209,6 +209,19 @@ def _assert_target_state(repo: RestoreRepo, plan: GitFirstRestorePlan) -> None:
         assert hashlib.sha256(path.read_bytes()).hexdigest() == entry.target_sha256
 
 
+def _owned_worktree_state(
+    repo: RestoreRepo,
+    plan: GitFirstRestorePlan,
+) -> dict[str, tuple[bytes, int]]:
+    return {
+        entry.path: (
+            (repo.root / entry.path).read_bytes(),
+            stat.S_IMODE((repo.root / entry.path).stat().st_mode),
+        )
+        for entry in plan.entries
+    }
+
+
 def _replace_commit_bytes(repo: RestoreRepo, commit: str, content: bytes) -> str:
     return repo.git(
         "hash-object",
@@ -818,3 +831,108 @@ def test_git_first_restore_rejects_index_conflict_without_mutation(
     assert repo.head() == plan.base_commit
     assert repo.spec_bytes() == repo.current_bytes
     assert repo.checkpoint_rows() == []
+
+
+@pytest.mark.parametrize("ledger_case", ("corrupt", "conflicting", "duplicate"))
+def test_git_first_restore_preflights_checkpoint_ledger_before_mutation(
+    repo: RestoreRepo,
+    ledger_case: str,
+) -> None:
+    plan = _restore_plan(repo)
+    ledger_path = repo.root / "specs/001-example/.echelon/checkpoints.json"
+    ledger_path.parent.mkdir()
+    if ledger_case == "corrupt":
+        ledger_path.write_bytes(b'{"spec_id":"001-example","checkpoints":[')
+    else:
+        row = {
+            "id": "phase1-quality-candidate-restored",
+            "spec_id": "001-example",
+            "phase": "phase1-quality-candidate-restored",
+            "next_phase": "checkpoint-assess",
+            "commit": plan.target_commit,
+            "metadata_commit": "",
+            "source": "auto",
+            "run_id": "spec-run",
+            "created_at": repo.git(
+                "show",
+                "-s",
+                "--format=%cI",
+                plan.target_commit,
+            ).decode().strip(),
+            "completion_id": plan.completion_id,
+        }
+        if ledger_case == "conflicting":
+            row["commit"] = plan.base_commit
+        rows = [row, row] if ledger_case == "duplicate" else [row]
+        ledger_path.write_text(
+            json.dumps({"spec_id": "001-example", "checkpoints": rows}) + "\n",
+            encoding="utf-8",
+        )
+    ledger_before = ledger_path.read_bytes()
+    worktree_before = _owned_worktree_state(repo, plan)
+
+    with pytest.raises(GitFirstRestoreError, match="checkpoint preflight"):
+        _apply(repo, plan)
+
+    assert repo.head() == plan.base_commit
+    assert repo.index_tree() == plan.base_tree
+    assert _owned_worktree_state(repo, plan) == worktree_before
+    assert ledger_path.read_bytes() == ledger_before
+    assert not (repo.run_root / "git-first-restores").exists()
+
+
+def test_git_first_restore_preflights_checkpoint_receipt_before_mutation(
+    repo: RestoreRepo,
+) -> None:
+    plan = _restore_plan(repo)
+    expected = {
+        "schema_version": 1,
+        "completion_id": plan.completion_id,
+        "restore_protocol": "git_first_v1",
+        "plan_sha256": git_first_restore_module._restore_plan_sha256(plan),
+        "target_commit": plan.target_commit,
+        "checkpoint": {
+            "schema_version": 1,
+            "completion_id": plan.completion_id,
+            "run_id": "spec-run",
+            "spec_id": "001-example",
+            "phase": "phase1-quality-candidate-restored",
+            "next_phase": "wrong-next-phase",
+            "outcome": "committed",
+            "commit": plan.target_commit,
+        },
+    }
+    worktree_before = _owned_worktree_state(repo, plan)
+
+    with pytest.raises(GitFirstRestoreError, match="checkpoint preflight"):
+        _apply(repo, plan, expected_receipt=expected)
+
+    assert repo.head() == plan.base_commit
+    assert repo.index_tree() == plan.base_tree
+    assert _owned_worktree_state(repo, plan) == worktree_before
+    assert repo.checkpoint_rows() == []
+    assert not (repo.run_root / "git-first-restores").exists()
+
+
+def test_git_first_restore_preflights_checkpoint_git_exclude_before_mutation(
+    repo: RestoreRepo,
+) -> None:
+    plan = _restore_plan(repo)
+    exclude = Path(repo.git("rev-parse", "--git-path", "info/exclude").decode().strip())
+    if not exclude.is_absolute():
+        exclude = repo.root / exclude
+    outside = repo.root.parent / "outside-exclude"
+    outside.write_bytes(b"preserve\n")
+    exclude.unlink()
+    exclude.symlink_to(outside)
+    worktree_before = _owned_worktree_state(repo, plan)
+
+    with pytest.raises(GitFirstRestoreError, match="checkpoint preflight"):
+        _apply(repo, plan)
+
+    assert repo.head() == plan.base_commit
+    assert repo.index_tree() == plan.base_tree
+    assert _owned_worktree_state(repo, plan) == worktree_before
+    assert exclude.is_symlink()
+    assert outside.read_bytes() == b"preserve\n"
+    assert not (repo.run_root / "git-first-restores").exists()
