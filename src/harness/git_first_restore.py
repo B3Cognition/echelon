@@ -101,6 +101,26 @@ class _RestoreEntrySnapshot:
     token: tuple[object, ...]
 
 
+@dataclass(frozen=True)
+class _ActiveIndexSnapshot:
+    path: Path
+    content: bytes
+    mode: int
+    token: tuple[object, ...]
+    sha256: str
+
+
+@dataclass
+class _ActiveIndexLock:
+    path: Path
+    parent_fd: int
+    index_name: str
+    lock_name: str
+    descriptor: int
+    lock_token: tuple[int, int]
+    installed: bool = False
+
+
 def _bounded_output(value: bytes) -> str:
     return value[:_ERROR_OUTPUT_LIMIT].decode("utf-8", errors="replace")
 
@@ -436,48 +456,220 @@ def _active_ref(project_root: Path) -> str:
     return ref_name
 
 
-def _active_index_snapshot(project_root: Path) -> tuple[int, int, int, int, int, str]:
+def _active_index_path(project_root: Path) -> Path:
     raw_path = _stdout_text(_git(project_root, "rev-parse", "--git-path", "index"))
     index_path = Path(raw_path)
     if not index_path.is_absolute():
         index_path = project_root / index_path
-    flags = os.O_RDONLY
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
+    index_path = Path(os.path.abspath(index_path))
+    if not index_path.name or index_path.name in {".", ".."}:
+        raise GitFirstRestoreError("active index path is unavailable")
+    return index_path
+
+
+def _open_directory_without_symlinks(path: Path) -> int:
+    lexical = Path(os.path.abspath(path))
+    if not lexical.is_absolute():  # pragma: no cover - abspath is absolute
+        raise GitFirstRestoreError("active index path is unavailable")
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
     try:
-        descriptor = os.open(index_path, flags)
+        descriptor = os.open(os.sep, flags)
+    except OSError as exc:
+        raise GitFirstRestoreError("active index path is unavailable") from exc
+    try:
+        for part in lexical.parts[1:]:
+            opened = os.open(part, flags, dir_fd=descriptor)
+            metadata = os.fstat(opened)
+            if not stat.S_ISDIR(metadata.st_mode):
+                os.close(opened)
+                raise OSError("active index ancestor is not a directory")
+            os.close(descriptor)
+            descriptor = opened
+        return descriptor
+    except OSError as exc:
+        os.close(descriptor)
+        raise GitFirstRestoreError("active index path is unavailable") from exc
+
+
+def _active_index_token(metadata: os.stat_result) -> tuple[object, ...]:
+    return (
+        stat.S_IFMT(metadata.st_mode),
+        stat.S_IMODE(metadata.st_mode),
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_nlink,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+        getattr(metadata, "st_flags", None),
+        getattr(metadata, "st_gen", None),
+    )
+
+
+def _active_index_snapshot_at(
+    *,
+    path: Path,
+    parent_fd: int,
+    index_name: str,
+) -> _ActiveIndexSnapshot:
+    try:
+        named = os.stat(index_name, dir_fd=parent_fd, follow_symlinks=False)
+    except OSError as exc:
+        raise GitFirstRestoreError("active index is unavailable") from exc
+    if stat.S_ISLNK(named.st_mode) or not stat.S_ISREG(named.st_mode):
+        raise GitFirstRestoreError("active index is not a regular file")
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+    try:
+        descriptor = os.open(index_name, flags, dir_fd=parent_fd)
     except OSError as exc:
         raise GitFirstRestoreError("active index is unavailable") from exc
     try:
-        before = os.fstat(descriptor)
-        if not stat.S_ISREG(before.st_mode):
-            raise GitFirstRestoreError("active index is not a regular file")
-        digest = hashlib.sha256()
-        while True:
-            chunk = os.read(descriptor, 64 * 1024)
-            if not chunk:
-                break
-            digest.update(chunk)
-        after = os.fstat(descriptor)
-        if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) != (
-            after.st_dev,
-            after.st_ino,
-            after.st_size,
-            after.st_mtime_ns,
+        opened = os.fstat(descriptor)
+        token = _active_index_token(opened)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino)
         ):
+            raise GitFirstRestoreError("active index identity changed")
+        remaining = opened.st_size
+        chunks: list[bytes] = []
+        digest = hashlib.sha256()
+        while remaining:
+            chunk = os.read(descriptor, min(1_048_576, remaining))
+            if not chunk:
+                raise GitFirstRestoreError("active index changed while reading")
+            remaining -= len(chunk)
+            chunks.append(chunk)
+            digest.update(chunk)
+        if os.read(descriptor, 1):
             raise GitFirstRestoreError("active index changed while reading")
-        return (
-            after.st_dev,
-            after.st_ino,
-            stat.S_IMODE(after.st_mode),
-            after.st_size,
-            after.st_mtime_ns,
-            digest.hexdigest(),
+        after = os.fstat(descriptor)
+        current = os.stat(index_name, dir_fd=parent_fd, follow_symlinks=False)
+        if _active_index_token(after) != token or _active_index_token(current) != token:
+            raise GitFirstRestoreError("active index changed while reading")
+        return _ActiveIndexSnapshot(
+            path=path,
+            content=b"".join(chunks),
+            mode=stat.S_IMODE(opened.st_mode),
+            token=token,
+            sha256=digest.hexdigest(),
         )
     except OSError as exc:
         raise GitFirstRestoreError("active index could not be read") from exc
     finally:
         os.close(descriptor)
+
+
+@contextmanager
+def _active_index_lock(project_root: Path) -> Iterator[_ActiveIndexLock]:
+    index_path = _active_index_path(project_root)
+    parent_fd = _open_directory_without_symlinks(index_path.parent)
+    index_name = index_path.name
+    lock_name = f"{index_name}.lock"
+    flags = (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        descriptor = os.open(lock_name, flags, 0o600, dir_fd=parent_fd)
+    except OSError as exc:
+        os.close(parent_fd)
+        raise GitFirstRestoreError("active index lock is unavailable") from exc
+    lock_metadata = os.fstat(descriptor)
+    lock = _ActiveIndexLock(
+        path=index_path,
+        parent_fd=parent_fd,
+        index_name=index_name,
+        lock_name=lock_name,
+        descriptor=descriptor,
+        lock_token=(lock_metadata.st_dev, lock_metadata.st_ino),
+    )
+    try:
+        yield lock
+    finally:
+        os.close(descriptor)
+        if not lock.installed:
+            try:
+                current = os.stat(
+                    lock_name,
+                    dir_fd=parent_fd,
+                    follow_symlinks=False,
+                )
+            except FileNotFoundError:
+                current = None
+            except OSError:
+                current = None
+            if current is not None and (
+                current.st_dev,
+                current.st_ino,
+            ) == lock.lock_token:
+                try:
+                    os.unlink(lock_name, dir_fd=parent_fd)
+                    os.fsync(parent_fd)
+                except OSError:
+                    pass
+        os.close(parent_fd)
+
+
+def _active_index_authority(
+    project_root: Path,
+) -> tuple[_ActiveIndexSnapshot, str]:
+    with _active_index_lock(project_root) as lock:
+        snapshot = _active_index_snapshot_at(
+            path=lock.path,
+            parent_fd=lock.parent_fd,
+            index_name=lock.index_name,
+        )
+        tree = _index_tree_from_content(project_root, snapshot.content)
+        if _active_index_snapshot_at(
+            path=lock.path,
+            parent_fd=lock.parent_fd,
+            index_name=lock.index_name,
+        ) != snapshot:
+            raise GitFirstRestoreError("active index changed while reading")
+        return snapshot, tree
+
+
+def _index_tree_from_content(project_root: Path, content: bytes) -> str:
+    with tempfile.TemporaryDirectory(prefix="echelon-index-authority-") as raw:
+        index_path = Path(raw) / "index"
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        descriptor = os.open(index_path, flags, 0o600)
+        try:
+            view = memoryview(content)
+            while view:
+                written = os.write(descriptor, view)
+                if written <= 0:
+                    raise OSError("short index authority write")
+                view = view[written:]
+            os.fsync(descriptor)
+        except OSError as exc:
+            raise GitFirstRestoreError("active index authority is unavailable") from exc
+        finally:
+            os.close(descriptor)
+        return _stdout_text(
+            _git(
+                project_root,
+                "write-tree",
+                env={"GIT_INDEX_FILE": str(index_path)},
+            )
+        )
+
+
+def _active_index_snapshot(project_root: Path) -> _ActiveIndexSnapshot:
+    snapshot, _tree = _active_index_authority(project_root)
+    return snapshot
 
 
 def _plan_spec_id(plan: GitFirstRestorePlan) -> str:
@@ -690,6 +882,7 @@ def recover_git_first_restore_plan(
     base = _validate_oid(base_commit, field="base commit")
     if not root.is_dir():
         raise GitFirstRestoreError("project root is not a directory")
+    _active_index_snapshot(root)
     resolved_base = _stdout_text(_git(root, "rev-parse", f"{base}^{{commit}}"))
     if resolved_base != base:
         raise GitFirstRestoreError("base commit is not canonical")
@@ -769,6 +962,7 @@ def recover_git_first_restore_plan(
         entries=tuple(plan_entries),
     )
     verify_git_first_restore_commit(root, plan)
+    _verify_git_first_restore_recovery_started(root, journals, plan)
     return plan
 
 
@@ -1365,7 +1559,89 @@ def _current_ref_commit(project_root: Path, ref_name: str) -> str:
 
 
 def _current_index_tree(project_root: Path) -> str:
-    return _stdout_text(_git(project_root, "write-tree"))
+    _snapshot, tree = _active_index_authority(project_root)
+    return tree
+
+
+def _prebuilt_target_index(
+    project_root: Path,
+    journal_root: Path,
+    *,
+    completion_id: str,
+    target_commit: str,
+    target_tree: str,
+) -> bytes:
+    with _isolated_index(journal_root, completion_id) as index_path:
+        index_env = {"GIT_INDEX_FILE": str(index_path)}
+        _git(project_root, "read-tree", target_commit, env=index_env)
+        if _stdout_text(_git(project_root, "write-tree", env=index_env)) != target_tree:
+            raise GitFirstRestoreError("prebuilt target index authority changed")
+        parent_fd = _open_directory_without_symlinks(index_path.parent)
+        try:
+            snapshot = _active_index_snapshot_at(
+                path=index_path,
+                parent_fd=parent_fd,
+                index_name=index_path.name,
+            )
+        finally:
+            os.close(parent_fd)
+    return snapshot.content
+
+
+def _install_prebuilt_active_index(
+    project_root: Path,
+    journal_root: Path,
+    *,
+    completion_id: str,
+    expected_snapshot: _ActiveIndexSnapshot,
+    expected_tree: str,
+    target_commit: str,
+    target_tree: str,
+) -> None:
+    target_content = _prebuilt_target_index(
+        project_root,
+        journal_root,
+        completion_id=completion_id,
+        target_commit=target_commit,
+        target_tree=target_tree,
+    )
+    _restore_fault("before_index_install")
+    with _active_index_lock(project_root) as lock:
+        current = _active_index_snapshot_at(
+            path=lock.path,
+            parent_fd=lock.parent_fd,
+            index_name=lock.index_name,
+        )
+        if current != expected_snapshot:
+            raise GitFirstRestoreError("active index changed before install")
+        current_tree = _index_tree_from_content(project_root, current.content)
+        if current_tree != expected_tree:
+            raise GitFirstRestoreError("active index tree changed before install")
+        if _active_index_snapshot_at(
+            path=lock.path,
+            parent_fd=lock.parent_fd,
+            index_name=lock.index_name,
+        ) != current:
+            raise GitFirstRestoreError("active index changed before install")
+        try:
+            view = memoryview(target_content)
+            while view:
+                written = os.write(lock.descriptor, view)
+                if written <= 0:
+                    raise OSError("short active index write")
+                view = view[written:]
+            os.fchmod(lock.descriptor, current.mode)
+            os.fsync(lock.descriptor)
+            os.replace(
+                lock.lock_name,
+                lock.index_name,
+                src_dir_fd=lock.parent_fd,
+                dst_dir_fd=lock.parent_fd,
+            )
+            lock.installed = True
+            os.fsync(lock.parent_fd)
+        except OSError as exc:
+            raise GitFirstRestoreError("active index install failed") from exc
 
 
 def _verify_restore_paths(
@@ -1385,6 +1661,67 @@ def _verify_restore_paths(
             raise GitFirstRestoreError("restore worktree authority changed")
         snapshots.append(snapshot)
     return tuple(snapshots)
+
+
+def _verify_git_first_restore_recovery_started(
+    project_root: Path,
+    journal_root: Path,
+    plan: GitFirstRestorePlan,
+) -> None:
+    """Require durable proof that this exact restore already began.
+
+    Plan reconstruction is intentionally unavailable as a general fallback for
+    failed preflight.  A retry is authorized only by the byte-exact durable
+    journal written before the first side effect, or by the fully converged
+    target state left after journal cleanup.
+    """
+
+    journal_dir = Path(journal_root) / _RESTORE_JOURNAL_DIRECTORY
+    journal_name = f"{plan.completion_id}.json"
+    try:
+        journal_metadata = os.lstat(journal_dir)
+    except FileNotFoundError:
+        journal_metadata = None
+    except OSError as exc:
+        raise GitFirstRestoreError("restore recovery authority is unavailable") from exc
+    if journal_metadata is not None:
+        if not stat.S_ISDIR(journal_metadata.st_mode) or stat.S_ISLNK(
+            journal_metadata.st_mode
+        ):
+            raise GitFirstRestoreError("restore recovery authority changed")
+        journal_fd = _open_restore_directory(
+            journal_dir,
+            field="restore journal directory",
+        )
+        try:
+            snapshot = _restore_entry_snapshot(
+                journal_fd,
+                journal_name,
+                missing_ok=True,
+            )
+        finally:
+            os.close(journal_fd)
+        if snapshot is not None:
+            expected = _canonical_json_bytes(asdict(_restore_journal(plan)))
+            if snapshot.mode != 0o600 or snapshot.content != expected:
+                raise GitFirstRestoreError("restore recovery authority changed")
+            return
+
+    if _current_ref_commit(project_root, plan.ref_name) != plan.target_commit:
+        raise GitFirstRestoreError("restore recovery is not authorized")
+    if _current_index_tree(project_root) != plan.target_tree:
+        raise GitFirstRestoreError("restore recovery is not authorized")
+    parents = {Path(entry.path).parent for entry in plan.entries}
+    if len(parents) != 1:
+        raise GitFirstRestoreError("restore recovery authority changed")
+    worktree_fd = _open_restore_directory(
+        project_root / next(iter(parents)),
+        field="restore spec directory",
+    )
+    try:
+        _verify_restore_paths(worktree_fd, plan.entries, target=True)
+    finally:
+        os.close(worktree_fd)
 
 
 def _validate_restore_receipt(
@@ -1486,7 +1823,7 @@ def apply_or_recover_git_first_restore(
     current_ref = _current_ref_commit(root, plan.ref_name)
     if current_ref not in {plan.base_commit, plan.target_commit}:
         raise GitFirstRestoreError("restore ref authority changed")
-    index_tree = _current_index_tree(root)
+    _initial_index_snapshot, index_tree = _active_index_authority(root)
     if index_tree not in {plan.base_tree, plan.target_tree}:
         raise GitFirstRestoreError("restore index authority changed")
 
@@ -1647,9 +1984,17 @@ def apply_or_recover_git_first_restore(
                 raise GitFirstRestoreError("restore ref authority changed")
             _restore_fault("after_ref_update")
 
-            index_tree = _current_index_tree(root)
+            index_snapshot, index_tree = _active_index_authority(root)
             if index_tree == plan.base_tree:
-                _git(root, "read-tree", plan.target_commit)
+                _install_prebuilt_active_index(
+                    root,
+                    lexical_journal_root,
+                    completion_id=plan.completion_id,
+                    expected_snapshot=index_snapshot,
+                    expected_tree=plan.base_tree,
+                    target_commit=plan.target_commit,
+                    target_tree=plan.target_tree,
+                )
             elif index_tree != plan.target_tree:
                 raise GitFirstRestoreError("restore index authority changed")
             _restore_fault("after_index_update")

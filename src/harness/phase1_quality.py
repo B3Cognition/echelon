@@ -176,6 +176,8 @@ def has_current_phase1_quality_certificate(
     if not isinstance(stored, Mapping):
         return False
     schema_version = stored.get("schema_version")
+    if type(schema_version) is not int:
+        return False
     if schema_version == LEGACY_SCHEMA_VERSION:
         if normalize_spec_authoring_mode(state.get("spec_authoring_mode")) == PROPORTIONAL_MODE:
             return False

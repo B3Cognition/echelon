@@ -108,8 +108,9 @@ def _patch_resume_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_resume_submits_a_valid_v2_answer_only_through_controller(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from echelon.cli import _cmd_resume
+    from echelon.cli import _cmd_resume, _spec_summary_session
 
     run_dir = _write_blocked_run(
         tmp_path,
@@ -170,11 +171,25 @@ def test_resume_submits_a_valid_v2_answer_only_through_controller(
     controller = sys.modules["harness.squad"].SquadController
     controller.resume_with_human_input = lambda self, answer: answers.append(answer) or True
 
-    _cmd_resume(["approve"], project_root=tmp_path, ext_dir=tmp_path / ".echelon/runtime")
+    with patch(
+        "harness.run_summary.summarize_run_for_cli",
+        return_value="Recorded the schema-v2 decision handoff.",
+    ):
+        with _spec_summary_session(tmp_path, "echelon spec resume"):
+            _cmd_resume(
+                ["approve"],
+                project_root=tmp_path,
+                ext_dir=tmp_path / ".echelon/runtime",
+            )
 
     assert answers == ["approve"]
     persisted = json.loads(state_path.read_text(encoding="utf-8"))
     assert persisted["blocked_decision"] == decision
+    output = capsys.readouterr().out
+    assert output.count("SQUAD SUMMARY") == 1
+    assert output.count("worked on") == 1
+    assert "Recorded the schema-v2 decision handoff." in output
+    assert output.count("echelon spec continue") == 1
 
 
 def test_resume_rejects_stale_v2_reason_before_controller_construction(

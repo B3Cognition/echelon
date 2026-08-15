@@ -110,3 +110,59 @@ def test_spec_continue_preserves_top_level_command_through_internal_run(
 
     assert captured["command"] == "echelon spec continue"
     assert cli._SPEC_SUMMARY_COMMAND.get() == "echelon spec run"
+
+
+def test_spec_continue_checkpoint_exit_emits_one_durable_summary(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    from echelon import cli
+
+    run_dir = tmp_path / "runs" / "spec-current"
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
+    state = {
+        "run_id": run_dir.name,
+        "spec_id": "001-demo",
+        "status": "blocked",
+        "phase": "phase1-what",
+        "blocked_reason": "human_decision_required",
+        "user_message": "Choose the public boundary.",
+        "autonomy_mode": "guided",
+        "implementation_targets": ["sources/api"],
+    }
+    (run_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    (tmp_path / ".git").mkdir()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "_installed_phase_runtime_or_exit", lambda _root: tmp_path)
+    monkeypatch.setattr(cli, "_require_provider_capability", lambda *_a, **_k: None)
+    monkeypatch.setattr(cli, "_workspace_git_present", lambda _root: True)
+    monkeypatch.setattr(
+        cli,
+        "_ensure_active_continue_spec_context",
+        lambda _root, _run, current, sync_missing: (current, None),
+    )
+    monkeypatch.setattr(
+        cli,
+        "_classify_run_recovery",
+        lambda *_a, **_k: SimpleNamespace(
+            kind="human_resume",
+            reason="human_decision_required",
+            command='echelon spec resume "<answer>"',
+            note="Choose the public boundary.",
+            phase="phase1-what",
+        ),
+    )
+
+    with patch(
+        "harness.run_summary.summarize_run_for_cli",
+        return_value="Recorded the blocked specification handoff.",
+    ):
+        cli._cmd_spec_continue([])
+
+    output = capsys.readouterr().out
+    assert output.count("SQUAD SUMMARY") == 1
+    assert output.count("worked on") == 1
+    assert "Recorded the blocked specification handoff." in output
+    assert output.count('echelon spec resume "<answer>"') == 1

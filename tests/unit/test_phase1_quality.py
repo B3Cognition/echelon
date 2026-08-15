@@ -242,6 +242,29 @@ def test_schema_v2_certificate_binds_authoritative_sage_pass(
     )
 
 
+def test_schema_v2_certificate_rejects_float_schema_version(
+    tmp_path: Path,
+) -> None:
+    state, spec_path, _report_path = _quality_state(tmp_path)
+    issues_path = _write_passing_sage_issues(spec_path)
+    certificate = build_phase1_quality_certificate(
+        state,
+        project_root=tmp_path,
+        authoritative_sage_assessment=_ordinary_assessment(
+            tmp_path,
+            issues_path,
+        ),
+    )
+    assert certificate is not None
+    certificate["schema_version"] = 2.0
+    state["spec_quality_certificate"] = certificate
+
+    assert not has_current_phase1_quality_certificate(
+        state,
+        project_root=tmp_path,
+    )
+
+
 def test_schema_v2_certificate_restart_currentness_rejects_sage_fail(
     tmp_path: Path,
 ) -> None:

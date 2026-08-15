@@ -12,11 +12,10 @@ from pathlib import Path
 import re
 import secrets
 import stat
-import subprocess
 from types import MappingProxyType
 from typing import Mapping, MutableMapping, Sequence
 
-from echelon.git_helpers import GitHelperError, run_git
+from echelon.git_helpers import GitHelperError, run_git, run_git_hardened
 from echelon.strict_json import loads_strict_json
 from echelon.spec_authoring import (
     PERFECTIONIST_MODE,
@@ -1394,21 +1393,33 @@ def load_candidate_checkpoint_entries(
         ) from exc
     entries: list[CandidateCheckpointEntry] = []
     try:
+        checkpoint = candidate.checkpoint_commit
+        if re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", checkpoint) is None:
+            raise QualityCandidateIntegrityError(
+                "candidate checkpoint commit is invalid"
+            )
+        resolved = run_git_hardened(
+            root,
+            "rev-parse",
+            "--verify",
+            f"{checkpoint}^{{commit}}",
+        )
+        if resolved.returncode != 0 or resolved.stdout.strip() != checkpoint:
+            raise QualityCandidateIntegrityError(
+                "candidate checkpoint commit is invalid"
+            )
         for name, expected_digest in candidate.owned_artifact_digests:
             relative = (spec_relative / name).as_posix()
-            tree = subprocess.run(
-                [
-                    "git",
-                    "ls-tree",
-                    "-z",
-                    candidate.checkpoint_commit,
-                    "--",
-                    relative,
-                ],
-                cwd=root,
+            tree = run_git_hardened(
+                root,
+                "ls-tree",
+                "-z",
+                "--full-tree",
+                checkpoint,
+                "--",
+                relative,
                 check=False,
-                capture_output=True,
-                timeout=120,
+                text=False,
             )
             rows = tuple(row for row in tree.stdout.split(b"\0") if row)
             if (
@@ -1433,12 +1444,13 @@ def load_candidate_checkpoint_entries(
                     f"candidate owned artifact is not a regular blob: {name}"
                 )
             blob_oid = fields[2].decode("ascii")
-            blob = subprocess.run(
-                ["git", "cat-file", "blob", blob_oid],
-                cwd=root,
+            blob = run_git_hardened(
+                root,
+                "cat-file",
+                "blob",
+                blob_oid,
                 check=False,
-                capture_output=True,
-                timeout=120,
+                text=False,
             )
             if blob.returncode != 0:
                 raise QualityCandidateIntegrityError(
@@ -1459,7 +1471,7 @@ def load_candidate_checkpoint_entries(
                     content=content,
                 )
             )
-    except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
+    except (OSError, GitHelperError, UnicodeError) as exc:
         raise QualityCandidateIntegrityError(
             "candidate checkpoint artifacts could not be read"
         ) from exc
@@ -2083,13 +2095,25 @@ def _verify_candidate_checkpoint_identity(
     spec_id: str,
 ) -> None:
     try:
-        result = run_git(
+        checkpoint = candidate.checkpoint_commit
+        if re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", checkpoint) is None:
+            raise QualityCandidateIntegrityError(
+                "candidate checkpoint identity mismatch"
+            )
+        resolved = run_git_hardened(
             project_root,
-            "show",
-            "-s",
-            "--format=%B",
-            candidate.checkpoint_commit,
+            "rev-parse",
+            "--verify",
+            f"{checkpoint}^{{commit}}",
             check=False,
+        )
+        result = run_git_hardened(
+            project_root,
+            "cat-file",
+            "commit",
+            checkpoint,
+            check=False,
+            text=False,
         )
     except GitHelperError as exc:
         raise QualityCandidateIntegrityError(
@@ -2101,8 +2125,19 @@ def _verify_candidate_checkpoint_identity(
         f"Echelon-Spec: {spec_id}",
         f"Echelon-Run: {run_id}",
     )
-    lines = result.stdout.splitlines()
-    if result.returncode != 0 or any(lines.count(item) != 1 for item in expected):
+    try:
+        _headers, message = result.stdout.split(b"\n\n", 1)
+        lines = message.decode("utf-8", errors="strict").splitlines()
+    except (UnicodeError, ValueError) as exc:
+        raise QualityCandidateIntegrityError(
+            "candidate checkpoint identity could not be verified"
+        ) from exc
+    if (
+        resolved.returncode != 0
+        or resolved.stdout.strip() != checkpoint
+        or result.returncode != 0
+        or any(lines.count(item) != 1 for item in expected)
+    ):
         raise QualityCandidateIntegrityError("candidate checkpoint identity mismatch")
 
 

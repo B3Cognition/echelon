@@ -182,6 +182,61 @@ class TestRunSkillAutoLand:
     """Test that run() calls land() when auto_merge is True."""
 
     @patch("harness.skills.run_skill.parse_intent")
+    @patch("harness.skills.run_skill.load_config")
+    @patch("harness.skills.run_skill.run_gc")
+    @patch("harness.skills.run_skill.StrategyCoordinator")
+    def test_coordinator_exception_still_emits_one_delivery_summary(
+        self,
+        mock_coordinator_cls: MagicMock,
+        _mock_gc: MagicMock,
+        _mock_config: MagicMock,
+        mock_parse: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from harness.skills.run_skill import run
+
+        spec_dir = tmp_path / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        mock_parse.return_value = RunIntent(
+            spec_id="001-demo",
+            mode="semi",
+            strategies=("default",),
+        )
+        mock_coordinator_cls.return_value.start.side_effect = RuntimeError(
+            "coordinator exploded"
+        )
+        runs = tmp_path / "runs"
+        state_dir = runs / "build-durable" / "state"
+        state_dir.mkdir(parents=True)
+        (runs / ".current-build-001-demo").write_text(
+            "build-durable\n",
+            encoding="utf-8",
+        )
+        (state_dir / "default.json").write_text(
+            '{"status":"blocked","outer_iteration":"unknown"}',
+            encoding="utf-8",
+        )
+
+        with patch(
+            "harness.run_summary.summarize_run_for_cli",
+            return_value="Recorded the failed delivery handoff.",
+        ):
+            with pytest.raises(RuntimeError, match="coordinator exploded"):
+                run(
+                    "spec 001-demo",
+                    MagicMock(),
+                    MagicMock(),
+                    base_dir=tmp_path,
+                    resume_build_id="build-durable",
+                )
+
+        output = capsys.readouterr().err
+        assert output.count("DELIVERY SUMMARY") == 1
+        assert output.count("worked on") == 1
+        assert "Recorded the failed delivery handoff." in output
+
+    @patch("harness.skills.run_skill.parse_intent")
     @patch("harness.skills.run_skill.run_gc")
     @patch("harness.skills.run_skill.StrategyCoordinator")
     @patch("harness.land.land", return_value=False)
@@ -192,6 +247,7 @@ class TestRunSkillAutoLand:
         _mock_gc: MagicMock,
         mock_parse: MagicMock,
         tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         """A failed post-convergence land is reported independently."""
         from harness.skills.run_skill import run
@@ -212,6 +268,10 @@ class TestRunSkillAutoLand:
         assert outcome.results[0].status == "converged"
         assert outcome.landing.status == "blocked"
         mock_land.assert_called_once()
+        output = capsys.readouterr().err
+        assert output.count("DELIVERY SUMMARY") == 1
+        assert output.count("worked on") == 1
+        assert output.count("echelon delivery land 042") == 1
 
     @patch("harness.skills.run_skill.parse_intent")
     @patch("harness.skills.run_skill.load_config")

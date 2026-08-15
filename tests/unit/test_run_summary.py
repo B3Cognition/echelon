@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import sys
 
@@ -45,6 +46,213 @@ def _context(project_root: Path) -> RunSummaryContext:
     )
 
 
+def _json_bullets(*bullets: str) -> str:
+    return json.dumps({"bullets": list(bullets)}, ensure_ascii=False)
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    (
+        "plain text is not the approved schema",
+        '{"bullets":["One sentence.","Two sentences."],"extra":true}',
+        '{"bullets":["Only one sentence."]}',
+        '{"bullets":["One.","Two.","Three.","Four.","Five."]}',
+        '{"bullets":["First sentence. Second sentence.","Another sentence."]}',
+        '{"bullets":["Safe sentence.","Unsafe \\u001b]0;title\\u0007 sentence."]}',
+        '{"bullets":["Safe sentence.","Unsafe \\u0085 sentence."]}',
+        _json_bullets("é" * 141 + ".", "Second sentence."),
+    ),
+)
+def test_summary_rejects_noncanonical_unsafe_or_oversized_json(
+    tmp_path: Path,
+    stdout: str,
+) -> None:
+    context = _context(tmp_path)
+    provider = _RecordingProvider(CliRunResult(exit_code=0, stdout=stdout, stderr=""))
+
+    summary = summarize_run(
+        context,
+        provider=provider,
+        agent=SummaryAgent(prompt="Summarize.", metadata={}),
+    )
+
+    assert summary.startswith("Echelon completed the requested specification work")
+
+
+@pytest.mark.parametrize(
+    ("context", "claim"),
+    (
+        (
+            RunSummaryContext(
+                project_root=Path("."),
+                command="echelon delivery run",
+                task="Deliver.",
+                status="blocked",
+            ),
+            "The delivery completed successfully.",
+        ),
+        (
+            RunSummaryContext(
+                project_root=Path("."),
+                command="echelon delivery run",
+                task="Deliver.",
+                status="done",
+                facts=("Verification: failed.",),
+            ),
+            "Verification passed for the delivery.",
+        ),
+        (
+            RunSummaryContext(
+                project_root=Path("."),
+                command="echelon delivery run",
+                task="Deliver.",
+                status="blocked",
+                provider_limit_message="Provider limit reached; resets at 21:10.",
+            ),
+            "No provider limit affected the run.",
+        ),
+        (
+            RunSummaryContext(
+                project_root=Path("."),
+                command="echelon spec run",
+                task="Specify.",
+                status="done",
+                quality_debt_status="accepted_with_debt",
+            ),
+            "The specification passed every quality gate.",
+        ),
+    ),
+)
+def test_summary_rejects_terminal_truth_contradictions(
+    tmp_path: Path,
+    context: RunSummaryContext,
+    claim: str,
+) -> None:
+    context = RunSummaryContext(**{**context.__dict__, "project_root": tmp_path})
+    provider = _RecordingProvider(
+        CliRunResult(
+            exit_code=0,
+            stdout=_json_bullets(claim, "Recorded the durable handoff state."),
+            stderr="",
+        )
+    )
+
+    summary = summarize_run(
+        context,
+        provider=provider,
+        agent=SummaryAgent(prompt="Summarize.", metadata={}),
+    )
+
+    assert claim not in summary
+
+
+def test_summary_evidence_packet_is_utf8_bounded_and_includes_path_content(
+    tmp_path: Path,
+) -> None:
+    evidence = tmp_path / "aggregate.json"
+    evidence.write_text("authoritative aggregate content\n" + ("界" * 20_000))
+    context = RunSummaryContext(
+        project_root=tmp_path,
+        command="echelon delivery continue",
+        task="Deliver the aggregate.",
+        status="blocked",
+        facts=("Verification: failed.", "Result: checkpointed."),
+        next_step="echelon delivery continue 001-demo",
+        inspect_paths=(evidence,),
+    )
+    provider = _RecordingProvider(
+        CliRunResult(
+            exit_code=0,
+            stdout=_json_bullets(
+                "Recorded the checkpointed delivery state.",
+                "Preserved the failed verification evidence.",
+            ),
+            stderr="",
+        )
+    )
+
+    summarize_run(
+        context,
+        provider=provider,
+        agent=SummaryAgent(prompt="Summarize.", metadata={}),
+    )
+
+    prompt = provider.calls[0][1]
+    packet = prompt.split("<evidence_packet>", 1)[1].split(
+        "</evidence_packet>", 1
+    )[0]
+    assert len(packet.encode("utf-8")) <= 12 * 1024
+    decoded = json.loads(packet)
+    assert decoded["status"] == "blocked"
+    assert decoded["facts"] == ["Verification: failed.", "Result: checkpointed."]
+    assert decoded["inspect"][0]["path"] == str(evidence.resolve())
+    assert "authoritative aggregate content" in decoded["inspect"][0]["content"]
+
+
+def test_summary_evidence_packet_stays_bounded_with_json_expanding_controls(
+    tmp_path: Path,
+) -> None:
+    expanding = "\x00" * 2_000
+    context = RunSummaryContext(
+        project_root=tmp_path,
+        command=expanding,
+        task=expanding,
+        status=expanding,
+        next_step=expanding,
+        quality_debt_status=expanding,
+        quality_debt_artifact=expanding,
+        quality_debt_failed_gates=(expanding,) * 8,
+        quality_debt_qualitative_issues=(expanding,) * 4,
+        quality_debt_resolved_by=expanding,
+        provider_limit_message=expanding,
+    )
+    provider = _RecordingProvider(
+        CliRunResult(
+            exit_code=0,
+            stdout=_json_bullets(
+                "Recorded the bounded run evidence.",
+                "Preserved the durable terminal state.",
+            ),
+            stderr="",
+        )
+    )
+
+    summary = summarize_run(
+        context,
+        provider=provider,
+        agent=SummaryAgent(prompt="Summarize.", metadata={}),
+    )
+
+    assert "Recorded the bounded run evidence." in summary
+    packet = provider.calls[0][1].split("<evidence_packet>", 1)[1].split(
+        "</evidence_packet>", 1
+    )[0]
+    assert len(packet.encode("utf-8")) <= 12 * 1024
+
+
+def test_model_cannot_duplicate_deterministic_next_step(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    provider = _RecordingProvider(
+        CliRunResult(
+            exit_code=0,
+            stdout=_json_bullets(
+                "Published the run-handoff specification.",
+                "Next, run echelon delivery run 123-run-handoff.",
+            ),
+            stderr="",
+        )
+    )
+
+    summary = summarize_run(
+        context,
+        provider=provider,
+        agent=SummaryAgent(prompt="Summarize.", metadata={}),
+    )
+
+    assert "Next" not in summary
+    assert "echelon delivery run 123-run-handoff" not in summary
+
+
 def test_summarize_run_uses_fast_low_agent_in_isolated_directory(
     tmp_path: Path,
 ) -> None:
@@ -53,10 +261,10 @@ def test_summarize_run_uses_fast_low_agent_in_isolated_directory(
     provider = _RecordingProvider(
         CliRunResult(
             exit_code=0,
-            stdout=(
-                "Published the run-handoff specification.\n"
-                "Verified the result with 42 passing tests.\n"
-                "The specification is ready for delivery."
+            stdout=_json_bullets(
+                "Published the run-handoff specification.",
+                "Verified the result with 42 passing tests.",
+                "The specification is ready for delivery.",
             ),
             stderr="",
         )
@@ -78,8 +286,8 @@ def test_summarize_run_uses_fast_low_agent_in_isolated_directory(
     assert Path(cwd) != project_root
     assert project_root not in Path(cwd).parents
     assert not Path(cwd).exists()
-    assert '"command": "echelon spec continue"' in prompt
-    assert '"status": "done"' in prompt
+    assert '"command":"echelon spec continue"' in prompt
+    assert '"status":"done"' in prompt
     assert "Published specs/123-run-handoff/spec.md." in prompt
     assert kwargs["timeout_ms"] == 30_000
     assert kwargs["request_metadata"] == {
@@ -109,8 +317,7 @@ def test_summarize_run_falls_back_when_agent_fails(tmp_path: Path) -> None:
     assert summary == (
         "Echelon completed the requested specification work.\n"
         "Published specs/123-run-handoff/spec.md.\n"
-        "Verification passed: 42 tests.\n"
-        "Next: echelon delivery run 123-run-handoff"
+        "Verification passed: 42 tests."
     )
 
 
@@ -192,7 +399,14 @@ def test_summary_agent_receives_bounded_quality_debt_fields(tmp_path: Path) -> N
         quality_debt_resolved_by="user",
     )
     provider = _RecordingProvider(
-        CliRunResult(exit_code=0, stdout="Accepted with quality debt.", stderr="")
+        CliRunResult(
+            exit_code=0,
+            stdout=_json_bullets(
+                "Recorded the proportional specification outcome.",
+                "Accepted with quality debt.",
+            ),
+            stderr="",
+        )
     )
 
     summarize_run(
@@ -202,9 +416,9 @@ def test_summary_agent_receives_bounded_quality_debt_fields(tmp_path: Path) -> N
     )
 
     prompt = provider.calls[0][1]
-    assert '"quality_debt_status": "accepted_with_debt"' in prompt
-    assert '"quality_debt_artifact": "specs/001-demo/quality-debt.json"' in prompt
-    assert '"quality_debt_resolved_by": "user"' in prompt
+    assert '"quality_debt_status":"accepted_with_debt"' in prompt
+    assert '"quality_debt_artifact":"specs/001-demo/quality-debt.json"' in prompt
+    assert '"quality_debt_resolved_by":"user"' in prompt
     assert "gate-0" in prompt
     assert "gate-7" in prompt
     assert "gate-8" not in prompt
@@ -226,7 +440,10 @@ def test_summary_agent_cannot_collapse_authorized_debt_into_quality_pass(
     provider = _RecordingProvider(
         CliRunResult(
             exit_code=0,
-            stdout="Specification quality passed and is fully certified.",
+            stdout=_json_bullets(
+                "Specification quality passed and is fully certified.",
+                "Recorded the durable handoff state.",
+            ),
             stderr="",
         )
     )
@@ -259,7 +476,10 @@ def test_model_summary_cannot_omit_required_debt_and_provider_facts(
     provider = _RecordingProvider(
         CliRunResult(
             exit_code=0,
-            stdout="Implemented the requested specification and prepared delivery.",
+            stdout=_json_bullets(
+                "Implemented the requested specification and prepared delivery.",
+                "Recorded the durable handoff state.",
+            ),
             stderr="",
         )
     )
@@ -294,7 +514,10 @@ def test_model_summary_rejects_success_wording_that_contradicts_accepted_debt(
     provider = _RecordingProvider(
         CliRunResult(
             exit_code=0,
-            stdout="All specification quality checks succeeded; the work is ready.",
+            stdout=_json_bullets(
+                "All specification quality checks succeeded; the work is ready.",
+                "Recorded the durable handoff state.",
+            ),
             stderr="",
         )
     )
@@ -349,7 +572,11 @@ def test_debt_mode_rejects_paraphrased_specification_quality_success_claims(
         quality_debt_resolved_by="COMMANDER",
     )
     provider = _RecordingProvider(
-        CliRunResult(exit_code=0, stdout=claim, stderr="")
+        CliRunResult(
+            exit_code=0,
+            stdout=_json_bullets(claim, "Recorded the durable handoff state."),
+            stderr="",
+        )
     )
 
     summary = summarize_run(
@@ -379,9 +606,9 @@ def test_debt_mode_removes_only_contradictory_specification_clause(
     provider = _RecordingProvider(
         CliRunResult(
             exit_code=0,
-            stdout=(
-                "Successfully implemented downstream planning. "
-                "The specification continued with accepted quality debt."
+            stdout=_json_bullets(
+                "Successfully implemented downstream planning.",
+                "The specification continued with accepted quality debt.",
             ),
             stderr="",
         )
@@ -428,7 +655,11 @@ def test_debt_mode_preserves_non_verdict_work_and_debt_narration(
         quality_debt_resolved_by="COMMANDER",
     )
     provider = _RecordingProvider(
-        CliRunResult(exit_code=0, stdout=narration, stderr="")
+        CliRunResult(
+            exit_code=0,
+            stdout=_json_bullets(narration, "Recorded the durable handoff state."),
+            stderr="",
+        )
     )
 
     summary = summarize_run(
@@ -467,7 +698,11 @@ def test_authoritative_truth_dedup_preserves_genuine_action_narration(
         provider_limit_message="You've hit your session limit · resets 4am",
     )
     provider = _RecordingProvider(
-        CliRunResult(exit_code=0, stdout=narration, stderr="")
+        CliRunResult(
+            exit_code=0,
+            stdout=_json_bullets(narration, "Recorded the durable handoff state."),
+            stderr="",
+        )
     )
 
     summary = summarize_run(
@@ -521,7 +756,7 @@ def test_authoritative_truth_dedup_preserves_genuine_action_narration(
         ),
     ),
 )
-def test_debt_mode_splits_action_narration_from_embedded_quality_verdict(
+def test_debt_mode_rejects_multi_sentence_bullet_with_embedded_quality_verdict(
     tmp_path: Path,
     model_line: str,
     safe_action: str,
@@ -538,7 +773,14 @@ def test_debt_mode_splits_action_narration_from_embedded_quality_verdict(
         quality_debt_resolved_by="COMMANDER",
     )
     provider = _RecordingProvider(
-        CliRunResult(exit_code=0, stdout=model_line, stderr="")
+        CliRunResult(
+            exit_code=0,
+            stdout=_json_bullets(
+                model_line,
+                "Recorded the durable handoff state.",
+            ),
+            stderr="",
+        )
     )
 
     summary = summarize_run(
@@ -547,7 +789,7 @@ def test_debt_mode_splits_action_narration_from_embedded_quality_verdict(
         agent=SummaryAgent(prompt="Summarize.", metadata={}),
     )
 
-    assert safe_action in summary
+    assert safe_action not in summary
     assert forbidden_verdict not in summary.lower()
     assert "accepted with quality debt" in summary.lower()
 
@@ -576,7 +818,11 @@ def test_debt_mode_preserves_ordinary_coordinated_work_actions(
         quality_debt_resolved_by="COMMANDER",
     )
     provider = _RecordingProvider(
-        CliRunResult(exit_code=0, stdout=narration, stderr="")
+        CliRunResult(
+            exit_code=0,
+            stdout=_json_bullets(narration, "Recorded the durable handoff state."),
+            stderr="",
+        )
     )
 
     summary = summarize_run(
@@ -606,9 +852,9 @@ def test_session_limit_and_quality_debt_implementation_narration_are_deduplicate
     provider = _RecordingProvider(
         CliRunResult(
             exit_code=0,
-            stdout=(
-                "Implemented quality-debt propagation through planning and verification.\n"
-                f"{provider_message}"
+            stdout=_json_bullets(
+                "Implemented quality-debt propagation through planning and verification.",
+                f"{provider_message}.",
             ),
             stderr="",
         )
@@ -648,7 +894,10 @@ def test_pure_debt_and_session_limit_truth_echoes_are_deduplicated(
     provider = _RecordingProvider(
         CliRunResult(
             exit_code=0,
-            stdout=f"Accepted with quality debt.\n{provider_message}",
+            stdout=_json_bullets(
+                "Accepted with quality debt.",
+                f"{provider_message}.",
+            ),
             stderr="",
         )
     )
@@ -684,8 +933,7 @@ def test_long_obedient_model_summary_is_bounded_and_truths_are_deduplicated(
     provider = _RecordingProvider(
         CliRunResult(
             exit_code=0,
-            stdout="\n".join(
-                (
+            stdout=_json_bullets(
                     narrative,
                     (
                         "Specification quality was accepted with quality debt by "
@@ -693,10 +941,6 @@ def test_long_obedient_model_summary_is_bounded_and_truths_are_deduplicated(
                     ),
                     "Provider limit reached; resets at 21:10.",
                     narrative,
-                    narrative,
-                    narrative,
-                    narrative,
-                )
             ),
             stderr="",
         )
@@ -818,7 +1062,14 @@ def test_summarize_run_keeps_provider_progress_out_of_the_terminal(
             return super().run_agent_result(cwd, prompt, **kwargs)
 
     provider = NoisyProvider(
-        CliRunResult(exit_code=0, stdout="Useful human summary.", stderr="")
+        CliRunResult(
+            exit_code=0,
+            stdout=_json_bullets(
+                "Useful human summary.",
+                "Recorded the durable handoff state.",
+            ),
+            stderr="",
+        )
     )
     agent = SummaryAgent(
         prompt="Summarize the completed Echelon run.",
@@ -877,7 +1128,10 @@ def test_summarize_run_for_cli_loads_the_dedicated_workspace_agent(
     provider = _RecordingProvider(
         CliRunResult(
             exit_code=0,
-            stdout="Finished the requested specification.\nIt is ready for delivery.",
+            stdout=_json_bullets(
+                "Finished the requested specification.",
+                "It is ready for delivery.",
+            ),
             stderr="",
         )
     )

@@ -14,7 +14,7 @@ Auto-detected from ECHELON_LLM (default: claude).
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass
@@ -27,7 +27,6 @@ import shlex
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from harness.gitops import copy_prosaic_runtime_tree, copy_runtime_tree
@@ -70,6 +69,24 @@ LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
 _SPEC_SUMMARY_COMMAND: ContextVar[str] = ContextVar(
     "echelon_spec_summary_command",
     default="echelon spec run",
+)
+
+
+@dataclass
+class _SpecSummaryScope:
+    project_root: Path
+    command: str
+    run_dir: Path | None = None
+    mode: str = "semi"
+    message: str = ""
+    implementation_targets: tuple[str, ...] = ()
+    emitted: bool = False
+    next_already_printed: bool = False
+
+
+_SPEC_SUMMARY_SCOPE: ContextVar[_SpecSummaryScope | None] = ContextVar(
+    "echelon_spec_summary_scope",
+    default=None,
 )
 
 from echelon.workspace_model import discover_workspace  # noqa: E402  (after stdlib imports)
@@ -4838,6 +4855,81 @@ def _cmd_spec_resolve(args: list[str], *, project_root: Path, ext_dir: Path) -> 
     )
 
 
+def _register_spec_summary_run(
+    project_root: Path,
+    squad_dir: Path,
+    *,
+    mode: object,
+    message: object,
+    implementation_targets: object = (),
+) -> None:
+    scope = _SPEC_SUMMARY_SCOPE.get()
+    if scope is None:
+        return
+    scope.run_dir = Path(squad_dir)
+    scope.mode = str(mode or "semi")
+    scope.message = str(message or "")
+    if isinstance(implementation_targets, (list, tuple)):
+        scope.implementation_targets = tuple(
+            str(value) for value in implementation_targets if str(value).strip()
+        )
+
+
+def _note_spec_summary_next_printed() -> None:
+    scope = _SPEC_SUMMARY_SCOPE.get()
+    if scope is not None:
+        scope.next_already_printed = True
+
+
+@contextmanager
+def _spec_summary_session(project_root: Path, command: str):
+    active = _SPEC_SUMMARY_SCOPE.get()
+    if active is not None:
+        yield active
+        return
+    scope = _SpecSummaryScope(
+        project_root=Path(project_root).resolve(),
+        command=command,
+    )
+    token = _SPEC_SUMMARY_SCOPE.set(scope)
+    try:
+        yield scope
+    finally:
+        try:
+            if scope.run_dir is not None and not scope.emitted:
+                state_file = scope.run_dir / "state.json"
+                state = json.loads(state_file.read_text(encoding="utf-8"))
+                if isinstance(state, dict) and state:
+                    persisted_targets = state.get("implementation_targets")
+                    fallback_targets = (
+                        tuple(
+                            str(value)
+                            for value in persisted_targets
+                            if str(value).strip()
+                        )
+                        if isinstance(persisted_targets, list)
+                        else ()
+                    )
+                    _print_squad_summary(
+                        scope.project_root,
+                        scope.run_dir,
+                        object(),
+                        mode=scope.mode,
+                        message=scope.message
+                        or str(state.get("user_message") or ""),
+                        implementation_targets=list(
+                            scope.implementation_targets
+                            or fallback_targets
+                        ),
+                        command=scope.command,
+                        include_next=not scope.next_already_printed,
+                    )
+        except BaseException:
+            pass
+        finally:
+            _SPEC_SUMMARY_SCOPE.reset(token)
+
+
 def _print_squad_summary(
     project_root: Path,
     squad_dir: Path,
@@ -4847,9 +4939,15 @@ def _print_squad_summary(
     message: str,
     implementation_targets: list[str] | None = None,
     command: str = "echelon spec run",
+    include_next: bool = True,
 ) -> None:
     """Render a delivery-style Phase A/spec authoring summary."""
     import json as _json
+
+    scope = _SPEC_SUMMARY_SCOPE.get()
+    if scope is not None:
+        if scope.emitted:
+            return
 
     state: dict = {}
     state_file = squad_dir / "state.json"
@@ -5003,9 +5101,11 @@ def _print_squad_summary(
         )
     )
     fields.append(("worked on", worked_on))
-    if next_step:
+    if next_step and include_next:
         fields.append(("next", next_step))
     _banner("SQUAD SUMMARY", fields, subtitle=f"{icon} {status_text}")
+    if scope is not None:
+        scope.emitted = True
 
 
 def _normalize_rewind_spec_dir(project_root: Path, state: dict) -> tuple[Path | None, str | None]:
@@ -6881,6 +6981,13 @@ def _cmd_run(
         existing_message = str(existing_state.get("user_message") or "").strip()
         if existing_message:
             run_message = existing_message
+    _register_spec_summary_run(
+        project_root,
+        squad_dir,
+        mode=mode,
+        message=run_message,
+        implementation_targets=implementation_targets,
+    )
     existing_inputs = existing_state.get("product_inputs") if existing_state else None
     if existing_inputs and not reset:
         declared_before = existing_inputs.get("declarations") if isinstance(existing_inputs, dict) else None
@@ -7967,6 +8074,13 @@ def _cmd_continue_impl(
         )
     user_message = state.get("user_message", "")
     mode = mode_override or state.get("autonomy_mode") or state.get("mode", "semi")
+    _register_spec_summary_run(
+        project_root,
+        squad_dir,
+        mode=mode,
+        message=user_message,
+        implementation_targets=state.get("implementation_targets") or (),
+    )
     try:
         decision = _active_v2_decision(state)
     except (RecoveryInstructionError, ValueError) as exc:
@@ -8012,9 +8126,11 @@ def _cmd_continue_impl(
             ]
             fields.append(("options", _render_v2_decision_options(decision)))
             fields.append(("resume with", action.command))
+            _note_spec_summary_next_printed()
             _banner("CHECKPOINT", fields, subtitle="Run paused. Human decision required.")
             return
         if action.kind == "manual_recovery":
+            _note_spec_summary_next_printed()
             _banner(
                 "CHECKPOINT",
                 [
@@ -8193,6 +8309,7 @@ def _cmd_continue_impl(
             ("recover with", action.command),
             ("then", "echelon spec continue"),
         ])
+        _note_spec_summary_next_printed()
         _banner(
             "CHECKPOINT",
             fields,
@@ -8231,6 +8348,7 @@ def _cmd_continue_impl(
         if rendered_options:
             fields.append(("options", rendered_options))
         fields.append(("resume with", action.command))
+        _note_spec_summary_next_printed()
         _banner(
             "CHECKPOINT",
             fields,
@@ -8244,6 +8362,7 @@ def _cmd_continue_impl(
             ("note", action.note),
         ]
         fields.extend(_issue_resolution_screen_guidance(project_root, squad_dir, state))
+        _note_spec_summary_next_printed()
         _banner(
             "CHECKPOINT",
             fields,
@@ -8258,6 +8377,7 @@ def _cmd_continue_impl(
     if cur_phase == "terminal-blocked":
         next_phase = _next_continue_phase(project_root)
         if next_phase is None:
+            _note_spec_summary_next_printed()
             print(
                 "Build is ready — nothing left to do in Phase A.\n\n"
                 "  echelon delivery run <spec-id>",
@@ -8276,6 +8396,7 @@ def _cmd_continue_impl(
     # Determine the next phase automatically
     next_phase = _next_continue_phase(project_root)
     if next_phase is None:
+        _note_spec_summary_next_printed()
         print(
             "Build is ready — nothing left to do in Phase A.\n\n"
             "  echelon delivery run <spec-id>",
@@ -9494,6 +9615,7 @@ def _resume_v2_human_input(
         raise SystemExit(1) from exc
 
     current = store.load()
+    _note_spec_summary_next_printed()
     _banner(
         "HUMAN DECISION SUBMITTED",
         [
@@ -9549,6 +9671,13 @@ def _cmd_resume(
         with PhaseAExecutionLock.acquire(project_root, operation_id):
             with SpecRunExecutionLock.acquire(squad_dir, operation_id):
                 state = store.load()
+                _register_spec_summary_run(
+                    project_root,
+                    squad_dir,
+                    mode=state.get("autonomy_mode") or state.get("mode", "semi"),
+                    message=state.get("user_message", ""),
+                    implementation_targets=state.get("implementation_targets") or (),
+                )
                 raw_decision = state.get("blocked_decision")
                 if (
                     isinstance(raw_decision, dict)
@@ -11180,7 +11309,8 @@ def _cmd_spec_run(args: list[str]) -> None:
         )
         sys.exit(1)
     _require_provider_capability("echelon spec run", ProviderCapability.ARTIFACT, project_dir=project_root)
-    _cmd_run(args, project_root=project_root, ext_dir=ext_dir)
+    with _spec_summary_session(project_root, "echelon spec run"):
+        _cmd_run(args, project_root=project_root, ext_dir=ext_dir)
 
 
 def _cmd_spec_retarget(args: list[str]) -> None:
@@ -11213,7 +11343,8 @@ def _cmd_spec_continue(args: list[str]) -> None:
     _require_provider_capability("echelon spec continue", ProviderCapability.ARTIFACT, project_dir=project_root)
     token = _SPEC_SUMMARY_COMMAND.set("echelon spec continue")
     try:
-        _cmd_continue(args, project_root=project_root, ext_dir=ext_dir)
+        with _spec_summary_session(project_root, "echelon spec continue"):
+            _cmd_continue(args, project_root=project_root, ext_dir=ext_dir)
     finally:
         _SPEC_SUMMARY_COMMAND.reset(token)
 
@@ -11230,7 +11361,8 @@ def _cmd_spec_resume(args: list[str]) -> None:
     _require_provider_capability("echelon spec resume", ProviderCapability.ARTIFACT, project_dir=project_root)
     token = _SPEC_SUMMARY_COMMAND.set("echelon spec resume")
     try:
-        _cmd_resume(args, project_root=project_root, ext_dir=ext_dir)
+        with _spec_summary_session(project_root, "echelon spec resume"):
+            _cmd_resume(args, project_root=project_root, ext_dir=ext_dir)
     finally:
         _SPEC_SUMMARY_COMMAND.reset(token)
 

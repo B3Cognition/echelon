@@ -442,7 +442,7 @@ def test_verifier_rejects_an_unowned_tree_change(repo: RestoreRepo) -> None:
         verify_git_first_restore_commit(repo.root, malicious)
 
 
-def test_verifier_rejects_wrong_parent_or_message(repo: RestoreRepo) -> None:
+def test_verifier_rejects_wrong_message(repo: RestoreRepo) -> None:
     plan = _build(repo)
     wrong = repo.git(
         "commit-tree",
@@ -464,6 +464,44 @@ def test_verifier_rejects_wrong_parent_or_message(repo: RestoreRepo) -> None:
         verify_git_first_restore_commit(
             repo.root,
             replace(plan, target_commit=wrong),
+        )
+
+
+def test_verifier_rejects_wrong_parent_with_exact_tree_and_message(
+    repo: RestoreRepo,
+) -> None:
+    plan = _build(repo)
+    alternate_parent = repo.git(
+        "commit-tree",
+        plan.base_tree,
+        input_bytes=b"alternate parent\n",
+        env={
+            "GIT_AUTHOR_NAME": "Echelon",
+            "GIT_AUTHOR_EMAIL": "echelon@local",
+            "GIT_COMMITTER_NAME": "Echelon",
+            "GIT_COMMITTER_EMAIL": "echelon@local",
+        },
+    ).decode().strip()
+    exact_target = repo.git("cat-file", "commit", plan.target_commit)
+    wrong_parent_bytes = exact_target.replace(
+        f"parent {plan.base_commit}\n".encode("ascii"),
+        f"parent {alternate_parent}\n".encode("ascii"),
+        1,
+    )
+    assert wrong_parent_bytes != exact_target
+    wrong_parent_commit = repo.git(
+        "hash-object",
+        "-t",
+        "commit",
+        "-w",
+        "--stdin",
+        input_bytes=wrong_parent_bytes,
+    ).decode().strip()
+
+    with pytest.raises(GitFirstRestoreError, match="exact authority"):
+        verify_git_first_restore_commit(
+            repo.root,
+            replace(plan, target_commit=wrong_parent_commit),
         )
 
 

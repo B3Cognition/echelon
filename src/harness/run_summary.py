@@ -6,10 +6,23 @@ from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 import io
 import json
+import os
 from pathlib import Path
 import re
 import tempfile
 from typing import Any, Mapping
+
+from echelon.strict_json import loads_strict_json
+
+
+MAX_EVIDENCE_BYTES = 12 * 1024
+_EVIDENCE_CORE_BUDGET = 8 * 1024
+_MAX_MODEL_BULLET_BYTES = 280
+_MAX_MODEL_TOTAL_BYTES = 900
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+_ANSI_RE = re.compile(
+    r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-_])"
+)
 
 
 @dataclass(frozen=True)
@@ -41,8 +54,8 @@ def summarize_run(
     provider: Any,
     agent: SummaryAgent,
 ) -> str:
-    prompt = _summary_prompt(context, agent.prompt)
     try:
+        prompt = _summary_prompt(context, agent.prompt)
         with tempfile.TemporaryDirectory(prefix="echelon-summary-") as work_dir:
             metadata = {
                 **agent.metadata,
@@ -63,15 +76,10 @@ def summarize_run(
 
     if result.exit_code != 0 or result.timed_out:
         return _fallback_summary(context)
-    summary = _clean_summary(result.stdout)
-    if not summary:
+    bullets = _valid_summary_bullets(result.stdout, context)
+    if bullets is None:
         return _fallback_summary(context)
-    narrative_lines = summary.splitlines()
-    if context.quality_debt_status == "accepted_with_debt":
-        narrative_lines = _safe_debt_narrative_clauses(summary)
-        if not narrative_lines:
-            return _fallback_summary(context)
-    return _compose_summary(narrative_lines, context)
+    return _compose_summary(list(bullets), context)
 
 
 def summarize_run_for_cli(context: RunSummaryContext) -> str:
@@ -102,58 +110,257 @@ def summarize_run_for_cli(context: RunSummaryContext) -> str:
 
 
 def _summary_prompt(context: RunSummaryContext, agent_prompt: str) -> str:
-    payload = {
-        "command": context.command[:160],
-        "task": context.task[:1_000],
-        "status": context.status[:80],
-        "facts": [fact[:500] for fact in context.facts[:20]],
-        "next_step": context.next_step[:500],
-        "workspace": str(context.project_root),
-        "inspect_paths": [str(path) for path in context.inspect_paths[:8]],
-        "quality_debt_status": context.quality_debt_status[:80],
-        "quality_debt_artifact": context.quality_debt_artifact[:500],
-        "quality_debt_failed_gates": [
-            gate[:160] for gate in context.quality_debt_failed_gates[:8]
-        ],
-        "quality_debt_qualitative_issues": [
-            issue[:200]
-            for issue in context.quality_debt_qualitative_issues[:8]
-        ],
-        "quality_debt_resolved_by": context.quality_debt_resolved_by[:40],
-        "provider_limit_message": context.provider_limit_message[:500],
-    }
+    packet = _evidence_packet_json(context)
     return (
         f"{agent_prompt.strip()}\n\n"
-        "Use the following run context as your starting point. You may inspect the "
-        "listed workspace paths when useful. Return only the final human-readable "
-        "summary as three to seven short plain-text lines. Do not use bullets, a "
-        "heading, JSON, or Markdown fences. Do not claim verification you did not "
-        "observe. If quality_debt_status is accepted_with_debt, say accepted with "
-        "quality debt, name the resolver and most important residual gates or "
-        "SAGE findings, and "
-        "never call specification quality passed or fully certified. Keep any "
-        "provider-limit fact independently visible.\n\n"
-        f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
+        "Use only the evidence packet below. Return exactly one JSON object with "
+        "the sole key `bullets`; its value must contain two to four single-sentence "
+        "strings. Each string must end in punctuation, contain no Markdown, ANSI, "
+        "OSC, or control characters, and be at most 280 UTF-8 bytes. The strings "
+        "together must be at most 900 UTF-8 bytes. Do not repeat next_step: the "
+        "terminal banner owns that instruction. Do not contradict terminal status, "
+        "verification, provider-limit, or quality-debt evidence. Emit no prose or "
+        "fence outside the JSON object.\n\n"
+        f"<evidence_packet>{packet}</evidence_packet>"
     )
 
 
-def _clean_summary(raw: object) -> str:
-    raw_text = str(raw or "").strip()
-    if raw_text.startswith(("{", "[")):
+def _utf8_prefix(value: object, limit: int) -> str:
+    normalized = _CONTROL_RE.sub(" ", str(value or ""))
+    encoded = normalized.encode("utf-8", errors="replace")
+
+    def prefix(raw_limit: int) -> str:
+        return encoded[:raw_limit].decode("utf-8", errors="ignore")
+
+    def serialized_size(candidate: str) -> int:
+        return len(json.dumps(candidate, ensure_ascii=False).encode("utf-8")) - 2
+
+    if serialized_size(normalized) <= limit:
+        return normalized
+    low, high = 0, min(len(encoded), limit)
+    while low < high:
+        midpoint = (low + high + 1) // 2
+        if serialized_size(prefix(midpoint)) <= limit:
+            low = midpoint
+        else:
+            high = midpoint - 1
+    return prefix(low)
+
+
+def _compact_json(value: object) -> str:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _inspection_content(path: Path) -> str:
+    try:
+        if path.is_symlink():
+            return ""
+        if path.is_file():
+            with path.open("rb") as stream:
+                return stream.read(MAX_EVIDENCE_BYTES * 2).decode(
+                    "utf-8", errors="replace"
+                )
+        if not path.is_dir():
+            return ""
+        sections: list[str] = []
+        for child in sorted(path.rglob("*")):
+            if len(sections) >= 16:
+                break
+            if child.is_symlink() or not child.is_file():
+                continue
+            try:
+                relative = child.relative_to(path).as_posix()
+                with child.open("rb") as stream:
+                    content = stream.read(2_048).decode(
+                        "utf-8", errors="replace"
+                    )
+            except (OSError, ValueError):
+                continue
+            sections.append(f"--- {relative} ---\n{content}")
+        return "\n".join(sections)
+    except OSError:
         return ""
-    lines: list[str] = []
-    for raw_line in raw_text.splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("```"):
-            continue
-        if line.startswith(("- ", "* ", "• ")):
-            line = line[2:].strip()
-        if line:
-            lines.append(line[:280])
-        if len(lines) == 7:
+
+
+def _fits_packet(value: object, limit: int = MAX_EVIDENCE_BYTES) -> bool:
+    return len(_compact_json(value).encode("utf-8")) <= limit
+
+
+def _evidence_packet_json(context: RunSummaryContext) -> str:
+    root = Path(context.project_root).resolve()
+    payload: dict[str, object] = {
+        "schema_version": 1,
+        "command": _utf8_prefix(context.command, 256),
+        "task": _utf8_prefix(context.task, 1_024),
+        "status": _utf8_prefix(context.status, 128),
+        "next_step": _utf8_prefix(context.next_step, 512),
+        "workspace": _utf8_prefix(root, 1_024),
+        "facts": [],
+        "quality_debt_status": _utf8_prefix(
+            context.quality_debt_status, 128
+        ),
+        "quality_debt_artifact": _utf8_prefix(
+            context.quality_debt_artifact, 512
+        ),
+        "quality_debt_failed_gates": [
+            _utf8_prefix(gate, 160)
+            for gate in context.quality_debt_failed_gates[:8]
+        ],
+        "quality_debt_qualitative_issues": [
+            _utf8_prefix(issue, 240)
+            for issue in context.quality_debt_qualitative_issues[:4]
+        ],
+        "quality_debt_resolved_by": _utf8_prefix(
+            context.quality_debt_resolved_by, 80
+        ),
+        "provider_limit_message": _utf8_prefix(
+            context.provider_limit_message, 512
+        ),
+        "inspect": [],
+    }
+    facts = payload["facts"]
+    assert isinstance(facts, list)
+    for fact in context.facts[:20]:
+        facts.append(_utf8_prefix(fact, 500))
+        if not _fits_packet(payload, _EVIDENCE_CORE_BUDGET):
+            facts.pop()
             break
-    text = "\n".join(lines)
-    return text[:1_200].rstrip()
+
+    inspect = payload["inspect"]
+    assert isinstance(inspect, list)
+    for raw_path in context.inspect_paths[:8]:
+        path = Path(raw_path)
+        if not path.is_absolute():
+            path = root / path
+        absolute = Path(os.path.abspath(path))
+        record = {
+            "path": _utf8_prefix(absolute, 1_024),
+            "content": _inspection_content(absolute),
+        }
+        inspect.append(record)
+        if _fits_packet(payload):
+            continue
+        content = str(record["content"])
+        low, high = 0, len(content.encode("utf-8", errors="replace"))
+        while low < high:
+            midpoint = (low + high + 1) // 2
+            record["content"] = _utf8_prefix(content, midpoint)
+            if _fits_packet(payload):
+                low = midpoint
+            else:
+                high = midpoint - 1
+        record["content"] = _utf8_prefix(content, low)
+        if not _fits_packet(payload):
+            inspect.pop()
+            break
+    encoded = _compact_json(payload)
+    if len(encoded.encode("utf-8")) > MAX_EVIDENCE_BYTES:
+        raise ValueError("summary evidence packet exceeds its byte budget")
+    return encoded
+
+
+def _expected_verification(context: RunSummaryContext) -> str:
+    joined = " ".join(context.facts).casefold()
+    verdicts = {
+        verdict
+        for verdict in ("passed", "failed", "deferred", "skipped")
+        if re.search(rf"\bverif(?:y|ication)\b[^.\n]*\b{verdict}\b", joined)
+    }
+    return next(iter(verdicts)) if len(verdicts) == 1 else ""
+
+
+def _contradicts_terminal_truth(
+    bullets: tuple[str, ...],
+    context: RunSummaryContext,
+) -> bool:
+    joined = " ".join(bullets).casefold()
+    status = context.status.casefold().strip()
+    if status == "done" and re.search(
+        r"\b(?:run|delivery|spec(?:ification)?|work)\b.{0,40}"
+        r"\b(?:failed|blocked|incomplete|not complete|stopped)\b",
+        joined,
+    ):
+        return True
+    if status in {"blocked", "failed", "interrupted", "budget_exhausted"} and re.search(
+        r"\b(?:run|delivery|spec(?:ification)?|work)\b.{0,50}"
+        r"\b(?:completed successfully|converged|finished successfully|"
+        r"succeeded|is done)\b",
+        joined,
+    ):
+        return True
+    verification = _expected_verification(context)
+    if verification == "passed" and re.search(
+        r"\bverification\b.{0,30}\b(?:failed|did not pass)\b", joined
+    ):
+        return True
+    if verification in {"failed", "deferred", "skipped"} and re.search(
+        r"\bverification\b.{0,30}\bpassed\b", joined
+    ):
+        return True
+    provider_limited = bool(context.provider_limit_message.strip())
+    claims_limit = bool(
+        re.search(r"\b(?:provider|session|rate|usage)\s+limit\b", joined)
+    )
+    denies_limit = bool(
+        re.search(
+            r"\b(?:no|without)\b.{0,25}\b(?:provider|session|rate|usage)"
+            r"\s+limit\b|\bprovider\b.{0,25}\b(?:available|unlimited)\b",
+            joined,
+        )
+    )
+    if (provider_limited and denies_limit) or (not provider_limited and claims_limit):
+        return True
+    debt = context.quality_debt_status == "accepted_with_debt"
+    if debt and (
+        any(_asserts_specification_quality_success(line) for line in bullets)
+        or re.search(r"\b(?:no|without)\b.{0,25}\b(?:quality\s+)?debt\b", joined)
+    ):
+        return True
+    if not debt and re.search(r"\baccepted with (?:quality )?debt\b", joined):
+        return True
+    return False
+
+
+def _valid_summary_bullets(
+    raw: object,
+    context: RunSummaryContext,
+) -> tuple[str, ...] | None:
+    if type(raw) is not str:
+        return None
+    try:
+        payload = loads_strict_json(raw)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if type(payload) is not dict or set(payload) != {"bullets"}:
+        return None
+    bullets = payload.get("bullets")
+    if type(bullets) is not list or not 2 <= len(bullets) <= 4:
+        return None
+    normalized: list[str] = []
+    for value in bullets:
+        if type(value) is not str or _ANSI_RE.search(value) or _CONTROL_RE.search(value):
+            return None
+        bullet = value.strip()
+        if (
+            not bullet
+            or len(bullet.encode("utf-8")) > _MAX_MODEL_BULLET_BYTES
+            or bullet.startswith(("#", "- ", "* ", "• ", "```", "|"))
+            or bullet[-1:] not in {".", "!", "?"}
+            or re.search(r"[.!?][\"')\]]*\s+\S", bullet[:-1])
+        ):
+            return None
+        normalized.append(bullet)
+    if sum(len(item.encode("utf-8")) for item in normalized) > _MAX_MODEL_TOTAL_BYTES:
+        return None
+    result = tuple(normalized)
+    if _contradicts_terminal_truth(result, context):
+        return None
+    return result
 
 
 def _asserts_specification_quality_success(clause: str) -> bool:
@@ -248,96 +455,6 @@ def _is_work_action_clause(clause: str) -> bool:
     )
 
 
-def _independent_claim_segments(sentence: str) -> list[str]:
-    contrast_parts = re.split(
-        r"\s*,\s*(?=(?:while|but|although)\b)",
-        sentence,
-        flags=re.IGNORECASE,
-    )
-    segments: list[str] = []
-    for part in contrast_parts:
-        remaining = part.strip()
-        while remaining:
-            split = next(
-                (
-                    match
-                    for match in re.finditer(
-                        r"\s+and\s+",
-                        remaining,
-                        flags=re.IGNORECASE,
-                    )
-                    if _starts_verdict_like_claim(remaining[match.end() :])
-                ),
-                None,
-            )
-            if split is None:
-                segments.append(remaining)
-                break
-            left = remaining[: split.start()].strip()
-            if left:
-                segments.append(left)
-            remaining = remaining[split.end() :].strip()
-    return segments
-
-
-def _starts_verdict_like_claim(value: str) -> bool:
-    direct_verdict = re.match(
-        r"\s*(?:(?:the\s+)?spec(?:ification)?(?:\s+quality)?\b|quality\b|"
-        r"(?:all|every|no)\s+(?:spec(?:ification)?|requirements?|quality|"
-        r"gates?|checks?|standards?|criteria|criterion)\b|"
-        r"(?:it|they|this|that)\s+(?:(?:has|have|had|is|are|was|were)\s+)?"
-        r"(?:pass|succeed|compli|certif|clear|clean|satisf|meet|met|validat|"
-        r"approv|exceed|surpass|achiev|fulfill|conform|flawless|perfect|"
-        r"good|ready)|"
-        r"(?:pass|succeed|compli|certif|clear|resolv|eliminat|satisf|meet|"
-        r"met|validat|approv|exceed|surpass|achiev|fulfill|conform)\w*\b|"
-        r"(?:is|are|was|were)\s+(?:clean|certified|compliant|successful|"
-        r"complete|debt-free|flawless|perfect|good|ready)\b)",
-        value,
-        flags=re.IGNORECASE,
-    )
-    exhaustive_resolution = re.match(
-        r"\s*(?:fix(?:ed)?|resolv(?:e|ed)|eliminat(?:e|ed)|remov(?:e|ed)|"
-        r"address(?:ed)?|clear(?:ed)?|clos(?:e|ed))\b.{0,40}\b(?:all|every)\b"
-        r".{0,100}\b(?:spec(?:ification)?|requirements?|quality|gates?|"
-        r"checks?|issues?|defects?|deficiencies|concerns?|failures?|findings?|"
-        r"problems?|gaps?|debt)\b",
-        value,
-        flags=re.IGNORECASE | re.DOTALL,
-    )
-    return bool(direct_verdict or exhaustive_resolution)
-
-
-def _safe_debt_narrative_clauses(summary: str) -> list[str]:
-    """Drop only contradictory debt-mode clauses and retain safe narration."""
-    safe: list[str] = []
-    for line in summary.splitlines():
-        sentences = re.split(r"(?<=[.!?;])\s+", line.strip())
-        for sentence in sentences:
-            sentence = sentence.strip()
-            if not sentence:
-                continue
-            claims = _independent_claim_segments(sentence)
-            accepted = [
-                claim
-                for claim in claims
-                if not _asserts_specification_quality_success(claim)
-            ]
-            if len(accepted) == len(claims):
-                safe.append(sentence)
-                continue
-            for claim in accepted:
-                cleaned = re.sub(
-                    r"^(?:while|but|although|and)\s+",
-                    "",
-                    claim.rstrip(", "),
-                    flags=re.IGNORECASE,
-                )
-                if cleaned:
-                    safe.append(cleaned)
-    return safe
-
-
 def _normalized_truth_content(value: str) -> str:
     return " ".join(re.findall(r"[a-z0-9]+", value.casefold()))
 
@@ -385,6 +502,14 @@ def _duplicates_required_truth(line: str, context: RunSummaryContext) -> bool:
     return False
 
 
+def _duplicates_deterministic_next(line: str, context: RunSummaryContext) -> bool:
+    next_step = _normalized_truth_content(context.next_step)
+    if not next_step:
+        return False
+    normalized = _normalized_truth_content(line)
+    return normalized.startswith("next ") or next_step in normalized
+
+
 def _compose_summary(
     narrative_lines: list[str],
     context: RunSummaryContext,
@@ -396,7 +521,11 @@ def _compose_summary(
     required_text = "\n".join(required)
     for raw_line in narrative_lines:
         line = raw_line.strip()
-        if not line or _duplicates_required_truth(line, context):
+        if (
+            not line
+            or _duplicates_required_truth(line, context)
+            or _duplicates_deterministic_next(line, context)
+        ):
             continue
         if len(selected) >= line_limit:
             break
@@ -507,6 +636,4 @@ def _fallback_summary(context: RunSummaryContext) -> str:
     if stopped:
         stopped = stopped[stopped.lower().index("stopped:") + 8 :]
         lines.append(f"Stopped: {stopped.strip().rstrip('.')}.")
-    if context.next_step.strip():
-        lines.append(f"Next: {context.next_step.strip()}")
     return _compose_summary(lines, context)

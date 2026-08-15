@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
+import re
 import subprocess
 
 import pytest
@@ -564,6 +566,92 @@ def test_candidate_checkpoint_entries_pin_tree_identity_and_bytes(
         name: (digest, (spec_dir / name).read_bytes())
         for name, digest in candidate.owned_artifact_digests
     }
+
+
+def test_candidate_preflight_ignores_replace_refs_and_pins_executable_mode(
+    tmp_path: Path,
+) -> None:
+    repo, spec_dir, artifact_root, evidence = _candidate_repo(tmp_path)
+    executable = spec_dir / "spec.md"
+    executable.chmod(0o755)
+    candidate = capture_quality_candidate(
+        project_root=repo,
+        spec_dir=spec_dir,
+        run_artifact_root=artifact_root,
+        run_id="run-1",
+        spec_id="001-demo",
+        candidate_id="quality-candidate-0",
+        understanding_evidence=evidence,
+        normalized_gates={
+            "overall": {"score": 0.7, "threshold": 0.8, "pass": False},
+        },
+        sage_finding_routes=(),
+        formal_statement_count=2,
+        repair_number=0,
+        assessment_index=0,
+        eligibility_reasons=(),
+        repair_state=_repair_state(),
+    )
+    manifest_path = (
+        artifact_root / "quality-candidates" / "quality-candidate-0.json"
+    )
+    relative = executable.relative_to(repo).as_posix()
+    blob_oid = _git(repo, "rev-parse", f"{candidate.checkpoint_commit}:{relative}")
+    replacement_index = tmp_path / "replacement-index"
+    replacement_env = {**os.environ, "GIT_INDEX_FILE": str(replacement_index)}
+    subprocess.run(
+        ["git", "read-tree", candidate.checkpoint_commit],
+        cwd=repo,
+        env=replacement_env,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "update-index", "--cacheinfo", "100644", blob_oid, relative],
+        cwd=repo,
+        env=replacement_env,
+        check=True,
+        capture_output=True,
+    )
+    replacement_tree = subprocess.run(
+        ["git", "write-tree"],
+        cwd=repo,
+        env=replacement_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    original_commit = subprocess.run(
+        ["git", "cat-file", "commit", candidate.checkpoint_commit],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    ).stdout
+    replacement_commit = subprocess.run(
+        ["git", "hash-object", "-t", "commit", "-w", "--stdin"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        input=re.sub(
+            rb"\Atree [0-9a-f]+",
+            f"tree {replacement_tree}".encode("ascii"),
+            original_commit,
+        ),
+        text=False,
+    ).stdout.decode("ascii").strip()
+    _git(repo, "replace", candidate.checkpoint_commit, replacement_commit)
+
+    preflight = proportional_quality_module.preflight_quality_candidate_restore(
+        project_root=repo,
+        spec_dir=spec_dir,
+        manifest_path=manifest_path,
+        expected_candidate_id=candidate.candidate_id,
+        expected_manifest_sha256=hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+    )
+
+    assert {
+        entry.path: entry.mode for entry in preflight.entries
+    }["spec.md"] == "100755"
 
 
 def test_pre_candidate_repair_state_migrates_once_and_candidate_membership_is_strict() -> None:

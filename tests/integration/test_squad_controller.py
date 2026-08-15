@@ -7758,6 +7758,150 @@ class TestProportionalQualityController:
         ]
         assert len(restored) == 1
 
+    def test_restore_index_install_rejects_concurrent_unrelated_staging(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store, _current_text = _older_best_proportional_quality_loop(
+            tmp_path
+        )
+        unrelated = tmp_path / "concurrent-stage.txt"
+        staged_bytes = b"preserve this unrelated stage\n"
+        real_git = git_first_restore_module._git
+        real_fault = git_first_restore_module._restore_fault
+        injected = False
+
+        def stage_unrelated() -> None:
+            nonlocal injected
+            if injected:
+                return
+            injected = True
+            unrelated.write_bytes(staged_bytes)
+            subprocess.run(
+                ["git", "add", "--", unrelated.name],
+                cwd=tmp_path,
+                check=True,
+                capture_output=True,
+            )
+
+        def inject_at_safe_install(point: str) -> None:
+            if point == "before_index_install":
+                stage_unrelated()
+            real_fault(point)
+
+        def inject_at_legacy_install(
+            project_root: Path,
+            *args: str,
+            **kwargs: object,
+        ):
+            if args[:1] == ("read-tree",) and kwargs.get("env") is None:
+                stage_unrelated()
+            return real_git(project_root, *args, **kwargs)
+
+        monkeypatch.setattr(
+            git_first_restore_module,
+            "_restore_fault",
+            inject_at_safe_install,
+        )
+        monkeypatch.setattr(
+            git_first_restore_module,
+            "_git",
+            inject_at_legacy_install,
+        )
+
+        result = ctrl.run("preserve a concurrent staged path", "semi")
+
+        failed = store.load()
+        assert injected is True
+        assert result.status == "blocked"
+        assert failed[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == "quality"
+        assert failed["controller_completion_failure"]["code"] == (
+            "receipts_mismatch"
+        )
+        assert subprocess.run(
+            ["git", "show", f":{unrelated.name}"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        ).stdout == staged_bytes
+        ledger = json.loads(
+            (
+                tmp_path
+                / "runs/run-test/specs/001-demo/.echelon/checkpoints.json"
+            ).read_text(encoding="utf-8")
+        )
+        assert not any(
+            row["phase"] == "phase1-quality-candidate-restored"
+            for row in ledger["checkpoints"]
+        )
+
+    def test_pending_restore_retry_rejects_symlinked_active_index(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store, _current_text = _older_best_proportional_quality_loop(
+            tmp_path
+        )
+        real_materialize = (
+            quality_effects_module.materialize_quality_candidate_restore
+        )
+
+        def interrupt_before_restore(*_args: object, **_kwargs: object):
+            raise KeyboardInterrupt("interrupt before candidate restore")
+
+        monkeypatch.setattr(
+            quality_effects_module,
+            "materialize_quality_candidate_restore",
+            interrupt_before_restore,
+        )
+        with pytest.raises(KeyboardInterrupt, match="before candidate restore"):
+            ctrl.run("prepare a retry with active index drift", "semi")
+        monkeypatch.setattr(
+            quality_effects_module,
+            "materialize_quality_candidate_restore",
+            real_materialize,
+        )
+
+        index_output = subprocess.run(
+            ["git", "rev-parse", "--git-path", "index"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        index_path = Path(index_output)
+        if not index_path.is_absolute():
+            index_path = tmp_path / index_path
+        victim = tmp_path / "active-index-victim"
+        index_path.rename(victim)
+        victim_bytes = victim.read_bytes()
+        index_path.symlink_to(victim)
+
+        del ctrl
+        fresh, fresh_store = _controller(tmp_path)
+        result = fresh.run("retry without following active index", "semi")
+
+        failed = fresh_store.load()
+        assert result.status == "blocked"
+        assert failed[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == "quality"
+        assert failed["controller_completion_failure"]["code"] == (
+            "receipts_mismatch"
+        )
+        assert index_path.is_symlink()
+        assert victim.read_bytes() == victim_bytes
+        ledger = json.loads(
+            (
+                tmp_path
+                / "runs/run-test/specs/001-demo/.echelon/checkpoints.json"
+            ).read_text(encoding="utf-8")
+        )
+        assert not any(
+            row["phase"] == "phase1-quality-candidate-restored"
+            for row in ledger["checkpoints"]
+        )
+
     def test_restore_retry_preserves_unrelated_owned_artifact_drift(
         self,
         tmp_path: Path,

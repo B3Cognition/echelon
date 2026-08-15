@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import subprocess
+from typing import overload
 
 
 class GitHelperError(RuntimeError):
@@ -32,6 +34,82 @@ def run_git(
         raise GitHelperError(
             f"git {' '.join(args)} failed in {repo}\n"
             f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+        )
+    return result
+
+
+@overload
+def run_git_hardened(
+    repo: Path,
+    *args: str,
+    check: bool = True,
+    text: bool = True,
+) -> subprocess.CompletedProcess[str]: ...
+
+
+@overload
+def run_git_hardened(
+    repo: Path,
+    *args: str,
+    check: bool = True,
+    text: bool = False,
+) -> subprocess.CompletedProcess[bytes]: ...
+
+
+def run_git_hardened(
+    repo: Path,
+    *args: str,
+    check: bool = True,
+    text: bool = True,
+) -> subprocess.CompletedProcess[str] | subprocess.CompletedProcess[bytes]:
+    """Run an authority-sensitive Git read without ambient rewrites/config."""
+
+    process_env = os.environ.copy()
+    for name in (
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_COMMON_DIR",
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_NAMESPACE",
+    ):
+        process_env.pop(name, None)
+    process_env.update(
+        {
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_SYSTEM": os.devnull,
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_COUNT": "0",
+            "GIT_NO_REPLACE_OBJECTS": "1",
+            "GIT_OPTIONAL_LOCKS": "0",
+        }
+    )
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=repo,
+            env=process_env,
+            check=False,
+            capture_output=True,
+            text=text,
+            timeout=120,
+        )
+    except FileNotFoundError as exc:
+        raise GitHelperError("could not execute git: git is not available") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise GitHelperError(f"git {' '.join(args)} timed out in {repo}") from exc
+    if check and result.returncode != 0:
+        stdout = result.stdout
+        stderr = result.stderr
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode("utf-8", errors="replace")
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode("utf-8", errors="replace")
+        raise GitHelperError(
+            f"git {' '.join(args)} failed in {repo}\n"
+            f"STDOUT:\n{stdout}\nSTDERR:\n{stderr}"
         )
     return result
 
