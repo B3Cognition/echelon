@@ -24,8 +24,9 @@ from echelon.strict_json import loads_strict_json
 from harness.proportional_quality import (
     QualityCandidateManifest,
     QualityCandidateIntegrityError,
-    load_authoritative_sage_assessment,
+    load_authoritative_sage_evidence_snapshot,
     load_quality_candidate_manifest,
+    require_current_authoritative_sage_evidence_snapshot,
     validate_repair_state,
 )
 from harness.understanding_gate import has_current_understanding_evidence
@@ -401,17 +402,26 @@ def _verify_restored_candidate(
         raise QualityCandidateIntegrityError(
             "quality-debt candidate artifact contract is invalid"
         )
+    sage_snapshot = load_authoritative_sage_evidence_snapshot(
+        spec_dir / "issues.md",
+        project_root=root,
+    )
     for name, expected_digest in artifact_digests.items():
-        if not _SHA256_RE.fullmatch(expected_digest) or _sha256(
-            spec_dir / name
-        ) != expected_digest:
+        current_digest = (
+            sage_snapshot.sha256
+            if name == "issues.md"
+            else _sha256(spec_dir / name)
+        )
+        if (
+            not _SHA256_RE.fullmatch(expected_digest)
+            or current_digest != expected_digest
+        ):
             raise QualityCandidateIntegrityError(
                 f"quality-debt candidate artifact digest mismatch: {name}"
             )
 
-    sage_verdict, authoritative_issues = load_authoritative_sage_assessment(
-        spec_dir / "issues.md"
-    )
+    sage_verdict = sage_snapshot.verdict
+    authoritative_issues = sage_snapshot.issues
     if any(
         issue.get("severity") == "CRITICAL"
         or issue.get("type") == "contradiction"
@@ -452,6 +462,11 @@ def _verify_restored_candidate(
             raise QualityCandidateIntegrityError(
                 "quality-debt SAGE finding route is invalid"
             )
+    require_current_authoritative_sage_evidence_snapshot(
+        sage_snapshot,
+        spec_dir / "issues.md",
+        project_root=root,
+    )
 
     evidence_digest = _sha256(evidence_path)
     if evidence_digest != candidate.understanding_evidence_digest:

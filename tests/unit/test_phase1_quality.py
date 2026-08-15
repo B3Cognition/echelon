@@ -97,7 +97,7 @@ No issues found.
     return issues_path
 
 
-def _ordinary_assessment() -> object:
+def _ordinary_assessment(project_root: Path, issues_path: Path) -> object:
     return quality_module.AuthoritativeQualityAssessment(
         numeric_pass=True,
         provider_verdict="PASS",
@@ -107,6 +107,10 @@ def _ordinary_assessment() -> object:
         ordinary_pass=True,
         proportional_failure=False,
         hard_blockers=(),
+        sage_evidence=quality_module.load_authoritative_sage_evidence_snapshot(
+            issues_path,
+            project_root=project_root,
+        ),
     )
 
 
@@ -191,7 +195,10 @@ def test_schema_v2_certificate_binds_authoritative_sage_pass(
     certificate = build_phase1_quality_certificate(
         state,
         project_root=tmp_path,
-        authoritative_sage_assessment=_ordinary_assessment(),
+        authoritative_sage_assessment=_ordinary_assessment(
+            tmp_path,
+            issues_path,
+        ),
     )
 
     assert certificate is not None
@@ -214,7 +221,10 @@ def test_schema_v2_certificate_restart_currentness_rejects_sage_fail(
     certificate = build_phase1_quality_certificate(
         state,
         project_root=tmp_path,
-        authoritative_sage_assessment=_ordinary_assessment(),
+        authoritative_sage_assessment=_ordinary_assessment(
+            tmp_path,
+            issues_path,
+        ),
     )
     assert certificate is not None
     state["spec_quality_certificate"] = certificate
@@ -251,15 +261,57 @@ def test_schema_v2_certificate_restart_currentness_rejects_sage_fail(
     )
 
 
+def test_schema_v2_currentness_rejects_parse_hash_evidence_swap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state, spec_path, _report_path = _quality_state(tmp_path)
+    issues_path = _write_passing_sage_issues(spec_path)
+    certificate = build_phase1_quality_certificate(
+        state,
+        project_root=tmp_path,
+        authoritative_sage_assessment=_ordinary_assessment(
+            tmp_path,
+            issues_path,
+        ),
+    )
+    assert certificate is not None
+    state["spec_quality_certificate"] = certificate
+    certified_bytes = issues_path.read_bytes()
+    issues_path.write_bytes(certified_bytes + b"\n<!-- parsed snapshot -->\n")
+    replacement = issues_path.with_suffix(".replacement.md")
+    replacement.write_bytes(certified_bytes)
+    real_read_bytes = Path.read_bytes
+    issues_reads = 0
+
+    def swap_before_digest(path: Path) -> bytes:
+        nonlocal issues_reads
+        if path == issues_path:
+            issues_reads += 1
+            if issues_reads == 2:
+                replacement.replace(issues_path)
+        return real_read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", swap_before_digest)
+
+    assert not has_current_phase1_quality_certificate(
+        state,
+        project_root=tmp_path,
+    )
+
+
 def test_schema_v2_certificate_restart_currentness_rejects_unsafe_sage_path(
     tmp_path: Path,
 ) -> None:
     state, spec_path, _report_path = _quality_state(tmp_path)
-    _write_passing_sage_issues(spec_path)
+    issues_path = _write_passing_sage_issues(spec_path)
     certificate = build_phase1_quality_certificate(
         state,
         project_root=tmp_path,
-        authoritative_sage_assessment=_ordinary_assessment(),
+        authoritative_sage_assessment=_ordinary_assessment(
+            tmp_path,
+            issues_path,
+        ),
     )
     assert certificate is not None
     state["spec_quality_certificate"] = {

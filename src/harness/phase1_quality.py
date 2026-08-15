@@ -5,15 +5,16 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
 from harness.phase1_quality_debt import has_current_quality_debt_authorization
 from harness.proportional_quality import (
+    AuthoritativeSageEvidenceSnapshot,
     QualityCandidateIntegrityError,
-    load_authoritative_sage_assessment,
+    load_authoritative_sage_evidence_snapshot,
+    require_current_authoritative_sage_evidence_snapshot,
 )
 from harness.understanding_gate import has_current_understanding_evidence
 
@@ -33,6 +34,7 @@ class AuthoritativeQualityAssessment:
     ordinary_pass: bool
     proportional_failure: bool
     hard_blockers: tuple[str, ...]
+    sage_evidence: AuthoritativeSageEvidenceSnapshot | None = None
 
 
 def build_phase1_quality_certificate(
@@ -58,21 +60,34 @@ def build_phase1_quality_certificate(
     base = _passing_certificate_base(state, project_root=project_root)
     if base is None:
         return None
+    sage_snapshot = assessment.sage_evidence
+    if not isinstance(sage_snapshot, AuthoritativeSageEvidenceSnapshot):
+        return None
     issues_path = _authoritative_issues_path(state, project_root)
     if issues_path is None:
         return None
     try:
-        sage_verdict, issues = load_authoritative_sage_assessment(issues_path)
-        sage_digest = _sha256_regular(issues_path)
-    except (OSError, QualityCandidateIntegrityError):
+        require_current_authoritative_sage_evidence_snapshot(
+            sage_snapshot,
+            issues_path,
+            project_root=project_root,
+        )
+    except QualityCandidateIntegrityError:
         return None
-    if sage_verdict != "PASS" or issues:
+    if (
+        sage_snapshot.project_relative_path
+        != _relative_or_absolute(issues_path, project_root)
+        or sage_snapshot.verdict != "PASS"
+        or sage_snapshot.issues
+        or sage_snapshot.verdict != assessment.sage_verdict
+        or sage_snapshot.issues != assessment.authoritative_issues
+    ):
         return None
     return {
         "schema_version": SCHEMA_VERSION,
         **base,
-        "sage_evidence": _relative_or_absolute(issues_path, project_root),
-        "sage_evidence_sha256": sage_digest,
+        "sage_evidence": sage_snapshot.project_relative_path,
+        "sage_evidence_sha256": sage_snapshot.sha256,
         "sage_verdict": "PASS",
     }
 
@@ -165,12 +180,12 @@ def has_current_phase1_quality_certificate(
             project_root=project_root,
         )
     elif schema_version == SCHEMA_VERSION:
-        issues_path = _current_v2_sage_evidence(
+        sage_snapshot = _current_v2_sage_evidence(
             state,
             stored,
             project_root=project_root,
         )
-        if issues_path is None:
+        if sage_snapshot is None:
             return False
         current = build_phase1_quality_certificate(
             state,
@@ -184,6 +199,7 @@ def has_current_phase1_quality_certificate(
                 ordinary_pass=True,
                 proportional_failure=False,
                 hard_blockers=(),
+                sage_evidence=sage_snapshot,
             ),
         )
     else:
@@ -198,7 +214,7 @@ def _current_v2_sage_evidence(
     stored: Mapping[str, object],
     *,
     project_root: Path,
-) -> Path | None:
+) -> AuthoritativeSageEvidenceSnapshot | None:
     issues_path = _authoritative_issues_path(state, project_root)
     if issues_path is None:
         return None
@@ -216,13 +232,20 @@ def _current_v2_sage_evidence(
     ):
         return None
     try:
-        verdict, issues = load_authoritative_sage_assessment(issues_path)
-        digest = _sha256_regular(issues_path)
-    except (OSError, QualityCandidateIntegrityError):
+        snapshot = load_authoritative_sage_evidence_snapshot(
+            issues_path,
+            project_root=project_root,
+        )
+    except QualityCandidateIntegrityError:
         return None
-    if verdict != "PASS" or issues or digest != stored_digest:
+    if (
+        snapshot.project_relative_path != expected_ref
+        or snapshot.verdict != "PASS"
+        or snapshot.issues
+        or snapshot.sha256 != stored_digest
+    ):
         return None
-    return issues_path
+    return snapshot
 
 
 def has_current_phase1_quality_prerequisite(
@@ -261,10 +284,7 @@ def _authoritative_issues_path(
     issues_path = spec_path.parent.resolve() / "issues.md"
     try:
         issues_path.relative_to(root)
-        metadata = issues_path.lstat()
-    except (OSError, ValueError):
-        return None
-    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+    except ValueError:
         return None
     return issues_path
 
@@ -275,13 +295,6 @@ def _resolve(project_root: Path, value: str) -> Path:
 
 
 def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def _sha256_regular(path: Path) -> str:
-    metadata = path.lstat()
-    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
-        raise OSError("not a regular file")
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 

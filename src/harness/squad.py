@@ -86,7 +86,7 @@ from harness.proportional_quality import (
     QualityCandidateManifest,
     QualityCandidateSnapshot,
     candidate_artifact_preimage_digests,
-    load_authoritative_sage_assessment,
+    load_authoritative_sage_evidence_snapshot,
     initialize_repair_state,
     load_quality_candidate_manifest,
     load_quality_candidate_snapshot,
@@ -9180,9 +9180,12 @@ class SquadController:
             )
         numeric_pass = report["pass"] is True
         normalized_provider_verdict = str(provider_verdict or "").upper()
-        sage_verdict, authoritative_issues = load_authoritative_sage_assessment(
-            spec_dir / "issues.md"
+        sage_evidence = load_authoritative_sage_evidence_snapshot(
+            spec_dir / "issues.md",
+            project_root=self._project_root,
         )
+        sage_verdict = sage_evidence.verdict
+        authoritative_issues = sage_evidence.issues
         exact_routes = tuple(dict(route) for route in routes)
         hard_blockers: list[str] = []
 
@@ -9254,6 +9257,7 @@ class SquadController:
             ordinary_pass=ordinary_pass,
             proportional_failure=not ordinary_pass,
             hard_blockers=unique_blockers,
+            sage_evidence=sage_evidence,
         )
 
     def _authoritative_proportional_assessment(
@@ -9390,6 +9394,7 @@ class SquadController:
                 authoritative_issues,
             ),
             repair_state=repair,
+            authoritative_sage_evidence=assessment.sage_evidence,
         )
         previous_evidence = state.get(
             "proportional_quality_candidate_evidence"

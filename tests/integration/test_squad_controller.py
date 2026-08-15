@@ -7112,6 +7112,97 @@ def _proportional_history_then_unchanged_what(
 
 
 class TestProportionalQualityController:
+    def test_replaced_sage_evidence_between_assessment_and_candidate_fails_closed(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store = _start_proportional_quality_loop(tmp_path)
+        updates, result = _proportional_assessment_fixture(ctrl, store, 0)
+        state = store.load()
+        state.update(updates)
+        store.save(state)
+        issues_path = tmp_path / "runs/run-test/specs/001-demo/issues.md"
+        replacement = issues_path.with_suffix(".replacement.md")
+        replacement.write_bytes(
+            issues_path.read_bytes() + b"\n<!-- replaced -->\n"
+        )
+        real_prepare = squad_module.prepare_quality_candidate
+
+        def replace_before_candidate_preparation(*args, **kwargs):
+            replacement.replace(issues_path)
+            return real_prepare(*args, **kwargs)
+
+        monkeypatch.setattr(
+            squad_module,
+            "prepare_quality_candidate",
+            replace_before_candidate_preparation,
+        )
+
+        route = _coordinate_prepared_result(
+            ctrl,
+            ctrl._graph.get("phase1-why2"),
+            result,
+        )
+
+        persisted = store.load()
+        assert route == "terminal-blocked"
+        assert persisted["blocked_reason"] == (
+            "proportional_quality_candidate_integrity_failed"
+        )
+        assert persisted["phase1_quality_repair"]["candidate_ids"] == []
+
+    def test_replaced_sage_evidence_between_assessment_and_certificate_fails_closed(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store = _start_proportional_quality_loop(tmp_path)
+        updates, result = _proportional_assessment_fixture(ctrl, store, 0)
+        _make_proportional_assessment_numerically_passing(updates)
+        _make_authoritative_sage_assessment_passing(ctrl)
+        result.echelon_result["verdict"] = "PASS"
+        result.echelon_result["state_updates"]["finding_routes"] = {
+            "findings": []
+        }
+        state = store.load()
+        state.update(updates)
+        store.save(state)
+        issues_path = tmp_path / "runs/run-test/specs/001-demo/issues.md"
+        replacement = issues_path.with_suffix(".replacement.md")
+        replacement.write_bytes(
+            issues_path.read_bytes() + b"\n<!-- replaced -->\n"
+        )
+        real_capture = ctrl._capture_proportional_quality_candidate
+
+        def capture_then_replace(*args, **kwargs):
+            captured = real_capture(*args, **kwargs)
+            replacement.replace(issues_path)
+            return captured
+
+        monkeypatch.setattr(
+            ctrl,
+            "_capture_proportional_quality_candidate",
+            capture_then_replace,
+        )
+
+        node = ctrl._graph.get("phase1-why2")
+        snapshot = ctrl._state_store.capture_routing_snapshot(
+            expected_phase=node.id
+        )
+        route, routing_updates, _request = ctrl._coordinate_why_transition_state(
+            node,
+            ctrl._prepare_phase_result(node, result, snapshot),
+            snapshot,
+        )
+
+        assert route == "terminal-blocked"
+        assert routing_updates["blocked_reason"] == (
+            "spec_quality_certificate_unavailable"
+        )
+        assert "spec_quality_certificate" not in routing_updates
+        assert store.load()["phase1_quality_repair"]["candidate_ids"] == []
+
     def test_numeric_and_provider_pass_cannot_certify_sage_fail(
         self,
         tmp_path: Path,

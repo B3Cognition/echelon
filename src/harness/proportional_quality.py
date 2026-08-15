@@ -13,6 +13,7 @@ import re
 import secrets
 import stat
 import subprocess
+from types import MappingProxyType
 from typing import Mapping, MutableMapping, Sequence
 
 from echelon.git_helpers import GitHelperError, run_git
@@ -70,6 +71,18 @@ class RepairOutcome:
 
 class QualityCandidateIntegrityError(RuntimeError):
     """Raised when candidate evidence or restoration cannot be trusted."""
+
+
+@dataclass(frozen=True)
+class AuthoritativeSageEvidenceSnapshot:
+    """One parsed SAGE artifact and the digest of those exact pinned bytes."""
+
+    project_relative_path: str
+    content: bytes = field(repr=False)
+    sha256: str
+    verdict: str
+    issues: tuple[Mapping[str, object], ...]
+    file_identity: tuple[object, ...]
 
 
 @dataclass(frozen=True)
@@ -166,15 +179,147 @@ def load_authoritative_sage_assessment(
 ) -> tuple[str, tuple[dict[str, str], ...]]:
     """Parse the required current WHY2 issues artifact or fail closed."""
     issue_path = Path(path)
+    authority_root = (
+        issue_path.parent.resolve()
+        if issue_path.is_absolute()
+        else Path.cwd().resolve()
+    )
+    snapshot = load_authoritative_sage_evidence_snapshot(
+        issue_path,
+        project_root=authority_root,
+    )
+    return snapshot.verdict, tuple(dict(issue) for issue in snapshot.issues)
+
+
+def load_authoritative_sage_evidence_snapshot(
+    path: Path,
+    *,
+    project_root: Path,
+) -> AuthoritativeSageEvidenceSnapshot:
+    """Read, digest, and parse one no-follow regular SAGE evidence snapshot."""
+    issue_path, relative_path = _safe_authoritative_sage_path(
+        path,
+        project_root=project_root,
+    )
+    parent_descriptor: int | None = None
     try:
-        metadata = issue_path.lstat()
-        content = issue_path.read_bytes()
-        text = content.decode("utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
+        parent_descriptor = _open_pinned_candidate_directory(issue_path.parent)
+        pinned = _candidate_entry_snapshot(parent_descriptor, issue_path.name)
+        if pinned is None:
+            raise OSError("authoritative SAGE issues are missing")
+        digest, content, identity, _mode = pinned
+        verdict, issues = _parse_authoritative_sage_assessment_bytes(content)
+    except QualityCandidateIntegrityError:
+        raise
+    except (OSError, ValueError) as exc:
         raise QualityCandidateIntegrityError(
             "authoritative SAGE issues are missing or malformed"
         ) from exc
-    if not stat.S_ISREG(metadata.st_mode) or not text.strip():
+    finally:
+        if parent_descriptor is not None:
+            os.close(parent_descriptor)
+    return AuthoritativeSageEvidenceSnapshot(
+        project_relative_path=relative_path,
+        content=content,
+        sha256=digest,
+        verdict=verdict,
+        issues=tuple(MappingProxyType(dict(issue)) for issue in issues),
+        file_identity=identity,
+    )
+
+
+def require_current_authoritative_sage_evidence_snapshot(
+    snapshot: AuthoritativeSageEvidenceSnapshot,
+    path: Path,
+    *,
+    project_root: Path,
+) -> None:
+    """Fail when a pinned SAGE entry no longer names the captured file."""
+    if not isinstance(snapshot, AuthoritativeSageEvidenceSnapshot):
+        raise QualityCandidateIntegrityError(
+            "authoritative SAGE evidence snapshot is invalid"
+        )
+    parsed_verdict, parsed_issues = _parse_authoritative_sage_assessment_bytes(
+        snapshot.content
+    )
+    if (
+        hashlib.sha256(snapshot.content).hexdigest() != snapshot.sha256
+        or parsed_verdict != snapshot.verdict
+        or tuple(parsed_issues) != snapshot.issues
+    ):
+        raise QualityCandidateIntegrityError(
+            "authoritative SAGE evidence snapshot is contradictory"
+        )
+    issue_path, relative_path = _safe_authoritative_sage_path(
+        path,
+        project_root=project_root,
+    )
+    if relative_path != snapshot.project_relative_path:
+        raise QualityCandidateIntegrityError(
+            "authoritative SAGE evidence path changed"
+        )
+    parent_descriptor: int | None = None
+    try:
+        parent_descriptor = _open_pinned_candidate_directory(issue_path.parent)
+        metadata = os.stat(
+            issue_path.name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        if (
+            stat.S_ISLNK(metadata.st_mode)
+            or not stat.S_ISREG(metadata.st_mode)
+            or _candidate_file_identity(metadata) != snapshot.file_identity
+        ):
+            raise OSError("authoritative SAGE evidence changed")
+    except OSError as exc:
+        raise QualityCandidateIntegrityError(
+            "authoritative SAGE evidence changed after assessment"
+        ) from exc
+    finally:
+        if parent_descriptor is not None:
+            os.close(parent_descriptor)
+
+
+def _safe_authoritative_sage_path(
+    path: Path,
+    *,
+    project_root: Path,
+) -> tuple[Path, str]:
+    root = Path(project_root).resolve()
+    requested = Path(path)
+    if not requested.is_absolute():
+        requested = root / requested
+    try:
+        parent = requested.parent.resolve(strict=True)
+        issue_path = parent / requested.name
+        relative = issue_path.relative_to(root)
+    except (OSError, ValueError) as exc:
+        raise QualityCandidateIntegrityError(
+            "authoritative SAGE evidence path is unsafe"
+        ) from exc
+    relative_path = relative.as_posix()
+    if (
+        not relative_path
+        or relative.is_absolute()
+        or any(part == ".." for part in relative.parts)
+    ):
+        raise QualityCandidateIntegrityError(
+            "authoritative SAGE evidence path is unsafe"
+        )
+    return issue_path, relative_path
+
+
+def _parse_authoritative_sage_assessment_bytes(
+    content: bytes,
+) -> tuple[str, tuple[dict[str, str], ...]]:
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise QualityCandidateIntegrityError(
+            "authoritative SAGE issues are missing or malformed"
+        ) from exc
+    if not text.strip():
         raise QualityCandidateIntegrityError(
             "authoritative SAGE issues are missing or malformed"
         )
@@ -676,6 +821,7 @@ def prepare_quality_candidate(
     assessment_index: int,
     eligibility_reasons: Sequence[str],
     repair_state: MutableMapping[str, object],
+    authoritative_sage_evidence: AuthoritativeSageEvidenceSnapshot | None = None,
 ) -> QualityCandidateManifest:
     """Validate and describe one WHY2 candidate without external effects."""
     if not _is_candidate_id(candidate_id):
@@ -718,8 +864,27 @@ def prepare_quality_candidate(
     )
     digests: list[tuple[str, str]] = []
     contents: dict[str, bytes] = {}
+    sage_snapshot = authoritative_sage_evidence
     for name in artifact_names:
         path = resolved_spec / name
+        if name == "issues.md" and sage_snapshot is not None:
+            require_current_authoritative_sage_evidence_snapshot(
+                sage_snapshot,
+                path,
+                project_root=root,
+            )
+            content = sage_snapshot.content
+            try:
+                text = content.decode("utf-8")
+                if not text.strip():
+                    raise ValueError("empty Markdown")
+            except (UnicodeDecodeError, ValueError) as exc:
+                raise QualityCandidateIntegrityError(
+                    "candidate artifact is malformed: issues.md"
+                ) from exc
+            contents[name] = content
+            digests.append((name, sage_snapshot.sha256))
+            continue
         try:
             metadata = path.lstat()
         except FileNotFoundError:
@@ -1557,18 +1722,7 @@ def _candidate_entry_snapshot(
     )
     try:
         opened = os.fstat(descriptor)
-        token = (
-            stat.S_IFMT(opened.st_mode),
-            opened.st_mode,
-            opened.st_dev,
-            opened.st_ino,
-            opened.st_nlink,
-            opened.st_size,
-            opened.st_mtime_ns,
-            opened.st_ctime_ns,
-            getattr(opened, "st_flags", None),
-            getattr(opened, "st_gen", None),
-        )
+        token = _candidate_file_identity(opened)
         if (
             not stat.S_ISREG(opened.st_mode)
             or (opened.st_dev, opened.st_ino, opened.st_size)
@@ -1585,35 +1739,13 @@ def _candidate_entry_snapshot(
             remaining -= len(chunk)
         content = b"".join(chunks)
         after = os.fstat(descriptor)
-        after_token = (
-            stat.S_IFMT(after.st_mode),
-            after.st_mode,
-            after.st_dev,
-            after.st_ino,
-            after.st_nlink,
-            after.st_size,
-            after.st_mtime_ns,
-            after.st_ctime_ns,
-            getattr(after, "st_flags", None),
-            getattr(after, "st_gen", None),
-        )
+        after_token = _candidate_file_identity(after)
         current = os.stat(
             name,
             dir_fd=directory_fd,
             follow_symlinks=False,
         )
-        current_token = (
-            stat.S_IFMT(current.st_mode),
-            current.st_mode,
-            current.st_dev,
-            current.st_ino,
-            current.st_nlink,
-            current.st_size,
-            current.st_mtime_ns,
-            current.st_ctime_ns,
-            getattr(current, "st_flags", None),
-            getattr(current, "st_gen", None),
-        )
+        current_token = _candidate_file_identity(current)
         if after_token != token or current_token != token:
             raise OSError("candidate restore entry changed while reading")
         return (
@@ -1624,6 +1756,21 @@ def _candidate_entry_snapshot(
         )
     finally:
         os.close(descriptor)
+
+
+def _candidate_file_identity(metadata: os.stat_result) -> tuple[object, ...]:
+    return (
+        stat.S_IFMT(metadata.st_mode),
+        metadata.st_mode,
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_nlink,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+        getattr(metadata, "st_flags", None),
+        getattr(metadata, "st_gen", None),
+    )
 
 
 def _legacy_restore_authority_present(
