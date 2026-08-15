@@ -343,11 +343,11 @@ def _clean_git_commit(source: Path) -> str | None:
 
 
 def _submodule_identities(source: Path) -> list[dict[str, str]]:
+    identities = _top_level_gitlinks(source)
     output = run_git([
         "-C", str(source), "submodule", "foreach", "--quiet", "--recursive",
-        "printf '%s\\0%s\\0' \"$sm_path\" \"$(git rev-parse HEAD^{commit})\"",
+        "printf '%s\\0%s\\0' \"$displaypath\" \"$sha1\"",
     ])
-    identities: list[dict[str, str]] = []
     fields = output.split("\0")
     if fields and fields[-1] == "":
         fields.pop()
@@ -356,8 +356,30 @@ def _submodule_identities(source: Path) -> list[dict[str, str]]:
     for path, commit in zip(fields[::2], fields[1::2], strict=True):
         if not path or len(commit) != 40:
             raise ReV2SnapshotError("invalid recursive submodule identity output")
-        identities.append({"commit": commit, "path": path})
-    return sorted(identities, key=lambda item: item["path"])
+        _record_submodule_identity(identities, path, commit)
+    return [{"commit": identities[path], "path": path} for path in sorted(identities)]
+
+
+def _top_level_gitlinks(source: Path) -> dict[str, str]:
+    output = run_git(["-C", str(source), "ls-files", "--stage", "-z"])
+    identities: dict[str, str] = {}
+    for record in output.split("\0"):
+        if not record or "\t" not in record:
+            continue
+        metadata, path = record.split("\t", 1)
+        mode, commit, _stage = metadata.split()
+        if mode == "160000":
+            _record_submodule_identity(identities, path, commit)
+    return identities
+
+
+def _record_submodule_identity(identities: dict[str, str], path: str, commit: str) -> None:
+    if not path or len(commit) != 40:
+        raise ReV2SnapshotError("invalid recursive submodule identity output")
+    prior = identities.get(path)
+    if prior is not None and prior != commit:
+        raise ReV2SnapshotError(f"conflicting submodule identity: {path}")
+    identities[path] = commit
 
 
 def _manifest_from_json(value: object) -> SnapshotManifest:

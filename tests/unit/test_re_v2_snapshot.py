@@ -282,6 +282,46 @@ def test_recursive_submodule_identities_include_nested_paths(
 
 
 @pytest.mark.unit
+def test_submodule_identities_include_uninitialized_and_root_relative_nested_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+
+    def fake_git(args: list[str]) -> str:
+        if args[-3:] == ["ls-files", "--stage", "-z"]:
+            return (
+                "160000 " + "b" * 40 + " 0\tmodules/uninitialized folder\0"
+                + "160000 " + "c" * 40 + " 0\tmodules/outer\0"
+            )
+        if "foreach" in args:
+            # Git's $sm_path would be "nested folder" here; $displaypath is root-relative.
+            return "modules/outer\0" + "c" * 40 + "\0modules/outer/nested folder\0" + "d" * 40 + "\0"
+        if args[-2:] == ["rev-parse", "--show-toplevel"]:
+            return str(source) + "\n"
+        if args[-2:] == ["rev-parse", "HEAD^{commit}"]:
+            return "a" * 40 + "\n"
+        if args[-1:] == ["--ignore-submodules=none"]:
+            return ""
+        if "add" in args:
+            worktree = Path(args[-2])
+            worktree.mkdir(parents=True)
+            (worktree / "api.py").write_text("VALUE = 1\n", encoding="utf-8")
+        if "move" in args:
+            Path(args[-2]).rename(Path(args[-1]))
+        return ""
+
+    monkeypatch.setattr("harness.re_v2.snapshot.run_git", fake_git)
+    captured = capture_source_snapshot(source, tmp_path / "snapshots", exclusions=())
+    manifest = json.loads(captured.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["git"]["submodules"] == [
+        {"commit": "c" * 40, "path": "modules/outer"},
+        {"commit": "d" * 40, "path": "modules/outer/nested folder"},
+        {"commit": "b" * 40, "path": "modules/uninitialized folder"},
+    ]
+
+
+@pytest.mark.unit
 def test_git_subdirectory_and_dirty_submodule_use_copied_snapshot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
