@@ -4276,9 +4276,17 @@ def test_qualitative_only_failure_never_vacuously_recommends_extension() -> None
         option_contract=policy.options,
     )
 
+    assert [option.id for option in request.options] == [
+        "extend_once",
+        "continue_with_debt",
+        "stop",
+    ]
     assert [option.id for option in request.options if option.recommended] == [
         "continue_with_debt"
     ]
+    assert next(
+        option for option in request.options if option.id == "continue_with_debt"
+    ).risk_level == "high"
 
 
 def test_proportional_budget_policy_cannot_be_prepared_after_extension_authorization(

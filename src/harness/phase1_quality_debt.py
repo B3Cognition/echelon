@@ -107,6 +107,10 @@ _RESOLUTION_COMPLETION_KEYS = frozenset(
 )
 
 
+class QualityDebtIntegrityError(QualityCandidateIntegrityError):
+    """Raised when an explicit debt record has no residual quality failure."""
+
+
 def _canonical_json(value: object, *, newline: bool = True) -> bytes:
     try:
         encoded = json.dumps(
@@ -419,10 +423,15 @@ def _verify_restored_candidate(
     issues_by_id = {
         issue["issue_id"]: issue for issue in authoritative_issues
     }
-    if set(issues_by_id) != {
+    route_issue_ids = [
         str(route.get("issue_id") or "")
         for route in candidate.sage_finding_routes
-    }:
+    ]
+    if (
+        len(route_issue_ids) != len(issues_by_id)
+        or len(set(route_issue_ids)) != len(route_issue_ids)
+        or set(issues_by_id) != set(route_issue_ids)
+    ):
         raise QualityCandidateIntegrityError(
             "quality-debt SAGE findings changed"
         )
@@ -506,8 +515,8 @@ def _failed_gates(
         if not passed
     ]
     if not failed and not candidate.sage_finding_routes:
-        raise QualityCandidateIntegrityError(
-            "passing candidates cannot create quality debt"
+        raise QualityDebtIntegrityError(
+            "quality debt has no residual failure"
         )
     return failed
 
@@ -1273,9 +1282,13 @@ def _current_quality_debt_authorization(
     qualitative = authorization.get("qualitative_debt")
     if not isinstance(qualitative, list) or any(
         not isinstance(item, Mapping) for item in qualitative
-    ) or (not failed_gates and not qualitative):
+    ):
         raise QualityCandidateIntegrityError(
             "quality-debt qualitative evidence is invalid"
+        )
+    if not failed_gates and not qualitative:
+        raise QualityDebtIntegrityError(
+            "quality debt has no residual failure"
         )
 
     candidate = load_quality_candidate_manifest(manifest_path)

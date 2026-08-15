@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+import harness.phase1_quality as quality_module
 from harness.phase1_quality import (
     build_phase1_quality_certificate,
     has_current_phase1_quality_certificate,
@@ -75,15 +76,68 @@ def _quality_state(tmp_path: Path) -> tuple[dict[str, object], Path, Path]:
     return state, spec_path, report_path
 
 
+def _write_passing_sage_issues(spec_path: Path) -> Path:
+    issues_path = spec_path.parent / "issues.md"
+    issues_path.write_text(
+        """# Issues — WHY2
+
+## Summary
+- **CRITICAL:** 0
+- **HIGH:** 0
+- **MEDIUM:** 0
+- **LOW:** 0
+- **Verdict:** PASS
+
+## Issues
+
+No issues found.
+""",
+        encoding="utf-8",
+    )
+    return issues_path
+
+
+def _ordinary_assessment() -> object:
+    return quality_module.AuthoritativeQualityAssessment(
+        numeric_pass=True,
+        provider_verdict="PASS",
+        sage_verdict="PASS",
+        authoritative_issues=(),
+        exact_routes=(),
+        ordinary_pass=True,
+        proportional_failure=False,
+        hard_blockers=(),
+    )
+
+
+def _legacy_certificate(
+    state: dict[str, object],
+    *,
+    project_root: Path,
+) -> dict[str, object]:
+    spec_path = project_root / str(state["spec_dir"]) / "spec.md"
+    evidence = state["understanding_evidence"]
+    assert isinstance(evidence, dict)
+    report_path = Path(str(evidence["path"]))
+    return {
+        "schema_version": 1,
+        "status": "passed",
+        "source_path": spec_path.relative_to(project_root).as_posix(),
+        "source_sha256": _sha256(spec_path),
+        "understanding_evidence": report_path.relative_to(
+            project_root
+        ).as_posix(),
+        "understanding_evidence_sha256": str(evidence["digest"]),
+        "sage_phase": "phase1-why2",
+    }
+
+
 def test_phase1_quality_certificate_is_bound_to_current_spec_and_evidence(
     tmp_path: Path,
 ) -> None:
     state, spec_path, _report_path = _quality_state(tmp_path)
 
-    certificate = build_phase1_quality_certificate(
-        state,
-        project_root=tmp_path,
-    )
+    certificate = _legacy_certificate(state, project_root=tmp_path)
 
     assert certificate is not None
     state["spec_quality_certificate"] = certificate
@@ -104,11 +158,7 @@ def test_phase1_quality_certificate_rejects_tampered_understanding_evidence(
     tmp_path: Path,
 ) -> None:
     state, _spec_path, report_path = _quality_state(tmp_path)
-    certificate = build_phase1_quality_certificate(
-        state,
-        project_root=tmp_path,
-    )
-    assert certificate is not None
+    certificate = _legacy_certificate(state, project_root=tmp_path)
     state["spec_quality_certificate"] = certificate
 
     report_path.write_text("{}")
@@ -124,13 +174,99 @@ def test_phase1_quality_certificate_requires_passing_why2_completion(
 ) -> None:
     state, _spec_path, _report_path = _quality_state(tmp_path)
     state["completed_phases"] = ["phase1-understanding"]
-    certificate = build_phase1_quality_certificate(
+    certificate = _legacy_certificate(state, project_root=tmp_path)
+    state["spec_quality_certificate"] = certificate
+    assert not has_current_phase1_quality_certificate(
         state,
         project_root=tmp_path,
     )
 
+
+def test_schema_v2_certificate_binds_authoritative_sage_pass(
+    tmp_path: Path,
+) -> None:
+    state, spec_path, _report_path = _quality_state(tmp_path)
+    issues_path = _write_passing_sage_issues(spec_path)
+
+    certificate = build_phase1_quality_certificate(
+        state,
+        project_root=tmp_path,
+        authoritative_sage_assessment=_ordinary_assessment(),
+    )
+
+    assert certificate is not None
+    assert certificate["schema_version"] == 2
+    assert certificate["sage_evidence"] == "specs/001-demo/issues.md"
+    assert certificate["sage_evidence_sha256"] == _sha256(issues_path)
+    assert certificate["sage_verdict"] == "PASS"
+    state["spec_quality_certificate"] = certificate
+    assert has_current_phase1_quality_certificate(
+        state,
+        project_root=tmp_path,
+    )
+
+
+def test_schema_v2_certificate_restart_currentness_rejects_sage_fail(
+    tmp_path: Path,
+) -> None:
+    state, spec_path, _report_path = _quality_state(tmp_path)
+    issues_path = _write_passing_sage_issues(spec_path)
+    certificate = build_phase1_quality_certificate(
+        state,
+        project_root=tmp_path,
+        authoritative_sage_assessment=_ordinary_assessment(),
+    )
     assert certificate is not None
     state["spec_quality_certificate"] = certificate
+
+    issues_path.write_text(
+        """# Issues — WHY2
+
+## Summary
+- **CRITICAL:** 0
+- **HIGH:** 0
+- **MEDIUM:** 0
+- **LOW:** 1
+- **Verdict:** FAIL
+
+## Issues
+
+### ISS-QUALITY: Residual issue
+- **Severity:** LOW
+- **Type:** incompleteness
+- **Description:** A required case remains incomplete.
+- **Affected artifact:** spec.md
+- **Affected section:** Requirements
+- **Evidence:** The authoritative SAGE assessment records the gap.
+- **Recommendation:** Complete the requirement.
+- **Responsible agent:** WHAT
+- **Action Required:** Amend the specification.
+""",
+        encoding="utf-8",
+    )
+
+    assert not has_current_phase1_quality_certificate(
+        state,
+        project_root=tmp_path,
+    )
+
+
+def test_schema_v2_certificate_restart_currentness_rejects_unsafe_sage_path(
+    tmp_path: Path,
+) -> None:
+    state, spec_path, _report_path = _quality_state(tmp_path)
+    _write_passing_sage_issues(spec_path)
+    certificate = build_phase1_quality_certificate(
+        state,
+        project_root=tmp_path,
+        authoritative_sage_assessment=_ordinary_assessment(),
+    )
+    assert certificate is not None
+    state["spec_quality_certificate"] = {
+        **certificate,
+        "sage_evidence": "../issues.md",
+    }
+
     assert not has_current_phase1_quality_certificate(
         state,
         project_root=tmp_path,

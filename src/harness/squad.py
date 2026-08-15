@@ -76,6 +76,7 @@ from harness.phase_a_readiness import (
 )
 from harness.phase_checkpoints import create_phase_checkpoint
 from harness.phase1_quality import (
+    AuthoritativeQualityAssessment,
     build_phase1_quality_certificate,
     has_current_phase1_quality_prerequisite,
 )
@@ -9118,10 +9119,10 @@ class SquadController:
         return spec_dir
 
     @staticmethod
-    def _proportional_finding_routes(
-        prepared: PreparedPhaseResult,
+    def _finding_routes_from_updates(
+        state_updates: Mapping[str, object],
     ) -> tuple[Mapping[str, object], ...]:
-        finding_routes = prepared.state_updates.get("finding_routes")
+        finding_routes = state_updates.get("finding_routes")
         findings = (
             finding_routes.get("findings")
             if isinstance(finding_routes, Mapping)
@@ -9133,6 +9134,139 @@ class SquadController:
             dict(finding)
             for finding in findings
             if isinstance(finding, Mapping)
+        )
+
+    @classmethod
+    def _proportional_finding_routes(
+        cls,
+        prepared: PreparedPhaseResult,
+    ) -> tuple[Mapping[str, object], ...]:
+        return cls._finding_routes_from_updates(prepared.state_updates)
+
+    def _authoritative_quality_assessment(
+        self,
+        *,
+        provider_verdict: str,
+        eval_state: Mapping[str, object],
+        routes: tuple[Mapping[str, object], ...],
+        spec_dir: Path,
+    ) -> AuthoritativeQualityAssessment:
+        if not has_current_understanding_evidence(
+            eval_state,
+            project_root=self._project_root,
+            phase="phase1-why2",
+        ):
+            raise QualityCandidateIntegrityError(
+                "authoritative Understanding evidence is unavailable"
+            )
+        evidence = eval_state.get("understanding_evidence")
+        if not isinstance(evidence, Mapping):
+            raise QualityCandidateIntegrityError(
+                "authoritative Understanding evidence is missing"
+            )
+        evidence_ref = str(evidence.get("path") or "").strip()
+        evidence_path = Path(evidence_ref)
+        if not evidence_path.is_absolute():
+            evidence_path = self._project_root / evidence_path
+        try:
+            report = json.loads(evidence_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise QualityCandidateIntegrityError(
+                "authoritative Understanding evidence is malformed"
+            ) from exc
+        if not isinstance(report, Mapping) or type(report.get("pass")) is not bool:
+            raise QualityCandidateIntegrityError(
+                "authoritative Understanding verdict is malformed"
+            )
+        numeric_pass = report["pass"] is True
+        normalized_provider_verdict = str(provider_verdict or "").upper()
+        sage_verdict, authoritative_issues = load_authoritative_sage_assessment(
+            spec_dir / "issues.md"
+        )
+        exact_routes = tuple(dict(route) for route in routes)
+        hard_blockers: list[str] = []
+
+        if sage_verdict == "PASS" and authoritative_issues:
+            hard_blockers.append("sage_pass_with_issues")
+        if sage_verdict == "FAIL" and not authoritative_issues:
+            hard_blockers.append("sage_fail_without_issues")
+        if (
+            normalized_provider_verdict in {"PASS", "FAIL"}
+            and normalized_provider_verdict != sage_verdict
+        ):
+            hard_blockers.append("provider_sage_mismatch")
+        if normalized_provider_verdict not in {"PASS", "FAIL"}:
+            hard_blockers.append("provider_quality_verdict_invalid")
+        if numeric_pass is False and normalized_provider_verdict == "PASS":
+            hard_blockers.append("numeric_provider_mismatch")
+
+        issue_ids = tuple(
+            str(issue.get("issue_id") or "") for issue in authoritative_issues
+        )
+        route_ids = tuple(
+            str(route.get("issue_id") or "") for route in exact_routes
+        )
+        if sage_verdict == "FAIL":
+            if (
+                not issue_ids
+                or len(route_ids) != len(issue_ids)
+                or len(set(route_ids)) != len(route_ids)
+                or set(route_ids) != set(issue_ids)
+                or any(route.get("route") != "spec_repair" for route in exact_routes)
+            ):
+                hard_blockers.append("sage_finding_route_mismatch")
+        elif exact_routes:
+            hard_blockers.append("sage_finding_route_mismatch")
+
+        if any(
+            issue.get("severity") == "CRITICAL"
+            for issue in authoritative_issues
+        ):
+            hard_blockers.append("critical_sage_issue")
+        if any(
+            issue.get("type") == "contradiction"
+            for issue in authoritative_issues
+        ):
+            hard_blockers.append("sage_contradiction")
+        evidence_status = eval_state.get("evidence_resolution_status")
+        if evidence_status not in {None, "not_required", "validated"}:
+            hard_blockers.append("unresolved_evidence_or_product_decision")
+        if eval_state.get("product_input_mapping_repair"):
+            hard_blockers.append("invalid_product_input_mapping")
+
+        unique_blockers = tuple(dict.fromkeys(hard_blockers))
+        ordinary_pass = (
+            numeric_pass
+            and normalized_provider_verdict == "PASS"
+            and sage_verdict == "PASS"
+            and not authoritative_issues
+            and not exact_routes
+            and not unique_blockers
+        )
+        return AuthoritativeQualityAssessment(
+            numeric_pass=numeric_pass,
+            provider_verdict=normalized_provider_verdict,
+            sage_verdict=sage_verdict,
+            authoritative_issues=tuple(
+                dict(issue) for issue in authoritative_issues
+            ),
+            exact_routes=exact_routes,
+            ordinary_pass=ordinary_pass,
+            proportional_failure=not ordinary_pass,
+            hard_blockers=unique_blockers,
+        )
+
+    def _authoritative_proportional_assessment(
+        self,
+        prepared: PreparedPhaseResult,
+        eval_state: Mapping[str, object],
+        spec_dir: Path,
+    ) -> AuthoritativeQualityAssessment:
+        return self._authoritative_quality_assessment(
+            provider_verdict=prepared.verdict,
+            eval_state=eval_state,
+            routes=self._proportional_finding_routes(prepared),
+            spec_dir=spec_dir,
         )
 
     @staticmethod
@@ -9171,7 +9305,7 @@ class SquadController:
         snapshot: RoutingStateSnapshot,
         eval_state: Mapping[str, object],
         *,
-        proportional_failure: bool,
+        assessment: AuthoritativeQualityAssessment,
     ) -> tuple[QualityCandidateManifest, dict[str, object]] | None:
         state = snapshot.state
         if not self._is_proportional_quality_state(state) or not (
@@ -9217,28 +9351,14 @@ class SquadController:
                 "threshold": raw_gate.get("threshold"),
                 "pass": raw_gate.get("pass"),
             }
-        findings = self._proportional_finding_routes(prepared)
+        findings = assessment.exact_routes
         candidate_id = f"quality-candidate-{len(repair['candidate_ids'])}"
         spec_dir = self._proportional_spec_dir(state)
         spec_id = _checkpoint_spec_id_from_state(dict(state), spec_dir)
-        sage_verdict, authoritative_issues = load_authoritative_sage_assessment(
-            spec_dir / "issues.md"
-        )
+        authoritative_issues = assessment.authoritative_issues
         issues_by_id = {
             str(issue["issue_id"]): issue for issue in authoritative_issues
         }
-        finding_issue_ids = [
-            str(finding.get("issue_id") or "") for finding in findings
-        ]
-        if proportional_failure and (
-            sage_verdict != "FAIL"
-            or not authoritative_issues
-            or len(set(finding_issue_ids)) != len(finding_issue_ids)
-            or set(finding_issue_ids) != set(issues_by_id)
-        ):
-            raise QualityCandidateIntegrityError(
-                "SAGE finding routes do not exactly cover authoritative issues"
-            )
         enriched_findings: list[dict[str, object]] = []
         for finding in findings:
             issue_id = str(finding.get("issue_id") or "")
@@ -9753,11 +9873,24 @@ class SquadController:
             node.id == "phase1-why2"
             and (result.verdict or "").upper() == "PASS"
             and explicit_quality_pass(latest_score) is True
+            and not self._is_proportional_quality_state(state_copy)
         ):
-            certificate = build_phase1_quality_certificate(
-                state_copy,
-                project_root=self._project_root,
-            )
+            try:
+                assessment = self._authoritative_quality_assessment(
+                    provider_verdict=result.verdict or "",
+                    eval_state=state_copy,
+                    routes=self._finding_routes_from_updates(
+                        result.state_updates
+                    ),
+                    spec_dir=self._proportional_spec_dir(state_copy),
+                )
+                certificate = build_phase1_quality_certificate(
+                    state_copy,
+                    project_root=self._project_root,
+                    authoritative_sage_assessment=assessment,
+                )
+            except QualityCandidateIntegrityError:
+                certificate = None
             if certificate is None:
                 quality_certificate_override = PHASE_TERMINAL_BLOCKED
             else:
@@ -10627,64 +10760,48 @@ class SquadController:
                 prepared,
                 snapshot,
             )
-        result, state, eval_state = self._transition_evaluation_inputs(
-            node,
-            prepared,
-            snapshot,
-        )
-        verdict_upper = (result.verdict or "").upper()
-        is_fail = (
-            self._evaluator.evaluate(
-                "quality_gates.fail",
-                eval_state,
-                result,
-            )
-            is True
-            or verdict_upper in ("FAIL", "BLOCKED")
-        )
-        try:
-            captured = self._capture_proportional_quality_candidate(
-                prepared,
-                snapshot,
-                eval_state,
-                proportional_failure=is_fail,
-            )
-        except QualityCandidateIntegrityError:
-            if not is_fail:
-                return self._coordinate_why_transition_state_legacy(
-                    node,
-                    prepared,
-                    snapshot,
-                )
-            return PHASE_TERMINAL_BLOCKED, {
-                "status": "blocked",
-                "blocked_reason": (
-                    "proportional_quality_candidate_integrity_failed"
-                ),
-            }, None
-        if not is_fail:
-            legacy_route, legacy_updates, request = (
-                self._coordinate_why_transition_state_legacy(
-                    node,
-                    prepared,
-                    snapshot,
-                )
-            )
-            if captured is None:
-                return legacy_route, legacy_updates, request
-            _manifest, proportional_updates = captured
-            return legacy_route, {
-                **legacy_updates,
-                **proportional_updates,
-            }, request
-        if captured is None:
+        if prepared.state_updates.get("escalation_question"):
             return self._coordinate_why_transition_state_legacy(
                 node,
                 prepared,
                 snapshot,
             )
-        manifest, proportional_updates = captured
-        if manifest.eligibility_reasons:
+        _result, _state, eval_state = self._transition_evaluation_inputs(
+            node,
+            prepared,
+            snapshot,
+        )
+        try:
+            assessment = self._authoritative_proportional_assessment(
+                prepared,
+                eval_state,
+                self._proportional_spec_dir(snapshot.state),
+            )
+        except QualityCandidateIntegrityError:
+            return self._proportional_integrity_failure()
+
+        if assessment.hard_blockers:
+            return self._proportional_integrity_failure()
+        if assessment.ordinary_pass:
+            try:
+                captured = self._capture_proportional_quality_candidate(
+                    prepared,
+                    snapshot,
+                    eval_state,
+                    assessment=assessment,
+                )
+            except QualityCandidateIntegrityError:
+                return self._proportional_integrity_failure()
+            certificate = build_phase1_quality_certificate(
+                eval_state,
+                project_root=self._project_root,
+                authoritative_sage_assessment=assessment,
+            )
+            if certificate is None:
+                return PHASE_TERMINAL_BLOCKED, {
+                    "status": "blocked",
+                    "blocked_reason": "spec_quality_certificate_unavailable",
+                }, None
             legacy_route, legacy_updates, request = (
                 self._coordinate_why_transition_state_legacy(
                     node,
@@ -10692,10 +10809,70 @@ class SquadController:
                     snapshot,
                 )
             )
+            proportional_updates = captured[1] if captured is not None else {}
             return legacy_route, {
                 **legacy_updates,
                 **proportional_updates,
+                "spec_quality_certificate": certificate,
             }, request
+
+        try:
+            return self._coordinate_proportional_failure(
+                assessment,
+                prepared,
+                snapshot,
+                eval_state,
+            )
+        except (QualityCandidateIntegrityError, HumanInputPolicyError, ValueError):
+            return self._proportional_integrity_failure()
+
+    @staticmethod
+    def _proportional_integrity_failure() -> tuple[
+        str,
+        dict[str, object],
+        None,
+    ]:
+        return PHASE_TERMINAL_BLOCKED, {
+            "status": "blocked",
+            "blocked_reason": "proportional_quality_candidate_integrity_failed",
+        }, None
+
+    def _coordinate_proportional_failure(
+        self,
+        assessment: AuthoritativeQualityAssessment,
+        prepared: PreparedPhaseResult,
+        snapshot: RoutingStateSnapshot,
+        eval_state: Mapping[str, object],
+    ) -> tuple[
+        str | None,
+        dict[str, object],
+        PreparedHumanInput | None,
+    ]:
+        """Route one authoritative eligible proportional quality failure."""
+        if (
+            not isinstance(assessment, AuthoritativeQualityAssessment)
+            or not assessment.proportional_failure
+            or assessment.ordinary_pass
+            or assessment.hard_blockers
+        ):
+            raise QualityCandidateIntegrityError(
+                "proportional failure assessment is invalid"
+            )
+        captured = self._capture_proportional_quality_candidate(
+            prepared,
+            snapshot,
+            eval_state,
+            assessment=assessment,
+        )
+        if captured is None:
+            raise QualityCandidateIntegrityError(
+                "proportional failure candidate is unavailable"
+            )
+        manifest, proportional_updates = captured
+        if manifest.eligibility_reasons:
+            raise QualityCandidateIntegrityError(
+                "proportional failure candidate is ineligible"
+            )
 
         repair = validate_repair_state(
             proportional_updates["phase1_quality_repair"]
@@ -10742,29 +10919,18 @@ class SquadController:
             and repair["extension_consumed"] == repair["extension_limit"]
             else "proportional_quality_budget_exhausted"
         )
-        try:
-            request, decision_updates = (
-                self._prepare_proportional_quality_decision(
-                    {**state, **proportional_updates},
-                    repair_state=repair,
-                    reason_code=reason_code,
-                    source_state_revision=snapshot.state_revision,
-                    last_repair_outcome=(
-                        proportional_updates[
-                            "proportional_quality_candidate_evidence"
-                        ].get("last_repair_outcome")
-                    ),
-                    current_candidate=manifest,
-                )
-            )
-        except (QualityCandidateIntegrityError, HumanInputPolicyError):
-            return PHASE_TERMINAL_BLOCKED, {
-                **proportional_updates,
-                "status": "blocked",
-                "blocked_reason": (
-                    "proportional_quality_candidate_integrity_failed"
-                ),
-            }, None
+        request, decision_updates = self._prepare_proportional_quality_decision(
+            {**snapshot.state, **proportional_updates},
+            repair_state=repair,
+            reason_code=reason_code,
+            source_state_revision=snapshot.state_revision,
+            last_repair_outcome=(
+                proportional_updates[
+                    "proportional_quality_candidate_evidence"
+                ].get("last_repair_outcome")
+            ),
+            current_candidate=manifest,
+        )
         return PHASE_TERMINAL_BLOCKED, {
             **proportional_updates,
             **decision_updates,

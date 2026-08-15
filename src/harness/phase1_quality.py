@@ -5,23 +5,83 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import stat
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
 from harness.phase1_quality_debt import has_current_quality_debt_authorization
+from harness.proportional_quality import (
+    QualityCandidateIntegrityError,
+    load_authoritative_sage_assessment,
+)
 from harness.understanding_gate import has_current_understanding_evidence
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+LEGACY_SCHEMA_VERSION = 1
 _SHA256_RE = re.compile(r"\A[0-9a-f]{64}\Z")
+
+
+@dataclass(frozen=True)
+class AuthoritativeQualityAssessment:
+    numeric_pass: bool
+    provider_verdict: str
+    sage_verdict: str
+    authoritative_issues: tuple[Mapping[str, object], ...]
+    exact_routes: tuple[Mapping[str, object], ...]
+    ordinary_pass: bool
+    proportional_failure: bool
+    hard_blockers: tuple[str, ...]
 
 
 def build_phase1_quality_certificate(
     state: Mapping[str, object],
     *,
     project_root: Path,
+    authoritative_sage_assessment: AuthoritativeQualityAssessment | None = None,
 ) -> dict[str, object] | None:
-    """Build a certificate only from current passing WHY2 evidence."""
+    """Build a schema-v2 certificate from one authoritative ordinary PASS."""
+    assessment = authoritative_sage_assessment
+    if (
+        not isinstance(assessment, AuthoritativeQualityAssessment)
+        or assessment.numeric_pass is not True
+        or assessment.provider_verdict != "PASS"
+        or assessment.sage_verdict != "PASS"
+        or assessment.authoritative_issues
+        or assessment.exact_routes
+        or assessment.ordinary_pass is not True
+        or assessment.proportional_failure is not False
+        or assessment.hard_blockers
+    ):
+        return None
+    base = _passing_certificate_base(state, project_root=project_root)
+    if base is None:
+        return None
+    issues_path = _authoritative_issues_path(state, project_root)
+    if issues_path is None:
+        return None
+    try:
+        sage_verdict, issues = load_authoritative_sage_assessment(issues_path)
+        sage_digest = _sha256_regular(issues_path)
+    except (OSError, QualityCandidateIntegrityError):
+        return None
+    if sage_verdict != "PASS" or issues:
+        return None
+    return {
+        "schema_version": SCHEMA_VERSION,
+        **base,
+        "sage_evidence": _relative_or_absolute(issues_path, project_root),
+        "sage_evidence_sha256": sage_digest,
+        "sage_verdict": "PASS",
+    }
+
+
+def _passing_certificate_base(
+    state: Mapping[str, object],
+    *,
+    project_root: Path,
+) -> dict[str, object] | None:
     if not has_current_understanding_evidence(
         state,
         project_root=project_root,
@@ -63,7 +123,6 @@ def build_phase1_quality_certificate(
         return None
 
     return {
-        "schema_version": SCHEMA_VERSION,
         "status": "passed",
         "source_path": _relative_or_absolute(spec_path, project_root),
         "source_sha256": source_digest,
@@ -74,6 +133,17 @@ def build_phase1_quality_certificate(
         "understanding_evidence_sha256": report_digest,
         "sage_phase": "phase1-why2",
     }
+
+
+def _build_legacy_phase1_quality_certificate(
+    state: Mapping[str, object],
+    *,
+    project_root: Path,
+) -> dict[str, object] | None:
+    base = _passing_certificate_base(state, project_root=project_root)
+    if base is None:
+        return None
+    return {"schema_version": LEGACY_SCHEMA_VERSION, **base}
 
 
 def has_current_phase1_quality_certificate(
@@ -88,13 +158,71 @@ def has_current_phase1_quality_certificate(
     stored = state.get("spec_quality_certificate")
     if not isinstance(stored, Mapping):
         return False
-    current = build_phase1_quality_certificate(
-        state,
-        project_root=project_root,
-    )
+    schema_version = stored.get("schema_version")
+    if schema_version == LEGACY_SCHEMA_VERSION:
+        current = _build_legacy_phase1_quality_certificate(
+            state,
+            project_root=project_root,
+        )
+    elif schema_version == SCHEMA_VERSION:
+        issues_path = _current_v2_sage_evidence(
+            state,
+            stored,
+            project_root=project_root,
+        )
+        if issues_path is None:
+            return False
+        current = build_phase1_quality_certificate(
+            state,
+            project_root=project_root,
+            authoritative_sage_assessment=AuthoritativeQualityAssessment(
+                numeric_pass=True,
+                provider_verdict="PASS",
+                sage_verdict="PASS",
+                authoritative_issues=(),
+                exact_routes=(),
+                ordinary_pass=True,
+                proportional_failure=False,
+                hard_blockers=(),
+            ),
+        )
+    else:
+        return False
     if current is None:
         return False
     return dict(stored) == current
+
+
+def _current_v2_sage_evidence(
+    state: Mapping[str, object],
+    stored: Mapping[str, object],
+    *,
+    project_root: Path,
+) -> Path | None:
+    issues_path = _authoritative_issues_path(state, project_root)
+    if issues_path is None:
+        return None
+    expected_ref = _relative_or_absolute(issues_path, project_root)
+    stored_ref = stored.get("sage_evidence")
+    stored_digest = stored.get("sage_evidence_sha256")
+    if (
+        type(stored_ref) is not str
+        or stored_ref != expected_ref
+        or Path(stored_ref).is_absolute()
+        or any(part == ".." for part in Path(stored_ref).parts)
+        or type(stored_digest) is not str
+        or _SHA256_RE.fullmatch(stored_digest) is None
+        or stored.get("sage_verdict") != "PASS"
+    ):
+        return None
+    try:
+        verdict, issues = load_authoritative_sage_assessment(issues_path)
+        digest = _sha256_regular(issues_path)
+    except (OSError, QualityCandidateIntegrityError):
+        return None
+    if verdict != "PASS" or issues or digest != stored_digest:
+        return None
+    return issues_path
 
 
 def has_current_phase1_quality_prerequisite(
@@ -122,12 +250,38 @@ def _spec_path(
     return _resolve(project_root, spec_dir_ref) / "spec.md"
 
 
+def _authoritative_issues_path(
+    state: Mapping[str, object],
+    project_root: Path,
+) -> Path | None:
+    spec_path = _spec_path(state, project_root)
+    if spec_path is None:
+        return None
+    root = Path(project_root).resolve()
+    issues_path = spec_path.parent.resolve() / "issues.md"
+    try:
+        issues_path.relative_to(root)
+        metadata = issues_path.lstat()
+    except (OSError, ValueError):
+        return None
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+        return None
+    return issues_path
+
+
 def _resolve(project_root: Path, value: str) -> Path:
     path = Path(value).expanduser()
     return path if path.is_absolute() else project_root / path
 
 
 def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _sha256_regular(path: Path) -> str:
+    metadata = path.lstat()
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+        raise OSError("not a regular file")
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 

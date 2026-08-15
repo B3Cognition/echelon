@@ -5435,7 +5435,15 @@ class TestSquadControllerBasics:
             timed_out=False,
         )
         ctrl, store = _controller(tmp_path, provider=provider)
-        store.initialize("r", "banzai", "msg", 0, "phase1-why2", max_iterations=5)
+        store.initialize(
+            "r",
+            "banzai",
+            "msg",
+            0,
+            "phase1-why2",
+            max_iterations=5,
+            spec_authoring_mode="perfectionist",
+        )
         _mark_constitution_complete(tmp_path, store)
         state = store.load()
         state["quality_scores"] = [
@@ -5487,7 +5495,15 @@ class TestSquadControllerBasics:
     def test_sage_qualitative_failure_overrides_certified_pass(self, tmp_path):
         """WHY2 may make a certified pass stricter without replacing its score."""
         ctrl, store = _controller(tmp_path)
-        store.initialize("r", "banzai", "msg", 0, "phase1-why2", max_iterations=5)
+        store.initialize(
+            "r",
+            "banzai",
+            "msg",
+            0,
+            "phase1-why2",
+            max_iterations=5,
+            spec_authoring_mode="perfectionist",
+        )
         state = store.load()
         state["quality_scores"] = [
             {
@@ -6024,7 +6040,10 @@ class TestSquadControllerBasics:
 
     def test_failing_why2_starts_quality_remediation_after_last_resolution(self, tmp_path):
         ctrl, store = _controller(tmp_path)
-        store.initialize("r", "semi", "msg", 0, "phase1-why2", max_iterations=5)
+        store.initialize(
+            "r", "semi", "msg", 0, "phase1-why2", max_iterations=5,
+            spec_authoring_mode="perfectionist",
+        )
         state = store.load()
         state.update(
             {
@@ -6069,7 +6088,10 @@ class TestSquadControllerBasics:
 
     def test_failing_why2_with_all_validated_issues_uses_current_quality_remediation(self, tmp_path):
         ctrl, store = _controller(tmp_path)
-        store.initialize("r", "semi", "msg", 0, "phase1-why2", max_iterations=5)
+        store.initialize(
+            "r", "semi", "msg", 0, "phase1-why2", max_iterations=5,
+            spec_authoring_mode="perfectionist",
+        )
         state = store.load()
         state.update(
             {
@@ -6123,7 +6145,10 @@ class TestSquadControllerBasics:
 
     def test_failing_why2_carries_qualitative_findings_into_quality_remediation(self, tmp_path):
         ctrl, store = _controller(tmp_path)
-        store.initialize("r", "semi", "msg", 0, "phase1-why2", max_iterations=5)
+        store.initialize(
+            "r", "semi", "msg", 0, "phase1-why2", max_iterations=5,
+            spec_authoring_mode="perfectionist",
+        )
         state = store.load()
         state.update(
             {
@@ -6773,6 +6798,26 @@ def _make_proportional_assessment_numerically_passing(
     )
 
 
+def _make_authoritative_sage_assessment_passing(ctrl: SquadController) -> None:
+    spec_dir = ctrl._project_root / "runs/run-test/specs/001-demo"
+    (spec_dir / "issues.md").write_text(
+        """# Issues — WHY2
+
+## Summary
+- **CRITICAL:** 0
+- **HIGH:** 0
+- **MEDIUM:** 0
+- **LOW:** 0
+- **Verdict:** PASS
+
+## Issues
+
+No issues found.
+""",
+        encoding="utf-8",
+    )
+
+
 def _start_proportional_quality_loop(
     tmp_path: Path,
     *,
@@ -7067,6 +7112,87 @@ def _proportional_history_then_unchanged_what(
 
 
 class TestProportionalQualityController:
+    def test_numeric_and_provider_pass_cannot_certify_sage_fail(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        ctrl, store = _start_proportional_quality_loop(tmp_path)
+        updates, result = _proportional_assessment_fixture(ctrl, store, 0)
+        _make_proportional_assessment_numerically_passing(updates)
+        result.echelon_result["verdict"] = "PASS"
+        state = store.load()
+        state.update(updates)
+        store.save(state)
+
+        route = _coordinate_prepared_result(
+            ctrl,
+            ctrl._graph.get("phase1-why2"),
+            result,
+        )
+
+        persisted = store.load()
+        assert route != "phase1-lexicon-derive"
+        assert persisted["blocked_reason"] == (
+            "proportional_quality_candidate_integrity_failed"
+        )
+        assert "spec_quality_certificate" not in persisted
+
+    def test_critical_sage_fail_blocks_when_other_verdicts_pass(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        ctrl, store = _start_proportional_quality_loop(tmp_path)
+        updates, result = _proportional_assessment_fixture(ctrl, store, 0)
+        _make_proportional_assessment_numerically_passing(updates)
+        result.echelon_result["verdict"] = "PASS"
+        issues = tmp_path / "runs/run-test/specs/001-demo/issues.md"
+        issues.write_text(
+            issues.read_text(encoding="utf-8")
+            .replace("- **CRITICAL:** 0", "- **CRITICAL:** 1")
+            .replace("- **LOW:** 1", "- **LOW:** 0")
+            .replace("- **Severity:** LOW", "- **Severity:** CRITICAL"),
+            encoding="utf-8",
+        )
+        state = store.load()
+        state.update(updates)
+        store.save(state)
+
+        route = _coordinate_prepared_result(
+            ctrl,
+            ctrl._graph.get("phase1-why2"),
+            result,
+        )
+
+        assert route == "terminal-blocked"
+        assert store.load()["blocked_reason"] == (
+            "proportional_quality_candidate_integrity_failed"
+        )
+        assert "spec_quality_certificate" not in store.load()
+
+    def test_provider_sage_mismatch_is_certification_integrity_failure(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        ctrl, store = _start_proportional_quality_loop(tmp_path)
+        updates, result = _proportional_assessment_fixture(ctrl, store, 0)
+        _make_proportional_assessment_numerically_passing(updates)
+        _make_authoritative_sage_assessment_passing(ctrl)
+        state = store.load()
+        state.update(updates)
+        store.save(state)
+
+        route = _coordinate_prepared_result(
+            ctrl,
+            ctrl._graph.get("phase1-why2"),
+            result,
+        )
+
+        assert route == "terminal-blocked"
+        assert store.load()["blocked_reason"] == (
+            "proportional_quality_candidate_integrity_failed"
+        )
+        assert "spec_quality_certificate" not in store.load()
+
     def test_recommendation_compares_latest_distinct_repairs_with_audit_history(
         self,
         tmp_path: Path,
@@ -7275,6 +7401,15 @@ class TestProportionalQualityController:
             accepted,
             project_root=tmp_path,
         )
+        ctrl._materialize_controller_phase_inputs(
+            ctrl._graph.get("phase3-plan")
+        )
+        debt_context = store.load()["spec_quality_debt_context"]
+        assert debt_context["status"] == "accepted_with_debt"
+        assert debt_context["failed_gates"] == []
+        assert debt_context["qualitative_debt"] == authorization[
+            "qualitative_debt"
+        ]
 
     def test_qualitative_only_sage_failure_is_commander_executable_in_banzai(
         self,
@@ -7320,8 +7455,19 @@ class TestProportionalQualityController:
         assert authorization["qualitative_debt"][0]["issue_id"] == (
             "ISS-QUALITY-0"
         )
+        ctrl._materialize_controller_phase_inputs(
+            ctrl._graph.get("phase3-plan")
+        )
+        debt_context = store.load()["spec_quality_debt_context"]
+        assert debt_context["failed_gates"] == []
+        assert debt_context["qualitative_debt"] == authorization[
+            "qualitative_debt"
+        ]
 
-    @pytest.mark.parametrize("route_problem", ["missing", "duplicate"])
+    @pytest.mark.parametrize(
+        "route_problem",
+        ["missing", "duplicate", "empty", "non_spec_repair"],
+    )
     def test_qualitative_only_failure_requires_exact_authoritative_route_coverage(
         self,
         tmp_path: Path,
@@ -7339,6 +7485,11 @@ class TestProportionalQualityController:
         ]
         if route_problem == "duplicate":
             findings.append(dict(findings[0]))
+        elif route_problem == "empty":
+            findings.clear()
+            result.echelon_result["verdict"] = "PASS"
+        elif route_problem == "non_spec_repair":
+            findings[0]["route"] = "human_decision"
         else:
             issues = (
                 tmp_path / "runs/run-test/specs/001-demo/issues.md"
@@ -8309,6 +8460,7 @@ class TestProportionalQualityController:
         updates["quality_scores"][-1].update(
             {"pass": True, "overall": 0.90, "evidence_digest": digest}
         )
+        _make_authoritative_sage_assessment_passing(ctrl)
         state = store.load()
         state.update(updates)
         store.save(state)
@@ -8984,10 +9136,10 @@ class TestProportionalQualityController:
         assert routed[0]["completion_id"] != restored[0]["completion_id"]
 
     @pytest.mark.parametrize(
-        ("severity", "issue_type", "expected_reason"),
+        ("severity", "issue_type"),
         [
-            ("CRITICAL", "incompleteness", "critical_sage_issue"),
-            ("LOW", "contradiction", "sage_contradiction"),
+            ("CRITICAL", "incompleteness"),
+            ("LOW", "contradiction"),
         ],
     )
     def test_authoritative_issue_artifact_forbids_quality_debt(
@@ -8995,7 +9147,6 @@ class TestProportionalQualityController:
         tmp_path: Path,
         severity: str,
         issue_type: str,
-        expected_reason: str,
     ) -> None:
         ctrl, store = _start_proportional_quality_loop(
             tmp_path,
@@ -9026,16 +9177,13 @@ class TestProportionalQualityController:
         )
 
         persisted = store.load()
-        assert next_phase == "phase1-what"
+        assert next_phase == "terminal-blocked"
+        assert persisted["blocked_reason"] == (
+            "proportional_quality_candidate_integrity_failed"
+        )
         assert "blocked_decision" not in persisted
         assert "spec_quality_debt_authorization" not in persisted
-        manifest = json.loads(
-            (
-                ctrl._squad_dir
-                / "quality-candidates/quality-candidate-0.json"
-            ).read_text(encoding="utf-8")
-        )
-        assert expected_reason in manifest["eligibility_reasons"]
+        assert persisted["phase1_quality_repair"]["candidate_ids"] == []
 
     def test_malformed_authoritative_issue_artifact_fails_closed_without_debt(
         self,
@@ -9690,6 +9838,7 @@ class TestProportionalQualityController:
                 "evidence_digest": digest,
             }
         )
+        _make_authoritative_sage_assessment_passing(ctrl)
         state = store.load()
         state.update(updates)
         store.save(state)
@@ -9717,6 +9866,8 @@ class TestProportionalQualityController:
         assert persisted["phase1_quality_repair"]["candidate_ids"] == [
             "quality-candidate-0"
         ]
+        assert persisted["spec_quality_certificate"]["schema_version"] == 2
+        assert persisted["spec_quality_certificate"]["sage_verdict"] == "PASS"
 
     def test_perfectionist_why2_failure_keeps_legacy_route(self, tmp_path: Path) -> None:
         ctrl, store = _controller(tmp_path)
@@ -13208,14 +13359,32 @@ class TestLexiconGateGuardDeterminism:
         ctrl, _store = _controller(tmp_path)
         node = ctrl._graph.get("phase1-why2")
         certificate = {
-            "schema_version": 1,
+            "schema_version": 2,
             "status": "passed",
             "source_path": "specs/001/spec.md",
             "source_sha256": "a" * 64,
             "understanding_evidence": "runs/r/evidence/why2.json",
             "understanding_evidence_sha256": "b" * 64,
             "sage_phase": "phase1-why2",
+            "sage_evidence": "specs/001/issues.md",
+            "sage_evidence_sha256": "c" * 64,
+            "sage_verdict": "PASS",
         }
+        assessment = squad_module.AuthoritativeQualityAssessment(
+            numeric_pass=True,
+            provider_verdict="PASS",
+            sage_verdict="PASS",
+            authoritative_issues=(),
+            exact_routes=(),
+            ordinary_pass=True,
+            proportional_failure=False,
+            hard_blockers=(),
+        )
+        monkeypatch.setattr(
+            ctrl,
+            "_authoritative_quality_assessment",
+            lambda **_kwargs: assessment,
+        )
         monkeypatch.setattr(
             "harness.squad.build_phase1_quality_certificate",
             lambda *_args, **_kwargs: certificate,
@@ -13236,7 +13405,11 @@ class TestLexiconGateGuardDeterminism:
 
         enrichment = ctrl._controller_enrichment(
             node,
-            {"quality_scores": [{"pass": True}]},
+            {
+                "quality_scores": [{"pass": True}],
+                "spec_authoring_mode": "perfectionist",
+                "spec_dir": "specs/001",
+            },
             result,
         )
 

@@ -137,6 +137,7 @@ def _debt_fixture(
     *,
     eligibility_reasons: tuple[str, ...] = (),
     apply_effect: bool = True,
+    qualitative_only: bool = False,
 ) -> tuple[
     dict[str, object],
     QualityCandidateManifest,
@@ -176,6 +177,8 @@ def _debt_fixture(
         (spec_dir / name).write_text(content, encoding="utf-8")
 
     evidence = tmp_path / "runs" / "run-1" / "evidence" / "why2.json"
+    score = 0.90 if qualitative_only else 0.70
+    passed = qualitative_only
     report = {
         "schema_version": 1,
         "status": "completed",
@@ -186,19 +189,19 @@ def _debt_fixture(
             "sha256": _sha256(spec_dir / "spec.md"),
         },
         "thresholds": {"overall": 0.80},
-        "scores": {"overall": 0.70},
+        "scores": {"overall": score},
         "gates": {
             "overall": {
-                "score": 0.70,
+                "score": score,
                 "threshold": 0.80,
-                "pass": False,
+                "pass": passed,
             }
         },
-        "pass": False,
+        "pass": passed,
         "requirement_count": 1,
     }
     _write_json(evidence, report)
-    margin = 0.70 - 0.80
+    margin = score - 0.80
     finding = {
         "issue_id": "ISS-QUALITY",
         "route": "spec_repair",
@@ -217,11 +220,11 @@ def _debt_fixture(
         run_artifact_root=str(tmp_path / "runs" / "run-1"),
         understanding_evidence=str(evidence),
         understanding_evidence_digest=_sha256(evidence),
-        normalized_gates=(("overall", 0.70, 0.80, False),),
+        normalized_gates=(("overall", score, 0.80, passed),),
         sage_finding_routes=(finding,),
-        failed_gate_count=1,
+        failed_gate_count=0 if qualitative_only else 1,
         worst_gate_margin=margin,
-        overall_score=0.70,
+        overall_score=score,
         formal_statement_count=1,
         byte_count=len((spec_dir / "spec.md").read_bytes()),
         repair_number=3,
@@ -254,8 +257,8 @@ def _debt_fixture(
         "status": "completed",
         "path": str(evidence),
         "digest": _sha256(evidence),
-        "pass": False,
-        "failing_gates": ["overall"],
+        "pass": passed,
+        "failing_gates": [] if qualitative_only else ["overall"],
         "error": None,
     }
     candidate_evidence_state = {
@@ -266,14 +269,18 @@ def _debt_fixture(
         "candidate_manifest_sha256": _sha256(manifest_path),
         "selected_spec_sha256": _sha256(spec_dir / "spec.md"),
         "eligibility_reasons": [],
-        "failed_gates": [
-            {
-                "name": "overall",
-                "score": 0.70,
-                "threshold": 0.80,
-                "pass": False,
-            }
-        ],
+        "failed_gates": (
+            []
+            if qualitative_only
+            else [
+                {
+                    "name": "overall",
+                    "score": 0.70,
+                    "threshold": 0.80,
+                    "pass": False,
+                }
+            ]
+        ),
         "sage_finding_routes": [finding],
         "last_repair_outcome": None,
     }
@@ -311,7 +318,7 @@ def _debt_fixture(
         "understanding_evidence": understanding_state,
         "quality_scores": [
             {
-                "pass": False,
+                "pass": passed,
                 "pass_id": "WHY2-iter-0",
                 "source": "harness:understanding",
                 "evidence": str(evidence),
@@ -475,6 +482,38 @@ def test_builder_prepares_complete_content_bound_schema_v1_debt(
     assert "spec_quality_certificate" not in authorization
     assert "spec_quality_certificate" not in debt
     assert has_current_quality_debt_authorization(state, project_root=tmp_path)
+
+
+def test_qualitative_only_debt_keeps_empty_failed_gates_and_current_sage_issues(
+    tmp_path: Path,
+) -> None:
+    state, _candidate, prepared, paths = _debt_fixture(
+        tmp_path,
+        qualitative_only=True,
+    )
+
+    assert prepared.authorization["failed_gates"] == []
+    assert prepared.authorization["qualitative_debt"] == [
+        {
+            "issue_id": "ISS-QUALITY",
+            "route": "spec_repair",
+            "rationale": "Residual non-critical quality debt.",
+            "severity": "LOW",
+            "type": "incompleteness",
+            "title": "Residual quality debt",
+        }
+    ]
+    assert has_current_quality_debt_authorization(
+        state,
+        project_root=tmp_path,
+    )
+
+    paths["issues"].write_bytes(paths["issues"].read_bytes() + b"\n")
+
+    assert not has_current_quality_debt_authorization(
+        state,
+        project_root=tmp_path,
+    )
 
 
 @pytest.mark.parametrize(
@@ -771,6 +810,38 @@ def test_builder_rejects_authoritative_hard_sage_blocker_even_if_manifest_lies(
     _write_json(paths["manifest"], _candidate_payload(forged))
 
     with pytest.raises(QualityCandidateIntegrityError, match="hard SAGE blocker"):
+        build_quality_debt_authorization(
+            project_root=tmp_path,
+            spec_dir=paths["spec"].parent,
+            candidate=forged,
+            candidate_manifest=paths["manifest"],
+            repair_state=state["phase1_quality_repair"],
+            decision=_sealed_decision(),
+            decision_id="dec-123",
+            resolved_by="user",
+            **_builder_authority_kwargs(state),
+        )
+
+
+@pytest.mark.parametrize("route_problem", ["duplicate", "non_spec_repair"])
+def test_builder_rejects_non_exact_authoritative_sage_routes(
+    tmp_path: Path,
+    route_problem: str,
+) -> None:
+    state, candidate, _prepared, paths = _debt_fixture(tmp_path)
+    finding = dict(candidate.sage_finding_routes[0])
+    routes = (
+        (finding, dict(finding))
+        if route_problem == "duplicate"
+        else ({**finding, "route": "human_decision"},)
+    )
+    forged = replace(candidate, sage_finding_routes=routes)
+    _write_json(paths["manifest"], _candidate_payload(forged))
+
+    with pytest.raises(
+        QualityCandidateIntegrityError,
+        match="SAGE finding route|SAGE findings",
+    ):
         build_quality_debt_authorization(
             project_root=tmp_path,
             spec_dir=paths["spec"].parent,
