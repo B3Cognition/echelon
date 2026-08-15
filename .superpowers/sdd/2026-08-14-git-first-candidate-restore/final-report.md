@@ -1,17 +1,17 @@
 # Final Recovery Verification Report
 
-Target authority: implementation base `057b0a7d408c11ca63640c8a52b04bea80677af4`; verified recovery head `f24d0587` before Task 5 compatibility repair. Git-first recovery remains authoritative over the exact sealed target ref, isolated index, complete target tree, blob modes/OIDs/digests, and pinned candidate manifest.
+Target authority: implementation base `057b0a7d408c11ca63640c8a52b04bea80677af4`; final verified code head `e8a5b09b`. Git-first recovery remains authoritative over the exact sealed target ref, isolated index, complete target tree, blob modes/OIDs/digests, and pinned candidate manifest.
 
 ## Evidence
 
 | Command | Result |
 |---|---|
-| focused recovery matrix | 1137 passed in 383.60s |
-| expanded feature suite | 1727 passed in 380.83s |
-| `tests/run-all.sh` | 1648 passed, 1 failed |
+| focused recovery matrix | 1139 passed in 383.61s |
+| expanded feature suite | 1729 passed in 381.72s |
+| `tests/run-all.sh` | 1649 passed, 0 failed |
 | deployment tests | 146 passed in 78.55s |
 | dry run | 9 bundle checks passed |
-| full pytest | 8882 passed, 9 skipped, 1 deselected, 4 failed in 1056.61s |
+| full pytest | 8885 passed, 9 skipped, 1 deselected, exactly 3 known failures in 1058.51s |
 | compileall / diff check | exit 0 / exit 0 |
 
 Crash/recovery coverage passes around journal fsync, every exchange boundary, ref update, index update, receipt replay, symlink/inode/mode drift, temporary residue, ref/index conflicts, and checkpoint preflight. Recovery verifies the exact target commit/ref/index/tree before completing; manifest preflight remains before mutation and SAGE PASS certification remains pinned and fail-closed.
