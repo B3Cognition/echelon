@@ -1641,7 +1641,7 @@ def _reconcile_candidate_artifact_exchange(
     os.fsync(directory_fd)
 
 
-def materialize_quality_candidate_restore(
+def _materialize_legacy_quality_candidate_restore(
     *,
     project_root: Path,
     spec_dir: Path,
@@ -1826,6 +1826,375 @@ def materialize_quality_candidate_restore(
     }
     if expected is not None and dict(expected) != receipt:
         raise QualityCandidateIntegrityError("candidate restoration receipt mismatch")
+    return receipt
+
+
+def _legacy_restore_authority_present(
+    *,
+    spec_dir: Path,
+    candidate: QualityCandidateManifest,
+    completion_id: str,
+    expected_receipt: object | None,
+) -> bool:
+    """Classify only exact schema-v1 file-first authority as legacy."""
+
+    if isinstance(expected_receipt, Mapping):
+        if expected_receipt.get("restore_protocol") == "git_first_v1":
+            return False
+        return True
+    artifact_root = Path(candidate.run_artifact_root).resolve()
+    journal_dir = artifact_root / _RESTORE_EXCHANGE_DIRECTORY
+    journal = journal_dir / f"{completion_id}.json"
+    try:
+        journal_directory_metadata = journal_dir.lstat()
+    except FileNotFoundError:
+        journal_directory_metadata = None
+    except OSError as exc:
+        raise QualityCandidateIntegrityError(
+            "legacy candidate restore recovery required: journal directory is unreadable"
+        ) from exc
+    if journal_directory_metadata is not None:
+        try:
+            unsafe_journal_directory = (
+                not stat.S_ISDIR(journal_directory_metadata.st_mode)
+                or stat.S_ISLNK(journal_directory_metadata.st_mode)
+                or journal_dir.resolve(strict=True) != journal_dir
+            )
+        except OSError as exc:
+            raise QualityCandidateIntegrityError(
+                "legacy candidate restore recovery required: journal directory is unsafe"
+            ) from exc
+        if unsafe_journal_directory:
+            raise QualityCandidateIntegrityError(
+                "legacy candidate restore recovery required: journal directory is unsafe"
+            )
+    try:
+        journal_metadata = journal.lstat()
+    except FileNotFoundError:
+        journal_metadata = None
+    except OSError as exc:
+        raise QualityCandidateIntegrityError(
+            "legacy candidate restore recovery required: journal is unreadable"
+        ) from exc
+    if journal_metadata is not None:
+        if not stat.S_ISREG(journal_metadata.st_mode):
+            raise QualityCandidateIntegrityError(
+                "legacy candidate restore recovery required: journal is unsafe"
+            )
+        return True
+    resolved_spec = Path(os.path.abspath(spec_dir))
+    try:
+        spec_metadata = resolved_spec.lstat()
+        if (
+            not stat.S_ISDIR(spec_metadata.st_mode)
+            or stat.S_ISLNK(spec_metadata.st_mode)
+            or resolved_spec.resolve(strict=True) != resolved_spec
+        ):
+            raise OSError("legacy restore spec directory is unsafe")
+        names = os.listdir(resolved_spec)
+    except OSError as exc:
+        raise QualityCandidateIntegrityError(
+            "legacy candidate restore recovery required: spec is unreadable"
+        ) from exc
+    if any(name.startswith(_RESTORE_EXCHANGE_TEMP_PREFIX) for name in names):
+        return True
+    return False
+
+
+def _validate_exact_legacy_restore_recovery(
+    *,
+    project_root: Path,
+    spec_dir: Path,
+    candidate: QualityCandidateManifest,
+    completion_id: str,
+    checkpoint_prestate: Mapping[str, object],
+    artifact_preimage_digests: Mapping[str, str],
+    preflighted_restore: PreflightedCandidateRestore | None,
+) -> None:
+    if preflighted_restore is None:
+        raise QualityCandidateIntegrityError(
+            "legacy candidate restore recovery required: sealed preflight is missing"
+        )
+    artifact_digests, _contents = _preflighted_checkpoint_contents(
+        preflighted_restore,
+        candidate,
+    )
+    preimages = _validated_restore_preimages(
+        artifact_preimage_digests,
+        artifact_digests=artifact_digests,
+    )
+    if (
+        type(checkpoint_prestate) is not dict
+        or set(checkpoint_prestate) != {"kind", "head"}
+        or checkpoint_prestate.get("kind") != "git_head"
+        or type(checkpoint_prestate.get("head")) is not str
+        or re.fullmatch(
+            r"[0-9a-f]{40}|[0-9a-f]{64}",
+            str(checkpoint_prestate.get("head")),
+        )
+        is None
+    ):
+        raise QualityCandidateIntegrityError(
+            "legacy candidate restore recovery required: base authority is invalid"
+        )
+    root = Path(project_root).resolve()
+    resolved_spec = Path(os.path.abspath(spec_dir))
+    try:
+        spec_relative = resolved_spec.relative_to(root)
+    except ValueError as exc:
+        raise QualityCandidateIntegrityError(
+            "legacy candidate restore recovery required: spec escapes project"
+        ) from exc
+    selected = {entry.path: entry for entry in preflighted_restore.entries}
+    base_modes: dict[str, int] = {}
+    for name in sorted(artifact_digests):
+        relative = (spec_relative / name).as_posix()
+        try:
+            result = subprocess.run(
+                [
+                    "git",
+                    "ls-tree",
+                    "-z",
+                    str(checkpoint_prestate["head"]),
+                    "--",
+                    relative,
+                ],
+                cwd=root,
+                check=False,
+                capture_output=True,
+                timeout=120,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise QualityCandidateIntegrityError(
+                "legacy candidate restore recovery required: base tree is unreadable"
+            ) from exc
+        rows = tuple(row for row in result.stdout.split(b"\0") if row)
+        if result.returncode != 0 or len(rows) != 1 or b"\t" not in rows[0]:
+            raise QualityCandidateIntegrityError(
+                "legacy candidate restore recovery required: base tree changed"
+            )
+        header, raw_path = rows[0].split(b"\t", 1)
+        fields = header.split()
+        if (
+            len(fields) != 3
+            or fields[0] not in {b"100644", b"100755"}
+            or fields[1] != b"blob"
+            or raw_path != relative.encode("utf-8")
+        ):
+            raise QualityCandidateIntegrityError(
+                "legacy candidate restore recovery required: base mode is unsafe"
+            )
+        base_modes[name] = int(fields[0][-3:], 8)
+    payload = _restore_exchange_payload(
+        project_root=root,
+        spec_dir=resolved_spec,
+        candidate=candidate,
+        completion_id=completion_id,
+        preimages=preimages,
+        postimages=artifact_digests,
+    )
+    payload_entries = payload.get("entries")
+    if not isinstance(payload_entries, list):  # pragma: no cover - local contract
+        raise QualityCandidateIntegrityError(
+            "legacy candidate restore recovery required: journal is malformed"
+        )
+    descriptor: int | None = None
+    try:
+        descriptor = _open_pinned_candidate_directory(resolved_spec)
+        for raw_entry in payload_entries:
+            if not isinstance(raw_entry, Mapping):
+                raise OSError("legacy restore entry is malformed")
+            name = str(raw_entry["artifact"])
+            current = _candidate_entry_snapshot(descriptor, name)
+            temporary = _candidate_entry_snapshot(
+                descriptor,
+                str(raw_entry["temp_name"]),
+                missing_ok=True,
+            )
+            if current is None:  # pragma: no cover - missing_ok is false
+                raise OSError("legacy restore artifact disappeared")
+            target_mode = int(selected[name].mode[-3:], 8)
+            current_is_base = (
+                current[0] == preimages[name]
+                and current[3] == base_modes[name]
+            )
+            current_is_target = (
+                current[0] == artifact_digests[name]
+                and current[3] == target_mode
+            )
+            if not current_is_base and not current_is_target:
+                raise OSError("legacy restore worktree authority changed")
+            if current_is_base:
+                if temporary is None:
+                    if base_modes[name] != target_mode:
+                        raise OSError(
+                            "legacy restore cannot recover a mode transition"
+                        )
+                elif not (
+                    temporary[0] == artifact_digests[name]
+                    and temporary[3] == target_mode
+                ):
+                    raise OSError("legacy restore target residue changed")
+            elif temporary is not None and not (
+                temporary[0] == preimages[name]
+                and temporary[3] == base_modes[name]
+            ):
+                raise OSError("legacy restore displaced residue changed")
+    except (KeyError, OSError) as exc:
+        raise QualityCandidateIntegrityError(
+            f"legacy candidate restore recovery required: {exc}"
+        ) from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def materialize_quality_candidate_restore(
+    *,
+    project_root: Path,
+    spec_dir: Path,
+    candidate: QualityCandidateManifest,
+    run_id: str,
+    spec_id: str,
+    completion_id: str,
+    next_phase: str,
+    checkpoint_prestate: Mapping[str, object],
+    artifact_preimage_digests: Mapping[str, str],
+    preflighted_restore: PreflightedCandidateRestore | None = None,
+    restore_plan: "GitFirstRestorePlan | None" = None,
+    expected_receipt: object | None = None,
+) -> dict[str, object]:
+    """Apply current Git-first restore authority or exact legacy residue."""
+
+    if _legacy_restore_authority_present(
+        spec_dir=spec_dir,
+        candidate=candidate,
+        completion_id=completion_id,
+        expected_receipt=expected_receipt,
+    ):
+        _validate_exact_legacy_restore_recovery(
+            project_root=project_root,
+            spec_dir=spec_dir,
+            candidate=candidate,
+            completion_id=completion_id,
+            checkpoint_prestate=checkpoint_prestate,
+            artifact_preimage_digests=artifact_preimage_digests,
+            preflighted_restore=preflighted_restore,
+        )
+        try:
+            return _materialize_legacy_quality_candidate_restore(
+                project_root=project_root,
+                spec_dir=spec_dir,
+                candidate=candidate,
+                run_id=run_id,
+                spec_id=spec_id,
+                completion_id=completion_id,
+                next_phase=next_phase,
+                checkpoint_prestate=checkpoint_prestate,
+                artifact_preimage_digests=artifact_preimage_digests,
+                preflighted_restore=preflighted_restore,
+                expected_receipt=expected_receipt,
+            )
+        except QualityCandidateIntegrityError as exc:
+            raise QualityCandidateIntegrityError(
+                f"legacy candidate restore recovery required: {exc}"
+            ) from exc
+    if restore_plan is None:
+        raise QualityCandidateIntegrityError(
+            "git-first candidate restore plan is missing"
+        )
+    if preflighted_restore is None:
+        raise QualityCandidateIntegrityError(
+            "git-first candidate restore preflight is missing"
+        )
+    artifact_digests, _contents = _preflighted_checkpoint_contents(
+        preflighted_restore,
+        candidate,
+    )
+    preimages = _validated_restore_preimages(
+        artifact_preimage_digests,
+        artifact_digests=artifact_digests,
+    )
+    if (
+        type(checkpoint_prestate) is not dict
+        or checkpoint_prestate != {
+            "kind": "git_head",
+            "head": restore_plan.base_commit,
+        }
+    ):
+        raise QualityCandidateIntegrityError(
+            "git-first candidate restore prestate changed"
+        )
+    plan_by_name = {
+        Path(entry.path).name: entry for entry in restore_plan.entries
+    }
+    selected_by_name = {
+        entry.path: entry for entry in preflighted_restore.entries
+    }
+    if set(plan_by_name) != set(artifact_digests) or set(selected_by_name) != set(
+        artifact_digests
+    ):
+        raise QualityCandidateIntegrityError(
+            "git-first candidate restore plan changed"
+        )
+    for name in sorted(artifact_digests):
+        planned = plan_by_name[name]
+        selected = selected_by_name[name]
+        if (
+            planned.base_sha256 != preimages[name]
+            or planned.target_mode != selected.mode
+            or planned.target_blob_oid != selected.blob_oid
+            or planned.target_sha256 != selected.sha256
+            or planned.target_sha256 != artifact_digests[name]
+        ):
+            raise QualityCandidateIntegrityError(
+                "git-first candidate restore plan changed"
+            )
+    expected = expected_receipt if isinstance(expected_receipt, Mapping) else None
+    git_expected: dict[str, object] | None = None
+    if expected is not None:
+        git_expected = {
+            "schema_version": 1,
+            "completion_id": completion_id,
+            "restore_protocol": expected.get("restore_protocol"),
+            "plan_sha256": expected.get("plan_sha256"),
+            "target_commit": expected.get("target_commit"),
+            "checkpoint": expected.get("checkpoint"),
+        }
+    try:
+        from harness.git_first_restore import (
+            GitFirstRestoreError,
+            apply_or_recover_git_first_restore,
+        )
+
+        restored = apply_or_recover_git_first_restore(
+            project_root=project_root,
+            spec_dir=spec_dir,
+            journal_root=Path(candidate.run_artifact_root),
+            plan=restore_plan,
+            run_id=run_id,
+            spec_id=spec_id,
+            next_phase=next_phase,
+            expected_receipt=git_expected,
+        )
+    except GitFirstRestoreError as exc:
+        raise QualityCandidateIntegrityError(
+            f"candidate restoration integrity failure: {exc}"
+        ) from exc
+    receipt = {
+        "schema_version": 1,
+        "candidate_id": candidate.candidate_id,
+        "artifact_preimage_digests": dict(sorted(preimages.items())),
+        "artifact_postimage_digests": dict(sorted(artifact_digests.items())),
+        "restore_protocol": restored.restore_protocol,
+        "plan_sha256": restored.plan_sha256,
+        "target_commit": restored.target_commit,
+        "checkpoint": dict(restored.checkpoint),
+    }
+    if expected is not None and dict(expected) != receipt:
+        raise QualityCandidateIntegrityError(
+            "candidate restoration receipt mismatch"
+        )
     return receipt
 
 

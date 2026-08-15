@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import subprocess
 
 import pytest
@@ -59,6 +60,17 @@ class RestoreRepo:
 
     def spec_bytes(self) -> bytes:
         return (self.root / "specs/001-example/spec.md").read_bytes()
+
+    def checkpoint_rows(self) -> list[dict[str, object]]:
+        ledger = self.root / "specs/001-example/.echelon/checkpoints.json"
+        if not ledger.exists():
+            return []
+        payload = json.loads(ledger.read_text(encoding="utf-8"))
+        return [
+            row
+            for row in payload["checkpoints"]
+            if row["phase"] == "phase1-quality-candidate-restored"
+        ]
 
     def blob_oid(self, content: bytes) -> str:
         return self.git("hash-object", "-w", "--stdin", input_bytes=content).decode().strip()
@@ -161,6 +173,40 @@ def _build(repo: RestoreRepo, **overrides: object) -> GitFirstRestorePlan:
     }
     values.update(overrides)
     return build_git_first_restore_commit(**values)  # type: ignore[arg-type]
+
+
+def _apply(
+    repo: RestoreRepo,
+    plan: GitFirstRestorePlan,
+    *,
+    expected_receipt: object | None = None,
+):
+    return git_first_restore_module.apply_or_recover_git_first_restore(
+        project_root=repo.root,
+        spec_dir=repo.root / "specs/001-example",
+        journal_root=repo.run_root,
+        plan=plan,
+        run_id="spec-run",
+        spec_id="001-example",
+        next_phase="checkpoint-assess",
+        expected_receipt=expected_receipt,
+    )
+
+
+def _restore_plan(repo: RestoreRepo) -> GitFirstRestorePlan:
+    return _build(repo, completion_id="1" * 32)
+
+
+def _assert_target_state(repo: RestoreRepo, plan: GitFirstRestorePlan) -> None:
+    assert repo.head() == plan.target_commit
+    assert repo.index_tree() == plan.target_tree
+    for entry in plan.entries:
+        path = repo.root / entry.path
+        metadata = path.lstat()
+        assert stat.S_ISREG(metadata.st_mode)
+        assert not path.is_symlink()
+        assert stat.S_IMODE(metadata.st_mode) == int(entry.target_mode[-3:], 8)
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == entry.target_sha256
 
 
 def _replace_commit_bytes(repo: RestoreRepo, commit: str, content: bytes) -> str:
@@ -492,3 +538,283 @@ def test_restore_builder_preserves_active_index_bytes(repo: RestoreRepo) -> None
     _build(repo)
 
     assert index_path.read_bytes() == index_before
+
+
+@pytest.mark.parametrize(
+    "crash_point",
+    (
+        "after_journal",
+        "after_first_exchange",
+        "after_all_exchanges",
+        "after_ref_update",
+        "after_index_update",
+        "before_receipt",
+    ),
+)
+def test_public_retry_converges_git_first_restore_once(
+    repo: RestoreRepo,
+    monkeypatch: pytest.MonkeyPatch,
+    crash_point: str,
+) -> None:
+    plan = _restore_plan(repo)
+    crashed = False
+
+    def crash_once(point: str) -> None:
+        nonlocal crashed
+        if point == crash_point and not crashed:
+            crashed = True
+            raise KeyboardInterrupt(f"crash at {point}")
+
+    monkeypatch.setattr(git_first_restore_module, "_restore_fault", crash_once)
+    with pytest.raises(KeyboardInterrupt, match=crash_point):
+        _apply(repo, plan)
+
+    monkeypatch.setattr(git_first_restore_module, "_restore_fault", lambda _point: None)
+    receipt = _apply(repo, plan)
+    replayed = _apply(repo, plan, expected_receipt=asdict(receipt))
+
+    assert replayed == receipt
+    assert receipt.restore_protocol == "git_first_v1"
+    assert receipt.target_commit == plan.target_commit
+    assert len(repo.checkpoint_rows()) == 1
+    _assert_target_state(repo, plan)
+    journal_dir = repo.run_root / "git-first-restores"
+    assert not journal_dir.exists() or list(journal_dir.iterdir()) == []
+
+
+def test_git_first_restore_replays_when_one_owned_entry_is_unchanged(
+    repo: RestoreRepo,
+) -> None:
+    selected = list(repo.selected_entries(spec_mode="100755"))
+    unchanged = b"# current gates\n"
+    selected[1] = CandidateCheckpointEntry(
+        path="quality-gates.md",
+        mode="100644",
+        blob_oid=repo.blob_oid(unchanged),
+        sha256=hashlib.sha256(unchanged).hexdigest(),
+        content=unchanged,
+    )
+    plan = _build(
+        repo,
+        completion_id="2" * 32,
+        selected_entries=tuple(selected),
+    )
+
+    receipt = _apply(repo, plan)
+    replayed = _apply(repo, plan, expected_receipt=asdict(receipt))
+
+    assert replayed == receipt
+    assert len(repo.checkpoint_rows()) == 1
+    _assert_target_state(repo, plan)
+
+
+def test_git_first_restore_preserves_unrelated_repository_paths(
+    repo: RestoreRepo,
+) -> None:
+    plan = _restore_plan(repo)
+    readme_before = (repo.root / "README.md").read_bytes()
+    readme_entry = repo.tree_entry(repo.base_commit, "README.md")
+
+    _apply(repo, plan)
+
+    assert (repo.root / "README.md").read_bytes() == readme_before
+    assert repo.tree_entry(plan.target_commit, "README.md") == readme_entry
+    _assert_target_state(repo, plan)
+
+
+def test_git_first_restore_symlink_drift_is_rejected_without_following(
+    repo: RestoreRepo,
+) -> None:
+    plan = _restore_plan(repo)
+    target = repo.root / "specs/001-example/spec.md"
+    victim = repo.root / "victim"
+    victim.write_bytes(b"do not mutate\n")
+    target.unlink()
+    target.symlink_to("../../victim")
+
+    with pytest.raises(GitFirstRestoreError, match="regular file"):
+        _apply(repo, plan)
+
+    assert target.is_symlink()
+    assert victim.read_bytes() == b"do not mutate\n"
+    assert repo.head() == plan.base_commit
+    assert repo.index_tree() == plan.base_tree
+    assert repo.checkpoint_rows() == []
+
+
+def test_git_first_restore_mode_only_owned_drift_is_rejected_before_mutation(
+    repo: RestoreRepo,
+) -> None:
+    plan = _restore_plan(repo)
+    spec = repo.root / "specs/001-example/spec.md"
+    gates = repo.root / "specs/001-example/quality-gates.md"
+    gates_before = gates.read_bytes()
+    spec.chmod(0o755)
+
+    with pytest.raises(GitFirstRestoreError, match="worktree authority changed"):
+        _apply(repo, plan)
+
+    assert spec.read_bytes() == repo.current_bytes
+    assert stat.S_IMODE(spec.stat().st_mode) == 0o755
+    assert gates.read_bytes() == gates_before
+    assert repo.head() == plan.base_commit
+    assert repo.index_tree() == plan.base_tree
+    assert repo.checkpoint_rows() == []
+
+
+def test_git_first_restore_rejects_unrelated_owned_drift_before_mutation(
+    repo: RestoreRepo,
+) -> None:
+    plan = _restore_plan(repo)
+    spec = repo.root / "specs/001-example/spec.md"
+    issues = repo.root / "specs/001-example/issues.md"
+    issues.write_bytes(b"unrelated owned drift\n")
+
+    with pytest.raises(GitFirstRestoreError, match="worktree authority changed"):
+        _apply(repo, plan)
+
+    assert spec.read_bytes() == repo.current_bytes
+    assert issues.read_bytes() == b"unrelated owned drift\n"
+    assert repo.head() == plan.base_commit
+    assert repo.index_tree() == plan.base_tree
+    assert repo.checkpoint_rows() == []
+
+
+def test_git_first_restore_rejects_same_digest_inode_swap(
+    repo: RestoreRepo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _restore_plan(repo)
+    spec = repo.root / "specs/001-example/spec.md"
+    real_snapshot = git_first_restore_module._restore_entry_snapshot
+    swapped = False
+
+    def swap_after_snapshot(directory_fd: int, name: str, **kwargs: object):
+        nonlocal swapped
+        snapshot = real_snapshot(directory_fd, name, **kwargs)
+        if name == "spec.md" and snapshot is not None and not swapped:
+            swapped = True
+            replacement = spec.with_name("same-digest-replacement")
+            replacement.write_bytes(spec.read_bytes())
+            replacement.chmod(stat.S_IMODE(spec.stat().st_mode))
+            os.replace(replacement, spec)
+        return snapshot
+
+    monkeypatch.setattr(
+        git_first_restore_module,
+        "_restore_entry_snapshot",
+        swap_after_snapshot,
+    )
+
+    with pytest.raises(GitFirstRestoreError, match="identity changed"):
+        _apply(repo, plan)
+
+    assert swapped is True
+    assert repo.head() == plan.base_commit
+    assert repo.index_tree() == plan.base_tree
+    assert repo.checkpoint_rows() == []
+
+
+def test_git_first_restore_rejects_unexplained_deterministic_temp(
+    repo: RestoreRepo,
+) -> None:
+    plan = _restore_plan(repo)
+    journal_dir = repo.run_root / "git-first-restores"
+    journal_dir.mkdir()
+    temp_name = git_first_restore_module._restore_temporary_name(
+        plan.completion_id,
+        plan.entries[0].path,
+    )
+    (journal_dir / temp_name).write_bytes(b"unexplained residue")
+
+    with pytest.raises(GitFirstRestoreError, match="journal is missing"):
+        _apply(repo, plan)
+
+    assert repo.head() == plan.base_commit
+    assert repo.index_tree() == plan.base_tree
+    assert repo.checkpoint_rows() == []
+
+
+def test_git_first_restore_preflights_all_existing_temps_before_exchange(
+    repo: RestoreRepo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _restore_plan(repo)
+
+    def crash_after_journal(point: str) -> None:
+        if point == "after_journal":
+            raise KeyboardInterrupt("crash after journal")
+
+    monkeypatch.setattr(
+        git_first_restore_module,
+        "_restore_fault",
+        crash_after_journal,
+    )
+    with pytest.raises(KeyboardInterrupt, match="after journal"):
+        _apply(repo, plan)
+
+    journal_dir = repo.run_root / "git-first-restores"
+    later = plan.entries[1]
+    temporary = journal_dir / git_first_restore_module._restore_temporary_name(
+        plan.completion_id,
+        later.path,
+    )
+    temporary.write_bytes(b"corrupt deterministic temporary\n")
+    temporary.chmod(int(later.target_mode[-3:], 8))
+    before = {
+        entry.path: (
+            (repo.root / entry.path).read_bytes(),
+            stat.S_IMODE((repo.root / entry.path).stat().st_mode),
+        )
+        for entry in plan.entries
+    }
+    monkeypatch.setattr(
+        git_first_restore_module,
+        "_restore_fault",
+        lambda _point: None,
+    )
+
+    with pytest.raises(GitFirstRestoreError, match="temporary changed"):
+        _apply(repo, plan)
+
+    assert {
+        entry.path: (
+            (repo.root / entry.path).read_bytes(),
+            stat.S_IMODE((repo.root / entry.path).stat().st_mode),
+        )
+        for entry in plan.entries
+    } == before
+    assert repo.head() == plan.base_commit
+    assert repo.index_tree() == plan.base_tree
+    assert repo.checkpoint_rows() == []
+
+
+def test_git_first_restore_rejects_ref_conflict_without_mutation(
+    repo: RestoreRepo,
+) -> None:
+    plan = _restore_plan(repo)
+    repo.git("commit", "--allow-empty", "-m", "conflicting ref advance")
+    conflicting = repo.head()
+
+    with pytest.raises(GitFirstRestoreError, match="ref authority changed"):
+        _apply(repo, plan)
+
+    assert repo.head() == conflicting
+    assert repo.spec_bytes() == repo.current_bytes
+    assert repo.checkpoint_rows() == []
+
+
+def test_git_first_restore_rejects_index_conflict_without_mutation(
+    repo: RestoreRepo,
+) -> None:
+    plan = _restore_plan(repo)
+    readme = repo.root / "README.md"
+    readme.write_bytes(b"staged unrelated drift\n")
+    repo.git("add", "README.md")
+
+    with pytest.raises(GitFirstRestoreError, match="index authority changed"):
+        _apply(repo, plan)
+
+    assert repo.head() == plan.base_commit
+    assert repo.spec_bytes() == repo.current_bytes
+    assert repo.checkpoint_rows() == []

@@ -79,6 +79,52 @@ VALID_PUBLICATION_MARKER = {
 
 
 @pytest.mark.parametrize(
+    "restore_receipt",
+    (
+        {
+            "schema_version": 1,
+            "candidate_id": "quality-candidate-0",
+            "artifact_preimage_digests": {"spec.md": "a" * 64},
+            "artifact_postimage_digests": {"spec.md": "b" * 64},
+            "checkpoint": {"commit": "c" * 40},
+        },
+        {
+            "schema_version": 1,
+            "candidate_id": "quality-candidate-0",
+            "artifact_preimage_digests": {"spec.md": "a" * 64},
+            "artifact_postimage_digests": {"spec.md": "b" * 64},
+            "restore_protocol": "git_first_v1",
+            "plan_sha256": "d" * 64,
+            "target_commit": "e" * 40,
+            "checkpoint": {"commit": "e" * 40},
+        },
+    ),
+)
+def test_schema_v1_outbox_accepts_legacy_and_git_first_restore_receipts(
+    restore_receipt: dict[str, object],
+) -> None:
+    value = {
+        "schema_version": 1,
+        "completion_id": COMPLETION_ID,
+        "effects": {
+            "quality": {
+                "schema_version": 1,
+                "operation": "restore",
+                "restore": restore_receipt,
+            }
+        },
+    }
+
+    assert completion_module._validate_receipts(
+        value,
+        intent={
+            "completion_id": COMPLETION_ID,
+            "effect_plan": ["quality"],
+        },
+    ) == value
+
+
+@pytest.mark.parametrize(
     "mutation",
     [
         lambda value: {**value, "extra": True},

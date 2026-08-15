@@ -7,6 +7,12 @@ from unittest.mock import MagicMock
 import pytest
 import yaml
 
+import harness.phase_checkpoints as phase_checkpoints_module
+from harness.git_first_restore import (
+    apply_or_recover_git_first_restore,
+    build_git_first_restore_commit,
+)
+from harness.proportional_quality import CandidateCheckpointEntry
 from harness.controller_state_contracts import (
     ControllerStateContractViolation,
 )
@@ -76,6 +82,94 @@ def _git(repo: Path, *args: str) -> str:
         capture_output=True,
         text=True,
     ).stdout.strip()
+
+
+def test_prebuilt_restore_checkpoint_records_without_staging_mutable_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    run_root = repo / "runs/run-test"
+    spec_dir = repo / "specs/001-demo"
+    spec_dir.mkdir(parents=True)
+    run_root.mkdir(parents=True)
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.name", "Checkpoint Test")
+    _git(repo, "config", "user.email", "checkpoint@example.test")
+    (repo / "README.md").write_text("unrelated\n", encoding="utf-8")
+    base_contents = {
+        "issues.md": b"base issues\n",
+        "quality-gates.md": b"base gates\n",
+        "requirements-overview.md": b"base overview\n",
+        "spec.md": b"base spec\n",
+    }
+    for name, content in base_contents.items():
+        (spec_dir / name).write_bytes(content)
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "base")
+    base = _git(repo, "rev-parse", "HEAD^{commit}")
+    selected: list[CandidateCheckpointEntry] = []
+    for name in sorted(base_contents):
+        content = f"selected {name}\n".encode()
+        blob = subprocess.run(
+            ["git", "hash-object", "-w", "--stdin"],
+            cwd=repo,
+            input=content,
+            check=True,
+            capture_output=True,
+        ).stdout.decode().strip()
+        selected.append(
+            CandidateCheckpointEntry(
+                path=name,
+                mode="100755" if name == "spec.md" else "100644",
+                blob_oid=blob,
+                sha256=hashlib.sha256(content).hexdigest(),
+                content=content,
+            )
+        )
+    completion_id = "9" * 32
+    plan = build_git_first_restore_commit(
+        project_root=repo,
+        journal_root=run_root,
+        completion_id=completion_id,
+        base_commit=base,
+        selected_candidate_id="quality-candidate-0",
+        selected_manifest_sha256="a" * 64,
+        selected_entries=tuple(selected),
+        run_id="run-test",
+        spec_id="001-demo",
+        next_phase="checkpoint-assess",
+    )
+    monkeypatch.setattr(
+        phase_checkpoints_module,
+        "_commit_spec_changes",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("prebuilt checkpoint staged mutable bytes")
+        ),
+    )
+
+    receipt = apply_or_recover_git_first_restore(
+        project_root=repo,
+        spec_dir=spec_dir,
+        journal_root=run_root,
+        plan=plan,
+        run_id="run-test",
+        spec_id="001-demo",
+        next_phase="checkpoint-assess",
+    )
+
+    ledger = json.loads(
+        (spec_dir / ".echelon/checkpoints.json").read_text(encoding="utf-8")
+    )
+    rows = [
+        row
+        for row in ledger["checkpoints"]
+        if row.get("completion_id") == completion_id
+    ]
+    assert len(rows) == 1
+    assert receipt.checkpoint["commit"] == plan.target_commit
+    assert _git(repo, "rev-parse", "HEAD^{commit}") == plan.target_commit
+    assert _git(repo, "write-tree") == plan.target_tree
 
 
 def test_tasks_lexicon_report_is_in_real_phase_checkpoint_commit(

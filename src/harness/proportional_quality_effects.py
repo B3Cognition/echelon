@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import hashlib
 from pathlib import Path
 from typing import Mapping
 
+from harness.git_first_restore import (
+    GitFirstRestoreError,
+    GitFirstRestorePlan,
+    build_git_first_restore_commit,
+    recover_git_first_restore_plan,
+)
 from harness.phase1_quality_debt import apply_or_verify_quality_debt_effect
 from harness.proportional_quality import (
     QualityCandidateIntegrityError,
+    _legacy_restore_authority_present,
     _validate_restore_candidate,
     materialize_quality_candidate,
     materialize_quality_candidate_restore,
@@ -81,6 +89,77 @@ def _quality_completion_id(completion_id: str, effect: str) -> str:
     return hashlib.sha256(
         f"{completion_id}:quality-{effect}".encode("utf-8")
     ).hexdigest()[:32]
+
+
+def _git_first_selected_entries(
+    *,
+    project_root: Path,
+    spec_dir: Path,
+    selected_restore: object,
+) -> tuple[object, ...]:
+    try:
+        relative_spec = Path(spec_dir).resolve().relative_to(
+            Path(project_root).resolve()
+        )
+        entries = selected_restore.entries
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise QualityCandidateIntegrityError(
+            "candidate restore preflight changed"
+        ) from exc
+    return tuple(
+        replace(
+            entry,
+            path=(relative_spec / entry.path).as_posix(),
+        )
+        for entry in entries
+    )
+
+
+def _build_git_first_plan(
+    *,
+    project_root: Path,
+    spec_dir: Path,
+    selected_restore: object,
+    completion_id: str,
+    base_commit: str,
+    run_id: str,
+    spec_id: str,
+    next_phase: str,
+) -> GitFirstRestorePlan:
+    entries = _git_first_selected_entries(
+        project_root=project_root,
+        spec_dir=spec_dir,
+        selected_restore=selected_restore,
+    )
+    values = {
+        "project_root": project_root,
+        "journal_root": Path(
+            selected_restore.snapshot.manifest.run_artifact_root
+        ),
+        "completion_id": completion_id,
+        "base_commit": base_commit,
+        "selected_candidate_id": (
+            selected_restore.snapshot.manifest.candidate_id
+        ),
+        "selected_manifest_sha256": selected_restore.snapshot.sha256,
+        "selected_entries": entries,
+        "run_id": run_id,
+        "spec_id": spec_id,
+        "next_phase": next_phase,
+    }
+    try:
+        return build_git_first_restore_commit(**values)
+    except GitFirstRestoreError:
+        try:
+            return recover_git_first_restore_plan(**values)
+        except GitFirstRestoreError as exc:
+            raise QualityCandidateIntegrityError(
+                f"candidate restore commit authority failed: {exc}"
+            ) from exc
+    except (AttributeError, TypeError, ValueError, GitFirstRestoreError) as exc:
+        raise QualityCandidateIntegrityError(
+            f"candidate restore commit authority failed: {exc}"
+        ) from exc
 
 
 def apply_or_verify_proportional_quality_effect(
@@ -231,6 +310,34 @@ def apply_or_verify_proportional_quality_effect(
                     completion_id,
                     "restore",
                 )
+                restore_expected = (
+                    expected.get("restore") if expected else None
+                )
+                candidate_checkpoint = candidate_receipt.get("checkpoint")
+                if (
+                    not isinstance(candidate_checkpoint, Mapping)
+                    or type(candidate_checkpoint.get("commit")) is not str
+                ):
+                    raise QualityCandidateIntegrityError(
+                        "current candidate checkpoint authority changed"
+                    )
+                restore_plan = None
+                if not _legacy_restore_authority_present(
+                    spec_dir=spec_dir,
+                    candidate=selected,
+                    completion_id=restore_completion_id,
+                    expected_receipt=restore_expected,
+                ):
+                    restore_plan = _build_git_first_plan(
+                        project_root=root,
+                        spec_dir=spec_dir,
+                        selected_restore=selected_restore,
+                        completion_id=restore_completion_id,
+                        base_commit=str(candidate_checkpoint["commit"]),
+                        run_id=run_id,
+                        spec_id=spec_id,
+                        next_phase=next_phase,
+                    )
                 restore_receipt = materialize_quality_candidate_restore(
                     project_root=root,
                     spec_dir=spec_dir,
@@ -241,13 +348,12 @@ def apply_or_verify_proportional_quality_effect(
                     next_phase=next_phase,
                     checkpoint_prestate={
                         "kind": "git_head",
-                        "head": candidate_receipt["checkpoint"]["commit"],
+                        "head": candidate_checkpoint["commit"],
                     },
                     artifact_preimage_digests=restore_preimages,
                     preflighted_restore=selected_restore,
-                    expected_receipt=(
-                        expected.get("restore") if expected else None
-                    ),
+                    restore_plan=restore_plan,
+                    expected_receipt=restore_expected,
                 )
             receipt = {
                 "schema_version": 1,
@@ -327,23 +433,43 @@ def apply_or_verify_proportional_quality_effect(
                 run_id=run_id,
                 spec_id=spec_id,
             )
+            restore_completion_id = _quality_completion_id(
+                completion_id,
+                "restore",
+            )
+            restore_expected = (
+                expected.get("restore") if expected else None
+            )
+            restore_plan = None
+            if not _legacy_restore_authority_present(
+                spec_dir=spec_dir,
+                candidate=candidate,
+                completion_id=restore_completion_id,
+                expected_receipt=restore_expected,
+            ):
+                restore_plan = _build_git_first_plan(
+                    project_root=root,
+                    spec_dir=spec_dir,
+                    selected_restore=selected_restore,
+                    completion_id=restore_completion_id,
+                    base_commit=str(effective_prestate["head"]),
+                    run_id=run_id,
+                    spec_id=spec_id,
+                    next_phase=next_phase,
+                )
             restore_receipt = materialize_quality_candidate_restore(
                 project_root=root,
                 spec_dir=spec_dir,
                 candidate=candidate,
                 run_id=run_id,
                 spec_id=spec_id,
-                completion_id=_quality_completion_id(
-                    completion_id,
-                    "restore",
-                ),
+                completion_id=restore_completion_id,
                 next_phase=next_phase,
                 checkpoint_prestate=effective_prestate,
                 artifact_preimage_digests=artifact_preimages,
                 preflighted_restore=selected_restore,
-                expected_receipt=(
-                    expected.get("restore") if expected else None
-                ),
+                restore_plan=restore_plan,
+                expected_receipt=restore_expected,
             )
             receipt = {
                 "schema_version": 1,

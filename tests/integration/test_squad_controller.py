@@ -8,6 +8,7 @@ from collections.abc import Mapping
 import sys
 import json
 import hashlib
+import re
 import copy
 import subprocess
 import uuid
@@ -29,6 +30,7 @@ if str(EXT_ROOT) not in sys.path:
 from harness.controller_state_contracts import ControllerStateContractViolation
 import harness.squad as squad_module
 import harness.squad_completion as completion_module
+import harness.git_first_restore as git_first_restore_module
 import harness.proportional_quality as proportional_quality_module
 import harness.proportional_quality_effects as quality_effects_module
 from harness.human_input import (
@@ -7410,7 +7412,7 @@ class TestProportionalQualityController:
             "checkpoint-assess"
         )
 
-    def test_restore_retry_recovers_partial_owned_file_replacement(
+    def test_restore_crash_after_first_exchange_recovers_once(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -7419,38 +7421,19 @@ class TestProportionalQualityController:
             tmp_path
         )
         spec_dir = tmp_path / "runs/run-test/specs/001-demo"
-        owned = {
-            "spec.md",
-            "requirements-overview.md",
-            "quality-gates.md",
-            "issues.md",
-        }
-        replace = (
-            proportional_quality_module._reconcile_candidate_artifact_exchange
-        )
-        replaced: list[str] = []
+        crashed = False
 
-        def interrupt_during_restore(
-            directory_fd: int,
-            *,
-            artifact: str,
-            **kwargs: object,
-        ) -> None:
-            assert artifact in owned
-            replaced.append(artifact)
-            if len(replaced) == 2:
+        def interrupt_during_restore(point: str) -> None:
+            nonlocal crashed
+            if point == "after_first_exchange" and not crashed:
+                crashed = True
                 raise KeyboardInterrupt(
                     "interrupted after the first candidate artifact replacement"
                 )
-            replace(
-                directory_fd,
-                artifact=artifact,
-                **kwargs,
-            )
 
         monkeypatch.setattr(
-            proportional_quality_module,
-            "_reconcile_candidate_artifact_exchange",
+            git_first_restore_module,
+            "_restore_fault",
             interrupt_during_restore,
         )
 
@@ -7461,7 +7444,7 @@ class TestProportionalQualityController:
         assert interrupted[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == (
             "quality"
         )
-        assert len(replaced) == 2
+        assert crashed is True
         candidate = json.loads(
             (
                 ctrl._squad_dir
@@ -7477,9 +7460,9 @@ class TestProportionalQualityController:
         assert any(observed[name] != postimages[name] for name in observed)
 
         monkeypatch.setattr(
-            proportional_quality_module,
-            "_reconcile_candidate_artifact_exchange",
-            replace,
+            git_first_restore_module,
+            "_restore_fault",
+            lambda _point: None,
         )
         del ctrl
         fresh, fresh_store = _controller(tmp_path)
@@ -7631,10 +7614,12 @@ class TestProportionalQualityController:
         assert tree.startswith("100644 ")
         assert victim.read_bytes() == b"../victim"
 
-    def test_restore_retry_reconciles_hard_kill_exchange_journal_before_checkpoint(
+    @pytest.mark.parametrize("mode_tampered", [False, True])
+    def test_restore_retry_reconciles_only_exact_legacy_exchange_journal(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
+        mode_tampered: bool,
     ) -> None:
         ctrl, store, _current_text = _older_best_proportional_quality_loop(
             tmp_path
@@ -7740,6 +7725,8 @@ class TestProportionalQualityController:
         )
         target.write_bytes(postimage_content)
         displaced.write_bytes(preimage_content)
+        if mode_tampered:
+            displaced.chmod(0o755)
 
         monkeypatch.setattr(
             quality_effects_module,
@@ -7753,6 +7740,16 @@ class TestProportionalQualityController:
 
         recovered = fresh_store.load()
         assert result.status == "blocked"
+        if mode_tampered:
+            assert recovered[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == (
+                "quality"
+            )
+            assert recovered["controller_completion_failure"]["code"] == (
+                "receipts_mismatch"
+            )
+            assert journal.exists()
+            assert displaced.exists()
+            return
         assert PENDING_CONTROLLER_COMPLETION_KEY not in recovered
         assert not journal.exists()
         assert not list(spec_dir.glob(".echelon-quality-restore-*.tmp"))
@@ -8647,6 +8644,21 @@ class TestProportionalQualityController:
         completion_id = pending[PENDING_CONTROLLER_COMPLETION_KEY][
             "completion_id"
         ]
+        outbox_receipts = json.loads(
+            (
+                ctrl._squad_dir
+                / ".completion-outbox"
+                / completion_id
+                / "receipts.json"
+            ).read_text(encoding="utf-8")
+        )
+        restore_receipt = outbox_receipts["effects"]["quality"]["restore"]
+        assert outbox_receipts["schema_version"] == 1
+        assert restore_receipt["restore_protocol"] == "git_first_v1"
+        assert restore_receipt["target_commit"] == (
+            restore_receipt["checkpoint"]["commit"]
+        )
+        assert re.fullmatch(r"[0-9a-f]{64}", restore_receipt["plan_sha256"])
         assert spec.read_text(encoding="utf-8").startswith("# Best candidate")
         calls = ctrl._provider.exec_agent.call_count
         decision = pending["blocked_decision"]
