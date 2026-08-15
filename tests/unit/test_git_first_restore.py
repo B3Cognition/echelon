@@ -12,6 +12,7 @@ import subprocess
 import pytest
 
 import harness.git_first_restore as git_first_restore_module
+import harness.phase_checkpoints as phase_checkpoints_module
 from harness.git_first_restore import (
     GitFirstRestoreError,
     GitFirstRestorePlan,
@@ -936,3 +937,102 @@ def test_git_first_restore_preflights_checkpoint_git_exclude_before_mutation(
     assert exclude.is_symlink()
     assert outside.read_bytes() == b"preserve\n"
     assert not (repo.run_root / "git-first-restores").exists()
+
+
+def test_git_first_restore_preflights_git_exclude_ancestor_before_mutation(
+    repo: RestoreRepo,
+) -> None:
+    plan = _restore_plan(repo)
+    exclude = Path(repo.git("rev-parse", "--git-path", "info/exclude").decode().strip())
+    if not exclude.is_absolute():
+        exclude = repo.root / exclude
+    outside = repo.root.parent / "outside-git-info"
+    exclude.parent.rename(outside)
+    exclude.parent.symlink_to(outside, target_is_directory=True)
+    outside_exclude_before = (outside / "exclude").read_bytes()
+    worktree_before = _owned_worktree_state(repo, plan)
+
+    with pytest.raises(GitFirstRestoreError, match="checkpoint preflight"):
+        _apply(repo, plan)
+
+    assert repo.head() == plan.base_commit
+    assert repo.index_tree() == plan.base_tree
+    assert _owned_worktree_state(repo, plan) == worktree_before
+    assert not (
+        repo.root / "specs/001-example/.echelon/checkpoints.json"
+    ).exists()
+    assert not (repo.run_root / "git-first-restores").exists()
+    assert exclude.parent.is_symlink()
+    assert (outside / "exclude").read_bytes() == outside_exclude_before
+
+
+def test_git_first_restore_fails_closed_when_git_exclude_path_cannot_resolve(
+    repo: RestoreRepo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _restore_plan(repo)
+    worktree_before = _owned_worktree_state(repo, plan)
+    real_run_git = phase_checkpoints_module.run_git
+    reported_exclude = Path(
+        repo.git("rev-parse", "--git-path", "info/exclude").decode().strip()
+    )
+    if not reported_exclude.is_absolute():
+        reported_exclude = repo.root / reported_exclude
+
+    def fail_git_exclude_resolution(project_root, *args, **kwargs):
+        if args == ("rev-parse", "--git-path", "info/exclude"):
+            return subprocess.CompletedProcess(
+                ["git", *args],
+                128,
+                stdout=f"{reported_exclude}\n",
+                stderr="cannot resolve Git exclude authority\n",
+            )
+        return real_run_git(project_root, *args, **kwargs)
+
+    monkeypatch.setattr(
+        phase_checkpoints_module,
+        "run_git",
+        fail_git_exclude_resolution,
+    )
+
+    with pytest.raises(GitFirstRestoreError, match="checkpoint preflight"):
+        _apply(repo, plan)
+
+    assert repo.head() == plan.base_commit
+    assert repo.index_tree() == plan.base_tree
+    assert _owned_worktree_state(repo, plan) == worktree_before
+    assert not (
+        repo.root / "specs/001-example/.echelon/checkpoints.json"
+    ).exists()
+    assert not (repo.run_root / "git-first-restores").exists()
+
+
+def test_git_first_restore_checkpoint_preflight_supports_linked_worktree(
+    repo: RestoreRepo,
+) -> None:
+    linked_root = repo.root.parent / "linked-worktree"
+    repo.git(
+        "worktree",
+        "add",
+        "-q",
+        "-b",
+        "linked-restore",
+        str(linked_root),
+    )
+    linked_run_root = repo.root.parent / "linked-run-artifacts"
+    linked_run_root.mkdir()
+    linked_repo = RestoreRepo(
+        root=linked_root,
+        run_root=linked_run_root,
+        base_commit=repo.base_commit,
+        current_bytes=repo.current_bytes,
+    )
+    plan = _restore_plan(linked_repo)
+
+    receipt = _apply(linked_repo, plan)
+
+    assert receipt.target_commit == plan.target_commit
+    _assert_target_state(linked_repo, plan)
+    assert len(linked_repo.checkpoint_rows()) == 1
+    journal_dir = linked_run_root / "git-first-restores"
+    assert not journal_dir.exists() or list(journal_dir.iterdir()) == []

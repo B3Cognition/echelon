@@ -1241,54 +1241,98 @@ def _ensure_checkpoint_runtime_ignored(project_root: Path) -> None:
             os.close(descriptor)
 
 
-def _preflight_checkpoint_runtime_ignored(project_root: Path) -> None:
-    """Inspect the checkpoint exclude target without creating or updating it."""
+def _open_checkpoint_exclude_parent(path: Path) -> int:
+    """Pin every directory component without following a symlink."""
 
-    result = run_git(
-        project_root,
-        "rev-parse",
-        "--git-path",
-        "info/exclude",
-        check=False,
+    if not path.is_absolute() or not path.name:
+        raise PhaseCheckpointError("checkpoint Git exclude path is invalid")
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_CLOEXEC", 0)
     )
-    if result.returncode != 0 or not result.stdout.strip():
-        return
-    path = Path(result.stdout.strip())
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(path.anchor or os.sep, flags)
+        for component in path.parent.parts[1:]:
+            if component in {"", ".", ".."}:
+                raise OSError("unsafe Git exclude path component")
+            next_descriptor = os.open(component, flags, dir_fd=descriptor)
+            try:
+                if not stat.S_ISDIR(os.fstat(next_descriptor).st_mode):
+                    raise OSError("Git exclude ancestor is not a directory")
+            except Exception:
+                os.close(next_descriptor)
+                raise
+            os.close(descriptor)
+            descriptor = next_descriptor
+        return descriptor
+    except OSError as exc:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        raise PhaseCheckpointError(
+            "checkpoint Git exclude path is unsafe"
+        ) from exc
+
+
+def _preflight_checkpoint_runtime_ignored(project_root: Path) -> None:
+    """Inspect the checkpoint exclude authority without mutating it."""
+
+    try:
+        result = run_git(
+            project_root,
+            "rev-parse",
+            "--git-path",
+            "info/exclude",
+            check=False,
+        )
+    except GitHelperError as exc:
+        raise PhaseCheckpointError(
+            "could not resolve checkpoint Git excludes"
+        ) from exc
+    raw_path = result.stdout.strip()
+    if result.returncode != 0 or not raw_path:
+        raise PhaseCheckpointError(
+            "could not resolve checkpoint Git excludes"
+        )
+    path = Path(raw_path)
     if not path.is_absolute():
         path = project_root / path
+    path = Path(os.path.abspath(path))
+    parent_descriptor = _open_checkpoint_exclude_parent(path)
+    descriptor: int | None = None
     try:
-        metadata = path.lstat()
-    except FileNotFoundError:
         try:
-            parent = path.parent.lstat()
+            metadata = os.stat(
+                path.name,
+                dir_fd=parent_descriptor,
+                follow_symlinks=False,
+            )
         except FileNotFoundError:
             return
-        except OSError as exc:
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
             raise PhaseCheckpointError(
-                "could not inspect checkpoint Git excludes"
-            ) from exc
-        if not stat.S_ISDIR(parent.st_mode):
-            raise PhaseCheckpointError(
-                "checkpoint Git exclude parent must be a directory"
+                "checkpoint Git excludes must be a regular file"
             )
-        return
-    except OSError as exc:
-        raise PhaseCheckpointError(
-            "could not inspect checkpoint Git excludes"
-        ) from exc
-    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
-        raise PhaseCheckpointError(
-            "checkpoint Git excludes must be a regular file"
+        flags = (
+            os.O_RDONLY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_CLOEXEC", 0)
         )
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-    try:
-        descriptor = os.open(path, flags)
-    except OSError as exc:
-        raise PhaseCheckpointError(
-            "could not inspect checkpoint Git excludes"
-        ) from exc
-    try:
+        descriptor = os.open(path.name, flags, dir_fd=parent_descriptor)
         opened = os.fstat(descriptor)
+        token = (
+            opened.st_dev,
+            opened.st_ino,
+            opened.st_mode,
+            opened.st_size,
+            opened.st_mtime_ns,
+            opened.st_ctime_ns,
+        )
         if (
             not stat.S_ISREG(opened.st_mode)
             or (opened.st_dev, opened.st_ino)
@@ -1303,13 +1347,45 @@ def _preflight_checkpoint_runtime_ignored(project_root: Path) -> None:
             if not chunk:
                 break
             content.extend(chunk)
+        after = os.fstat(descriptor)
+        if (
+            after.st_dev,
+            after.st_ino,
+            after.st_mode,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        ) != token:
+            raise PhaseCheckpointError(
+                "checkpoint Git exclude identity changed"
+            )
+        current = os.stat(
+            path.name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        if (
+            current.st_dev,
+            current.st_ino,
+            current.st_mode,
+            current.st_size,
+            current.st_mtime_ns,
+            current.st_ctime_ns,
+        ) != token:
+            raise PhaseCheckpointError(
+                "checkpoint Git exclude identity changed"
+            )
         content.decode("utf-8")
+    except PhaseCheckpointError:
+        raise
     except (OSError, UnicodeDecodeError) as exc:
         raise PhaseCheckpointError(
             "could not inspect checkpoint Git excludes"
         ) from exc
     finally:
-        os.close(descriptor)
+        if descriptor is not None:
+            os.close(descriptor)
+        os.close(parent_descriptor)
 
 
 def create_or_recover_completion_checkpoint(
