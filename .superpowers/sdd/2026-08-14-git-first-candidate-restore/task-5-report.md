@@ -1,0 +1,5 @@
+# Task 5 Implementer Report
+
+Verification completed. Focused matrix: 1137 passed; expanded suite: 1727 passed; deployment: 146 passed; bundle: 9/9; full pytest: 8882 passed, 9 skipped, 1 deselected, four failures. Three are the known baseline capability-policy failures; the fourth is the documented out-of-scope journal fixture. Task-4 compatibility repair is scoped to its listed files and passes 13 targeted cases. See `final-report.md` for identities, authority/crash evidence, debt behavior, legacy guidance, and deferred Lexicon defects.
+
+RED/GREEN: the journal metadata test failed with an empty deferred journal because its legacy WHY2 fixture inherited proportional SAGE policy. The fixture now explicitly selects perfectionist mode; the exact test and local file passed (106 tests). Self-review: this is fixture-only, retains proportional defaults elsewhere, and the six-file compatibility commit is `f100788f`. Final full pytest from that head: 8883 passed, 9 skipped, 1 deselected, exactly the three base capability-policy failures.

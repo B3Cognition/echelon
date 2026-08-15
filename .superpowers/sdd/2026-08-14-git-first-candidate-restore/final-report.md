@@ -26,4 +26,4 @@ Task 5 repaired the corresponding in-scope regression: perfectionist callers wit
 
 ## Whole-branch review package
 
-Review range: `057b0a7d408c11ca63640c8a52b04bea80677af4..HEAD`. Review must explicitly verdict target commit/tree/modes; ref/index crash recovery; manifest preflight before mutation; SAGE PASS certification; guided/banzai qualitative debt; legacy outbox; and perfectionist behavior. Verdict: STOP pending the single out-of-scope fixture failure; no product recovery authority or deferred Lexicon defect was changed.
+Final verified head: `f100788f`. The legacy journal fixture now explicitly selects perfectionist mode; its exact test and 106-test local file pass. Full pytest: 8883 passed, 9 skipped, 1 deselected, and exactly the three base-reproduced capability-policy failures in 1063.62s. Review range: `057b0a7d408c11ca63640c8a52b04bea80677af4..HEAD`. Review must explicitly verdict target commit/tree/modes; ref/index crash recovery; manifest preflight before mutation; SAGE PASS certification; guided/banzai qualitative debt; legacy outbox; and perfectionist behavior. Verdict: ready for whole-branch review; deferred Lexicon defects remain unchanged.
