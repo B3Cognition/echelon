@@ -43,8 +43,13 @@ def build_phase1_quality_certificate(
     project_root: Path,
     authoritative_sage_assessment: AuthoritativeQualityAssessment | None = None,
 ) -> dict[str, object] | None:
-    """Build a schema-v2 certificate from one authoritative ordinary PASS."""
+    """Build a proportional v2 or legacy/perfectionist v1 certificate."""
     assessment = authoritative_sage_assessment
+    if assessment is None:
+        return build_legacy_phase1_quality_certificate(
+            state,
+            project_root=project_root,
+        )
     if (
         not isinstance(assessment, AuthoritativeQualityAssessment)
         or assessment.numeric_pass is not True
@@ -150,7 +155,7 @@ def _passing_certificate_base(
     }
 
 
-def _build_legacy_phase1_quality_certificate(
+def build_legacy_phase1_quality_certificate(
     state: Mapping[str, object],
     *,
     project_root: Path,
@@ -175,7 +180,7 @@ def has_current_phase1_quality_certificate(
         return False
     schema_version = stored.get("schema_version")
     if schema_version == LEGACY_SCHEMA_VERSION:
-        current = _build_legacy_phase1_quality_certificate(
+        current = build_legacy_phase1_quality_certificate(
             state,
             project_root=project_root,
         )

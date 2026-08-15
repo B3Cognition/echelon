@@ -564,7 +564,7 @@ def test_unknown_entry_type_is_preserved_without_schema_warning(tmp_path):
 
 # ── SquadController._judgment_dispatch journal coverage ──────────────────────
 
-def _squad_controller(tmp_path: Path):
+def _squad_controller(tmp_path: Path, *, spec_authoring_mode: str = "proportional"):
     """Minimal SquadController wired to a mock provider."""
     from harness.phase_graph import PhaseGraph, PhaseNode
     from harness.squad import SquadController
@@ -589,6 +589,7 @@ def _squad_controller(tmp_path: Path):
         user_message="test",
         token_budget=0,
         entry_phase="init",
+        spec_authoring_mode=spec_authoring_mode,
     )
     ctrl = SquadController(
         provider=provider,
@@ -670,7 +671,10 @@ def test_judgment_journal_entries_publish_only_after_committed_route(tmp_path):
 
 def test_judgment_dispatch_replaces_null_journal_metadata(tmp_path):
     """COMMANDER/SAGE placeholders like id: null must not persist to JSONL."""
-    ctrl, provider = _squad_controller(tmp_path)
+    ctrl, provider = _squad_controller(
+        tmp_path,
+        spec_authoring_mode="perfectionist",
+    )
     provider.exec_agent.return_value = SquadAgentResult(
         exit_code=0,
         echelon_result={

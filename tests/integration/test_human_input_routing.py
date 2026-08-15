@@ -2842,6 +2842,7 @@ def test_consecutive_fail_and_why2_metric_stagnation_return_safeguard_request(
     state = store.load()
     state.update(
         {
+            "spec_authoring_mode": "perfectionist",
             "why_fail_count": 1,
             "why2_metric_stagnation_count": stagnation_count,
             "why_failure_baseline": {

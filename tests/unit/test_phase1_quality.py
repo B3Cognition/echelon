@@ -8,6 +8,7 @@ import pytest
 
 import harness.phase1_quality as quality_module
 from harness.phase1_quality import (
+    build_legacy_phase1_quality_certificate,
     build_phase1_quality_certificate,
     has_current_phase1_quality_certificate,
     has_current_phase1_quality_prerequisite,
@@ -156,6 +157,17 @@ def test_phase1_quality_certificate_is_bound_to_current_spec_and_evidence(
         state,
         project_root=tmp_path,
     )
+
+
+def test_legacy_builder_preserves_perfectionist_certificate_shape(
+    tmp_path: Path,
+) -> None:
+    state, _spec_path, _report_path = _quality_state(tmp_path)
+
+    assert build_legacy_phase1_quality_certificate(
+        state,
+        project_root=tmp_path,
+    ) == _legacy_certificate(state, project_root=tmp_path)
 
 
 def test_phase1_quality_certificate_rejects_tampered_understanding_evidence(

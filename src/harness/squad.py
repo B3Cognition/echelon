@@ -9880,22 +9880,10 @@ class SquadController:
             and explicit_quality_pass(latest_score) is True
             and not self._is_proportional_quality_state(state_copy)
         ):
-            try:
-                assessment = self._authoritative_quality_assessment(
-                    provider_verdict=result.verdict or "",
-                    eval_state=state_copy,
-                    routes=self._finding_routes_from_updates(
-                        result.state_updates
-                    ),
-                    spec_dir=self._proportional_spec_dir(state_copy),
-                )
-                certificate = build_phase1_quality_certificate(
-                    state_copy,
-                    project_root=self._project_root,
-                    authoritative_sage_assessment=assessment,
-                )
-            except QualityCandidateIntegrityError:
-                certificate = None
+            certificate = build_phase1_quality_certificate(
+                state_copy,
+                project_root=self._project_root,
+            )
             if certificate is None:
                 quality_certificate_override = PHASE_TERMINAL_BLOCKED
             else:

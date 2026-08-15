@@ -5063,7 +5063,10 @@ class TestSquadControllerBasics:
                 }
             },
         )
-        store.initialize("r", "brownfield", "msg", 0, "phase1-tracker")
+        store.initialize(
+            "r", "brownfield", "msg", 0, "phase1-tracker",
+            spec_authoring_mode="perfectionist",
+        )
         _mark_constitution_complete(tmp_path, store)
         state = store.load()
         state["re_generation"] = 1
@@ -5115,7 +5118,10 @@ class TestSquadControllerBasics:
             "_lexicon_gate_config",
             lambda: {"lexicon_gate": {"enabled": False, "spec_enabled": False}},
         )
-        store.initialize("r", "brownfield", "msg", 0, "phase1-tracker")
+        store.initialize(
+            "r", "brownfield", "msg", 0, "phase1-tracker",
+            spec_authoring_mode="perfectionist",
+        )
         _mark_constitution_complete(tmp_path, store)
         state = store.load()
         state["re_generation"] = 1
@@ -5692,7 +5698,10 @@ class TestSquadControllerBasics:
             timed_out=False,
         )
         ctrl, store = _controller(tmp_path, provider=provider)
-        store.initialize("r", "semi", "msg", 0, "phase1-why2", max_iterations=5)
+        store.initialize(
+            "r", "semi", "msg", 0, "phase1-why2", max_iterations=5,
+            spec_authoring_mode="perfectionist",
+        )
         store.increment_why_fail_count()
 
         spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
@@ -5712,7 +5721,10 @@ class TestSquadControllerBasics:
     def test_what_artifact_repair_starts_a_fresh_why_failure_cycle(self, tmp_path):
         """A repaired spec must not inherit a WHY failure from its prior version."""
         ctrl, store = _controller(tmp_path)
-        store.initialize("r", "semi", "msg", 0, "phase1-what", max_iterations=5)
+        store.initialize(
+            "r", "semi", "msg", 0, "phase1-what", max_iterations=5,
+            spec_authoring_mode="perfectionist",
+        )
         spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
         spec_dir.mkdir(parents=True)
         (spec_dir / "spec.md").write_text("# Repaired specification\n", encoding="utf-8")
@@ -5904,7 +5916,10 @@ class TestSquadControllerBasics:
 
     def test_passing_why2_validates_only_the_repaired_selected_issue(self, tmp_path):
         ctrl, store = _controller(tmp_path)
-        store.initialize("r", "semi", "msg", 0, "phase1-why2", max_iterations=5)
+        store.initialize(
+            "r", "semi", "msg", 0, "phase1-why2", max_iterations=5,
+            spec_authoring_mode="perfectionist",
+        )
         state = store.load()
         state.update(
             {
@@ -5950,7 +5965,10 @@ class TestSquadControllerBasics:
 
     def test_failing_why2_validates_repaired_issue_absent_from_remaining_findings(self, tmp_path):
         ctrl, store = _controller(tmp_path)
-        store.initialize("r", "semi", "msg", 0, "phase1-why2", max_iterations=5)
+        store.initialize(
+            "r", "semi", "msg", 0, "phase1-why2", max_iterations=5,
+            spec_authoring_mode="perfectionist",
+        )
         state = store.load()
         state.update(
             {
@@ -5996,7 +6014,10 @@ class TestSquadControllerBasics:
 
     def test_failing_why2_does_not_reopen_a_repaired_selected_issue(self, tmp_path):
         ctrl, store = _controller(tmp_path)
-        store.initialize("r", "semi", "msg", 0, "phase1-why2", max_iterations=5)
+        store.initialize(
+            "r", "semi", "msg", 0, "phase1-why2", max_iterations=5,
+            spec_authoring_mode="perfectionist",
+        )
         state = store.load()
         state.update({
             "selected_issue_resolution": "ISS-001",
@@ -6209,7 +6230,10 @@ class TestSquadControllerBasics:
         from echelon.cli import _classify_run_recovery
 
         ctrl, store = _controller(tmp_path)
-        store.initialize("r", "semi", "msg", 0, "phase1-why2", max_iterations=5)
+        store.initialize(
+            "r", "semi", "msg", 0, "phase1-why2", max_iterations=5,
+            spec_authoring_mode="perfectionist",
+        )
         spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
         spec_dir.mkdir(parents=True)
         (spec_dir / "issues.md").write_text("# Findings\n", encoding="utf-8")
@@ -6408,7 +6432,10 @@ class TestSquadControllerBasics:
                 ready_spec_dir=None,
             ),
         )
-        store.initialize("r", "banzai", "msg", 0, "phase1-why1", max_iterations=5)
+        store.initialize(
+            "r", "banzai", "msg", 0, "phase1-why1", max_iterations=5,
+            spec_authoring_mode="perfectionist",
+        )
         _mark_constitution_complete(tmp_path, store)
         state = store.load()
         state["spec_id"] = "001-test"
