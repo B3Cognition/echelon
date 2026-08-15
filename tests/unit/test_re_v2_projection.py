@@ -1,14 +1,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Mapping
 
+import pytest
+
 from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.events import EventStore
 from harness.re_v2.model import BudgetPolicy, RunManifest
-from harness.re_v2.projection import project_run, rebuild_projection
+from harness.re_v2.projection import (
+    ReV2ProjectionError,
+    project_run,
+    rebuild_projection,
+)
 from harness.re_v2.run_store import ReV2Paths, create_run_store
 
 
@@ -179,3 +186,88 @@ def test_projection_rebuild_is_byte_identical_and_ignores_existing_projection(
     assert first == second
     assert paths.projection.read_bytes() == second
     assert not tuple(paths.root.glob(".projection.json.*.tmp"))
+
+
+def test_projection_write_retries_interrupted_write_and_fsync(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import harness.re_v2.projection as projection_module
+
+    paths, _ = populated_run(tmp_path)
+    real_write = os.write
+    real_fsync = os.fsync
+    write_calls = 0
+    fsync_calls = 0
+
+    def interrupted_write(fd: int, payload: bytes) -> int:
+        nonlocal write_calls
+        write_calls += 1
+        if write_calls == 1:
+            return real_write(fd, payload[:11])
+        if write_calls == 2:
+            raise InterruptedError
+        return real_write(fd, payload)
+
+    def interrupted_fsync(fd: int) -> None:
+        nonlocal fsync_calls
+        fsync_calls += 1
+        if fsync_calls == 1:
+            raise InterruptedError
+        real_fsync(fd)
+
+    monkeypatch.setattr(projection_module.os, "write", interrupted_write)
+    monkeypatch.setattr(projection_module.os, "fsync", interrupted_fsync)
+    rebuilt = rebuild_projection(paths)
+
+    assert paths.projection.read_bytes() == canonical_json_bytes(rebuilt)
+    assert write_calls >= 3
+    assert fsync_calls >= 3
+
+
+_UNSORTED_DEPENDENCIES = tuple(reversed(sorted((digest("dep-a"), digest("dep-b")))))
+
+
+@pytest.mark.parametrize(
+    ("receipt", "message"),
+    [
+        (SimpleNamespace(artifact_hash=digest("artifact")), "artifact_key"),
+        (
+            SimpleNamespace(
+                artifact_hash=digest("artifact"), artifact_key=SimpleNamespace()
+            ),
+            "dependency_hashes",
+        ),
+        (
+            SimpleNamespace(
+                artifact_hash=digest("artifact"),
+                artifact_key=SimpleNamespace(
+                    dependency_hashes=_UNSORTED_DEPENDENCIES
+                ),
+            ),
+            "unique and sorted",
+        ),
+        (
+            SimpleNamespace(
+                artifact_hash=digest("artifact"),
+                artifact_key=SimpleNamespace(
+                    dependency_hashes=(digest("dep-a"), digest("dep-a"))
+                ),
+            ),
+            "unique and sorted",
+        ),
+        (
+            SimpleNamespace(
+                artifact_hash=digest("artifact"),
+                artifact_key=SimpleNamespace(dependency_hashes={digest("dep-a")}),
+            ),
+            "dependency_hashes",
+        ),
+    ],
+)
+def test_projection_rejects_noncanonical_ledger_dependency_structure(
+    receipt: object, message: str
+) -> None:
+    ledger = FixtureLedgerView(accepted_artifacts={digest("key"): receipt})
+
+    with pytest.raises(ReV2ProjectionError, match=message):
+        project_run(manifest("re-projection"), (), ledger)

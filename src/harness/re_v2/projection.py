@@ -182,7 +182,7 @@ def _accepted_roots(ledger: ProjectionLedgerView) -> list[str]:
             raise ReV2ProjectionError("ledger artifact receipt has invalid artifact_hash")
         accepted_hashes.add(artifact_hash)
         if artifact_key is None:
-            continue
+            raise ReV2ProjectionError("ledger artifact receipt is missing artifact_key")
         if isinstance(artifact_key, Mapping):
             dependency_hashes = artifact_key.get("dependency_hashes")
         else:
@@ -199,6 +199,10 @@ def _accepted_roots(ledger: ProjectionLedgerView) -> list[str]:
                     "ledger artifact receipt has invalid dependency_hashes"
                 )
             dependencies.add(dependency_hash)
+        if tuple(dependency_hashes) != tuple(sorted(set(dependency_hashes))):
+            raise ReV2ProjectionError(
+                "ledger dependency_hashes must be unique and sorted"
+            )
     return sorted(accepted_hashes - dependencies)
 
 
@@ -212,7 +216,7 @@ def _write_projection(paths: ReV2Paths, projection: Mapping[str, object]) -> Non
         temporary = Path(name)
         try:
             _write_all(fd, payload)
-            os.fsync(fd)
+            _fsync(fd)
         finally:
             os.close(fd)
         os.replace(temporary, paths.projection)
@@ -230,16 +234,28 @@ def _write_projection(paths: ReV2Paths, projection: Mapping[str, object]) -> Non
 def _write_all(fd: int, payload: bytes) -> None:
     offset = 0
     while offset < len(payload):
-        written = os.write(fd, payload[offset:])
+        try:
+            written = os.write(fd, payload[offset:])
+        except InterruptedError:
+            continue
         if written <= 0:
             raise OSError("short write while persisting projection")
         offset += written
 
 
+def _fsync(fd: int) -> None:
+    while True:
+        try:
+            os.fsync(fd)
+            return
+        except InterruptedError:
+            continue
+
+
 def _fsync_directory(path: Path) -> None:
     fd = os.open(path, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
     try:
-        os.fsync(fd)
+        _fsync(fd)
     finally:
         os.close(fd)
 

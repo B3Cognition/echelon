@@ -115,6 +115,17 @@ def test_replay_rejects_noncanonical_json_even_with_a_valid_hash(tmp_path: Path)
         store.replay()
 
 
+@pytest.mark.parametrize("number", ["NaN", "Infinity", "-Infinity", "1e10000"])
+def test_replay_rejects_nonfinite_or_overflowing_json_numbers_with_record_index(
+    tmp_path: Path, number: str
+) -> None:
+    store = event_store(tmp_path)
+    store.path.write_bytes(f'{{"payload":{number}}}\n'.encode())
+
+    with pytest.raises(ReV2EventError, match=r"event record 1 .*invalid JSON"):
+        store.replay()
+
+
 def test_state_machine_rejects_out_of_order_work_events(tmp_path: Path) -> None:
     store = event_store(tmp_path)
     store.append("run_created", {"run_manifest_id": digest("run")}, occurred_at=NOW)
@@ -291,3 +302,41 @@ def test_append_write_loop_survives_short_writes(
         "run_created", {"run_manifest_id": digest("run")}, occurred_at=NOW
     )
     assert store.replay() == (appended,)
+
+
+def test_append_retries_interrupted_write_and_fsync(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import harness.re_v2.events as events_module
+
+    real_write = os.write
+    real_fsync = os.fsync
+    write_calls = 0
+    fsync_calls = 0
+
+    def interrupted_write(fd: int, payload: bytes) -> int:
+        nonlocal write_calls
+        write_calls += 1
+        if write_calls == 1:
+            return real_write(fd, payload[:7])
+        if write_calls == 2:
+            raise InterruptedError
+        return real_write(fd, payload)
+
+    def interrupted_fsync(fd: int) -> None:
+        nonlocal fsync_calls
+        fsync_calls += 1
+        if fsync_calls == 1:
+            raise InterruptedError
+        real_fsync(fd)
+
+    monkeypatch.setattr(events_module.os, "write", interrupted_write)
+    monkeypatch.setattr(events_module.os, "fsync", interrupted_fsync)
+    store = event_store(tmp_path)
+    appended = store.append(
+        "run_created", {"run_manifest_id": digest("run")}, occurred_at=NOW
+    )
+
+    assert store.replay() == (appended,)
+    assert write_calls >= 3
+    assert fsync_calls >= 3

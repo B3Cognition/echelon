@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import fcntl
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -414,7 +415,7 @@ class EventStore:
             fd = self._open_events_for_append()
             try:
                 _write_all(fd, canonical_json_bytes(event.to_json_dict()))
-                os.fsync(fd)
+                _fsync(fd)
             finally:
                 os.close(fd)
             if not existed:
@@ -462,11 +463,25 @@ class EventStore:
         previous: str | None = None
         for index, line in enumerate(payload.splitlines(), start=1):
             try:
-                raw = json.loads(line)
-            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raw = json.loads(
+                    line,
+                    parse_constant=_reject_json_constant,
+                    parse_float=_finite_json_float,
+                )
+            except (UnicodeDecodeError, ValueError, OverflowError) as exc:
                 raise ReV2EventError(f"event record {index} is invalid JSON") from exc
-            event = _record_from_raw(raw, index)
-            if canonical_json_bytes(event.to_json_dict()) != line + b"\n":
+            try:
+                event = _record_from_raw(raw, index)
+                canonical = canonical_json_bytes(event.to_json_dict())
+            except ReV2EventError as exc:
+                if str(exc).startswith(f"event record {index} "):
+                    raise
+                raise ReV2EventError(f"event record {index} is invalid: {exc}") from exc
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ReV2EventError(
+                    f"event record {index} cannot be canonicalized"
+                ) from exc
+            if canonical != line + b"\n":
                 raise ReV2EventError(f"event record {index} is not canonical JSON")
             if event.seq != index:
                 raise ReV2EventError(
@@ -556,6 +571,17 @@ def _record_from_raw(raw: object, index: int) -> EventRecord:
     )
 
 
+def _reject_json_constant(value: str) -> object:
+    raise ValueError(f"nonfinite JSON number: {value}")
+
+
+def _finite_json_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError(f"overflowing JSON number: {value}")
+    return parsed
+
+
 def _replay_state(events: tuple[EventRecord, ...]) -> _ReplayState:
     state = _ReplayState()
     for event in events:
@@ -566,16 +592,28 @@ def _replay_state(events: tuple[EventRecord, ...]) -> _ReplayState:
 def _write_all(fd: int, payload: bytes) -> None:
     offset = 0
     while offset < len(payload):
-        written = os.write(fd, payload[offset:])
+        try:
+            written = os.write(fd, payload[offset:])
+        except InterruptedError:
+            continue
         if written <= 0:
             raise OSError("short write while appending event")
         offset += written
 
 
+def _fsync(fd: int) -> None:
+    while True:
+        try:
+            os.fsync(fd)
+            return
+        except InterruptedError:
+            continue
+
+
 def _fsync_directory(path: Path) -> None:
     fd = os.open(path, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
     try:
-        os.fsync(fd)
+        _fsync(fd)
     finally:
         os.close(fd)
 
