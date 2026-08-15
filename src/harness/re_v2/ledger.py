@@ -112,6 +112,8 @@ class ObjectStore:
         """Durably publish *payload* without replacing an existing object."""
         if not isinstance(payload, bytes):
             raise ReV2LedgerError("blob payload must be bytes")
+        if payload.startswith(TREE_OBJECT_MAGIC):
+            raise ReV2LedgerError("blob payload uses reserved tree object prefix")
         return self._put(payload)
 
     def put_tree(self, root: Path) -> str:

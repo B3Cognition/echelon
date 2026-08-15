@@ -124,6 +124,15 @@ def object_path(objects: ObjectStore, object_hash: str) -> Path:
     return objects.root / "sha256" / suffix[:2] / suffix[2:]
 
 
+def write_raw_object(objects: ObjectStore, payload: bytes) -> str:
+    """Install an adversarial on-disk object without using the safe public API."""
+    object_hash = content_digest(payload)
+    path = object_path(objects, object_hash)
+    path.parent.mkdir()
+    path.write_bytes(payload)
+    return object_hash
+
+
 def accepted_receipts(
     objects: ObjectStore,
     *,
@@ -321,7 +330,8 @@ def test_verify_rejects_tree_manifest_path_traversal(
 ) -> None:
     objects = ObjectStore(tmp_path / "objects")
     blob_hash = objects.put_blob(b"safe bytes")
-    manifest_hash = objects.put_blob(
+    manifest_hash = write_raw_object(
+        objects,
         TREE_OBJECT_MAGIC
         + b'{"entries":[{"blob_hash":"'
         + blob_hash.encode()
@@ -338,7 +348,8 @@ def test_verify_rejects_tree_manifest_path_traversal(
 def test_verify_tree_recursively_checks_referenced_blob_size(tmp_path: Path) -> None:
     objects = ObjectStore(tmp_path / "objects")
     blob_hash = objects.put_blob(b"three")
-    manifest_hash = objects.put_blob(
+    manifest_hash = write_raw_object(
+        objects,
         TREE_OBJECT_MAGIC
         + b'{"entries":[{"blob_hash":"'
         + blob_hash.encode()
@@ -364,6 +375,21 @@ def test_blob_json_that_resembles_a_tree_is_never_parsed_as_a_tree(
 
     assert objects.verify(blob_hash) is True
     assert object_path(objects, blob_hash).read_bytes() == tree_shaped_blob
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [TREE_OBJECT_MAGIC, TREE_OBJECT_MAGIC + b"ordinary blob bytes"],
+)
+def test_blob_rejects_reserved_tree_envelope_before_publication(
+    tmp_path: Path, payload: bytes
+) -> None:
+    objects = ObjectStore(tmp_path / "objects")
+
+    with pytest.raises(ReV2LedgerError, match="reserved tree.*prefix"):
+        objects.put_blob(payload)
+
+    assert list((objects.root / "sha256").rglob("*")) == []
 
 
 def test_ledger_writes_canonical_hash_chained_records(tmp_path: Path) -> None:
