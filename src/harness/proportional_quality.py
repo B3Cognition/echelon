@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import hashlib
 import json
 import math
@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import secrets
 import stat
+import subprocess
 from typing import Mapping, MutableMapping, Sequence
 
 from echelon.git_helpers import GitHelperError, run_git
@@ -98,6 +99,21 @@ class QualityCandidateSnapshot:
 
     manifest: QualityCandidateManifest
     sha256: str
+
+
+@dataclass(frozen=True)
+class CandidateCheckpointEntry:
+    path: str
+    mode: str
+    blob_oid: str
+    sha256: str
+    content: bytes = field(repr=False)
+
+
+@dataclass(frozen=True)
+class PreflightedCandidateRestore:
+    snapshot: QualityCandidateSnapshot
+    entries: tuple[CandidateCheckpointEntry, ...]
 
 
 _CANDIDATE_MANIFEST_KEYS = frozenset(
@@ -997,12 +1013,8 @@ def rank_quality_candidates(
     )
 
 
-def _validate_restore_candidate(
-    project_root: Path,
+def _restore_candidate_artifact_digests(
     candidate: QualityCandidateManifest,
-    *,
-    run_id: str,
-    spec_id: str,
 ) -> dict[str, str]:
     if (
         not isinstance(candidate, QualityCandidateManifest)
@@ -1010,6 +1022,29 @@ def _validate_restore_candidate(
         or not _is_candidate_id(candidate.candidate_id)
     ):
         raise QualityCandidateIntegrityError("candidate manifest is invalid")
+    artifact_digests = dict(candidate.owned_artifact_digests)
+    if len(artifact_digests) != len(candidate.owned_artifact_digests):
+        raise QualityCandidateIntegrityError("candidate artifact paths are duplicated")
+    allowed = {
+        "spec.md",
+        "requirements-overview.md",
+        "quality-gates.md",
+        "issues.md",
+    }
+    required = {"spec.md", "quality-gates.md", "issues.md"}
+    if not required <= set(artifact_digests) or not set(artifact_digests) <= allowed:
+        raise QualityCandidateIntegrityError("candidate artifact paths are unsafe")
+    return artifact_digests
+
+
+def _validate_restore_candidate(
+    project_root: Path,
+    candidate: QualityCandidateManifest,
+    *,
+    run_id: str,
+    spec_id: str,
+) -> dict[str, str]:
+    artifact_digests = _restore_candidate_artifact_digests(candidate)
     root = Path(project_root).resolve()
     artifact_root = Path(candidate.run_artifact_root).resolve()
     evidence_path = Path(candidate.understanding_evidence).resolve()
@@ -1025,18 +1060,6 @@ def _validate_restore_candidate(
     )
     if actual_evidence_digest != candidate.understanding_evidence_digest:
         raise QualityCandidateIntegrityError("Understanding evidence digest mismatch")
-    artifact_digests = dict(candidate.owned_artifact_digests)
-    if len(artifact_digests) != len(candidate.owned_artifact_digests):
-        raise QualityCandidateIntegrityError("candidate artifact paths are duplicated")
-    allowed = {
-        "spec.md",
-        "requirements-overview.md",
-        "quality-gates.md",
-        "issues.md",
-    }
-    required = {"spec.md", "quality-gates.md", "issues.md"}
-    if not required <= set(artifact_digests) or not set(artifact_digests) <= allowed:
-        raise QualityCandidateIntegrityError("candidate artifact paths are unsafe")
     evidence_spec = evidence_payload["spec"]
     if evidence_spec.get("sha256") != artifact_digests["spec.md"]:
         raise QualityCandidateIntegrityError(
@@ -1189,13 +1212,13 @@ def _validated_restore_preimages(
     return dict(value)
 
 
-def _candidate_checkpoint_contents(
-    *,
+def load_candidate_checkpoint_entries(
     project_root: Path,
     spec_dir: Path,
-    checkpoint_commit: str,
-    artifact_digests: Mapping[str, str],
-) -> dict[str, bytes]:
+    candidate: QualityCandidateManifest,
+) -> tuple[CandidateCheckpointEntry, ...]:
+    """Load exact manifest-owned blobs from an immutable candidate commit."""
+    artifact_digests = _restore_candidate_artifact_digests(candidate)
     root = Path(project_root).resolve()
     resolved_spec = Path(spec_dir).resolve()
     try:
@@ -1204,31 +1227,151 @@ def _candidate_checkpoint_contents(
         raise QualityCandidateIntegrityError(
             "candidate spec directory escapes project root"
         ) from exc
-    contents: dict[str, bytes] = {}
+    entries: list[CandidateCheckpointEntry] = []
     try:
-        for name in sorted(artifact_digests):
+        for name, expected_digest in candidate.owned_artifact_digests:
             relative = (spec_relative / name).as_posix()
-            result = run_git(
-                root,
-                "show",
-                f"{checkpoint_commit}:{relative}",
+            tree = subprocess.run(
+                [
+                    "git",
+                    "ls-tree",
+                    "-z",
+                    candidate.checkpoint_commit,
+                    "--",
+                    relative,
+                ],
+                cwd=root,
                 check=False,
+                capture_output=True,
+                timeout=120,
             )
-            if result.returncode != 0:
+            rows = tuple(row for row in tree.stdout.split(b"\0") if row)
+            if (
+                tree.returncode != 0
+                or len(rows) != 1
+                or b"\t" not in rows[0]
+            ):
                 raise QualityCandidateIntegrityError(
                     f"candidate owned artifact is missing: {name}"
                 )
-            content = result.stdout.encode("utf-8")
-            if hashlib.sha256(content).hexdigest() != artifact_digests[name]:
+            header, raw_path = rows[0].split(b"\t", 1)
+            fields = header.split()
+            if (
+                len(fields) != 3
+                or fields[0] not in {b"100644", b"100755"}
+                or fields[1] != b"blob"
+                or re.fullmatch(rb"[0-9a-f]{40}|[0-9a-f]{64}", fields[2])
+                is None
+                or raw_path != relative.encode("utf-8")
+            ):
+                raise QualityCandidateIntegrityError(
+                    f"candidate owned artifact is not a regular blob: {name}"
+                )
+            blob_oid = fields[2].decode("ascii")
+            blob = subprocess.run(
+                ["git", "cat-file", "blob", blob_oid],
+                cwd=root,
+                check=False,
+                capture_output=True,
+                timeout=120,
+            )
+            if blob.returncode != 0:
+                raise QualityCandidateIntegrityError(
+                    f"candidate owned artifact is missing: {name}"
+                )
+            content = bytes(blob.stdout)
+            digest = hashlib.sha256(content).hexdigest()
+            if digest != expected_digest:
                 raise QualityCandidateIntegrityError(
                     f"candidate artifact digest mismatch: {name}"
                 )
-            contents[name] = content
-    except GitHelperError as exc:
+            entries.append(
+                CandidateCheckpointEntry(
+                    path=name,
+                    mode=fields[0].decode("ascii"),
+                    blob_oid=blob_oid,
+                    sha256=digest,
+                    content=content,
+                )
+            )
+    except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
         raise QualityCandidateIntegrityError(
             "candidate checkpoint artifacts could not be read"
         ) from exc
-    return contents
+    if len(entries) != len(candidate.owned_artifact_digests):
+        raise QualityCandidateIntegrityError(
+            "candidate checkpoint artifact count mismatch"
+        )
+    return tuple(entries)
+
+
+def preflight_quality_candidate_restore(
+    *,
+    project_root: Path,
+    spec_dir: Path,
+    manifest_path: Path,
+    expected_candidate_id: str,
+    expected_manifest_sha256: str,
+) -> PreflightedCandidateRestore:
+    """Authenticate selected manifest bytes and pin all checkpoint blobs."""
+    snapshot = load_quality_candidate_snapshot(
+        manifest_path,
+        expected_sha256=expected_manifest_sha256,
+        expected_candidate_id=expected_candidate_id,
+    )
+    return PreflightedCandidateRestore(
+        snapshot=snapshot,
+        entries=load_candidate_checkpoint_entries(
+            project_root,
+            spec_dir,
+            snapshot.manifest,
+        ),
+    )
+
+
+def _preflighted_checkpoint_contents(
+    restore: PreflightedCandidateRestore,
+    candidate: QualityCandidateManifest,
+) -> tuple[dict[str, str], dict[str, bytes]]:
+    if (
+        not isinstance(restore, PreflightedCandidateRestore)
+        or not isinstance(restore.snapshot, QualityCandidateSnapshot)
+        or restore.snapshot.manifest != candidate
+        or not _is_sha256(restore.snapshot.sha256)
+    ):
+        raise QualityCandidateIntegrityError(
+            "candidate restore preflight changed"
+        )
+    artifact_digests = _restore_candidate_artifact_digests(candidate)
+    expected_paths = tuple(
+        path for path, _digest in candidate.owned_artifact_digests
+    )
+    if (
+        type(restore.entries) is not tuple
+        or any(
+            not isinstance(entry, CandidateCheckpointEntry)
+            for entry in restore.entries
+        )
+        or tuple(entry.path for entry in restore.entries) != expected_paths
+    ):
+        raise QualityCandidateIntegrityError(
+            "candidate checkpoint artifact count mismatch"
+        )
+    contents: dict[str, bytes] = {}
+    for entry in restore.entries:
+        if (
+            entry.mode not in {"100644", "100755"}
+            or re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", entry.blob_oid)
+            is None
+            or type(entry.content) is not bytes
+            or hashlib.sha256(entry.content).hexdigest() != entry.sha256
+            or artifact_digests.get(entry.path) != entry.sha256
+        ):
+            raise QualityCandidateIntegrityError(
+                f"candidate checkpoint entry changed: {entry.path}"
+            )
+        contents[entry.path] = entry.content
+    return artifact_digests, contents
 
 
 _RESTORE_EXCHANGE_KIND = "quality_candidate_restore_exchange"
@@ -1509,23 +1652,30 @@ def materialize_quality_candidate_restore(
     next_phase: str,
     checkpoint_prestate: Mapping[str, object],
     artifact_preimage_digests: Mapping[str, str],
+    preflighted_restore: PreflightedCandidateRestore | None = None,
     expected_receipt: object | None = None,
 ) -> dict[str, object]:
     """Apply or recover a state-authorized best-candidate restoration."""
-    artifact_digests = _validate_restore_candidate(
-        project_root,
-        candidate=candidate,
-        run_id=run_id,
-        spec_id=spec_id,
-    )
+    if preflighted_restore is None:
+        artifact_digests = _validate_restore_candidate(
+            project_root,
+            candidate=candidate,
+            run_id=run_id,
+            spec_id=spec_id,
+        )
+        entries = load_candidate_checkpoint_entries(
+            project_root,
+            spec_dir,
+            candidate,
+        )
+        contents = {entry.path: entry.content for entry in entries}
+    else:
+        artifact_digests, contents = _preflighted_checkpoint_contents(
+            preflighted_restore,
+            candidate,
+        )
     preimages = _validated_restore_preimages(
         artifact_preimage_digests,
-        artifact_digests=artifact_digests,
-    )
-    contents = _candidate_checkpoint_contents(
-        project_root=project_root,
-        spec_dir=spec_dir,
-        checkpoint_commit=candidate.checkpoint_commit,
         artifact_digests=artifact_digests,
     )
     expected = (

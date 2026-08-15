@@ -9,6 +9,7 @@ import subprocess
 
 import pytest
 
+import harness.proportional_quality as proportional_quality_module
 from harness.proportional_quality import (
     AUTOMATIC_REPAIR_LIMIT,
     EXTENSION_REPAIR_LIMIT,
@@ -16,6 +17,7 @@ from harness.proportional_quality import (
     QualityCandidateManifest,
     capture_quality_candidate,
     initialize_repair_state,
+    load_quality_candidate_snapshot,
     rank_quality_candidates,
     record_what_outcome,
     restore_quality_candidate,
@@ -486,6 +488,82 @@ def test_capture_persists_manifest_after_unique_checkpoint_and_updates_repair_st
     assert repair["baseline_candidate_id"] == "quality-candidate-0"
     assert repair["candidate_ids"] == ["quality-candidate-0"]
     assert "Echelon-Phase: phase1-quality-candidate-0" in _git(repo, "log", "-1", "--format=%B")
+
+
+def test_candidate_slot_rejects_another_candidate_id(tmp_path: Path) -> None:
+    repo, spec_dir, artifact_root, evidence = _candidate_repo(tmp_path)
+    capture_quality_candidate(
+        project_root=repo,
+        spec_dir=spec_dir,
+        run_artifact_root=artifact_root,
+        run_id="run-1",
+        spec_id="001-demo",
+        candidate_id="quality-candidate-0",
+        understanding_evidence=evidence,
+        normalized_gates={
+            "overall": {"score": 0.7, "threshold": 0.8, "pass": False},
+        },
+        sage_finding_routes=(),
+        formal_statement_count=2,
+        repair_number=0,
+        assessment_index=0,
+        eligibility_reasons=(),
+        repair_state=_repair_state(),
+    )
+    candidate_dir = artifact_root / "quality-candidates"
+    wrong_slot = candidate_dir / "quality-candidate-1.json"
+    wrong_slot.write_bytes(
+        (candidate_dir / "quality-candidate-0.json").read_bytes()
+    )
+
+    with pytest.raises(QualityCandidateIntegrityError, match="identity mismatch"):
+        load_quality_candidate_snapshot(
+            wrong_slot,
+            expected_candidate_id="quality-candidate-1",
+        )
+
+
+def test_candidate_checkpoint_entries_pin_tree_identity_and_bytes(
+    tmp_path: Path,
+) -> None:
+    repo, spec_dir, artifact_root, evidence = _candidate_repo(tmp_path)
+    candidate = capture_quality_candidate(
+        project_root=repo,
+        spec_dir=spec_dir,
+        run_artifact_root=artifact_root,
+        run_id="run-1",
+        spec_id="001-demo",
+        candidate_id="quality-candidate-0",
+        understanding_evidence=evidence,
+        normalized_gates={
+            "overall": {"score": 0.7, "threshold": 0.8, "pass": False},
+        },
+        sage_finding_routes=(),
+        formal_statement_count=2,
+        repair_number=0,
+        assessment_index=0,
+        eligibility_reasons=(),
+        repair_state=_repair_state(),
+    )
+
+    entries = proportional_quality_module.load_candidate_checkpoint_entries(
+        repo,
+        spec_dir,
+        candidate,
+    )
+
+    assert tuple(entry.path for entry in entries) == tuple(
+        name for name, _digest in candidate.owned_artifact_digests
+    )
+    assert all(entry.mode == "100644" for entry in entries)
+    assert all(len(entry.blob_oid) in {40, 64} for entry in entries)
+    assert {
+        entry.path: (entry.sha256, entry.content)
+        for entry in entries
+    } == {
+        name: (digest, (spec_dir / name).read_bytes())
+        for name, digest in candidate.owned_artifact_digests
+    }
 
 
 def test_pre_candidate_repair_state_migrates_once_and_candidate_membership_is_strict() -> None:

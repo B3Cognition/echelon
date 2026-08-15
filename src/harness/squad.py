@@ -9316,7 +9316,8 @@ class SquadController:
         repair = validate_repair_state(repair_state)
         return tuple(
             load_quality_candidate_snapshot(
-                self._squad_dir / "quality-candidates" / f"{candidate_id}.json"
+                self._squad_dir / "quality-candidates" / f"{candidate_id}.json",
+                expected_candidate_id=candidate_id,
             )
             for candidate_id in repair["candidate_ids"]
         )

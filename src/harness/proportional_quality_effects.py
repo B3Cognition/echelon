@@ -9,9 +9,10 @@ from typing import Mapping
 from harness.phase1_quality_debt import apply_or_verify_quality_debt_effect
 from harness.proportional_quality import (
     QualityCandidateIntegrityError,
-    load_quality_candidate_manifest,
+    _validate_restore_candidate,
     materialize_quality_candidate,
     materialize_quality_candidate_restore,
+    preflight_quality_candidate_restore,
     quality_candidate_from_effect_payload,
     validate_repair_state,
 )
@@ -167,22 +168,7 @@ def apply_or_verify_proportional_quality_effect(
             restore_preimages = effect.get(
                 "restore_artifact_preimage_digests"
             )
-            materialized, candidate_receipt = materialize_quality_candidate(
-                project_root=root,
-                spec_dir=spec_dir,
-                candidate=draft,
-                run_id=run_id,
-                spec_id=spec_id,
-                completion_id=_quality_completion_id(
-                    completion_id,
-                    "candidate",
-                ),
-                next_phase=next_phase,
-                checkpoint_prestate=effective_prestate,
-                require_current_artifacts=restore_id is None,
-                expected_receipt=candidate_expected,
-            )
-            restore_receipt: dict[str, object] | None = None
+            selected_restore = None
             if restore_id is not None:
                 if (
                     type(restore_id) is not str
@@ -202,17 +188,41 @@ def apply_or_verify_proportional_quality_effect(
                     raise QualityCandidateIntegrityError(
                         "candidate restore selection changed"
                     )
-                selected = (
-                    materialized
-                    if restore_id == materialized.candidate_id
-                    else load_quality_candidate_manifest(
-                        Path(materialized.run_artifact_root)
+                selected_restore = preflight_quality_candidate_restore(
+                    project_root=root,
+                    spec_dir=spec_dir,
+                    manifest_path=(
+                        Path(draft.run_artifact_root)
                         / "quality-candidates"
-                        / f"{restore_id}.json",
-                        expected_sha256=restore_manifest_sha,
-                        expected_candidate_id=restore_id,
-                    )
+                        / f"{restore_id}.json"
+                    ),
+                    expected_candidate_id=restore_id,
+                    expected_manifest_sha256=restore_manifest_sha,
                 )
+                _validate_restore_candidate(
+                    root,
+                    selected_restore.snapshot.manifest,
+                    run_id=run_id,
+                    spec_id=spec_id,
+                )
+            materialized, candidate_receipt = materialize_quality_candidate(
+                project_root=root,
+                spec_dir=spec_dir,
+                candidate=draft,
+                run_id=run_id,
+                spec_id=spec_id,
+                completion_id=_quality_completion_id(
+                    completion_id,
+                    "candidate",
+                ),
+                next_phase=next_phase,
+                checkpoint_prestate=effective_prestate,
+                require_current_artifacts=restore_id is None,
+                expected_receipt=candidate_expected,
+            )
+            restore_receipt: dict[str, object] | None = None
+            if selected_restore is not None:
+                selected = selected_restore.snapshot.manifest
                 if selected.candidate_id != restore_id:
                     raise QualityCandidateIntegrityError(
                         "candidate restore identity changed"
@@ -234,6 +244,7 @@ def apply_or_verify_proportional_quality_effect(
                         "head": candidate_receipt["checkpoint"]["commit"],
                     },
                     artifact_preimage_digests=restore_preimages,
+                    preflighted_restore=selected_restore,
                     expected_receipt=(
                         expected.get("restore") if expected else None
                     ),
@@ -302,10 +313,19 @@ def apply_or_verify_proportional_quality_effect(
             )
             manifest_ref = evidence.get("candidate_manifest")
             manifest_path = _inside_project(root, manifest_ref)
-            candidate = load_quality_candidate_manifest(
-                manifest_path,
-                expected_sha256=candidate_manifest_sha,
+            selected_restore = preflight_quality_candidate_restore(
+                project_root=root,
+                spec_dir=spec_dir,
+                manifest_path=manifest_path,
                 expected_candidate_id=candidate_id,
+                expected_manifest_sha256=candidate_manifest_sha,
+            )
+            candidate = selected_restore.snapshot.manifest
+            _validate_restore_candidate(
+                root,
+                candidate,
+                run_id=run_id,
+                spec_id=spec_id,
             )
             restore_receipt = materialize_quality_candidate_restore(
                 project_root=root,
@@ -320,6 +340,7 @@ def apply_or_verify_proportional_quality_effect(
                 next_phase=next_phase,
                 checkpoint_prestate=effective_prestate,
                 artifact_preimage_digests=artifact_preimages,
+                preflighted_restore=selected_restore,
                 expected_receipt=(
                     expected.get("restore") if expected else None
                 ),

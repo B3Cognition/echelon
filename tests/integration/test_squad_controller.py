@@ -7901,7 +7901,30 @@ class TestProportionalQualityController:
             for row in ledger["checkpoints"]
         )
 
-    def test_combined_candidate_restore_rejects_selected_manifest_replacement(
+    def test_candidate_list_slot_rejects_another_candidate_id(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        ctrl, store, _current_text = _older_best_proportional_quality_loop(
+            tmp_path
+        )
+        candidate_dir = ctrl._squad_dir / "quality-candidates"
+        (candidate_dir / "quality-candidate-1.json").write_bytes(
+            (candidate_dir / "quality-candidate-0.json").read_bytes()
+        )
+        repair = dict(store.load()["phase1_quality_repair"])
+        repair["candidate_ids"] = [
+            "quality-candidate-0",
+            "quality-candidate-1",
+        ]
+
+        with pytest.raises(
+            proportional_quality_module.QualityCandidateIntegrityError,
+            match="identity mismatch",
+        ):
+            ctrl._load_proportional_candidate_snapshots(repair)
+
+    def test_combined_restore_authenticates_selected_manifest_before_any_effect(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -7909,13 +7932,50 @@ class TestProportionalQualityController:
         ctrl, store, current_text = _older_best_proportional_quality_loop(
             tmp_path
         )
-        materialize = quality_effects_module.materialize_quality_candidate
+        apply_effect = squad_module.apply_or_verify_proportional_quality_effect
         replaced = False
+        before_effect: dict[str, object] | None = None
+        spec_dir = tmp_path / "runs/run-test/specs/001-demo"
 
-        def materialize_then_replace(*args: object, **kwargs: object):
-            nonlocal replaced
-            result = materialize(*args, **kwargs)
-            if not replaced:
+        def capture_mutation_surfaces() -> dict[str, object]:
+            candidate_dir = ctrl._squad_dir / "quality-candidates"
+            return {
+                "head": subprocess.run(
+                    ["git", "rev-parse", "HEAD"],
+                    cwd=tmp_path,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout.strip(),
+                "new_candidate_manifests": {
+                    path.name: path.read_bytes()
+                    for path in candidate_dir.glob("quality-candidate-*.json")
+                    if path.name != "quality-candidate-0.json"
+                },
+                "owned_artifacts": {
+                    name: (spec_dir / name).read_bytes()
+                    for name in (
+                        "spec.md",
+                        "requirements-overview.md",
+                        "quality-gates.md",
+                        "issues.md",
+                    )
+                },
+                "checkpoint_ledger": (
+                    spec_dir / ".echelon/checkpoints.json"
+                ).read_bytes(),
+            }
+
+        def replace_manifest_then_apply(
+            effect: Mapping[str, object],
+            **kwargs: object,
+        ):
+            nonlocal before_effect, replaced
+            if (
+                effect.get("operation") == "candidate"
+                and effect.get("restore_candidate_id") is not None
+                and not replaced
+            ):
                 replaced = True
                 manifest = (
                     ctrl._squad_dir
@@ -7926,34 +7986,28 @@ class TestProportionalQualityController:
                     json.dumps(payload, indent=4, sort_keys=True) + "\n",
                     encoding="utf-8",
                 )
-            return result
+                before_effect = capture_mutation_surfaces()
+            return apply_effect(effect, **kwargs)
 
         monkeypatch.setattr(
-            quality_effects_module,
-            "materialize_quality_candidate",
-            materialize_then_replace,
+            squad_module,
+            "apply_or_verify_proportional_quality_effect",
+            replace_manifest_then_apply,
         )
 
         result = ctrl.run("msg", "semi")
 
         failed = store.load()
-        spec_path = tmp_path / "runs/run-test/specs/001-demo/spec.md"
+        spec_path = spec_dir / "spec.md"
         assert replaced is True
+        assert before_effect is not None
         assert result.status == "blocked"
         assert failed[PENDING_CONTROLLER_COMPLETION_KEY]["step"] == "quality"
         assert failed["controller_completion_failure"]["code"] == (
             "receipts_mismatch"
         )
         assert spec_path.read_text(encoding="utf-8") == current_text
-        ledger = json.loads(
-            (spec_path.parent / ".echelon/checkpoints.json").read_text(
-                encoding="utf-8"
-            )
-        )
-        assert not any(
-            row["phase"] == "phase1-quality-candidate-restored"
-            for row in ledger["checkpoints"]
-        )
+        assert capture_mutation_surfaces() == before_effect
 
     def test_run_passing_candidate_keeps_routed_and_candidate_checkpoints(
         self,
