@@ -13477,16 +13477,13 @@ class TestLexiconGateGuardDeterminism:
         ctrl, _store = _controller(tmp_path)
         node = ctrl._graph.get("phase1-why2")
         certificate = {
-            "schema_version": 2,
+            "schema_version": 1,
             "status": "passed",
             "source_path": "specs/001/spec.md",
             "source_sha256": "a" * 64,
             "understanding_evidence": "runs/r/evidence/why2.json",
             "understanding_evidence_sha256": "b" * 64,
             "sage_phase": "phase1-why2",
-            "sage_evidence": "specs/001/issues.md",
-            "sage_evidence_sha256": "c" * 64,
-            "sage_verdict": "PASS",
         }
         assessment = squad_module.AuthoritativeQualityAssessment(
             numeric_pass=True,
@@ -13499,12 +13496,7 @@ class TestLexiconGateGuardDeterminism:
             hard_blockers=(),
         )
         monkeypatch.setattr(
-            ctrl,
-            "_authoritative_quality_assessment",
-            lambda **_kwargs: assessment,
-        )
-        monkeypatch.setattr(
-            "harness.squad.build_phase1_quality_certificate",
+            "harness.squad.build_legacy_phase1_quality_certificate",
             lambda *_args, **_kwargs: certificate,
         )
         result = SquadAgentResult(

@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
+from echelon.spec_authoring import PROPORTIONAL_MODE, normalize_spec_authoring_mode
+
 from harness.phase1_quality_debt import has_current_quality_debt_authorization
 from harness.proportional_quality import (
     AuthoritativeSageEvidenceSnapshot,
@@ -43,13 +45,8 @@ def build_phase1_quality_certificate(
     project_root: Path,
     authoritative_sage_assessment: AuthoritativeQualityAssessment | None = None,
 ) -> dict[str, object] | None:
-    """Build a proportional v2 or legacy/perfectionist v1 certificate."""
+    """Build a schema-v2 certificate from an authoritative ordinary PASS."""
     assessment = authoritative_sage_assessment
-    if assessment is None:
-        return build_legacy_phase1_quality_certificate(
-            state,
-            project_root=project_root,
-        )
     if (
         not isinstance(assessment, AuthoritativeQualityAssessment)
         or assessment.numeric_pass is not True
@@ -180,6 +177,8 @@ def has_current_phase1_quality_certificate(
         return False
     schema_version = stored.get("schema_version")
     if schema_version == LEGACY_SCHEMA_VERSION:
+        if normalize_spec_authoring_mode(state.get("spec_authoring_mode")) == PROPORTIONAL_MODE:
+            return False
         current = build_legacy_phase1_quality_certificate(
             state,
             project_root=project_root,

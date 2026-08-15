@@ -77,6 +77,7 @@ from harness.phase_a_readiness import (
 from harness.phase_checkpoints import create_phase_checkpoint
 from harness.phase1_quality import (
     AuthoritativeQualityAssessment,
+    build_legacy_phase1_quality_certificate,
     build_phase1_quality_certificate,
     has_current_phase1_quality_prerequisite,
 )
@@ -9880,7 +9881,7 @@ class SquadController:
             and explicit_quality_pass(latest_score) is True
             and not self._is_proportional_quality_state(state_copy)
         ):
-            certificate = build_phase1_quality_certificate(
+            certificate = build_legacy_phase1_quality_certificate(
                 state_copy,
                 project_root=self._project_root,
             )

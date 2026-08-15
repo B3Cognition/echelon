@@ -53,6 +53,7 @@ def _quality_state(tmp_path: Path) -> tuple[dict[str, object], Path, Path]:
     report_digest = _sha256(report_path)
     state: dict[str, object] = {
         "spec_dir": "specs/001-demo",
+        "spec_authoring_mode": "perfectionist",
         "completed_phases": ["phase1-understanding", "phase1-why2"],
         "understanding_evidence": {
             "phase": "phase1-why2",
@@ -168,6 +169,22 @@ def test_legacy_builder_preserves_perfectionist_certificate_shape(
         state,
         project_root=tmp_path,
     ) == _legacy_certificate(state, project_root=tmp_path)
+
+
+@pytest.mark.parametrize("mode", [None, "proportional"])
+def test_legacy_certificate_is_rejected_for_proportional_modes(
+    tmp_path: Path, mode: str | None,
+) -> None:
+    state, _spec_path, _report_path = _quality_state(tmp_path)
+    if mode is None:
+        state.pop("spec_authoring_mode")
+    else:
+        state["spec_authoring_mode"] = mode
+    state["spec_quality_certificate"] = _legacy_certificate(
+        state, project_root=tmp_path,
+    )
+
+    assert not has_current_phase1_quality_certificate(state, project_root=tmp_path)
 
 
 def test_phase1_quality_certificate_rejects_tampered_understanding_evidence(
