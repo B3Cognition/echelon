@@ -14653,6 +14653,59 @@ THEN: The dashboard is visible
         assert "lexicon_gate_exhausted" not in prepared.control_updates
         assert ctrl._evaluate_transitions(node, prepared, snapshot) == "terminal-blocked"
 
+    def test_tasks_gate_exhaustion_persists_report_backed_terminal_state(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        """The public controller path must retain evidence needed by PLAN repair."""
+        ctrl, store = _controller(tmp_path)
+        node = ctrl._graph.get("phase3-tasks-lexicon")
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "requirements.lexicon.md").write_text(
+            _valid_lexicon_spec(), encoding="utf-8"
+        )
+        (spec_dir / "tasks.md").write_text("not canonical tasks\n", encoding="utf-8")
+        state = store.load()
+        state.update(
+            {
+                "phase": node.id,
+                "iteration": 0,
+                "max_iterations": 3,
+                "spec_dir": str(spec_dir.relative_to(tmp_path)),
+                "tasks_lexicon_attempts": 2,
+            }
+        )
+        store.save(state)
+        monkeypatch.setattr(
+            ctrl, "_guard_constitution_provenance", lambda phase: phase
+        )
+        monkeypatch.setattr(
+            ctrl, "_guard_spec_lexicon_evidence", lambda phase: phase
+        )
+        monkeypatch.setattr(
+            ctrl, "_guard_phase1_quality_evidence", lambda phase: phase
+        )
+        monkeypatch.setattr(
+            ctrl, "_guard_understanding_evidence", lambda phase: phase
+        )
+
+        result = ctrl.run_single_phase(node.id, "validate tasks", "banzai")
+
+        persisted = store.load()
+        assert result.status == "blocked"
+        assert result.phase == "terminal-blocked"
+        assert persisted["blocked_reason"] == "tasks_lexicon_gate_exhausted"
+        assert persisted["tasks_lexicon_gate_exhausted"] is True
+        assert persisted["tasks_lexicon_action"] == "block"
+        assert persisted["tasks_lexicon_pass"] is False
+        assert persisted["tasks_lexicon_attempts"] == 3
+        assert persisted["tasks_lexicon_findings"] > 0
+        report_path = Path(persisted["tasks_lexicon_report"])
+        assert report_path.is_file()
+        assert json.loads(report_path.read_text(encoding="utf-8"))["ok"] is False
+
     def test_tasks_gate_pass_falls_through_to_understanding(self, tmp_path):
         provider = _mock_provider()
         ctrl, store = _controller(tmp_path, provider=provider)

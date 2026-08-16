@@ -8551,11 +8551,20 @@ class SquadController:
                         ]
                     )
                 state["phase_output_recovery"] = recovery
-        if retryable_analysis:
+        tasks_lexicon_terminal = (
+            phase
+            in {"phase3-tasks-lexicon", "phase3-consensus-tasks-lexicon"}
+            and reason == "tasks_lexicon_gate_exhausted"
+            and (result.state_updates or {}).get("tasks_lexicon_action")
+            == "block"
+        )
+        if retryable_analysis or tasks_lexicon_terminal:
             node = self._graph.get(phase)
             for key in node.controller_state_update_keys:
                 if key in (result.state_updates or {}) and key != "blocked_reason":
                     state[key] = result.state_updates[key]
+        if tasks_lexicon_terminal:
+            state["tasks_lexicon_gate_exhausted"] = True
         if reason == "provider_session_limit":
             state["provider_limit_message"] = result.provider_limit_message
             if result.echelon_result is None:
