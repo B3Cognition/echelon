@@ -598,10 +598,12 @@ deterministically impacted. In short: full fulfillment evidence is still require
 Harness `run` and `resume` also print `HARNESS HISTORY`: tracked runs, checkpoint state, and token/cost totals for the same spec so repeated resumes do not feel like a black box.
 
 When a spec or delivery invocation actually runs Echelon work, its final
-`SQUAD SUMMARY` or `DELIVERY SUMMARY` includes a short `worked on` handoff. A
-dedicated fast, low-effort SUMMARIZER writes the human-readable narrative from
-bounded run facts; provider failure falls back silently to a deterministic
-summary. The agent runs once at the final banner, not at internal phase exits.
+`SQUAD SUMMARY` or `DELIVERY SUMMARY` includes a short `worked on` handoff.
+Echelon builds human-readable facts from authoritative run state; a dedicated
+fast, low-effort SUMMARIZER selects and orders their IDs, and Echelon renders the
+exact controller-authored sentences. Invalid output or provider failure falls
+back silently to deterministic fact selection. The agent runs once at the final
+banner, not at internal phase exits.
 
 ### Explicit scope deferrals
 

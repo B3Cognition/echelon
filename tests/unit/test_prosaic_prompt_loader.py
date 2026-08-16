@@ -108,6 +108,19 @@ def test_load_subagent_inspects_the_project_prosaic_bundle(
 
 
 @pytest.mark.unit
+def test_deployed_summarizer_uses_the_id_only_selection_contract() -> None:
+    root = Path(__file__).resolve().parents[2]
+    text = (root / "prosaic/subagents/echelon.summarizer.md").read_text(
+        encoding="utf-8"
+    )
+    assert "selected_fact_ids" in text
+    assert '"bullets"' not in text
+    assert "model_tier: fast" in text
+    assert "effort: low" in text
+    assert "tools: write" in text
+
+
+@pytest.mark.unit
 def test_load_command_inlines_referenced_companion_markdown(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
