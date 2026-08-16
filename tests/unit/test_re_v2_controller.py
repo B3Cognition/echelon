@@ -11,6 +11,7 @@ from harness.re_v2.candidates import CandidateStore, DispatchLease, ProcessIdent
 from harness.re_v2.canonical import content_digest
 from harness.re_v2.controller import (
     DeterministicInventoryExecutor,
+    ExecutorRegistration,
     ReV2Controller,
     ReV2ControllerError,
     WorkExecutor,
@@ -107,9 +108,17 @@ class FakeProviderExecutor(WorkExecutor):
         self.token_usage = token_usage
         self.timed_out = timed_out
         self.result_contract_valid = result_contract_valid
-        self.provider_name = provider_name
-        self.provider_contract_hash = provider_contract_hash
+        self._provider_name = provider_name
+        self._provider_contract_hash = provider_contract_hash
         self.calls: list[tuple[Path, WorkItem, DispatchLease]] = []
+
+    @property
+    def provider_name(self) -> str:
+        return self._provider_name
+
+    @property
+    def provider_contract_hash(self) -> str:
+        return self._provider_contract_hash
 
     def execute(
         self, snapshot_root: Path, work_item: WorkItem, lease: DispatchLease
@@ -133,6 +142,20 @@ class FakeProviderExecutor(WorkExecutor):
             model_name="fixture-model",
             stderr_digest=None,
         )
+
+
+class WritableMetadataExecutor:
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self.provider_name = "fixture"
+        self.provider_contract_hash = PROVIDER_CONTRACT_HASH
+        self.calls: list[tuple[Path, WorkItem, DispatchLease]] = []
+
+    def execute(
+        self, snapshot_root: Path, work_item: WorkItem, lease: DispatchLease
+    ) -> tuple[Path, ExecutionObservation]:
+        self.calls.append((snapshot_root, work_item, lease))
+        raise AssertionError("writable-metadata executor must never execute")
 
 
 def _template(
@@ -259,6 +282,21 @@ def _registry_key(template: WorkTemplate) -> tuple[str, str, str, str, str, str]
     )
 
 
+def _registration(
+    template: WorkTemplate,
+    executor: WorkExecutor,
+) -> ExecutorRegistration:
+    return ExecutorRegistration(
+        provider_name="fixture",
+        provider_contract_hash=PROVIDER_CONTRACT_HASH,
+        producer_id=template.producer_id,
+        producer_protocol_version=template.producer_protocol_version,
+        layer=template.layer,
+        result_contract_id=template.result_contract_id,
+        executor=executor,
+    )
+
+
 def _controller(
     context: ReV2RunContext,
     *,
@@ -374,9 +412,18 @@ def test_executor_registry_requires_the_exact_work_protocol_tuple(
         "L0",
         "fixture-result-v1",
     )
+    registration = ExecutorRegistration(
+        provider_name="fixture",
+        provider_contract_hash=PROVIDER_CONTRACT_HASH,
+        producer_id="fixture-producer",
+        producer_protocol_version="wrong-protocol",
+        layer="L0",
+        result_contract_id="fixture-result-v1",
+        executor=executor,
+    )
     controller = ReV2Controller(
         context,
-        executor_registry={wrong_key: executor},
+        executor_registry={wrong_key: registration},
         process_inspector=DeadInspector(),
         process_identity_factory=_identity_factory,
         clock=lambda: NOW,
@@ -393,7 +440,78 @@ def test_executor_registry_requires_the_exact_work_protocol_tuple(
     )
 
 
-def test_observation_provider_must_match_the_manifest_before_persistence(
+def test_executor_registry_rejects_raw_executor_values(tmp_path: Path) -> None:
+    template = _template("inventory", goal="inventory")
+    context = _context(tmp_path, (template,))
+    executor = FakeProviderExecutor(tmp_path)
+
+    with pytest.raises(ReV2ControllerError, match="ExecutorRegistration|frozen"):
+        ReV2Controller(
+            context,
+            executor_registry={_registry_key(template): executor},
+            process_inspector=DeadInspector(),
+            process_identity_factory=_identity_factory,
+            clock=lambda: NOW,
+        )
+
+    assert executor.calls == []
+    assert context.event_store.replay() == ()
+
+
+def test_convenience_executor_rejects_writable_provider_metadata(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path, (_template("inventory", goal="inventory"),))
+    executor = WritableMetadataExecutor(tmp_path)
+
+    with pytest.raises(ReV2ControllerError, match="read-only|immutable"):
+        ReV2Controller(
+            context,
+            executor=executor,
+            process_inspector=DeadInspector(),
+            process_identity_factory=_identity_factory,
+            clock=lambda: NOW,
+        )
+
+    assert executor.calls == []
+    assert context.event_store.replay() == ()
+
+
+@pytest.mark.parametrize(
+    ("attribute", "wrong_value"),
+    (
+        ("_provider_name", "other-provider"),
+        (
+            "_provider_contract_hash",
+            content_digest({"provider": "fixture", "tier": 2}),
+        ),
+    ),
+)
+def test_registry_revalidates_executor_declared_provider_binding(
+    tmp_path: Path,
+    attribute: str,
+    wrong_value: str,
+) -> None:
+    template = _template("inventory", goal="inventory")
+    context = _context(tmp_path, (template,))
+    executor = FakeProviderExecutor(tmp_path)
+    registration = _registration(template, executor)
+    setattr(executor, attribute, wrong_value)
+
+    with pytest.raises(ReV2ControllerError, match="provider"):
+        ReV2Controller(
+            context,
+            executor_registry={registration.key: registration},
+            process_inspector=DeadInspector(),
+            process_identity_factory=_identity_factory,
+            clock=lambda: NOW,
+        )
+
+    assert executor.calls == []
+    assert context.event_store.replay() == ()
+
+
+def test_convenience_executor_provider_name_must_match_before_planning(
     tmp_path: Path,
 ) -> None:
     context = _context(tmp_path, (_template("inventory", goal="inventory"),))
@@ -410,7 +528,7 @@ def test_observation_provider_must_match_the_manifest_before_persistence(
     assert context.candidate_store.discover() == ()
 
 
-def test_executor_contract_hash_must_match_before_planning_or_execution(
+def test_convenience_executor_contract_hash_must_match_before_planning(
     tmp_path: Path,
 ) -> None:
     context = _context(tmp_path, (_template("inventory", goal="inventory"),))
@@ -644,7 +762,9 @@ def test_deterministic_inventory_omits_operational_git_worktree_metadata(
         leased_at=NOW,
     )
     executor = DeterministicInventoryExecutor(
-        tmp_path / "inventory-output", clock=lambda: NOW
+        tmp_path / "inventory-output",
+        provider_contract_hash=PROVIDER_CONTRACT_HASH,
+        clock=lambda: NOW,
     )
 
     output, _observation = executor.execute(snapshot, item, lease)

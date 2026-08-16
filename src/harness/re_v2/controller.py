@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import fcntl
+import inspect
 import os
 from pathlib import Path
 import stat
@@ -42,6 +43,12 @@ class ReV2ControllerError(RuntimeError):
 class WorkExecutor(Protocol):
     """Produce observable candidate bytes without granting them authority."""
 
+    @property
+    def provider_name(self) -> str: ...
+
+    @property
+    def provider_contract_hash(self) -> str: ...
+
     def execute(
         self,
         snapshot_root: Path,
@@ -74,6 +81,14 @@ class ExecutorRegistration:
         if not callable(getattr(self.executor, "execute", None)):
             raise ReV2ControllerError(
                 "registered executor must provide execute(snapshot, work, lease)"
+            )
+        declared_binding = _executor_provider_binding(self.executor)
+        if declared_binding != (
+            self.provider_name,
+            self.provider_contract_hash,
+        ):
+            raise ReV2ControllerError(
+                "executor-declared provider metadata does not match registration"
             )
 
     @property
@@ -117,10 +132,20 @@ class DeterministicInventoryExecutor:
         self,
         output_root: Path,
         *,
+        provider_contract_hash: str,
         clock: Callable[[], str] | None = None,
     ) -> None:
         self.output_root = Path(output_root)
+        self._provider_contract_hash = provider_contract_hash
         self._clock = clock or _canonical_utc_now
+
+    @property
+    def provider_name(self) -> str:
+        return "deterministic-inventory"
+
+    @property
+    def provider_contract_hash(self) -> str:
+        return self._provider_contract_hash
 
     def execute(
         self,
@@ -182,7 +207,11 @@ def production_executor_registry(
     if provider_name != "deterministic-inventory":
         return MappingProxyType({})
     provider_contract_hash = content_digest(provider_contract)
-    executor = DeterministicInventoryExecutor(output_root, clock=clock)
+    executor = DeterministicInventoryExecutor(
+        output_root,
+        provider_contract_hash=provider_contract_hash,
+        clock=clock,
+    )
     registrations = tuple(
         ExecutorRegistration(
             provider_name=provider_name,
@@ -207,10 +236,7 @@ class ReV2Controller:
         self,
         context: ReV2RunContext,
         *,
-        executor_registry: Mapping[
-            ExecutorKey, ExecutorRegistration | WorkExecutor
-        ]
-        | None = None,
+        executor_registry: Mapping[ExecutorKey, ExecutorRegistration] | None = None,
         executor: WorkExecutor | None = None,
         process_inspector: ProcessInspector | object | None = None,
         process_identity_factory: ProcessIdentityFactory | None = None,
@@ -233,17 +259,25 @@ class ReV2Controller:
         manifest = context.manifest
         provider_name, provider_contract_hash = _provider_binding(manifest)
         if executor is not None:
-            declared_provider = getattr(executor, "provider_name", None)
-            declared_contract_hash = getattr(
-                executor, "provider_contract_hash", None
+            declared_binding = _executor_provider_binding(executor)
+            if declared_binding != (provider_name, provider_contract_hash):
+                raise ReV2ControllerError(
+                    "convenience executor does not match manifest provider contract"
+                )
+            generated = tuple(
+                ExecutorRegistration(
+                    provider_name=declared_binding[0],
+                    provider_contract_hash=declared_binding[1],
+                    producer_id=template.producer_id,
+                    producer_protocol_version=template.producer_protocol_version,
+                    layer=template.layer,
+                    result_contract_id=template.result_contract_id,
+                    executor=executor,
+                )
+                for template in context.graph.templates
             )
             executor_registry = {
-                _executor_key(
-                    template,
-                    provider_name=str(declared_provider),
-                    provider_contract_hash=str(declared_contract_hash),
-                ): executor
-                for template in context.graph.templates
+                registration.key: registration for registration in generated
             }
         if executor_registry is None:
             executor_registry = production_executor_registry(
@@ -252,19 +286,25 @@ class ReV2Controller:
                 clock=self._clock,
             )
         registrations: dict[ExecutorKey, ExecutorRegistration] = {}
-        for key, value in executor_registry.items():
+        for key, registration in executor_registry.items():
             if not _valid_executor_key(key):
                 raise ReV2ControllerError(
                     "executor registry keys must be exact provider protocol tuples"
                 )
-            registration = (
-                value
-                if isinstance(value, ExecutorRegistration)
-                else ExecutorRegistration(*key, executor=value)
-            )
+            if type(registration) is not ExecutorRegistration:
+                raise ReV2ControllerError(
+                    "executor registry values must be frozen ExecutorRegistration objects"
+                )
             if registration.key != key:
                 raise ReV2ControllerError(
                     "executor registry key does not match registration metadata"
+                )
+            if _executor_provider_binding(registration.executor) != (
+                registration.provider_name,
+                registration.provider_contract_hash,
+            ):
+                raise ReV2ControllerError(
+                    "executor-declared provider metadata does not match registration"
                 )
             if (
                 registration.provider_name != provider_name
@@ -706,6 +746,34 @@ def _valid_executor_key(value: object) -> bool:
         and len(value[1]) == 71
         and all(character in "0123456789abcdef" for character in value[1][7:])
     )
+
+
+def _executor_provider_binding(executor: object) -> tuple[str, str]:
+    for field in ("provider_name", "provider_contract_hash"):
+        descriptor = inspect.getattr_static(type(executor), field, None)
+        if (
+            not isinstance(descriptor, property)
+            or descriptor.fset is not None
+            or descriptor.fdel is not None
+        ):
+            raise ReV2ControllerError(
+                "executor provider metadata must use immutable read-only properties"
+            )
+    provider_name = getattr(executor, "provider_name", None)
+    provider_contract_hash = getattr(executor, "provider_contract_hash", None)
+    if not isinstance(provider_name, str) or not provider_name:
+        raise ReV2ControllerError("executor provider_name is invalid")
+    if not (
+        isinstance(provider_contract_hash, str)
+        and provider_contract_hash.startswith("sha256:")
+        and len(provider_contract_hash) == 71
+        and all(
+            character in "0123456789abcdef"
+            for character in provider_contract_hash[7:]
+        )
+    ):
+        raise ReV2ControllerError("executor provider_contract_hash is invalid")
+    return provider_name, provider_contract_hash
 
 
 def _provider_binding(manifest: RunManifest) -> tuple[str, str]:
