@@ -11,10 +11,9 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
+import secrets
 import stat
 import sys
-import tempfile
 from typing import Callable, Iterable, Iterator
 
 from .canonical import canonical_json_bytes, content_digest
@@ -25,16 +24,20 @@ EMPTY_INDEX_HASH = content_digest(b"")
 
 _DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _RUN_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,254}\Z")
+_HAS_DIRFD_SUPPORT = all(
+    operation in os.supports_dir_fd
+    for operation in (os.open, os.mkdir, os.stat, os.unlink, os.rmdir, os.rename)
+)
 _MANIFEST_FIELDS = {
     "accepted_root_hashes",
     "generation_id",
-    "run_id",
     "schema_version",
     "synthesis_policy_hash",
 }
 _INDEX_FIELDS = {
     "generation_id",
     "generation_manifest_hash",
+    "run_id",
     "schema_version",
 }
 
@@ -53,7 +56,6 @@ class GenerationManifest:
 
     schema_version: int
     generation_id: str
-    run_id: str
     accepted_root_hashes: tuple[str, ...]
     synthesis_policy_hash: str
 
@@ -64,7 +66,6 @@ class GenerationManifest:
             or self.schema_version != PUBLICATION_SCHEMA_VERSION
         ):
             raise ReV2PublicationError("unsupported generation manifest schema_version")
-        _run_id(self.run_id)
         roots = _canonical_roots(self.accepted_root_hashes)
         if roots != self.accepted_root_hashes:
             raise ReV2PublicationError(
@@ -78,23 +79,19 @@ class GenerationManifest:
     @classmethod
     def create(
         cls,
-        run_id: str,
         accepted_root_hashes: Iterable[str],
         synthesis_policy_hash: str,
     ) -> "GenerationManifest":
-        safe_run_id = _run_id(run_id)
         roots = _canonical_roots(accepted_root_hashes)
         policy_hash = _digest(synthesis_policy_hash, "synthesis_policy_hash")
         identity = {
             "accepted_root_hashes": list(roots),
-            "run_id": safe_run_id,
             "schema_version": PUBLICATION_SCHEMA_VERSION,
             "synthesis_policy_hash": policy_hash,
         }
         return cls(
             schema_version=PUBLICATION_SCHEMA_VERSION,
             generation_id=content_digest(identity),
-            run_id=safe_run_id,
             accepted_root_hashes=roots,
             synthesis_policy_hash=policy_hash,
         )
@@ -112,7 +109,6 @@ class GenerationManifest:
             manifest = cls(
                 schema_version=raw["schema_version"],  # type: ignore[arg-type]
                 generation_id=raw["generation_id"],  # type: ignore[arg-type]
-                run_id=raw["run_id"],  # type: ignore[arg-type]
                 accepted_root_hashes=tuple(roots),  # type: ignore[arg-type]
                 synthesis_policy_hash=raw["synthesis_policy_hash"],  # type: ignore[arg-type]
             )
@@ -127,7 +123,6 @@ class GenerationManifest:
     def identity_dict(self) -> dict[str, object]:
         return {
             "accepted_root_hashes": list(self.accepted_root_hashes),
-            "run_id": self.run_id,
             "schema_version": self.schema_version,
             "synthesis_policy_hash": self.synthesis_policy_hash,
         }
@@ -136,7 +131,6 @@ class GenerationManifest:
         return {
             "accepted_root_hashes": list(self.accepted_root_hashes),
             "generation_id": self.generation_id,
-            "run_id": self.run_id,
             "schema_version": self.schema_version,
             "synthesis_policy_hash": self.synthesis_policy_hash,
         }
@@ -149,6 +143,7 @@ class PublishedV2Index:
     schema_version: int
     generation_id: str
     generation_manifest_hash: str
+    run_id: str
 
     def __post_init__(self) -> None:
         if (
@@ -159,9 +154,10 @@ class PublishedV2Index:
             raise ReV2PublicationError("unsupported published v2 index schema_version")
         _digest(self.generation_id, "generation_id")
         _digest(self.generation_manifest_hash, "generation_manifest_hash")
+        _run_id(self.run_id)
 
     @classmethod
-    def create(cls, manifest: GenerationManifest) -> "PublishedV2Index":
+    def create(cls, run_id: str, manifest: GenerationManifest) -> "PublishedV2Index":
         if not isinstance(manifest, GenerationManifest):
             raise ReV2PublicationError("manifest must be a GenerationManifest")
         manifest_bytes = canonical_json_bytes(manifest.to_json_dict())
@@ -169,6 +165,7 @@ class PublishedV2Index:
             schema_version=PUBLICATION_SCHEMA_VERSION,
             generation_id=manifest.generation_id,
             generation_manifest_hash=content_digest(manifest_bytes),
+            run_id=_run_id(run_id),
         )
 
     @classmethod
@@ -180,6 +177,7 @@ class PublishedV2Index:
                 schema_version=raw["schema_version"],  # type: ignore[arg-type]
                 generation_id=raw["generation_id"],  # type: ignore[arg-type]
                 generation_manifest_hash=raw["generation_manifest_hash"],  # type: ignore[arg-type]
+                run_id=raw["run_id"],  # type: ignore[arg-type]
             )
         except (TypeError, ValueError) as exc:
             raise ReV2PublicationError(
@@ -197,24 +195,33 @@ class PublishedV2Index:
         return {
             "generation_id": self.generation_id,
             "generation_manifest_hash": self.generation_manifest_hash,
+            "run_id": self.run_id,
             "schema_version": self.schema_version,
         }
 
 
-@dataclass(frozen=True, slots=True)
-class _PublicationPaths:
-    workspace: Path
-    root: Path
-    generations: Path
-    index: Path
-    lock: Path
+@dataclass(slots=True)
+class _PinnedLayout:
+    workspace_path: Path
+    workspace_fd: int
+    re_fd: int | None
+    v2_fd: int | None
+    generations_fd: int | None
+
+    def close(self) -> None:
+        for fd in (self.generations_fd, self.v2_fd, self.re_fd, self.workspace_fd):
+            if fd is not None:
+                os.close(fd)
 
 
 @dataclass(frozen=True, slots=True)
-class _OwnedTemporary:
-    path: Path
-    device: int
-    inode: int
+class _GenerationProof:
+    generation_id: str
+    directory_device: int
+    directory_inode: int
+    manifest_device: int
+    manifest_inode: int
+    manifest_hash: str
 
 
 def publish_generation(
@@ -231,33 +238,38 @@ def publish_generation(
     This primitive deliberately does not infer certification, completeness, or
     synthesis eligibility.  Its roots and policy are explicit caller inputs.
     """
-    manifest = GenerationManifest.create(
-        run_id, accepted_root_hashes, synthesis_policy_hash
-    )
+    safe_run_id = _run_id(run_id)
+    manifest = GenerationManifest.create(accepted_root_hashes, synthesis_policy_hash)
     expected = _digest(expected_index_hash, "expected_index_hash")
-    paths = _paths(workspace_root, create=True)
 
     try:
-        with _publication_lock(paths):
-            _validate_layout(paths)
-            current = _load_index(paths)
-            observed = current.index_hash if current is not None else EMPTY_INDEX_HASH
-            if observed != expected:
-                raise ReV2PublicationConflict(
-                    f"expected index {expected}, found {observed}"
+        with _pinned_layout(workspace_root, create=True) as layout:
+            with _publication_lock(layout):
+                _verify_layout(layout, require_complete=True)
+                current = _load_index(layout)
+                observed = (
+                    current.index_hash if current is not None else EMPTY_INDEX_HASH
                 )
+                if observed != expected:
+                    raise ReV2PublicationConflict(
+                        f"expected index {expected}, found {observed}"
+                    )
 
-            _create_or_reuse_generation(paths, manifest, fault_hook)
-            desired = PublishedV2Index.create(manifest)
-            if current == desired:
-                return desired
-            _replace_index(paths, desired, fault_hook)
-            installed = _load_index(paths)
-            if installed != desired:
-                raise ReV2PublicationError(
-                    "installed published v2 index failed exact validation"
+                generation_proof = _create_or_reuse_generation(
+                    layout, manifest, fault_hook
                 )
-            return desired
+                desired = PublishedV2Index.create(safe_run_id, manifest)
+                if current == desired:
+                    return desired
+                _replace_index(
+                    layout, desired, manifest, generation_proof, fault_hook
+                )
+                installed = _load_index(layout)
+                if installed != desired:
+                    raise ReV2PublicationError(
+                        "installed published v2 index failed exact validation"
+                    )
+                return desired
     except (ReV2PublicationError, KeyboardInterrupt, SystemExit):
         raise
     except OSError as exc:
@@ -266,48 +278,32 @@ def publish_generation(
 
 def current_index_hash(workspace_root: Path) -> str:
     """Return the canonical current-index hash or the explicit empty sentinel."""
-    paths = _paths(workspace_root, create=False)
-    if not _path_exists(paths.root):
-        return EMPTY_INDEX_HASH
-    index = _load_index(paths)
-    return index.index_hash if index is not None else EMPTY_INDEX_HASH
+    try:
+        with _pinned_layout(workspace_root, create=False) as layout:
+            if layout.v2_fd is None:
+                return EMPTY_INDEX_HASH
+            index = _load_index(layout)
+            return index.index_hash if index is not None else EMPTY_INDEX_HASH
+    except (ReV2PublicationError, KeyboardInterrupt, SystemExit):
+        raise
+    except OSError as exc:
+        raise ReV2PublicationError(f"cannot read v2 publication index: {exc}") from exc
 
 
 def load_published_v2_index(workspace_root: Path) -> PublishedV2Index | None:
     """Load and validate the canonical index and its complete generation."""
-    paths = _paths(workspace_root, create=False)
-    if not _path_exists(paths.root):
-        return None
-    return _load_index(paths)
+    try:
+        with _pinned_layout(workspace_root, create=False) as layout:
+            if layout.v2_fd is None:
+                return None
+            return _load_index(layout)
+    except (ReV2PublicationError, KeyboardInterrupt, SystemExit):
+        raise
+    except OSError as exc:
+        raise ReV2PublicationError(f"cannot read v2 publication index: {exc}") from exc
 
 
-def _paths(workspace_root: Path, *, create: bool) -> _PublicationPaths:
-    workspace = _workspace(workspace_root)
-    re_root = workspace / "re"
-    root = re_root / "v2"
-    generations = root / "generations"
-    paths = _PublicationPaths(
-        workspace=workspace,
-        root=root,
-        generations=generations,
-        index=root / "index.json",
-        lock=root / ".publication.lock",
-    )
-    if create:
-        _ensure_directory(re_root, workspace, "re publication parent")
-        _ensure_directory(root, re_root, "v2 publication root")
-        _ensure_directory(generations, root, "generation namespace")
-    else:
-        if _path_exists(re_root):
-            _require_directory(re_root, "re publication parent")
-        if _path_exists(root):
-            _require_directory(root, "v2 publication root")
-        if _path_exists(generations):
-            _require_directory(generations, "generation namespace")
-    return paths
-
-
-def _workspace(value: Path) -> Path:
+def _workspace_path(value: Path) -> Path:
     try:
         raw = Path(value)
     except TypeError as exc:
@@ -333,29 +329,84 @@ def _workspace(value: Path) -> Path:
     return resolved
 
 
-def _validate_layout(paths: _PublicationPaths) -> None:
-    _require_directory(paths.workspace, "workspace")
-    _require_directory(paths.root.parent, "re publication parent")
-    _require_directory(paths.root, "v2 publication root")
-    _require_directory(paths.generations, "generation namespace")
+@contextmanager
+def _pinned_layout(workspace_root: Path, *, create: bool) -> Iterator[_PinnedLayout]:
+    _require_dirfd_support()
+    workspace_path = _workspace_path(workspace_root)
+    workspace_fd = _open_directory_path_nofollow(workspace_path)
+    layout = _PinnedLayout(workspace_path, workspace_fd, None, None, None)
+    try:
+        layout.re_fd = _open_or_create_directory_at(
+            workspace_fd, "re", "re publication parent", create=create
+        )
+        if layout.re_fd is None:
+            _verify_layout(layout, require_complete=False)
+            yield layout
+            return
+        layout.v2_fd = _open_or_create_directory_at(
+            layout.re_fd, "v2", "v2 publication root", create=create
+        )
+        if layout.v2_fd is None:
+            _verify_layout(layout, require_complete=False)
+            yield layout
+            return
+        layout.generations_fd = _open_or_create_directory_at(
+            layout.v2_fd,
+            "generations",
+            "generation namespace",
+            create=create,
+        )
+        _verify_layout(layout, require_complete=create)
+        yield layout
+    finally:
+        layout.close()
+
+
+def _verify_layout(layout: _PinnedLayout, *, require_complete: bool) -> None:
+    _require_path_matches_fd(layout.workspace_path, layout.workspace_fd, "workspace")
+    pairs = (
+        (layout.workspace_fd, "re", layout.re_fd, "re publication parent"),
+        (layout.re_fd, "v2", layout.v2_fd, "v2 publication root"),
+        (
+            layout.v2_fd,
+            "generations",
+            layout.generations_fd,
+            "generation namespace",
+        ),
+    )
+    for parent_fd, name, child_fd, label in pairs:
+        if child_fd is None:
+            if require_complete:
+                raise ReV2PublicationError(f"publication layout is incomplete: {label}")
+            return
+        if parent_fd is None:
+            raise ReV2PublicationError(f"publication layout continuity failed: {label}")
+        _require_entry_matches_fd(parent_fd, name, child_fd, label)
 
 
 @contextmanager
-def _publication_lock(paths: _PublicationPaths) -> Iterator[None]:
+def _publication_lock(layout: _PinnedLayout) -> Iterator[None]:
+    if layout.v2_fd is None:
+        raise ReV2PublicationError("v2 publication root is unavailable")
     flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_CLOEXEC", 0)
     flags |= getattr(os, "O_NOFOLLOW", 0)
-    existed = _path_exists(paths.lock)
-    fd = _open(paths.lock, flags, 0o600)
+    existed = _entry_exists(layout.v2_fd, ".publication.lock")
+    fd = _open_at(layout.v2_fd, ".publication.lock", flags, 0o600)
     try:
         details = os.fstat(fd)
         if not stat.S_ISREG(details.st_mode):
             raise ReV2PublicationError("publication lock is not a regular file")
-        _require_same_inode(paths.lock, details, "publication lock")
+        _require_entry_matches_fd(
+            layout.v2_fd, ".publication.lock", fd, "publication lock"
+        )
         if not existed:
             _fsync(fd)
-            _fsync_directory(paths.root)
+            _fsync(layout.v2_fd)
         _flock(fd, fcntl.LOCK_EX)
-        _require_same_inode(paths.lock, details, "publication lock")
+        _verify_layout(layout, require_complete=True)
+        _require_entry_matches_fd(
+            layout.v2_fd, ".publication.lock", fd, "publication lock"
+        )
         yield
     finally:
         try:
@@ -365,63 +416,98 @@ def _publication_lock(paths: _PublicationPaths) -> Iterator[None]:
 
 
 def _create_or_reuse_generation(
-    paths: _PublicationPaths,
+    layout: _PinnedLayout,
     manifest: GenerationManifest,
     fault_hook: Callable[[str], None] | None,
-) -> None:
+) -> _GenerationProof:
+    if layout.generations_fd is None:
+        raise ReV2PublicationError("generation namespace is unavailable")
     payload = canonical_json_bytes(manifest.to_json_dict())
-    final = paths.generations / manifest.generation_id
-    if _path_exists(final):
-        _validate_generation(final, manifest.generation_id, content_digest(payload), payload)
-        return
-
-    temporary_path = Path(
-        tempfile.mkdtemp(
-            prefix=".generation.", suffix=".tmp", dir=paths.generations
+    if _entry_exists(layout.generations_fd, manifest.generation_id):
+        return _validate_generation(
+            layout, manifest.generation_id, content_digest(payload), payload
         )
+
+    temporary_name, temporary_fd, temporary_identity = _create_temporary_directory_at(
+        layout.generations_fd, ".generation.", ".tmp"
     )
-    temporary = _owned_temporary(temporary_path)
     promoted = False
     try:
-        manifest_path = temporary.path / "manifest.json"
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0)
         flags |= getattr(os, "O_NOFOLLOW", 0)
-        fd = _open(manifest_path, flags, 0o600)
+        fd = _open_at(temporary_fd, "manifest.json", flags, 0o600)
         try:
             _write_all(fd, payload)
             os.fchmod(fd, 0o400)
             _fsync(fd)
         finally:
             os.close(fd)
-        os.chmod(temporary.path, 0o500, follow_symlinks=False)
-        _fsync_directory(temporary.path)
+        _fchmod(temporary_fd, 0o500)
+        _fsync(temporary_fd)
         _hook(fault_hook, "generation_temporary_written")
+        _verify_layout(layout, require_complete=True)
+        _require_entry_matches_fd(
+            layout.generations_fd,
+            temporary_name,
+            temporary_fd,
+            "generation temporary",
+        )
         try:
-            _rename_no_replace(temporary.path, final)
-        except FileExistsError:
-            _validate_generation(
-                final, manifest.generation_id, content_digest(payload), payload
+            _rename_no_replace_at(
+                layout.generations_fd,
+                temporary_name,
+                manifest.generation_id,
+                temporary_fd,
             )
-            return
+        except FileExistsError:
+            return _validate_generation(
+                layout, manifest.generation_id, content_digest(payload), payload
+            )
         promoted = True
-        _fsync_directory(final)
-        _fsync_directory(paths.generations)
+        _verify_layout(layout, require_complete=True)
+        _require_entry_matches_fd(
+            layout.generations_fd,
+            manifest.generation_id,
+            temporary_fd,
+            "promoted generation",
+        )
+        _fsync(temporary_fd)
+        _fsync(layout.generations_fd)
+        proof = _validate_generation(
+            layout, manifest.generation_id, content_digest(payload), payload
+        )
         _hook(fault_hook, "generation_promoted")
+        _verify_layout(layout, require_complete=True)
+        return _validate_generation(
+            layout,
+            manifest.generation_id,
+            content_digest(payload),
+            payload,
+            expected_proof=proof,
+        )
     finally:
+        os.close(temporary_fd)
         if not promoted:
-            _cleanup_owned_temporary(temporary)
+            _cleanup_temporary_directory_at(
+                layout.generations_fd,
+                temporary_name,
+                temporary_identity,
+            )
 
 
 def _replace_index(
-    paths: _PublicationPaths,
+    layout: _PinnedLayout,
     index: PublishedV2Index,
+    manifest: GenerationManifest,
+    generation_proof: _GenerationProof,
     fault_hook: Callable[[str], None] | None,
 ) -> None:
+    if layout.v2_fd is None:
+        raise ReV2PublicationError("v2 publication root is unavailable")
     payload = canonical_json_bytes(index.to_json_dict())
-    fd, name = tempfile.mkstemp(
-        prefix=".index.json.", suffix=".tmp", dir=paths.root
+    temporary_name, fd, temporary_identity = _create_temporary_file_at(
+        layout.v2_fd, ".index.json.", ".tmp"
     )
-    temporary = _owned_temporary(Path(name))
     replaced = False
     try:
         try:
@@ -431,51 +517,80 @@ def _replace_index(
         finally:
             os.close(fd)
         _hook(fault_hook, "index_temporary_written")
-        _replace(temporary.path, paths.index)
+        _verify_layout(layout, require_complete=True)
+        manifest_payload = canonical_json_bytes(manifest.to_json_dict())
+        _validate_generation(
+            layout,
+            manifest.generation_id,
+            content_digest(manifest_payload),
+            manifest_payload,
+            expected_proof=generation_proof,
+        )
+        _replace_at(layout.v2_fd, temporary_name, "index.json")
         replaced = True
-        _fsync_directory(paths.root)
+        _verify_layout(layout, require_complete=True)
+        _fsync(layout.v2_fd)
         _hook(fault_hook, "index_replaced")
     finally:
         if not replaced:
-            _cleanup_owned_temporary(temporary)
+            _cleanup_temporary_file_at(
+                layout.v2_fd, temporary_name, temporary_identity
+            )
 
 
-def _load_index(paths: _PublicationPaths) -> PublishedV2Index | None:
-    if not _path_exists(paths.index):
+def _load_index(layout: _PinnedLayout) -> PublishedV2Index | None:
+    if layout.v2_fd is None:
         return None
-    payload = _read_regular(paths.index, "published v2 index")
+    _verify_layout(layout, require_complete=False)
+    if not _entry_exists(layout.v2_fd, "index.json"):
+        return None
+    payload, _ = _read_regular_at(
+        layout.v2_fd, "index.json", "published v2 index"
+    )
     index = PublishedV2Index.from_bytes(payload)
     _validate_generation(
-        paths.generations / index.generation_id,
+        layout,
         index.generation_id,
         index.generation_manifest_hash,
         None,
     )
+    _verify_layout(layout, require_complete=True)
     return index
 
 
 def _validate_generation(
-    directory: Path,
+    layout: _PinnedLayout,
     generation_id: str,
     expected_manifest_hash: str,
     expected_payload: bytes | None,
-) -> GenerationManifest:
+    *,
+    expected_proof: _GenerationProof | None = None,
+) -> _GenerationProof:
+    if layout.generations_fd is None:
+        raise ReV2PublicationError(
+            f"generation manifest is missing for {generation_id}"
+        )
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
     flags |= getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
-        details = os.lstat(directory)
+        directory_fd = _open_at(layout.generations_fd, generation_id, flags)
     except OSError as exc:
         raise ReV2PublicationError(
             f"generation manifest is missing for {generation_id}"
         ) from exc
-    if stat.S_ISLNK(details.st_mode) or not stat.S_ISDIR(details.st_mode):
-        raise ReV2PublicationError(f"generation collision at {generation_id}")
-    directory_fd = _open(directory, flags)
     try:
         opened = os.fstat(directory_fd)
-        if _identity(details) != _identity(opened):
+        _require_entry_matches_fd(
+            layout.generations_fd,
+            generation_id,
+            directory_fd,
+            f"generation {generation_id}",
+        )
+        if not stat.S_ISDIR(opened.st_mode):
+            raise ReV2PublicationError(f"generation collision at {generation_id}")
+        if stat.S_IMODE(opened.st_mode) != 0o500:
             raise ReV2PublicationError(
-                f"generation mutated during validation: {generation_id}"
+                f"generation has mutable or unexpected mode: {generation_id}"
             )
         entries = _directory_entries(directory_fd, generation_id)
         if "manifest.json" not in entries:
@@ -484,8 +599,12 @@ def _validate_generation(
             )
         if entries != ["manifest.json"]:
             raise ReV2PublicationError(f"generation collision at {generation_id}")
-        payload = _read_regular_at(
-            directory_fd, "manifest.json", "generation manifest"
+        payload, manifest_details = _read_regular_at(
+            directory_fd,
+            "manifest.json",
+            "generation manifest",
+            expected_mode=0o400,
+            require_single_link=True,
         )
         manifest = GenerationManifest.from_bytes(payload)
         if (
@@ -496,17 +615,33 @@ def _validate_generation(
             raise ReV2PublicationError(f"generation collision at {generation_id}")
         confirmed = _directory_entries(directory_fd, generation_id)
         after = os.fstat(directory_fd)
-        current = os.lstat(directory)
+        _require_entry_matches_fd(
+            layout.generations_fd,
+            generation_id,
+            directory_fd,
+            f"generation {generation_id}",
+        )
         if (
             confirmed != entries
             or _stable_directory_identity(opened)
             != _stable_directory_identity(after)
-            or _identity(after) != _identity(current)
         ):
             raise ReV2PublicationError(
                 f"generation mutated during validation: {generation_id}"
             )
-        return manifest
+        proof = _GenerationProof(
+            generation_id=generation_id,
+            directory_device=after.st_dev,
+            directory_inode=after.st_ino,
+            manifest_device=manifest_details.st_dev,
+            manifest_inode=manifest_details.st_ino,
+            manifest_hash=content_digest(payload),
+        )
+        if expected_proof is not None and proof != expected_proof:
+            raise ReV2PublicationError(
+                f"generation was replaced during publication: {generation_id}"
+            )
+        return proof
     finally:
         os.close(directory_fd)
 
@@ -565,84 +700,185 @@ def _digest(value: object, field: str) -> str:
     return value
 
 
-def _ensure_directory(path: Path, parent: Path, label: str) -> None:
-    _require_directory(parent, f"{label} parent")
+def _require_dirfd_support() -> None:
+    if (
+        not _HAS_DIRFD_SUPPORT
+        or not hasattr(os, "O_NOFOLLOW")
+        or not hasattr(os, "O_DIRECTORY")
+    ):
+        raise ReV2PublicationError(
+            "descriptor-relative no-follow publication is unsupported"
+        )
+
+
+def _open_directory_path_nofollow(path: Path) -> int:
+    absolute = path.absolute()
+    if not absolute.is_absolute() or any(part in {".", ".."} for part in absolute.parts):
+        raise ReV2PublicationError(f"unsafe workspace traversal path: {path}")
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    current = _open(Path("/"), flags)
     try:
-        details = os.lstat(path)
+        for part in absolute.parts[1:]:
+            next_fd = _open_at(current, part, flags)
+            os.close(current)
+            current = next_fd
+        if not stat.S_ISDIR(os.fstat(current).st_mode):
+            raise ReV2PublicationError("workspace path must be a directory")
+        return current
+    except BaseException:
+        os.close(current)
+        raise
+
+
+def _open_or_create_directory_at(
+    parent_fd: int,
+    name: str,
+    label: str,
+    *,
+    create: bool,
+) -> int | None:
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    try:
+        fd = _open_at(parent_fd, name, flags)
     except FileNotFoundError:
+        if not create:
+            return None
         try:
-            path.mkdir(mode=0o700)
+            _mkdir_at(parent_fd, name, 0o700)
         except FileExistsError:
             pass
+        _fsync(parent_fd)
+        try:
+            fd = _open_at(parent_fd, name, flags)
         except OSError as exc:
-            raise ReV2PublicationError(f"cannot create {label}: {exc}") from exc
-        else:
-            _fsync_directory(parent)
-        _require_directory(path, label)
-        return
+            raise ReV2PublicationError(f"unsafe concurrent {label}: {exc}") from exc
     except OSError as exc:
-        raise ReV2PublicationError(f"cannot inspect {label}: {exc}") from exc
-    if stat.S_ISLNK(details.st_mode):
-        raise ReV2PublicationError(f"unsafe symlink for {label}: {path}")
+        raise ReV2PublicationError(f"cannot open {label} without symlinks: {exc}") from exc
+    details = os.fstat(fd)
     if not stat.S_ISDIR(details.st_mode):
-        raise ReV2PublicationError(f"{label} is not a directory: {path}")
-
-
-def _require_directory(path: Path, label: str) -> None:
+        os.close(fd)
+        raise ReV2PublicationError(f"{label} is not a directory")
     try:
-        details = os.lstat(path)
-    except OSError as exc:
-        raise ReV2PublicationError(f"cannot inspect {label}: {exc}") from exc
-    if stat.S_ISLNK(details.st_mode):
-        raise ReV2PublicationError(f"unsafe symlink for {label}: {path}")
-    if not stat.S_ISDIR(details.st_mode):
-        raise ReV2PublicationError(f"{label} is not a directory: {path}")
+        _require_entry_matches_fd(parent_fd, name, fd, label)
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
 
 
-def _require_same_inode(path: Path, expected: os.stat_result, label: str) -> None:
+def _require_path_matches_fd(path: Path, fd: int, label: str) -> None:
     try:
         current = os.lstat(path)
     except OSError as exc:
-        raise ReV2PublicationError(f"{label} disappeared") from exc
+        raise ReV2PublicationError(f"{label} path continuity was lost") from exc
+    expected = os.fstat(fd)
     if stat.S_ISLNK(current.st_mode) or _identity(current) != _identity(expected):
-        raise ReV2PublicationError(f"{label} was replaced during acquisition")
+        raise ReV2PublicationError(f"{label} was replaced during publication")
 
 
-def _read_regular(path: Path, label: str) -> bytes:
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-    fd = _open(path, flags)
+def _require_entry_matches_fd(
+    parent_fd: int, name: str, fd: int, label: str
+) -> None:
     try:
-        before = os.fstat(fd)
-        if not stat.S_ISREG(before.st_mode):
-            raise ReV2PublicationError(f"{label} is not a regular file")
-        _require_same_inode(path, before, label)
-        payload = _read_all(fd)
-        after = os.fstat(fd)
-        if _stable_file_identity(before) != _stable_file_identity(after):
-            raise ReV2PublicationError(f"{label} mutated while being read")
-        if len(payload) != after.st_size:
-            raise ReV2PublicationError(f"{label} has an unstable size")
-        _require_same_inode(path, after, label)
-        return payload
-    finally:
-        os.close(fd)
+        current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except OSError as exc:
+        raise ReV2PublicationError(f"{label} path continuity was lost") from exc
+    expected = os.fstat(fd)
+    if stat.S_ISLNK(current.st_mode) or _identity(current) != _identity(expected):
+        raise ReV2PublicationError(f"{label} was replaced during publication")
 
 
-def _read_regular_at(directory_fd: int, name: str, label: str) -> bytes:
+def _entry_exists(parent_fd: int, name: str) -> bool:
+    try:
+        os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def _create_temporary_directory_at(
+    parent_fd: int, prefix: str, suffix: str
+) -> tuple[str, int, tuple[int, int]]:
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    for _ in range(128):
+        name = f"{prefix}{secrets.token_hex(16)}{suffix}"
+        try:
+            _mkdir_at(parent_fd, name, 0o700)
+        except FileExistsError:
+            continue
+        fd = _open_at(parent_fd, name, flags)
+        details = os.fstat(fd)
+        try:
+            _require_entry_matches_fd(parent_fd, name, fd, "generation temporary")
+        except BaseException:
+            os.close(fd)
+            _cleanup_temporary_directory_at(
+                parent_fd, name, (details.st_dev, details.st_ino)
+            )
+            raise
+        return name, fd, (details.st_dev, details.st_ino)
+    raise ReV2PublicationError("cannot allocate a unique generation temporary")
+
+
+def _create_temporary_file_at(
+    parent_fd: int, prefix: str, suffix: str
+) -> tuple[str, int, tuple[int, int]]:
+    flags = (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | os.O_NOFOLLOW
+        | getattr(os, "O_CLOEXEC", 0)
+    )
+    for _ in range(128):
+        name = f"{prefix}{secrets.token_hex(16)}{suffix}"
+        try:
+            fd = _open_at(parent_fd, name, flags, 0o600)
+        except FileExistsError:
+            continue
+        details = os.fstat(fd)
+        if not stat.S_ISREG(details.st_mode):
+            os.close(fd)
+            raise ReV2PublicationError("index temporary is not a regular file")
+        try:
+            _require_entry_matches_fd(parent_fd, name, fd, "index temporary")
+        except BaseException:
+            os.close(fd)
+            _cleanup_temporary_file_at(
+                parent_fd, name, (details.st_dev, details.st_ino)
+            )
+            raise
+        return name, fd, (details.st_dev, details.st_ino)
+    raise ReV2PublicationError("cannot allocate a unique index temporary")
+
+
+def _read_regular_at(
+    directory_fd: int,
+    name: str,
+    label: str,
+    *,
+    expected_mode: int | None = None,
+    require_single_link: bool = False,
+) -> tuple[bytes, os.stat_result]:
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     fd = _open_at(directory_fd, name, flags)
     try:
         before = os.fstat(fd)
         if not stat.S_ISREG(before.st_mode):
             raise ReV2PublicationError(f"{label} is not a regular file")
+        if expected_mode is not None and stat.S_IMODE(before.st_mode) != expected_mode:
+            raise ReV2PublicationError(f"{label} has mutable or unexpected mode")
+        if require_single_link and before.st_nlink != 1:
+            raise ReV2PublicationError(f"{label} must have exactly one hard link")
         payload = _read_all(fd)
         after = os.fstat(fd)
         if (
             _stable_file_identity(before) != _stable_file_identity(after)
             or len(payload) != after.st_size
+            or (require_single_link and after.st_nlink != 1)
         ):
             raise ReV2PublicationError(f"{label} mutated while being read")
-        return payload
+        return payload, after
     finally:
         os.close(fd)
 
@@ -655,10 +891,23 @@ def _open(path: Path, flags: int, mode: int | None = None) -> int:
             continue
 
 
-def _open_at(directory_fd: int, name: str, flags: int) -> int:
+def _open_at(
+    directory_fd: int, name: str, flags: int, mode: int | None = None
+) -> int:
     while True:
         try:
-            return os.open(name, flags, dir_fd=directory_fd)
+            if mode is None:
+                return os.open(name, flags, dir_fd=directory_fd)
+            return os.open(name, flags, mode, dir_fd=directory_fd)
+        except InterruptedError:
+            continue
+
+
+def _mkdir_at(directory_fd: int, name: str, mode: int) -> None:
+    while True:
+        try:
+            os.mkdir(name, mode, dir_fd=directory_fd)
+            return
         except InterruptedError:
             continue
 
@@ -705,21 +954,12 @@ def _fsync(fd: int) -> None:
             continue
 
 
-def _fsync_directory(path: Path) -> None:
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
-    flags |= getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
-    fd = _open(path, flags)
-    try:
-        details = os.fstat(fd)
-        if not stat.S_ISDIR(details.st_mode):
-            raise ReV2PublicationError(f"cannot fsync non-directory: {path}")
-        _require_same_inode(path, details, "publication directory")
-        _fsync(fd)
-    finally:
-        os.close(fd)
-
-
-def _rename_no_replace(source: Path, destination: Path) -> None:
+def _rename_no_replace_at(
+    directory_fd: int,
+    source: str,
+    destination: str,
+    source_fd: int,
+) -> None:
     while True:
         libc = ctypes.CDLL(None, use_errno=True)
         source_bytes = os.fsencode(source)
@@ -735,7 +975,11 @@ def _rename_no_replace(source: Path, destination: Path) -> None:
             ]
             operation.restype = ctypes.c_int
             result = operation(
-                -100, source_bytes, -100, destination_bytes, 0x00000001
+                directory_fd,
+                source_bytes,
+                directory_fd,
+                destination_bytes,
+                0x00000001,
             )
         elif sys.platform == "darwin" and hasattr(libc, "renameatx_np"):
             operation = libc.renameatx_np
@@ -747,21 +991,23 @@ def _rename_no_replace(source: Path, destination: Path) -> None:
                 ctypes.c_uint,
             ]
             operation.restype = ctypes.c_int
-            flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
-            flags |= getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
-            source_fd = _open(source, flags)
             frozen_mode = stat.S_IMODE(os.fstat(source_fd).st_mode)
             try:
                 _fchmod(source_fd, frozen_mode | stat.S_IWUSR)
                 result = operation(
-                    -2, source_bytes, -2, destination_bytes, 0x00000004
+                    directory_fd,
+                    source_bytes,
+                    directory_fd,
+                    destination_bytes,
+                    0x00000004,
                 )
                 saved_errno = ctypes.get_errno()
                 _fchmod(source_fd, frozen_mode)
                 _fsync(source_fd)
                 ctypes.set_errno(saved_errno)
-            finally:
-                os.close(source_fd)
+            except BaseException:
+                _fchmod(source_fd, frozen_mode)
+                raise
         else:
             raise ReV2PublicationError(
                 "atomic no-replace generation promotion is unsupported"
@@ -776,13 +1022,20 @@ def _rename_no_replace(source: Path, destination: Path) -> None:
         raise OSError(error, os.strerror(error), destination)
 
 
-def _replace(source: Path, destination: Path) -> None:
+def _replace_at(directory_fd: int, source: str, destination: str) -> None:
     while True:
         try:
-            os.replace(source, destination)
+            os.rename(
+                source,
+                destination,
+                src_dir_fd=directory_fd,
+                dst_dir_fd=directory_fd,
+            )
             return
         except InterruptedError:
-            if not _path_exists(source) and _path_exists(destination):
+            if not _entry_exists(directory_fd, source) and _entry_exists(
+                directory_fd, destination
+            ):
                 return
             continue
 
@@ -796,36 +1049,53 @@ def _fchmod(fd: int, mode: int) -> None:
             continue
 
 
-def _path_exists(path: Path) -> bool:
+def _cleanup_temporary_file_at(
+    parent_fd: int, name: str, identity: tuple[int, int]
+) -> None:
     try:
-        os.lstat(path)
-    except FileNotFoundError:
-        return False
-    except OSError as exc:
-        raise ReV2PublicationError(f"cannot inspect publication path {path}: {exc}") from exc
-    return True
-
-
-def _owned_temporary(path: Path) -> _OwnedTemporary:
-    details = os.lstat(path)
-    return _OwnedTemporary(path, details.st_dev, details.st_ino)
-
-
-def _cleanup_owned_temporary(temporary: _OwnedTemporary) -> None:
-    try:
-        details = os.lstat(temporary.path)
+        details = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
     except FileNotFoundError:
         return
     except OSError:
         return
-    if (details.st_dev, details.st_ino) != (temporary.device, temporary.inode):
+    if (details.st_dev, details.st_ino) != identity or not stat.S_ISREG(
+        details.st_mode
+    ):
         return
     try:
-        if stat.S_ISDIR(details.st_mode) and not stat.S_ISLNK(details.st_mode):
-            os.chmod(temporary.path, 0o700, follow_symlinks=False)
-            shutil.rmtree(temporary.path)
-        else:
-            temporary.path.unlink()
+        os.unlink(name, dir_fd=parent_fd)
+    except OSError:
+        pass
+
+
+def _cleanup_temporary_directory_at(
+    parent_fd: int, name: str, identity: tuple[int, int]
+) -> None:
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    try:
+        fd = _open_at(parent_fd, name, flags)
+    except OSError:
+        return
+    try:
+        details = os.fstat(fd)
+        if (details.st_dev, details.st_ino) != identity:
+            return
+        _fchmod(fd, 0o700)
+        try:
+            manifest = os.stat("manifest.json", dir_fd=fd, follow_symlinks=False)
+        except OSError:
+            manifest = None
+        if manifest is not None and stat.S_ISREG(manifest.st_mode):
+            try:
+                os.unlink("manifest.json", dir_fd=fd)
+            except OSError:
+                pass
+    finally:
+        os.close(fd)
+    try:
+        current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        if (current.st_dev, current.st_ino) == identity:
+            os.rmdir(name, dir_fd=parent_fd)
     except OSError:
         pass
 

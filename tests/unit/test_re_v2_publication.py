@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import stat
 
 import pytest
 
@@ -52,11 +53,23 @@ def test_same_root_set_publishes_at_most_one_generation(tmp_path: Path) -> None:
     second = _publish(
         tmp_path,
         roots=(_digest("b"), _digest("a"), _digest("a")),
+        run_id="re-run-2",
         expected_index_hash=first.index_hash,
     )
 
     assert second.generation_id == first.generation_id
+    assert second.run_id == "re-run-2"
+    assert second.index_hash != first.index_hash
     assert len(list((tmp_path / "re/v2/generations").iterdir())) == 1
+    manifest = json.loads(
+        (
+            tmp_path
+            / "re/v2/generations"
+            / first.generation_id
+            / "manifest.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert "run_id" not in manifest
 
 
 @pytest.mark.unit
@@ -76,7 +89,7 @@ def test_index_cas_preserves_competing_publication(tmp_path: Path) -> None:
         tmp_path
         / "re/v2/generations"
         / GenerationManifest.create(
-            "re-run-1", (_digest("stale"),), _digest("policy")
+            (_digest("stale"),), _digest("policy")
         ).generation_id
     ).exists()
 
@@ -84,26 +97,22 @@ def test_index_cas_preserves_competing_publication(tmp_path: Path) -> None:
 @pytest.mark.unit
 def test_generation_identity_binds_only_exact_semantic_inputs() -> None:
     roots = (_digest("b"), _digest("a"), _digest("b"))
-    manifest = GenerationManifest.create("re-run-1", roots, _digest("policy"))
+    manifest = GenerationManifest.create(roots, _digest("policy"))
 
     canonical_roots = tuple(sorted((_digest("a"), _digest("b"))))
     assert manifest.accepted_root_hashes == canonical_roots
     assert manifest.generation_id == content_digest(
         {
             "accepted_root_hashes": list(canonical_roots),
-            "run_id": "re-run-1",
             "schema_version": 1,
             "synthesis_policy_hash": _digest("policy"),
         }
     )
     assert GenerationManifest.create(
-        "re-run-2", roots, _digest("policy")
+        roots, _digest("other-policy")
     ).generation_id != manifest.generation_id
     assert GenerationManifest.create(
-        "re-run-1", roots, _digest("other-policy")
-    ).generation_id != manifest.generation_id
-    assert GenerationManifest.create(
-        "re-run-1", (_digest("a"),), _digest("policy")
+        (_digest("a"),), _digest("policy")
     ).generation_id != manifest.generation_id
 
 
@@ -120,6 +129,9 @@ def test_publication_writes_only_canonical_manifests_and_index(tmp_path: Path) -
     assert published.generation_manifest_hash == content_digest(manifest_bytes)
     assert published.index_hash == content_digest(index_bytes)
     assert sorted(path.name for path in generation.iterdir()) == ["manifest.json"]
+    assert stat.S_IMODE(generation.stat().st_mode) == 0o500
+    assert stat.S_IMODE((generation / "manifest.json").stat().st_mode) == 0o400
+    assert (generation / "manifest.json").stat().st_nlink == 1
     assert sorted(path.name for path in tmp_path.iterdir()) == ["re"]
     assert EMPTY_INDEX_HASH == content_digest(b"")
 
@@ -187,10 +199,87 @@ def test_workspace_path_rejects_symlinked_parent_traversal(tmp_path: Path) -> No
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("swap_target", ("workspace", "re"))
+def test_layout_creation_never_follows_a_swapped_ancestor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, swap_target: str
+) -> None:
+    import harness.re_v2.publication as publication_module
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    held = tmp_path / f"held-{swap_target}"
+    if swap_target == "re":
+        (workspace / "re").mkdir()
+    original_mkdir = publication_module.os.mkdir
+    swapped = False
+
+    def swap_before_mkdir(path, mode=0o777, *, dir_fd=None):
+        nonlocal swapped
+        name = Path(path).name
+        trigger = "re" if swap_target == "workspace" else "v2"
+        if not swapped and name == trigger:
+            swapped = True
+            victim = workspace if swap_target == "workspace" else workspace / "re"
+            victim.rename(held)
+            victim.symlink_to(outside, target_is_directory=True)
+        if dir_fd is None:
+            return original_mkdir(path, mode)
+        return original_mkdir(path, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(publication_module.os, "mkdir", swap_before_mkdir)
+    failure: Exception | None = None
+    try:
+        _publish(workspace, roots=(_digest("root"),))
+    except Exception as exc:
+        failure = exc
+
+    assert swapped
+    assert isinstance(failure, ReV2PublicationError)
+    assert "replaced" in str(failure) or "symlink" in str(failure) or "continuity" in str(failure)
+    assert not list(outside.iterdir())
+
+
+@pytest.mark.unit
+def test_rejected_ancestor_swap_closes_the_unbound_child_descriptor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import harness.re_v2.publication as publication_module
+
+    workspace = tmp_path / "workspace"
+    re_root = workspace / "re"
+    re_root.mkdir(parents=True)
+    displaced = tmp_path / "displaced-re"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    original_open = publication_module.os.open
+    opened_re_fd: int | None = None
+
+    def swap_after_open(path, flags, mode=0o777, *, dir_fd=None):
+        nonlocal opened_re_fd
+        if dir_fd is None:
+            return original_open(path, flags, mode)
+        fd = original_open(path, flags, mode, dir_fd=dir_fd)
+        if path == "re" and opened_re_fd is None:
+            opened_re_fd = fd
+            re_root.rename(displaced)
+            re_root.symlink_to(outside, target_is_directory=True)
+        return fd
+
+    monkeypatch.setattr(publication_module.os, "open", swap_after_open)
+    with pytest.raises(ReV2PublicationError, match="replaced"):
+        _publish(workspace, roots=(_digest("root"),))
+
+    assert opened_re_fd is not None
+    with pytest.raises(OSError):
+        publication_module.os.fstat(opened_re_fd)
+
+
+@pytest.mark.unit
 def test_schema_versions_reject_boolean_values() -> None:
     manifest_identity = {
         "accepted_root_hashes": [_digest("root")],
-        "run_id": "re-run-1",
         "schema_version": True,
         "synthesis_policy_hash": _digest("policy"),
     }
@@ -204,6 +293,7 @@ def test_schema_versions_reject_boolean_values() -> None:
         {
             "generation_id": _digest("generation"),
             "generation_manifest_hash": _digest("manifest"),
+            "run_id": "re-run-1",
             "schema_version": True,
         }
     )
@@ -219,6 +309,7 @@ def test_existing_generation_requires_exact_manifest_and_no_extra_bytes(
     generation = tmp_path / "re/v2/generations" / first.generation_id
     generation.chmod(0o700)
     (generation / "extra").write_bytes(b"unexpected")
+    generation.chmod(0o500)
 
     with pytest.raises(ReV2PublicationError, match="generation.*collision"):
         _publish(
@@ -229,11 +320,39 @@ def test_existing_generation_requires_exact_manifest_and_no_extra_bytes(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("mutation", ("directory_mode", "manifest_mode", "hardlink"))
+def test_existing_generation_reuse_requires_immutable_single_link_state(
+    tmp_path: Path, mutation: str
+) -> None:
+    first = _publish(tmp_path, roots=(_digest("root"),))
+    index = tmp_path / "re/v2/index.json"
+    prior_index = index.read_bytes()
+    generation = tmp_path / "re/v2/generations" / first.generation_id
+    manifest = generation / "manifest.json"
+    if mutation == "directory_mode":
+        generation.chmod(0o700)
+    elif mutation == "manifest_mode":
+        manifest.chmod(0o600)
+    else:
+        (tmp_path / "manifest-hardlink.json").hardlink_to(manifest)
+
+    with pytest.raises(ReV2PublicationError, match="generation"):
+        _publish(
+            tmp_path,
+            roots=(_digest("root"),),
+            run_id="re-run-2",
+            expected_index_hash=first.index_hash,
+        )
+
+    assert index.read_bytes() == prior_index
+
+
+@pytest.mark.unit
 def test_generation_promotion_never_replaces_a_racing_collision(
     tmp_path: Path,
 ) -> None:
     manifest = GenerationManifest.create(
-        "re-run-1", (_digest("root"),), _digest("policy")
+        (_digest("root"),), _digest("policy")
     )
     collision = tmp_path / "re/v2/generations" / manifest.generation_id
     competing_inode: int | None = None
@@ -275,6 +394,7 @@ def test_noncanonical_or_dangling_current_index_fails_before_cas(tmp_path: Path)
     generation = tmp_path / "re/v2/generations" / first.generation_id
     generation.chmod(0o700)
     (generation / "manifest.json").unlink()
+    generation.chmod(0o500)
     with pytest.raises(ReV2PublicationError, match="manifest"):
         load_published_v2_index(tmp_path)
 
@@ -287,7 +407,6 @@ def test_generation_validation_rejects_bytes_added_during_read(
 
     published = _publish(tmp_path, roots=(_digest("root"),))
     generation = tmp_path / "re/v2/generations" / published.generation_id
-    generation.chmod(0o700)
     original_scandir = publication_module.os.scandir
     injected = False
 
@@ -298,7 +417,9 @@ def test_generation_validation_rejects_bytes_added_during_read(
         iterator.close()
         if not injected:
             injected = True
+            generation.chmod(0o700)
             (generation / "late").write_bytes(b"late bytes")
+            generation.chmod(0o500)
         return iter(entries)
 
     monkeypatch.setattr(publication_module.os, "scandir", inject_after_first_listing)
@@ -308,6 +429,49 @@ def test_generation_validation_rejects_bytes_added_during_read(
 
 class _InjectedCrash(RuntimeError):
     pass
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "boundary", ("generation_promoted", "index_temporary_written")
+)
+def test_generation_replacement_at_last_moment_preserves_prior_index(
+    tmp_path: Path, boundary: str
+) -> None:
+    old = _publish(tmp_path, roots=(_digest("old"),))
+    index_path = tmp_path / "re/v2/index.json"
+    prior_index = index_path.read_bytes()
+    generations = tmp_path / "re/v2/generations"
+    displaced = generations / ".displaced-generation"
+
+    def replace_generation(point: str) -> None:
+        if point != boundary:
+            return
+        candidates = [
+            path
+            for path in generations.iterdir()
+            if not path.name.startswith(".") and path.name != old.generation_id
+        ]
+        assert len(candidates) == 1
+        generation = candidates[0]
+        payload = (generation / "manifest.json").read_bytes()
+        generation.chmod(0o700)
+        generation.rename(displaced)
+        generation.mkdir(mode=0o700)
+        replacement_manifest = generation / "manifest.json"
+        replacement_manifest.write_bytes(payload)
+        replacement_manifest.chmod(0o400)
+        generation.chmod(0o500)
+
+    with pytest.raises(ReV2PublicationError, match="generation.*replaced"):
+        _publish(
+            tmp_path,
+            roots=(_digest("new"),),
+            expected_index_hash=old.index_hash,
+            fault_hook=replace_generation,
+        )
+
+    assert index_path.read_bytes() == prior_index
 
 
 @pytest.mark.unit
@@ -325,7 +489,7 @@ def test_fault_boundaries_expose_old_or_complete_new_index(
 ) -> None:
     old = _publish(tmp_path, roots=(_digest("old"),))
     desired_manifest = GenerationManifest.create(
-        "re-run-1", (_digest("new"),), _digest("policy")
+        (_digest("new"),), _digest("policy")
     )
 
     def crash(point: str) -> None:
