@@ -30,6 +30,7 @@ _DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _METADATA_NAME = "metadata.json"
 _OBSERVATION_NAME = "observation.json"
 _PAYLOAD_NAME = "payload"
+_COMMITTED_DIR = ".committed"
 _T = TypeVar("_T")
 _HAS_DIRFD_OPEN = os.open in os.supports_dir_fd
 
@@ -193,6 +194,7 @@ class PersistedCandidate:
     observation: ExecutionObservation
     inventory: tuple[CandidateInventoryEntry, ...]
     persisted_at: str
+    metadata_hash: str
     path: Path
     payload_path: Path
 
@@ -201,6 +203,7 @@ class PersistedCandidate:
         _safe_id(self.dispatch_id, "dispatch_id")
         _digest(self.work_item_id, "work_item_id")
         _utc_timestamp(self.persisted_at, "persisted_at")
+        _digest(self.metadata_hash, "metadata_hash")
 
 
 @dataclass(frozen=True, slots=True)
@@ -321,13 +324,26 @@ class CandidateStore:
             if os.path.lexists(final):
                 if final.is_symlink():
                     raise ReV2CandidateError(f"published candidate target is a symlink: {final}")
-                existing = self._load_candidate(final)
+                committed = self._marker_exists(lease.dispatch_id)
+                existing = self._load_candidate(final, allow_mutable_root=not committed)
                 source_scan = _scan_tree(source, mutable=True)
                 if not self._matches_retry(existing, lease, observation, source_scan):
                     raise ReV2CandidateError(
                         f"candidate target already exists with conflicting bytes: {lease.dispatch_id}"
                     )
+                if committed:
+                    self._validate_marker(existing)
+                else:
+                    self._freeze_published_root(final)
+                    _fsync_directory(self.paths.candidates)
+                    existing = self._load_candidate(final)
+                    self._publish_marker(existing)
                 return existing
+
+            if self._marker_exists(lease.dispatch_id):
+                raise ReV2CandidateError(
+                    f"commit marker exists without candidate: {lease.dispatch_id}"
+                )
 
             source_before = _scan_tree(source, mutable=True)
             temporary = self.paths.candidates / f".{lease.dispatch_id}.tmp"
@@ -387,9 +403,10 @@ class CandidateStore:
                         f"cannot atomically publish candidate without replacement: {exc}"
                     ) from exc
                 published = True
-                _fsync_directory(final)
+                self._freeze_published_root(final)
                 _fsync_directory(self.paths.candidates)
                 candidate = self._load_candidate(final)
+                self._publish_marker(candidate)
                 self._fault("candidate_renamed")
                 return candidate
             finally:
@@ -404,13 +421,29 @@ class CandidateStore:
         """Validate and return every published candidate in deterministic order."""
         with self._locked():
             candidates: list[PersistedCandidate] = []
+            marker_root = self._marker_root(create=False)
+            if not os.path.lexists(marker_root):
+                return ()
             root_fd = _open_directory_path_nofollow(self.paths.candidates)
+            marker_fd = _open_directory_path_nofollow(marker_root)
             try:
-                names = sorted(_retry_eintr(os.listdir, root_fd))
-                for name in names:
-                    if name.startswith("."):
+                marker_names = sorted(_retry_eintr(os.listdir, marker_fd))
+                for marker_name in marker_names:
+                    if marker_name.startswith("."):
                         continue
+                    if not marker_name.endswith(".json"):
+                        raise ReV2CandidateError(
+                            f"invalid candidate commit marker name: {marker_name}"
+                        )
+                    name = marker_name[:-5]
+                    if name.startswith("."):
+                        raise ReV2CandidateError("invalid private candidate commit marker")
                     _safe_id(name, "published candidate directory")
+                    marker, marker_mode = self._read_marker_at(marker_fd, marker_name)
+                    if marker["dispatch_id"] != name:
+                        raise ReV2CandidateError("candidate commit marker dispatch mismatch")
+                    if stat.S_IMODE(marker_mode) & 0o222:
+                        raise ReV2CandidateError("candidate commit marker is mutable")
                     try:
                         child_fd = _openat(
                             root_fd,
@@ -418,20 +451,19 @@ class CandidateStore:
                             os.O_RDONLY | os.O_DIRECTORY | _nofollow_flag(),
                         )
                     except OSError as exc:
-                        if exc.errno in {errno.ELOOP, errno.EMLINK}:
-                            raise ReV2CandidateError(
-                                f"published candidate is a symlink: {name}"
-                            ) from exc
                         raise ReV2CandidateError(
-                            f"malformed published candidate is not a directory: {name}"
+                            f"candidate commit marker without matching directory: {name}"
                         ) from exc
                     try:
-                        candidates.append(
-                            self._load_candidate_fd(self.paths.candidates / name, child_fd)
+                        candidate = self._load_candidate_fd(
+                            self.paths.candidates / name, child_fd
                         )
+                        self._validate_marker_value(marker, candidate)
+                        candidates.append(candidate)
                     finally:
                         os.close(child_fd)
             finally:
+                os.close(marker_fd)
                 os.close(root_fd)
             return tuple(candidates)
 
@@ -465,6 +497,117 @@ class CandidateStore:
             leases.mkdir(mode=0o700)
             _fsync_directory(self.paths.candidates)
         return leases
+
+    def _marker_root(self, *, create: bool) -> Path:
+        markers = self.paths.candidates / _COMMITTED_DIR
+        if os.path.lexists(markers):
+            if markers.is_symlink():
+                raise ReV2CandidateError(f"commit marker root is a symlink: {markers}")
+            if not markers.is_dir():
+                raise ReV2CandidateError(f"commit marker root is not a directory: {markers}")
+        elif create:
+            markers.mkdir(mode=0o700)
+            _fsync_directory(self.paths.candidates)
+        return markers
+
+    def _marker_exists(self, dispatch_id: str) -> bool:
+        markers = self._marker_root(create=False)
+        if not os.path.lexists(markers):
+            return False
+        marker = markers / f"{dispatch_id}.json"
+        if marker.is_symlink():
+            raise ReV2CandidateError(f"candidate commit marker is a symlink: {marker}")
+        return os.path.lexists(marker)
+
+    def _publish_marker(self, candidate: PersistedCandidate) -> None:
+        markers = self._marker_root(create=True)
+        marker = {
+            "candidate_id": candidate.candidate_id,
+            "dispatch_id": candidate.dispatch_id,
+            "metadata_hash": candidate.metadata_hash,
+            "schema_version": _SCHEMA_VERSION,
+        }
+        payload = canonical_json_bytes(marker)
+        target = markers / f"{candidate.dispatch_id}.json"
+        if os.path.lexists(target):
+            existing = self._read_canonical_json(target, "candidate commit marker")
+            if canonical_json_bytes(existing) != payload:
+                raise ReV2CandidateError(
+                    f"conflicting candidate commit marker: {candidate.dispatch_id}"
+                )
+            self._validate_marker_value(
+                _exact_object(
+                    existing,
+                    {"candidate_id", "dispatch_id", "metadata_hash", "schema_version"},
+                    "candidate commit marker",
+                ),
+                candidate,
+            )
+            return
+        temporary = markers / f".{candidate.dispatch_id}.{os.getpid()}.tmp"
+        if os.path.lexists(temporary):
+            raise ReV2CandidateError(f"unsafe existing commit marker temporary: {temporary}")
+        try:
+            _write_new_file(temporary, payload, mode=0o400)
+            try:
+                os.link(temporary, target, follow_symlinks=False)
+            except FileExistsError as exc:
+                raise ReV2CandidateError(
+                    f"conflicting candidate commit marker: {candidate.dispatch_id}"
+                ) from exc
+            temporary.unlink()
+            _fsync_directory(markers)
+            _fsync_directory(self.paths.candidates)
+        finally:
+            if os.path.lexists(temporary):
+                temporary.unlink()
+
+    def _read_marker_at(self, marker_fd: int, name: str) -> tuple[Mapping[str, object], int]:
+        value, mode = _read_canonical_json_at(marker_fd, name, "candidate commit marker")
+        marker = _exact_object(
+            value,
+            {"candidate_id", "dispatch_id", "metadata_hash", "schema_version"},
+            "candidate commit marker",
+        )
+        if marker["schema_version"] != _SCHEMA_VERSION:
+            raise ReV2CandidateError("unsupported candidate commit marker schema")
+        _safe_id(marker["dispatch_id"], "commit marker dispatch_id")
+        _digest(marker["candidate_id"], "commit marker candidate_id")
+        _digest(marker["metadata_hash"], "commit marker metadata_hash")
+        return marker, mode
+
+    def _validate_marker(self, candidate: PersistedCandidate) -> None:
+        markers = self._marker_root(create=False)
+        marker_fd = _open_directory_path_nofollow(markers)
+        try:
+            marker, _mode = self._read_marker_at(
+                marker_fd, f"{candidate.dispatch_id}.json"
+            )
+        finally:
+            os.close(marker_fd)
+        self._validate_marker_value(marker, candidate)
+
+    @staticmethod
+    def _validate_marker_value(
+        marker: Mapping[str, object], candidate: PersistedCandidate
+    ) -> None:
+        expected = {
+            "candidate_id": candidate.candidate_id,
+            "dispatch_id": candidate.dispatch_id,
+            "metadata_hash": candidate.metadata_hash,
+            "schema_version": _SCHEMA_VERSION,
+        }
+        if dict(marker) != expected:
+            raise ReV2CandidateError("candidate commit marker mismatch")
+
+    @staticmethod
+    def _freeze_published_root(path: Path) -> None:
+        fd = _open_directory_path_nofollow(path)
+        try:
+            os.fchmod(fd, 0o500)
+            _retry_eintr(os.fsync, fd)
+        finally:
+            os.close(fd)
 
     @contextmanager
     def _locked(self) -> Iterator[None]:
@@ -521,14 +664,20 @@ class CandidateStore:
             raise ReV2CandidateError("unsupported lease schema version")
         return DispatchLease.from_json_dict(raw["lease"])
 
-    def _load_candidate(self, path: Path) -> PersistedCandidate:
+    def _load_candidate(
+        self, path: Path, *, allow_mutable_root: bool = False
+    ) -> PersistedCandidate:
         candidate_fd = _open_directory_path_nofollow(path)
         try:
-            return self._load_candidate_fd(path, candidate_fd)
+            return self._load_candidate_fd(
+                path, candidate_fd, allow_mutable_root=allow_mutable_root
+            )
         finally:
             os.close(candidate_fd)
 
-    def _load_candidate_fd(self, path: Path, candidate_fd: int) -> PersistedCandidate:
+    def _load_candidate_fd(
+        self, path: Path, candidate_fd: int, *, allow_mutable_root: bool = False
+    ) -> PersistedCandidate:
         expected_children = {_METADATA_NAME, _OBSERVATION_NAME, _PAYLOAD_NAME}
         actual_children = set(_retry_eintr(os.listdir, candidate_fd))
         if actual_children != expected_children:
@@ -554,6 +703,7 @@ class CandidateStore:
             },
             "candidate metadata",
         )
+        metadata_hash = content_digest(canonical_json_bytes(dict(metadata)))
         if metadata["schema_version"] != _SCHEMA_VERSION:
             raise ReV2CandidateError("unsupported candidate schema version")
         dispatch_id = _safe_id(metadata["dispatch_id"], "dispatch_id")
@@ -599,7 +749,7 @@ class CandidateStore:
         except OSError as exc:
             raise ReV2CandidateError("candidate payload is missing or symlinked") from exc
         try:
-            found = tuple(item.entry for item in _scan_tree_fd(payload_fd, mutable=False))
+            found = tuple(item.entry for item in _scan_tree_fd(payload_fd, mutable=True))
             payload_mode = os.fstat(payload_fd).st_mode
         finally:
             os.close(payload_fd)
@@ -625,6 +775,8 @@ class CandidateStore:
             _OBSERVATION_NAME: observation_mode,
         }
         for name, mode in protected_modes.items():
+            if allow_mutable_root and name == path.name:
+                continue
             if stat.S_IMODE(mode) & 0o222:
                 raise ReV2CandidateError(f"published candidate is mutable: {name}")
         return PersistedCandidate(
@@ -636,6 +788,7 @@ class CandidateStore:
             observation=observation,
             inventory=inventory,
             persisted_at=persisted_at,
+            metadata_hash=metadata_hash,
             path=path,
             payload_path=payload_path,
         )
@@ -750,8 +903,12 @@ def _scan_tree_fd(root_fd: int, *, mutable: bool) -> tuple[_ScannedEntry, ...]:
                     raise ReV2CandidateError(f"candidate source changed while scanning: {relative}")
             finally:
                 os.close(child_fd)
-        if mutable and _stat_identity(os.fstat(directory_fd)) != _stat_identity(directory_before):
-            raise ReV2CandidateError("candidate source changed while scanning directory")
+        if mutable:
+            confirmed_children = sorted(_retry_eintr(os.listdir, directory_fd))
+            if confirmed_children != children:
+                raise ReV2CandidateError("candidate directory entries changed while scanning")
+            if _stat_identity(os.fstat(directory_fd)) != _stat_identity(directory_before):
+                raise ReV2CandidateError("candidate source changed while scanning directory")
 
     visit(root_fd)
     return tuple(scanned)

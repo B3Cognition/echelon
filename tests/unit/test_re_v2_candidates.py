@@ -352,6 +352,32 @@ def test_retry_after_candidate_rename_recognizes_exact_candidate(tmp_path: Path)
     assert base.persist(lease, output, observation()) == discovered
 
 
+def test_raw_rename_crash_is_unpublished_and_exact_retry_commits(
+    tmp_path: Path,
+) -> None:
+    paths = ReV2Paths.for_run(tmp_path / "run")
+    paths.root.mkdir(parents=True)
+    base = store_for_paths(paths)
+    lease = base.begin(work_item(), process_identity(), dispatch_id="dispatch-raw-crash")
+    output = fixture_output(tmp_path)
+    real_rename = candidates_module._rename_noreplace
+
+    def rename_then_crash(source: Path, target: Path) -> None:
+        real_rename(source, target)
+        target.chmod(0o700)  # simulate Darwin interruption before root refreeze
+        raise RuntimeError("raw rename crash")
+
+    with pytest.raises(RuntimeError, match="raw rename crash"):
+        store_for_paths(paths, rename_noreplace=rename_then_crash).persist(
+            lease, output, observation()
+        )
+
+    assert base.discover() == ()
+    recovered = base.persist(lease, output, observation())
+    assert base.discover() == (recovered,)
+    assert (paths.candidates / ".committed/dispatch-raw-crash.json").is_file()
+
+
 def test_atomic_publish_never_replaces_a_colliding_target(tmp_path: Path) -> None:
     paths = ReV2Paths.for_run(tmp_path / "run")
     paths.root.mkdir(parents=True)
@@ -486,13 +512,79 @@ def test_discovery_fails_closed_on_any_payload_mutation(
         store.discover()
 
 
-def test_discovery_fails_closed_on_malformed_published_candidate(tmp_path: Path) -> None:
+def test_discovery_ignores_an_unmarked_incomplete_candidate(tmp_path: Path) -> None:
     store = candidate_store(tmp_path)
     malformed = store.paths.candidates / "dispatch-malformed"
     malformed.mkdir()
     (malformed / "metadata.json").write_text(json.dumps({"schema_version": 1}))
 
-    with pytest.raises(ReV2CandidateError, match="malformed|invalid|missing"):
+    assert store.discover() == ()
+
+
+def test_discovery_fails_closed_on_marker_without_candidate(tmp_path: Path) -> None:
+    store = candidate_store(tmp_path)
+    markers = store.paths.candidates / ".committed"
+    markers.mkdir()
+    marker = {
+        "candidate_id": content_digest(b"candidate"),
+        "dispatch_id": "dispatch-missing",
+        "metadata_hash": content_digest(b"metadata"),
+        "schema_version": 1,
+    }
+    marker_path = markers / "dispatch-missing.json"
+    marker_path.write_bytes(
+        json.dumps(marker, sort_keys=True, separators=(",", ":")).encode() + b"\n"
+    )
+    marker_path.chmod(0o400)
+
+    with pytest.raises(ReV2CandidateError, match="marker.*without|missing"):
+        store.discover()
+
+
+def test_discovery_fails_closed_on_marker_metadata_mismatch(tmp_path: Path) -> None:
+    store = candidate_store(tmp_path)
+    candidate = store.persist(
+        store.begin(work_item(), process_identity()), fixture_output(tmp_path), observation()
+    )
+    marker_path = store.paths.candidates / f".committed/{candidate.dispatch_id}.json"
+    marker_path.chmod(0o600)
+    marker = json.loads(marker_path.read_bytes())
+    marker["metadata_hash"] = content_digest(b"wrong metadata")
+    marker_path.write_bytes(
+        json.dumps(marker, sort_keys=True, separators=(",", ":")).encode() + b"\n"
+    )
+    marker_path.chmod(0o400)
+
+    with pytest.raises(ReV2CandidateError, match="marker mismatch"):
+        store.discover()
+
+
+def test_discovery_rejects_entry_inserted_after_payload_listing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = candidate_store(tmp_path)
+    candidate = store.persist(
+        store.begin(work_item(), process_identity()), fixture_output(tmp_path), observation()
+    )
+    real_listdir = candidates_module.os.listdir
+    inserted = False
+
+    def list_then_insert(fd: int) -> list[str]:
+        nonlocal inserted
+        names = real_listdir(fd)
+        if names == ["artifact.md"] and not inserted:
+            inserted = True
+            candidate.path.chmod(0o700)
+            candidate.payload_path.chmod(0o700)
+            extra = candidate.payload_path / "late.txt"
+            extra.write_bytes(b"late\n")
+            extra.chmod(0o400)
+            candidate.payload_path.chmod(0o500)
+            candidate.path.chmod(0o500)
+        return names
+
+    monkeypatch.setattr(candidates_module.os, "listdir", list_then_insert)
+    with pytest.raises(ReV2CandidateError, match="changed|extra"):
         store.discover()
 
 
