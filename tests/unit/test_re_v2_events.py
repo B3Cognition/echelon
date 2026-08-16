@@ -22,6 +22,81 @@ def event_store(tmp_path: Path) -> EventStore:
     return EventStore(tmp_path / "events.jsonl")
 
 
+def start_attempt(
+    store: EventStore,
+    *,
+    work_item_id: str,
+    dispatch_id: str,
+    attempt_kind: str,
+    attempt_index: int,
+) -> None:
+    store.append(
+        "dispatch_leased",
+        {"dispatch_id": dispatch_id, "work_item_id": work_item_id},
+        occurred_at=NOW,
+    )
+    store.append(
+        "dispatch_started",
+        {
+            "attempt_index": attempt_index,
+            "attempt_kind": attempt_kind,
+            "dispatch_id": dispatch_id,
+            "work_item_id": work_item_id,
+        },
+        occurred_at=NOW,
+    )
+
+
+def observe(
+    store: EventStore, *, work_item_id: str, dispatch_id: str, contract_valid: bool
+) -> None:
+    store.append(
+        "dispatch_observed",
+        {
+            "dispatch_id": dispatch_id,
+            "observation": {
+                "duration_ms": 1,
+                "ended_at": NOW,
+                "exit_code": 0,
+                "model_name": "fixture-model",
+                "output_truncated": False,
+                "provider_name": "fixture",
+                "result_contract_valid": contract_valid,
+                "started_at": NOW,
+                "stderr_digest": None,
+                "timed_out": False,
+                "token_usage": 1,
+            },
+            "work_item_id": work_item_id,
+        },
+        occurred_at=NOW,
+    )
+
+
+def reject_candidate(
+    store: EventStore, *, work_item_id: str, dispatch_id: str, candidate_id: str
+) -> None:
+    store.append(
+        "candidate_persisted",
+        {
+            "candidate_id": candidate_id,
+            "dispatch_id": dispatch_id,
+            "work_item_id": work_item_id,
+        },
+        occurred_at=NOW,
+    )
+    store.append(
+        "candidate_rejected",
+        {
+            "candidate_id": candidate_id,
+            "certification_id": digest(f"certification-{candidate_id}"),
+            "reason": "rejected",
+            "work_item_id": work_item_id,
+        },
+        occurred_at=NOW,
+    )
+
+
 def replace_jsonl_record(
     path: Path, *, index: int, field: str, value: object
 ) -> None:
@@ -307,6 +382,205 @@ def test_history_rejects_reused_dispatches_candidates_and_invalid_attempt_order(
         occurred_at=NOW,
     )
     assert validate_event_history(store.replay())[-1].type == "dispatch_started"
+
+
+@pytest.mark.parametrize("attempt_kind", ["semantic_repair", "result_contract_retry"])
+def test_repair_attempt_cannot_be_a_work_items_first_dispatch(
+    tmp_path: Path, attempt_kind: str
+) -> None:
+    store = event_store(tmp_path)
+    work = digest("work")
+    store.append("run_created", {"run_manifest_id": digest("run")}, occurred_at=NOW)
+
+    with pytest.raises(ReV2EventError, match="initial_generation"):
+        start_attempt(
+            store,
+            work_item_id=work,
+            dispatch_id="dispatch-1",
+            attempt_kind=attempt_kind,
+            attempt_index=1,
+        )
+
+
+def test_semantic_repairs_require_and_consume_rejected_generation_outcomes(
+    tmp_path: Path,
+) -> None:
+    store = event_store(tmp_path)
+    work = digest("work")
+    store.append("run_created", {"run_manifest_id": digest("run")}, occurred_at=NOW)
+    start_attempt(
+        store,
+        work_item_id=work,
+        dispatch_id="dispatch-1",
+        attempt_kind="initial_generation",
+        attempt_index=1,
+    )
+    observe(store, work_item_id=work, dispatch_id="dispatch-1", contract_valid=True)
+    reject_candidate(store, work_item_id=work, dispatch_id="dispatch-1", candidate_id="candidate-1")
+    start_attempt(
+        store,
+        work_item_id=work,
+        dispatch_id="dispatch-2",
+        attempt_kind="semantic_repair",
+        attempt_index=1,
+    )
+    observe(store, work_item_id=work, dispatch_id="dispatch-2", contract_valid=True)
+    reject_candidate(store, work_item_id=work, dispatch_id="dispatch-2", candidate_id="candidate-2")
+    start_attempt(
+        store,
+        work_item_id=work,
+        dispatch_id="dispatch-3",
+        attempt_kind="semantic_repair",
+        attempt_index=2,
+    )
+
+    assert store.replay()[-1].payload["attempt_index"] == 2
+
+
+def test_contract_retries_require_fresh_invalid_contract_observations(
+    tmp_path: Path,
+) -> None:
+    store = event_store(tmp_path)
+    work = digest("work")
+    store.append("run_created", {"run_manifest_id": digest("run")}, occurred_at=NOW)
+    start_attempt(
+        store,
+        work_item_id=work,
+        dispatch_id="dispatch-1",
+        attempt_kind="initial_generation",
+        attempt_index=1,
+    )
+    observe(store, work_item_id=work, dispatch_id="dispatch-1", contract_valid=False)
+    start_attempt(
+        store,
+        work_item_id=work,
+        dispatch_id="dispatch-2",
+        attempt_kind="result_contract_retry",
+        attempt_index=1,
+    )
+    observe(store, work_item_id=work, dispatch_id="dispatch-2", contract_valid=False)
+    start_attempt(
+        store,
+        work_item_id=work,
+        dispatch_id="dispatch-3",
+        attempt_kind="result_contract_retry",
+        attempt_index=2,
+    )
+
+    assert store.replay()[-1].payload["attempt_index"] == 2
+
+
+def test_valid_contract_or_candidate_rejection_cannot_reuse_an_older_retry_eligibility(
+    tmp_path: Path,
+) -> None:
+    store = event_store(tmp_path)
+    work = digest("work")
+    store.append("run_created", {"run_manifest_id": digest("run")}, occurred_at=NOW)
+    start_attempt(
+        store,
+        work_item_id=work,
+        dispatch_id="dispatch-1",
+        attempt_kind="initial_generation",
+        attempt_index=1,
+    )
+    observe(store, work_item_id=work, dispatch_id="dispatch-1", contract_valid=False)
+    start_attempt(
+        store,
+        work_item_id=work,
+        dispatch_id="dispatch-2",
+        attempt_kind="result_contract_retry",
+        attempt_index=1,
+    )
+    observe(store, work_item_id=work, dispatch_id="dispatch-2", contract_valid=True)
+    reject_candidate(store, work_item_id=work, dispatch_id="dispatch-2", candidate_id="candidate-2")
+    store.append(
+        "dispatch_leased",
+        {"dispatch_id": "dispatch-3", "work_item_id": work},
+        occurred_at=NOW,
+    )
+    with pytest.raises(ReV2EventError, match="result_contract_retry"):
+        store.append(
+            "dispatch_started",
+            {
+                "attempt_index": 2,
+                "attempt_kind": "result_contract_retry",
+                "dispatch_id": "dispatch-3",
+                "work_item_id": work,
+            },
+            occurred_at=NOW,
+        )
+
+
+def test_repair_attempts_reject_cross_kind_and_stale_outcome_eligibility(
+    tmp_path: Path,
+) -> None:
+    store = event_store(tmp_path)
+    work = digest("work")
+    store.append("run_created", {"run_manifest_id": digest("run")}, occurred_at=NOW)
+    start_attempt(
+        store,
+        work_item_id=work,
+        dispatch_id="dispatch-1",
+        attempt_kind="initial_generation",
+        attempt_index=1,
+    )
+    observe(store, work_item_id=work, dispatch_id="dispatch-1", contract_valid=True)
+    reject_candidate(store, work_item_id=work, dispatch_id="dispatch-1", candidate_id="candidate-1")
+    store.append(
+        "dispatch_leased",
+        {"dispatch_id": "dispatch-2", "work_item_id": work},
+        occurred_at=NOW,
+    )
+    with pytest.raises(ReV2EventError, match="result_contract_retry"):
+        store.append(
+            "dispatch_started",
+            {
+                "attempt_index": 1,
+                "attempt_kind": "result_contract_retry",
+                "dispatch_id": "dispatch-2",
+                "work_item_id": work,
+            },
+            occurred_at=NOW,
+        )
+
+    # Use the eligible semantic repair, then finish it with a valid contract.
+    store.append(
+        "dispatch_started",
+        {
+            "attempt_index": 1,
+            "attempt_kind": "semantic_repair",
+            "dispatch_id": "dispatch-2",
+            "work_item_id": work,
+        },
+        occurred_at=NOW,
+    )
+    observe(store, work_item_id=work, dispatch_id="dispatch-2", contract_valid=True)
+    reject_candidate(store, work_item_id=work, dispatch_id="dispatch-2", candidate_id="candidate-2")
+    start_attempt(
+        store,
+        work_item_id=work,
+        dispatch_id="dispatch-3",
+        attempt_kind="semantic_repair",
+        attempt_index=2,
+    )
+    observe(store, work_item_id=work, dispatch_id="dispatch-3", contract_valid=True)
+    reject_candidate(store, work_item_id=work, dispatch_id="dispatch-3", candidate_id="candidate-3")
+    store.append(
+        "dispatch_leased",
+        {"dispatch_id": "dispatch-4", "work_item_id": work},
+        occurred_at=NOW,
+    )
+    with pytest.raises(ReV2EventError, match="result_contract_retry"):
+        store.append(
+            "dispatch_started",
+            {
+                "attempt_index": 1,
+                "attempt_kind": "result_contract_retry",
+                "dispatch_id": "dispatch-4",
+                "work_item_id": work,
+            },
+            occurred_at=NOW,
+        )
 
 
 def test_concurrent_appenders_get_one_consecutive_chain(tmp_path: Path) -> None:

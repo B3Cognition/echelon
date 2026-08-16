@@ -272,7 +272,13 @@ class _ReplayState:
     candidate_ids: set[str] = field(default_factory=set)
     attempt_indices: dict[tuple[str, str], int] = field(default_factory=dict)
     initial_generation_work_items: set[str] = field(default_factory=set)
+    dispatched_work_items: set[str] = field(default_factory=set)
     dispatch_started_at: dict[str, str] = field(default_factory=dict)
+    active_attempt_kind: str | None = None
+    active_result_contract_valid: bool | None = None
+    eligible_work_item_id: str | None = None
+    semantic_repair_eligible: bool = False
+    result_contract_retry_eligible: bool = False
 
     def consume(self, event: EventRecord) -> None:
         event_type = event.type
@@ -309,7 +315,13 @@ class _ReplayState:
             self.paused = True
         elif event_type == "dispatch_leased":
             if self.work_stage is not None:
-                raise ReV2EventError("dispatch_leased requires no active work item")
+                if not (
+                    self.work_stage == "observed"
+                    and self.work_item_id == self.eligible_work_item_id
+                    and self.result_contract_retry_eligible
+                ):
+                    raise ReV2EventError("dispatch_leased requires no active work item")
+                self._clear_work()
             dispatch_id = str(payload["dispatch_id"])
             if dispatch_id in self.dispatch_ids:
                 raise ReV2EventError("dispatch_id must be globally unique")
@@ -328,23 +340,54 @@ class _ReplayState:
                 raise ReV2EventError(
                     "dispatch_started attempt_index must be consecutive per work item and kind"
                 )
+            if attempt_kind == "initial_generation" and work_item_id in self.dispatched_work_items:
+                raise ReV2EventError(
+                    "dispatch_started requires initial_generation as a work item's first dispatch"
+                )
             if (
-                attempt_kind == "initial_generation"
-                and work_item_id in self.initial_generation_work_items
+                attempt_kind != "initial_generation"
+                and work_item_id not in self.initial_generation_work_items
             ):
                 raise ReV2EventError(
-                    "dispatch_started permits only one initial_generation per work item"
+                    "dispatch_started requires initial_generation as a work item's first dispatch"
+                )
+            if attempt_kind == "semantic_repair" and not self._eligible_for(
+                work_item_id, "semantic_repair"
+            ):
+                raise ReV2EventError(
+                    "semantic_repair requires the immediately preceding rejected generation"
+                )
+            if attempt_kind == "result_contract_retry" and not self._eligible_for(
+                work_item_id, "result_contract_retry"
+            ):
+                raise ReV2EventError(
+                    "result_contract_retry requires the immediately preceding invalid contract observation"
                 )
             self.attempt_indices[attempt_key] = attempt_index
             if attempt_kind == "initial_generation":
                 self.initial_generation_work_items.add(work_item_id)
+            else:
+                self._clear_eligibility()
+            self.dispatched_work_items.add(work_item_id)
             self.dispatch_started_at[str(payload["dispatch_id"])] = event.occurred_at
+            self.active_attempt_kind = attempt_kind
+            self.active_result_contract_valid = None
             self.work_stage = "started"
         elif event_type == "dispatch_observed":
             self._require_work(event, "started")
             started_at = self.dispatch_started_at.get(str(payload["dispatch_id"]))
             if started_at is None or _parsed_rfc3339(event.occurred_at) < _parsed_rfc3339(started_at):
                 raise ReV2EventError("dispatch_observed occurs before dispatch_started")
+            self.active_result_contract_valid = bool(
+                payload["observation"]["result_contract_valid"]
+            )
+            if self.active_result_contract_valid:
+                self._clear_eligibility()
+            else:
+                self._set_eligibility(
+                    str(payload["work_item_id"]), semantic_repair=False,
+                    result_contract_retry=True,
+                )
             self.work_stage = "observed"
         elif event_type == "candidate_persisted":
             self._require_work(event, "observed")
@@ -360,8 +403,15 @@ class _ReplayState:
                 raise ReV2EventError(f"{event_type} does not match persisted candidate")
             self.certification_id = str(payload["certification_id"])
             if event_type == "candidate_rejected":
+                self._set_eligibility(
+                    str(payload["work_item_id"]),
+                    semantic_repair=self.active_attempt_kind
+                    in {"initial_generation", "semantic_repair"},
+                    result_contract_retry=self.active_result_contract_valid is False,
+                )
                 self._clear_work()
             else:
+                self._clear_eligibility()
                 self.work_stage = "certified"
         elif event_type == "artifact_accepted":
             self._require_work(event, "certified", require_dispatch=False)
@@ -372,6 +422,7 @@ class _ReplayState:
                 str(payload["certification_id"]),
                 str(payload["artifact_hash"]),
             )
+            self._clear_eligibility()
             self._clear_work()
         elif event_type == "checkpoint_recorded":
             observed = (
@@ -420,6 +471,27 @@ class _ReplayState:
         self.work_stage = None
         self.candidate_id = None
         self.certification_id = None
+        self.active_attempt_kind = None
+        self.active_result_contract_valid = None
+
+    def _set_eligibility(
+        self, work_item_id: str, *, semantic_repair: bool, result_contract_retry: bool
+    ) -> None:
+        self.eligible_work_item_id = work_item_id
+        self.semantic_repair_eligible = semantic_repair
+        self.result_contract_retry_eligible = result_contract_retry
+
+    def _clear_eligibility(self) -> None:
+        self.eligible_work_item_id = None
+        self.semantic_repair_eligible = False
+        self.result_contract_retry_eligible = False
+
+    def _eligible_for(self, work_item_id: str, attempt_kind: str) -> bool:
+        if work_item_id != self.eligible_work_item_id:
+            return False
+        if attempt_kind == "semantic_repair":
+            return self.semantic_repair_eligible
+        return self.result_contract_retry_eligible
 
     def _finish(self, event_type: str) -> None:
         self.seen += 1
