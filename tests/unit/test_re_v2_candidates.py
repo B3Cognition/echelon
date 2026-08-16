@@ -8,6 +8,7 @@ import stat
 
 import pytest
 
+import harness.re_v2.candidates as candidates_module
 from harness.re_v2.candidates import (
     CandidateStore,
     ProcessIdentity,
@@ -19,6 +20,7 @@ from harness.re_v2.run_store import ReV2Paths
 
 
 NOW = "2026-08-14T12:00:00Z"
+PERSISTED = "2026-08-14T12:00:02Z"
 
 
 def work_item() -> WorkItem:
@@ -77,7 +79,19 @@ def observation(*, result_contract_valid: bool = True) -> ExecutionObservation:
 def candidate_store(tmp_path: Path) -> CandidateStore:
     paths = ReV2Paths.for_run(tmp_path / "run")
     paths.root.mkdir(parents=True)
-    return CandidateStore(paths)
+    return store_for_paths(paths)
+
+
+def store_for_paths(paths: ReV2Paths, **kwargs: object) -> CandidateStore:
+    options: dict[str, object] = {
+        "process_probe": lambda pid: {
+            1234: "linux-start-987",
+            5678: "linux-start-987",
+        }.get(pid),
+        "clock": lambda: PERSISTED,
+    }
+    options.update(kwargs)
+    return CandidateStore(paths, **options)  # type: ignore[arg-type]
 
 
 def fixture_output(tmp_path: Path) -> Path:
@@ -154,6 +168,19 @@ def test_begin_is_exactly_idempotent_and_conflicts_fail_closed(tmp_path: Path) -
         store.begin(work_item(), changed_process, dispatch_id="dispatch-fixed")
 
 
+def test_begin_rejects_dead_or_reused_pid(tmp_path: Path) -> None:
+    paths = ReV2Paths.for_run(tmp_path / "run")
+    paths.root.mkdir(parents=True)
+    with pytest.raises(ReV2CandidateError, match="not live"):
+        CandidateStore(paths, process_probe=lambda _pid: None).begin(
+            work_item(), process_identity()
+        )
+    with pytest.raises(ReV2CandidateError, match="start identity mismatch"):
+        CandidateStore(paths, process_probe=lambda _pid: "reused-process").begin(
+            work_item(), process_identity()
+        )
+
+
 def test_begin_fault_leaves_one_complete_idempotent_lease(tmp_path: Path) -> None:
     boundaries: list[str] = []
 
@@ -165,11 +192,11 @@ def test_begin_fault_leaves_one_complete_idempotent_lease(tmp_path: Path) -> Non
     paths = ReV2Paths.for_run(tmp_path / "run")
     paths.root.mkdir(parents=True)
     with pytest.raises(RuntimeError, match="crash"):
-        CandidateStore(paths, fault_hook=fail).begin(
+        store_for_paths(paths, fault_hook=fail).begin(
             work_item(), process_identity(), dispatch_id="dispatch-fixed"
         )
 
-    lease = CandidateStore(paths).begin(
+    lease = store_for_paths(paths).begin(
         work_item(), process_identity(), dispatch_id="dispatch-fixed"
     )
     assert lease.dispatch_id == "dispatch-fixed"
@@ -207,12 +234,12 @@ def test_persist_rejects_source_mutation_after_copy(tmp_path: Path) -> None:
 
     paths = ReV2Paths.for_run(tmp_path / "run")
     paths.root.mkdir(parents=True)
-    store = CandidateStore(paths, fault_hook=mutate)
+    store = store_for_paths(paths, fault_hook=mutate)
     lease = store.begin(work_item(), process_identity())
 
     with pytest.raises(ReV2CandidateError, match="changed"):
         store.persist(lease, output, observation())
-    assert CandidateStore(paths).discover() == ()
+    assert store_for_paths(paths).discover() == ()
 
 
 def test_persist_rejects_an_output_with_a_symlinked_parent(tmp_path: Path) -> None:
@@ -242,6 +269,20 @@ def test_persist_rejects_special_payload_files(tmp_path: Path) -> None:
         store.persist(lease, output, observation())
 
 
+def test_readonly_source_directories_are_ingested_before_freezing(tmp_path: Path) -> None:
+    store = candidate_store(tmp_path)
+    lease = store.begin(work_item(), process_identity())
+    output = fixture_output(tmp_path)
+    readonly = output / "readonly"
+    readonly.mkdir()
+    (readonly / "inside.txt").write_text("inside\n", encoding="utf-8")
+    readonly.chmod(0o555)
+
+    candidate = store.persist(lease, output, observation())
+
+    assert (candidate.payload_path / "readonly/inside.txt").read_bytes() == b"inside\n"
+
+
 @pytest.mark.parametrize(
     ("boundary", "expected_count"),
     [
@@ -255,7 +296,7 @@ def test_fault_boundaries_expose_zero_or_one_complete_candidate(
 ) -> None:
     paths = ReV2Paths.for_run(tmp_path / "run")
     paths.root.mkdir(parents=True)
-    base = CandidateStore(paths)
+    base = store_for_paths(paths)
     lease = base.begin(work_item(), process_identity())
 
     def fail(observed: str) -> None:
@@ -263,7 +304,7 @@ def test_fault_boundaries_expose_zero_or_one_complete_candidate(
             raise RuntimeError("crash")
 
     with pytest.raises(RuntimeError, match="crash"):
-        CandidateStore(paths, fault_hook=fail).persist(
+        store_for_paths(paths, fault_hook=fail).persist(
             lease, fixture_output(tmp_path), observation()
         )
 
@@ -273,10 +314,30 @@ def test_fault_boundaries_expose_zero_or_one_complete_candidate(
         assert (candidates[0].payload_path / "artifact.md").read_bytes() == b"durable provider bytes\n"
 
 
+def test_metadata_boundary_has_a_fully_frozen_staging_tree(tmp_path: Path) -> None:
+    paths = ReV2Paths.for_run(tmp_path / "run")
+    paths.root.mkdir(parents=True)
+
+    def inspect(boundary: str) -> None:
+        if boundary != "metadata_fsynced":
+            return
+        staging = next(paths.candidates.glob(".*.tmp"))
+        assert all(
+            stat.S_IMODE(path.stat().st_mode) & 0o222 == 0
+            for path in (staging, *staging.rglob("*"))
+        )
+        raise RuntimeError("inspected")
+
+    store = store_for_paths(paths, fault_hook=inspect)
+    lease = store.begin(work_item(), process_identity())
+    with pytest.raises(RuntimeError, match="inspected"):
+        store.persist(lease, fixture_output(tmp_path), observation())
+
+
 def test_retry_after_candidate_rename_recognizes_exact_candidate(tmp_path: Path) -> None:
     paths = ReV2Paths.for_run(tmp_path / "run")
     paths.root.mkdir(parents=True)
-    base = CandidateStore(paths)
+    base = store_for_paths(paths)
     lease = base.begin(work_item(), process_identity())
     output = fixture_output(tmp_path)
 
@@ -285,10 +346,99 @@ def test_retry_after_candidate_rename_recognizes_exact_candidate(tmp_path: Path)
             raise RuntimeError("crash")
 
     with pytest.raises(RuntimeError, match="crash"):
-        CandidateStore(paths, fault_hook=fail).persist(lease, output, observation())
+        store_for_paths(paths, fault_hook=fail).persist(lease, output, observation())
 
     discovered = base.discover()[0]
     assert base.persist(lease, output, observation()) == discovered
+
+
+def test_atomic_publish_never_replaces_a_colliding_target(tmp_path: Path) -> None:
+    paths = ReV2Paths.for_run(tmp_path / "run")
+    paths.root.mkdir(parents=True)
+
+    def collide(source: Path, target: Path) -> None:
+        target.mkdir()
+        (target / "owner").write_text("competitor\n", encoding="utf-8")
+        raise FileExistsError(target)
+
+    store = store_for_paths(paths, rename_noreplace=collide)
+    lease = store.begin(work_item(), process_identity(), dispatch_id="dispatch-race")
+    with pytest.raises(ReV2CandidateError, match="already exists"):
+        store.persist(lease, fixture_output(tmp_path), observation())
+    assert (paths.candidates / "dispatch-race/owner").read_bytes() == b"competitor\n"
+
+
+def test_persistence_clock_orders_lease_observation_and_candidate(tmp_path: Path) -> None:
+    store = candidate_store(tmp_path)
+    lease = store.begin(work_item(), process_identity(), leased_at=NOW)
+    candidate = store.persist(lease, fixture_output(tmp_path), observation())
+    assert candidate.persisted_at == PERSISTED
+
+    paths = ReV2Paths.for_run(tmp_path / "later-run")
+    paths.root.mkdir(parents=True)
+    late_lease_store = store_for_paths(paths)
+    late = late_lease_store.begin(
+        work_item(), process_identity(), leased_at="2026-08-14T12:00:01.500000Z"
+    )
+    late_output = tmp_path / "late-output"
+    late_output.mkdir()
+    (late_output / "artifact").write_bytes(b"late")
+    with pytest.raises(ReV2CandidateError, match="lease.*observation"):
+        late_lease_store.persist(late, late_output, observation())
+
+    future_paths = ReV2Paths.for_run(tmp_path / "future-run")
+    future_paths.root.mkdir(parents=True)
+    future = store_for_paths(future_paths, clock=lambda: "2026-08-14T12:00:00.500000Z")
+    future_lease = future.begin(work_item(), process_identity())
+    future_output = tmp_path / "future-output"
+    future_output.mkdir()
+    (future_output / "artifact").write_bytes(b"future")
+    with pytest.raises(ReV2CandidateError, match="persistence.*observation"):
+        future.persist(future_lease, future_output, observation())
+
+
+def test_durability_syscalls_retry_one_shot_eintr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_open = candidates_module.os.open
+    real_write = candidates_module.os.write
+    real_fsync = candidates_module.os.fsync
+    real_flock = candidates_module.fcntl.flock
+    interrupted = {"open": True, "write": True, "fsync": True, "flock": True}
+
+    def open_once(*args: object, **kwargs: object) -> int:
+        if interrupted["open"]:
+            interrupted["open"] = False
+            raise InterruptedError
+        return real_open(*args, **kwargs)  # type: ignore[arg-type]
+
+    def write_once(fd: int, payload: bytes) -> int:
+        if interrupted["write"]:
+            interrupted["write"] = False
+            raise InterruptedError
+        return real_write(fd, payload)
+
+    def fsync_once(fd: int) -> None:
+        if interrupted["fsync"]:
+            interrupted["fsync"] = False
+            raise InterruptedError
+        real_fsync(fd)
+
+    def flock_once(fd: int, operation: int) -> None:
+        if interrupted["flock"]:
+            interrupted["flock"] = False
+            raise InterruptedError
+        real_flock(fd, operation)
+
+    monkeypatch.setattr(candidates_module.os, "open", open_once)
+    monkeypatch.setattr(candidates_module.os, "write", write_once)
+    monkeypatch.setattr(candidates_module.os, "fsync", fsync_once)
+    monkeypatch.setattr(candidates_module.fcntl, "flock", flock_once)
+    store = candidate_store(tmp_path)
+    lease = store.begin(work_item(), process_identity())
+    interrupted.update({"open": True, "write": True, "fsync": True, "flock": True})
+    candidate = store.persist(lease, fixture_output(tmp_path), observation())
+    assert store.discover() == (candidate,)
 
 
 def test_discovery_ignores_private_work_areas_and_sorts_candidates(tmp_path: Path) -> None:
@@ -368,6 +518,33 @@ def test_discovery_verifies_every_canonical_metadata_field(tmp_path: Path) -> No
         store.discover()
 
 
+def test_discovery_does_not_follow_metadata_swapped_after_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = candidate_store(tmp_path)
+    candidate = store.persist(
+        store.begin(work_item(), process_identity()), fixture_output(tmp_path), observation()
+    )
+    metadata = candidate.path / "metadata.json"
+    outside = tmp_path / "outside.json"
+    outside.write_text("{}\n", encoding="utf-8")
+    real_openat = candidates_module._openat
+    swapped = False
+
+    def swap_then_open(parent_fd: int, name: str, flags: int, mode: int = 0o777) -> int:
+        nonlocal swapped
+        if name == "metadata.json" and not swapped:
+            swapped = True
+            candidate.path.chmod(0o700)
+            metadata.rename(candidate.path / "metadata.saved")
+            metadata.symlink_to(outside)
+        return real_openat(parent_fd, name, flags, mode)
+
+    monkeypatch.setattr(candidates_module, "_openat", swap_then_open)
+    with pytest.raises(ReV2CandidateError, match="symlink|invalid|malformed"):
+        store.discover()
+
+
 def test_store_rejects_external_or_symlinked_candidate_roots(tmp_path: Path) -> None:
     paths = ReV2Paths.for_run(tmp_path / "run")
     paths.root.mkdir(parents=True)
@@ -375,11 +552,11 @@ def test_store_rejects_external_or_symlinked_candidate_roots(tmp_path: Path) -> 
     outside.mkdir()
     escaped = replace(paths, candidates=outside)
     with pytest.raises(ReV2CandidateError, match="candidates path"):
-        CandidateStore(escaped)
+        store_for_paths(escaped)
 
     paths.candidates.symlink_to(outside, target_is_directory=True)
     with pytest.raises(ReV2CandidateError, match="symlink"):
-        CandidateStore(paths)
+        store_for_paths(paths)
 
 
 def test_store_rejects_symlinked_lease_and_published_targets(tmp_path: Path) -> None:
@@ -390,10 +567,10 @@ def test_store_rejects_symlinked_lease_and_published_targets(tmp_path: Path) -> 
     outside.mkdir()
     (paths.candidates / ".leases").symlink_to(outside, target_is_directory=True)
     with pytest.raises(ReV2CandidateError, match="symlink"):
-        CandidateStore(paths).begin(work_item(), process_identity())
+        store_for_paths(paths).begin(work_item(), process_identity())
 
     (paths.candidates / ".leases").unlink()
-    store = CandidateStore(paths)
+    store = store_for_paths(paths)
     (paths.candidates / "dispatch-fixed").symlink_to(outside, target_is_directory=True)
     lease = store.begin(work_item(), process_identity(), dispatch_id="dispatch-fixed")
     with pytest.raises(ReV2CandidateError, match="symlink|already exists"):

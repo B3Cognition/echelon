@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import ctypes
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import errno
 import fcntl
 import hashlib
 import json
@@ -13,7 +15,9 @@ from pathlib import Path
 import re
 import shutil
 import stat
-from typing import Callable, Iterator, Literal, Mapping
+import subprocess
+import sys
+from typing import Callable, Iterator, Literal, Mapping, TypeVar
 
 from .canonical import canonical_json_bytes, content_digest
 from .model import ExecutionObservation, ReV2ModelError, WorkItem
@@ -26,6 +30,8 @@ _DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _METADATA_NAME = "metadata.json"
 _OBSERVATION_NAME = "observation.json"
 _PAYLOAD_NAME = "payload"
+_T = TypeVar("_T")
+_HAS_DIRFD_OPEN = os.open in os.supports_dir_fd
 
 
 class ReV2CandidateError(RuntimeError):
@@ -211,11 +217,17 @@ class CandidateStore:
         paths: ReV2Paths,
         *,
         fault_hook: Callable[[str], None] | None = None,
+        process_probe: Callable[[int], str | None] | None = None,
+        clock: Callable[[], str] | None = None,
+        rename_noreplace: Callable[[Path, Path], None] | None = None,
     ) -> None:
         if not isinstance(paths, ReV2Paths):
             raise ReV2CandidateError("candidate store requires ReV2Paths")
         self.paths = paths
         self._fault_hook = fault_hook
+        self._process_probe = process_probe or _default_process_probe
+        self._clock = clock or _canonical_utc_now
+        self._rename_noreplace = rename_noreplace or _rename_noreplace
         self._validate_store_root(create=True)
 
     def begin(
@@ -231,6 +243,13 @@ class CandidateStore:
             raise ReV2CandidateError("work_item must be a WorkItem")
         if not isinstance(process_identity, ProcessIdentity):
             raise ReV2CandidateError("process_identity must be a ProcessIdentity")
+        observed_start = self._process_probe(process_identity.pid)
+        if observed_start is None:
+            raise ReV2CandidateError(f"process PID {process_identity.pid} is not live")
+        if observed_start != process_identity.process_start_identity:
+            raise ReV2CandidateError(
+                f"process PID {process_identity.pid} start identity mismatch"
+            )
         if dispatch_id is None:
             suffix = hashlib.sha256(
                 canonical_json_bytes(
@@ -293,7 +312,8 @@ class CandidateStore:
             raise ReV2CandidateError("persist requires a DispatchLease")
         if not isinstance(observation, ExecutionObservation):
             raise ReV2CandidateError("persist requires an ExecutionObservation")
-        _validate_observation_time(observation)
+        persisted_at = _utc_timestamp(self._clock(), "persistence clock")
+        _validate_candidate_timeline(lease, observation, persisted_at)
         source = _safe_source_root(Path(output_root), self.paths.candidates)
         with self._locked():
             self._require_active_lease(lease)
@@ -333,7 +353,6 @@ class CandidateStore:
                 inventory = tuple(
                     _frozen_entry(item.entry) for item in source_before
                 )
-                persisted_at = observation.ended_at
                 identity = _candidate_identity(
                     lease, observation, inventory, persisted_at
                 )
@@ -353,17 +372,22 @@ class CandidateStore:
                     canonical_json_bytes(observation.to_json_dict()),
                     mode=0o400,
                 )
-                _fsync_tree_directories(payload_root)
-                _fsync_directory(temporary)
+                _make_tree_immutable(temporary)
+                _fsync_tree(temporary)
                 self._fault("metadata_fsynced")
 
-                if os.path.lexists(final):
+                try:
+                    self._rename_noreplace(temporary, final)
+                except FileExistsError as exc:
                     raise ReV2CandidateError(
                         f"candidate target already exists: {lease.dispatch_id}"
-                    )
-                os.rename(temporary, final)
+                    ) from exc
+                except OSError as exc:
+                    raise ReV2CandidateError(
+                        f"cannot atomically publish candidate without replacement: {exc}"
+                    ) from exc
                 published = True
-                final.chmod(0o500)
+                _fsync_directory(final)
                 _fsync_directory(self.paths.candidates)
                 candidate = self._load_candidate(final)
                 self._fault("candidate_renamed")
@@ -380,17 +404,35 @@ class CandidateStore:
         """Validate and return every published candidate in deterministic order."""
         with self._locked():
             candidates: list[PersistedCandidate] = []
-            for child in sorted(self.paths.candidates.iterdir(), key=lambda item: item.name):
-                if child.name.startswith("."):
-                    continue
-                _safe_id(child.name, "published candidate directory")
-                if child.is_symlink():
-                    raise ReV2CandidateError(f"published candidate is a symlink: {child.name}")
-                if not child.is_dir():
-                    raise ReV2CandidateError(
-                        f"malformed published candidate is not a directory: {child.name}"
-                    )
-                candidates.append(self._load_candidate(child))
+            root_fd = _open_directory_path_nofollow(self.paths.candidates)
+            try:
+                names = sorted(_retry_eintr(os.listdir, root_fd))
+                for name in names:
+                    if name.startswith("."):
+                        continue
+                    _safe_id(name, "published candidate directory")
+                    try:
+                        child_fd = _openat(
+                            root_fd,
+                            name,
+                            os.O_RDONLY | os.O_DIRECTORY | _nofollow_flag(),
+                        )
+                    except OSError as exc:
+                        if exc.errno in {errno.ELOOP, errno.EMLINK}:
+                            raise ReV2CandidateError(
+                                f"published candidate is a symlink: {name}"
+                            ) from exc
+                        raise ReV2CandidateError(
+                            f"malformed published candidate is not a directory: {name}"
+                        ) from exc
+                    try:
+                        candidates.append(
+                            self._load_candidate_fd(self.paths.candidates / name, child_fd)
+                        )
+                    finally:
+                        os.close(child_fd)
+            finally:
+                os.close(root_fd)
             return tuple(candidates)
 
     def _validate_store_root(self, *, create: bool) -> None:
@@ -432,17 +474,17 @@ class CandidateStore:
         if hasattr(os, "O_NOFOLLOW"):
             flags |= os.O_NOFOLLOW
         try:
-            fd = os.open(lock_path, flags, 0o600)
+            fd = _retry_eintr(os.open, lock_path, flags, 0o600)
         except OSError as exc:
             raise ReV2CandidateError(f"cannot safely open candidate-store lock: {exc}") from exc
         try:
             if not stat.S_ISREG(os.fstat(fd).st_mode):
                 raise ReV2CandidateError("candidate-store lock is not a regular file")
-            fcntl.flock(fd, fcntl.LOCK_EX)
+            _retry_eintr(fcntl.flock, fd, fcntl.LOCK_EX)
             self._validate_store_root(create=False)
             yield
         finally:
-            fcntl.flock(fd, fcntl.LOCK_UN)
+            _retry_eintr(fcntl.flock, fd, fcntl.LOCK_UN)
             os.close(fd)
 
     def _require_active_lease(self, lease: DispatchLease) -> None:
@@ -462,15 +504,15 @@ class CandidateStore:
         if path.is_symlink():
             raise ReV2CandidateError(f"{label} is a symlink: {path}")
         try:
-            info = path.lstat()
-            if not stat.S_ISREG(info.st_mode):
+            parent_fd = _open_directory_path_nofollow(path.parent)
+            try:
+                value, mode = _read_canonical_json_at(parent_fd, path.name, label)
+            finally:
+                os.close(parent_fd)
+            if not stat.S_ISREG(mode):
                 raise ReV2CandidateError(f"{label} is not a regular file: {path}")
-            payload = path.read_bytes()
-            value = json.loads(payload)
         except (OSError, ValueError) as exc:
             raise ReV2CandidateError(f"invalid {label}: {exc}") from exc
-        if payload != canonical_json_bytes(value):
-            raise ReV2CandidateError(f"invalid non-canonical {label}: {path}")
         return value
 
     def _lease_from_envelope(self, value: object) -> DispatchLease:
@@ -480,15 +522,25 @@ class CandidateStore:
         return DispatchLease.from_json_dict(raw["lease"])
 
     def _load_candidate(self, path: Path) -> PersistedCandidate:
+        candidate_fd = _open_directory_path_nofollow(path)
+        try:
+            return self._load_candidate_fd(path, candidate_fd)
+        finally:
+            os.close(candidate_fd)
+
+    def _load_candidate_fd(self, path: Path, candidate_fd: int) -> PersistedCandidate:
         expected_children = {_METADATA_NAME, _OBSERVATION_NAME, _PAYLOAD_NAME}
-        actual_children = {child.name for child in path.iterdir()}
+        actual_children = set(_retry_eintr(os.listdir, candidate_fd))
         if actual_children != expected_children:
             missing = sorted(expected_children - actual_children)
             extra = sorted(actual_children - expected_children)
             detail = f"missing {missing[0]}" if missing else f"extra {extra[0]}"
             raise ReV2CandidateError(f"malformed published candidate {path.name}: {detail}")
+        metadata_value, metadata_mode = _read_canonical_json_at(
+            candidate_fd, _METADATA_NAME, "candidate metadata"
+        )
         metadata = _exact_object(
-            self._read_canonical_json(path / _METADATA_NAME, "candidate metadata"),
+            metadata_value,
             {
                 "candidate_id",
                 "dispatch_id",
@@ -512,13 +564,16 @@ class CandidateStore:
         persisted_at = _utc_timestamp(metadata["persisted_at"], "persisted_at")
         try:
             work_item = WorkItem.from_json_dict(metadata["work_item"])
+            observation_value, observation_mode = _read_canonical_json_at(
+                candidate_fd, _OBSERVATION_NAME, "candidate observation"
+            )
             observation = ExecutionObservation.from_json_dict(
-                self._read_canonical_json(path / _OBSERVATION_NAME, "candidate observation")
+                observation_value
             )
         except ReV2ModelError as exc:
             raise ReV2CandidateError(f"invalid candidate model: {exc}") from exc
-        _validate_observation_time(observation)
         lease = DispatchLease.from_json_dict(metadata["lease"])
+        _validate_candidate_timeline(lease, observation, persisted_at)
         if (
             work_item.work_item_id != work_item_id
             or lease.work_item != work_item
@@ -535,9 +590,19 @@ class CandidateStore:
         ) or len({entry.path for entry in inventory}) != len(inventory):
             raise ReV2CandidateError("candidate inventory paths must be sorted and unique")
         payload_path = path / _PAYLOAD_NAME
-        if payload_path.is_symlink() or not payload_path.is_dir():
-            raise ReV2CandidateError("candidate payload is missing or symlinked")
-        found = tuple(item.entry for item in _scan_tree(payload_path, mutable=False))
+        try:
+            payload_fd = _openat(
+                candidate_fd,
+                _PAYLOAD_NAME,
+                os.O_RDONLY | os.O_DIRECTORY | _nofollow_flag(),
+            )
+        except OSError as exc:
+            raise ReV2CandidateError("candidate payload is missing or symlinked") from exc
+        try:
+            found = tuple(item.entry for item in _scan_tree_fd(payload_fd, mutable=False))
+            payload_mode = os.fstat(payload_fd).st_mode
+        finally:
+            os.close(payload_fd)
         _compare_inventory(inventory, found)
         identity = _candidate_identity(lease, observation, inventory, persisted_at)
         expected_metadata = {
@@ -553,9 +618,15 @@ class CandidateStore:
             observation.ended_at, "observation.ended_at"
         ):
             raise ReV2CandidateError("candidate persisted_at precedes observation end")
-        for protected in (path, payload_path, path / _METADATA_NAME, path / _OBSERVATION_NAME):
-            if stat.S_IMODE(protected.stat().st_mode) & 0o222:
-                raise ReV2CandidateError(f"published candidate is mutable: {protected.name}")
+        protected_modes = {
+            path.name: os.fstat(candidate_fd).st_mode,
+            _PAYLOAD_NAME: payload_mode,
+            _METADATA_NAME: metadata_mode,
+            _OBSERVATION_NAME: observation_mode,
+        }
+        for name, mode in protected_modes.items():
+            if stat.S_IMODE(mode) & 0o222:
+                raise ReV2CandidateError(f"published candidate is mutable: {name}")
         return PersistedCandidate(
             candidate_id=candidate_id,
             dispatch_id=dispatch_id,
@@ -618,97 +689,193 @@ def _safe_source_root(source: Path, candidate_root: Path) -> Path:
 
 
 def _scan_tree(root: Path, *, mutable: bool) -> tuple[_ScannedEntry, ...]:
-    if root.is_symlink() or not root.is_dir():
-        raise ReV2CandidateError(f"candidate payload root is unsafe: {root}")
+    root_fd = _open_directory_path_nofollow(root)
+    try:
+        return _scan_tree_fd(root_fd, mutable=mutable)
+    finally:
+        os.close(root_fd)
+
+
+def _scan_tree_fd(root_fd: int, *, mutable: bool) -> tuple[_ScannedEntry, ...]:
     scanned: list[_ScannedEntry] = []
 
-    def visit(directory: Path, prefix: str = "") -> None:
+    def visit(directory_fd: int, prefix: str = "") -> None:
+        directory_before = os.fstat(directory_fd)
         try:
-            children = sorted(directory.iterdir(), key=lambda item: item.name)
+            children = sorted(_retry_eintr(os.listdir, directory_fd))
         except OSError as exc:
             raise ReV2CandidateError(f"cannot inventory candidate payload: {exc}") from exc
-        for child in children:
-            relative = f"{prefix}/{child.name}" if prefix else child.name
+        for name in children:
+            relative = f"{prefix}/{name}" if prefix else name
             _relative_path(relative)
             try:
-                before = child.lstat()
-            except OSError as exc:
-                raise ReV2CandidateError(f"candidate source changed while scanning: {relative}") from exc
-            identity = _stat_identity(before)
-            mode = stat.S_IMODE(before.st_mode)
-            if stat.S_ISLNK(before.st_mode):
-                raise ReV2CandidateError(f"candidate payload rejects symlink: {relative}")
-            if stat.S_ISDIR(before.st_mode):
-                scanned.append(
-                    _ScannedEntry(
-                        CandidateInventoryEntry(relative, "directory", mode, 0, None),
-                        identity,
-                    )
+                child_fd = _openat(
+                    directory_fd,
+                    name,
+                    os.O_RDONLY | os.O_NONBLOCK | _nofollow_flag(),
                 )
-                visit(child, relative)
-                after = child.lstat()
+            except OSError as exc:
+                if exc.errno in {errno.ELOOP, errno.EMLINK}:
+                    raise ReV2CandidateError(f"candidate payload rejects symlink: {relative}") from exc
+                raise ReV2CandidateError(f"candidate source changed while opening: {relative}") from exc
+            try:
+                before = os.fstat(child_fd)
+                identity = _stat_identity(before)
+                mode = stat.S_IMODE(before.st_mode)
+                if stat.S_ISDIR(before.st_mode):
+                    scanned.append(
+                        _ScannedEntry(
+                            CandidateInventoryEntry(relative, "directory", mode, 0, None),
+                            identity,
+                        )
+                    )
+                    visit(child_fd, relative)
+                elif stat.S_ISREG(before.st_mode):
+                    payload = _read_all_fd(child_fd)
+                    after = os.fstat(child_fd)
+                    if _stat_identity(after) != identity or len(payload) != before.st_size:
+                        raise ReV2CandidateError(f"candidate source changed while reading: {relative}")
+                    scanned.append(
+                        _ScannedEntry(
+                            CandidateInventoryEntry(
+                                relative, "file", mode, len(payload), content_digest(payload)
+                            ),
+                            identity,
+                        )
+                    )
+                else:
+                    raise ReV2CandidateError(f"candidate payload rejects special file: {relative}")
+                after = os.fstat(child_fd)
                 if mutable and _stat_identity(after) != identity:
                     raise ReV2CandidateError(f"candidate source changed while scanning: {relative}")
-            elif stat.S_ISREG(before.st_mode):
-                payload, observed = _read_regular_no_follow(child, before)
-                scanned.append(
-                    _ScannedEntry(
-                        CandidateInventoryEntry(
-                            relative, "file", mode, len(payload), content_digest(payload)
-                        ),
-                        observed,
-                    )
-                )
-            else:
-                raise ReV2CandidateError(f"candidate payload rejects special file: {relative}")
-    visit(root)
+            finally:
+                os.close(child_fd)
+        if mutable and _stat_identity(os.fstat(directory_fd)) != _stat_identity(directory_before):
+            raise ReV2CandidateError("candidate source changed while scanning directory")
+
+    visit(root_fd)
     return tuple(scanned)
 
 
-def _read_regular_no_follow(path: Path, expected: os.stat_result) -> tuple[bytes, tuple[int, int, int, int, int, int]]:
-    flags = os.O_RDONLY
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
+def _nofollow_flag() -> int:
+    if not hasattr(os, "O_NOFOLLOW") or not _HAS_DIRFD_OPEN:
+        raise ReV2CandidateError("descriptor-relative no-follow operations are unsupported")
+    return os.O_NOFOLLOW
+
+
+def _openat(parent_fd: int, name: str, flags: int, mode: int = 0o777) -> int:
+    return _retry_eintr(os.open, name, flags, mode, dir_fd=parent_fd)
+
+
+def _open_directory_path_nofollow(path: Path) -> int:
+    absolute = path.absolute()
+    if not absolute.is_absolute() or any(part in {".", ".."} for part in absolute.parts):
+        raise ReV2CandidateError(f"unsafe directory traversal path: {path}")
+    current = _retry_eintr(os.open, "/", os.O_RDONLY | os.O_DIRECTORY)
     try:
-        fd = os.open(path, flags)
+        for part in absolute.parts[1:]:
+            next_fd = _openat(
+                current,
+                part,
+                os.O_RDONLY | os.O_DIRECTORY | _nofollow_flag(),
+            )
+            os.close(current)
+            current = next_fd
+        if not stat.S_ISDIR(os.fstat(current).st_mode):
+            raise ReV2CandidateError(f"path is not a directory: {path}")
+        return current
+    except Exception:
+        os.close(current)
+        raise
+
+
+def _read_all_fd(fd: int) -> bytes:
+    chunks: list[bytes] = []
+    while True:
+        chunk = _retry_eintr(os.read, fd, 1024 * 1024)
+        if not chunk:
+            return b"".join(chunks)
+        chunks.append(chunk)
+
+
+def _read_regular_at(
+    parent_fd: int, name: str, label: str
+) -> tuple[bytes, tuple[int, int, int, int, int, int], int]:
+    try:
+        fd = _openat(parent_fd, name, os.O_RDONLY | os.O_NONBLOCK | _nofollow_flag())
     except OSError as exc:
-        raise ReV2CandidateError(f"cannot safely read candidate file {path}: {exc}") from exc
+        if exc.errno in {errno.ELOOP, errno.EMLINK}:
+            raise ReV2CandidateError(f"{label} is a symlink") from exc
+        raise ReV2CandidateError(f"cannot safely read {label}: {exc}") from exc
     try:
         before = os.fstat(fd)
-        if not stat.S_ISREG(before.st_mode) or _stat_identity(before) != _stat_identity(expected):
-            raise ReV2CandidateError(f"candidate source changed while reading: {path}")
-        chunks: list[bytes] = []
-        while True:
-            chunk = os.read(fd, 1024 * 1024)
-            if not chunk:
-                break
-            chunks.append(chunk)
+        if not stat.S_ISREG(before.st_mode):
+            raise ReV2CandidateError(f"{label} is not a regular file")
+        payload = _read_all_fd(fd)
         after = os.fstat(fd)
         if _stat_identity(before) != _stat_identity(after):
-            raise ReV2CandidateError(f"candidate source changed while reading: {path}")
-        payload = b"".join(chunks)
+            raise ReV2CandidateError(f"{label} changed while reading")
         if len(payload) != before.st_size:
-            raise ReV2CandidateError(f"candidate source changed while reading: {path}")
-        return payload, _stat_identity(after)
+            raise ReV2CandidateError(f"{label} changed while reading")
+        return payload, _stat_identity(after), before.st_mode
     finally:
         os.close(fd)
+
+
+def _read_canonical_json_at(parent_fd: int, name: str, label: str) -> tuple[object, int]:
+    payload, _identity, mode = _read_regular_at(parent_fd, name, label)
+    try:
+        value = json.loads(payload)
+    except ValueError as exc:
+        raise ReV2CandidateError(f"invalid {label}: {exc}") from exc
+    if payload != canonical_json_bytes(value):
+        raise ReV2CandidateError(f"invalid non-canonical {label}")
+    return value, mode
+
+
+def _read_relative_regular(
+    root_fd: int, relative: str
+) -> tuple[bytes, tuple[int, int, int, int, int, int]]:
+    parts = relative.split("/")
+    current = os.dup(root_fd)
+    try:
+        for part in parts[:-1]:
+            next_fd = _openat(
+                current,
+                part,
+                os.O_RDONLY | os.O_DIRECTORY | _nofollow_flag(),
+            )
+            os.close(current)
+            current = next_fd
+        payload, identity, _mode = _read_regular_at(current, parts[-1], relative)
+        return payload, identity
+    finally:
+        os.close(current)
 
 
 def _copy_scanned_tree(
     source: Path, target: Path, scanned: tuple[_ScannedEntry, ...]
 ) -> None:
     target.mkdir(mode=0o700)
-    for item in scanned:
-        entry = item.entry
-        destination = target.joinpath(*entry.path.split("/"))
-        if entry.kind == "directory":
-            destination.mkdir(mode=0o700)
-            destination.chmod(entry.mode)
-            continue
-        payload, identity = _read_regular_no_follow(source / entry.path, os.lstat(source / entry.path))
-        if identity != item.identity or len(payload) != entry.size or content_digest(payload) != entry.digest:
-            raise ReV2CandidateError(f"candidate source changed while copying: {entry.path}")
-        _write_new_file(destination, payload, mode=entry.mode)
+    directories = [item for item in scanned if item.entry.kind == "directory"]
+    for item in directories:
+        destination = target.joinpath(*item.entry.path.split("/"))
+        destination.mkdir(mode=0o700)
+    source_fd = _open_directory_path_nofollow(source)
+    try:
+        for item in scanned:
+            entry = item.entry
+            destination = target.joinpath(*entry.path.split("/"))
+            if entry.kind == "directory":
+                continue
+            payload, identity = _read_relative_regular(source_fd, entry.path)
+            if identity != item.identity or len(payload) != entry.size or content_digest(payload) != entry.digest:
+                raise ReV2CandidateError(f"candidate source changed while copying: {entry.path}")
+            _write_new_file(destination, payload, mode=entry.mode)
+    finally:
+        os.close(source_fd)
+    for item in sorted(directories, key=lambda value: len(value.entry.path.split("/")), reverse=True):
+        target.joinpath(*item.entry.path.split("/")).chmod(item.entry.mode)
 
 
 def _frozen_entry(entry: CandidateInventoryEntry) -> CandidateInventoryEntry:
@@ -767,33 +934,57 @@ def _write_new_file(path: Path, payload: bytes, *, mode: int) -> None:
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
-    fd = os.open(path, flags, mode)
+    fd = _retry_eintr(os.open, path, flags, mode)
     try:
         offset = 0
         while offset < len(payload):
-            written = os.write(fd, payload[offset:])
+            written = _retry_eintr(os.write, fd, payload[offset:])
             if written <= 0:
                 raise OSError("short write while persisting candidate")
             offset += written
         os.fchmod(fd, mode)
-        os.fsync(fd)
+        _retry_eintr(os.fsync, fd)
     finally:
         os.close(fd)
 
 
-def _fsync_tree_directories(root: Path) -> None:
-    directories = [root, *(path for path in root.rglob("*") if path.is_dir())]
-    for directory in sorted(directories, key=lambda item: len(item.parts), reverse=True):
-        _fsync_directory(directory)
+def _fsync_tree(root: Path) -> None:
+    root_fd = _open_directory_path_nofollow(root)
+    try:
+        _fsync_tree_fd(root_fd)
+    finally:
+        os.close(root_fd)
+
+
+def _fsync_tree_fd(directory_fd: int) -> None:
+    for name in sorted(_retry_eintr(os.listdir, directory_fd)):
+        try:
+            child_fd = _openat(
+                directory_fd,
+                name,
+                os.O_RDONLY | os.O_NONBLOCK | _nofollow_flag(),
+            )
+        except OSError as exc:
+            raise ReV2CandidateError(f"cannot open staged candidate for durability: {name}") from exc
+        try:
+            mode = os.fstat(child_fd).st_mode
+            if stat.S_ISDIR(mode):
+                _fsync_tree_fd(child_fd)
+            elif not stat.S_ISREG(mode):
+                raise ReV2CandidateError(f"staged candidate contains special file: {name}")
+            _retry_eintr(os.fsync, child_fd)
+        finally:
+            os.close(child_fd)
+    _retry_eintr(os.fsync, directory_fd)
 
 
 def _fsync_directory(path: Path) -> None:
     try:
-        fd = os.open(path, os.O_RDONLY)
+        fd = _retry_eintr(os.open, path, os.O_RDONLY)
     except OSError as exc:
         raise ReV2CandidateError(f"cannot open directory for durability flush {path}: {exc}") from exc
     try:
-        os.fsync(fd)
+        _retry_eintr(os.fsync, fd)
     except OSError as exc:
         raise ReV2CandidateError(f"cannot durably flush directory {path}: {exc}") from exc
     finally:
@@ -811,11 +1002,98 @@ def _stat_identity(info: os.stat_result) -> tuple[int, int, int, int, int, int]:
     )
 
 
-def _validate_observation_time(observation: ExecutionObservation) -> None:
+def _validate_candidate_timeline(
+    lease: DispatchLease, observation: ExecutionObservation, persisted_at: str
+) -> None:
+    leased = _parse_utc(lease.leased_at, "lease.leased_at")
     started = _parse_utc(observation.started_at, "observation.started_at")
     ended = _parse_utc(observation.ended_at, "observation.ended_at")
+    persisted = _parse_utc(persisted_at, "persisted_at")
+    if started < leased:
+        raise ReV2CandidateError("lease timestamp follows observation start")
     if ended < started:
         raise ReV2CandidateError("observation ended_at precedes started_at")
+    if persisted < ended:
+        raise ReV2CandidateError("persistence clock precedes observation end")
+
+
+def _canonical_utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
+def _default_process_probe(pid: int) -> str | None:
+    if sys.platform.startswith("linux"):
+        try:
+            data = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+            fields = data[data.rfind(")") + 2 :].split()
+            return f"linux:{fields[19]}" if len(fields) > 19 else None
+        except (OSError, ValueError, IndexError):
+            return None
+    if sys.platform == "darwin":
+        # argv execution with shell disabled avoids command injection; lstart is
+        # stable for one PID lifetime and is normalized to a safe hash token.
+        try:
+            completed = subprocess.run(
+                ["ps", "-o", "lstart=", "-p", str(pid)],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+        except OSError:
+            return None
+        started = completed.stdout.strip()
+        if completed.returncode != 0 or not started:
+            return None
+        return "macos:" + hashlib.sha256(started.encode("utf-8")).hexdigest()
+    raise ReV2CandidateError("stable process probing is unsupported on this platform")
+
+
+def _rename_noreplace(source: Path, target: Path) -> None:
+    libc = ctypes.CDLL(None, use_errno=True)
+    source_bytes = os.fsencode(source)
+    target_bytes = os.fsencode(target)
+    if sys.platform.startswith("linux") and hasattr(libc, "renameat2"):
+        operation = libc.renameat2
+        operation.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+        operation.restype = ctypes.c_int
+        result = operation(-100, source_bytes, -100, target_bytes, 1)
+    elif sys.platform == "darwin" and hasattr(libc, "renameatx_np"):
+        operation = libc.renameatx_np
+        operation.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+        operation.restype = ctypes.c_int
+        # Darwin refuses to rename a non-writable directory. Keep an fd pinned
+        # across the syscall and restore the frozen mode before returning; the
+        # publication boundary is not exposed to callers until that restoration
+        # and its durability flush complete.
+        source_fd = _open_directory_path_nofollow(source)
+        frozen_mode = stat.S_IMODE(os.fstat(source_fd).st_mode)
+        try:
+            os.fchmod(source_fd, frozen_mode | stat.S_IWUSR)
+            result = operation(-2, source_bytes, -2, target_bytes, 0x00000004)
+            saved_errno = ctypes.get_errno()
+            os.fchmod(source_fd, frozen_mode)
+            _retry_eintr(os.fsync, source_fd)
+            ctypes.set_errno(saved_errno)
+        finally:
+            os.close(source_fd)
+    else:
+        raise ReV2CandidateError("atomic no-replace directory rename is unsupported")
+    if result != 0:
+        error = ctypes.get_errno()
+        if error == errno.EEXIST:
+            raise FileExistsError(error, os.strerror(error), target)
+        raise OSError(error, os.strerror(error), target)
+
+
+def _retry_eintr(
+    operation: Callable[..., _T], *args: object, **kwargs: object
+) -> _T:
+    while True:
+        try:
+            return operation(*args, **kwargs)
+        except InterruptedError:
+            continue
 
 
 def _utc_timestamp(value: object, field: str) -> str:
