@@ -100,7 +100,7 @@ def test_squad_summary_builds_typed_semantic_facts(tmp_path: Path) -> None:
     assert not hasattr(context, "inspect_paths")
 
 
-def test_squad_summary_never_renders_empty_worked_on_after_next_filtering(
+def test_squad_summary_never_renders_empty_worked_on_after_invalid_selection(
     tmp_path: Path,
     capsys,
 ) -> None:
@@ -118,25 +118,18 @@ def test_squad_summary_never_renders_empty_worked_on_after_next_filtering(
         encoding="utf-8",
     )
 
-    class NextOnlyProvider:
+    class InvalidSelectionProvider:
         def run_agent_result(self, *_args, **_kwargs):
             return CliRunResult(
                 exit_code=0,
-                stdout=json.dumps(
-                    {
-                        "bullets": [
-                            "Next, run echelon delivery run 123-run-handoff.",
-                            "Use echelon delivery run 123-run-handoff next.",
-                        ]
-                    }
-                ),
+                stdout=json.dumps({"selected_fact_ids": ["unknown", "unknown"]}),
                 stderr="",
             )
 
     def render(context):
         return summarize_run(
             context,
-            provider=NextOnlyProvider(),
+            provider=InvalidSelectionProvider(),
             agent=SummaryAgent(prompt="Summarize.", metadata={}),
         )
 

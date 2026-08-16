@@ -810,12 +810,7 @@ class TestRunSkillAutoLand:
                 return CliRunResult(
                     exit_code=0,
                     stdout=json.dumps(
-                        {
-                            "bullets": [
-                                "Recorded the large multi-strategy delivery.",
-                                "Preserved the authoritative aggregate handoff.",
-                            ]
-                        }
+                        {"selected_fact_ids": ["f0001", "f0002"]}
                     ),
                     stderr="",
                 )
