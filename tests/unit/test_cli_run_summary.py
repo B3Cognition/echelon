@@ -71,6 +71,12 @@ def test_squad_summary_builds_typed_semantic_facts(tmp_path: Path) -> None:
                 "status": "done",
                 "phase": "terminal-done",
                 "completed_phases": ["phase1", "phase2"],
+                "phase1_quality_repair": {
+                    "authoring_mode": "proportional",
+                    "automatic_consumed": 1,
+                    "automatic_limit": 3,
+                },
+                "spec_quality_certificate": {"status": "passed"},
             }
         ),
         encoding="utf-8",
@@ -97,6 +103,19 @@ def test_squad_summary_builds_typed_semantic_facts(tmp_path: Path) -> None:
         and fact.text == f"Published the specification at {spec_dir}."
         for fact in context.facts
     )
+    assert any(
+        fact.category is SummaryFactCategory.VERIFICATION
+        and fact.text == (
+            "One proportional quality repair produced a passing specification "
+            "quality certificate."
+        )
+        for fact in context.facts
+    )
+    assert any(
+        fact.text == "Completed 2 specification phases and preserved durable state."
+        for fact in context.facts
+    )
+    assert all("phase1, phase2" not in fact.text for fact in context.facts)
     assert not hasattr(context, "inspect_paths")
 
 

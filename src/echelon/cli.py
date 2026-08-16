@@ -4957,14 +4957,44 @@ def _phase_a_summary_facts(
         for value in state.get("completed_phases", ())
         if str(value).strip()
     )
+    repair_state = state.get("phase1_quality_repair")
+    certificate = state.get("spec_quality_certificate")
+    if isinstance(repair_state, Mapping) and isinstance(certificate, Mapping):
+        consumed = int(repair_state.get("automatic_consumed", 0) or 0)
+        if (
+            repair_state.get("authoring_mode") == "proportional"
+            and certificate.get("status") == "passed"
+        ):
+            if consumed == 1:
+                quality_text = (
+                    "One proportional quality repair produced a passing "
+                    "specification quality certificate."
+                )
+            elif consumed > 1:
+                quality_text = (
+                    f"{consumed} proportional quality repairs produced a passing "
+                    "specification quality certificate."
+                )
+            else:
+                quality_text = (
+                    "The proportional quality review produced a passing "
+                    "specification quality certificate."
+                )
+            facts.append(
+                SummaryFact(
+                    SummaryFactCategory.VERIFICATION,
+                    SummaryFactImportance.HIGH,
+                    quality_text,
+                    len(facts),
+                )
+            )
     if completed:
         facts.append(
             SummaryFact(
                 SummaryFactCategory.HANDOFF,
                 SummaryFactImportance.NORMAL,
-                "Prepared durable specification state after completing "
-                + ", ".join(completed[:6])
-                + ".",
+                f"Completed {len(completed)} specification phases and preserved "
+                "durable state.",
                 len(facts),
             )
         )
