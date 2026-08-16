@@ -166,7 +166,7 @@ def run_tasks_lexicon_gate(
         blocked_reason = None
     else:
         action = "block"
-        blocked_reason = "lexicon_gate_exhausted"
+        blocked_reason = "tasks_lexicon_gate_exhausted"
     findings = len(report["findings"])
     return TasksLexiconGateResult(
         action=action,

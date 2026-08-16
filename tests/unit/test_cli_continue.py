@@ -571,6 +571,71 @@ THEN: The dashboard is visible
     assert "echelon phase run phase1-lexicon\n" not in output
 
 
+@pytest.mark.parametrize(
+    "blocked_reason",
+    ["tasks_lexicon_gate_exhausted", "lexicon_gate_exhausted"],
+)
+def test_continue_routes_exhausted_tasks_lexicon_to_phase3_plan_repair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+    blocked_reason: str,
+) -> None:
+    """Current and legacy Tasks blocks repair planning, not Phase 1 Lexicon."""
+    _write_real_constitution(tmp_path)
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": blocked_reason,
+            "spec_id": "001-demo",
+            "spec_dir": "runs/spec-test/specs/001-demo",
+            "completed_phases": [
+                "phase1-constitution",
+                "phase1-lexicon",
+                "phase3-plan",
+                "phase3-tasks-lexicon",
+            ],
+            "last_dispatch": {"phase_id": "phase3-tasks-lexicon"},
+            "user_message": "build the dashboard",
+            "autonomy_mode": "banzai",
+        },
+    )
+    spec_dir = run_dir / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Dashboard\n", encoding="utf-8")
+    (spec_dir / "tasks.md").write_text("# Tasks\n", encoding="utf-8")
+    (spec_dir / "tasks-lexicon-report.json").write_text(
+        json.dumps({"ok": False, "findings": [{"code": "parse-error"}]}),
+        encoding="utf-8",
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_run",
+        lambda args, **_kwargs: calls.append(args),
+    )
+
+    _cmd_continue(
+        [],
+        project_root=tmp_path,
+        ext_dir=tmp_path / ".specify/extensions/echelon",
+    )
+
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == "terminal-blocked"
+    assert state["status"] == "blocked"
+    assert state["blocked_reason"] == blocked_reason
+    assert calls == []
+    output = capsys.readouterr().out
+    assert "Manual recovery required" in output
+    assert "tasks.md" in output
+    assert "tasks-lexicon-report.json" in output
+    assert "echelon phase run phase3-plan" in output
+    assert "requirements.lexicon.md" not in output
+    assert "phase1-lexicon-derive" not in output
+
+
 def test_continue_honors_persisted_banzai_judgment_after_readiness_misroute(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

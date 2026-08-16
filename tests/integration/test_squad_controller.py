@@ -14645,7 +14645,12 @@ THEN: The dashboard is visible
         prepared = ctrl._prepare_phase_result(node, result, snapshot)
 
         assert prepared.state_updates["tasks_lexicon_action"] == "block"
-        assert prepared.control_updates["blocked_reason"] == "lexicon_gate_exhausted"
+        assert (
+            prepared.control_updates["blocked_reason"]
+            == "tasks_lexicon_gate_exhausted"
+        )
+        assert prepared.control_updates["tasks_lexicon_gate_exhausted"] is True
+        assert "lexicon_gate_exhausted" not in prepared.control_updates
         assert ctrl._evaluate_transitions(node, prepared, snapshot) == "terminal-blocked"
 
     def test_tasks_gate_pass_falls_through_to_understanding(self, tmp_path):

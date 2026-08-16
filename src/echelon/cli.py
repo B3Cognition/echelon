@@ -4333,6 +4333,31 @@ def _classify_run_recovery(
             note="the run cannot continue until the configured budget is higher",
         )
 
+    last_dispatch = run_state.get("last_dispatch")
+    last_dispatch_phase = (
+        str(last_dispatch.get("phase_id") or "").strip()
+        if isinstance(last_dispatch, dict)
+        else ""
+    )
+    tasks_lexicon_block = reason == "tasks_lexicon_gate_exhausted" or (
+        reason == "lexicon_gate_exhausted"
+        and last_dispatch_phase
+        in {"phase3-tasks-lexicon", "phase3-consensus-tasks-lexicon"}
+    )
+    if tasks_lexicon_block:
+        return _RunRecoveryAction(
+            "manual_recovery",
+            reason="tasks_lexicon_gate_exhausted",
+            phase="phase3-plan",
+            command="echelon phase run phase3-plan",
+            note=(
+                "The hard Tasks Lexicon gate failed. Re-run the Phase 3 planning "
+                "node to repair tasks.md from tasks-lexicon-report.json; the "
+                "controller will revalidate the repaired plan through the "
+                "deterministic Tasks Lexicon gate."
+            ),
+        )
+
     if reason == "lexicon_gate_exhausted":
         return _RunRecoveryAction(
             "manual_recovery",

@@ -10003,12 +10003,20 @@ class SquadController:
                     "governance_gate_exhausted"
                 )
             elif lexicon_override:
-                control_updates.update(
-                    {
-                        "blocked_reason": "lexicon_gate_exhausted",
-                        "lexicon_gate_exhausted": True,
-                    }
-                )
+                if node.id == "phase1-lexicon":
+                    control_updates.update(
+                        {
+                            "blocked_reason": "lexicon_gate_exhausted",
+                            "lexicon_gate_exhausted": True,
+                        }
+                    )
+                else:
+                    control_updates.update(
+                        {
+                            "blocked_reason": "tasks_lexicon_gate_exhausted",
+                            "tasks_lexicon_gate_exhausted": True,
+                        }
+                    )
             elif repair_override:
                 control_updates.update(
                     {
