@@ -144,6 +144,7 @@ _PAYLOAD_SCHEMAS: dict[str, dict[str, PayloadValidator]] = {
     "dispatch_leased": {"dispatch_id": _safe_id, "work_item_id": _digest},
     "dispatch_lease_retired": {
         "dispatch_id": _safe_id,
+        "lease_id": _digest,
         "reason": _string,
         "work_item_id": _digest,
     },

@@ -106,6 +106,12 @@ def different_item() -> WorkItem:
     return replace(item, goal_id="different-goal")
 
 
+def test_dispatch_lease_id_binds_the_complete_serialized_lease(tmp_path: Path) -> None:
+    lease = candidate_store(tmp_path).begin(work_item(), process_identity())
+
+    assert lease.lease_id == content_digest(lease.to_json_dict())
+
+
 def test_complete_candidate_survives_missing_result_object(tmp_path: Path) -> None:
     store = candidate_store(tmp_path)
     lease = store.begin(work_item(), process_identity())

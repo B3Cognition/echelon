@@ -229,10 +229,12 @@ def test_eventless_lease_retirement_is_strict_and_allowed_while_paused(
         {"reason": "operator hold", "reason_code": "operator_hold"},
         occurred_at=NOW,
     )
+    lease_id = digest("lease")
     retired = store.append(
         "dispatch_lease_retired",
         {
             "dispatch_id": "dispatch-orphan",
+            "lease_id": lease_id,
             "reason": "dead process without a committed candidate",
             "work_item_id": work_item_id,
         },
@@ -245,6 +247,7 @@ def test_eventless_lease_retirement_is_strict_and_allowed_while_paused(
             "dispatch_lease_retired",
             {
                 "dispatch_id": "dispatch-orphan",
+                "lease_id": lease_id,
                 "reason": "duplicate retirement",
                 "work_item_id": work_item_id,
             },

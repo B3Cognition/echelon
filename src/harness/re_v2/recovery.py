@@ -27,7 +27,7 @@ from .candidates import (
     ProcessIdentity,
     ReV2CandidateError,
 )
-from .canonical import canonical_json_bytes
+from .canonical import canonical_json_bytes, content_digest
 from .events import EventRecord, EventStore, ReV2EventError
 from .ledger import (
     Certifier,
@@ -158,8 +158,20 @@ def recover_run(
 
     leases = _discover_leases(context)
     outstanding = _outstanding_leases(events, leases)
+    retired_dispatches = {
+        str(event.payload["dispatch_id"])
+        for event in events
+        if event.type == "dispatch_lease_retired"
+    }
+    outstanding_dispatches = {lease.dispatch_id for lease in outstanding}
+    inspectable = tuple(
+        lease
+        for lease in leases
+        if lease.dispatch_id in outstanding_dispatches
+        or lease.dispatch_id in retired_dispatches
+    )
     inspected: list[tuple[DispatchLease, ProcessState]] = []
-    for lease in outstanding:
+    for lease in inspectable:
         state = _inspect_process(inspector, lease.process_identity)
         inspected.append((lease, state))
 
@@ -167,6 +179,7 @@ def recover_run(
         lease
         for lease, state in inspected
         if state is ProcessState.PID_REUSED_OR_AMBIGUOUS
+        and lease.dispatch_id not in retired_dispatches
     )
     live = tuple(
         lease for lease, state in inspected if state is ProcessState.SAME_PROCESS_LIVE
@@ -306,14 +319,20 @@ def _validate_authorities(
     ):
         raise ReV2RecoveryError("work graph does not match immutable run inputs")
     for template in context.graph.templates:
-        pinned_protocol = manifest.artifact_policy_versions.get(template.layer)
-        if pinned_protocol is None:
+        pinned_policy_version = manifest.artifact_policy_versions.get(template.layer)
+        if pinned_policy_version is None:
             raise ReV2RecoveryError(
                 f"graph layer {template.layer} has no manifest artifact policy"
             )
-        if pinned_protocol != template.producer_protocol_version:
+        expected_policy_hash = content_digest(
+            {
+                "artifact_kind": template.artifact_kind,
+                "policy_version": pinned_policy_version,
+            }
+        )
+        if template.layer_policy_hash != expected_policy_hash:
             raise ReV2RecoveryError(
-                "graph producer protocol does not match manifest artifact policy"
+                "graph layer policy hash does not match manifest artifact policy"
             )
     try:
         events = context.event_store.replay()
@@ -497,7 +516,10 @@ def _outstanding_leases(
         if event.type == "dispatch_observed"
     }
     retired = {
-        str(event.payload["dispatch_id"]): str(event.payload["work_item_id"])
+        str(event.payload["dispatch_id"]): (
+            str(event.payload["work_item_id"]),
+            str(event.payload["lease_id"]),
+        )
         for event in events
         if event.type == "dispatch_lease_retired"
     }
@@ -516,7 +538,7 @@ def _outstanding_leases(
             raise ReV2RecoveryError(
                 f"dispatch lease does not match event work item: {dispatch_id}"
             )
-    for dispatch_id, work_item_id in retired.items():
+    for dispatch_id, (work_item_id, lease_id) in retired.items():
         lease = lease_by_dispatch.get(dispatch_id)
         if lease is None:
             raise ReV2RecoveryError(
@@ -525,6 +547,10 @@ def _outstanding_leases(
         if lease.work_item_id != work_item_id:
             raise ReV2RecoveryError(
                 f"retirement event does not match lease work item: {dispatch_id}"
+            )
+        if lease.lease_id != lease_id:
+            raise ReV2RecoveryError(
+                f"retirement event does not match the exact lease: {dispatch_id}"
             )
     resolved = observed | set(retired)
     return tuple(
@@ -569,6 +595,7 @@ def _resolve_eventless_dead_leases(
                 "dispatch_lease_retired",
                 {
                     "dispatch_id": lease.dispatch_id,
+                    "lease_id": lease.lease_id,
                     "reason": "dead process without a committed candidate",
                     "work_item_id": lease.work_item_id,
                 },

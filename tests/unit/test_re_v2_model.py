@@ -50,7 +50,7 @@ def valid_run_manifest_dict() -> dict[str, object]:
         "requested_goals": ["api", "inventory"],
         "initial_budget_policy": valid_budget_policy().to_json_dict(),
         "provider_contract": {"provider": "fake", "settings": {"tier": 1}},
-        "artifact_policy_versions": {"L0": "inventory-v1"},
+        "artifact_policy_versions": {"L0": "egr-164-v1"},
         "parent_run_id": None,
     }
 
@@ -62,7 +62,9 @@ def valid_artifact_key() -> ArtifactKey:
         artifact_kind="source-inventory",
         layer="L0",
         producer_protocol_version="inventory-v1",
-        layer_policy_hash=digest("3"),
+        layer_policy_hash=content_digest(
+            {"artifact_kind": "source-inventory", "policy_version": "egr-164-v1"}
+        ),
         dependency_hashes=(),
     )
 
@@ -74,7 +76,9 @@ def valid_work_template() -> WorkTemplate:
         layer="L0",
         producer_id="inventory",
         producer_protocol_version="inventory-v1",
-        layer_policy_hash=digest("3"),
+        layer_policy_hash=content_digest(
+            {"artifact_kind": "source-inventory", "policy_version": "egr-164-v1"}
+        ),
         required_template_ids=(),
         verifier_id="inventory-verifier",
         verifier_version="v1",

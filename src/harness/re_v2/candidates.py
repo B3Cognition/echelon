@@ -120,6 +120,10 @@ class DispatchLease:
             "work_item_id": self.work_item_id,
         }
 
+    @property
+    def lease_id(self) -> str:
+        return content_digest(self.to_json_dict())
+
     @classmethod
     def from_json_dict(cls, value: object) -> "DispatchLease":
         raw = _exact_object(

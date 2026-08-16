@@ -22,7 +22,7 @@ from .candidates import (
 from .canonical import canonical_json_bytes, content_digest
 from .events import EventRecord, ReV2EventError
 from .ledger import ReV2LedgerError
-from .model import ExecutionObservation, WorkItem
+from .model import ExecutionObservation, RunManifest, WorkItem
 from .planner import PlanDecision, ReV2PlanError, plan_next
 from .projection import ReV2ProjectionError, rebuild_projection
 from .recovery import (
@@ -51,7 +51,41 @@ class WorkExecutor(Protocol):
 
 
 ProcessIdentityFactory = Callable[[WorkItem, str, int, str], ProcessIdentity]
-ExecutorKey = tuple[str, str, str, str]
+ExecutorKey = tuple[str, str, str, str, str, str]
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutorRegistration:
+    """Immutable provider and work-protocol binding for one executor."""
+
+    provider_name: str
+    provider_contract_hash: str
+    producer_id: str
+    producer_protocol_version: str
+    layer: str
+    result_contract_id: str
+    executor: WorkExecutor
+
+    def __post_init__(self) -> None:
+        if not _valid_executor_key(self.key):
+            raise ReV2ControllerError(
+                "executor registration must contain exact provider and protocol pins"
+            )
+        if not callable(getattr(self.executor, "execute", None)):
+            raise ReV2ControllerError(
+                "registered executor must provide execute(snapshot, work, lease)"
+            )
+
+    @property
+    def key(self) -> ExecutorKey:
+        return (
+            self.provider_name,
+            self.provider_contract_hash,
+            self.producer_id,
+            self.producer_protocol_version,
+            self.layer,
+            self.result_contract_id,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,20 +174,29 @@ class DeterministicInventoryExecutor:
 def production_executor_registry(
     output_root: Path,
     *,
+    provider_contract: Mapping[str, object],
     clock: Callable[[], str] | None = None,
-) -> Mapping[ExecutorKey, WorkExecutor]:
+) -> Mapping[ExecutorKey, ExecutorRegistration]:
     """Return only the deterministic source/partition L0 producers."""
+    provider_name = str(provider_contract.get("provider"))
+    if provider_name != "deterministic-inventory":
+        return MappingProxyType({})
+    provider_contract_hash = content_digest(provider_contract)
     executor = DeterministicInventoryExecutor(output_root, clock=clock)
+    registrations = tuple(
+        ExecutorRegistration(
+            provider_name=provider_name,
+            provider_contract_hash=provider_contract_hash,
+            producer_id=producer,
+            producer_protocol_version="re-v2-l0-v1",
+            layer="L0",
+            result_contract_id="deterministic-inventory-v1",
+            executor=executor,
+        )
+        for producer in sorted(DeterministicInventoryExecutor._PRODUCERS)
+    )
     return MappingProxyType(
-        {
-            (
-                producer,
-                "re-v2-l0-v1",
-                "L0",
-                "deterministic-inventory-v1",
-            ): executor
-            for producer in sorted(DeterministicInventoryExecutor._PRODUCERS)
-        }
+        {registration.key: registration for registration in registrations}
     )
 
 
@@ -164,7 +207,10 @@ class ReV2Controller:
         self,
         context: ReV2RunContext,
         *,
-        executor_registry: Mapping[ExecutorKey, WorkExecutor] | None = None,
+        executor_registry: Mapping[
+            ExecutorKey, ExecutorRegistration | WorkExecutor
+        ]
+        | None = None,
         executor: WorkExecutor | None = None,
         process_inspector: ProcessInspector | object | None = None,
         process_identity_factory: ProcessIdentityFactory | None = None,
@@ -184,20 +230,51 @@ class ReV2Controller:
             process_identity_factory or _default_process_identity
         )
         self._fault_hook = fault_hook
+        manifest = context.manifest
+        provider_name, provider_contract_hash = _provider_binding(manifest)
         if executor is not None:
+            declared_provider = getattr(executor, "provider_name", None)
+            declared_contract_hash = getattr(
+                executor, "provider_contract_hash", None
+            )
             executor_registry = {
-                _executor_key(template): executor
+                _executor_key(
+                    template,
+                    provider_name=str(declared_provider),
+                    provider_contract_hash=str(declared_contract_hash),
+                ): executor
                 for template in context.graph.templates
             }
         if executor_registry is None:
             executor_registry = production_executor_registry(
-                context.paths.root / ".execution", clock=self._clock
+                context.paths.root / ".execution",
+                provider_contract=manifest.to_json_dict()["provider_contract"],
+                clock=self._clock,
             )
-        self._executors = MappingProxyType(dict(executor_registry))
-        if any(not _valid_executor_key(key) for key in self._executors):
-            raise ReV2ControllerError(
-                "executor registry keys must be exact producer protocol tuples"
+        registrations: dict[ExecutorKey, ExecutorRegistration] = {}
+        for key, value in executor_registry.items():
+            if not _valid_executor_key(key):
+                raise ReV2ControllerError(
+                    "executor registry keys must be exact provider protocol tuples"
+                )
+            registration = (
+                value
+                if isinstance(value, ExecutorRegistration)
+                else ExecutorRegistration(*key, executor=value)
             )
+            if registration.key != key:
+                raise ReV2ControllerError(
+                    "executor registry key does not match registration metadata"
+                )
+            if (
+                registration.provider_name != provider_name
+                or registration.provider_contract_hash != provider_contract_hash
+            ):
+                raise ReV2ControllerError(
+                    "executor registration does not match manifest provider contract"
+                )
+            registrations[key] = registration
+        self._executors = MappingProxyType(registrations)
 
     def run_once(self) -> ReV2ControllerResult:
         """Recover first, then plan and dispatch no more than one item."""
@@ -252,9 +329,17 @@ class ReV2Controller:
                     decision,
                     now,
                 )
-            selected = self._executors.get(_executor_key(item))
+            provider_name, provider_contract_hash = _provider_binding(
+                recovery.manifest
+            )
+            selected = self._executors.get(
+                _executor_key(
+                    item,
+                    provider_name=provider_name,
+                    provider_contract_hash=provider_contract_hash,
+                )
+            )
             if selected is None:
-                self._record_plan(decision, now)
                 return self._pause(
                     "producer_not_registered",
                     (
@@ -264,20 +349,21 @@ class ReV2Controller:
                     decision,
                     now,
                 )
-            if not callable(getattr(selected, "execute", None)):
+            if (
+                selected.provider_name != provider_name
+                or selected.provider_contract_hash != provider_contract_hash
+            ):
                 raise ReV2ControllerError(
-                    "registered executor must provide execute(snapshot, work, lease)"
+                    "selected executor registration does not match manifest provider contract"
                 )
             self._record_plan(decision, now)
             return self._dispatch(
                 item,
-                selected,
+                selected.executor,
                 decision,
                 attempt_kind=attempt_kind,
                 attempt_index=attempt_index,
-                expected_provider=str(
-                    recovery.manifest.provider_contract["provider"]
-                ),
+                expected_provider=selected.provider_name,
                 now=now,
             )
 
@@ -591,12 +677,19 @@ def _validate_item_certifier(context: ReV2RunContext, item: WorkItem) -> None:
         )
 
 
-def _executor_key(item: object) -> ExecutorKey:
+def _executor_key(
+    item: object,
+    *,
+    provider_name: str,
+    provider_contract_hash: str,
+) -> ExecutorKey:
     output_key = getattr(item, "output_key", None)
     layer = getattr(output_key, "layer", None)
     if layer is None:
         layer = getattr(item, "layer", None)
     return (
+        provider_name,
+        provider_contract_hash,
         str(getattr(item, "producer_id")),
         str(getattr(item, "producer_protocol_version")),
         str(layer),
@@ -607,9 +700,19 @@ def _executor_key(item: object) -> ExecutorKey:
 def _valid_executor_key(value: object) -> bool:
     return (
         isinstance(value, tuple)
-        and len(value) == 4
+        and len(value) == 6
         and all(isinstance(item, str) and item for item in value)
+        and value[1].startswith("sha256:")
+        and len(value[1]) == 71
+        and all(character in "0123456789abcdef" for character in value[1][7:])
     )
+
+
+def _provider_binding(manifest: RunManifest) -> tuple[str, str]:
+    provider_contract = manifest.to_json_dict()["provider_contract"]
+    if not isinstance(provider_contract, dict):
+        raise ReV2ControllerError("manifest provider contract is not canonical")
+    return str(provider_contract["provider"]), content_digest(provider_contract)
 
 
 def _terminal_result(
@@ -788,6 +891,7 @@ def _flock(fd: int, operation: int) -> None:
 __all__ = (
     "DeterministicInventoryExecutor",
     "ExecutorKey",
+    "ExecutorRegistration",
     "ProcessIdentityFactory",
     "ReV2Controller",
     "ReV2ControllerError",

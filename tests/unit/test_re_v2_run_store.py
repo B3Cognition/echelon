@@ -37,7 +37,7 @@ def _manifest(*, run_id: str) -> RunManifest:
             result_contract_retry_limit=1,
         ),
         provider_contract={"provider": "fake"},
-        artifact_policy_versions={"L0": "inventory-v1"},
+        artifact_policy_versions={"L0": "egr-164-v1"},
         parent_run_id=None,
     )
 

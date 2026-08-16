@@ -42,6 +42,9 @@ OBSERVED = "2026-08-14T12:00:01Z"
 PERSISTED = "2026-08-14T12:00:02Z"
 CERTIFIED = "2026-08-14T12:00:03Z"
 PROCESS_START = "linux:fixture-start"
+POLICY_VERSION = "egr-164-v1"
+PROVIDER_CONTRACT = {"provider": "fixture"}
+PROVIDER_CONTRACT_HASH = content_digest(PROVIDER_CONTRACT)
 
 
 class DeadInspector:
@@ -98,12 +101,14 @@ class FakeProviderExecutor(WorkExecutor):
         timed_out: bool = False,
         result_contract_valid: bool = True,
         provider_name: str = "fixture",
+        provider_contract_hash: str = PROVIDER_CONTRACT_HASH,
     ) -> None:
         self.root = root
         self.token_usage = token_usage
         self.timed_out = timed_out
         self.result_contract_valid = result_contract_valid
         self.provider_name = provider_name
+        self.provider_contract_hash = provider_contract_hash
         self.calls: list[tuple[Path, WorkItem, DispatchLease]] = []
 
     def execute(
@@ -144,7 +149,9 @@ def _template(
         layer=layer,
         producer_id=producer,
         producer_protocol_version="v1",
-        layer_policy_hash=content_digest(f"policy-{kind}".encode()),
+        layer_policy_hash=content_digest(
+            {"artifact_kind": kind, "policy_version": POLICY_VERSION}
+        ),
         required_template_ids=dependencies,
         verifier_id="fixture-verifier",
         verifier_version="v1",
@@ -190,9 +197,9 @@ def _context(
             semantic_repair_round_limit=2,
             result_contract_retry_limit=2,
         ),
-        provider_contract={"provider": "fixture"},
+        provider_contract=PROVIDER_CONTRACT,
         artifact_policy_versions={
-            template.layer: template.producer_protocol_version
+            template.layer: POLICY_VERSION
             for template in templates
         },
         parent_run_id=None,
@@ -241,8 +248,10 @@ def _identity_factory(
     )
 
 
-def _registry_key(template: WorkTemplate) -> tuple[str, str, str, str]:
+def _registry_key(template: WorkTemplate) -> tuple[str, str, str, str, str, str]:
     return (
+        "fixture",
+        PROVIDER_CONTRACT_HASH,
         template.producer_id,
         template.producer_protocol_version,
         template.layer,
@@ -255,17 +264,9 @@ def _controller(
     *,
     executor: WorkExecutor | None = None,
 ) -> ReV2Controller:
-    registry = (
-        None
-        if executor is None
-        else {
-            _registry_key(template): executor
-            for template in context.graph.templates
-        }
-    )
     return ReV2Controller(
         context,
-        executor_registry=registry,
+        executor=executor,
         process_inspector=DeadInspector(),
         process_identity_factory=_identity_factory,
         clock=lambda: NOW,
@@ -366,6 +367,8 @@ def test_executor_registry_requires_the_exact_work_protocol_tuple(
     context = _context(tmp_path, (_template("inventory", goal="inventory"),))
     executor = FakeProviderExecutor(tmp_path)
     wrong_key = (
+        "fixture",
+        PROVIDER_CONTRACT_HASH,
         "fixture-producer",
         "wrong-protocol",
         "L0",
@@ -383,9 +386,10 @@ def test_executor_registry_requires_the_exact_work_protocol_tuple(
 
     assert result.status == "paused"
     assert result.reason_code == "producer_not_registered"
+    events = context.event_store.replay()
     assert not any(
-        event.type == "dispatch_leased"
-        for event in context.event_store.replay()
+        event.type in {"work_planned", "dispatch_leased", "dispatch_started"}
+        for event in events
     )
 
 
@@ -398,7 +402,31 @@ def test_observation_provider_must_match_the_manifest_before_persistence(
     with pytest.raises(ReV2ControllerError, match="provider"):
         _controller(context, executor=executor).run_once()
 
+    assert executor.calls == []
+    assert not any(
+        event.type in {"work_planned", "dispatch_leased", "dispatch_started"}
+        for event in context.event_store.replay()
+    )
     assert context.candidate_store.discover() == ()
+
+
+def test_executor_contract_hash_must_match_before_planning_or_execution(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path, (_template("inventory", goal="inventory"),))
+    executor = FakeProviderExecutor(
+        tmp_path,
+        provider_contract_hash=content_digest({"provider": "fixture", "tier": 2}),
+    )
+
+    with pytest.raises(ReV2ControllerError, match="provider contract"):
+        _controller(context, executor=executor).run_once()
+
+    assert executor.calls == []
+    assert not any(
+        event.type in {"work_planned", "dispatch_leased", "dispatch_started"}
+        for event in context.event_store.replay()
+    )
 
 
 def test_resource_exhaustion_pauses_and_can_resume_after_authorization(
@@ -668,7 +696,7 @@ def test_restart_before_durable_candidate_dispatches_one_replacement(
 
     crashing = ReV2Controller(
         context,
-        executor_registry={_registry_key(context.graph.templates[0]): executor},
+        executor=executor,
         process_inspector=DeadInspector(),
         process_identity_factory=_identity_factory,
         clock=lambda: NOW,
@@ -714,7 +742,7 @@ def test_restart_after_durable_candidate_never_duplicates_work(
 
     crashing = ReV2Controller(
         context,
-        executor_registry={_registry_key(context.graph.templates[0]): executor},
+        executor=executor,
         process_inspector=DeadInspector(),
         process_identity_factory=_identity_factory,
         clock=lambda: NOW,

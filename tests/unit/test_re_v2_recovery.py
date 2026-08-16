@@ -43,6 +43,7 @@ OBSERVED = "2026-08-14T12:00:01Z"
 PERSISTED = "2026-08-14T12:00:02Z"
 CERTIFIED = "2026-08-14T12:00:03Z"
 PROCESS_START = "linux:fixture-start"
+POLICY_VERSION = "egr-164-v1"
 
 
 @dataclass
@@ -103,7 +104,12 @@ def _template(*, layer: str = "L0", protocol: str = "v1") -> WorkTemplate:
         layer=layer,
         producer_id="fixture-producer",
         producer_protocol_version=protocol,
-        layer_policy_hash=content_digest(b"fixture-policy"),
+        layer_policy_hash=content_digest(
+            {
+                "artifact_kind": "fixture-inventory",
+                "policy_version": POLICY_VERSION,
+            }
+        ),
         required_template_ids=(),
         verifier_id="fixture-verifier",
         verifier_version="v1",
@@ -171,7 +177,7 @@ def _context(tmp_path: Path) -> ReV2RunContext:
             result_contract_retry_limit=2,
         ),
         provider_contract={"provider": "fixture"},
-        artifact_policy_versions={"L0": "v1"},
+        artifact_policy_versions={"L0": POLICY_VERSION},
         parent_run_id=None,
     )
     paths = create_run_store(run_dir, manifest)
@@ -574,6 +580,7 @@ def test_paused_recovery_retires_eventless_dead_lease_without_attempt_charge(
     assert len(retired) == 1
     assert retired[0].payload == {
         "dispatch_id": lease.dispatch_id,
+        "lease_id": lease.lease_id,
         "reason": "dead process without a committed candidate",
         "work_item_id": item.work_item_id,
     }
@@ -600,6 +607,7 @@ def test_recovery_rejects_retirement_event_for_a_different_work_item(
         "dispatch_lease_retired",
         {
             "dispatch_id": lease.dispatch_id,
+            "lease_id": lease.lease_id,
             "reason": "forged retirement",
             "work_item_id": content_digest(b"different-work-item"),
         },
@@ -612,6 +620,118 @@ def test_recovery_rejects_retirement_event_for_a_different_work_item(
             process_inspector=RecordingInspector({}),
             clock=lambda: CERTIFIED,
         )
+
+
+def test_recovery_rejects_retirement_with_an_altered_lease_id(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path)
+    _start_run(context)
+    item = _work_item(
+        context.snapshot.snapshot_id,
+        context.manifest.partition_manifest_id,
+    )
+    lease = context.candidate_store.begin(
+        item,
+        _identity(),
+        dispatch_id="dispatch-altered-retirement",
+        leased_at=NOW,
+    )
+    context.event_store.append(
+        "dispatch_lease_retired",
+        {
+            "dispatch_id": lease.dispatch_id,
+            "lease_id": content_digest(b"altered-lease"),
+            "reason": "forged retirement",
+            "work_item_id": lease.work_item_id,
+        },
+        occurred_at=NOW,
+    )
+
+    with pytest.raises(ReV2RecoveryError, match="retirement|lease"):
+        recover_run(
+            context,
+            process_inspector=RecordingInspector({}),
+            clock=lambda: CERTIFIED,
+        )
+
+
+def test_recovery_inspects_and_rejects_an_exact_retired_live_lease(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path)
+    _start_run(context)
+    item = _work_item(
+        context.snapshot.snapshot_id,
+        context.manifest.partition_manifest_id,
+    )
+    lease = context.candidate_store.begin(
+        item,
+        _identity(),
+        dispatch_id="dispatch-retired-live",
+        leased_at=NOW,
+    )
+    context.event_store.append(
+        "dispatch_lease_retired",
+        {
+            "dispatch_id": lease.dispatch_id,
+            "lease_id": lease.lease_id,
+            "reason": "claimed dead",
+            "work_item_id": lease.work_item_id,
+        },
+        occurred_at=NOW,
+    )
+    inspector = RecordingInspector({1234: ProcessState.SAME_PROCESS_LIVE})
+
+    with pytest.raises(ReV2RecoveryError, match="still running"):
+        recover_run(context, process_inspector=inspector, clock=lambda: CERTIFIED)
+
+    assert inspector.calls == [lease.process_identity]
+
+
+def test_exact_dead_retirement_remains_idempotent_and_inspected(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path)
+    _start_run(context)
+    item = _work_item(
+        context.snapshot.snapshot_id,
+        context.manifest.partition_manifest_id,
+    )
+    lease = context.candidate_store.begin(
+        item,
+        _identity(),
+        dispatch_id="dispatch-retired-dead",
+        leased_at=NOW,
+    )
+    context.event_store.append(
+        "dispatch_lease_retired",
+        {
+            "dispatch_id": lease.dispatch_id,
+            "lease_id": lease.lease_id,
+            "reason": "dead process without a committed candidate",
+            "work_item_id": lease.work_item_id,
+        },
+        occurred_at=NOW,
+    )
+    first_inspector = RecordingInspector({1234: ProcessState.DEAD})
+
+    first = recover_run(
+        context,
+        process_inspector=first_inspector,
+        clock=lambda: CERTIFIED,
+    )
+    first_events = first.events
+    second_inspector = RecordingInspector({1234: ProcessState.DEAD})
+    second = recover_run(
+        context,
+        process_inspector=second_inspector,
+        clock=lambda: CERTIFIED,
+    )
+
+    assert first_inspector.calls == [lease.process_identity]
+    assert second_inspector.calls == [lease.process_identity]
+    assert second.events == first_events
 
 
 def test_recovery_reconstructs_eventless_committed_candidate_lifecycle(
@@ -767,22 +887,64 @@ def test_recovery_validates_snapshot_before_process_inspection(tmp_path: Path) -
     assert inspector.calls == []
 
 
-@pytest.mark.parametrize(
-    ("layer", "protocol"),
-    (("L0", "v2"), ("L1", "v1")),
-)
-def test_recovery_rejects_graph_protocols_outside_the_manifest_policy(
-    tmp_path: Path, layer: str, protocol: str
+def test_recovery_binds_policy_hash_independently_of_producer_protocol(
+    tmp_path: Path,
 ) -> None:
     context = _context(tmp_path)
     graph = validate_work_graph(
-        (_template(layer=layer, protocol=protocol),),
+        (_template(protocol="v2"),),
         requested_goals=context.manifest.requested_goals,
         source_snapshot_id=context.snapshot.snapshot_id,
         partition_manifest_id=context.manifest.partition_manifest_id,
     )
 
-    with pytest.raises(ReV2RecoveryError, match="protocol|policy"):
+    result = recover_run(
+        replace(context, graph=graph),
+        process_inspector=RecordingInspector({}),
+        clock=lambda: CERTIFIED,
+    )
+
+    assert result.manifest.artifact_policy_versions["L0"] == POLICY_VERSION
+
+
+def test_recovery_rejects_a_graph_layer_without_a_manifest_policy(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path)
+    graph = validate_work_graph(
+        (_template(layer="L1"),),
+        requested_goals=context.manifest.requested_goals,
+        source_snapshot_id=context.snapshot.snapshot_id,
+        partition_manifest_id=context.manifest.partition_manifest_id,
+    )
+
+    with pytest.raises(ReV2RecoveryError, match="no manifest artifact policy"):
+        recover_run(
+            replace(context, graph=graph),
+            process_inspector=RecordingInspector({}),
+            clock=lambda: CERTIFIED,
+        )
+
+
+def test_recovery_rejects_a_graph_policy_hash_mismatch(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    mismatched = replace(
+        _template(),
+        layer_policy_hash=content_digest(
+            {
+                "artifact_kind": "fixture-inventory",
+                "policy_version": "different-policy-v1",
+            }
+        ),
+    )
+    graph = validate_work_graph(
+        (mismatched,),
+        requested_goals=context.manifest.requested_goals,
+        source_snapshot_id=context.snapshot.snapshot_id,
+        partition_manifest_id=context.manifest.partition_manifest_id,
+    )
+
+    with pytest.raises(ReV2RecoveryError, match="policy hash"):
         recover_run(
             replace(context, graph=graph),
             process_inspector=RecordingInspector({}),
