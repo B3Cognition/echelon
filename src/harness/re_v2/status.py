@@ -10,7 +10,7 @@ from typing import Mapping
 from .budget import BudgetDecision, evaluate_budget
 from .events import EventRecord, EventStore
 from .ledger import Ledger, LedgerView, ObjectStore
-from .planner import PlanDecision, ReV2PlanError, build_initial_inventory_graph, plan_next
+from .planner import PlanDecision, WorkGraph, build_initial_inventory_graph, plan_next
 from .projection import rebuild_projection
 from .publication import load_published_v2_index
 from .run_store import ReV2Paths, ReV2RunStoreError, detect_re_engine, load_run_manifest
@@ -18,6 +18,38 @@ from .run_store import ReV2Paths, ReV2RunStoreError, detect_re_engine, load_run_
 
 class ReV2StatusError(RuntimeError):
     """Raised when authoritative v2 facts cannot be rendered safely."""
+
+
+_SUPPORTED_PROVIDER_CONTRACT = {
+    "provider": "deterministic-inventory",
+    "provider_protocol_version": "re-v2-l0-v1",
+    "result_contract_id": "deterministic-inventory-v1",
+}
+_SUPPORTED_ARTIFACT_POLICIES = {"L0": "egr-164-v1"}
+
+
+def validate_supported_v2_manifest(manifest: object, graph: WorkGraph) -> None:
+    """Refuse immutable pins this EGR-164 binary cannot execute exactly."""
+    requested_goals = tuple(getattr(manifest, "requested_goals", ()))
+    if requested_goals != graph.requested_goals:
+        raise ReV2StatusError(
+            "unsupported pinned requested goals "
+            f"{requested_goals!r}; supported goals are {graph.requested_goals!r}"
+        )
+    artifact_policies = dict(getattr(manifest, "artifact_policy_versions", {}))
+    if artifact_policies != _SUPPORTED_ARTIFACT_POLICIES:
+        raise ReV2StatusError(
+            "unsupported pinned artifact policies "
+            f"{artifact_policies!r}; supported policies are "
+            f"{_SUPPORTED_ARTIFACT_POLICIES!r}"
+        )
+    provider_contract = dict(getattr(manifest, "provider_contract", {}))
+    if provider_contract != _SUPPORTED_PROVIDER_CONTRACT:
+        raise ReV2StatusError(
+            "unsupported pinned RE v2 provider contract "
+            f"{provider_contract!r}; supported contract is "
+            f"{_SUPPORTED_PROVIDER_CONTRACT!r}"
+        )
 
 
 def render_v2_status(run_dir: Path, *, as_json: bool = False) -> str:
@@ -32,6 +64,7 @@ def render_v2_status(run_dir: Path, *, as_json: bool = False) -> str:
             manifest.source_snapshot_id,
             manifest.partition_manifest_id,
         )
+        validate_supported_v2_manifest(manifest, graph)
         supported_verifiers = {
             template.verifier_id: template.verifier_version
             for template in graph.templates
@@ -67,20 +100,17 @@ def render_v2_status(run_dir: Path, *, as_json: bool = False) -> str:
 
 
 def _plan(
-    graph: object,
+    graph: WorkGraph,
     requested_goals: tuple[str, ...],
     ledger: LedgerView,
     budget: BudgetDecision,
-) -> PlanDecision | None:
-    try:
-        return plan_next(  # type: ignore[arg-type]
-            graph,
-            ledger,
-            budget,
-            requested_goals=requested_goals,
-        )
-    except ReV2PlanError:
-        return None
+) -> PlanDecision:
+    return plan_next(
+        graph,
+        ledger,
+        budget,
+        requested_goals=requested_goals,
+    )
 
 
 def _status_document(
@@ -91,8 +121,8 @@ def _status_document(
     ledger: LedgerView,
     projection: Mapping[str, object],
     budget: BudgetDecision,
-    plan: PlanDecision | None,
-    graph: object,
+    plan: PlanDecision,
+    graph: WorkGraph,
 ) -> dict[str, object]:
     raw_state = str(projection["state"])
     status = (
@@ -103,17 +133,23 @@ def _status_document(
     reason_code, reason = _reason(events, status)
     next_action = _next_action(status, reason_code, reason)
     publication = load_published_v2_index(run_dir.resolve().parent.parent)
-    explanations = tuple(plan.explanations.values()) if plan is not None else ()
+    explanations = tuple(plan.explanations.values())
     accepted = tuple(ledger.accepted_artifacts.values())
     certifications = tuple(ledger.certifications.values())
-    templates = tuple(getattr(graph, "templates", ()))
+    templates = graph.templates
     layers: dict[str, dict[str, object]] = {}
     artifact_policies = getattr(manifest, "artifact_policy_versions")
     for layer in sorted(artifact_policies):
-        accepted_count = sum(
-            receipt.artifact_key.layer == layer for receipt in accepted
+        layer_templates = tuple(
+            template for template in templates if template.layer == layer
         )
-        required_count = sum(template.layer == layer for template in templates)
+        accepted_count = sum(
+            plan.explanations[template.template_id].action == "reuse"
+            and plan.explanations[template.template_id].reason_code
+            == "accepted_exact_artifact"
+            for template in layer_templates
+        )
+        required_count = len(layer_templates)
         layer_status = (
             "complete"
             if required_count > 0 and accepted_count >= required_count
@@ -123,12 +159,13 @@ def _status_document(
         )
         layers[layer] = {
             "accepted_artifacts": accepted_count,
+            "required_artifacts": required_count,
             "status": layer_status,
         }
 
     current_work_item_id = projection.get("current_work_item_id")
     next_work_item_id = (
-        plan.ready[0].work_item_id if plan is not None and plan.ready else None
+        plan.ready[0].work_item_id if plan.ready else None
     )
     return {
         "artifact_counts": {
@@ -211,12 +248,17 @@ def _resource_budget(used: int, authorized: int | None) -> dict[str, int | None]
 def _attempt_budget(
     used_by_work_item: Mapping[str, int], authorized: int
 ) -> dict[str, object]:
-    highest = max(used_by_work_item.values(), default=0)
     return {
-        "authorized": authorized,
-        "remaining": max(0, authorized - highest),
-        "used": sum(used_by_work_item.values()),
-        "used_by_work_item": dict(sorted(used_by_work_item.items())),
+        "aggregate_used": sum(used_by_work_item.values()),
+        "authorized_per_work_item": authorized,
+        "by_work_item": {
+            work_item_id: {
+                "authorized": authorized,
+                "remaining": max(0, authorized - used),
+                "used": used,
+            }
+            for work_item_id, used in sorted(used_by_work_item.items())
+        },
     }
 
 
@@ -290,7 +332,7 @@ def _render_human(status: Mapping[str, object]) -> str:
     ):
         value = budgets[key]
         assert isinstance(value, Mapping)
-        lines.append(f"  {key}: {_used_authorized(value)}")
+        lines.append(f"  {key}: {_attempts_text(value)}")
     artifact_counts = status["artifact_counts"]
     plan_counts = status["plan_counts"]
     assert isinstance(artifact_counts, Mapping) and isinstance(plan_counts, Mapping)
@@ -320,7 +362,8 @@ def _layers_text(value: object) -> str:
     if not isinstance(value, Mapping) or not value:
         return "none"
     return ", ".join(
-        f"{layer}={details['status']} ({details['accepted_artifacts']} accepted)"
+        f"{layer}={details['status']} "
+        f"({details['accepted_artifacts']}/{details['required_artifacts']} accepted)"
         for layer, details in value.items()
         if isinstance(details, Mapping)
     )
@@ -331,6 +374,23 @@ def _used_authorized(value: Mapping[str, object]) -> str:
     return f"{value['used']} / {authorized if authorized is not None else 'unlimited'}"
 
 
+def _attempts_text(value: Mapping[str, object]) -> str:
+    by_work_item = value["by_work_item"]
+    assert isinstance(by_work_item, Mapping)
+    item_text = ", ".join(
+        (
+            f"{work_item_id}={details['used']}/{details['authorized']} "
+            f"({details['remaining']} remaining)"
+        )
+        for work_item_id, details in by_work_item.items()
+        if isinstance(details, Mapping)
+    ) or "none"
+    return (
+        f"aggregate used={value['aggregate_used']}; authorized per work item="
+        f"{value['authorized_per_work_item']}; work items={item_text}"
+    )
+
+
 def _canonical_utc_now() -> str:
     return (
         datetime.now(timezone.utc)
@@ -339,4 +399,8 @@ def _canonical_utc_now() -> str:
     )
 
 
-__all__ = ("ReV2StatusError", "render_v2_status")
+__all__ = (
+    "ReV2StatusError",
+    "render_v2_status",
+    "validate_supported_v2_manifest",
+)

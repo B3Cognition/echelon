@@ -10450,17 +10450,15 @@ def _re_v2_context(project_root: Path, run_dir: Path) -> object:
     from harness.re_v2.planner import build_initial_inventory_graph
     from harness.re_v2.recovery import ReV2RunContext
     from harness.re_v2.run_store import ReV2Paths, load_run_manifest
+    from harness.re_v2.status import validate_supported_v2_manifest
 
     manifest = load_run_manifest(run_dir)
     paths = ReV2Paths.for_run(run_dir)
-    snapshot = _load_re_v2_snapshot(project_root, manifest)
     graph = build_initial_inventory_graph(
         manifest.source_snapshot_id, manifest.partition_manifest_id
     )
-    if graph.requested_goals != manifest.requested_goals:
-        raise ValueError(
-            "pinned RE v2 goals are not registered by this Echelon version"
-        )
+    validate_supported_v2_manifest(manifest, graph)
+    snapshot = _load_re_v2_snapshot(project_root, manifest)
     objects = ObjectStore(paths.objects)
     ledger = Ledger(
         paths,

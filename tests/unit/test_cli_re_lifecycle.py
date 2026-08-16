@@ -1173,3 +1173,106 @@ def test_re_v2_unsupported_protocol_reports_recorded_values_before_v1(
     error = capsys.readouterr().err
     assert "re-v2" in error
     assert "9.9" in error
+
+
+def _create_v2_run_with_provider_contract(
+    project_root: Path,
+    snapshot_root: Path,
+    provider_contract: dict[str, object],
+) -> Path:
+    from harness.re_v2.canonical import content_digest
+    from harness.re_v2.model import BudgetPolicy, RunManifest
+    from harness.re_v2.run_store import create_run_store
+    from harness.re_v2.snapshot import capture_source_snapshot
+
+    snapshot = capture_source_snapshot(
+        project_root,
+        snapshot_root,
+        exclusions=(".echelon/cache", "re/.cache", "runs"),
+    )
+    run_dir = project_root / "runs" / "re-20260814-130000-000001"
+    manifest = RunManifest(
+        schema_version=1,
+        engine="re-v2",
+        engine_protocol_version="2.0",
+        run_id=run_dir.name,
+        created_at="2026-08-14T13:00:00Z",
+        source_snapshot_id=snapshot.snapshot_id,
+        source_snapshot_kind=snapshot.kind,
+        partition_manifest_id=content_digest(b"provider-pin-partitions"),
+        requested_goals=("inventory",),
+        initial_budget_policy=BudgetPolicy(
+            token_limit=5_000_000,
+            active_ms_limit=10_800_000,
+            provider_attempt_limit=1,
+            artifact_generation_attempt_limit=1,
+            semantic_repair_round_limit=0,
+            result_contract_retry_limit=0,
+        ),
+        provider_contract=provider_contract,
+        artifact_policy_versions={"L0": "egr-164-v1"},
+        parent_run_id=None,
+    )
+    create_run_store(run_dir, manifest)
+    (project_root / "runs" / ".current-re").write_text(
+        run_dir.name + "\n", encoding="utf-8"
+    )
+    return run_dir
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "provider_contract",
+    (
+        {
+            "provider": "deterministic-inventory",
+            "provider_protocol_version": "future-l0",
+            "result_contract_id": "deterministic-inventory-v1",
+        },
+        {
+            "provider": "deterministic-inventory",
+            "result_contract_id": "deterministic-inventory-v1",
+        },
+        {
+            "provider": "deterministic-inventory",
+            "provider_protocol_version": "re-v2-l0-v1",
+            "result_contract_id": "future-result",
+        },
+        {
+            "provider": "deterministic-inventory",
+            "provider_protocol_version": "re-v2-l0-v1",
+        },
+    ),
+)
+def test_re_v2_rejects_nonexact_provider_contract_before_any_run_event(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    provider_contract: dict[str, object],
+) -> None:
+    from echelon.cli import _cmd_re_continue
+    from harness.re_v2.run_store import ReV2Paths
+
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname = 'fixture'\nversion = '0.1.0'\n",
+        encoding="utf-8",
+    )
+    external_home = tmp_path.parent / f"{tmp_path.name}-provider-pin-home"
+    monkeypatch.setenv("ECHELON_HOME", str(external_home))
+    run_dir = _create_v2_run_with_provider_contract(
+        tmp_path,
+        external_home / "re-v2" / "snapshots",
+        provider_contract,
+    )
+    paths = ReV2Paths.for_run(run_dir)
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(SystemExit) as exc:
+        _cmd_re_continue([])
+
+    assert exc.value.code == 2
+    assert "unsupported pinned RE v2 provider contract" in capsys.readouterr().err
+    assert not paths.events.exists()
+    assert not paths.ledger.exists()
+    assert not paths.candidates.exists()
+    assert not (paths.root / ".execution").exists()
