@@ -11,6 +11,7 @@ from harness.prosaic_prompt_loader import ProsaicCommandArtifact
 from harness.run_summary import (
     RunSummaryContext,
     SummaryAgent,
+    _contradicts_terminal_truth,
     summarize_run,
     summarize_run_for_cli,
 )
@@ -402,6 +403,13 @@ def test_model_cannot_duplicate_deterministic_next_step(tmp_path: Path) -> None:
         ("blocked", (), "No work remains."),
         ("failed", (), "Nothing remains to do."),
         ("incomplete", (), "There is no work left."),
+        ("blocked", (), "There is nothing left to do."),
+        ("failed", (), "There was nothing left to do."),
+        ("incomplete", (), "There are no tasks remaining."),
+        ("blocked", (), "There were zero work items left."),
+        ("failed", (), "No work remains to be done."),
+        ("incomplete", (), "There is no work to do."),
+        ("blocked", (), "Nothing remains to be done."),
         ("blocked", (), "All requested work is finished."),
         ("blocked", ("Verification: failed.",), "All tests passed."),
         ("failed", ("Verification: blocked.",), "Every check succeeded."),
@@ -423,6 +431,8 @@ def test_model_cannot_duplicate_deterministic_next_step(tmp_path: Path) -> None:
         ),
         ("failed", ("Verification: failed.",), "Testing succeeded."),
         ("blocked", ("Verification: blocked.",), "No tests failed."),
+        ("failed", ("Verification: failed.",), "No tests have failed."),
+        ("blocked", ("Verification: blocked.",), "There were no test failures."),
         (
             "incomplete",
             ("Verification: incomplete.",),
@@ -434,6 +444,63 @@ def test_model_cannot_duplicate_deterministic_next_step(tmp_path: Path) -> None:
             "Validation found no failures.",
         ),
         ("blocked", (), "Checks reported zero failures."),
+        ("failed", ("Verification: failed.",), "Our tests passed."),
+        ("blocked", ("Verification: blocked.",), "Both tests passed."),
+        (
+            "failed",
+            ("Verification: failed.",),
+            "All of our tests have passed.",
+        ),
+        (
+            "blocked",
+            ("Verification: blocked.",),
+            "Both of the checks were passing.",
+        ),
+        ("failed", ("Verification: failed.",), "Our tests all passed."),
+        (
+            "blocked",
+            ("Verification: blocked.",),
+            "All our tests passed successfully in the sandbox.",
+        ),
+        (
+            "failed",
+            ("Verification: failed.",),
+            "Both checks are now green.",
+        ),
+        (
+            "incomplete",
+            ("Verification: incomplete.",),
+            "Every validation check has been passing throughout deployment.",
+        ),
+        ("incomplete", ("Verification: incomplete.",), "My checks have passed."),
+        (
+            "blocked",
+            ("Verification: unavailable.",),
+            "Those regression tests are passing.",
+        ),
+        ("failed", ("Verification: failed.",), "Each validation check has passed."),
+        ("blocked", ("Verification: blocked.",), "Every unit test passes."),
+        (
+            "incomplete",
+            ("Verification: incomplete.",),
+            "Their deployment checks succeeded.",
+        ),
+        ("failed", ("Verification: failed.",), "There are no check failures."),
+        (
+            "incomplete",
+            ("Verification: incomplete.",),
+            "Neither of our tests has failed.",
+        ),
+        ("blocked", ("Verification: blocked.",), "No tests are failing."),
+        ("failed", ("Verification: failed.",), "No tests have ever failed."),
+        ("blocked", ("Verification: blocked.",), "Testing did not fail."),
+        ("incomplete", ("Verification: incomplete.",), "The checks are not failing."),
+        ("failed", ("Verification: failed.",), "There were no failed checks."),
+        (
+            "blocked",
+            ("Verification: unavailable.",),
+            "There have been zero test failures.",
+        ),
     ),
 )
 def test_summary_rejects_generic_unsupported_success_verdicts(
@@ -479,6 +546,12 @@ def test_summary_rejects_generic_unsupported_success_verdicts(
         "Wrote checks passing Unicode lookalikes into the serializer.",
         "Updated validation passing escaped data through the boundary.",
         "Implemented tests passing structured results to the reporter.",
+        "Testing passed JSON values into the renderer.",
+        "Validation passed escaped input into the parser.",
+        "Our tests passed structured results to the reporter.",
+        "Both checks passed payloads through the adapter.",
+        "Testing has passed JSON values into the renderer.",
+        "Testing is passing JSON values into the renderer.",
     ),
 )
 def test_summary_preserves_completed_work_narration_without_success_verdicts(
@@ -507,6 +580,85 @@ def test_summary_preserves_completed_work_narration_without_success_verdicts(
     )
 
     assert narration in summary
+
+
+@pytest.mark.parametrize(
+    ("status", "facts", "narrative"),
+    (
+        ("blocked", (), "Implemented the renderer. No work remains."),
+        (
+            "failed",
+            ("Verification: failed.",),
+            "Recorded diagnostics. All tests passed.",
+        ),
+        ("incomplete", (), "Updated the parser; there was nothing left to do."),
+        (
+            "blocked",
+            ("Verification: unavailable.",),
+            "Collected logs, but our tests have passed.",
+        ),
+        (
+            "failed",
+            ("Verification: failed.",),
+            "Recorded diagnostics. There were no check failures.",
+        ),
+        (
+            "blocked",
+            ("Verification: blocked.",),
+            "Recorded diagnostics: Both of our checks have passed.",
+        ),
+        (
+            "failed",
+            ("Verification: failed.",),
+            "Recorded diagnostics and regression tests passed.",
+        ),
+        (
+            "incomplete",
+            ("Verification: incomplete.",),
+            "Recorded diagnostics while our smoke tests have passed.",
+        ),
+    ),
+)
+def test_truth_classifier_segments_later_sentence_and_clause_claims(
+    tmp_path: Path,
+    status: str,
+    facts: tuple[str, ...],
+    narrative: str,
+) -> None:
+    context = RunSummaryContext(
+        project_root=tmp_path,
+        command="echelon delivery run",
+        task="Classify complete truth claims.",
+        status=status,
+        facts=facts,
+    )
+
+    assert _contradicts_terminal_truth((narrative,), context)
+
+
+@pytest.mark.parametrize(
+    "narrative",
+    (
+        "Implemented the renderer. Added tests passing JSON values into it.",
+        "Recorded diagnostics. Testing passed JSON values into the renderer.",
+        "Updated the parser; validation passed escaped input into the boundary.",
+        "Recorded diagnostics and testing passed JSON values into the renderer.",
+        "Updated the parser; our tests have passed structured results to the reporter.",
+    ),
+)
+def test_truth_classifier_preserves_later_transitive_narration(
+    tmp_path: Path,
+    narrative: str,
+) -> None:
+    context = RunSummaryContext(
+        project_root=tmp_path,
+        command="echelon delivery run",
+        task="Classify complete truth claims.",
+        status="blocked",
+        facts=("Verification: failed.",),
+    )
+
+    assert not _contradicts_terminal_truth((narrative,), context)
 
 
 @pytest.mark.parametrize(

@@ -346,96 +346,209 @@ def _expected_verification(context: RunSummaryContext) -> str:
     return next(iter(verdicts)) if len(verdicts) == 1 else ""
 
 
-def _asserts_terminal_success(clause: str) -> bool:
-    subject = (
-        r"\b(?:task|run|delivery|spec(?:ification)?|work|request|effort|"
-        r"operation|process|job|everything|it)\b"
-    )
-    verdict = (
-        r"(?:\b(?:succeeded|converged)\b|"
-        r"\b(?:completed|finished)(?:\s+successfully)?[.!?]?\s*$|"
-        r"\b(?:is|was)\s+(?:complete|done|successful|finished)\b)"
-    )
-    claim_boundary = (
-        r"(?:^\s*|[,;]\s*(?:and\s+)?|\b(?:and|but|although|while)\s+)"
-    )
-    work_subject = (
-        r"(?:requested\s+)?(?:work|tasks?|items?|steps?|actions?|requests?)"
-    )
-    exhaustion_claim = re.search(
-        rf"{claim_boundary}(?:"
-        rf"(?:no|zero)\s+{work_subject}\s+"
-        r"(?:remains?|(?:is|are)\s+(?:left|remaining))|"
-        r"(?:nothing|none)\s+(?:remains?|(?:is|was)\s+left)"
-        r"(?:\s+to\s+do)?|"
-        rf"there\s+(?:is|are)\s+no\s+{work_subject}\s+"
-        r"(?:left|remaining)|"
-        rf"all\s+{work_subject}\s+(?:(?:is|are|was|were)\s+|"
-        r"(?:has|have)\s+been\s+)?(?:finished|completed|done))\b",
-        clause,
-        flags=re.IGNORECASE,
-    )
+_CLAIM_START = (
+    r"(?:(?:[a-z][a-z0-9_-]*\s+){1,3}(?:verification|testing|"
+    r"test\s+suite|check\s+suite|tests?|checks?|validation(?:\s+checks?)?)\b|"
+    r"(?:there|nothing|none|no|zero|all|both|each|every|either|neither|"
+    r"the|this|that|these|those|our|my|your|their|its|his|her|"
+    r"task|run|delivery|specification|spec|work|request|effort|operation|"
+    r"process|job|everything|it|verification|testing|validation|tests?|checks?|"
+    r"[a-z][a-z0-9_-]*['’]s)\b)"
+)
+_CLAIM_SPLIT_RE = re.compile(
+    rf"(?:[.!?][\"')\]]*\s+|;\s*|"
+    rf",\s*(?:and|but|although|while)\s+|"
+    rf":\s*(?={_CLAIM_START})|"
+    rf"\s+(?:and|but|although|while)\s+(?={_CLAIM_START}))",
+    flags=re.IGNORECASE,
+)
+_VERDICT_ADVERB = (
+    r"(?:successfully|cleanly|fully|completely|overall|again|now|already|"
+    r"today|yesterday|earlier|later|once|[a-z][a-z0-9-]*ly)"
+)
+_VERDICT_COMPLEMENT = (
+    r"(?:in|on|for|after|before|across|throughout|under|with|without)\s+[^.!?]+"
+)
+_COMPLETE_CLAIM_TAIL = (
+    rf"(?:\s+{_VERDICT_ADVERB})*(?:\s+{_VERDICT_COMPLEMENT})?[.!?]?"
+)
+
+
+def _claim_segments(value: str) -> tuple[str, ...]:
+    """Return sentence and explicit-clause units used for truth classification."""
+    segments: list[str] = []
+    for raw_segment in _CLAIM_SPLIT_RE.split(value):
+        segment = re.sub(
+            r"^\s*(?:and|but|although|while)\s+",
+            "",
+            raw_segment,
+            flags=re.IGNORECASE,
+        ).strip(" \t\r\n,;")
+        if segment:
+            segments.append(segment)
+    return tuple(segments)
+
+
+def _matches_complete_claim(pattern: str, clause: str) -> bool:
     return bool(
-        re.search(rf"{subject}.{{0,60}}{verdict}", clause, flags=re.IGNORECASE)
-        or exhaustion_claim
-        or re.search(
-            r"^\s*(?:(?:completed|finished)\s*(?:successfully)?|done|"
-            r"succeeded|successful)[.!?]?\s*$",
-            clause,
+        re.fullmatch(
+            rf"(?:{pattern}){_COMPLETE_CLAIM_TAIL}",
+            clause.strip(),
             flags=re.IGNORECASE,
         )
     )
 
 
-def _asserts_verification_success(clause: str) -> bool:
-    claim_boundary = (
-        r"(?:^\s*|[,;]\s*(?:and\s+)?|\b(?:and|but|although|while)\s+)"
+def _asserts_terminal_success(clause: str) -> bool:
+    terminal_subject = (
+        r"(?:(?:(?:all|both|the|this|that|our|my|your|their|its|his|her)\s+)?"
+        r"(?:(?:requested|assigned|entire|whole|current|final)\s+){0,2}"
+        r"(?:task|run|delivery|spec(?:ification)?|work|request|effort|"
+        r"operation|process|job)|everything|it)"
     )
-    subject = (
-        r"(?:(?:all|every|the|these|those)\s+)?"
-        r"(?:(?:regression|unit|integration|package|deployment|sandbox|"
-        r"automated|final|requested)\s+){0,2}"
+    predicate_adverbs = rf"(?:{_VERDICT_ADVERB}\s+)*"
+    terminal_predicate = (
+        r"(?:succeed(?:s|ed)?|converge(?:s|d)?|complete(?:s|d)?|"
+        r"finish(?:es|ed)?|"
+        rf"(?:has|have|had)\s+{predicate_adverbs}"
+        r"(?:succeeded|converged|completed|finished)|"
+        rf"(?:is|are|was|were|has\s+been|have\s+been|had\s+been)\s+"
+        rf"{predicate_adverbs}(?:complete|done|successful|finished|completed))"
+    )
+    work_subject = (
+        r"(?:requested\s+)?(?:work(?:\s+items?)?|tasks?|items?|steps?|"
+        r"actions?|requests?)"
+    )
+    state_auxiliary = (
+        r"(?:is|are|was|were|has\s+been|have\s+been|had\s+been)"
+    )
+    remaining_predicate = (
+        rf"(?:remain(?:s|ed)?|{state_auxiliary}\s+(?:left|remaining))"
+    )
+    remaining_complement = r"(?:\s+to\s+(?:do|be\s+(?:done|completed)))?"
+    exhaustion_claim = (
+        rf"(?:(?:no|zero)\s+{work_subject}\s+{remaining_predicate}"
+        rf"{remaining_complement}|"
+        rf"(?:nothing|none)\s+{remaining_predicate}{remaining_complement}|"
+        rf"there\s+{state_auxiliary}\s+(?:(?:no|zero)\s+{work_subject}"
+        rf"(?:\s+(?:left|remaining))?{remaining_complement}|"
+        r"nothing(?:\s+(?:left|remaining))?"
+        rf"{remaining_complement})|"
+        rf"all\s+{work_subject}\s+(?:(?:is|are|was|were)\s+|"
+        r"(?:has|have|had)\s+been\s+)?(?:finished|completed|done))"
+    )
+    return bool(
+        _matches_complete_claim(
+            rf"{terminal_subject}\s+{terminal_predicate}",
+            clause,
+        )
+        or _matches_complete_claim(exhaustion_claim, clause)
+        or _matches_complete_claim(
+            r"(?:(?:completed|finished)(?:\s+successfully)?|done|succeeded|"
+            r"successful)",
+            clause,
+        )
+    )
+
+
+def _asserts_verification_success(clause: str) -> bool:
+    if _is_work_action_clause(clause):
+        return False
+    subject_owner = (
+        r"(?:the|this|that|these|those|our|my|your|their|its|his|her|"
+        r"[a-z][a-z0-9_-]*['’]s)"
+    )
+    subject_nucleus = (
         r"(?:verification|testing|test\s+suite|check\s+suite|tests?|checks?|"
         r"validation(?:\s+checks?)?)"
     )
-    bare_subject = (
-        r"(?:(?:regression|unit|integration|package|deployment|sandbox|"
-        r"automated|final|requested)\s+){0,2}"
-        r"(?:test\s+suite|check\s+suite|tests?|checks?|verification|testing|"
-        r"validation(?:\s+checks?)?)"
+    subject_modifier = (
+        r"(?!(?:the|this|that|these|those|our|my|your|their|its|his|her|"
+        r"all|both|each|every|either|neither|none|no|zero|of)\b)"
+        r"[a-z][a-z0-9_-]*"
     )
+    subject_base = (
+        rf"(?:{subject_owner}\s+)?(?:{subject_modifier}\s+){{0,3}}?"
+        rf"{subject_nucleus}"
+    )
+    subject_quantifier = (
+        r"(?:(?:all|both|each|either)\s+(?:of\s+)?|every\s+)?"
+    )
+    subject = rf"{subject_quantifier}{subject_base}"
+    predicate_adverbs = rf"(?:{_VERDICT_ADVERB}|all)"
     positive_predicate = (
-        r"(?:all\s+)?(?:pass(?:ed|es)?|succeed(?:ed|s)?|"
-        r"completed\s+successfully)|"
-        r"(?:is|are|was|were)\s+(?:passing|green|successful|complete|done|clean)"
+        r"(?:(?:all|both)\s+)?(?:pass(?:es|ed)?|succeed(?:s|ed)?|"
+        r"completed\s+successfully|"
+        rf"(?:has|have|had)\s+(?:(?:{predicate_adverbs})\s+)*"
+        r"(?:passed|succeeded|completed\s+successfully)|"
+        rf"(?:is|are|was|were|has\s+been|have\s+been|had\s+been)\s+"
+        rf"(?:(?:{predicate_adverbs})\s+)*"
+        r"(?:passing|green|successful|complete|done|clean))"
     )
-    direct_verdict = re.search(
-        rf"{claim_boundary}{subject}\s+(?:{positive_predicate})\b",
+    direct_verdict = _matches_complete_claim(
+        rf"{subject}\s+{positive_predicate}",
         clause,
-        flags=re.IGNORECASE,
     )
-    no_failed_subject = re.search(
-        rf"{claim_boundary}(?:(?:no|zero)\s+{bare_subject}|"
-        rf"(?:none|not\s+one)\s+of\s+(?:the\s+)?{bare_subject})\s+"
-        r"(?:failed|was\s+unsuccessful|were\s+unsuccessful)\b",
+    failure_adverb = rf"(?:ever|yet|previously|currently|still|{_VERDICT_ADVERB})"
+    failed_predicate = (
+        rf"(?:(?:has|have|had)\s+)?(?:{failure_adverb}\s+)*failed|"
+        r"(?:is|are|was|were|has\s+been|have\s+been|had\s+been)\s+"
+        rf"(?:{failure_adverb}\s+)*(?:failing|unsuccessful)"
+    )
+    no_failed_subject = _matches_complete_claim(
+        rf"(?:(?:no|zero)\s+{subject_base}|"
+        rf"neither\s+(?:of\s+)?{subject_base}|"
+        rf"(?:none|not\s+one)\s+of\s+{subject_base})\s+"
+        rf"(?:{failed_predicate})",
         clause,
-        flags=re.IGNORECASE,
     )
-    no_failures_found = re.search(
-        rf"{claim_boundary}{subject}\s+"
-        r"(?:found|reported|showed|recorded|returned|had)\s+"
-        r"(?:no|zero)\s+(?:failures?|errors?)\b",
+    negated_failure_predicate = (
+        rf"(?:did\s+not\s+(?:{failure_adverb}\s+)*fail|"
+        rf"(?:has|have|had)\s+(?:not|never)\s+(?:{failure_adverb}\s+)*failed|"
+        r"(?:is|are|was|were|has\s+been|have\s+been|had\s+been)\s+not\s+"
+        rf"(?:{failure_adverb}\s+)*(?:failing|unsuccessful)|"
+        rf"never\s+(?:{failure_adverb}\s+)*failed)"
+    )
+    negated_failure = _matches_complete_claim(
+        rf"{subject}\s+{negated_failure_predicate}",
         clause,
-        flags=re.IGNORECASE,
     )
-    return bool(direct_verdict or no_failed_subject or no_failures_found)
+    failure_noun = (
+        rf"(?:(?:{subject_modifier}\s+){{0,2}}?"
+        r"(?:test|check|validation|verification)(?:\s+suite)?\s+failures?|"
+        r"failed\s+(?:tests?|checks?|validation\s+checks?))"
+    )
+    state_auxiliary = (
+        r"(?:is|are|was|were|has\s+been|have\s+been|had\s+been)"
+    )
+    no_failure_existence = _matches_complete_claim(
+        rf"there\s+{state_auxiliary}\s+(?:no|zero)\s+{failure_noun}",
+        clause,
+    )
+    no_failures_found = _matches_complete_claim(
+        rf"{subject}\s+(?:found|reported|showed|recorded|returned|had|"
+        r"detected|encountered)\s+(?:no|zero)\s+(?:failures?|errors?)",
+        clause,
+    )
+    return bool(
+        direct_verdict
+        or no_failed_subject
+        or negated_failure
+        or no_failure_existence
+        or no_failures_found
+    )
 
 
 def _contradicts_terminal_truth(
     bullets: tuple[str, ...],
     context: RunSummaryContext,
 ) -> bool:
-    joined = " ".join(bullets).casefold()
+    claims = tuple(
+        claim
+        for bullet in bullets
+        for claim in _claim_segments(bullet)
+    )
+    joined = " ".join(claims).casefold()
     status = context.status.casefold().strip()
     if status == "done" and re.search(
         r"\b(?:run|delivery|spec(?:ification)?|work)\b.{0,40}"
@@ -456,7 +569,7 @@ def _contradicts_terminal_truth(
         "interrupted",
         "budget_exhausted",
         "incomplete",
-    } and any(_asserts_terminal_success(line) for line in bullets):
+    } and any(_asserts_terminal_success(claim) for claim in claims):
         return True
     verification = _expected_verification(context)
     if verification == "passed" and re.search(
@@ -464,7 +577,7 @@ def _contradicts_terminal_truth(
     ):
         return True
     if verification != "passed" and any(
-        _asserts_verification_success(line) for line in bullets
+        _asserts_verification_success(claim) for claim in claims
     ):
         return True
     provider_limited = bool(context.provider_limit_message.strip())
@@ -482,7 +595,7 @@ def _contradicts_terminal_truth(
         return True
     debt = context.quality_debt_status == "accepted_with_debt"
     if debt and (
-        any(_asserts_specification_quality_success(line) for line in bullets)
+        any(_asserts_specification_quality_success(claim) for claim in claims)
         or re.search(r"\b(?:no|without)\b.{0,25}\b(?:quality\s+)?debt\b", joined)
     ):
         return True

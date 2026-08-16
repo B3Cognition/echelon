@@ -543,3 +543,268 @@ fallback, provider, CLI, delivery, Git-first restore, proportional repair,
 certificate/debt, or Tasks Lexicon behavior. No known blocker remains. Future
 new verdict grammar should be added as a structural subject/predicate form with
 both adversarial and action-narration controls.
+
+## Fix Round 2 — anchor truth to complete claims
+
+Round base: `f78529a23f15429b937f53f5acc4a72c34606942`
+
+### Findings and root cause
+
+Round 1 still treated each complete model bullet as the unit of truth rather
+than first separating its claims. Its boundary expression recognized the start
+of the bullet and selected conjunctions, but not a later sentence. Therefore
+`Implemented the renderer. No work remains.` and `Recorded diagnostics. All
+tests passed.` escaped classification.
+
+The verification subject grammar allowed only a small determiner set and
+simple finite predicates. Possessives, `both`, perfect auxiliaries, and
+existential failure nouns were not modeled, so claims such as `Our tests
+passed.`, `Both tests passed.`, `No tests have failed.`, and `There were no test
+failures.` were accepted against contradictory authority.
+
+Finally, the positive verification predicate stopped matching immediately
+after `passed` or `passing`. It did not require the predicate to finish the
+claim. Consequently, finite transitive narration such as `Testing passed JSON
+values into the renderer.` was treated as an unsupported verification verdict.
+
+The common root cause was lexical proximity without a complete-claim grammar:
+boundaries, subject structure, auxiliary structure, and predicate completion
+were each only partially represented.
+
+### Exact RED
+
+The initial Round 2 matrix combined the public strict-JSON path with direct
+classifier coverage for later sentences. The direct coverage is intentional:
+the public schema independently rejects multi-sentence bullet strings, while
+the truth classifier must still classify complete claims correctly if called
+with such input.
+
+```text
+.venv/bin/pytest tests/unit/test_run_summary.py::test_summary_rejects_generic_unsupported_success_verdicts tests/unit/test_run_summary.py::test_summary_preserves_completed_work_narration_without_success_verdicts tests/unit/test_run_summary.py::test_truth_classifier_segments_later_sentence_and_clause_claims tests/unit/test_run_summary.py::test_truth_classifier_preserves_later_transitive_narration -q
+```
+
+The exact public-path assertion lines were:
+
+```text
+assert claim not in summary
+assert narration in summary
+```
+
+They failed for these exact values:
+
+```text
+There is nothing left to do.
+There was nothing left to do.
+There were zero work items left.
+No tests have failed.
+There were no test failures.
+Our tests passed.
+Both tests passed.
+My checks have passed.
+Each validation check has passed.
+Their deployment checks succeeded.
+There are no check failures.
+There have been zero test failures.
+Testing passed JSON values into the renderer.
+Validation passed escaped input into the parser.
+```
+
+The exact direct-classifier assertion lines were:
+
+```text
+assert _contradicts_terminal_truth((narrative,), context)
+assert not _contradicts_terminal_truth((narrative,), context)
+```
+
+They failed for these exact values:
+
+```text
+Implemented the renderer. No work remains.
+Recorded diagnostics. All tests passed.
+Updated the parser; there was nothing left to do.
+Collected logs, but our tests have passed.
+Recorded diagnostics. There were no check failures.
+Updated the parser; validation passed escaped input into the boundary.
+```
+
+Exact command summary:
+
+```text
+20 failed, 35 passed in 0.52s
+```
+
+After the first structural implementation, a sibling expansion reproduced the
+remaining complement, post-subject quantifier, progressive negative, failure
+noun, and colon-boundary gaps. The exact command was the same four-node command
+above. The exact failing values were:
+
+```text
+No work remains to be done.
+There is no work to do.
+Our tests all passed.
+No tests are failing.
+There were no failed checks.
+Recorded diagnostics: Both of our checks have passed.
+```
+
+Exact command summary:
+
+```text
+6 failed, 60 passed in 0.41s
+```
+
+A final structural sibling expansion covered passive remaining-work
+complements, adverb-bearing perfect failures, explicit negated failure, and a
+modified verification subject after a coordinator. The exact command was again
+the same four-node command. The exact failing values were:
+
+```text
+Nothing remains to be done.
+No tests have ever failed.
+Testing did not fail.
+The checks are not failing.
+Recorded diagnostics and regression tests passed.
+```
+
+Exact command summary:
+
+```text
+5 failed, 72 passed in 0.41s
+```
+
+### Fix
+
+`_claim_segments` now separates sentence punctuation, semicolons, colons that
+introduce a recognizable claim, and coordinating clauses with recognizable
+terminal or verification subjects. Every terminal, verification, and
+specification-quality truth check receives those segments instead of the
+caller-ordered bullet as one lexical span.
+
+Terminal claims are full matches over a terminal subject and finite success
+predicate, or a structural remaining-work/exhaustion form. Present, past, and
+perfect existential auxiliaries are supported, as are no/zero work, nothing,
+none, and all-work forms. Direct-object continuations cannot complete the
+pattern.
+
+Verification claims use a composed grammar:
+
+- optional quantifiers, determiners, possessives, and bounded modifiers before
+  a verification/testing/test/check/validation nucleus;
+- simple, perfect, progressive, and copular positive predicates;
+- negative-failure subjects, negated failure predicates, no-failure reports,
+  and present/past/perfect existential failure nouns; and
+- a complete-claim tail that permits verdict adverbs and bounded prepositional
+  complements but not a bare direct object.
+
+Action-first clauses are still excluded from verification verdict
+classification. Full matching also preserves subject-first transitive controls:
+`Testing passed JSON values into the renderer.`, `Testing has passed JSON
+values into the renderer.`, `Testing is passing JSON values into the
+renderer.`, and possessive or quantified variants remain work narration because
+their direct objects prevent verdict completion.
+
+### Exact GREEN
+
+Focused truth and safe-control matrix:
+
+```text
+.venv/bin/pytest tests/unit/test_run_summary.py::test_summary_rejects_generic_unsupported_success_verdicts tests/unit/test_run_summary.py::test_summary_preserves_completed_work_narration_without_success_verdicts tests/unit/test_run_summary.py::test_truth_classifier_segments_later_sentence_and_clause_claims tests/unit/test_run_summary.py::test_truth_classifier_preserves_later_transitive_narration -q
+77 passed in 0.35s
+```
+
+Complete summary file, including every existing priority, sentinel, fallback,
+provider/debt, and safe-work regression:
+
+```text
+.venv/bin/pytest tests/unit/test_run_summary.py -q
+159 passed in 0.50s
+```
+
+Complete directly affected summary/CLI/skill files:
+
+```text
+.venv/bin/pytest tests/unit/test_run_summary.py tests/unit/test_cli_run_summary.py tests/unit/test_run_skill.py -q
+193 passed in 0.89s
+```
+
+Complete expanded summary/CLI/skill/orchestrator regressions:
+
+```text
+.venv/bin/pytest tests/unit/test_run_summary.py tests/unit/test_cli_run_summary.py tests/unit/test_cli_continue.py tests/unit/test_cli_resume_escalation_options.py tests/unit/test_cli_resume_spec_context.py tests/unit/test_cli_mode_args.py tests/unit/test_cli_status.py tests/unit/test_core_cli_run_discovery.py tests/unit/test_cli_run_dir_gitignore.py tests/unit/test_run_skill.py tests/unit/test_orchestrator.py -q
+340 passed in 2.11s
+```
+
+Provider regressions:
+
+```text
+.venv/bin/pytest tests/unit/test_ai_cli_backend.py tests/unit/test_llm_provider.py tests/unit/test_provider.py tests/unit/test_squad_provider.py tests/kernel/test_squad_provider.py tests/unit/test_topology_provider.py tests/unit/test_spec_telemetry_provider.py -q
+301 passed in 1.50s
+```
+
+Package/deployment/runtime prompt regressions:
+
+```text
+.venv/bin/pytest tests/unit/test_prosaic_package_install.py tests/unit/test_workspace_init_deploy_runtime.py tests/kernel/test_phase_graph.py tests/unit/test_prosaic_prompt_loader.py tests/unit/test_prosaic_provider_deployment.py tests/unit/test_prosaic_constitution_runtime.py tests/unit/test_skill_loader_prosaic.py -q
+164 passed in 78.84s (0:01:18)
+```
+
+Repository runner:
+
+```text
+bash tests/run-all.sh
+Total: 1649 passed, 0 failed, 0 skipped
+OVERALL: PASS
+```
+
+Bundle validation:
+
+```text
+bash scripts/bash/dry-run.sh
+Bundle validation passed: 9 checks
+```
+
+Compilation and diff hygiene:
+
+```text
+.venv/bin/python -m compileall -q src tests/unit tests/integration
+exit 0
+
+git diff --check
+exit 0
+```
+
+Post-commit status hygiene:
+
+```text
+git status --short
+(no output)
+```
+
+### Round changed files, self-review, compatibility, and concerns
+
+- `src/harness/run_summary.py` — added sentence/explicit-clause segmentation
+  and replaced proximity verdict matching with complete terminal and
+  verification claim grammars.
+- `tests/unit/test_run_summary.py` — expanded public adversarial and safe
+  narration matrices and added direct later-sentence/clause classification
+  controls.
+- `.superpowers/sdd/2026-08-14-git-first-candidate-restore/summary-final-fix-report.md`
+  — appended exact Round 2 RED, GREEN, compatibility, and hygiene evidence.
+
+Self-review confirmed that every requested sentence is exercised through the
+public strict-JSON rendering path where the schema permits it. Direct tests
+exercise later-sentence input without weakening the established single-sentence
+model-output schema. The grammar models claim components rather than complete
+forbidden phrases, and every broadened positive form has an action-first or
+direct-object safe control. Existing priority selection, 12-KiB cap, sentinel
+escaping, deterministic fallback, provider/debt truth, and output composition
+remain green.
+
+The implementation is viable within the existing architecture: it changes no
+evidence schema, packet budget, prompt contract, provider integration, or
+output shape. It changes no Git-first restore, proportional repair,
+certificate/debt, or Tasks Lexicon behavior. The only compatibility effect is
+that unsupported terminal and verification claims with structurally equivalent
+subjects, auxiliaries, or existential forms now select the existing
+deterministic fallback as intended. No blocker or known in-scope concern
+remains.
