@@ -470,6 +470,41 @@ def test_contract_retries_require_fresh_invalid_contract_observations(
     assert store.replay()[-1].payload["attempt_index"] == 2
 
 
+def test_invalid_contract_retry_lease_must_remain_on_eligible_work_item(
+    tmp_path: Path,
+) -> None:
+    store = event_store(tmp_path)
+    work_a = digest("work-a")
+    work_b = digest("work-b")
+    store.append("run_created", {"run_manifest_id": digest("run")}, occurred_at=NOW)
+    start_attempt(
+        store,
+        work_item_id=work_a,
+        dispatch_id="dispatch-1",
+        attempt_kind="initial_generation",
+        attempt_index=1,
+    )
+    observe(store, work_item_id=work_a, dispatch_id="dispatch-1", contract_valid=False)
+    before_rejected_lease = store.replay()
+
+    with pytest.raises(ReV2EventError, match="eligible work item"):
+        store.append(
+            "dispatch_leased",
+            {"dispatch_id": "dispatch-2", "work_item_id": work_b},
+            occurred_at=NOW,
+        )
+    assert store.replay() == before_rejected_lease
+
+    start_attempt(
+        store,
+        work_item_id=work_a,
+        dispatch_id="dispatch-2",
+        attempt_kind="result_contract_retry",
+        attempt_index=1,
+    )
+    assert store.replay()[-1].payload["work_item_id"] == work_a
+
+
 def test_valid_contract_or_candidate_rejection_cannot_reuse_an_older_retry_eligibility(
     tmp_path: Path,
 ) -> None:

@@ -136,9 +136,9 @@ def test_unknown_usage_is_not_reported_as_exact_zero(tmp_path) -> None:
 def test_attempt_kinds_charge_only_their_durable_dispatch_starts(tmp_path) -> None:
     store = store_with_run(tmp_path)
     start(store, dispatch_id="dispatch-1", kind="initial_generation", index=1)
-    observe_and_reject(store, dispatch_id="dispatch-1", candidate_id="candidate-1", observation_value=observation(result_contract_valid=False))
+    observe_and_reject(store, dispatch_id="dispatch-1", candidate_id="candidate-1", observation_value=observation())
     start(store, dispatch_id="dispatch-2", kind="semantic_repair", index=1)
-    observe_and_reject(store, dispatch_id="dispatch-2", candidate_id="candidate-2", observation_value=observation())
+    observe_and_reject(store, dispatch_id="dispatch-2", candidate_id="candidate-2", observation_value=observation(result_contract_valid=False))
     start(store, dispatch_id="dispatch-3", kind="result_contract_retry", index=1)
     store.append("dispatch_observed", {"dispatch_id": "dispatch-3", "observation": observation(token_usage=19), "work_item_id": WORK}, occurred_at=NOW)
 

@@ -321,6 +321,10 @@ class _ReplayState:
                     and self.result_contract_retry_eligible
                 ):
                     raise ReV2EventError("dispatch_leased requires no active work item")
+                if payload["work_item_id"] != self.eligible_work_item_id:
+                    raise ReV2EventError(
+                        "dispatch_leased retry must retain the eligible work item"
+                    )
                 self._clear_work()
             dispatch_id = str(payload["dispatch_id"])
             if dispatch_id in self.dispatch_ids:
