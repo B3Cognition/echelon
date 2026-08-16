@@ -471,7 +471,16 @@ class RunManifest:
         object.__setattr__(self, "requested_goals", _sorted_unique_ids(self.requested_goals, "requested_goals"))
         if not isinstance(self.initial_budget_policy, BudgetPolicy):
             _error("initial_budget_policy must be a BudgetPolicy")
-        object.__setattr__(self, "provider_contract", _freeze_json(_canonical_object(self.provider_contract, "provider_contract")))
+        provider_contract = _canonical_object(
+            self.provider_contract, "provider_contract"
+        )
+        _safe_id(
+            provider_contract.get("provider"),
+            "provider_contract.provider",
+        )
+        object.__setattr__(
+            self, "provider_contract", _freeze_json(provider_contract)
+        )
         policies = _canonical_object(self.artifact_policy_versions, "artifact_policy_versions")
         if not policies or any(not _safe_id(key, "artifact_policy_versions key") or not _safe_id(item, "artifact_policy_versions value") for key, item in policies.items()):
             _error("artifact_policy_versions must have nonempty safe keys and values")

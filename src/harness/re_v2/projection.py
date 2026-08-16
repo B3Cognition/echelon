@@ -55,6 +55,7 @@ def project_run(
     certifications_rejected = 0
     authorizations: list[dict[str, object]] = []
     pause_reason: str | None = None
+    paused = False
     terminal_reason: str | None = None
 
     for event in events:
@@ -99,9 +100,11 @@ def project_run(
                 }
             )
         elif event.type == "run_paused":
+            paused = True
             state = "paused"
             pause_reason = str(payload["reason"])
         elif event.type == "run_resumed":
+            paused = False
             state = "running" if current_work_item_id is not None else "planned"
             pause_reason = None
         elif event.type == "run_completed":
@@ -114,6 +117,8 @@ def project_run(
             state = "failed"
             terminal_reason = str(payload["reason"])
 
+    if paused:
+        state = "paused"
     roots = _accepted_roots(ledger)
     return {
         "accepted_roots": roots,

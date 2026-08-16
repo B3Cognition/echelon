@@ -167,6 +167,7 @@ def ledger_view(
     return LedgerView(
         accepted_artifacts={receipt.artifact_key.identity: receipt for _, receipt in accepted},
         certifications={certification.identity: certification for certification, _ in accepted},
+        certification_work_items={},
     )
 
 
@@ -386,6 +387,7 @@ def test_reuse_requires_matching_replayed_certification() -> None:
     forged = LedgerView(
         accepted_artifacts={receipt.artifact_key.identity: receipt},
         certifications={receipt.certification_id: unsupported},
+        certification_work_items={},
     )
 
     decision = plan_next(graph((selected,), ("inventory",)), forged, open_budget())
@@ -428,7 +430,7 @@ def test_work_item_identity_excludes_global_resource_limits() -> None:
     assert bounded.ready[0].work_item_id == unbounded.ready[0].work_item_id
 
 
-def test_budget_blocks_only_relevant_generation_dimensions() -> None:
+def test_planner_defers_item_attempt_limits_until_attempt_kind_is_known() -> None:
     selected = template("inventory", "inventory", provider_attempts=1)
     validated = graph((selected,), ("inventory",))
     initial = plan_next(validated, ledger_view(), open_budget())
@@ -439,16 +441,16 @@ def test_budget_blocks_only_relevant_generation_dimensions() -> None:
         ledger_view(),
         open_budget(exhausted=("semantic_rounds:another-item",)),
     )
-    blocked = plan_next(
+    provider_exhausted = plan_next(
         validated,
         ledger_view(),
         open_budget(provider_attempts={item_id: 1}),
     )
 
     assert tuple(item.work_item_id for item in irrelevant.ready) == (item_id,)
-    assert blocked.ready == ()
-    assert blocked.explanations[selected.template_id].action == "blocked_budget"
-    assert blocked.explanations[selected.template_id].reason_code == "provider_attempts_exhausted"
+    assert tuple(item.work_item_id for item in provider_exhausted.ready) == (
+        item_id,
+    )
 
 
 def test_global_resource_exhaustion_blocks_ready_generation() -> None:

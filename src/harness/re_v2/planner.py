@@ -220,7 +220,7 @@ def plan_next(
             )
             continue
 
-        exhausted = _generation_budget_exhaustion(item, budget)
+        exhausted = _global_budget_exhaustion(budget)
         if exhausted is not None:
             explanations[template_id] = PlanExplanation(
                 work_item_id=item.work_item_id,
@@ -434,25 +434,10 @@ def _same_logical_output(left: ArtifactKey, right: ArtifactKey) -> bool:
     return left.artifact_kind == right.artifact_kind and left.layer == right.layer
 
 
-def _generation_budget_exhaustion(
-    item: WorkItem, budget: BudgetDecision
-) -> str | None:
+def _global_budget_exhaustion(budget: BudgetDecision) -> str | None:
     for dimension in _GLOBAL_GENERATION_DIMENSIONS:
         if dimension in budget.exhausted_dimensions:
             return dimension
-    item_id = item.work_item_id
-    if (
-        f"provider_attempts:{item_id}" in budget.exhausted_dimensions
-        or budget.provider_attempts.get(item_id, 0)
-        >= min(item.max_provider_attempts, budget.provider_attempt_limit)
-    ):
-        return "provider_attempts"
-    if (
-        f"generation_attempts:{item_id}" in budget.exhausted_dimensions
-        or budget.generation_attempts.get(item_id, 0)
-        >= min(item.max_generation_attempts, budget.generation_attempt_limit)
-    ):
-        return "generation_attempts"
     return None
 
 

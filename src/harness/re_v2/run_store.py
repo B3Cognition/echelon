@@ -28,6 +28,7 @@ class ReV2Paths:
     projection: Path
     ledger: Path
     candidates: Path
+    objects: Path
 
     @classmethod
     def for_run(cls, run_dir: Path) -> "ReV2Paths":
@@ -42,6 +43,7 @@ class ReV2Paths:
             projection=root / "projection.json",
             ledger=root / "ledger.jsonl",
             candidates=root / "candidates",
+            objects=root / "objects",
         )
 
 
@@ -66,6 +68,13 @@ def create_run_store(run_dir: Path, manifest: RunManifest) -> ReV2Paths:
     except OSError as exc:
         raise ReV2RunStoreError(f"cannot create v2 run store {paths.root}: {exc}") from exc
     _fsync_directory(run_dir.resolve())
+    try:
+        paths.objects.mkdir(mode=0o700)
+    except OSError as exc:
+        raise ReV2RunStoreError(
+            f"cannot create run-local object store {paths.objects}: {exc}"
+        ) from exc
+    _fsync_directory(paths.root)
 
     payload = canonical_json_bytes(manifest.to_json_dict())
     temp_path: Path | None = None

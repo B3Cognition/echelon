@@ -142,6 +142,11 @@ _PAYLOAD_SCHEMAS: dict[str, dict[str, PayloadValidator]] = {
     "run_created": {"run_manifest_id": _digest},
     "work_planned": {"work_item_ids": _digest_array},
     "dispatch_leased": {"dispatch_id": _safe_id, "work_item_id": _digest},
+    "dispatch_lease_retired": {
+        "dispatch_id": _safe_id,
+        "reason": _string,
+        "work_item_id": _digest,
+    },
     "dispatch_started": {
         "attempt_index": _positive,
         "attempt_kind": _attempt_kind,
@@ -206,6 +211,16 @@ _PAYLOAD_SCHEMAS: dict[str, dict[str, PayloadValidator]] = {
 
 _TERMINAL_TYPES = {"run_completed", "run_finalized_partial", "run_failed"}
 _PAUSED_CONTROL_TYPES = {"budget_authorized", "operator_pause_requested"}
+_PAUSED_RECOVERY_TYPES = {
+    "dispatch_lease_retired",
+    "dispatch_started",
+    "dispatch_observed",
+    "candidate_persisted",
+    "candidate_certified",
+    "candidate_rejected",
+    "artifact_accepted",
+    "checkpoint_recorded",
+}
 def _validate_rfc3339(value: object) -> str:
     if not isinstance(value, str) or not _RFC3339_RE.fullmatch(value):
         raise ReV2EventError("occurred_at must be an RFC3339 timestamp")
@@ -297,10 +312,14 @@ class _ReplayState:
                         "paused run requires authorization or operator action before run_resumed"
                     )
                 self.paused = False
-            elif event_type not in _PAUSED_CONTROL_TYPES:
+            elif event_type in _PAUSED_CONTROL_TYPES:
+                self._finish(event_type)
+                return
+            elif event_type not in _PAUSED_RECOVERY_TYPES:
                 raise ReV2EventError(f"{event_type} is not allowed while run is paused")
-            self._finish(event_type)
-            return
+            if event_type == "run_resumed":
+                self._finish(event_type)
+                return
 
         if self.pause_requested and event_type != "run_paused":
             raise ReV2EventError("operator pause request must be followed by run_paused")
@@ -313,6 +332,11 @@ class _ReplayState:
         elif event_type == "run_paused":
             self.pause_requested = False
             self.paused = True
+        elif event_type == "dispatch_lease_retired":
+            dispatch_id = str(payload["dispatch_id"])
+            if dispatch_id in self.dispatch_ids:
+                raise ReV2EventError("dispatch_id must be globally unique")
+            self.dispatch_ids.add(dispatch_id)
         elif event_type == "dispatch_leased":
             if self.work_stage is not None:
                 if not (

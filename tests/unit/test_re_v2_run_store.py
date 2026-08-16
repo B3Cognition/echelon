@@ -56,6 +56,19 @@ def test_run_manifest_is_create_once(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_create_run_store_materializes_run_local_object_authority(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "runs" / "re-1"
+
+    paths = create_run_store(run_dir, _manifest(run_id="re-1"))
+
+    assert paths.objects == paths.root / "objects"
+    assert paths.objects.is_dir()
+    assert not paths.objects.is_symlink()
+
+
+@pytest.mark.unit
 def test_interleaving_creator_cannot_overwrite_pinned_manifest(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -189,23 +189,47 @@ def recover_run(
     except ReV2CandidateError as exc:
         raise ReV2RecoveryError(f"committed candidate validation failed: {exc}") from exc
     _validate_persisted_candidate_events(events, candidates)
+    _validate_candidates_against_authorities(
+        events,
+        leases,
+        candidates,
+        expected_provider=str(manifest.provider_contract["provider"]),
+    )
+    _audit_ledger_receipts(context, ledger_view, candidates)
 
-    if _is_paused(events) and outstanding:
+    if _is_terminal(events) and outstanding:
         raise ReV2RecoveryError(
-            "paused run has an unresolved dead lease; resume before recovery",
-            reason_code="paused_with_unresolved_lease",
+            "terminal run has an unresolved dead lease",
+            reason_code="terminal_with_unresolved_lease",
         )
     if not _is_terminal(events):
-        _close_dead_active_dispatch(context, events, leases, candidates, now)
+        _resolve_eventless_dead_leases(
+            context, events, outstanding, candidates
+        )
         events = context.event_store.replay()
+        _close_dead_active_dispatch(
+            context,
+            events,
+            leases,
+            candidates,
+            now,
+            expected_provider=str(manifest.provider_contract["provider"]),
+        )
+        events = context.event_store.replay()
+        unresolved = _outstanding_leases(events, leases)
+        if unresolved:
+            dispatches = ", ".join(lease.dispatch_id for lease in unresolved)
+            raise ReV2RecoveryError(
+                f"dead leases remain unresolved after recovery: {dispatches}"
+            )
 
     reconciled: list[str] = []
     for candidate in candidates:
         needs_recovery = _candidate_needs_recovery(events, candidate)
         if needs_recovery:
-            if _is_paused(events) or _is_terminal(events):
+            if _is_terminal(events):
                 raise ReV2RecoveryError(
-                    "paused or terminal run contains an unhandled committed candidate"
+                    "terminal run contains an unhandled committed candidate"
                 )
             reconciled.append(candidate.candidate_id)
         # Handled candidates are still cross-checked against ledger authority.
@@ -261,6 +285,18 @@ def _validate_authorities(
         raise ReV2RecoveryError("ledger is not bound to the run ledger path")
     if context.ledger.object_store is not context.object_store:
         raise ReV2RecoveryError("ledger and context do not share the object store")
+    object_root = context.object_store.root
+    expected_objects = context.paths.objects
+    if (
+        object_root.is_symlink()
+        or expected_objects.is_symlink()
+        or not object_root.is_dir()
+        or object_root.resolve() != expected_objects.resolve()
+        or object_root != object_root.resolve()
+    ):
+        raise ReV2RecoveryError(
+            "object store is not the safe run-local object authority"
+        )
     if context.ledger.pinned_source_snapshot_id != manifest.source_snapshot_id:
         raise ReV2RecoveryError("ledger is not pinned to the manifest snapshot")
     if (
@@ -269,6 +305,16 @@ def _validate_authorities(
         or context.graph.requested_goals != manifest.requested_goals
     ):
         raise ReV2RecoveryError("work graph does not match immutable run inputs")
+    for template in context.graph.templates:
+        pinned_protocol = manifest.artifact_policy_versions.get(template.layer)
+        if pinned_protocol is None:
+            raise ReV2RecoveryError(
+                f"graph layer {template.layer} has no manifest artifact policy"
+            )
+        if pinned_protocol != template.producer_protocol_version:
+            raise ReV2RecoveryError(
+                "graph producer protocol does not match manifest artifact policy"
+            )
     try:
         events = context.event_store.replay()
         ledger_view = context.ledger.replay()
@@ -279,6 +325,9 @@ def _validate_authorities(
         or events[0].payload["run_manifest_id"] != manifest.run_manifest_id
     ):
         raise ReV2RecoveryError("run_created does not match immutable run manifest")
+    _validate_observation_providers(
+        events, str(manifest.provider_contract["provider"])
+    )
     return manifest, events, ledger_view
 
 
@@ -447,6 +496,11 @@ def _outstanding_leases(
         for event in events
         if event.type == "dispatch_observed"
     }
+    retired = {
+        str(event.payload["dispatch_id"]): str(event.payload["work_item_id"])
+        for event in events
+        if event.type == "dispatch_lease_retired"
+    }
     event_leases = {
         str(event.payload["dispatch_id"]): str(event.payload["work_item_id"])
         for event in events
@@ -462,8 +516,19 @@ def _outstanding_leases(
             raise ReV2RecoveryError(
                 f"dispatch lease does not match event work item: {dispatch_id}"
             )
+    for dispatch_id, work_item_id in retired.items():
+        lease = lease_by_dispatch.get(dispatch_id)
+        if lease is None:
+            raise ReV2RecoveryError(
+                f"retirement event references a missing dispatch lease: {dispatch_id}"
+            )
+        if lease.work_item_id != work_item_id:
+            raise ReV2RecoveryError(
+                f"retirement event does not match lease work item: {dispatch_id}"
+            )
+    resolved = observed | set(retired)
     return tuple(
-        lease for lease in leases if lease.dispatch_id not in observed
+        lease for lease in leases if lease.dispatch_id not in resolved
     )
 
 
@@ -480,12 +545,88 @@ def _inspect_process(inspector: object, identity: ProcessIdentity) -> ProcessSta
         raise ReV2RecoveryError("process inspector returned an invalid state") from exc
 
 
+def _resolve_eventless_dead_leases(
+    context: ReV2RunContext,
+    events: tuple[EventRecord, ...],
+    outstanding: tuple[DispatchLease, ...],
+    candidates: tuple[PersistedCandidate, ...],
+) -> None:
+    leased_dispatches = {
+        str(event.payload["dispatch_id"])
+        for event in events
+        if event.type == "dispatch_leased"
+    }
+    candidates_by_dispatch = {
+        candidate.dispatch_id: candidate for candidate in candidates
+    }
+    history = events
+    for lease in outstanding:
+        if lease.dispatch_id in leased_dispatches:
+            continue
+        candidate = candidates_by_dispatch.get(lease.dispatch_id)
+        if candidate is None:
+            context.event_store.append(
+                "dispatch_lease_retired",
+                {
+                    "dispatch_id": lease.dispatch_id,
+                    "reason": "dead process without a committed candidate",
+                    "work_item_id": lease.work_item_id,
+                },
+                occurred_at=lease.leased_at,
+            )
+            history = context.event_store.replay()
+            continue
+
+        attempt_kind, attempt_index = next_dispatch_attempt(
+            history, lease.work_item
+        )
+        context.event_store.append(
+            "dispatch_leased",
+            {
+                "dispatch_id": lease.dispatch_id,
+                "work_item_id": lease.work_item_id,
+            },
+            occurred_at=lease.leased_at,
+        )
+        context.event_store.append(
+            "dispatch_started",
+            {
+                "attempt_index": attempt_index,
+                "attempt_kind": attempt_kind,
+                "dispatch_id": lease.dispatch_id,
+                "work_item_id": lease.work_item_id,
+            },
+            occurred_at=candidate.observation.started_at,
+        )
+        context.event_store.append(
+            "dispatch_observed",
+            {
+                "dispatch_id": lease.dispatch_id,
+                "observation": candidate.observation.to_json_dict(),
+                "work_item_id": lease.work_item_id,
+            },
+            occurred_at=candidate.observation.ended_at,
+        )
+        context.event_store.append(
+            "candidate_persisted",
+            {
+                "candidate_id": candidate.candidate_id,
+                "dispatch_id": candidate.dispatch_id,
+                "work_item_id": candidate.work_item_id,
+            },
+            occurred_at=candidate.persisted_at,
+        )
+        history = context.event_store.replay()
+
+
 def _close_dead_active_dispatch(
     context: ReV2RunContext,
     events: tuple[EventRecord, ...],
     leases: tuple[DispatchLease, ...],
     candidates: tuple[PersistedCandidate, ...],
     clock: Callable[[], str],
+    *,
+    expected_provider: str,
 ) -> None:
     observed = {
         str(event.payload["dispatch_id"])
@@ -550,7 +691,7 @@ def _close_dead_active_dispatch(
             output_truncated=False,
             result_contract_valid=False,
             token_usage=None,
-            provider_name=lease.work_item.producer_id,
+            provider_name=expected_provider,
             model_name="unknown",
             stderr_digest=None,
         )
@@ -671,6 +812,117 @@ def _validate_persisted_candidate_events(
             raise ReV2RecoveryError(
                 "candidate_persisted event does not match committed candidate"
             )
+
+
+def _validate_candidates_against_authorities(
+    events: tuple[EventRecord, ...],
+    leases: tuple[DispatchLease, ...],
+    candidates: tuple[PersistedCandidate, ...],
+    *,
+    expected_provider: str,
+) -> None:
+    lease_by_dispatch = {lease.dispatch_id: lease for lease in leases}
+    for candidate in candidates:
+        if candidate.observation.provider_name != expected_provider:
+            raise ReV2RecoveryError(
+                "committed candidate observation provider does not match manifest"
+            )
+        lease = lease_by_dispatch.get(candidate.dispatch_id)
+        if (
+            lease is None
+            or candidate.lease != lease
+            or candidate.work_item != lease.work_item
+            or candidate.work_item_id != lease.work_item_id
+        ):
+            raise ReV2RecoveryError(
+                "committed candidate does not match its exact dispatch lease"
+            )
+        leased_event = next(
+            (
+                event
+                for event in events
+                if event.type == "dispatch_leased"
+                and event.payload["dispatch_id"] == candidate.dispatch_id
+            ),
+            None,
+        )
+        if leased_event is not None and (
+            leased_event.payload["work_item_id"] != candidate.work_item_id
+        ):
+            raise ReV2RecoveryError(
+                "committed candidate does not match dispatch lease event"
+            )
+        observation_event = next(
+            (
+                event
+                for event in events
+                if event.type == "dispatch_observed"
+                and event.payload["dispatch_id"] == candidate.dispatch_id
+            ),
+            None,
+        )
+        if observation_event is not None:
+            _validate_candidate_observation(events, candidate)
+
+
+def _validate_observation_providers(
+    events: tuple[EventRecord, ...], expected_provider: str
+) -> None:
+    for event in events:
+        if event.type != "dispatch_observed":
+            continue
+        observation = ExecutionObservation.from_json_dict(
+            event.payload["observation"]
+        )
+        if observation.provider_name != expected_provider:
+            raise ReV2RecoveryError(
+                "dispatch observation provider does not match manifest"
+            )
+
+
+def _audit_ledger_receipts(
+    context: ReV2RunContext,
+    ledger: LedgerView,
+    candidates: tuple[PersistedCandidate, ...],
+) -> None:
+    by_candidate = {candidate.candidate_id: candidate for candidate in candidates}
+    if set(ledger.certification_work_items) != set(ledger.certifications):
+        raise ReV2RecoveryError(
+            "ledger certification is missing its durable WorkItem"
+        )
+    for certification_id, receipt in sorted(ledger.certifications.items()):
+        candidate = by_candidate.get(receipt.candidate_id)
+        if candidate is None:
+            raise ReV2RecoveryError(
+                "ledger certification has no exact committed candidate"
+            )
+        work_item = ledger.certification_work_items[certification_id]
+        if work_item != candidate.work_item:
+            raise ReV2RecoveryError(
+                "ledger certification WorkItem does not match committed candidate"
+            )
+        _validate_certification(receipt, candidate)
+        try:
+            context.object_store.verify(
+                receipt.certification_key.artifact_hash
+            )
+        except ReV2LedgerError as exc:
+            raise ReV2RecoveryError(
+                f"ledger certification object is invalid: {exc}"
+            ) from exc
+
+    for artifact in ledger.accepted_artifacts.values():
+        certification = ledger.certifications.get(artifact.certification_id)
+        if certification is None:
+            raise ReV2RecoveryError(
+                "ledger artifact has no matching certification"
+            )
+        candidate = by_candidate.get(artifact.candidate_id)
+        if candidate is None:
+            raise ReV2RecoveryError(
+                "ledger artifact has no exact committed candidate"
+            )
+        _validate_artifact(artifact, certification, candidate)
 
 
 def _candidate_needs_recovery(

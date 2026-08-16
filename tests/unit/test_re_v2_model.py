@@ -106,6 +106,20 @@ def test_manifest_rejects_nested_non_finite_provider_contract_value(non_finite: 
         RunManifest.from_json_dict(raw)
 
 
+@pytest.mark.parametrize(
+    "provider_contract",
+    ({}, {"provider": ""}, {"provider": "unsafe provider"}),
+)
+def test_manifest_requires_a_safe_pinned_provider(
+    provider_contract: dict[str, object],
+) -> None:
+    raw = valid_run_manifest_dict()
+    raw["provider_contract"] = provider_contract
+
+    with pytest.raises(ReV2ModelError, match="provider"):
+        RunManifest.from_json_dict(raw)
+
+
 def test_artifact_identity_ignores_operational_budget() -> None:
     key = valid_artifact_key()
     assert key.identity == ArtifactKey.from_json_dict(key.to_json_dict()).identity

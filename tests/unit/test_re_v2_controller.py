@@ -97,11 +97,13 @@ class FakeProviderExecutor(WorkExecutor):
         token_usage: int | None = None,
         timed_out: bool = False,
         result_contract_valid: bool = True,
+        provider_name: str = "fixture",
     ) -> None:
         self.root = root
         self.token_usage = token_usage
         self.timed_out = timed_out
         self.result_contract_valid = result_contract_valid
+        self.provider_name = provider_name
         self.calls: list[tuple[Path, WorkItem, DispatchLease]] = []
 
     def execute(
@@ -122,7 +124,7 @@ class FakeProviderExecutor(WorkExecutor):
             output_truncated=False,
             result_contract_valid=self.result_contract_valid,
             token_usage=self.token_usage,
-            provider_name="fixture",
+            provider_name=self.provider_name,
             model_name="fixture-model",
             stderr_digest=None,
         )
@@ -159,6 +161,7 @@ def _context(
     templates: tuple[WorkTemplate, ...],
     *,
     token_limit: int = 100,
+    generation_attempt_limit: int = 5,
 ) -> ReV2RunContext:
     source = tmp_path / "source"
     source.mkdir()
@@ -183,16 +186,19 @@ def _context(
             token_limit=token_limit,
             active_ms_limit=100_000,
             provider_attempt_limit=5,
-            artifact_generation_attempt_limit=5,
+            artifact_generation_attempt_limit=generation_attempt_limit,
             semantic_repair_round_limit=2,
             result_contract_retry_limit=2,
         ),
         provider_contract={"provider": "fixture"},
-        artifact_policy_versions={"L0": "v1"},
+        artifact_policy_versions={
+            template.layer: template.producer_protocol_version
+            for template in templates
+        },
         parent_run_id=None,
     )
     paths = create_run_store(run_dir, manifest)
-    objects = ObjectStore(tmp_path / "objects")
+    objects = ObjectStore(paths.objects)
     ledger = Ledger(
         paths,
         objects,
@@ -235,12 +241,28 @@ def _identity_factory(
     )
 
 
+def _registry_key(template: WorkTemplate) -> tuple[str, str, str, str]:
+    return (
+        template.producer_id,
+        template.producer_protocol_version,
+        template.layer,
+        template.result_contract_id,
+    )
+
+
 def _controller(
     context: ReV2RunContext,
     *,
     executor: WorkExecutor | None = None,
 ) -> ReV2Controller:
-    registry = None if executor is None else {"fixture-producer": executor}
+    registry = (
+        None
+        if executor is None
+        else {
+            _registry_key(template): executor
+            for template in context.graph.templates
+        }
+    )
     return ReV2Controller(
         context,
         executor_registry=registry,
@@ -338,6 +360,47 @@ def test_unregistered_producer_pauses_without_v1_or_executor_fallback(
     assert events[-1].payload["reason_code"] == "producer_not_registered"
 
 
+def test_executor_registry_requires_the_exact_work_protocol_tuple(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path, (_template("inventory", goal="inventory"),))
+    executor = FakeProviderExecutor(tmp_path)
+    wrong_key = (
+        "fixture-producer",
+        "wrong-protocol",
+        "L0",
+        "fixture-result-v1",
+    )
+    controller = ReV2Controller(
+        context,
+        executor_registry={wrong_key: executor},
+        process_inspector=DeadInspector(),
+        process_identity_factory=_identity_factory,
+        clock=lambda: NOW,
+    )
+
+    result = controller.run_once()
+
+    assert result.status == "paused"
+    assert result.reason_code == "producer_not_registered"
+    assert not any(
+        event.type == "dispatch_leased"
+        for event in context.event_store.replay()
+    )
+
+
+def test_observation_provider_must_match_the_manifest_before_persistence(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path, (_template("inventory", goal="inventory"),))
+    executor = FakeProviderExecutor(tmp_path, provider_name="other-provider")
+
+    with pytest.raises(ReV2ControllerError, match="provider"):
+        _controller(context, executor=executor).run_once()
+
+    assert context.candidate_store.discover() == ()
+
+
 def test_resource_exhaustion_pauses_and_can_resume_after_authorization(
     tmp_path: Path,
 ) -> None:
@@ -387,6 +450,88 @@ def test_resource_exhaustion_pauses_and_can_resume_after_authorization(
     assert len(second_executor.calls) == 1
 
 
+def test_result_contract_retry_is_not_blocked_by_generation_exhaustion(
+    tmp_path: Path,
+) -> None:
+    template = _template("inventory", goal="inventory")
+    context = _context(
+        tmp_path,
+        (template,),
+        generation_attempt_limit=1,
+    )
+    context.event_store.append(
+        "run_created",
+        {"run_manifest_id": context.manifest.run_manifest_id},
+        occurred_at=NOW,
+    )
+    item = plan_next(
+        context.graph,
+        context.ledger.replay(),
+        evaluate_budget(
+            context.manifest.initial_budget_policy,
+            context.event_store.replay(),
+            now=NOW,
+        ),
+    ).ready[0]
+    lease = context.candidate_store.begin(
+        item,
+        _identity_factory(item, "initial_generation", 1, NOW),
+        dispatch_id="dispatch-invalid-initial",
+        leased_at=NOW,
+    )
+    context.event_store.append(
+        "dispatch_leased",
+        {"dispatch_id": lease.dispatch_id, "work_item_id": item.work_item_id},
+        occurred_at=NOW,
+    )
+    context.event_store.append(
+        "dispatch_started",
+        {
+            "attempt_index": 1,
+            "attempt_kind": "initial_generation",
+            "dispatch_id": lease.dispatch_id,
+            "work_item_id": item.work_item_id,
+        },
+        occurred_at=NOW,
+    )
+    invalid = ExecutionObservation(
+        started_at=NOW,
+        ended_at=OBSERVED,
+        duration_ms=1_000,
+        exit_code=0,
+        timed_out=False,
+        output_truncated=False,
+        result_contract_valid=False,
+        token_usage=0,
+        provider_name="fixture",
+        model_name="fixture-model",
+        stderr_digest=None,
+    )
+    context.event_store.append(
+        "dispatch_observed",
+        {
+            "dispatch_id": lease.dispatch_id,
+            "observation": invalid.to_json_dict(),
+            "work_item_id": item.work_item_id,
+        },
+        occurred_at=OBSERVED,
+    )
+    executor = FakeProviderExecutor(tmp_path)
+
+    result = _controller(context, executor=executor).run_until_stopped()
+
+    starts = [
+        event
+        for event in context.event_store.replay()
+        if event.type == "dispatch_started"
+    ]
+    assert result.status == "complete"
+    assert [event.payload["attempt_kind"] for event in starts] == [
+        "initial_generation",
+        "result_contract_retry",
+    ]
+
+
 def test_repeated_terminal_runs_do_not_duplicate_work_or_acceptance(
     tmp_path: Path,
 ) -> None:
@@ -433,7 +578,8 @@ def test_controller_validates_the_pinned_certifier_before_dispatch(
 
     assert executor.calls == []
     assert not any(
-        event.type == "dispatch_leased" for event in context.event_store.replay()
+        event.type in {"work_planned", "dispatch_leased"}
+        for event in context.event_store.replay()
     )
 
 
@@ -522,7 +668,7 @@ def test_restart_before_durable_candidate_dispatches_one_replacement(
 
     crashing = ReV2Controller(
         context,
-        executor_registry={"fixture-producer": executor},
+        executor_registry={_registry_key(context.graph.templates[0]): executor},
         process_inspector=DeadInspector(),
         process_identity_factory=_identity_factory,
         clock=lambda: NOW,
@@ -568,7 +714,7 @@ def test_restart_after_durable_candidate_never_duplicates_work(
 
     crashing = ReV2Controller(
         context,
-        executor_registry={"fixture-producer": executor},
+        executor_registry={_registry_key(context.graph.templates[0]): executor},
         process_inspector=DeadInspector(),
         process_identity_factory=_identity_factory,
         clock=lambda: NOW,

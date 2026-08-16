@@ -261,6 +261,7 @@ class LedgerView:
 
     accepted_artifacts: Mapping[str, ArtifactReceipt]
     certifications: Mapping[str, CertificationReceipt]
+    certification_work_items: Mapping[str, WorkItem]
 
 
 @dataclass(slots=True)
@@ -355,6 +356,9 @@ class _LedgerState:
         return LedgerView(
             accepted_artifacts=MappingProxyType(dict(self.accepted_artifacts)),
             certifications=MappingProxyType(dict(self.certifications)),
+            certification_work_items=MappingProxyType(
+                dict(self.certification_work_items)
+            ),
         )
 
 

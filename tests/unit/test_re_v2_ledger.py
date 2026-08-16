@@ -650,7 +650,7 @@ def test_re_v2_paths_bind_ledger_to_the_immutable_run_manifest(
         parent_run_id=None,
     )
     paths = create_run_store(tmp_path / "run-1", manifest)
-    objects = ObjectStore(tmp_path / "objects")
+    objects = ObjectStore(paths.objects)
     ledger = Ledger(
         paths,
         objects,
@@ -677,6 +677,7 @@ def test_certification_persists_and_validates_the_full_work_item(
         "receipt": certification.to_json_dict(),
         "work_item": item.to_json_dict(),
     }
+    assert ledger.replay().certification_work_items[certification.identity] == item
 
     wrong_item = replace(item, verifier_id="other-verifier")
     with pytest.raises(ReV2LedgerError, match="work item|work_item|verifier"):

@@ -218,6 +218,40 @@ def test_state_machine_rejects_out_of_order_work_events(tmp_path: Path) -> None:
         )
 
 
+def test_eventless_lease_retirement_is_strict_and_allowed_while_paused(
+    tmp_path: Path,
+) -> None:
+    store = event_store(tmp_path)
+    work_item_id = digest("work")
+    store.append("run_created", {"run_manifest_id": digest("run")}, occurred_at=NOW)
+    store.append(
+        "run_paused",
+        {"reason": "operator hold", "reason_code": "operator_hold"},
+        occurred_at=NOW,
+    )
+    retired = store.append(
+        "dispatch_lease_retired",
+        {
+            "dispatch_id": "dispatch-orphan",
+            "reason": "dead process without a committed candidate",
+            "work_item_id": work_item_id,
+        },
+        occurred_at=NOW,
+    )
+
+    assert retired.type == "dispatch_lease_retired"
+    with pytest.raises(ReV2EventError, match="globally unique"):
+        store.append(
+            "dispatch_lease_retired",
+            {
+                "dispatch_id": "dispatch-orphan",
+                "reason": "duplicate retirement",
+                "work_item_id": work_item_id,
+            },
+            occurred_at=NOW,
+        )
+
+
 def test_checkpoint_consumes_the_matching_acceptance_exactly_once(tmp_path: Path) -> None:
     store = event_store(tmp_path)
     work_item_id = digest("work")

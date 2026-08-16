@@ -51,6 +51,7 @@ class WorkExecutor(Protocol):
 
 
 ProcessIdentityFactory = Callable[[WorkItem, str, int, str], ProcessIdentity]
+ExecutorKey = tuple[str, str, str, str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,12 +141,17 @@ def production_executor_registry(
     output_root: Path,
     *,
     clock: Callable[[], str] | None = None,
-) -> Mapping[str, WorkExecutor]:
+) -> Mapping[ExecutorKey, WorkExecutor]:
     """Return only the deterministic source/partition L0 producers."""
     executor = DeterministicInventoryExecutor(output_root, clock=clock)
     return MappingProxyType(
         {
-            producer: executor
+            (
+                producer,
+                "re-v2-l0-v1",
+                "L0",
+                "deterministic-inventory-v1",
+            ): executor
             for producer in sorted(DeterministicInventoryExecutor._PRODUCERS)
         }
     )
@@ -158,7 +164,7 @@ class ReV2Controller:
         self,
         context: ReV2RunContext,
         *,
-        executor_registry: Mapping[str, WorkExecutor] | None = None,
+        executor_registry: Mapping[ExecutorKey, WorkExecutor] | None = None,
         executor: WorkExecutor | None = None,
         process_inspector: ProcessInspector | object | None = None,
         process_identity_factory: ProcessIdentityFactory | None = None,
@@ -179,18 +185,19 @@ class ReV2Controller:
         )
         self._fault_hook = fault_hook
         if executor is not None:
-            producers = {template.producer_id for template in context.graph.templates}
-            executor_registry = {producer: executor for producer in producers}
+            executor_registry = {
+                _executor_key(template): executor
+                for template in context.graph.templates
+            }
         if executor_registry is None:
             executor_registry = production_executor_registry(
                 context.paths.root / ".execution", clock=self._clock
             )
         self._executors = MappingProxyType(dict(executor_registry))
-        if any(
-            not isinstance(producer, str) or not producer
-            for producer in self._executors
-        ):
-            raise ReV2ControllerError("executor registry keys must be producer IDs")
+        if any(not _valid_executor_key(key) for key in self._executors):
+            raise ReV2ControllerError(
+                "executor registry keys must be exact producer protocol tuples"
+            )
 
     def run_once(self) -> ReV2ControllerResult:
         """Recover first, then plan and dispatch no more than one item."""
@@ -218,9 +225,9 @@ class ReV2Controller:
                 )
             except (ReV2BudgetError, ReV2PlanError) as exc:
                 raise ReV2ControllerError(f"planning failed: {exc}") from exc
-            self._record_plan(decision, now)
 
             if not decision.ready:
+                self._record_plan(decision, now)
                 if _goals_satisfied(decision):
                     return self._complete(decision, now)
                 reason_code, reason = _blocked_reason(decision)
@@ -238,14 +245,16 @@ class ReV2Controller:
                 ) from exc
             exhausted = _attempt_exhaustion(item, attempt_kind, budget)
             if exhausted is not None:
+                self._record_plan(decision, now)
                 return self._pause(
                     f"{exhausted}_exhausted",
                     f"The {exhausted} budget is exhausted for {item.work_item_id}.",
                     decision,
                     now,
                 )
-            selected = self._executors.get(item.producer_id)
+            selected = self._executors.get(_executor_key(item))
             if selected is None:
+                self._record_plan(decision, now)
                 return self._pause(
                     "producer_not_registered",
                     (
@@ -255,12 +264,20 @@ class ReV2Controller:
                     decision,
                     now,
                 )
+            if not callable(getattr(selected, "execute", None)):
+                raise ReV2ControllerError(
+                    "registered executor must provide execute(snapshot, work, lease)"
+                )
+            self._record_plan(decision, now)
             return self._dispatch(
                 item,
                 selected,
                 decision,
                 attempt_kind=attempt_kind,
                 attempt_index=attempt_index,
+                expected_provider=str(
+                    recovery.manifest.provider_contract["provider"]
+                ),
                 now=now,
             )
 
@@ -319,6 +336,7 @@ class ReV2Controller:
         *,
         attempt_kind: str,
         attempt_index: int,
+        expected_provider: str,
         now: str,
     ) -> ReV2ControllerResult:
         try:
@@ -374,6 +392,10 @@ class ReV2Controller:
                     "executor must return (Path, ExecutionObservation)"
                 )
             output_root, observation = outcome
+            if observation.provider_name != expected_provider:
+                raise ReV2ControllerError(
+                    "executor observation provider does not match the manifest"
+                )
             self._fault("provider_terminated")
             candidate = self.context.candidate_store.persist(
                 lease, output_root, observation
@@ -534,6 +556,18 @@ def _attempt_exhaustion(
     item: WorkItem, kind: str, budget: BudgetDecision
 ) -> str | None:
     item_id = item.work_item_id
+    provider_limit = min(
+        item.max_provider_attempts, budget.provider_attempt_limit
+    )
+    if budget.provider_attempts.get(item_id, 0) >= provider_limit:
+        return "provider_attempts"
+    if kind in {"initial_generation", "semantic_repair"}:
+        generation_limit = min(
+            item.max_generation_attempts,
+            budget.generation_attempt_limit,
+        )
+        if budget.generation_attempts.get(item_id, 0) >= generation_limit:
+            return "generation_attempts"
     if kind == "semantic_repair":
         limit = min(item.max_semantic_rounds, budget.semantic_round_limit)
         if budget.semantic_rounds.get(item_id, 0) >= limit:
@@ -555,6 +589,27 @@ def _validate_item_certifier(context: ReV2RunContext, item: WorkItem) -> None:
         raise ReV2ControllerError(
             "pinned certifier does not match the ready WorkItem verifier"
         )
+
+
+def _executor_key(item: object) -> ExecutorKey:
+    output_key = getattr(item, "output_key", None)
+    layer = getattr(output_key, "layer", None)
+    if layer is None:
+        layer = getattr(item, "layer", None)
+    return (
+        str(getattr(item, "producer_id")),
+        str(getattr(item, "producer_protocol_version")),
+        str(layer),
+        str(getattr(item, "result_contract_id")),
+    )
+
+
+def _valid_executor_key(value: object) -> bool:
+    return (
+        isinstance(value, tuple)
+        and len(value) == 4
+        and all(isinstance(item, str) and item for item in value)
+    )
 
 
 def _terminal_result(
@@ -732,6 +787,7 @@ def _flock(fd: int, operation: int) -> None:
 
 __all__ = (
     "DeterministicInventoryExecutor",
+    "ExecutorKey",
     "ProcessIdentityFactory",
     "ReV2Controller",
     "ReV2ControllerError",
