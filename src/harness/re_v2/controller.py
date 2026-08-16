@@ -352,23 +352,6 @@ class ReV2Controller:
 
             item = decision.ready[0]
             _validate_item_certifier(self.context, item)
-            try:
-                attempt_kind, attempt_index = next_dispatch_attempt(
-                    self.context.event_store.replay(), item
-                )
-            except (ReV2EventError, ReV2RecoveryError) as exc:
-                raise ReV2ControllerError(
-                    f"cannot select dispatch attempt: {exc}"
-                ) from exc
-            exhausted = _attempt_exhaustion(item, attempt_kind, budget)
-            if exhausted is not None:
-                self._record_plan(decision, now)
-                return self._pause(
-                    f"{exhausted}_exhausted",
-                    f"The {exhausted} budget is exhausted for {item.work_item_id}.",
-                    decision,
-                    now,
-                )
             provider_name, provider_contract_hash = _provider_binding(
                 recovery.manifest
             )
@@ -389,21 +372,42 @@ class ReV2Controller:
                     decision,
                     now,
                 )
-            if (
-                selected.provider_name != provider_name
-                or selected.provider_contract_hash != provider_contract_hash
-            ):
-                raise ReV2ControllerError(
-                    "selected executor registration does not match manifest provider contract"
+            try:
+                attempt_kind, attempt_index = next_dispatch_attempt(
+                    self.context.event_store.replay(), item
                 )
+            except (ReV2EventError, ReV2RecoveryError) as exc:
+                raise ReV2ControllerError(
+                    f"cannot select dispatch attempt: {exc}"
+                ) from exc
+            exhausted = _attempt_exhaustion(item, attempt_kind, budget)
+            if exhausted is not None:
+                _validate_selected_executor_binding(
+                    selected,
+                    provider_name=provider_name,
+                    provider_contract_hash=provider_contract_hash,
+                )
+                self._record_plan(decision, now)
+                return self._pause(
+                    f"{exhausted}_exhausted",
+                    f"The {exhausted} budget is exhausted for {item.work_item_id}.",
+                    decision,
+                    now,
+                )
+            _validate_selected_executor_binding(
+                selected,
+                provider_name=provider_name,
+                provider_contract_hash=provider_contract_hash,
+            )
             self._record_plan(decision, now)
             return self._dispatch(
                 item,
-                selected.executor,
+                selected,
                 decision,
                 attempt_kind=attempt_kind,
                 attempt_index=attempt_index,
-                expected_provider=selected.provider_name,
+                manifest_provider_name=provider_name,
+                manifest_provider_contract_hash=provider_contract_hash,
                 now=now,
             )
 
@@ -457,12 +461,13 @@ class ReV2Controller:
     def _dispatch(
         self,
         item: WorkItem,
-        executor: WorkExecutor,
+        registration: ExecutorRegistration,
         decision: PlanDecision,
         *,
         attempt_kind: str,
         attempt_index: int,
-        expected_provider: str,
+        manifest_provider_name: str,
+        manifest_provider_contract_hash: str,
         now: str,
     ) -> ReV2ControllerResult:
         try:
@@ -477,6 +482,11 @@ class ReV2Controller:
             raise ReV2ControllerError(
                 "process_identity_factory must return ProcessIdentity"
             )
+        _validate_selected_executor_binding(
+            registration,
+            provider_name=manifest_provider_name,
+            provider_contract_hash=manifest_provider_contract_hash,
+        )
         try:
             lease = self.context.candidate_store.begin(
                 item,
@@ -505,7 +515,7 @@ class ReV2Controller:
             )
             self._fault("dispatch_started")
 
-            outcome = executor.execute(
+            outcome = registration.executor.execute(
                 self.context.snapshot.read_root, item, lease
             )
             if (
@@ -518,7 +528,7 @@ class ReV2Controller:
                     "executor must return (Path, ExecutionObservation)"
                 )
             output_root, observation = outcome
-            if observation.provider_name != expected_provider:
+            if observation.provider_name != registration.provider_name:
                 raise ReV2ControllerError(
                     "executor observation provider does not match the manifest"
                 )
@@ -774,6 +784,28 @@ def _executor_provider_binding(executor: object) -> tuple[str, str]:
     ):
         raise ReV2ControllerError("executor provider_contract_hash is invalid")
     return provider_name, provider_contract_hash
+
+
+def _validate_selected_executor_binding(
+    registration: ExecutorRegistration,
+    *,
+    provider_name: str,
+    provider_contract_hash: str,
+) -> None:
+    registration_binding = (
+        registration.provider_name,
+        registration.provider_contract_hash,
+    )
+    manifest_binding = (provider_name, provider_contract_hash)
+    declared_binding = _executor_provider_binding(registration.executor)
+    if (
+        registration_binding != manifest_binding
+        or declared_binding != registration_binding
+    ):
+        raise ReV2ControllerError(
+            "selected executor provider binding does not match its immutable "
+            "registration and manifest provider contract"
+        )
 
 
 def _provider_binding(manifest: RunManifest) -> tuple[str, str]:

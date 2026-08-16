@@ -511,6 +511,76 @@ def test_registry_revalidates_executor_declared_provider_binding(
     assert context.event_store.replay() == ()
 
 
+@pytest.mark.parametrize(
+    ("attribute", "wrong_value"),
+    (
+        ("_provider_name", "other-provider"),
+        (
+            "_provider_contract_hash",
+            content_digest({"provider": "fixture", "tier": 2}),
+        ),
+    ),
+)
+def test_registry_revalidates_executor_binding_immediately_before_dispatch(
+    tmp_path: Path,
+    attribute: str,
+    wrong_value: str,
+) -> None:
+    template = _template("inventory", goal="inventory")
+    context = _context(tmp_path, (template,))
+    executor = FakeProviderExecutor(tmp_path)
+    registration = _registration(template, executor)
+    controller = ReV2Controller(
+        context,
+        executor_registry={registration.key: registration},
+        process_inspector=DeadInspector(),
+        process_identity_factory=_identity_factory,
+        clock=lambda: NOW,
+    )
+    setattr(executor, attribute, wrong_value)
+
+    with pytest.raises(ReV2ControllerError, match="provider binding"):
+        controller.run_once()
+
+    assert executor.calls == []
+    assert not any(
+        event.type in {"work_planned", "dispatch_leased", "dispatch_started"}
+        for event in context.event_store.replay()
+    )
+    assert not (context.paths.candidates / ".leases").exists()
+
+
+@pytest.mark.parametrize(
+    ("attribute", "wrong_value"),
+    (
+        ("_provider_name", "other-provider"),
+        (
+            "_provider_contract_hash",
+            content_digest({"provider": "fixture", "tier": 2}),
+        ),
+    ),
+)
+def test_convenience_executor_revalidates_binding_immediately_before_dispatch(
+    tmp_path: Path,
+    attribute: str,
+    wrong_value: str,
+) -> None:
+    context = _context(tmp_path, (_template("inventory", goal="inventory"),))
+    executor = FakeProviderExecutor(tmp_path)
+    controller = _controller(context, executor=executor)
+    setattr(executor, attribute, wrong_value)
+
+    with pytest.raises(ReV2ControllerError, match="provider binding"):
+        controller.run_once()
+
+    assert executor.calls == []
+    assert not any(
+        event.type in {"work_planned", "dispatch_leased", "dispatch_started"}
+        for event in context.event_store.replay()
+    )
+    assert not (context.paths.candidates / ".leases").exists()
+
+
 def test_convenience_executor_provider_name_must_match_before_planning(
     tmp_path: Path,
 ) -> None:
