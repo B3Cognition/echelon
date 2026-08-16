@@ -16,7 +16,7 @@ import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict
+from typing import Any, Dict, Mapping
 
 from harness.config import load_config
 from harness.coordinator import StrategyCoordinator
@@ -209,6 +209,124 @@ def _verified_ledger_line(info: dict[str, Any]) -> str:
     )
 
 
+def _delivery_provider_limit_message(
+    result_map: Mapping[str, Any],
+    comparison: Mapping[str, Any],
+) -> str:
+    messages: list[str] = []
+    for sid, info in comparison.get("strategies", {}).items():
+        result = result_map.get(sid)
+        if _is_provider_limited_summary_row(info, result):
+            message = str(info.get("provider_limit_message") or "").strip()
+            messages.append(message or f"Strategy {sid} reached its provider limit")
+    if not messages:
+        return ""
+    if len(messages) == 1:
+        return messages[0]
+    return f"{len(messages)} strategies reached provider limits; first: {messages[0]}"
+
+
+def _delivery_summary_facts(
+    result_map: Mapping[str, Any],
+    comparison: Mapping[str, Any],
+):
+    from harness.run_summary import (
+        SummaryFact,
+        SummaryFactCategory,
+        SummaryFactImportance,
+    )
+
+    strategies = comparison.get("strategies", {})
+    summary = comparison.get("summary", {})
+    n_converged = int(summary.get("converged", 0) or 0)
+    n_provider_limited = sum(
+        1
+        for sid, info in strategies.items()
+        if _is_provider_limited_summary_row(info, result_map.get(sid))
+    )
+    n_checkpointed = sum(
+        1
+        for sid, info in strategies.items()
+        if not info.get("converged", False)
+        and not _is_provider_limited_summary_row(info, result_map.get(sid))
+        and (
+            getattr(result_map.get(sid), "termination_reason", None)
+            or info.get("termination_reason")
+        )
+        in _CHECKPOINT_REASONS
+    )
+    n_failed = max(
+        0,
+        int(summary.get("failed", 0) or 0) - n_checkpointed - n_provider_limited,
+    )
+    outcome_parts = [f"{n_converged} converged", f"{n_failed} failed"]
+    if n_checkpointed:
+        outcome_parts.append(f"{n_checkpointed} checkpointed")
+    if n_provider_limited:
+        outcome_parts.append(f"{n_provider_limited} provider-limited")
+    outcome = ", ".join(outcome_parts[:-1])
+    if len(outcome_parts) > 1:
+        outcome += f", and {outcome_parts[-1]}"
+    else:
+        outcome = outcome_parts[0]
+    facts = [
+        SummaryFact(
+            SummaryFactCategory.OUTCOME,
+            SummaryFactImportance.HIGH,
+            f"Delivery finished with {outcome} strategies.",
+            0,
+        )
+    ]
+    for sid, info in strategies.items():
+        result = result_map.get(sid)
+        converged = bool(info.get("converged", False))
+        reason = (
+            getattr(result, "termination_reason", None)
+            if result is not None
+            else info.get("termination_reason")
+        )
+        provider_limited = _is_provider_limited_summary_row(info, result)
+        if converged:
+            facts.append(
+                SummaryFact(
+                    SummaryFactCategory.WORK,
+                    SummaryFactImportance.HIGH,
+                    f"Strategy {sid} converged successfully.",
+                    len(facts),
+                )
+            )
+        elif provider_limited or reason in _CHECKPOINT_REASONS:
+            facts.append(
+                SummaryFact(
+                    SummaryFactCategory.HANDOFF,
+                    SummaryFactImportance.HIGH,
+                    f"Prepared strategy {sid} for durable continuation.",
+                    len(facts),
+                )
+            )
+        else:
+            facts.append(
+                SummaryFact(
+                    SummaryFactCategory.BLOCKER,
+                    SummaryFactImportance.CRITICAL,
+                    f"Strategy {sid} stopped before convergence.",
+                    len(facts),
+                )
+            )
+        verification = getattr(result, "final_verify", None)
+        if verification is not None:
+            verdict = "passed" if verification.passed else "failed"
+            facts.append(
+                SummaryFact(
+                    SummaryFactCategory.VERIFICATION,
+                    SummaryFactImportance.HIGH,
+                    f"Strategy {sid} verification {verdict}.",
+                    len(facts),
+                )
+            )
+    return tuple(facts)
+
+
 def _print_delivery_summary(
     intent: Any,
     result_map: Dict[str, Any],
@@ -233,7 +351,6 @@ def _print_delivery_summary(
     fulfillment_recommendation = _fulfillment_gap_recommendation(spec_dir)
 
     fields: list[tuple[str, str]] = [("spec", f"{intent.spec_id}{task_note}")]
-    summary_facts: list[str] = []
     if target_repo:
         fields.append(("target", target_repo))
     fields.append(("strategies", f"{', '.join(intent.strategies)}  |  mode: {intent.mode}"))
@@ -339,7 +456,6 @@ def _print_delivery_summary(
                 )
 
         fields.append((sid, "\n".join(lines)))
-        summary_facts.extend(f"{sid}: {line}" for line in lines)
 
     summary = comparison.get("summary", {})
     n_converged = summary.get("converged", 0)
@@ -370,7 +486,9 @@ def _print_delivery_summary(
     if total_tokens:
         result_str += f"  ·  {total_tokens:,} tokens"
     fields.append(("delivery", result_str))
-    summary_facts.append(f"Delivery result: {result_str}.")
+    provider_limit_message = _delivery_provider_limit_message(result_map, comparison)
+    if provider_limit_message:
+        fields.append(("provider limit", provider_limit_message))
     next_step = ""
     if n_checkpointed or n_provider_limited:
         next_step = f"echelon delivery continue {intent.spec_id}"
@@ -401,9 +519,9 @@ def _print_delivery_summary(
                     and not (n_failed or n_checkpointed or n_provider_limited)
                     else "blocked"
                 ),
-                facts=tuple(summary_facts),
+                facts=_delivery_summary_facts(result_map, comparison),
                 next_step=next_step,
-                inspect_paths=((spec_dir.resolve(),) if spec_dir is not None else ()),
+                provider_limit_message=provider_limit_message,
             )
         )
         fields.append(("worked on", worked_on))

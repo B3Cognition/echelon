@@ -144,12 +144,19 @@ class TestRunMultiTarget:
         assert all(env["ECHELON_SUPPRESS_RUN_SUMMARY"] == "1" for env in child_envs)
         assert summarize.call_count == 1
         context = summarize.call_args.args[0]
+        from harness.run_summary import SummaryFact, SummaryFactCategory
+
         assert context.command == "echelon delivery continue"
         assert context.status == "returned"
         assert context.next_step == (
             "Review the target delivery results above before choosing the next command."
         )
-        assert all("worker returned exit 0" in fact for fact in context.facts)
+        assert all(isinstance(fact, SummaryFact) for fact in context.facts)
+        assert all(
+            fact.category is SummaryFactCategory.OUTCOME
+            and "completed successfully" in fact.text
+            for fact in context.facts
+        )
         assert "land" not in context.next_step
 
     def test_non_json_safe_canonical_contract_fails_before_launch(

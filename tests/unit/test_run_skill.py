@@ -741,6 +741,13 @@ class TestRunSkillAutoLand:
             )
 
         assert summarize.call_args.args[0].command == "echelon delivery continue"
+        from harness.run_summary import SummaryFact
+
+        assert all(
+            isinstance(fact, SummaryFact)
+            for fact in summarize.call_args.args[0].facts
+        )
+        assert not hasattr(summarize.call_args.args[0], "inspect_paths")
 
         output = capsys.readouterr().err
         assert output.count("DELIVERY SUMMARY") == 1
@@ -837,19 +844,24 @@ class TestRunSkillAutoLand:
 
         capsys.readouterr()
         context = captured["context"]
-        assert len(context.facts) > 20
-        assert len(json.dumps(context.facts).encode("utf-8")) > 12 * 1024
+        from harness.run_summary import SummaryFact
+
+        assert context.facts
+        assert all(isinstance(fact, SummaryFact) for fact in context.facts)
         packet = provider.prompt.split("<evidence_packet>", 1)[1].split(
             "</evidence_packet>", 1
         )[0]
         assert len(packet.encode("utf-8")) <= 12 * 1024
-        facts = json.loads(packet)["facts"]
-        assert (
-            "Delivery result: 30 converged, 0 failed, 1 provider-limited  "
-            "·  300,000 tokens."
-        ) in facts
-        assert any("verify: ✓ passed" in fact for fact in facts)
-        assert any(provider_message in fact for fact in facts)
+        decoded = json.loads(packet)
+        assert decoded["schema_version"] == 2
+        facts = decoded["facts"]
+        assert all(
+            set(fact) == {"id", "category", "importance", "text"}
+            for fact in facts
+        )
+        assert any(fact["category"] == "verification" for fact in facts)
+        assert context.provider_limit_message == provider_message
+        assert all(provider_message not in fact["text"] for fact in facts)
 
     def test_delivery_summary_marks_mixed_strategy_outcome_blocked(
         self,

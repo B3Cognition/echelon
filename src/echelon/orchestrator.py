@@ -345,11 +345,30 @@ def _print_multi_target_summary(
 ) -> None:
     """Render one narrative for the parent multi-target CLI invocation."""
     from echelon.ui import banner
-    from harness.run_summary import RunSummaryContext, summarize_run_for_cli
+    from harness.run_summary import (
+        RunSummaryContext,
+        SummaryFact,
+        SummaryFactCategory,
+        SummaryFactImportance,
+        summarize_run_for_cli,
+    )
 
     target_facts = tuple(
-        f"Target {label}: worker returned exit {results.get(result_id, 1)}."
-        for result_id, (_target, label) in target_runs
+        SummaryFact(
+            SummaryFactCategory.OUTCOME,
+            (
+                SummaryFactImportance.HIGH
+                if results.get(result_id, 1) == 0
+                else SummaryFactImportance.CRITICAL
+            ),
+            (
+                f"Target {label} completed successfully."
+                if results.get(result_id, 1) == 0
+                else f"Target {label} returned exit {results.get(result_id, 1)}."
+            ),
+            order,
+        )
+        for order, (result_id, (_target, label)) in enumerate(target_runs)
     )
     next_step = (
         "Review the target delivery results above before choosing the next command."
@@ -362,7 +381,6 @@ def _print_multi_target_summary(
             status="returned",
             facts=target_facts,
             next_step=next_step,
-            inspect_paths=(),
         )
     )
     banner(
