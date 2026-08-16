@@ -205,7 +205,10 @@ def test_planner_rejects_cycles(monkeypatch: pytest.MonkeyPatch) -> None:
     first = template("first", "first", dependencies=("second",), producer="first")
     second = template("second", "second", dependencies=("first",), producer="second")
 
-    with pytest.raises(ReV2PlanError, match="cycle"):
+    with pytest.raises(
+        ReV2PlanError,
+        match=r"^work graph contains a cycle at first$",
+    ):
         validate_work_graph(
             (first, second),
             requested_goals=("first",),
@@ -274,6 +277,27 @@ def test_input_order_does_not_change_graph_or_plan_output() -> None:
         item.to_json_dict() for item in second_plan.ready
     )
     assert dict(first_plan.explanations) == dict(second_plan.explanations)
+
+
+def test_valid_deep_chain_validates_and_plans_without_recursion_error() -> None:
+    chain: list[WorkTemplate] = []
+    dependencies: tuple[str, ...] = ()
+    for index in range(2_501):
+        node = template(
+            "deep",
+            f"deep-node-{index:04d}",
+            dependencies=dependencies,
+        )
+        chain.append(node)
+        dependencies = (node.template_id,)
+
+    validated = graph(tuple(reversed(chain)), ("deep",))
+    decision = plan_next(validated, ledger_view(), open_budget())
+
+    assert len(validated.templates) == 2_501
+    assert tuple(item.template_id for item in decision.ready) == (chain[0].template_id,)
+    assert len(decision.explanations) == 2_501
+    assert decision.explanations[chain[-1].template_id].action == "blocked_dependency"
 
 
 def test_requested_goal_schedules_only_its_dependency_closure() -> None:

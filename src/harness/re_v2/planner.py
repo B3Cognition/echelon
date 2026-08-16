@@ -103,7 +103,7 @@ def validate_work_graph(
                 raise ReV2PlanError(
                     f"template {template_id} has missing dependency {required_id}"
                 )
-    _reject_cycles(by_id)
+    _topological_order(by_id, frozenset(by_id))
 
     available_goals = {item.goal_id for item in supplied}
     selected_goals = available_goals if requested_goals is None else set(
@@ -295,24 +295,6 @@ def build_initial_inventory_graph(
     )
 
 
-def _reject_cycles(by_id: Mapping[str, WorkTemplate]) -> None:
-    state: dict[str, Literal["visiting", "visited"]] = {}
-
-    def visit(template_id: str) -> None:
-        status = state.get(template_id)
-        if status == "visiting":
-            raise ReV2PlanError(f"work graph contains a cycle at {template_id}")
-        if status == "visited":
-            return
-        state[template_id] = "visiting"
-        for required_id in by_id[template_id].required_template_ids:
-            visit(required_id)
-        state[template_id] = "visited"
-
-    for template_id in sorted(by_id):
-        visit(template_id)
-
-
 def _goal_closure(
     by_id: Mapping[str, WorkTemplate], requested_goals: tuple[str, ...]
 ) -> frozenset[str]:
@@ -335,19 +317,37 @@ def _topological_order(
     by_id: Mapping[str, WorkTemplate], active: frozenset[str]
 ) -> tuple[str, ...]:
     ordered: list[str] = []
-    visited: set[str] = set()
+    state: dict[str, Literal["visiting", "visited"]] = {}
+    for root_id in sorted(active):
+        if root_id in state:
+            continue
+        state[root_id] = "visiting"
+        stack: list[tuple[str, int]] = [(root_id, 0)]
+        while stack:
+            template_id, dependency_index = stack[-1]
+            dependencies = by_id[template_id].required_template_ids
+            while (
+                dependency_index < len(dependencies)
+                and dependencies[dependency_index] not in active
+            ):
+                dependency_index += 1
+            if dependency_index == len(dependencies):
+                stack.pop()
+                state[template_id] = "visited"
+                ordered.append(template_id)
+                continue
 
-    def visit(template_id: str) -> None:
-        if template_id in visited:
-            return
-        for required_id in by_id[template_id].required_template_ids:
-            if required_id in active:
-                visit(required_id)
-        visited.add(template_id)
-        ordered.append(template_id)
-
-    for template_id in sorted(active):
-        visit(template_id)
+            dependency_id = dependencies[dependency_index]
+            stack[-1] = (template_id, dependency_index + 1)
+            dependency_state = state.get(dependency_id)
+            if dependency_state == "visiting":
+                raise ReV2PlanError(
+                    f"work graph contains a cycle at {dependency_id}"
+                )
+            if dependency_state == "visited":
+                continue
+            state[dependency_id] = "visiting"
+            stack.append((dependency_id, 0))
     return tuple(ordered)
 
 
