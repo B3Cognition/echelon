@@ -7,7 +7,12 @@ from unittest.mock import patch
 
 from harness.ai_cli_backend import CliRunResult
 from echelon.cli import _print_squad_summary
-from harness.run_summary import SummaryAgent, summarize_run
+from harness.run_summary import (
+    SummaryAgent,
+    SummaryFact,
+    SummaryFactCategory,
+    summarize_run,
+)
 
 
 def test_squad_summary_includes_one_human_readable_worked_on_section(
@@ -51,6 +56,48 @@ def test_squad_summary_includes_one_human_readable_worked_on_section(
     assert "Verified the result with 42 passing tests." in output
     assert "next" in output
     assert "echelon delivery run 123-run-handoff" in output
+
+
+def test_squad_summary_builds_typed_semantic_facts(tmp_path: Path) -> None:
+    squad_dir = tmp_path / "runs" / "spec-123"
+    squad_dir.mkdir(parents=True)
+    spec_dir = tmp_path / "specs" / "123-greeting"
+    spec_dir.mkdir(parents=True)
+    (squad_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "spec_id": "123-greeting",
+                "published_spec_dir": str(spec_dir),
+                "status": "done",
+                "phase": "terminal-done",
+                "completed_phases": ["phase1", "phase2"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    captured = {}
+
+    def capture(context):
+        captured["context"] = context
+        return "Published the greeting specification."
+
+    with patch("harness.run_summary.summarize_run_for_cli", side_effect=capture):
+        _print_squad_summary(
+            tmp_path,
+            squad_dir,
+            SimpleNamespace(status="done", phase="terminal-done"),
+            mode="semi",
+            message="Create a greeting.",
+        )
+
+    context = captured["context"]
+    assert all(isinstance(fact, SummaryFact) for fact in context.facts)
+    assert any(
+        fact.category is SummaryFactCategory.WORK
+        and fact.text == f"Published the specification at {spec_dir}."
+        for fact in context.facts
+    )
+    assert not hasattr(context, "inspect_paths")
 
 
 def test_squad_summary_never_renders_empty_worked_on_after_next_filtering(

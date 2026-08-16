@@ -4930,6 +4930,56 @@ def _spec_summary_session(project_root: Path, command: str):
             _SPEC_SUMMARY_SCOPE.reset(token)
 
 
+def _phase_a_summary_facts(
+    state: Mapping[str, object],
+    *,
+    spec_dir: str,
+    stopped: str,
+):
+    from harness.run_summary import (
+        SummaryFact,
+        SummaryFactCategory,
+        SummaryFactImportance,
+    )
+
+    facts: list[SummaryFact] = []
+    if spec_dir:
+        facts.append(
+            SummaryFact(
+                SummaryFactCategory.WORK,
+                SummaryFactImportance.HIGH,
+                f"Published the specification at {spec_dir}.",
+                len(facts),
+            )
+        )
+    completed = tuple(
+        str(value).strip()
+        for value in state.get("completed_phases", ())
+        if str(value).strip()
+    )
+    if completed:
+        facts.append(
+            SummaryFact(
+                SummaryFactCategory.HANDOFF,
+                SummaryFactImportance.NORMAL,
+                "Prepared durable specification state after completing "
+                + ", ".join(completed[:6])
+                + ".",
+                len(facts),
+            )
+        )
+    if stopped and stopped != "completed":
+        facts.append(
+            SummaryFact(
+                SummaryFactCategory.BLOCKER,
+                SummaryFactImportance.CRITICAL,
+                f"Specification work stopped because {stopped}.",
+                len(facts),
+            )
+        )
+    return tuple(facts)
+
+
 def _print_squad_summary(
     project_root: Path,
     squad_dir: Path,
@@ -5061,21 +5111,15 @@ def _print_squad_summary(
 
     from harness.run_summary import RunSummaryContext, summarize_run_for_cli
 
-    facts = [_format_completed_phases(state), f"Result: {result_line}."]
-    if spec_dir:
-        facts.insert(1, f"Published specification: {spec_dir}.")
-    if stopped and stopped != "completed":
-        facts.append(f"Stopped: {stopped}.")
+    facts = _phase_a_summary_facts(state, spec_dir=spec_dir, stopped=stopped)
     worked_on = summarize_run_for_cli(
         RunSummaryContext(
             project_root=project_root,
             command=command,
             task=message,
             status=status,
-            facts=tuple(facts),
+            facts=facts,
             next_step=next_step,
-            inspect_paths=(squad_dir.resolve(),)
-            + ((Path(spec_dir).resolve(),) if spec_dir else ()),
             quality_debt_status=(
                 str(debt_facts["status"]) if debt_facts is not None else ""
             ),
