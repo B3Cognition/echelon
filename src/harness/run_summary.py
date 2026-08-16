@@ -356,8 +356,28 @@ def _asserts_terminal_success(clause: str) -> bool:
         r"\b(?:completed|finished)(?:\s+successfully)?[.!?]?\s*$|"
         r"\b(?:is|was)\s+(?:complete|done|successful|finished)\b)"
     )
+    claim_boundary = (
+        r"(?:^\s*|[,;]\s*(?:and\s+)?|\b(?:and|but|although|while)\s+)"
+    )
+    work_subject = (
+        r"(?:requested\s+)?(?:work|tasks?|items?|steps?|actions?|requests?)"
+    )
+    exhaustion_claim = re.search(
+        rf"{claim_boundary}(?:"
+        rf"(?:no|zero)\s+{work_subject}\s+"
+        r"(?:remains?|(?:is|are)\s+(?:left|remaining))|"
+        r"(?:nothing|none)\s+(?:remains?|(?:is|was)\s+left)"
+        r"(?:\s+to\s+do)?|"
+        rf"there\s+(?:is|are)\s+no\s+{work_subject}\s+"
+        r"(?:left|remaining)|"
+        rf"all\s+{work_subject}\s+(?:(?:is|are|was|were)\s+|"
+        r"(?:has|have)\s+been\s+)?(?:finished|completed|done))\b",
+        clause,
+        flags=re.IGNORECASE,
+    )
     return bool(
         re.search(rf"{subject}.{{0,60}}{verdict}", clause, flags=re.IGNORECASE)
+        or exhaustion_claim
         or re.search(
             r"^\s*(?:(?:completed|finished)\s*(?:successfully)?|done|"
             r"succeeded|successful)[.!?]?\s*$",
@@ -368,16 +388,47 @@ def _asserts_terminal_success(clause: str) -> bool:
 
 
 def _asserts_verification_success(clause: str) -> bool:
+    claim_boundary = (
+        r"(?:^\s*|[,;]\s*(?:and\s+)?|\b(?:and|but|although|while)\s+)"
+    )
     subject = (
-        r"\b(?:verification|tests?|checks?|test\s+suite|check\s+suite|"
-        r"validation(?:\s+checks?)?)\b"
+        r"(?:(?:all|every|the|these|those)\s+)?"
+        r"(?:(?:regression|unit|integration|package|deployment|sandbox|"
+        r"automated|final|requested)\s+){0,2}"
+        r"(?:verification|testing|test\s+suite|check\s+suite|tests?|checks?|"
+        r"validation(?:\s+checks?)?)"
     )
-    verdict = (
-        r"(?:\bpass(?:ed|es|ing)?\b|\bsucceed(?:ed|s|ing)?\b|"
-        r"\bcompleted\s+successfully\b|"
-        r"\b(?:is|are|was|were)\s+(?:green|successful|complete|done|clean)\b)"
+    bare_subject = (
+        r"(?:(?:regression|unit|integration|package|deployment|sandbox|"
+        r"automated|final|requested)\s+){0,2}"
+        r"(?:test\s+suite|check\s+suite|tests?|checks?|verification|testing|"
+        r"validation(?:\s+checks?)?)"
     )
-    return bool(re.search(rf"{subject}.{{0,60}}{verdict}", clause, re.IGNORECASE))
+    positive_predicate = (
+        r"(?:all\s+)?(?:pass(?:ed|es)?|succeed(?:ed|s)?|"
+        r"completed\s+successfully)|"
+        r"(?:is|are|was|were)\s+(?:passing|green|successful|complete|done|clean)"
+    )
+    direct_verdict = re.search(
+        rf"{claim_boundary}{subject}\s+(?:{positive_predicate})\b",
+        clause,
+        flags=re.IGNORECASE,
+    )
+    no_failed_subject = re.search(
+        rf"{claim_boundary}(?:(?:no|zero)\s+{bare_subject}|"
+        rf"(?:none|not\s+one)\s+of\s+(?:the\s+)?{bare_subject})\s+"
+        r"(?:failed|was\s+unsuccessful|were\s+unsuccessful)\b",
+        clause,
+        flags=re.IGNORECASE,
+    )
+    no_failures_found = re.search(
+        rf"{claim_boundary}{subject}\s+"
+        r"(?:found|reported|showed|recorded|returned|had)\s+"
+        r"(?:no|zero)\s+(?:failures?|errors?)\b",
+        clause,
+        flags=re.IGNORECASE,
+    )
+    return bool(direct_verdict or no_failed_subject or no_failures_found)
 
 
 def _contradicts_terminal_truth(

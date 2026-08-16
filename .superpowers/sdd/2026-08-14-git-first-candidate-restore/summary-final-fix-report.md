@@ -30,9 +30,13 @@ public delivery renderer.
 
 ```text
 .venv/bin/pytest tests/unit/test_run_summary.py::test_summary_evidence_prioritizes_authoritative_facts_over_strategy_paths tests/unit/test_run_skill.py::TestRunSkillAutoLand::test_delivery_summary_preserves_late_authority_in_bounded_packet -q
-FF                                                                       [100%]
-AssertionError: assert 'Changed work: hardened the delivery summary.' in ['strategy-00: branch: ...', ...]
-AssertionError: assert 'Delivery result: 30 converged, 0 failed, 1 provider-limited  ·  300,000 tokens.' in ['strategy-00: ✓ CONVERGED', ...]
+Failing assertion: assert fact in facts
+fact: Changed work: hardened the delivery summary.
+Failing assertion:
+assert (
+    "Delivery result: 30 converged, 0 failed, 1 provider-limited  "
+    "·  300,000 tokens."
+) in facts
 2 failed in 0.38s
 ```
 
@@ -90,7 +94,7 @@ controls still passed:
 
 ```text
 .venv/bin/pytest tests/unit/test_run_summary.py::test_summary_rejects_generic_unsupported_success_verdicts tests/unit/test_run_summary.py::test_summary_preserves_completed_work_narration_without_success_verdicts -q
-FFFFFFFF....                                                             [100%]
+Failing assertion for every adversarial case: assert claim not in summary
 8 failed, 4 passed in 0.33s
 ```
 
@@ -100,7 +104,6 @@ of subject-first completed-work narration:
 
 ```text
 .venv/bin/pytest tests/unit/test_run_summary.py::test_summary_rejects_generic_unsupported_success_verdicts tests/unit/test_run_summary.py::test_summary_preserves_completed_work_narration_without_success_verdicts -q
-..F......F..F..                                                          [100%]
 AssertionError: assert 'The job is done.' not in summary
 AssertionError: assert 'The regression tests are passing.' not in summary
 AssertionError: assert 'The work completed included summary parser changes.' in summary
@@ -127,7 +130,6 @@ or running diagnostic tests without a positive verdict remains safe.
 
 ```text
 .venv/bin/pytest tests/unit/test_run_summary.py::test_summary_rejects_generic_unsupported_success_verdicts tests/unit/test_run_summary.py::test_summary_preserves_completed_work_narration_without_success_verdicts -q
-...............                                                          [100%]
 15 passed in 0.27s
 ```
 
@@ -139,7 +141,7 @@ verification with no evidence, and five completed-work controls.
 
 ### Root cause
 
-`_compact_json` used ordinary `json.dumps(..., ensure_ascii=False)`, which leaves
+`_compact_json` used ordinary `json.dumps` with `ensure_ascii=False`, which leaves
 ASCII `<`, `>`, and `&` literal. Because the compact JSON was placed between
 literal `<evidence_packet>` sentinels, an untrusted task, fact, or inspected file
 could contain `</evidence_packet>` and create an early closing boundary followed
@@ -216,7 +218,6 @@ line. This keeps Next ownership in the outer banner and prevents a blank public
 
 ```text
 .venv/bin/pytest tests/unit/test_run_summary.py::test_summary_falls_back_when_next_filter_leaves_fewer_than_two_narratives tests/unit/test_cli_run_summary.py::test_squad_summary_never_renders_empty_worked_on_after_next_filtering -q
-...                                                                      [100%]
 3 passed in 0.36s
 ```
 
@@ -226,7 +227,6 @@ The final exact public-path node matrix is:
 
 ```text
 .venv/bin/pytest tests/unit/test_run_summary.py::test_summary_evidence_prioritizes_authoritative_facts_over_strategy_paths tests/unit/test_run_skill.py::TestRunSkillAutoLand::test_delivery_summary_preserves_late_authority_in_bounded_packet tests/unit/test_run_summary.py::test_summary_rejects_generic_unsupported_success_verdicts tests/unit/test_run_summary.py::test_summary_preserves_completed_work_narration_without_success_verdicts tests/unit/test_run_summary.py::test_summary_evidence_escapes_sentinels_without_changing_json_semantics tests/unit/test_run_summary.py::test_summary_falls_back_when_next_filter_leaves_fewer_than_two_narratives tests/unit/test_cli_run_summary.py::test_squad_summary_never_renders_empty_worked_on_after_next_filtering -q
-.....................                                                    [100%]
 21 passed in 0.50s
 ```
 
@@ -234,8 +234,6 @@ Complete directly affected files:
 
 ```text
 .venv/bin/pytest tests/unit/test_run_summary.py tests/unit/test_cli_run_summary.py tests/unit/test_run_skill.py -q
-........................................................................ [ 54%]
-...........................................................              [100%]
 131 passed in 0.87s
 ```
 
@@ -361,3 +359,187 @@ passed before the complete successful `tests/run-all.sh` rerun:
   intentionally default to the low-priority class. New canonical wording must
   extend the classifier and its public test matrix.
 - No known blocker or architectural concern remains in the authorized scope.
+
+## Fix Round 1 — complete summary truth classification
+
+Round base: `3428a59180b220fbb57844b31c3e98dcd1318da2`
+
+### Findings and root cause
+
+The first-wave truth rules remained incomplete in two connected ways:
+
+1. Terminal completion recognized positive predicates such as `is done` and
+   `succeeded`, but not quantified exhaustion claims. `No work remains.`,
+   `Nothing remains to do.`, and `There is no work left.` therefore bypassed
+   blocked/failed/incomplete status validation. `All requested work is
+   finished.` was already rejected by the positive terminal rule and remains a
+   regression control.
+2. Verification used a proximity scan for a verification/test/check subject
+   followed by a positive lexical form. It missed structurally positive
+   negative-failure claims such as `No tests failed.` and `Validation found no
+   failures.`, while the same scan interpreted the gerund in `Added tests
+   passing JSON values into the renderer.` as a standalone verdict.
+
+The shared root cause was that lexical proximity did not distinguish a
+clause-level claim from a noun phrase embedded under a completed-work action.
+
+### Exact RED
+
+```text
+.venv/bin/pytest tests/unit/test_run_summary.py::test_summary_rejects_generic_unsupported_success_verdicts tests/unit/test_run_summary.py::test_summary_preserves_completed_work_narration_without_success_verdicts -q
+```
+
+The exact failing terminal assertions were all `assert claim not in summary`
+for these values:
+
+```text
+No work remains.
+Nothing remains to do.
+There is no work left.
+```
+
+The exact failing verification assertions were all `assert claim not in
+summary` for these values:
+
+```text
+Testing succeeded.
+No tests failed.
+None of the checks failed.
+Validation found no failures.
+Checks reported zero failures.
+```
+
+The exact false-positive control assertions were all `assert narration in
+summary` for these values:
+
+```text
+Added tests passing JSON values into the renderer.
+Wrote checks passing Unicode lookalikes into the serializer.
+Updated validation passing escaped data through the boundary.
+Implemented tests passing structured results to the reporter.
+```
+
+Exact command summary:
+
+```text
+12 failed, 16 passed in 0.42s
+```
+
+### Fix
+
+Terminal exhaustion is now classified only when a quantified work subject and
+an exhaustion predicate form a claim at the start of a clause or after an
+explicit coordinating boundary. The structural forms cover no/zero remaining
+work, nothing/none left to do, existential no-work-left claims, and exhaustive
+all-work-finished claims. Action narration that merely discusses such a phrase
+inside another predicate does not become a terminal verdict.
+
+Verification success is now classified through three claim-anchored forms:
+
+- a verification/testing/test/check/validation subject with a finite positive
+  predicate;
+- no/zero/none-of test or check subjects with a failed predicate; or
+- a verification subject that found, reported, showed, recorded, returned, or
+  had no/zero failures.
+
+The subject must begin a clause (or follow an explicit coordinating boundary),
+and present-progress passing requires a finite linking verb. Consequently,
+`tests passing JSON values` remains a transitive noun phrase rather than a test
+verdict, while `The regression tests are passing.` remains a verdict.
+
+### Exact GREEN
+
+```text
+.venv/bin/pytest tests/unit/test_run_summary.py::test_summary_rejects_generic_unsupported_success_verdicts tests/unit/test_run_summary.py::test_summary_preserves_completed_work_narration_without_success_verdicts -q
+28 passed in 0.28s
+```
+
+### Round verification
+
+Complete directly affected summary/CLI/skill files:
+
+```text
+.venv/bin/pytest tests/unit/test_run_summary.py tests/unit/test_cli_run_summary.py tests/unit/test_run_skill.py -q
+144 passed in 0.84s
+```
+
+Complete summary/CLI/skill/orchestrator regressions:
+
+```text
+.venv/bin/pytest tests/unit/test_run_summary.py tests/unit/test_cli_run_summary.py tests/unit/test_cli_continue.py tests/unit/test_cli_resume_escalation_options.py tests/unit/test_cli_resume_spec_context.py tests/unit/test_cli_mode_args.py tests/unit/test_cli_status.py tests/unit/test_core_cli_run_discovery.py tests/unit/test_cli_run_dir_gitignore.py tests/unit/test_run_skill.py tests/unit/test_orchestrator.py -q
+291 passed in 1.82s
+```
+
+Provider regressions:
+
+```text
+.venv/bin/pytest tests/unit/test_ai_cli_backend.py tests/unit/test_llm_provider.py tests/unit/test_provider.py tests/unit/test_squad_provider.py tests/kernel/test_squad_provider.py tests/unit/test_topology_provider.py tests/unit/test_spec_telemetry_provider.py -q
+301 passed in 1.29s
+```
+
+Package/deployment/runtime prompt regressions:
+
+```text
+.venv/bin/pytest tests/unit/test_prosaic_package_install.py tests/unit/test_workspace_init_deploy_runtime.py tests/kernel/test_phase_graph.py tests/unit/test_prosaic_prompt_loader.py tests/unit/test_prosaic_provider_deployment.py tests/unit/test_prosaic_constitution_runtime.py tests/unit/test_skill_loader_prosaic.py -q
+164 passed in 78.54s (0:01:18)
+```
+
+Repository runner:
+
+```text
+bash tests/run-all.sh
+Total: 1649 passed, 0 failed, 0 skipped
+OVERALL: PASS
+```
+
+Bundle validation:
+
+```text
+bash scripts/bash/dry-run.sh
+Bundle validation passed: 9 checks
+```
+
+Compilation:
+
+```text
+.venv/bin/python -m compileall -q src tests/unit tests/integration
+exit 0
+```
+
+Diff hygiene, recorded separately from status hygiene:
+
+```text
+git diff --check
+exit 0
+```
+
+Post-commit status hygiene:
+
+```text
+git status --short
+(no output)
+```
+
+### Round changed files, self-review, compatibility, and concerns
+
+- `src/harness/run_summary.py` — replaced verification lexical proximity with
+  clause-bound direct, negative-failure, and no-failures-found claims; added
+  structural terminal exhaustion claims.
+- `tests/unit/test_run_summary.py` — added four completion claims, five
+  verification/no-failure claims, and four transitive action controls through
+  public strict-JSON rendering.
+- `.superpowers/sdd/2026-08-14-git-first-candidate-restore/summary-final-fix-report.md`
+  — removed abbreviated RED representations and appended this round's exact
+  evidence.
+
+Self-review confirmed that the matcher does not enumerate the requested full
+sentences: it composes claim boundary, semantic subject, quantifier, and finite
+predicate classes. The direct predicates no longer accept a bare `passing`
+gerund. Existing terminal, verification, provider/debt, priority, sentinel, and
+fallback tests remain in the complete 144-test directly affected matrix.
+
+This round changes no packet schema, evidence selection, prompt boundary,
+fallback, provider, CLI, delivery, Git-first restore, proportional repair,
+certificate/debt, or Tasks Lexicon behavior. No known blocker remains. Future
+new verdict grammar should be added as a structural subject/predicate form with
+both adversarial and action-narration controls.

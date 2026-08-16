@@ -399,6 +399,10 @@ def test_model_cannot_duplicate_deterministic_next_step(tmp_path: Path) -> None:
         ("failed", (), "Everything is done."),
         ("failed", (), "The job is done."),
         ("incomplete", (), "The requested work succeeded."),
+        ("blocked", (), "No work remains."),
+        ("failed", (), "Nothing remains to do."),
+        ("incomplete", (), "There is no work left."),
+        ("blocked", (), "All requested work is finished."),
         ("blocked", ("Verification: failed.",), "All tests passed."),
         ("failed", ("Verification: blocked.",), "Every check succeeded."),
         (
@@ -417,6 +421,19 @@ def test_model_cannot_duplicate_deterministic_next_step(tmp_path: Path) -> None:
             ("Verification: failed.",),
             "The regression tests are passing.",
         ),
+        ("failed", ("Verification: failed.",), "Testing succeeded."),
+        ("blocked", ("Verification: blocked.",), "No tests failed."),
+        (
+            "incomplete",
+            ("Verification: incomplete.",),
+            "None of the checks failed.",
+        ),
+        (
+            "blocked",
+            ("Verification: unavailable.",),
+            "Validation found no failures.",
+        ),
+        ("blocked", (), "Checks reported zero failures."),
     ),
 )
 def test_summary_rejects_generic_unsupported_success_verdicts(
@@ -458,6 +475,10 @@ def test_summary_rejects_generic_unsupported_success_verdicts(
         "The work completed included summary parser changes.",
         "Added regression tests for failed verification.",
         "Ran the reproducer to collect diagnostics.",
+        "Added tests passing JSON values into the renderer.",
+        "Wrote checks passing Unicode lookalikes into the serializer.",
+        "Updated validation passing escaped data through the boundary.",
+        "Implemented tests passing structured results to the reporter.",
     ),
 )
 def test_summary_preserves_completed_work_narration_without_success_verdicts(
