@@ -5,7 +5,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from harness.ai_cli_backend import CliRunResult
 from echelon.cli import _print_squad_summary
+from harness.run_summary import SummaryAgent, summarize_run
 
 
 def test_squad_summary_includes_one_human_readable_worked_on_section(
@@ -49,6 +51,63 @@ def test_squad_summary_includes_one_human_readable_worked_on_section(
     assert "Verified the result with 42 passing tests." in output
     assert "next" in output
     assert "echelon delivery run 123-run-handoff" in output
+
+
+def test_squad_summary_never_renders_empty_worked_on_after_next_filtering(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    squad_dir = tmp_path / "runs" / "spec-123"
+    squad_dir.mkdir(parents=True)
+    (squad_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "spec_id": "123-run-handoff",
+                "status": "done",
+                "phase": "terminal-done",
+                "completed_phases": ["phase1", "phase2"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class NextOnlyProvider:
+        def run_agent_result(self, *_args, **_kwargs):
+            return CliRunResult(
+                exit_code=0,
+                stdout=json.dumps(
+                    {
+                        "bullets": [
+                            "Next, run echelon delivery run 123-run-handoff.",
+                            "Use echelon delivery run 123-run-handoff next.",
+                        ]
+                    }
+                ),
+                stderr="",
+            )
+
+    def render(context):
+        return summarize_run(
+            context,
+            provider=NextOnlyProvider(),
+            agent=SummaryAgent(prompt="Summarize.", metadata={}),
+        )
+
+    with patch(
+        "harness.run_summary.summarize_run_for_cli",
+        side_effect=render,
+    ):
+        _print_squad_summary(
+            tmp_path,
+            squad_dir,
+            SimpleNamespace(status="done", phase="terminal-done"),
+            mode="semi",
+            message="Add a run handoff.",
+        )
+
+    output = capsys.readouterr().out
+    assert output.count("worked on") == 1
+    assert "Echelon completed the requested specification work." in output
 
 
 def test_squad_summary_keeps_invoked_command_distinct_from_recovery_command(

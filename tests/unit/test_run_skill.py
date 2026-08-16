@@ -7,6 +7,7 @@ when auto_merge is True on the intent.
 from __future__ import annotations
 
 from dataclasses import replace
+import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -745,6 +746,110 @@ class TestRunSkillAutoLand:
         assert output.count("DELIVERY SUMMARY") == 1
         assert "worked on" in output
         assert "Implemented the requested delivery." in output
+
+    def test_delivery_summary_preserves_late_authority_in_bounded_packet(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from harness.ai_cli_backend import CliRunResult
+        from harness.run_summary import SummaryAgent, summarize_run
+        from harness.skills.run_skill import _print_delivery_summary
+
+        intent = RunIntent(spec_id="001-demo", mode="semi")
+        result_map: dict[str, DeliveryResult] = {}
+        strategies: dict[str, dict[str, object]] = {}
+        for index in range(30):
+            sid = f"strategy-{index:02}"
+            result = _make_converged_result()
+            result_map[sid] = result
+            strategies[sid] = {
+                "status": result.status,
+                "termination_reason": result.termination_reason,
+                "converged": True,
+                "outer_iterations": 1,
+                "inner_iterations": 0,
+                "branch": f"harness/001-demo/{sid}/{'segment-' * 55}",
+            }
+        limited_sid = "strategy-provider-limited"
+        limited = replace(
+            _make_checkpoint_result(),
+            termination_reason="provider_session_limit",
+        )
+        provider_message = "You've hit your session limit · resets 9:10pm"
+        result_map[limited_sid] = limited
+        strategies[limited_sid] = {
+            "status": limited.status,
+            "termination_reason": limited.termination_reason,
+            "converged": False,
+            "outer_iterations": limited.outer_iterations,
+            "inner_iterations": limited.inner_iterations,
+            "branch": f"harness/001-demo/{limited_sid}/{'segment-' * 55}",
+            "build_status": "provider_session_limit",
+            "provider_limit_message": provider_message,
+            "provider_reset_hint": "9:10pm",
+        }
+        comparison = {
+            "strategies": strategies,
+            "summary": {"converged": 30, "failed": 1, "total_tokens": 300_000},
+        }
+        captured: dict[str, object] = {}
+
+        class RecordingProvider:
+            prompt = ""
+
+            def run_agent_result(self, _cwd, prompt, **_kwargs):
+                self.prompt = prompt
+                return CliRunResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {
+                            "bullets": [
+                                "Recorded the large multi-strategy delivery.",
+                                "Preserved the authoritative aggregate handoff.",
+                            ]
+                        }
+                    ),
+                    stderr="",
+                )
+
+        provider = RecordingProvider()
+
+        def render(context):
+            captured["context"] = context
+            return summarize_run(
+                context,
+                provider=provider,
+                agent=SummaryAgent(prompt="Summarize.", metadata={}),
+            )
+
+        with patch(
+            "harness.run_summary.summarize_run_for_cli",
+            side_effect=render,
+        ):
+            _print_delivery_summary(
+                intent,
+                result_map,
+                comparison,
+                tmp_path,
+                None,
+            )
+
+        capsys.readouterr()
+        context = captured["context"]
+        assert len(context.facts) > 20
+        assert len(json.dumps(context.facts).encode("utf-8")) > 12 * 1024
+        packet = provider.prompt.split("<evidence_packet>", 1)[1].split(
+            "</evidence_packet>", 1
+        )[0]
+        assert len(packet.encode("utf-8")) <= 12 * 1024
+        facts = json.loads(packet)["facts"]
+        assert (
+            "Delivery result: 30 converged, 0 failed, 1 provider-limited  "
+            "·  300,000 tokens."
+        ) in facts
+        assert any("verify: ✓ passed" in fact for fact in facts)
+        assert any(provider_message in fact for fact in facts)
 
     def test_delivery_summary_marks_mixed_strategy_outcome_blocked(
         self,
