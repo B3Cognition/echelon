@@ -119,11 +119,12 @@ Commands:
                     [--message <text>]
                                             Run one explicit phase through COMMANDER contracts.
 
-  re run [--re-policy none|cached-only|changed|refresh-all]
+  re run [--engine v1|v2] [--shadow]
+                    [--re-policy none|cached-only|changed|refresh-all]
                     [--re-max-inner <n>] [--reset]
                                             Run or reuse workspace reverse engineering.
   re refresh --source <source-id>           Refresh and publish one declared source.
-  re status                                 Show live RE state, source quality, debt, and next action.
+  re status [--json]                        Show live RE state, source quality, debt, and next action.
   re continue [--re-max-inner <n>] [--re-token-limit <n>] [--re-time-limit-minutes <n>]
                                             Continue the active RE run.
   re resume <answer> [--re-max-inner <n>] [--re-token-limit <n>] [--re-time-limit-minutes <n>]
@@ -9715,16 +9716,65 @@ def _format_re_token_budget(state: dict, outer: dict) -> str:
     return f"{usage / 1_000_000:.1f}M / {limit / 1_000_000:.1f}M ({usage / limit:.0%})"
 
 
+def _detect_re_engine_for_cli(run_dir: Path) -> str:
+    """Detect a pinned engine and preserve recorded identity in refusal errors."""
+    from harness.re_v2.run_store import ReV2RunStoreError, detect_re_engine
+
+    try:
+        return detect_re_engine(run_dir)
+    except ReV2RunStoreError as exc:
+        manifest_path = run_dir.resolve() / "v2" / "run.json"
+        recorded: tuple[str, str] | None = None
+        if manifest_path.is_file() and not manifest_path.is_symlink():
+            try:
+                raw = json.loads(manifest_path.read_bytes())
+                if isinstance(raw, dict):
+                    engine = raw.get("engine")
+                    protocol = raw.get("engine_protocol_version")
+                    if (
+                        isinstance(engine, str)
+                        and engine
+                        and isinstance(protocol, str)
+                        and protocol
+                    ):
+                        recorded = (engine, protocol)
+            except (OSError, ValueError, TypeError):
+                pass
+        if recorded is not None:
+            raise ValueError(
+                "unsupported pinned RE engine/protocol "
+                f"{recorded[0]!r}/{recorded[1]!r}; install an Echelon version "
+                "compatible with the recorded protocol"
+            ) from exc
+        raise ValueError(str(exc)) from exc
+
+
 def _cmd_re_status(args: list[str]) -> None:
     """Show the active RE controller state and every source's quality outcome."""
     from harness.re_lifecycle import resolve_current_re_run
+    from harness.re_v2.status import ReV2StatusError, render_v2_status
 
-    if args:
-        print("Usage: echelon re status", file=sys.stderr)
+    as_json = args == ["--json"]
+    if args and not as_json:
+        print("Usage: echelon re status [--json]", file=sys.stderr)
         raise SystemExit(2)
     run_dir = resolve_current_re_run(Path.cwd())
     if run_dir is None:
         print("echelon re status: no active RE run", file=sys.stderr)
+        raise SystemExit(2)
+    try:
+        engine = _detect_re_engine_for_cli(run_dir)
+        if engine == "v2":
+            print(render_v2_status(run_dir, as_json=as_json), end="")
+            return
+    except (ReV2StatusError, ValueError) as exc:
+        print(f"echelon re status: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
+    if as_json:
+        print(
+            "echelon re status: --json is available only for pinned v2 runs",
+            file=sys.stderr,
+        )
         raise SystemExit(2)
     run_re_dir = run_dir / "re"
     outer = _read_re_summary_state(run_dir / "state.json")
@@ -10129,10 +10179,514 @@ def _format_missing_workspace_artifacts(paths: list[str]) -> str:
     return "\n".join([heading, *displayed, suffix]).strip()
 
 
+def _parse_re_creation_engine_options(
+    args: list[str],
+) -> tuple[str, bool, list[str]]:
+    """Remove additive v2 creation switches without changing the v1 parser."""
+    engine = "v1"
+    engine_seen = False
+    shadow = False
+    remaining: list[str] = []
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg == "--engine":
+            if engine_seen or index + 1 >= len(args):
+                raise ValueError("--engine requires exactly one of v1 or v2")
+            engine = args[index + 1].strip()
+            engine_seen = True
+            index += 2
+        elif arg.startswith("--engine="):
+            if engine_seen:
+                raise ValueError("--engine requires exactly one of v1 or v2")
+            engine = arg.split("=", 1)[1].strip()
+            engine_seen = True
+            index += 1
+        elif arg == "--shadow":
+            if shadow:
+                raise ValueError("--shadow may be supplied only once")
+            shadow = True
+            index += 1
+        else:
+            remaining.append(arg)
+            index += 1
+    if engine not in {"v1", "v2"}:
+        raise ValueError("--engine requires v1 or v2")
+    if shadow and engine != "v2":
+        raise ValueError("--shadow is valid only with --engine v2")
+    return engine, shadow, remaining
+
+
+def _re_v2_now() -> str:
+    return (
+        datetime.now(timezone.utc)
+        .isoformat(timespec="microseconds")
+        .replace("+00:00", "Z")
+    )
+
+
+def _re_v2_snapshot_root(project_root: Path) -> Path:
+    configured = os.environ.get("ECHELON_HOME")
+    base = Path(configured).expanduser() if configured else Path.home() / ".echelon"
+    destination = (base / "re-v2" / "snapshots").resolve(strict=False)
+    workspace = project_root.resolve()
+    if destination == workspace or destination.is_relative_to(workspace):
+        raise ValueError("RE v2 snapshot storage must be outside the source workspace")
+    return destination
+
+
+def _re_v2_partition_manifest_id(
+    workspace_manifest: object, source_snapshot_id: str
+) -> str:
+    from harness.re_v2.canonical import content_digest
+
+    workspace_root = Path(getattr(getattr(workspace_manifest, "workspace"), "root"))
+    sources: list[dict[str, str]] = []
+    seen_ids: set[str] = set()
+    for source in getattr(workspace_manifest, "sources"):
+        source_id = str(getattr(source, "id"))
+        configured_path = str(getattr(source, "path"))
+        if (
+            not source_id
+            or source_id in seen_ids
+            or (source_id != "." and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", source_id) is None)
+        ):
+            raise ValueError(f"unsafe or duplicate RE v2 source id: {source_id!r}")
+        source_path = Path(configured_path)
+        if source_path.is_absolute():
+            resolved = source_path.resolve()
+        else:
+            if ".." in source_path.parts:
+                raise ValueError(f"unsafe RE v2 source path: {configured_path!r}")
+            resolved = (workspace_root / source_path).resolve()
+        if (
+            not resolved.is_relative_to(workspace_root)
+            or resolved.is_symlink()
+            or not resolved.is_dir()
+        ):
+            raise ValueError(f"unsafe or unavailable RE v2 source path: {configured_path!r}")
+        seen_ids.add(source_id)
+        sources.append(
+            {
+                "git_role": str(getattr(source, "git_role")),
+                "id": source_id,
+                "path": resolved.relative_to(workspace_root).as_posix() or ".",
+            }
+        )
+    if not sources:
+        raise ValueError("workspace has no source roots for RE v2 inventory")
+    return content_digest(
+        {
+            "partition_protocol": "re-v2-partition-v1",
+            "source_snapshot_id": source_snapshot_id,
+            "sources": sorted(sources, key=lambda item: (item["id"], item["path"])),
+        }
+    )
+
+
+def _new_re_v2_run_id(project_root: Path) -> str:
+    runs = project_root.resolve() / "runs"
+    base = datetime.now(timezone.utc).strftime("re-%Y%m%d-%H%M%S-%f")
+    for index in range(1_000):
+        candidate = base if index == 0 else f"{base}-{index}"
+        if not (runs / candidate).exists() and not (runs / candidate).is_symlink():
+            return candidate
+    raise ValueError("cannot allocate a unique RE v2 run id")
+
+
+def _activate_re_v2_run(project_root: Path, run_id: str) -> None:
+    runs = project_root.resolve() / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    gitignore = runs / ".gitignore"
+    if not gitignore.exists():
+        gitignore.write_text("*/state.json\n*/*.tmp\n.current*\n", encoding="utf-8")
+    marker = runs / ".current-re"
+    temporary = runs / f".current-re.{os.getpid()}.tmp"
+    try:
+        temporary.write_text(run_id + "\n", encoding="utf-8")
+        os.replace(temporary, marker)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+class _DeterministicInventoryCertifier:
+    """Controller-owned verifier for the exact deterministic L0 document."""
+
+    verifier_id = "deterministic-inventory-verifier"
+    verifier_version = "v1"
+
+    def __init__(self, object_store: object, snapshot: object) -> None:
+        self._object_store = object_store
+        self._snapshot = snapshot
+
+    def certify(self, candidate: object, work_item: object) -> object:
+        from harness.re_v2.canonical import canonical_json_bytes
+        from harness.re_v2.ledger import CertificationDecision
+        from harness.re_v2.model import (
+            ArtifactReceipt,
+            CertificationKey,
+            CertificationReceipt,
+        )
+
+        payload_root = Path(getattr(candidate, "payload_path"))
+        artifact_hash = self._object_store.put_tree(payload_root)
+        diagnostics = self._diagnostics(candidate, work_item, payload_root)
+        certified_at = _re_v2_now()
+        certification = CertificationReceipt(
+            certification_key=CertificationKey(
+                artifact_hash=artifact_hash,
+                verifier_id=self.verifier_id,
+                verifier_version=self.verifier_version,
+                source_snapshot_id=getattr(work_item, "output_key").source_snapshot_id,
+                audit_epoch_id=None,
+            ),
+            candidate_id=str(getattr(candidate, "candidate_id")),
+            work_item_id=str(getattr(work_item, "work_item_id")),
+            verdict="rejected" if diagnostics else "accepted",
+            normalized_diagnostics=diagnostics,
+            evidence_references=("inventory.json",),
+            scope_verified=not diagnostics,
+            certified_at=certified_at,
+        )
+        if diagnostics:
+            return CertificationDecision(certification, None)
+        artifact = ArtifactReceipt(
+            artifact_key=getattr(work_item, "output_key"),
+            artifact_hash=artifact_hash,
+            certification_id=certification.identity,
+            candidate_id=str(getattr(candidate, "candidate_id")),
+            work_item_id=str(getattr(work_item, "work_item_id")),
+            accepted_at=certified_at,
+        )
+        return CertificationDecision(certification, artifact)
+
+    def _diagnostics(
+        self, candidate: object, work_item: object, payload_root: Path
+    ) -> tuple[str, ...]:
+        from harness.re_v2.canonical import canonical_json_bytes
+
+        observation = getattr(candidate, "observation")
+        if (
+            observation.provider_name != "deterministic-inventory"
+            or observation.exit_code != 0
+            or observation.timed_out
+            or observation.output_truncated
+            or not observation.result_contract_valid
+        ):
+            return ("deterministic-transport-invalid",)
+        try:
+            entries = sorted(path.name for path in payload_root.iterdir())
+            document_path = payload_root / "inventory.json"
+            payload = document_path.read_bytes()
+            document = json.loads(payload)
+            snapshot_manifest = json.loads(
+                Path(getattr(self._snapshot, "manifest_path")).read_bytes()
+            )
+        except (OSError, ValueError, TypeError):
+            return ("inventory-document-unreadable",)
+        if entries != ["inventory.json"] or document_path.is_symlink() or not document_path.is_file():
+            return ("inventory-output-scope-invalid",)
+        try:
+            if payload != canonical_json_bytes(document):
+                return ("inventory-document-noncanonical",)
+        except (TypeError, ValueError):
+            return ("inventory-document-noncanonical",)
+        expected_fields = {
+            "artifact_kind",
+            "dependency_hashes",
+            "partition_manifest_id",
+            "producer_protocol_version",
+            "schema_version",
+            "snapshot_entries",
+            "source_snapshot_id",
+            "work_item_id",
+        }
+        if not isinstance(document, dict) or set(document) != expected_fields:
+            return ("inventory-document-schema-invalid",)
+        expected_entries = [
+            {
+                "digest": item["digest"],
+                "mode": int(item["mode"]) & ~0o222,
+                "path": item["path"],
+                "size": item["size"],
+            }
+            for item in snapshot_manifest.get("entries", [])
+            if isinstance(item, dict)
+        ]
+        output_key = getattr(work_item, "output_key")
+        expected = {
+            "artifact_kind": output_key.artifact_kind,
+            "dependency_hashes": list(getattr(work_item, "required_artifact_hashes")),
+            "partition_manifest_id": output_key.partition_manifest_id,
+            "producer_protocol_version": getattr(work_item, "producer_protocol_version"),
+            "schema_version": 1,
+            "snapshot_entries": sorted(expected_entries, key=lambda item: str(item["path"])),
+            "source_snapshot_id": output_key.source_snapshot_id,
+            "work_item_id": getattr(work_item, "work_item_id"),
+        }
+        return () if document == expected else ("inventory-evidence-mismatch",)
+
+
+def _load_re_v2_snapshot(project_root: Path, manifest: object) -> object:
+    from harness.re_v2.snapshot import CapturedSnapshot, validate_source_snapshot
+
+    bundle = _re_v2_snapshot_root(project_root) / str(
+        getattr(manifest, "source_snapshot_id")
+    )
+    snapshot = CapturedSnapshot(
+        snapshot_id=str(getattr(manifest, "source_snapshot_id")),
+        kind=getattr(manifest, "source_snapshot_kind"),
+        read_root=bundle / "source",
+        manifest_path=bundle / "manifest.json",
+    )
+    validate_source_snapshot(snapshot)
+    return snapshot
+
+
+def _re_v2_context(project_root: Path, run_dir: Path) -> object:
+    from harness.re_v2.candidates import CandidateStore
+    from harness.re_v2.events import EventStore
+    from harness.re_v2.ledger import Ledger, ObjectStore
+    from harness.re_v2.planner import build_initial_inventory_graph
+    from harness.re_v2.recovery import ReV2RunContext
+    from harness.re_v2.run_store import ReV2Paths, load_run_manifest
+
+    manifest = load_run_manifest(run_dir)
+    paths = ReV2Paths.for_run(run_dir)
+    snapshot = _load_re_v2_snapshot(project_root, manifest)
+    graph = build_initial_inventory_graph(
+        manifest.source_snapshot_id, manifest.partition_manifest_id
+    )
+    if graph.requested_goals != manifest.requested_goals:
+        raise ValueError(
+            "pinned RE v2 goals are not registered by this Echelon version"
+        )
+    objects = ObjectStore(paths.objects)
+    ledger = Ledger(
+        paths,
+        objects,
+        supported_verifiers={
+            _DeterministicInventoryCertifier.verifier_id:
+            _DeterministicInventoryCertifier.verifier_version
+        },
+    )
+    return ReV2RunContext(
+        paths=paths,
+        snapshot=snapshot,
+        graph=graph,
+        event_store=EventStore(paths),
+        object_store=objects,
+        ledger=ledger,
+        candidate_store=CandidateStore(paths),
+        certifier=_DeterministicInventoryCertifier(objects, snapshot),
+    )
+
+
+def _run_re_v2_shadow(context: object) -> None:
+    from harness.re_v2.budget import evaluate_budget
+    from harness.re_v2.planner import plan_next
+    from harness.re_v2.recovery import recover_run
+    from harness.re_v2.status import render_v2_status
+
+    recovered = recover_run(context)
+    budget = evaluate_budget(
+        recovered.manifest.initial_budget_policy,
+        recovered.events,
+        now=_re_v2_now(),
+    )
+    decision = plan_next(
+        context.graph,
+        recovered.ledger,
+        budget,
+        requested_goals=recovered.manifest.requested_goals,
+    )
+    print("RE V2 — SHADOW PLAN")
+    for template_id, explanation in decision.explanations.items():
+        print(
+            f"{template_id}: {explanation.action} "
+            f"({explanation.reason_code}) — {explanation.reason}"
+        )
+    print(render_v2_status(context.paths.root.parent), end="")
+
+
+def _run_re_v2_live(context: object) -> None:
+    from harness.re_v2.controller import ReV2Controller
+    from harness.re_v2.status import render_v2_status
+
+    ReV2Controller(context).run_until_stopped()
+    print(render_v2_status(context.paths.root.parent), end="")
+
+
+def _run_re_v2_create(
+    project_root: Path,
+    *,
+    token_limit: int | None,
+    time_limit_minutes: int | None,
+    shadow: bool,
+) -> None:
+    from harness.re_v2.model import (
+        RE_V2_ENGINE,
+        RE_V2_PROTOCOL,
+        BudgetPolicy,
+        RunManifest,
+    )
+    from harness.re_v2.run_store import create_run_store
+    from harness.re_v2.snapshot import capture_source_snapshot
+
+    workspace_root = project_root.resolve()
+    workspace_manifest = discover_workspace(workspace_root)
+    snapshot = capture_source_snapshot(
+        workspace_root,
+        _re_v2_snapshot_root(workspace_root),
+        exclusions=(".echelon/cache", "re/.cache", "runs"),
+    )
+    partition_manifest_id = _re_v2_partition_manifest_id(
+        workspace_manifest, snapshot.snapshot_id
+    )
+    run_id = _new_re_v2_run_id(workspace_root)
+    run_dir = workspace_root / "runs" / run_id
+    manifest = RunManifest(
+        schema_version=1,
+        engine=RE_V2_ENGINE,
+        engine_protocol_version=RE_V2_PROTOCOL,
+        run_id=run_id,
+        created_at=_re_v2_now(),
+        source_snapshot_id=snapshot.snapshot_id,
+        source_snapshot_kind=snapshot.kind,
+        partition_manifest_id=partition_manifest_id,
+        requested_goals=("inventory",),
+        initial_budget_policy=BudgetPolicy(
+            token_limit=token_limit if token_limit is not None else 5_000_000,
+            active_ms_limit=(
+                time_limit_minutes * 60_000
+                if time_limit_minutes is not None
+                else 180 * 60_000
+            ),
+            provider_attempt_limit=1,
+            artifact_generation_attempt_limit=1,
+            semantic_repair_round_limit=0,
+            result_contract_retry_limit=0,
+        ),
+        provider_contract={
+            "provider": "deterministic-inventory",
+            "provider_protocol_version": "re-v2-l0-v1",
+            "result_contract_id": "deterministic-inventory-v1",
+        },
+        artifact_policy_versions={"L0": "egr-164-v1"},
+        parent_run_id=None,
+    )
+    create_run_store(run_dir, manifest)
+    _activate_re_v2_run(workspace_root, run_id)
+    context = _re_v2_context(workspace_root, run_dir)
+    if shadow:
+        _run_re_v2_shadow(context)
+    else:
+        _run_re_v2_live(context)
+
+
+def _re_v2_is_paused(events: tuple[object, ...]) -> bool:
+    paused = False
+    for event in events:
+        if getattr(event, "type") == "run_paused":
+            paused = True
+        elif getattr(event, "type") == "run_resumed":
+            paused = False
+    return paused
+
+
+def _run_re_v2_continue(
+    run_dir: Path,
+    *,
+    token_limit: int | None,
+    time_limit_minutes: int | None,
+) -> None:
+    from harness.re_v2.budget import (
+        BudgetDimension,
+        authorize_resource_increase,
+        evaluate_budget,
+    )
+    from harness.re_v2.recovery import recover_run
+
+    project_root = run_dir.resolve().parent.parent
+    context = _re_v2_context(project_root, run_dir)
+    recovered = recover_run(context)
+    terminal_types = {"run_completed", "run_finalized_partial", "run_failed"}
+    if recovered.events and recovered.events[-1].type in terminal_types:
+        if token_limit is not None or time_limit_minutes is not None:
+            raise ValueError("terminal v2 runs cannot receive budget authorization")
+        _run_re_v2_live(context)
+        return
+    paused = _re_v2_is_paused(recovered.events)
+    requested = (
+        (BudgetDimension.TOKENS, token_limit),
+        (
+            BudgetDimension.ACTIVE_MS,
+            time_limit_minutes * 60_000
+            if time_limit_minutes is not None
+            else None,
+        ),
+    )
+    authorized = False
+    for dimension, new_value in requested:
+        if new_value is None:
+            continue
+        history = context.event_store.replay()
+        if not _re_v2_is_paused(history):
+            raise ValueError("v2 budget authorization requires a paused run")
+        budget = evaluate_budget(
+            context.manifest.initial_budget_policy,
+            history,
+            now=_re_v2_now(),
+        )
+        old_value = (
+            budget.token_limit
+            if dimension is BudgetDimension.TOKENS
+            else budget.active_ms_limit
+        )
+        event = authorize_resource_increase(
+            context.manifest.initial_budget_policy,
+            history,
+            dimension=dimension,
+            old_value=old_value,
+            new_value=new_value,
+            actor="echelon-cli",
+            reason="CLI resource ceiling increase",
+        )
+        context.event_store.append(
+            str(event["type"]),
+            event["payload"],
+            occurred_at=_re_v2_now(),
+        )
+        authorized = True
+    if paused:
+        if not authorized:
+            context.event_store.append(
+                "operator_pause_requested",
+                {
+                    "reason": "CLI continuation requested",
+                    "requested_by": "echelon-cli",
+                },
+                occurred_at=_re_v2_now(),
+            )
+        context.event_store.append(
+            "run_resumed",
+            {
+                "reason": (
+                    "CLI continuation after resource authorization"
+                    if authorized
+                    else "CLI continuation requested"
+                )
+            },
+            occurred_at=_re_v2_now(),
+        )
+    _run_re_v2_live(context)
+
+
 def _cmd_re_run(args: list[str]) -> None:
     from harness.re_lifecycle import ReLifecycleError
 
     try:
+        engine, shadow, lifecycle_args = _parse_re_creation_engine_options(args)
         (
             policy,
             re_max_inner,
@@ -10143,12 +10697,31 @@ def _cmd_re_run(args: list[str]) -> None:
             time_limit_minutes,
             positional,
         ) = _parse_re_lifecycle_options(
-            args,
+            lifecycle_args,
             allow_policy=True,
             allow_reset=True,
         )
         if positional:
             raise ValueError("echelon re run does not accept positional arguments")
+        if engine == "v2":
+            if re_max_inner is not None:
+                raise ValueError(
+                    "v2 has independent attempt budgets; this option is valid only for v1"
+                )
+            if policy != "changed" or reset or no_reuse or profile is not None:
+                raise ValueError(
+                    "v2 inventory creation does not accept v1 policy, reset, reuse, or profile options"
+                )
+            try:
+                _run_re_v2_create(
+                    Path.cwd(),
+                    token_limit=token_limit,
+                    time_limit_minutes=time_limit_minutes,
+                    shadow=shadow,
+                )
+            except RuntimeError as exc:
+                raise ValueError(str(exc)) from exc
+            return
         result = _re_lifecycle_controller(Path.cwd()).run(
             policy=policy,
             re_max_inner=re_max_inner,
@@ -10206,7 +10779,7 @@ def _cmd_re_refresh(args: list[str]) -> None:
 
 
 def _cmd_re_continue(args: list[str]) -> None:
-    from harness.re_lifecycle import ReLifecycleError
+    from harness.re_lifecycle import ReLifecycleError, resolve_current_re_run
 
     try:
         _policy, re_max_inner, _reset, _no_reuse, _profile, token_limit, time_limit_minutes, positional = _parse_re_lifecycle_options(
@@ -10218,6 +10791,21 @@ def _cmd_re_continue(args: list[str]) -> None:
         if positional:
             raise ValueError("echelon re continue does not accept positional arguments")
         project_root = Path.cwd()
+        run_dir = resolve_current_re_run(project_root)
+        if run_dir is not None and _detect_re_engine_for_cli(run_dir) == "v2":
+            if re_max_inner is not None:
+                raise ValueError(
+                    "v2 has independent attempt budgets; this option is valid only for v1"
+                )
+            try:
+                _run_re_v2_continue(
+                    run_dir,
+                    token_limit=token_limit,
+                    time_limit_minutes=time_limit_minutes,
+                )
+            except RuntimeError as exc:
+                raise ValueError(str(exc)) from exc
+            return
         _print_re_continue_summary(project_root, re_max_inner=re_max_inner)
         overrides: dict[str, int] = {}
         if token_limit is not None:

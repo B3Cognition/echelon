@@ -143,6 +143,13 @@ re_app = typer.Typer(
     help="Publish and inspect workspace reverse engineering.",
     no_args_is_help=True,
 )
+
+
+class ReEngine(str, Enum):
+    V1 = "v1"
+    V2 = "v2"
+
+
 re_memory_app = typer.Typer(
     add_completion=False,
     help="Mine workspace reverse-engineering memory in MemPalace.",
@@ -841,6 +848,17 @@ def re_run(
         "--no-reuse",
         help="Ignore published RE artifacts and reconstruct from source.",
     ),
+    engine: ReEngine = typer.Option(
+        ReEngine.V1,
+        "--engine",
+        case_sensitive=True,
+        help="Creation engine: v1 (default) or the opt-in pinned v2 kernel.",
+    ),
+    shadow: bool = typer.Option(
+        False,
+        "--shadow",
+        help="For v2 only, explain the authoritative plan without dispatching work.",
+    ),
 ) -> None:
     """Run or resume workspace reverse engineering; publish explicitly afterward."""
     args = ["--re-policy", re_policy]
@@ -852,6 +870,10 @@ def re_run(
         args.append("--reset")
     if no_reuse:
         args.append("--no-reuse")
+    if engine is ReEngine.V2:
+        args.extend(["--engine", engine.value])
+    if shadow:
+        args.append("--shadow")
     _legacy_cli()._cmd_re_run(args)
 
 
@@ -868,9 +890,15 @@ def re_refresh(
 
 
 @re_app.command("status")
-def re_status() -> None:
+def re_status(
+    as_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Render the authoritative v2 status document as JSON.",
+    ),
+) -> None:
     """Show live RE state, source quality, debt, and the next safe action."""
-    _legacy_cli()._cmd_re_status([])
+    _legacy_cli()._cmd_re_status(["--json"] if as_json else [])
 
 
 @re_app.command("continue")

@@ -28,6 +28,39 @@ def test_re_publish_routes_explicit_flags(monkeypatch):
 
 
 @pytest.mark.unit
+def test_re_v2_creation_options_are_typed_and_routed(monkeypatch):
+    from echelon.cli_app import app, run
+
+    help_result = invoke_help("re", "run")
+    calls: list[list[str]] = []
+    monkeypatch.setattr("echelon.cli._cmd_re_run", lambda args: calls.append(args))
+
+    run(["re", "run", "--engine", "v2", "--shadow"])
+    invalid = CliRunner().invoke(app, ["re", "run", "--engine", "future"])
+
+    assert help_result.exit_code == 0
+    assert "--engine" in help_result.output
+    assert "v1" in help_result.output
+    assert "v2" in help_result.output
+    assert "--shadow" in help_result.output
+    assert calls == [["--re-policy", "changed", "--engine", "v2", "--shadow"]]
+    assert invalid.exit_code == 2
+
+
+@pytest.mark.unit
+def test_re_status_json_option_routes_without_changing_default(monkeypatch):
+    from echelon.cli_app import run
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr("echelon.cli._cmd_re_status", lambda args: calls.append(args))
+
+    run(["re", "status"])
+    run(["re", "status", "--json"])
+
+    assert calls == [[], ["--json"]]
+
+
+@pytest.mark.unit
 def test_re_finalize_routes_explicit_partial_acknowledgement(monkeypatch):
     from echelon.cli_app import run
 

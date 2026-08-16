@@ -840,3 +840,336 @@ def test_spec_continue_rejects_moved_re_budget(
 
     assert exc.value.code == 2
     assert "moved to 'echelon re continue'" in capsys.readouterr().err
+
+
+def _create_pinned_v2_run(project_root: Path) -> Path:
+    from harness.re_v2.canonical import content_digest
+    from harness.re_v2.model import BudgetPolicy, RunManifest
+    from harness.re_v2.run_store import create_run_store
+
+    run_dir = project_root / "runs" / "re-20260814-120000-000001"
+    manifest = RunManifest(
+        schema_version=1,
+        engine="re-v2",
+        engine_protocol_version="2.0",
+        run_id=run_dir.name,
+        created_at="2026-08-14T12:00:00Z",
+        source_snapshot_id=content_digest(b"snapshot"),
+        source_snapshot_kind="content-snapshot",
+        partition_manifest_id=content_digest(b"partitions"),
+        requested_goals=("inventory",),
+        initial_budget_policy=BudgetPolicy(
+            token_limit=5_000_000,
+            active_ms_limit=10_800_000,
+            provider_attempt_limit=1,
+            artifact_generation_attempt_limit=1,
+            semantic_repair_round_limit=0,
+            result_contract_retry_limit=0,
+        ),
+        provider_contract={"provider": "deterministic-inventory"},
+        artifact_policy_versions={"L0": "egr-164-v1"},
+        parent_run_id=None,
+    )
+    create_run_store(run_dir, manifest)
+    (project_root / "runs" / ".current-re").write_text(
+        run_dir.name + "\n", encoding="utf-8"
+    )
+    return run_dir
+
+
+@pytest.mark.unit
+def test_re_continue_routes_from_pinned_manifest_before_v1_state_parse(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.cli import _cmd_re_continue
+
+    run_dir = _create_pinned_v2_run(tmp_path)
+    calls: list[tuple[Path, int | None, int | None]] = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "echelon.cli._run_re_v2_continue",
+        lambda selected, *, token_limit, time_limit_minutes: calls.append(
+            (selected, token_limit, time_limit_minutes)
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "echelon.cli._re_lifecycle_controller",
+        lambda *_args: pytest.fail("v1 controller was constructed"),
+    )
+
+    _cmd_re_continue([])
+
+    assert calls == [(run_dir.resolve(), None, None)]
+
+
+@pytest.mark.unit
+def test_re_v2_continue_rejects_v1_attempt_budget_option_exactly(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _cmd_re_continue
+
+    _create_pinned_v2_run(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "echelon.cli._run_re_v2_continue",
+        lambda *_args, **_kwargs: pytest.fail("v2 continuation must not start"),
+        raising=False,
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        _cmd_re_continue(["--re-max-inner", "2"])
+
+    assert exc.value.code == 2
+    assert (
+        "v2 has independent attempt budgets; this option is valid only for v1"
+        in capsys.readouterr().err
+    )
+
+
+@pytest.mark.unit
+def test_re_status_routes_pinned_v2_without_reading_outer_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _cmd_re_status
+
+    run_dir = _create_pinned_v2_run(tmp_path)
+    (run_dir / "state.json").write_text("not-json", encoding="utf-8")
+    calls: list[tuple[Path, bool]] = []
+    monkeypatch.chdir(tmp_path)
+
+    def fake_render(selected: Path, *, as_json: bool = False) -> str:
+        calls.append((selected, as_json))
+        return '{"engine":"re-v2"}\n'
+
+    monkeypatch.setattr(
+        "harness.re_v2.status.render_v2_status",
+        fake_render,
+    )
+
+    _cmd_re_status(["--json"])
+
+    assert calls == [(run_dir.resolve(), True)]
+    assert capsys.readouterr().out == '{"engine":"re-v2"}\n'
+
+
+@pytest.mark.unit
+def test_re_run_defaults_to_v1_without_constructing_v2(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _cmd_re_run
+
+    calls: list[dict[str, object]] = []
+
+    class FakeV1Controller:
+        def run(self, **kwargs: object) -> SimpleNamespace:
+            calls.append(kwargs)
+            return SimpleNamespace(
+                status="done",
+                run_id="re-v1",
+                generation=3,
+                no_work=False,
+            )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "echelon.cli._re_lifecycle_controller", lambda _root: FakeV1Controller()
+    )
+    monkeypatch.setattr(
+        "echelon.cli._run_re_v2_create",
+        lambda *_args, **_kwargs: pytest.fail("v2 creation was invoked"),
+        raising=False,
+    )
+
+    _cmd_re_run([])
+
+    assert calls == [
+        {
+            "policy": "changed",
+            "re_max_inner": None,
+            "reset": False,
+            "reuse_published": True,
+            "profile_name": None,
+            "hard_token_limit": None,
+            "hard_active_minutes": None,
+        }
+    ]
+    assert "RE run re-v1 complete; publication is pending." in capsys.readouterr().out
+
+
+@pytest.mark.unit
+def test_re_v2_shadow_creation_pins_l0_without_dispatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _cmd_re_run
+    from harness.re_v2.events import EventStore
+    from harness.re_v2.run_store import ReV2Paths, load_run_manifest
+
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname = 'fixture'\nversion = '0.1.0'\n",
+        encoding="utf-8",
+    )
+    external_home = tmp_path.parent / f"{tmp_path.name}-echelon-home"
+    monkeypatch.setenv("ECHELON_HOME", str(external_home))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "harness.re_v2.controller.ReV2Controller",
+        lambda *_args, **_kwargs: pytest.fail("shadow constructed a controller"),
+    )
+
+    _cmd_re_run(["--engine", "v2", "--shadow"])
+
+    run_id = (tmp_path / "runs" / ".current-re").read_text(encoding="utf-8").strip()
+    run_dir = tmp_path / "runs" / run_id
+    manifest = load_run_manifest(run_dir)
+    events = EventStore(ReV2Paths.for_run(run_dir)).replay()
+    assert manifest.engine == "re-v2"
+    assert manifest.engine_protocol_version == "2.0"
+    assert manifest.requested_goals == ("inventory",)
+    assert manifest.provider_contract["provider"] == "deterministic-inventory"
+    assert manifest.artifact_policy_versions == {"L0": "egr-164-v1"}
+    assert [event.type for event in events] == ["run_created"]
+    assert not any(event.type.startswith("dispatch_") for event in events)
+    output = capsys.readouterr().out
+    assert "SHADOW PLAN" in output
+    assert "generate" in output
+    assert "RE V2 — ACTIVE" in output
+
+
+@pytest.mark.unit
+def test_re_v2_live_creation_certifies_registered_l0_without_synthesis(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _cmd_re_run
+    from harness.re_v2.events import EventStore
+    from harness.re_v2.ledger import Ledger, ObjectStore
+    from harness.re_v2.planner import build_initial_inventory_graph
+    from harness.re_v2.run_store import ReV2Paths, load_run_manifest
+
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname = 'fixture'\nversion = '0.1.0'\n",
+        encoding="utf-8",
+    )
+    external_home = tmp_path.parent / f"{tmp_path.name}-echelon-home"
+    monkeypatch.setenv("ECHELON_HOME", str(external_home))
+    monkeypatch.chdir(tmp_path)
+
+    _cmd_re_run(["--engine", "v2"])
+
+    run_id = (tmp_path / "runs" / ".current-re").read_text(encoding="utf-8").strip()
+    run_dir = tmp_path / "runs" / run_id
+    manifest = load_run_manifest(run_dir)
+    paths = ReV2Paths.for_run(run_dir)
+    events = EventStore(paths).replay()
+    graph = build_initial_inventory_graph(
+        manifest.source_snapshot_id, manifest.partition_manifest_id
+    )
+    ledger = Ledger(
+        paths,
+        ObjectStore(paths.objects),
+        {
+            template.verifier_id: template.verifier_version
+            for template in graph.templates
+        },
+    ).replay()
+    assert events[-1].type == "run_completed"
+    assert len(ledger.accepted_artifacts) == 2
+    assert len(ledger.certifications) == 2
+    assert not any(event.type.startswith("synthesis_") for event in events)
+    output = capsys.readouterr().out
+    assert "RE V2 — COMPLETE" in output
+    assert "synthesis: not registered" in output
+
+
+@pytest.mark.unit
+def test_re_v2_continue_authorizes_only_resource_ceiling_and_resumes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _cmd_re_continue, _cmd_re_run
+    from harness.re_v2.events import EventStore
+    from harness.re_v2.run_store import ReV2Paths, load_run_manifest
+
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname = 'fixture'\nversion = '0.1.0'\n",
+        encoding="utf-8",
+    )
+    external_home = tmp_path.parent / f"{tmp_path.name}-echelon-home"
+    monkeypatch.setenv("ECHELON_HOME", str(external_home))
+    monkeypatch.chdir(tmp_path)
+    _cmd_re_run(
+        ["--engine", "v2", "--shadow", "--re-token-limit", "1"]
+    )
+    capsys.readouterr()
+    run_id = (tmp_path / "runs" / ".current-re").read_text(encoding="utf-8").strip()
+    run_dir = tmp_path / "runs" / run_id
+    paths = ReV2Paths.for_run(run_dir)
+    events = EventStore(paths)
+    before = load_run_manifest(run_dir)
+    events.append(
+        "run_paused",
+        {"reason": "token_limit", "reason_code": "tokens_exhausted"},
+        occurred_at="2026-08-14T12:00:00Z",
+    )
+
+    _cmd_re_continue(["--re-token-limit", "2"])
+
+    after = load_run_manifest(run_dir)
+    history = events.replay()
+    authorization = next(
+        event for event in history if event.type == "budget_authorized"
+    )
+    assert authorization.payload == {
+        "authorized_by": "echelon-cli",
+        "dimension": "tokens",
+        "new_value": 2,
+        "old_value": 1,
+        "reason": "CLI resource ceiling increase",
+    }
+    assert any(event.type == "run_resumed" for event in history)
+    assert before == after
+    assert after.initial_budget_policy.provider_attempt_limit == 1
+    assert after.initial_budget_policy.artifact_generation_attempt_limit == 1
+    assert "RE V2 — COMPLETE" in capsys.readouterr().out
+
+
+@pytest.mark.unit
+def test_re_v2_unsupported_protocol_reports_recorded_values_before_v1(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _cmd_re_continue
+    from harness.re_v2.canonical import canonical_json_bytes
+    from harness.re_v2.run_store import ReV2Paths
+
+    run_dir = _create_pinned_v2_run(tmp_path)
+    manifest_path = ReV2Paths.for_run(run_dir).manifest
+    raw = json.loads(manifest_path.read_bytes())
+    raw["engine_protocol_version"] = "9.9"
+    manifest_path.write_bytes(canonical_json_bytes(raw))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "echelon.cli._re_lifecycle_controller",
+        lambda *_args: pytest.fail("v1 controller was constructed"),
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        _cmd_re_continue([])
+
+    assert exc.value.code == 2
+    error = capsys.readouterr().err
+    assert "re-v2" in error
+    assert "9.9" in error
