@@ -85,7 +85,12 @@ def test_project_run_derives_status_usage_counts_and_roots_from_authorities(
         ),
         (
             "dispatch_started",
-            {"dispatch_id": "dispatch-1", "work_item_id": digest("work")},
+            {
+                "attempt_index": 1,
+                "attempt_kind": "initial_generation",
+                "dispatch_id": "dispatch-1",
+                "work_item_id": digest("work"),
+            },
         ),
         (
             "dispatch_observed",

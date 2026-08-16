@@ -5,29 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
-import re
 from types import MappingProxyType
 from typing import Iterable, Mapping
 
-from .canonical import content_digest
-from .events import EventRecord, _validate_payload
+from .events import EventRecord, ReV2EventError, validate_event_history
 from .model import BudgetPolicy, ExecutionObservation, ReV2ModelError
 
 
 MAX_ACCOUNTING_VALUE = (1 << 63) - 1
-_SAFE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]*\Z")
-_DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
-_EVENT_RECORD_FIELDS = frozenset(
-    {
-        "schema_version",
-        "seq",
-        "previous_event_hash",
-        "occurred_at",
-        "type",
-        "payload",
-        "event_hash",
-    }
-)
 
 
 class ReV2BudgetError(ValueError):
@@ -47,8 +32,6 @@ class BudgetDimension(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class BudgetDecision:
-    """Derived budget state; policy itself remains immutable."""
-
     known_tokens: int
     unknown_token_dispatches: int
     active_ms: int
@@ -77,7 +60,6 @@ class BudgetDecision:
 
     @property
     def continuable(self) -> bool:
-        """Resource-only exhaustion can be resumed with a valid authorization."""
         return bool(self.exhausted_dimensions) and all(
             dimension in {BudgetDimension.TOKENS.value, BudgetDimension.ACTIVE_MS.value}
             for dimension in self.exhausted_dimensions
@@ -89,20 +71,11 @@ class BudgetDecision:
 
 
 def evaluate_budget(
-    policy: BudgetPolicy,
-    events: Iterable[EventRecord | Mapping[str, object]],
-    *,
-    now: str,
+    policy: BudgetPolicy, events: Iterable[EventRecord], *, now: str
 ) -> BudgetDecision:
-    """Replay validated execution facts into a dimension-specific budget view.
-
-    ``dispatch_started`` is the sole provider-attempt authority,
-    ``candidate_persisted`` the sole generation-attempt authority,
-    ``candidate_rejected`` the current semantic-round authority, and an invalid
-    ``dispatch_observed`` result contract the sole contract-retry authority.
-    Tokens and provider-active time come only from ``dispatch_observed``.
-    """
-    _utc_timestamp(now, "now")
+    """Replay one validated complete EventRecord history into budget state."""
+    current_time = _timestamp(now, "now")
+    history = _validated_history(events)
     limits = _initial_limits(policy)
     known_tokens = 0
     unknown_token_dispatches = 0
@@ -111,18 +84,34 @@ def evaluate_budget(
     generation_attempts: dict[str, int] = {}
     semantic_rounds: dict[str, int] = {}
     result_contract_retries: dict[str, int] = {}
+    open_dispatches: dict[str, datetime] = {}
 
-    for event in events:
-        event_type, payload = _event_fact(event)
-        if event_type == "budget_authorized":
+    for event in history:
+        payload = event.payload
+        if event.type == "budget_authorized":
             _apply_authorization(limits, payload)
-        elif event_type == "dispatch_started":
-            _increment(provider_attempts, _work_item_id(payload), "provider attempts")
-        elif event_type == "candidate_persisted":
-            _increment(generation_attempts, _work_item_id(payload), "generation attempts")
-        elif event_type == "candidate_rejected":
-            _increment(semantic_rounds, _work_item_id(payload), "semantic rounds")
-        elif event_type == "dispatch_observed":
+        elif event.type == "dispatch_started":
+            work_item_id = str(payload["work_item_id"])
+            attempt_kind = str(payload["attempt_kind"])
+            _increment(provider_attempts, work_item_id, "provider attempts")
+            if attempt_kind == "initial_generation":
+                _increment(generation_attempts, work_item_id, "generation attempts")
+            elif attempt_kind == "semantic_repair":
+                _increment(generation_attempts, work_item_id, "generation attempts")
+                _increment(semantic_rounds, work_item_id, "semantic rounds")
+            elif attempt_kind == "result_contract_retry":
+                _increment(result_contract_retries, work_item_id, "result contract retries")
+            else:  # Defensive; the shared validator has already rejected this.
+                raise ReV2BudgetError("validated history has an invalid attempt kind")
+            started_at = _timestamp(event.occurred_at, "dispatch_started occurred_at")
+            if current_time < started_at:
+                raise ReV2BudgetError("now is before dispatch_started")
+            open_dispatches[str(payload["dispatch_id"])] = started_at
+        elif event.type == "dispatch_observed":
+            dispatch_id = str(payload["dispatch_id"])
+            started_at = open_dispatches.pop(dispatch_id, None)
+            if started_at is None:
+                raise ReV2BudgetError("validated history observes an unopened dispatch")
             observation = _observation(payload)
             active_ms = _add(active_ms, observation.duration_ms, "active_ms")
             if observation.token_usage is None:
@@ -131,12 +120,13 @@ def evaluate_budget(
                 )
             else:
                 known_tokens = _add(known_tokens, observation.token_usage, "known_tokens")
-            if not observation.result_contract_valid:
-                _increment(
-                    result_contract_retries,
-                    _work_item_id(payload),
-                    "result contract retries",
-                )
+
+    for started_at in open_dispatches.values():
+        if current_time < started_at:
+            raise ReV2BudgetError("now is before dispatch_started")
+        active_ms = _add(
+            active_ms, _elapsed_ms(started_at, current_time), "active_ms"
+        )
 
     exhausted = _exhausted_dimensions(
         known_tokens=known_tokens,
@@ -158,10 +148,10 @@ def evaluate_budget(
         semantic_rounds=_freeze_counts(semantic_rounds),
         result_contract_retries=_freeze_counts(result_contract_retries),
         exhausted_dimensions=exhausted,
-        provider_attempt_limit=_require_limit(limits, BudgetDimension.PROVIDER_ATTEMPTS),
-        generation_attempt_limit=_require_limit(limits, BudgetDimension.GENERATION_ATTEMPTS),
-        semantic_round_limit=_require_limit(limits, BudgetDimension.SEMANTIC_ROUNDS),
-        result_contract_retry_limit=_require_limit(
+        provider_attempt_limit=_finite_limit(limits, BudgetDimension.PROVIDER_ATTEMPTS),
+        generation_attempt_limit=_finite_limit(limits, BudgetDimension.GENERATION_ATTEMPTS),
+        semantic_round_limit=_finite_limit(limits, BudgetDimension.SEMANTIC_ROUNDS),
+        result_contract_retry_limit=_finite_limit(
             limits, BudgetDimension.RESULT_CONTRACT_RETRIES
         ),
     )
@@ -169,7 +159,7 @@ def evaluate_budget(
 
 def authorize_resource_increase(
     policy: BudgetPolicy,
-    events: Iterable[EventRecord | Mapping[str, object]] = (),
+    events: Iterable[EventRecord] = (),
     *,
     dimension: BudgetDimension | str,
     old_value: int | None,
@@ -177,29 +167,24 @@ def authorize_resource_increase(
     actor: str,
     reason: str,
 ) -> dict[str, object]:
-    """Create one canonical ``budget_authorized`` EventStore fact.
-
-    This function only validates and returns a fact; it never mutates
-    ``BudgetPolicy``.  Existing authorization facts determine the effective
-    limit that ``old_value`` must name.
-    """
+    """Return one canonical EventStore ``budget_authorized`` fact, never mutate policy."""
     selected = _resource_dimension(dimension)
-    _safe_nonempty(actor, "actor")
+    _safe_actor(actor)
     _nonempty(reason, "reason")
     _optional_limit(old_value, "old_value")
     _positive_accounting(new_value, "new_value")
 
     limits = _initial_limits(policy)
-    for event in events:
-        event_type, payload = _event_fact(event)
-        if event_type == "budget_authorized":
-            _apply_authorization(limits, payload)
+    for event in _validated_history(events):
+        if event.type == "budget_authorized":
+            _apply_authorization(limits, event.payload)
     current = limits[selected]
+    if current is None:
+        raise ReV2BudgetError("an unlimited resource limit cannot be authorized to a finite value")
     if old_value != current:
         raise ReV2BudgetError("old_value does not match the current effective limit")
-    if current is not None and new_value <= current:
+    if new_value <= current:
         raise ReV2BudgetError("new_value must be an increase over old_value")
-
     return {
         "type": "budget_authorized",
         "payload": {
@@ -212,88 +197,49 @@ def authorize_resource_increase(
     }
 
 
+def _validated_history(events: Iterable[EventRecord]) -> tuple[EventRecord, ...]:
+    try:
+        return validate_event_history(events)
+    except ReV2EventError as exc:
+        raise ReV2BudgetError(f"validated EventRecord history required: {exc}") from exc
+
+
 def _initial_limits(policy: BudgetPolicy) -> dict[BudgetDimension, int | None]:
     if not isinstance(policy, BudgetPolicy):
         raise ReV2BudgetError("policy must be a BudgetPolicy")
     return {
         BudgetDimension.TOKENS: _optional_limit(policy.token_limit, "token_limit"),
-        BudgetDimension.ACTIVE_MS: _optional_limit(
-            policy.active_ms_limit, "active_ms_limit"
-        ),
-        BudgetDimension.PROVIDER_ATTEMPTS: _accounting(
-            policy.provider_attempt_limit, "provider_attempt_limit"
-        ),
-        BudgetDimension.GENERATION_ATTEMPTS: _accounting(
-            policy.artifact_generation_attempt_limit,
-            "artifact_generation_attempt_limit",
-        ),
-        BudgetDimension.SEMANTIC_ROUNDS: _accounting(
-            policy.semantic_repair_round_limit, "semantic_repair_round_limit"
-        ),
-        BudgetDimension.RESULT_CONTRACT_RETRIES: _accounting(
-            policy.result_contract_retry_limit, "result_contract_retry_limit"
-        ),
+        BudgetDimension.ACTIVE_MS: _optional_limit(policy.active_ms_limit, "active_ms_limit"),
+        BudgetDimension.PROVIDER_ATTEMPTS: _accounting(policy.provider_attempt_limit, "provider_attempt_limit"),
+        BudgetDimension.GENERATION_ATTEMPTS: _accounting(policy.artifact_generation_attempt_limit, "artifact_generation_attempt_limit"),
+        BudgetDimension.SEMANTIC_ROUNDS: _accounting(policy.semantic_repair_round_limit, "semantic_repair_round_limit"),
+        BudgetDimension.RESULT_CONTRACT_RETRIES: _accounting(policy.result_contract_retry_limit, "result_contract_retry_limit"),
     }
 
 
-def _event_fact(event: EventRecord | Mapping[str, object]) -> tuple[str, Mapping[str, object]]:
-    if isinstance(event, EventRecord):
-        event_type, payload = event.type, event.payload
-    elif isinstance(event, Mapping):
-        keys = set(event)
-        if keys == {"type", "payload"}:
-            event_type, payload = event["type"], event["payload"]
-        elif keys == _EVENT_RECORD_FIELDS:
-            event_type, payload = _validate_full_event_record(event)
-        else:
-            raise ReV2BudgetError("event must be an EventRecord or a strict event fact")
-    else:
-        raise ReV2BudgetError("event must be an EventRecord or a mapping")
-    if not isinstance(event_type, str) or not isinstance(payload, Mapping):
-        raise ReV2BudgetError("event has malformed type or payload")
-    try:
-        _validate_payload(event_type, payload)
-    except (TypeError, ValueError, RuntimeError) as exc:
-        raise ReV2BudgetError(f"malformed {event_type!r} event: {exc}") from exc
-    return event_type, payload
-
-
-def _validate_full_event_record(event: Mapping[str, object]) -> tuple[object, object]:
-    schema_version = event["schema_version"]
-    seq = event["seq"]
-    previous = event["previous_event_hash"]
-    occurred_at = event["occurred_at"]
-    event_type = event["type"]
-    payload = event["payload"]
-    event_hash = event["event_hash"]
-    if schema_version != 1 or not isinstance(seq, int) or isinstance(seq, bool) or seq <= 0:
-        raise ReV2BudgetError("event record has invalid schema_version or seq")
-    _accounting(seq, "seq")
-    if previous is not None and (not isinstance(previous, str) or not _DIGEST_RE.fullmatch(previous)):
-        raise ReV2BudgetError("event record has invalid previous_event_hash")
-    _utc_timestamp(occurred_at, "occurred_at")
-    if not isinstance(payload, Mapping):
-        raise ReV2BudgetError("event record payload must be an object")
-    if not isinstance(event_hash, str) or not _DIGEST_RE.fullmatch(event_hash):
-        raise ReV2BudgetError("event record has invalid event_hash")
-    identity = {
-        "occurred_at": occurred_at,
-        "payload": dict(payload),
-        "previous_event_hash": previous,
-        "schema_version": schema_version,
-        "seq": seq,
-        "type": event_type,
-    }
-    if content_digest(identity) != event_hash:
-        raise ReV2BudgetError("event record has invalid event_hash")
-    return event_type, payload
+def _apply_authorization(
+    limits: dict[BudgetDimension, int | None], payload: Mapping[str, object]
+) -> None:
+    selected = _resource_dimension(payload["dimension"])
+    _safe_actor(payload["authorized_by"])
+    _nonempty(payload["reason"], "reason")
+    old_value = payload["old_value"]
+    new_value = _positive_accounting(payload["new_value"], "new_value")
+    _optional_limit(old_value, "old_value")
+    current = limits[selected]
+    if current is None:
+        raise ReV2BudgetError("an unlimited resource limit cannot be authorized to a finite value")
+    if old_value != current:
+        raise ReV2BudgetError("budget authorization old_value does not match effective limit")
+    if new_value <= current:
+        raise ReV2BudgetError("budget authorization must increase the effective limit")
+    limits[selected] = new_value
 
 
 def _observation(payload: Mapping[str, object]) -> ExecutionObservation:
-    raw = payload.get("observation")
     try:
-        observation = ExecutionObservation.from_json_dict(raw)
-    except (ReV2ModelError, TypeError, ValueError) as exc:
+        observation = ExecutionObservation.from_json_dict(payload["observation"])
+    except (KeyError, ReV2ModelError, TypeError, ValueError) as exc:
         raise ReV2BudgetError(f"invalid observation: {exc}") from exc
     _accounting(observation.duration_ms, "duration_ms")
     if observation.token_usage is not None:
@@ -301,42 +247,10 @@ def _observation(payload: Mapping[str, object]) -> ExecutionObservation:
     return observation
 
 
-def _work_item_id(payload: Mapping[str, object]) -> str:
-    value = payload.get("work_item_id")
-    if not isinstance(value, str) or not _DIGEST_RE.fullmatch(value):
-        raise ReV2BudgetError("work_item_id must be a lowercase sha256 digest")
-    return value
-
-
-def _apply_authorization(
-    limits: dict[BudgetDimension, int | None], payload: Mapping[str, object]
-) -> None:
-    dimension = _resource_dimension(payload.get("dimension"))
-    actor = payload.get("authorized_by")
-    _safe_nonempty(actor, "authorized_by")
-    reason = payload.get("reason")
-    _nonempty(reason, "reason")
-    old_value = payload.get("old_value")
-    new_value = payload.get("new_value")
-    _optional_limit(old_value, "old_value")
-    _positive_accounting(new_value, "new_value")
-    current = limits[dimension]
-    if old_value != current:
-        raise ReV2BudgetError("budget authorization old_value does not match effective limit")
-    if current is not None and new_value <= current:
-        raise ReV2BudgetError("budget authorization must increase the effective limit")
-    limits[dimension] = new_value
-
-
 def _exhausted_dimensions(
-    *,
-    known_tokens: int,
-    active_ms: int,
-    limits: Mapping[BudgetDimension, int | None],
-    provider_attempts: Mapping[str, int],
-    generation_attempts: Mapping[str, int],
-    semantic_rounds: Mapping[str, int],
-    result_contract_retries: Mapping[str, int],
+    *, known_tokens: int, active_ms: int, limits: Mapping[BudgetDimension, int | None],
+    provider_attempts: Mapping[str, int], generation_attempts: Mapping[str, int],
+    semantic_rounds: Mapping[str, int], result_contract_retries: Mapping[str, int],
 ) -> tuple[str, ...]:
     exhausted: list[str] = []
     if _at_limit(known_tokens, limits[BudgetDimension.TOKENS]):
@@ -349,7 +263,7 @@ def _exhausted_dimensions(
         (BudgetDimension.SEMANTIC_ROUNDS, semantic_rounds),
         (BudgetDimension.RESULT_CONTRACT_RETRIES, result_contract_retries),
     ):
-        limit = _require_limit(limits, dimension)
+        limit = _finite_limit(limits, dimension)
         exhausted.extend(
             f"{dimension.value}:{work_item_id}"
             for work_item_id, count in sorted(counts.items())
@@ -358,12 +272,30 @@ def _exhausted_dimensions(
     return tuple(exhausted)
 
 
+def _timestamp(value: object, field: str) -> datetime:
+    if not isinstance(value, str):
+        raise ReV2BudgetError(f"{field} must be an RFC3339 timestamp")
+    try:
+        parsed = datetime.fromisoformat(value[:-1] + "+00:00" if value.endswith("Z") else value)
+    except ValueError as exc:
+        raise ReV2BudgetError(f"{field} must be an RFC3339 timestamp") from exc
+    if parsed.tzinfo is None:
+        raise ReV2BudgetError(f"{field} must be an RFC3339 timestamp")
+    return parsed.astimezone(timezone.utc)
+
+
+def _elapsed_ms(started_at: datetime, now: datetime) -> int:
+    delta = now - started_at
+    milliseconds = delta.days * 86_400_000 + delta.seconds * 1_000 + delta.microseconds // 1_000
+    return _accounting(milliseconds, "open provider active_ms")
+
+
 def _at_limit(value: int, limit: int | None) -> bool:
     return limit is not None and value >= limit
 
 
-def _increment(counts: dict[str, int], work_item_id: str, label: str) -> None:
-    counts[work_item_id] = _add(counts.get(work_item_id, 0), 1, label)
+def _increment(counts: dict[str, int], work_item_id: str, field: str) -> None:
+    counts[work_item_id] = _add(counts.get(work_item_id, 0), 1, field)
 
 
 def _add(left: int, right: int, field: str) -> int:
@@ -379,9 +311,7 @@ def _freeze_counts(counts: Mapping[str, int]) -> Mapping[str, int]:
     return MappingProxyType(dict(sorted(counts.items())))
 
 
-def _require_limit(
-    limits: Mapping[BudgetDimension, int | None], dimension: BudgetDimension
-) -> int:
+def _finite_limit(limits: Mapping[BudgetDimension, int | None], dimension: BudgetDimension) -> int:
     value = limits[dimension]
     if value is None:
         raise ReV2BudgetError(f"{dimension.value} requires a finite limit")
@@ -390,18 +320,16 @@ def _require_limit(
 
 def _resource_dimension(value: object) -> BudgetDimension:
     try:
-        dimension = BudgetDimension(value)
+        selected = BudgetDimension(value)
     except (TypeError, ValueError) as exc:
         raise ReV2BudgetError("dimension must be a budget dimension") from exc
-    if dimension not in {BudgetDimension.TOKENS, BudgetDimension.ACTIVE_MS}:
+    if selected not in {BudgetDimension.TOKENS, BudgetDimension.ACTIVE_MS}:
         raise ReV2BudgetError("only tokens or active_ms may be authorized")
-    return dimension
+    return selected
 
 
 def _optional_limit(value: object, field: str) -> int | None:
-    if value is None:
-        return None
-    return _positive_accounting(value, field)
+    return None if value is None else _positive_accounting(value, field)
 
 
 def _positive_accounting(value: object, field: str) -> int:
@@ -419,9 +347,11 @@ def _accounting(value: object, field: str) -> int:
     return value
 
 
-def _safe_nonempty(value: object, field: str) -> str:
-    if not isinstance(value, str) or not _SAFE_ID_RE.fullmatch(value):
-        raise ReV2BudgetError(f"{field} must be a nonempty safe ID")
+def _safe_actor(value: object) -> str:
+    if not isinstance(value, str) or not value or not value[0].isalnum() or not all(
+        char.isalnum() or char in "._:-" for char in value
+    ):
+        raise ReV2BudgetError("actor must be a nonempty safe ID")
     return value
 
 
@@ -431,23 +361,7 @@ def _nonempty(value: object, field: str) -> str:
     return value
 
 
-def _utc_timestamp(value: object, field: str) -> str:
-    if not isinstance(value, str) or not value.endswith("Z"):
-        raise ReV2BudgetError(f"{field} must be an RFC3339 UTC timestamp")
-    try:
-        parsed = datetime.fromisoformat(value[:-1] + "+00:00")
-    except ValueError as exc:
-        raise ReV2BudgetError(f"{field} must be an RFC3339 UTC timestamp") from exc
-    if parsed.tzinfo != timezone.utc:
-        raise ReV2BudgetError(f"{field} must be an RFC3339 UTC timestamp")
-    return value
-
-
 __all__ = (
-    "MAX_ACCOUNTING_VALUE",
-    "BudgetDecision",
-    "BudgetDimension",
-    "ReV2BudgetError",
-    "authorize_resource_increase",
-    "evaluate_budget",
+    "MAX_ACCOUNTING_VALUE", "BudgetDecision", "BudgetDimension", "ReV2BudgetError",
+    "authorize_resource_increase", "evaluate_budget",
 )

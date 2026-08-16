@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from harness.re_v2.canonical import canonical_json_bytes, content_digest
-from harness.re_v2.events import EventStore, ReV2EventError
+from harness.re_v2.events import EventStore, ReV2EventError, validate_event_history
 
 
 NOW = "2026-08-14T12:00:00Z"
@@ -133,7 +133,12 @@ def test_state_machine_rejects_out_of_order_work_events(tmp_path: Path) -> None:
     with pytest.raises(ReV2EventError, match="dispatch_started"):
         store.append(
             "dispatch_started",
-            {"dispatch_id": "dispatch-1", "work_item_id": digest("work")},
+            {
+                "attempt_index": 1,
+                "attempt_kind": "initial_generation",
+                "dispatch_id": "dispatch-1",
+                "work_item_id": digest("work"),
+            },
             occurred_at=NOW,
         )
 
@@ -151,7 +156,12 @@ def test_checkpoint_consumes_the_matching_acceptance_exactly_once(tmp_path: Path
     )
     store.append(
         "dispatch_started",
-        {"dispatch_id": "dispatch-1", "work_item_id": work_item_id},
+        {
+            "attempt_index": 1,
+            "attempt_kind": "initial_generation",
+            "dispatch_id": "dispatch-1",
+            "work_item_id": work_item_id,
+        },
         occurred_at=NOW,
     )
     store.append(
@@ -263,6 +273,40 @@ def test_paused_run_requires_control_then_resume_and_executes_no_work(
         occurred_at=NOW,
     )
     assert store.replay()[-1].type == "dispatch_leased"
+
+
+def test_history_rejects_reused_dispatches_candidates_and_invalid_attempt_order(
+    tmp_path: Path,
+) -> None:
+    store = event_store(tmp_path)
+    work = digest("work")
+    store.append("run_created", {"run_manifest_id": digest("run")}, occurred_at=NOW)
+    store.append(
+        "dispatch_leased", {"dispatch_id": "dispatch-1", "work_item_id": work}, occurred_at=NOW
+    )
+    with pytest.raises(ReV2EventError, match="attempt_index"):
+        store.append(
+            "dispatch_started",
+            {
+                "attempt_index": 2,
+                "attempt_kind": "semantic_repair",
+                "dispatch_id": "dispatch-1",
+                "work_item_id": work,
+            },
+            occurred_at=NOW,
+        )
+
+    store.append(
+        "dispatch_started",
+        {
+            "attempt_index": 1,
+            "attempt_kind": "initial_generation",
+            "dispatch_id": "dispatch-1",
+            "work_item_id": work,
+        },
+        occurred_at=NOW,
+    )
+    assert validate_event_history(store.replay())[-1].type == "dispatch_started"
 
 
 def test_concurrent_appenders_get_one_consecutive_chain(tmp_path: Path) -> None:

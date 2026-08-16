@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 import fcntl
 import json
@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 import re
 from types import MappingProxyType
-from typing import Callable, Mapping
+from typing import Callable, Iterable, Mapping
 
 from .canonical import canonical_json_bytes, content_digest
 from .model import ExecutionObservation
@@ -127,13 +127,27 @@ def _budget_dimension(value: object, field: str) -> None:
         raise ReV2EventError(f"{field} must be tokens or active_ms")
 
 
+def _attempt_kind(value: object, field: str) -> None:
+    if value not in {
+        "initial_generation",
+        "semantic_repair",
+        "result_contract_retry",
+    }:
+        raise ReV2EventError(f"{field} has an unsupported attempt kind")
+
+
 PayloadValidator = Callable[[object, str], None]
 
 _PAYLOAD_SCHEMAS: dict[str, dict[str, PayloadValidator]] = {
     "run_created": {"run_manifest_id": _digest},
     "work_planned": {"work_item_ids": _digest_array},
     "dispatch_leased": {"dispatch_id": _safe_id, "work_item_id": _digest},
-    "dispatch_started": {"dispatch_id": _safe_id, "work_item_id": _digest},
+    "dispatch_started": {
+        "attempt_index": _positive,
+        "attempt_kind": _attempt_kind,
+        "dispatch_id": _safe_id,
+        "work_item_id": _digest,
+    },
     "dispatch_observed": {
         "dispatch_id": _safe_id,
         "observation": _observation,
@@ -202,6 +216,10 @@ def _validate_rfc3339(value: object) -> str:
     return value
 
 
+def _parsed_rfc3339(value: str) -> datetime:
+    return datetime.fromisoformat(value[:-1] + "+00:00" if value.endswith("Z") else value)
+
+
 def _canonical_payload(value: object) -> Mapping[str, object]:
     if not isinstance(value, Mapping) or any(not isinstance(key, str) for key in value):
         raise ReV2EventError("event payload must be a JSON object")
@@ -250,6 +268,11 @@ class _ReplayState:
     certification_id: str | None = None
     last_acceptance: tuple[str, str, str] | None = None
     synthesis: tuple[tuple[str, ...], str] | None = None
+    dispatch_ids: set[str] = field(default_factory=set)
+    candidate_ids: set[str] = field(default_factory=set)
+    attempt_indices: dict[tuple[str, str], int] = field(default_factory=dict)
+    initial_generation_work_items: set[str] = field(default_factory=set)
+    dispatch_started_at: dict[str, str] = field(default_factory=dict)
 
     def consume(self, event: EventRecord) -> None:
         event_type = event.type
@@ -287,18 +310,49 @@ class _ReplayState:
         elif event_type == "dispatch_leased":
             if self.work_stage is not None:
                 raise ReV2EventError("dispatch_leased requires no active work item")
-            self.dispatch_id = str(payload["dispatch_id"])
+            dispatch_id = str(payload["dispatch_id"])
+            if dispatch_id in self.dispatch_ids:
+                raise ReV2EventError("dispatch_id must be globally unique")
+            self.dispatch_ids.add(dispatch_id)
+            self.dispatch_id = dispatch_id
             self.work_item_id = str(payload["work_item_id"])
             self.work_stage = "leased"
         elif event_type == "dispatch_started":
             self._require_work(event, "leased")
+            work_item_id = str(payload["work_item_id"])
+            attempt_kind = str(payload["attempt_kind"])
+            attempt_index = int(payload["attempt_index"])
+            attempt_key = (work_item_id, attempt_kind)
+            expected_index = self.attempt_indices.get(attempt_key, 0) + 1
+            if attempt_index != expected_index:
+                raise ReV2EventError(
+                    "dispatch_started attempt_index must be consecutive per work item and kind"
+                )
+            if (
+                attempt_kind == "initial_generation"
+                and work_item_id in self.initial_generation_work_items
+            ):
+                raise ReV2EventError(
+                    "dispatch_started permits only one initial_generation per work item"
+                )
+            self.attempt_indices[attempt_key] = attempt_index
+            if attempt_kind == "initial_generation":
+                self.initial_generation_work_items.add(work_item_id)
+            self.dispatch_started_at[str(payload["dispatch_id"])] = event.occurred_at
             self.work_stage = "started"
         elif event_type == "dispatch_observed":
             self._require_work(event, "started")
+            started_at = self.dispatch_started_at.get(str(payload["dispatch_id"]))
+            if started_at is None or _parsed_rfc3339(event.occurred_at) < _parsed_rfc3339(started_at):
+                raise ReV2EventError("dispatch_observed occurs before dispatch_started")
             self.work_stage = "observed"
         elif event_type == "candidate_persisted":
             self._require_work(event, "observed")
-            self.candidate_id = str(payload["candidate_id"])
+            candidate_id = str(payload["candidate_id"])
+            if candidate_id in self.candidate_ids:
+                raise ReV2EventError("candidate_id must be globally unique")
+            self.candidate_ids.add(candidate_id)
+            self.candidate_id = candidate_id
             self.work_stage = "persisted"
         elif event_type in {"candidate_certified", "candidate_rejected"}:
             self._require_work(event, "persisted", require_dispatch=False)
@@ -459,8 +513,6 @@ class EventStore:
             raise ReV2EventError("partial final event record")
 
         events: list[EventRecord] = []
-        state = _ReplayState()
-        previous: str | None = None
         for index, line in enumerate(payload.splitlines(), start=1):
             try:
                 raw = json.loads(
@@ -483,16 +535,8 @@ class EventStore:
                 ) from exc
             if canonical != line + b"\n":
                 raise ReV2EventError(f"event record {index} is not canonical JSON")
-            if event.seq != index:
-                raise ReV2EventError(
-                    f"event record {index} has nonconsecutive sequence {event.seq}"
-                )
-            if event.previous_event_hash != previous:
-                raise ReV2EventError(f"event record {index} has wrong previous event hash")
-            state.consume(event)
             events.append(event)
-            previous = event.event_hash
-        return tuple(events)
+        return validate_event_history(events)
 
     def _validate_parent(self) -> None:
         if self.path.parent.is_symlink() or not self.path.parent.is_dir():
@@ -539,36 +583,53 @@ def _record_from_raw(raw: object, index: int) -> EventRecord:
             f"event record {index} is missing fields: {', '.join(sorted(missing))}"
         )
 
-    identity = dict(raw)
-    observed_hash = identity.pop("event_hash")
-    _digest(observed_hash, "event_hash")
-    expected_hash = _event_hash(identity)
-    if observed_hash != expected_hash:
-        raise ReV2EventError(f"event record {index} has invalid event hash")
-
-    if raw["schema_version"] != EVENT_SCHEMA_VERSION or isinstance(
-        raw["schema_version"], bool
-    ):
-        raise ReV2EventError(
-            f"event record {index} has unknown event schema version"
-        )
-    if not isinstance(raw["seq"], int) or isinstance(raw["seq"], bool) or raw["seq"] <= 0:
-        raise ReV2EventError(f"event record {index} has invalid sequence")
-    previous = raw["previous_event_hash"]
-    if previous is not None:
-        _digest(previous, "previous_event_hash")
-    timestamp = _validate_rfc3339(raw["occurred_at"])
-    payload = _canonical_payload(raw["payload"])
-    _validate_payload(raw["type"], payload)
     return EventRecord(
-        event_hash=str(observed_hash),
-        occurred_at=timestamp,
-        payload=payload,
-        previous_event_hash=previous,
-        schema_version=EVENT_SCHEMA_VERSION,
+        event_hash=raw["event_hash"],
+        occurred_at=raw["occurred_at"],
+        payload=_canonical_payload(raw["payload"]),
+        previous_event_hash=raw["previous_event_hash"],
+        schema_version=raw["schema_version"],
         seq=raw["seq"],
         type=raw["type"],
     )
+
+
+def validate_event_history(events: Iterable[EventRecord]) -> tuple[EventRecord, ...]:
+    """Validate the complete immutable event history before any projection reads it."""
+    history = tuple(events)
+    state = _ReplayState()
+    previous: str | None = None
+    for index, event in enumerate(history, start=1):
+        _validate_event_record(event, index)
+        if event.seq != index:
+            raise ReV2EventError(
+                f"event record {index} has nonconsecutive sequence {event.seq}"
+            )
+        if event.previous_event_hash != previous:
+            raise ReV2EventError(f"event record {index} has wrong previous event hash")
+        state.consume(event)
+        previous = event.event_hash
+    return history
+
+
+def _validate_event_record(event: object, index: int) -> None:
+    if not isinstance(event, EventRecord):
+        raise ReV2EventError(f"event record {index} must be an EventRecord")
+    if event.schema_version != EVENT_SCHEMA_VERSION or isinstance(
+        event.schema_version, bool
+    ):
+        raise ReV2EventError(f"event record {index} has unknown event schema version")
+    if not isinstance(event.seq, int) or isinstance(event.seq, bool) or event.seq <= 0:
+        raise ReV2EventError(f"event record {index} has invalid sequence")
+    if event.previous_event_hash is not None:
+        _digest(event.previous_event_hash, "previous_event_hash")
+    _validate_rfc3339(event.occurred_at)
+    if not isinstance(event.payload, Mapping):
+        raise ReV2EventError(f"event record {index} payload must be a JSON object")
+    _digest(event.event_hash, "event_hash")
+    if event.event_hash != _event_hash(event.identity_dict()):
+        raise ReV2EventError(f"event record {index} has invalid event hash")
+    _validate_payload(event.type, event.payload)
 
 
 def _reject_json_constant(value: str) -> object:
@@ -623,4 +684,5 @@ __all__ = (
     "EventRecord",
     "EventStore",
     "ReV2EventError",
+    "validate_event_history",
 )
