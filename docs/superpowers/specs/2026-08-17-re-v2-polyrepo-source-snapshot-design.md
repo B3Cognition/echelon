@@ -77,9 +77,9 @@ The composite manifest contains:
 
 - a capture schema/version and snapshot kind;
 - a canonical, source-ID-sorted component list;
-- for each component: source ID, workspace-relative path, repository-relative
-  path, pinned commit, recursive submodule identities, and component tree
-  digest;
+- for each component: source ID, Git role, workspace-relative path,
+  repository-relative path, pinned commit, recursive submodule identities, and
+  component tree digest;
 - the flat canonical inventory of files under the composite read root; and
 - the complete effective exclusion policy.
 
@@ -125,9 +125,11 @@ weaken the provider filesystem boundary.
 9. Generate and validate the canonical component and flat inventories, make
    the staged tree immutable, and atomically publish it using the existing
    commit-marker protocol.
-10. Derive the partition manifest from the published component list. Create
-    the run store and activate the run only after the snapshot and partition
-    source sets match exactly.
+10. Derive the partition manifest from the published component IDs, Git roles,
+    and workspace paths. Create the run store and activate the run only after
+    the snapshot and partition source sets match exactly. Recovery recomputes
+    that partition identity from the committed composite manifest, never from
+    the mutable workspace.
 
 Crashes or validation failures may leave only recoverable private staging
 state. They never expose a committed snapshot, create a v2 run, or replace the
