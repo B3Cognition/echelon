@@ -57,7 +57,13 @@ from .run_store import (
     ReV2RunStoreError,
     load_run_manifest,
 )
-from .snapshot import CapturedSnapshot, ReV2SnapshotError, validate_source_snapshot
+from .snapshot import (
+    CapturedSnapshot,
+    ReV2SnapshotError,
+    load_snapshot_manifest,
+    validate_source_snapshot,
+)
+from .workspace_snapshot import composite_partition_manifest_id
 
 
 class ReV2RecoveryError(RuntimeError):
@@ -294,8 +300,15 @@ def _validate_authorities(
         raise ReV2RecoveryError("snapshot handle does not match immutable run manifest")
     try:
         validate_source_snapshot(context.snapshot)
+        snapshot_manifest = load_snapshot_manifest(context.snapshot)
     except ReV2SnapshotError as exc:
         raise ReV2RecoveryError(f"source snapshot validation failed: {exc}") from exc
+    if manifest.engine_protocol_version == "2.1":
+        expected_partition = composite_partition_manifest_id(snapshot_manifest)
+        if manifest.partition_manifest_id != expected_partition:
+            raise ReV2RecoveryError(
+                "immutable run partition does not match the composite source snapshot"
+            )
 
     expected = ReV2Paths.for_run(context.paths.root.parent)
     if context.paths != expected:

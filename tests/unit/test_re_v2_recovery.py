@@ -3,13 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 import json
 from pathlib import Path
+import stat
+from typing import Callable
 
 import pytest
 
 import harness.re_v2.recovery as recovery_module
 from harness.re_v2.budget import evaluate_budget
 from harness.re_v2.candidates import CandidateStore, ProcessIdentity
-from harness.re_v2.canonical import content_digest
+from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.events import EventStore
 from harness.re_v2.ledger import (
     CertificationDecision,
@@ -37,7 +39,12 @@ from harness.re_v2.recovery import (
     recover_run,
 )
 from harness.re_v2.run_store import create_run_store
-from harness.re_v2.snapshot import capture_source_snapshot
+from harness.re_v2.snapshot import (
+    SnapshotComponent,
+    capture_source_snapshot,
+    publish_workspace_snapshot_tree,
+)
+from harness.re_v2.workspace_snapshot import composite_partition_manifest_id
 
 
 NOW = "2026-08-14T12:00:00Z"
@@ -160,20 +167,61 @@ def _work_item(snapshot_id: str, partition_id: str) -> WorkItem:
 def _context(
     tmp_path: Path,
     templates: tuple[WorkTemplate, ...] | None = None,
+    *,
+    composite: bool = False,
+    partition_id_override: str | None = None,
 ) -> ReV2RunContext:
     selected_templates = templates or (_template(),)
-    source = tmp_path / "source"
-    source.mkdir()
-    (source / "api.py").write_text("VALUE = 1\n", encoding="utf-8")
-    snapshot = capture_source_snapshot(
-        source, tmp_path / "snapshots", exclusions=()
-    )
-    partition_id = content_digest(b"fixture-partitions")
+    if composite:
+        prepared = tmp_path / "prepared"
+        source = prepared / "source"
+        source.mkdir(parents=True)
+        target = source / "api.py"
+        target.write_text("VALUE = 1\n", encoding="utf-8")
+        component = SnapshotComponent(
+            source_id="source",
+            git_role="source",
+            workspace_path="source",
+            repository_path=".",
+            commit="a" * 40,
+            submodules=(),
+            tree_digest=content_digest(
+                [
+                    {
+                        "digest": content_digest(target.read_bytes()),
+                        "mode": stat.S_IMODE(target.stat().st_mode),
+                        "path": "api.py",
+                        "size": target.stat().st_size,
+                    }
+                ]
+            ),
+        )
+        snapshot = publish_workspace_snapshot_tree(
+            prepared,
+            tmp_path / "snapshots",
+            (component,),
+        )
+        from harness.re_v2.snapshot import load_snapshot_manifest
+
+        partition_id = composite_partition_manifest_id(
+            load_snapshot_manifest(snapshot)
+        )
+        protocol = "2.1"
+    else:
+        source = tmp_path / "source"
+        source.mkdir()
+        (source / "api.py").write_text("VALUE = 1\n", encoding="utf-8")
+        snapshot = capture_source_snapshot(
+            source, tmp_path / "snapshots", exclusions=()
+        )
+        partition_id = content_digest(b"fixture-partitions")
+        protocol = "2.0"
+    partition_id = partition_id_override or partition_id
     run_dir = tmp_path / "runs" / "re-fixture"
     manifest = RunManifest(
         schema_version=1,
         engine="re-v2",
-        engine_protocol_version="2.0",
+        engine_protocol_version=protocol,
         run_id=run_dir.name,
         created_at=NOW,
         source_snapshot_id=snapshot.snapshot_id,
@@ -1131,6 +1179,87 @@ def test_recovery_validates_snapshot_before_process_inspection(tmp_path: Path) -
         recover_run(mismatched, process_inspector=inspector, clock=lambda: CERTIFIED)
 
     assert inspector.calls == []
+
+
+def _rewrite_composite_manifest(
+    context: ReV2RunContext,
+    mutate: Callable[[dict[str, object]], None],
+) -> None:
+    manifest = json.loads(context.snapshot.manifest_path.read_bytes())
+    mutate(manifest)
+    payload = canonical_json_bytes(manifest)
+    bundle = context.snapshot.manifest_path.parent
+    bundle.chmod(bundle.stat().st_mode | stat.S_IWUSR)
+    context.snapshot.manifest_path.chmod(0o600)
+    context.snapshot.manifest_path.write_bytes(payload)
+    context.snapshot.manifest_path.chmod(0o400)
+    marker = (
+        bundle.parent
+        / ".snapshot-commits"
+        / f"{context.snapshot.snapshot_id}.json"
+    )
+    marker.chmod(0o600)
+    marker.write_bytes(
+        canonical_json_bytes(
+            {
+                "capture_version": 2,
+                "manifest_digest": content_digest(payload),
+                "snapshot_id": context.snapshot.snapshot_id,
+            }
+        )
+    )
+    marker.chmod(0o400)
+
+
+@pytest.mark.parametrize("field", ("commit", "tree_digest", "workspace_path"))
+def test_recovery_rejects_composite_component_tamper_before_side_effects(
+    tmp_path: Path,
+    field: str,
+) -> None:
+    context = _context(tmp_path, composite=True)
+    inspector = RecordingInspector({})
+    before_candidates = tuple(context.paths.candidates.rglob("*"))
+    before_ledger = context.paths.ledger.exists()
+
+    def mutate(manifest: dict[str, object]) -> None:
+        component = manifest["components"][0]  # type: ignore[index]
+        if field == "commit":
+            component[field] = "b" * 40
+        elif field == "tree_digest":
+            component[field] = content_digest(b"different")
+        else:
+            component[field] = "other"
+
+    _rewrite_composite_manifest(context, mutate)
+
+    with pytest.raises(ReV2RecoveryError, match="snapshot"):
+        recover_run(context, process_inspector=inspector, clock=lambda: CERTIFIED)
+
+    assert inspector.calls == []
+    assert context.certifier.calls == 0
+    assert tuple(context.paths.candidates.rglob("*")) == before_candidates
+    assert context.paths.ledger.exists() is before_ledger
+
+
+def test_recovery_rejects_composite_partition_mismatch_before_side_effects(
+    tmp_path: Path,
+) -> None:
+    context = _context(
+        tmp_path,
+        composite=True,
+        partition_id_override=content_digest(b"forged-partition"),
+    )
+    inspector = RecordingInspector({})
+    before_candidates = tuple(context.paths.candidates.rglob("*"))
+    before_ledger = context.paths.ledger.exists()
+
+    with pytest.raises(ReV2RecoveryError, match="partition"):
+        recover_run(context, process_inspector=inspector, clock=lambda: CERTIFIED)
+
+    assert inspector.calls == []
+    assert context.certifier.calls == 0
+    assert tuple(context.paths.candidates.rglob("*")) == before_candidates
+    assert context.paths.ledger.exists() is before_ledger
 
 
 def test_recovery_binds_policy_hash_independently_of_producer_protocol(
