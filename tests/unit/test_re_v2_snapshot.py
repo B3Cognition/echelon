@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import stat
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -24,6 +26,205 @@ def _copied_snapshot(tmp_path: Path):
 def _make_writable(path: Path) -> None:
     path.parent.chmod(path.parent.stat().st_mode | stat.S_IWUSR)
     path.chmod(path.stat().st_mode | stat.S_IWUSR)
+
+
+def _git(repository: Path, *args: str) -> str:
+    completed = subprocess.run(
+        ["git", "-C", str(repository), *args],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    return completed.stdout
+
+
+def _init_git_repository(path: Path) -> None:
+    path.mkdir()
+    _git(path, "init", "-q")
+    _git(path, "config", "user.name", "Snapshot Test")
+    _git(path, "config", "user.email", "snapshot@example.invalid")
+
+
+def _commit_all(repository: Path, message: str) -> str:
+    _git(repository, "add", "-A")
+    _git(repository, "commit", "-q", "-m", message)
+    return _git(repository, "rev-parse", "HEAD").strip()
+
+
+def _capture_in_crashing_process(
+    source: Path, destination: Path, fault_point: str
+) -> subprocess.CompletedProcess[str]:
+    script = """
+import os
+import sys
+from pathlib import Path
+
+from harness.re_v2.snapshot import capture_source_snapshot
+
+point = sys.argv[3]
+
+def fault(observed: str) -> None:
+    if observed == point:
+        os._exit(74)
+
+capture_source_snapshot(
+    Path(sys.argv[1]),
+    Path(sys.argv[2]),
+    exclusions=(),
+    fault_hook=fault,
+)
+"""
+    environment = os.environ.copy()
+    source_path = str(Path(__file__).parents[2] / "src")
+    environment["PYTHONPATH"] = os.pathsep.join(
+        value
+        for value in (source_path, environment.get("PYTHONPATH", ""))
+        if value
+    )
+    return subprocess.run(
+        [sys.executable, "-c", script, str(source), str(destination), fault_point],
+        check=False,
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "fault_point",
+    [
+        "source_installed",
+        "manifest_installed",
+        "permissions_normalized",
+        "bundle_fsynced",
+        "final_promoted",
+    ],
+)
+def test_copy_snapshot_crash_at_publication_boundary_is_retryable(
+    tmp_path: Path, fault_point: str
+) -> None:
+    """Removing any staging/promotion recovery step must strand this ID."""
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "api.py").write_text("VALUE = 1\n", encoding="utf-8")
+    destination = tmp_path / "snapshots"
+
+    crashed = _capture_in_crashing_process(source, destination, fault_point)
+
+    assert crashed.returncode == 74, crashed.stderr
+    captured = capture_source_snapshot(source, destination, exclusions=())
+    validate_source_snapshot(captured)
+    assert [path.name for path in destination.glob("sha256:*")] == [
+        captured.snapshot_id
+    ]
+    assert not list(destination.glob(".snapshot-stage-*"))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "fault_point",
+    [
+        "source_installed",
+        "manifest_installed",
+        "permissions_normalized",
+        "bundle_fsynced",
+        "final_promoted",
+    ],
+)
+def test_git_snapshot_crash_at_publication_boundary_repairs_registration(
+    tmp_path: Path, fault_point: str
+) -> None:
+    """A crash must not strand a registered staging worktree or invalid ID."""
+    source = tmp_path / "source"
+    _init_git_repository(source)
+    (source / "api.py").write_text("VALUE = 1\n", encoding="utf-8")
+    _commit_all(source, "source")
+    destination = tmp_path / "snapshots"
+
+    crashed = _capture_in_crashing_process(source, destination, fault_point)
+
+    assert crashed.returncode == 74, crashed.stderr
+    captured = capture_source_snapshot(source, destination, exclusions=())
+    validate_source_snapshot(captured)
+    worktrees = _git(source, "worktree", "list", "--porcelain")
+    assert worktrees.count(f"worktree {captured.read_root}") == 1
+    assert ".snapshot-stage-" not in worktrees
+    assert not list(destination.glob(".snapshot-stage-*"))
+
+
+@pytest.mark.unit
+def test_concurrent_same_id_capture_adopts_one_committed_bundle(tmp_path: Path) -> None:
+    """Removing the per-ID lock/no-replace adoption path must lose one writer."""
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "api.py").write_text("VALUE = 1\n", encoding="utf-8")
+    destination = tmp_path / "snapshots"
+    ready = tmp_path / "ready"
+    script = """
+import os
+import sys
+import time
+from pathlib import Path
+
+from harness.re_v2.snapshot import capture_source_snapshot
+
+ready = Path(sys.argv[3])
+
+def fault(point: str) -> None:
+    if point != "bundle_fsynced":
+        return
+    ready.mkdir(exist_ok=True)
+    (ready / str(os.getpid())).write_text("ready", encoding="utf-8")
+    deadline = time.monotonic() + 10
+    while len(list(ready.iterdir())) < 2:
+        if time.monotonic() >= deadline:
+            raise RuntimeError("concurrent capture barrier timed out")
+        time.sleep(0.01)
+
+captured = capture_source_snapshot(
+    Path(sys.argv[1]), Path(sys.argv[2]), exclusions=(), fault_hook=fault
+)
+print(captured.snapshot_id)
+"""
+    environment = os.environ.copy()
+    source_path = str(Path(__file__).parents[2] / "src")
+    environment["PYTHONPATH"] = os.pathsep.join(
+        value
+        for value in (source_path, environment.get("PYTHONPATH", ""))
+        if value
+    )
+    command = [
+        sys.executable,
+        "-c",
+        script,
+        str(source),
+        str(destination),
+        str(ready),
+    ]
+    processes = [
+        subprocess.Popen(
+            command,
+            env=environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        for _ in range(2)
+    ]
+    results = [process.communicate(timeout=20) for process in processes]
+
+    assert [process.returncode for process in processes] == [0, 0], results
+    assert results[0][0].strip() == results[1][0].strip()
+    captured = capture_source_snapshot(source, destination, exclusions=())
+    assert captured.snapshot_id == results[0][0].strip()
+    validate_source_snapshot(captured)
+    assert [path.name for path in destination.glob("sha256:*")] == [
+        captured.snapshot_id
+    ]
+    assert not list(destination.glob(".snapshot-stage-*"))
 
 
 @pytest.mark.unit
@@ -175,7 +376,7 @@ def test_copy_refuses_source_changes_during_staging(tmp_path: Path, monkeypatch:
 
 
 @pytest.mark.unit
-def test_clean_git_source_uses_pinned_detached_worktree_and_records_submodules(
+def test_clean_git_source_uses_pinned_detached_worktree_and_repairs_metadata(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     source = tmp_path / "source"
@@ -191,11 +392,10 @@ def test_clean_git_source_uses_pinned_detached_worktree_and_records_submodules(
             return "a" * 40 + "\n"
         if args[-4:] == ["status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"]:
             return ""
-        if "foreach" in args:
-            return "modules/example folder\0" + "b" * 40 + "\0"
         if "add" in args:
             worktree = Path(args[-2])
             worktree.mkdir(parents=True)
+            (worktree / ".git").write_text("gitdir: fake\n", encoding="utf-8")
             (worktree / "api.py").write_text("VALUE = 1\n", encoding="utf-8")
         if "move" in args:
             old, new = map(Path, args[-2:])
@@ -212,7 +412,126 @@ def test_clean_git_source_uses_pinned_detached_worktree_and_records_submodules(
     assert any("move" in command for command in commands)
     manifest = json.loads(captured.manifest_path.read_text(encoding="utf-8"))
     assert manifest["git"]["commit"] == "a" * 40
-    assert manifest["git"]["submodules"] == [{"commit": "b" * 40, "path": "modules/example folder"}]
+    assert manifest["git"]["submodules"] == []
+
+
+@pytest.mark.unit
+def test_clean_git_snapshot_materializes_exact_initialized_submodule_bytes(
+    tmp_path: Path,
+) -> None:
+    """Skipping local object materialization must leave this assertion empty."""
+    module = tmp_path / "module"
+    _init_git_repository(module)
+    expected = b"submodule\x00bytes\n"
+    (module / "payload.bin").write_bytes(expected)
+    module_commit = _commit_all(module, "module")
+
+    source = tmp_path / "source"
+    _init_git_repository(source)
+    (source / "root.txt").write_text("root\n", encoding="utf-8")
+    _commit_all(source, "root")
+    _git(
+        source,
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        "-q",
+        str(module),
+        "modules/example",
+    )
+    _commit_all(source, "add module")
+
+    captured = capture_source_snapshot(source, tmp_path / "snapshots", exclusions=())
+
+    assert captured.kind == "git-worktree"
+    assert (captured.read_root / "modules/example/payload.bin").read_bytes() == expected
+    assert not (captured.read_root / "modules/example/.git").exists()
+    manifest = json.loads(captured.manifest_path.read_bytes())
+    assert manifest["git"]["submodules"] == [
+        {"commit": module_commit, "path": "modules/example"}
+    ]
+    assert "modules/example/payload.bin" in {
+        entry["path"] for entry in manifest["entries"]
+    }
+    validate_source_snapshot(captured)
+
+
+@pytest.mark.unit
+def test_dirty_submodule_falls_back_to_copy_without_nested_git_metadata(
+    tmp_path: Path,
+) -> None:
+    """Copy fallback must not leak a nested submodule's operational `.git`."""
+    module = tmp_path / "module"
+    _init_git_repository(module)
+    (module / "payload.txt").write_text("committed\n", encoding="utf-8")
+    _commit_all(module, "module")
+
+    source = tmp_path / "source"
+    _init_git_repository(source)
+    (source / "root.txt").write_text("root\n", encoding="utf-8")
+    _commit_all(source, "root")
+    _git(
+        source,
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        "-q",
+        str(module),
+        "modules/example",
+    )
+    _commit_all(source, "add module")
+    (source / "modules/example/payload.txt").write_text(
+        "dirty bytes\n", encoding="utf-8"
+    )
+
+    captured = capture_source_snapshot(source, tmp_path / "snapshots", exclusions=())
+
+    assert captured.kind == "content-snapshot"
+    assert (captured.read_root / "modules/example/payload.txt").read_text(
+        encoding="utf-8"
+    ) == "dirty bytes\n"
+    assert not (captured.read_root / "modules/example/.git").exists()
+    manifest = json.loads(captured.manifest_path.read_bytes())
+    assert all(not entry["path"].endswith("/.git") for entry in manifest["entries"])
+    validate_source_snapshot(captured)
+
+
+@pytest.mark.unit
+def test_mismatched_submodule_falls_back_to_exact_content_copy(tmp_path: Path) -> None:
+    module = tmp_path / "module"
+    _init_git_repository(module)
+    (module / "payload.txt").write_text("old bytes\n", encoding="utf-8")
+    old_commit = _commit_all(module, "old")
+    (module / "payload.txt").write_text("pinned bytes\n", encoding="utf-8")
+    _commit_all(module, "pinned")
+
+    source = tmp_path / "source"
+    _init_git_repository(source)
+    (source / "root.txt").write_text("root\n", encoding="utf-8")
+    _commit_all(source, "root")
+    _git(
+        source,
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        "-q",
+        str(module),
+        "modules/example",
+    )
+    _commit_all(source, "add module")
+    _git(source / "modules/example", "checkout", "-q", old_commit)
+
+    captured = capture_source_snapshot(source, tmp_path / "snapshots", exclusions=())
+
+    assert captured.kind == "content-snapshot"
+    assert (captured.read_root / "modules/example/payload.txt").read_text(
+        encoding="utf-8"
+    ) == "old bytes\n"
+    assert not (captured.read_root / "modules/example/.git").exists()
+    validate_source_snapshot(captured)
 
 
 @pytest.mark.unit
@@ -234,6 +553,7 @@ def test_git_snapshot_physically_omits_tracked_excluded_file(
         if "add" in args:
             worktree = Path(args[-2])
             worktree.mkdir(parents=True)
+            (worktree / ".git").write_text("gitdir: fake\n", encoding="utf-8")
             (worktree / "keep.py").write_text("keep", encoding="utf-8")
             (worktree / "secret.txt").write_text("excluded", encoding="utf-8")
         if "move" in args:
@@ -249,76 +569,110 @@ def test_git_snapshot_physically_omits_tracked_excluded_file(
 
 
 @pytest.mark.unit
-def test_recursive_submodule_identities_include_nested_paths(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_recursive_submodules_are_materialized_with_root_relative_identities(
+    tmp_path: Path,
 ) -> None:
+    inner = tmp_path / "inner"
+    _init_git_repository(inner)
+    (inner / "inner.txt").write_text("inner bytes\n", encoding="utf-8")
+    inner_commit = _commit_all(inner, "inner")
+
+    outer = tmp_path / "outer"
+    _init_git_repository(outer)
+    (outer / "outer.txt").write_text("outer bytes\n", encoding="utf-8")
+    _commit_all(outer, "outer")
+    _git(
+        outer,
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        "-q",
+        str(inner),
+        "nested folder",
+    )
+    outer_commit = _commit_all(outer, "add inner")
+
     source = tmp_path / "source"
-    source.mkdir()
+    _init_git_repository(source)
+    (source / "root.txt").write_text("root\n", encoding="utf-8")
+    _commit_all(source, "root")
+    _git(
+        source,
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        "-q",
+        str(outer),
+        "modules/outer",
+    )
+    _commit_all(source, "add outer")
+    _git(
+        source,
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "update",
+        "-q",
+        "--init",
+        "--recursive",
+    )
 
-    def fake_git(args: list[str]) -> str:
-        if "foreach" in args:
-            return "modules/outer\0" + "b" * 40 + "\0modules/outer/nested folder\0" + "c" * 40 + "\0"
-        if args[-2:] == ["rev-parse", "--show-toplevel"]:
-            return str(source) + "\n"
-        if args[-2:] == ["rev-parse", "HEAD^{commit}"]:
-            return "a" * 40 + "\n"
-        if args[-1:] == ["--ignore-submodules=none"]:
-            return ""
-        if "add" in args:
-            worktree = Path(args[-2])
-            worktree.mkdir(parents=True)
-            (worktree / "api.py").write_text("VALUE = 1\n", encoding="utf-8")
-        if "move" in args:
-            Path(args[-2]).rename(Path(args[-1]))
-        return ""
-
-    monkeypatch.setattr("harness.re_v2.snapshot.run_git", fake_git)
     captured = capture_source_snapshot(source, tmp_path / "snapshots", exclusions=())
+
+    assert (captured.read_root / "modules/outer/outer.txt").read_text(
+        encoding="utf-8"
+    ) == "outer bytes\n"
+    assert (
+        captured.read_root / "modules/outer/nested folder/inner.txt"
+    ).read_text(encoding="utf-8") == "inner bytes\n"
+    assert not (captured.read_root / "modules/outer/.git").exists()
+    assert not (captured.read_root / "modules/outer/nested folder/.git").exists()
     manifest = json.loads(captured.manifest_path.read_text(encoding="utf-8"))
     assert manifest["git"]["submodules"] == [
-        {"commit": "b" * 40, "path": "modules/outer"},
-        {"commit": "c" * 40, "path": "modules/outer/nested folder"},
+        {"commit": outer_commit, "path": "modules/outer"},
+        {"commit": inner_commit, "path": "modules/outer/nested folder"},
     ]
+    validate_source_snapshot(captured)
 
 
 @pytest.mark.unit
-def test_submodule_identities_include_uninitialized_and_root_relative_nested_paths(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_uninitialized_submodule_fails_closed_without_fetching(tmp_path: Path) -> None:
+    module = tmp_path / "module"
+    _init_git_repository(module)
+    (module / "payload.txt").write_text("payload\n", encoding="utf-8")
+    _commit_all(module, "module")
+
     source = tmp_path / "source"
-    source.mkdir()
+    _init_git_repository(source)
+    (source / "root.txt").write_text("root\n", encoding="utf-8")
+    _commit_all(source, "root")
+    _git(
+        source,
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        "-q",
+        str(module),
+        "modules/uninitialized folder",
+    )
+    _commit_all(source, "add module")
+    _git(
+        source,
+        "submodule",
+        "deinit",
+        "-q",
+        "-f",
+        "--",
+        "modules/uninitialized folder",
+    )
 
-    def fake_git(args: list[str]) -> str:
-        if args[-3:] == ["ls-files", "--stage", "-z"]:
-            return (
-                "160000 " + "b" * 40 + " 0\tmodules/uninitialized folder\0"
-                + "160000 " + "c" * 40 + " 0\tmodules/outer\0"
-            )
-        if "foreach" in args:
-            # Git's $sm_path would be "nested folder" here; $displaypath is root-relative.
-            return "modules/outer\0" + "c" * 40 + "\0modules/outer/nested folder\0" + "d" * 40 + "\0"
-        if args[-2:] == ["rev-parse", "--show-toplevel"]:
-            return str(source) + "\n"
-        if args[-2:] == ["rev-parse", "HEAD^{commit}"]:
-            return "a" * 40 + "\n"
-        if args[-1:] == ["--ignore-submodules=none"]:
-            return ""
-        if "add" in args:
-            worktree = Path(args[-2])
-            worktree.mkdir(parents=True)
-            (worktree / "api.py").write_text("VALUE = 1\n", encoding="utf-8")
-        if "move" in args:
-            Path(args[-2]).rename(Path(args[-1]))
-        return ""
+    with pytest.raises(ReV2SnapshotError, match="not initialized locally|offline"):
+        capture_source_snapshot(source, tmp_path / "snapshots", exclusions=())
 
-    monkeypatch.setattr("harness.re_v2.snapshot.run_git", fake_git)
-    captured = capture_source_snapshot(source, tmp_path / "snapshots", exclusions=())
-    manifest = json.loads(captured.manifest_path.read_text(encoding="utf-8"))
-    assert manifest["git"]["submodules"] == [
-        {"commit": "c" * 40, "path": "modules/outer"},
-        {"commit": "d" * 40, "path": "modules/outer/nested folder"},
-        {"commit": "b" * 40, "path": "modules/uninitialized folder"},
-    ]
+    assert not list((tmp_path / "snapshots").glob("sha256:*"))
 
 
 @pytest.mark.unit
@@ -374,6 +728,7 @@ def test_duplicate_clean_git_snapshot_removes_temporary_worktree(
         if "add" in args:
             worktree = Path(args[-2])
             worktree.mkdir(parents=True)
+            (worktree / ".git").write_text("gitdir: fake\n", encoding="utf-8")
             (worktree / "api.py").write_text("VALUE = 1\n", encoding="utf-8")
         if "move" in args:
             Path(args[-2]).rename(Path(args[-1]))
@@ -451,7 +806,10 @@ def test_failed_git_deregistration_preserves_registered_bundle(
     monkeypatch.setattr("harness.re_v2.snapshot._publish_manifest", lambda *_: (_ for _ in ()).throw(OSError("disk full")))
     with pytest.raises(ReV2SnapshotError, match="cleanup failed"):
         capture_source_snapshot(source, tmp_path / "snapshots", exclusions=())
-    assert list((tmp_path / "snapshots").glob("sha256:*/source/api.py"))
+    # The registered worktree is retained under its hidden owned staging path;
+    # a failed deregistration must never make it discoverable as a snapshot ID.
+    assert list((tmp_path / "snapshots").glob(".snapshot-stage-*/source/api.py"))
+    assert not list((tmp_path / "snapshots").glob("sha256:*"))
 
 
 @pytest.mark.unit
@@ -475,6 +833,8 @@ def test_git_prepublication_failure_deregisters_temporary_worktree_once(
             worktree = Path(args[-2])
             worktree.mkdir(parents=True)
             (worktree / "unsafe").symlink_to(source / "api.py")
+        if "move" in args:
+            Path(args[-2]).rename(Path(args[-1]))
         return ""
 
     monkeypatch.setattr("harness.re_v2.snapshot.run_git", fake_git)
