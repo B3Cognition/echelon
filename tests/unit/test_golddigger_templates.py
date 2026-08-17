@@ -109,7 +109,7 @@ class TestGolddiggerTemplates:
                 "$RE_OUTPUT_DIR/sources/{source-id}/specs/{domain-id}/spec.md",
                 "$RE_OUTPUT_DIR/workspace/contracts.md",
             ),
-            "verifier": ("$RE_OUTPUT_DIR/quality/{source-id}/coverage-report.md",),
+            "verifier": ("$RE_OUTPUT_DIR/quality/sources/{source-id}.json",),
             "expander": ("$RE_OUTPUT_DIR/sources/{source-id}/specs/{domain-id}/spec.md",),
             "validator": ("semantic_quality_review",),
             "checklister": (
@@ -131,10 +131,22 @@ class TestGolddiggerTemplates:
             assert "specs/000-re-overview" not in text
 
         assert "{state.output_dir}/sources/{source-id}/specs/{domain-id}/spec.md" in RE_PHASES["2-specify"].read_text()
-        assert "{state.output_dir}/quality/{source-id}/coverage-report.md" in RE_PHASES["3-verify"].read_text()
+        assert "{state.output_dir}/quality/sources/{source-id}.json" in RE_PHASES["3-verify"].read_text()
         assert "{state.output_dir}/quality/semantic-quality-review.json" in RE_PHASES["5-validate"].read_text()
         assert "{state.output_dir}/workspace/checklist.md" in RE_PHASES["6-checklist"].read_text()
         assert "{state.output_dir}/workspace/strategy/constitution.md" in RE_PHASES["7-constitute"].read_text()
+
+    def test_re_templates_do_not_reference_retired_markdown_coverage_report(self) -> None:
+        templates = [*RE_AGENTS.values(), *RE_PHASES.values()]
+
+        for path in templates:
+            assert "quality/{source-id}/coverage-report.md" not in path.read_text(encoding="utf-8")
+
+    def test_re_validator_does_not_treat_aggregate_gate_report_as_domain_input(self) -> None:
+        validator = RE_AGENTS["validator"].read_text(encoding="utf-8")
+
+        assert "aggregate semantic quality report is controller-owned output" in validator
+        assert "NEVER read it as a `.domains` audit input" in validator
 
     def test_golddigger_treats_empty_sources_as_successful_skip(self) -> None:
         text = AGENT.read_text(encoding="utf-8")

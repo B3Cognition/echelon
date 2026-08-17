@@ -64,7 +64,7 @@ SKILL_MAP = {
     "reopen":  "echelon.reopen",
 }
 
-CLI_VERSION = "4.0.2"
+CLI_VERSION = "4.0.3"
 LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
 
 from echelon.workspace_model import discover_workspace  # noqa: E402  (after stdlib imports)
@@ -119,15 +119,19 @@ Commands:
                     [--message <text>]
                                             Run one explicit phase through COMMANDER contracts.
 
-  re run [--re-policy none|cached-only|changed|refresh-all]
+  re run [--engine v1|v2] [--shadow]
+                    [--re-policy none|cached-only|changed|refresh-all]
                     [--re-max-inner <n>] [--reset]
                                             Run or reuse workspace reverse engineering.
   re refresh --source <source-id>           Refresh and publish one declared source.
-  re status                                 Show live RE state, source quality, debt, and next action.
+  re status [--json]                        Show live RE state, source quality, debt, and next action.
   re continue [--re-max-inner <n>] [--re-token-limit <n>] [--re-time-limit-minutes <n>]
                                             Continue the active RE run.
   re resume <answer> [--re-max-inner <n>] [--re-token-limit <n>] [--re-time-limit-minutes <n>]
                                             Resume blocked RE with a human answer.
+  re finalize [<run-id>] --allow-partial    Accept recorded debt and stop a blocked RE run.
+  re synthesize [<run-id>] --allow-partial [--re-token-limit <n>]
+                                            Build workspace synthesis from partial source results.
   re publish <run-id> [--allow-partial] [--commit]
                                             Publish validated workspace RE output.
 
@@ -9712,16 +9716,65 @@ def _format_re_token_budget(state: dict, outer: dict) -> str:
     return f"{usage / 1_000_000:.1f}M / {limit / 1_000_000:.1f}M ({usage / limit:.0%})"
 
 
+def _detect_re_engine_for_cli(run_dir: Path) -> str:
+    """Detect a pinned engine and preserve recorded identity in refusal errors."""
+    from harness.re_v2.run_store import ReV2RunStoreError, detect_re_engine
+
+    try:
+        return detect_re_engine(run_dir)
+    except ReV2RunStoreError as exc:
+        manifest_path = run_dir.resolve() / "v2" / "run.json"
+        recorded: tuple[str, str] | None = None
+        if manifest_path.is_file() and not manifest_path.is_symlink():
+            try:
+                raw = json.loads(manifest_path.read_bytes())
+                if isinstance(raw, dict):
+                    engine = raw.get("engine")
+                    protocol = raw.get("engine_protocol_version")
+                    if (
+                        isinstance(engine, str)
+                        and engine
+                        and isinstance(protocol, str)
+                        and protocol
+                    ):
+                        recorded = (engine, protocol)
+            except (OSError, ValueError, TypeError):
+                pass
+        if recorded is not None:
+            raise ValueError(
+                "unsupported pinned RE engine/protocol "
+                f"{recorded[0]!r}/{recorded[1]!r}; install an Echelon version "
+                "compatible with the recorded protocol"
+            ) from exc
+        raise ValueError(str(exc)) from exc
+
+
 def _cmd_re_status(args: list[str]) -> None:
     """Show the active RE controller state and every source's quality outcome."""
     from harness.re_lifecycle import resolve_current_re_run
+    from harness.re_v2.status import ReV2StatusError, render_v2_status
 
-    if args:
-        print("Usage: echelon re status", file=sys.stderr)
+    as_json = args == ["--json"]
+    if args and not as_json:
+        print("Usage: echelon re status [--json]", file=sys.stderr)
         raise SystemExit(2)
     run_dir = resolve_current_re_run(Path.cwd())
     if run_dir is None:
         print("echelon re status: no active RE run", file=sys.stderr)
+        raise SystemExit(2)
+    try:
+        engine = _detect_re_engine_for_cli(run_dir)
+        if engine == "v2":
+            print(render_v2_status(run_dir, as_json=as_json), end="")
+            return
+    except (ReV2StatusError, ValueError) as exc:
+        print(f"echelon re status: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
+    if as_json:
+        print(
+            "echelon re status: --json is available only for pinned v2 runs",
+            file=sys.stderr,
+        )
         raise SystemExit(2)
     run_re_dir = run_dir / "re"
     outer = _read_re_summary_state(run_dir / "state.json")
@@ -9747,6 +9800,18 @@ def _cmd_re_status(args: list[str]) -> None:
         status == "partial_quality_debt" for status in source_statuses
     )
     nonpassed_count = sum(status != "passed" for status in source_statuses)
+    finalized_partial = (
+        outer.get("finalized_partial") is True
+        and outer.get("golddigger_status") == "partial"
+    )
+    publication_complete = outer.get("publication_complete") is True
+    synthesis_status = (
+        "complete"
+        if inner.get("re_workspace_synthesis_complete") is True
+        else "incomplete (accepted partial debt)"
+        if finalized_partial
+        else "pending"
+    )
     fields = [
         ("run", run_dir.name),
         ("controller", controller_status),
@@ -9754,9 +9819,34 @@ def _cmd_re_status(args: list[str]) -> None:
         ("phase", f"{phase} — {phase_label}"),
         ("policy", str(outer.get("re_policy") or "unknown")),
         ("sources", _re_source_progress(display_inner)),
-        ("synthesis", "complete" if inner.get("re_workspace_synthesis_complete") is True else "pending"),
+        ("synthesis", synthesis_status),
         ("token budget", _format_re_token_budget(inner, outer)),
     ]
+    if finalized_partial:
+        raw_finalization = outer.get("re_partial_finalization")
+        finalization = raw_finalization if isinstance(raw_finalization, dict) else {}
+        semantic_count = int(finalization.get("semantic_failure_count") or 0)
+        raw_semantic_sources = finalization.get("semantic_failure_sources")
+        semantic_sources = (
+            [value for value in raw_semantic_sources if isinstance(value, str)]
+            if isinstance(raw_semantic_sources, list)
+            else []
+        )
+        fields.append(
+            (
+                "semantic debt",
+                f"{semantic_count} finding{'s' if semantic_count != 1 else ''} across "
+                + (", ".join(semantic_sources) or "no named source"),
+            )
+        )
+    if publication_complete:
+        fields.append(
+            (
+                "publication",
+                f"generation {int(outer.get('generation') or 0)} "
+                f"({outer.get('golddigger_status') or 'unknown'})",
+            )
+        )
     if controller_status == "blocked":
         fields.extend(
             (
@@ -9779,7 +9869,17 @@ def _cmd_re_status(args: list[str]) -> None:
         print("  source                                 status                 coverage / debt")
         print("  ─────────────────────────────────────  ─────────────────────  ─────────────────")
         print("\n".join(source_rows))
-    if controller_status == "in_progress":
+    if finalized_partial and publication_complete:
+        action = (
+            "This run is finalized and published as partial; debt remains explicit. "
+            "No continuation is required."
+        )
+    elif finalized_partial:
+        action = (
+            f"This run is finalized as partial. Publish it with `echelon re publish "
+            f"{run_dir.name} --allow-partial`."
+        )
+    elif controller_status == "in_progress":
         action = "Do not start another continuation while the controller is active."
     elif controller_status == "blocked":
         action = (
@@ -10079,10 +10179,496 @@ def _format_missing_workspace_artifacts(paths: list[str]) -> str:
     return "\n".join([heading, *displayed, suffix]).strip()
 
 
+def _parse_re_creation_engine_options(
+    args: list[str],
+) -> tuple[str, bool, list[str]]:
+    """Remove additive v2 creation switches without changing the v1 parser."""
+    engine = "v1"
+    engine_seen = False
+    shadow = False
+    remaining: list[str] = []
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg == "--engine":
+            if engine_seen or index + 1 >= len(args):
+                raise ValueError("--engine requires exactly one of v1 or v2")
+            engine = args[index + 1].strip()
+            engine_seen = True
+            index += 2
+        elif arg.startswith("--engine="):
+            if engine_seen:
+                raise ValueError("--engine requires exactly one of v1 or v2")
+            engine = arg.split("=", 1)[1].strip()
+            engine_seen = True
+            index += 1
+        elif arg == "--shadow":
+            if shadow:
+                raise ValueError("--shadow may be supplied only once")
+            shadow = True
+            index += 1
+        else:
+            remaining.append(arg)
+            index += 1
+    if engine not in {"v1", "v2"}:
+        raise ValueError("--engine requires v1 or v2")
+    if shadow and engine != "v2":
+        raise ValueError("--shadow is valid only with --engine v2")
+    return engine, shadow, remaining
+
+
+def _re_v2_now() -> str:
+    return (
+        datetime.now(timezone.utc)
+        .isoformat(timespec="microseconds")
+        .replace("+00:00", "Z")
+    )
+
+
+def _re_v2_snapshot_root(project_root: Path) -> Path:
+    configured = os.environ.get("ECHELON_HOME")
+    base = Path(configured).expanduser() if configured else Path.home() / ".echelon"
+    destination = (base / "re-v2" / "snapshots").resolve(strict=False)
+    workspace = project_root.resolve()
+    if destination == workspace or destination.is_relative_to(workspace):
+        raise ValueError("RE v2 snapshot storage must be outside the source workspace")
+    return destination
+
+
+def _re_v2_partition_manifest_id(
+    workspace_manifest: object, snapshot: object
+) -> str:
+    from harness.re_v2.snapshot import load_snapshot_manifest
+    from harness.re_v2.workspace_snapshot import composite_partition_manifest_id
+
+    snapshot_manifest = load_snapshot_manifest(snapshot)
+    components = snapshot_manifest.components
+    if components is None:
+        raise ValueError("RE v2 creation requires a composite source snapshot")
+    expected = sorted(
+        (
+            str(getattr(source, "id")),
+            str(getattr(source, "git_role")),
+            str(getattr(source, "path")),
+        )
+        for source in getattr(workspace_manifest, "sources")
+    )
+    observed = sorted(
+        (
+            component.source_id,
+            component.git_role,
+            component.workspace_path,
+        )
+        for component in components
+    )
+    if expected != observed:
+        raise ValueError(
+            "workspace source set does not match the committed RE v2 snapshot"
+        )
+    return composite_partition_manifest_id(snapshot_manifest)
+
+
+def _new_re_v2_run_id(project_root: Path) -> str:
+    runs = project_root.resolve() / "runs"
+    base = datetime.now(timezone.utc).strftime("re-%Y%m%d-%H%M%S-%f")
+    for index in range(1_000):
+        candidate = base if index == 0 else f"{base}-{index}"
+        if not (runs / candidate).exists() and not (runs / candidate).is_symlink():
+            return candidate
+    raise ValueError("cannot allocate a unique RE v2 run id")
+
+
+def _activate_re_v2_run(project_root: Path, run_id: str) -> None:
+    runs = project_root.resolve() / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    gitignore = runs / ".gitignore"
+    if not gitignore.exists():
+        gitignore.write_text("*/state.json\n*/*.tmp\n.current*\n", encoding="utf-8")
+    marker = runs / ".current-re"
+    temporary = runs / f".current-re.{os.getpid()}.tmp"
+    try:
+        temporary.write_text(run_id + "\n", encoding="utf-8")
+        os.replace(temporary, marker)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+class _DeterministicInventoryCertifier:
+    """Controller-owned verifier for the exact deterministic L0 document."""
+
+    verifier_id = "deterministic-inventory-verifier"
+    verifier_version = "v1"
+
+    def __init__(self, object_store: object, snapshot: object) -> None:
+        self._object_store = object_store
+        self._snapshot = snapshot
+
+    def certify(self, candidate: object, work_item: object) -> object:
+        from harness.re_v2.canonical import canonical_json_bytes
+        from harness.re_v2.ledger import CertificationDecision
+        from harness.re_v2.model import (
+            ArtifactReceipt,
+            CertificationKey,
+            CertificationReceipt,
+        )
+
+        payload_root = Path(getattr(candidate, "payload_path"))
+        artifact_hash = self._object_store.put_tree(payload_root)
+        diagnostics = self._diagnostics(candidate, work_item, payload_root)
+        certified_at = _re_v2_now()
+        certification = CertificationReceipt(
+            certification_key=CertificationKey(
+                artifact_hash=artifact_hash,
+                verifier_id=self.verifier_id,
+                verifier_version=self.verifier_version,
+                source_snapshot_id=getattr(work_item, "output_key").source_snapshot_id,
+                audit_epoch_id=None,
+            ),
+            candidate_id=str(getattr(candidate, "candidate_id")),
+            work_item_id=str(getattr(work_item, "work_item_id")),
+            verdict="rejected" if diagnostics else "accepted",
+            normalized_diagnostics=diagnostics,
+            evidence_references=("inventory.json",),
+            scope_verified=not diagnostics,
+            certified_at=certified_at,
+        )
+        if diagnostics:
+            return CertificationDecision(certification, None)
+        artifact = ArtifactReceipt(
+            artifact_key=getattr(work_item, "output_key"),
+            artifact_hash=artifact_hash,
+            certification_id=certification.identity,
+            candidate_id=str(getattr(candidate, "candidate_id")),
+            work_item_id=str(getattr(work_item, "work_item_id")),
+            accepted_at=certified_at,
+        )
+        return CertificationDecision(certification, artifact)
+
+    def _diagnostics(
+        self, candidate: object, work_item: object, payload_root: Path
+    ) -> tuple[str, ...]:
+        from harness.re_v2.canonical import canonical_json_bytes
+
+        observation = getattr(candidate, "observation")
+        if (
+            observation.provider_name != "deterministic-inventory"
+            or observation.exit_code != 0
+            or observation.timed_out
+            or observation.output_truncated
+            or not observation.result_contract_valid
+        ):
+            return ("deterministic-transport-invalid",)
+        try:
+            entries = sorted(path.name for path in payload_root.iterdir())
+            document_path = payload_root / "inventory.json"
+            payload = document_path.read_bytes()
+            document = json.loads(payload)
+            snapshot_manifest = json.loads(
+                Path(getattr(self._snapshot, "manifest_path")).read_bytes()
+            )
+        except (OSError, ValueError, TypeError):
+            return ("inventory-document-unreadable",)
+        if entries != ["inventory.json"] or document_path.is_symlink() or not document_path.is_file():
+            return ("inventory-output-scope-invalid",)
+        try:
+            if payload != canonical_json_bytes(document):
+                return ("inventory-document-noncanonical",)
+        except (TypeError, ValueError):
+            return ("inventory-document-noncanonical",)
+        expected_fields = {
+            "artifact_kind",
+            "dependency_hashes",
+            "partition_manifest_id",
+            "producer_protocol_version",
+            "schema_version",
+            "snapshot_entries",
+            "source_snapshot_id",
+            "work_item_id",
+        }
+        if not isinstance(document, dict) or set(document) != expected_fields:
+            return ("inventory-document-schema-invalid",)
+        expected_entries = [
+            {
+                "digest": item["digest"],
+                "mode": int(item["mode"]) & ~0o222,
+                "path": item["path"],
+                "size": item["size"],
+            }
+            for item in snapshot_manifest.get("entries", [])
+            if isinstance(item, dict)
+        ]
+        output_key = getattr(work_item, "output_key")
+        expected = {
+            "artifact_kind": output_key.artifact_kind,
+            "dependency_hashes": list(getattr(work_item, "required_artifact_hashes")),
+            "partition_manifest_id": output_key.partition_manifest_id,
+            "producer_protocol_version": getattr(work_item, "producer_protocol_version"),
+            "schema_version": 1,
+            "snapshot_entries": sorted(expected_entries, key=lambda item: str(item["path"])),
+            "source_snapshot_id": output_key.source_snapshot_id,
+            "work_item_id": getattr(work_item, "work_item_id"),
+        }
+        return () if document == expected else ("inventory-evidence-mismatch",)
+
+
+def _load_re_v2_snapshot(project_root: Path, manifest: object) -> object:
+    from harness.re_v2.snapshot import CapturedSnapshot, validate_source_snapshot
+
+    bundle = _re_v2_snapshot_root(project_root) / str(
+        getattr(manifest, "source_snapshot_id")
+    )
+    snapshot = CapturedSnapshot(
+        snapshot_id=str(getattr(manifest, "source_snapshot_id")),
+        kind=getattr(manifest, "source_snapshot_kind"),
+        read_root=bundle / "source",
+        manifest_path=bundle / "manifest.json",
+    )
+    validate_source_snapshot(snapshot)
+    return snapshot
+
+
+def _re_v2_context(project_root: Path, run_dir: Path) -> object:
+    from harness.re_v2.candidates import CandidateStore
+    from harness.re_v2.events import EventStore
+    from harness.re_v2.ledger import Ledger, ObjectStore
+    from harness.re_v2.planner import build_initial_inventory_graph
+    from harness.re_v2.recovery import ReV2RunContext
+    from harness.re_v2.run_store import ReV2Paths, load_run_manifest
+    from harness.re_v2.status import validate_supported_v2_manifest
+
+    manifest = load_run_manifest(run_dir)
+    paths = ReV2Paths.for_run(run_dir)
+    graph = build_initial_inventory_graph(
+        manifest.source_snapshot_id, manifest.partition_manifest_id
+    )
+    validate_supported_v2_manifest(manifest, graph)
+    snapshot = _load_re_v2_snapshot(project_root, manifest)
+    objects = ObjectStore(paths.objects)
+    ledger = Ledger(
+        paths,
+        objects,
+        supported_verifiers={
+            _DeterministicInventoryCertifier.verifier_id:
+            _DeterministicInventoryCertifier.verifier_version
+        },
+    )
+    return ReV2RunContext(
+        paths=paths,
+        snapshot=snapshot,
+        graph=graph,
+        event_store=EventStore(paths),
+        object_store=objects,
+        ledger=ledger,
+        candidate_store=CandidateStore(paths),
+        certifier=_DeterministicInventoryCertifier(objects, snapshot),
+    )
+
+
+def _run_re_v2_shadow(context: object) -> None:
+    from harness.re_v2.budget import evaluate_budget
+    from harness.re_v2.planner import plan_next
+    from harness.re_v2.recovery import recover_run
+    from harness.re_v2.status import render_v2_status
+
+    recovered = recover_run(context)
+    budget = evaluate_budget(
+        recovered.manifest.initial_budget_policy,
+        recovered.events,
+        now=_re_v2_now(),
+    )
+    decision = plan_next(
+        context.graph,
+        recovered.ledger,
+        budget,
+        requested_goals=recovered.manifest.requested_goals,
+    )
+    print("RE V2 — SHADOW PLAN")
+    for template_id, explanation in decision.explanations.items():
+        print(
+            f"{template_id}: {explanation.action} "
+            f"({explanation.reason_code}) — {explanation.reason}"
+        )
+    print(render_v2_status(context.paths.root.parent), end="")
+
+
+def _run_re_v2_live(context: object) -> None:
+    from harness.re_v2.controller import ReV2Controller
+    from harness.re_v2.status import render_v2_status
+
+    ReV2Controller(context).run_until_stopped()
+    print(render_v2_status(context.paths.root.parent), end="")
+
+
+def _run_re_v2_create(
+    project_root: Path,
+    *,
+    token_limit: int | None,
+    time_limit_minutes: int | None,
+    shadow: bool,
+) -> None:
+    from harness.re_v2.model import (
+        RE_V2_ENGINE,
+        RE_V2_PROTOCOL,
+        BudgetPolicy,
+        RunManifest,
+    )
+    from harness.re_v2.run_store import create_run_store
+    from harness.re_v2.workspace_snapshot import capture_workspace_snapshot
+
+    workspace_root = project_root.resolve()
+    workspace_manifest = discover_workspace(workspace_root)
+    snapshot = capture_workspace_snapshot(
+        workspace_root,
+        workspace_manifest.sources,
+        _re_v2_snapshot_root(workspace_root),
+    )
+    partition_manifest_id = _re_v2_partition_manifest_id(
+        workspace_manifest, snapshot
+    )
+    run_id = _new_re_v2_run_id(workspace_root)
+    run_dir = workspace_root / "runs" / run_id
+    manifest = RunManifest(
+        schema_version=1,
+        engine=RE_V2_ENGINE,
+        engine_protocol_version=RE_V2_PROTOCOL,
+        run_id=run_id,
+        created_at=_re_v2_now(),
+        source_snapshot_id=snapshot.snapshot_id,
+        source_snapshot_kind=snapshot.kind,
+        partition_manifest_id=partition_manifest_id,
+        requested_goals=("inventory",),
+        initial_budget_policy=BudgetPolicy(
+            token_limit=token_limit if token_limit is not None else 5_000_000,
+            active_ms_limit=(
+                time_limit_minutes * 60_000
+                if time_limit_minutes is not None
+                else 180 * 60_000
+            ),
+            provider_attempt_limit=1,
+            artifact_generation_attempt_limit=1,
+            semantic_repair_round_limit=0,
+            result_contract_retry_limit=0,
+        ),
+        provider_contract={
+            "provider": "deterministic-inventory",
+            "provider_protocol_version": "re-v2-l0-v1",
+            "result_contract_id": "deterministic-inventory-v1",
+        },
+        artifact_policy_versions={"L0": "egr-164-v1"},
+        parent_run_id=None,
+    )
+    create_run_store(run_dir, manifest)
+    _activate_re_v2_run(workspace_root, run_id)
+    context = _re_v2_context(workspace_root, run_dir)
+    if shadow:
+        _run_re_v2_shadow(context)
+    else:
+        _run_re_v2_live(context)
+
+
+def _re_v2_is_paused(events: tuple[object, ...]) -> bool:
+    paused = False
+    for event in events:
+        if getattr(event, "type") == "run_paused":
+            paused = True
+        elif getattr(event, "type") == "run_resumed":
+            paused = False
+    return paused
+
+
+def _run_re_v2_continue(
+    run_dir: Path,
+    *,
+    token_limit: int | None,
+    time_limit_minutes: int | None,
+) -> None:
+    from harness.re_v2.budget import (
+        BudgetDimension,
+        authorize_resource_increase,
+        evaluate_budget,
+    )
+    from harness.re_v2.recovery import recover_run
+
+    project_root = run_dir.resolve().parent.parent
+    context = _re_v2_context(project_root, run_dir)
+    recovered = recover_run(context)
+    terminal_types = {"run_completed", "run_finalized_partial", "run_failed"}
+    if recovered.events and recovered.events[-1].type in terminal_types:
+        if token_limit is not None or time_limit_minutes is not None:
+            raise ValueError("terminal v2 runs cannot receive budget authorization")
+        _run_re_v2_live(context)
+        return
+    paused = _re_v2_is_paused(recovered.events)
+    requested = (
+        (BudgetDimension.TOKENS, token_limit),
+        (
+            BudgetDimension.ACTIVE_MS,
+            time_limit_minutes * 60_000
+            if time_limit_minutes is not None
+            else None,
+        ),
+    )
+    authorized = False
+    for dimension, new_value in requested:
+        if new_value is None:
+            continue
+        history = context.event_store.replay()
+        if not _re_v2_is_paused(history):
+            raise ValueError("v2 budget authorization requires a paused run")
+        budget = evaluate_budget(
+            context.manifest.initial_budget_policy,
+            history,
+            now=_re_v2_now(),
+        )
+        old_value = (
+            budget.token_limit
+            if dimension is BudgetDimension.TOKENS
+            else budget.active_ms_limit
+        )
+        event = authorize_resource_increase(
+            context.manifest.initial_budget_policy,
+            history,
+            dimension=dimension,
+            old_value=old_value,
+            new_value=new_value,
+            actor="echelon-cli",
+            reason="CLI resource ceiling increase",
+        )
+        context.event_store.append(
+            str(event["type"]),
+            event["payload"],
+            occurred_at=_re_v2_now(),
+        )
+        authorized = True
+    if paused:
+        if not authorized:
+            context.event_store.append(
+                "operator_pause_requested",
+                {
+                    "reason": "CLI continuation requested",
+                    "requested_by": "echelon-cli",
+                },
+                occurred_at=_re_v2_now(),
+            )
+        context.event_store.append(
+            "run_resumed",
+            {
+                "reason": (
+                    "CLI continuation after resource authorization"
+                    if authorized
+                    else "CLI continuation requested"
+                )
+            },
+            occurred_at=_re_v2_now(),
+        )
+    _run_re_v2_live(context)
+
+
 def _cmd_re_run(args: list[str]) -> None:
     from harness.re_lifecycle import ReLifecycleError
 
     try:
+        engine, shadow, lifecycle_args = _parse_re_creation_engine_options(args)
         (
             policy,
             re_max_inner,
@@ -10093,12 +10679,31 @@ def _cmd_re_run(args: list[str]) -> None:
             time_limit_minutes,
             positional,
         ) = _parse_re_lifecycle_options(
-            args,
+            lifecycle_args,
             allow_policy=True,
             allow_reset=True,
         )
         if positional:
             raise ValueError("echelon re run does not accept positional arguments")
+        if engine == "v2":
+            if re_max_inner is not None:
+                raise ValueError(
+                    "v2 has independent attempt budgets; this option is valid only for v1"
+                )
+            if policy != "changed" or reset or no_reuse or profile is not None:
+                raise ValueError(
+                    "v2 inventory creation does not accept v1 policy, reset, reuse, or profile options"
+                )
+            try:
+                _run_re_v2_create(
+                    Path.cwd(),
+                    token_limit=token_limit,
+                    time_limit_minutes=time_limit_minutes,
+                    shadow=shadow,
+                )
+            except RuntimeError as exc:
+                raise ValueError(str(exc)) from exc
+            return
         result = _re_lifecycle_controller(Path.cwd()).run(
             policy=policy,
             re_max_inner=re_max_inner,
@@ -10156,7 +10761,7 @@ def _cmd_re_refresh(args: list[str]) -> None:
 
 
 def _cmd_re_continue(args: list[str]) -> None:
-    from harness.re_lifecycle import ReLifecycleError
+    from harness.re_lifecycle import ReLifecycleError, resolve_current_re_run
 
     try:
         _policy, re_max_inner, _reset, _no_reuse, _profile, token_limit, time_limit_minutes, positional = _parse_re_lifecycle_options(
@@ -10168,6 +10773,21 @@ def _cmd_re_continue(args: list[str]) -> None:
         if positional:
             raise ValueError("echelon re continue does not accept positional arguments")
         project_root = Path.cwd()
+        run_dir = resolve_current_re_run(project_root)
+        if run_dir is not None and _detect_re_engine_for_cli(run_dir) == "v2":
+            if re_max_inner is not None:
+                raise ValueError(
+                    "v2 has independent attempt budgets; this option is valid only for v1"
+                )
+            try:
+                _run_re_v2_continue(
+                    run_dir,
+                    token_limit=token_limit,
+                    time_limit_minutes=time_limit_minutes,
+                )
+            except RuntimeError as exc:
+                raise ValueError(str(exc)) from exc
+            return
         _print_re_continue_summary(project_root, re_max_inner=re_max_inner)
         overrides: dict[str, int] = {}
         if token_limit is not None:
@@ -10211,18 +10831,167 @@ def _cmd_re_resume(args: list[str]) -> None:
         raise SystemExit(2) from exc
     _print_re_lifecycle_result(result)
 
+
+def _cmd_re_finalize(args: list[str]) -> None:
+    """Explicitly acknowledge debt and terminalize a blocked RE run as partial."""
+    from harness.re_finalization import ReFinalizationError, finalize_partial_re_run
+
+    allow_partial = False
+    positional: list[str] = []
+    for arg in args:
+        if arg == "--allow-partial":
+            allow_partial = True
+        elif arg.startswith("-"):
+            print(f"echelon re finalize: unknown argument '{arg}'", file=sys.stderr)
+            raise SystemExit(2)
+        else:
+            positional.append(arg)
+    if not allow_partial:
+        print(
+            "echelon re finalize: --allow-partial is required; "
+            "this transition accepts unresolved RE debt",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    if len(positional) > 1:
+        print(
+            "Usage: echelon re finalize [<run-id>] --allow-partial",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    try:
+        result = finalize_partial_re_run(
+            Path.cwd(),
+            run_id=positional[0] if positional else None,
+        )
+    except (ReFinalizationError, OSError, ValueError) as exc:
+        print(f"echelon re finalize: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+    publish_command = f"echelon re publish {result.run_id} --allow-partial"
+    print(
+        f"RE run {result.run_id} finalized as partial; unresolved debt remains."
+    )
+    _banner(
+        "RE FINAL STATE — PARTIAL",
+        [
+            ("run", result.run_id),
+            ("status", "partial (debt accepted, not full quality)"),
+            ("stopped because", result.blocked_reason),
+            ("partial sources", ", ".join(result.partial_sources) or "workspace-level only"),
+            ("semantic findings", str(result.semantic_failure_count)),
+            (
+                "workspace synthesis",
+                "incomplete" if result.workspace_synthesis_incomplete else "present",
+            ),
+            ("debt manifest", str(result.debt_manifest)),
+            ("next step", publish_command),
+        ],
+        subtitle="The run is terminal and publishable only with --allow-partial.",
+    )
+
+
+def _cmd_re_synthesize(args: list[str]) -> None:
+    """Regenerate only workspace synthesis from accepted partial source results."""
+    from harness.config import load_config
+    from harness.re_finalization import (
+        ReFinalizationError,
+        synthesize_partial_re_run,
+    )
+    from harness.squad_provider import SquadCliProvider
+
+    allow_partial = False
+    token_limit: int | None = None
+    time_limit_minutes: int | None = None
+    positional: list[str] = []
+    index = 0
+    try:
+        while index < len(args):
+            arg = args[index]
+            if arg == "--allow-partial":
+                allow_partial = True
+                index += 1
+            elif arg in {"--re-token-limit", "--re-time-limit-minutes"}:
+                if index + 1 >= len(args):
+                    raise ValueError(f"{arg} requires a positive integer")
+                try:
+                    value = int(args[index + 1])
+                except ValueError as exc:
+                    raise ValueError(f"{arg} requires a positive integer") from exc
+                if value < 1:
+                    raise ValueError(f"{arg} requires a positive integer")
+                if arg == "--re-token-limit":
+                    token_limit = value
+                else:
+                    time_limit_minutes = value
+                index += 2
+            elif arg.startswith("--re-token-limit="):
+                token_limit = int(arg.split("=", 1)[1])
+                index += 1
+            elif arg.startswith("--re-time-limit-minutes="):
+                time_limit_minutes = int(arg.split("=", 1)[1])
+                index += 1
+            elif arg.startswith("-"):
+                raise ValueError(f"unknown argument {arg!r}")
+            else:
+                positional.append(arg)
+                index += 1
+        if not allow_partial:
+            raise ValueError(
+                "--allow-partial is required; synthesis will use sources with accepted debt"
+            )
+        if len(positional) > 1:
+            raise ValueError(
+                "usage: echelon re synthesize [<run-id>] --allow-partial "
+                "[--re-token-limit <n>]"
+            )
+        project_root = Path.cwd()
+        runtime_root, prosaic_subagents_dir = _installed_re_runtime_or_exit(
+            project_root
+        )
+        config = load_config(project_root, squad_only=True)
+        result = synthesize_partial_re_run(
+            project_root,
+            run_id=positional[0] if positional else None,
+            provider=SquadCliProvider(config),
+            extension_root=runtime_root,
+            prosaic_subagents_dir=prosaic_subagents_dir,
+            hard_token_limit=token_limit,
+            hard_active_minutes=time_limit_minutes,
+        )
+    except (ReFinalizationError, OSError, ValueError) as exc:
+        print(f"echelon re synthesize: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+    publish_command = f"echelon re publish {result.run_id} --allow-partial"
+    print(f"Workspace synthesis completed for partial RE run {result.run_id}.")
+    _banner(
+        "RE WORKSPACE SYNTHESIS — COMPLETE",
+        [
+            ("run", result.run_id),
+            ("source quality", "partial debt accepted"),
+            ("workspace synthesis", "complete"),
+            ("token usage", str(result.token_usage)),
+            ("next step", publish_command),
+        ],
+        subtitle="Only workspace synthesis ran; source repair and semantic revalidation stayed closed.",
+    )
+
+
 def _cmd_re_publish(args: list[str]) -> None:
     """Publish one validated run into the canonical workspace RE registry."""
     import json
     import re
 
     from echelon.git_helpers import GitHelperError, run_git
+    from harness.re_artifacts import ReArtifactCatalogError
     from harness.re_lock import (
         RePublicationActiveRun,
         RePublishLocked,
         RePublishRecoveryRequired,
     )
     from harness.re_migration import import_legacy_re_cache
+    from harness.re_finalization import mark_re_run_published
     from harness.re_publication import RePublicationError, publish_re_run
 
     allow_partial = False
@@ -10269,10 +11038,16 @@ def _cmd_re_publish(args: list[str]) -> None:
             expected_generation=int(lifecycle_state.get("expected_generation") or 0),
             allow_same_run_republish=True,
         )
+        mark_re_run_published(
+            run_dir,
+            status=result.status,
+            generation=result.generation,
+        )
         if commit:
             _commit_re_publication(project_root, result.generation, run_git)
     except (
         RePublicationError,
+        ReArtifactCatalogError,
         RePublicationActiveRun,
         RePublishLocked,
         RePublishRecoveryRequired,

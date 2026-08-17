@@ -48,6 +48,12 @@ owned source code or tests demonstrate the behavior.
 
 Set `RE_OUTPUT_DIR = state.output_dir`. Read the execution plan, source index, workspace contracts, and the requested domain's staged spec, analysis, tests, and structural evidence.
 
+The aggregate semantic quality report is controller-owned output assembled from
+completed domain audits. NEVER read it as a `.domains` audit input or use its
+stale `failures` records to decide the requested domain's current verdict;
+independently audit the controller-requested domain against its current spec and
+owned source evidence.
+
 For the requested non-empty source-domain:
 
 1. Read the domain's owned code, tests, extracted analysis, and domain spec. Do not let a sibling domain's code justify a claim.

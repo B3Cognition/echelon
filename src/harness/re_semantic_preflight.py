@@ -32,6 +32,7 @@ _REQUIREMENT = re.compile(
     re.MULTILINE | re.DOTALL | re.IGNORECASE,
 )
 _FENCE = re.compile(r"```.*?```", re.DOTALL)
+_INLINE_CODE = re.compile(r"`[^`\n]*`")
 
 
 @dataclass(frozen=True)
@@ -161,12 +162,16 @@ def check_semantic_preflight(
 
 def _unscoped_universal_terms(body: str) -> tuple[str, ...]:
     """Return distinct universal terms outside bounded exclusion clauses."""
+    # Identifiers and literal values can legitimately contain words such as
+    # ``all`` (for example ``ALL_KPI`` or ``/settings/all-kpi``).  Preserve
+    # offsets while excluding inline code from the prose-quantifier scan.
+    prose = _INLINE_CODE.sub(lambda match: " " * len(match.group(0)), body)
     terms: list[str] = []
-    for match in _UNIVERSAL.finditer(body):
+    for match in _UNIVERSAL.finditer(prose):
         sentence_start = 0
-        for boundary in _SENTENCE_BOUNDARY.finditer(body, 0, match.start()):
+        for boundary in _SENTENCE_BOUNDARY.finditer(prose, 0, match.start()):
             sentence_start = boundary.end()
-        if not _BOUNDED_EXCLUSION.search(body[sentence_start:match.start()]):
+        if not _BOUNDED_EXCLUSION.search(prose[sentence_start:match.start()]):
             term = match.group(0).casefold()
             if term not in terms:
                 terms.append(term)

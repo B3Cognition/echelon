@@ -136,6 +136,29 @@ def test_resolve_current_re_run_rejects_path_like_pointer(tmp_path: Path) -> Non
 
 
 @pytest.mark.unit
+def test_continue_uses_existing_v1_lifecycle_for_run_without_v2_manifest(tmp_path: Path) -> None:
+    """A legacy run remains continuable by the v1 lifecycle controller."""
+    run_dir = tmp_path / "runs" / "re-1"
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current-re").write_text("re-1\n", encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps({"run_id": "re-1", "run_kind": "re", "status": "done", "generation": 4}),
+        encoding="utf-8",
+    )
+    controller = ReLifecycleController(
+        project_root=tmp_path,
+        extension_root=tmp_path / "extension",
+        provider_factory=object,
+    )
+
+    result = controller.continue_run()
+
+    assert result.status == "done"
+    assert result.run_id == "re-1"
+    assert result.generation == 4
+
+
+@pytest.mark.unit
 def test_changed_current_plan_exits_before_provider_creation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

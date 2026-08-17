@@ -28,6 +28,82 @@ def test_re_publish_routes_explicit_flags(monkeypatch):
 
 
 @pytest.mark.unit
+def test_re_v2_creation_options_are_typed_and_routed(monkeypatch):
+    from echelon.cli_app import app, run
+
+    help_result = invoke_help("re", "run")
+    calls: list[list[str]] = []
+    monkeypatch.setattr("echelon.cli._cmd_re_run", lambda args: calls.append(args))
+
+    run(["re", "run", "--engine", "v2", "--shadow"])
+    invalid = CliRunner().invoke(app, ["re", "run", "--engine", "future"])
+
+    assert help_result.exit_code == 0
+    assert "--engine" in help_result.output
+    assert "v1" in help_result.output
+    assert "v2" in help_result.output
+    assert "--shadow" in help_result.output
+    assert calls == [["--re-policy", "changed", "--engine", "v2", "--shadow"]]
+    assert invalid.exit_code == 2
+
+
+@pytest.mark.unit
+def test_re_status_json_option_routes_without_changing_default(monkeypatch):
+    from echelon.cli_app import run
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr("echelon.cli._cmd_re_status", lambda args: calls.append(args))
+
+    run(["re", "status"])
+    run(["re", "status", "--json"])
+
+    assert calls == [[], ["--json"]]
+
+
+@pytest.mark.unit
+def test_re_finalize_routes_explicit_partial_acknowledgement(monkeypatch):
+    from echelon.cli_app import run
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_re_finalize",
+        lambda args: calls.append(args),
+        raising=False,
+    )
+
+    run(["re", "finalize", "re-123", "--allow-partial"])
+
+    assert calls == [["re-123", "--allow-partial"]]
+
+
+@pytest.mark.unit
+def test_re_synthesize_routes_partial_acknowledgement_and_budget(monkeypatch):
+    from echelon.cli_app import run
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_re_synthesize",
+        lambda args: calls.append(args),
+        raising=False,
+    )
+
+    run(
+        [
+            "re",
+            "synthesize",
+            "re-123",
+            "--allow-partial",
+            "--re-token-limit",
+            "1325000000",
+        ]
+    )
+
+    assert calls == [
+        ["re-123", "--allow-partial", "--re-token-limit", "1325000000"]
+    ]
+
+
+@pytest.mark.unit
 def test_re_execute_run_routes_to_deterministic_controller(monkeypatch):
     from echelon.cli_app import run
 

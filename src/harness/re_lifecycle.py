@@ -31,6 +31,7 @@ from harness.re_planner import (
 )
 from harness.re_profiles import migrate_legacy_re_profile, resolve_re_execution_profile
 from harness.re_registry import load_published_index
+from harness.re_v2.run_store import ReV2RunStoreError, detect_re_engine
 from kernel.re_state import init_re_state
 
 
@@ -633,10 +634,21 @@ class ReLifecycleController:
         self._save_state(run_dir, state)
 
     def _load_state(self, run_dir: Path) -> dict:
+        self._require_v1_engine(run_dir)
         state = self._load_json(run_dir / "state.json")
         if state.get("run_kind") != "re" or state.get("run_id") != run_dir.name:
             raise ReLifecycleError(f"invalid RE lifecycle state: {run_dir}")
         return state
+
+    @staticmethod
+    def _require_v1_engine(run_dir: Path) -> None:
+        """Keep v1 state parsing behind the immutable engine boundary."""
+        try:
+            engine = detect_re_engine(run_dir)
+        except ReV2RunStoreError as exc:
+            raise ReLifecycleError(str(exc)) from exc
+        if engine != "v1":
+            raise ReLifecycleError("v2 RE run requires the v2 lifecycle controller")
 
     def _save_state(self, run_dir: Path, state: dict) -> None:
         self._save_json(run_dir / "state.json", state)

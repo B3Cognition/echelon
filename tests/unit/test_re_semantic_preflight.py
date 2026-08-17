@@ -76,6 +76,20 @@ def test_preflight_accepts_universal_words_in_bounded_exclusion_clause(
     assert check_semantic_preflight(spec, None) == ()
 
 
+def test_preflight_ignores_universal_words_inside_inline_code(tmp_path: Path) -> None:
+    spec = tmp_path / "spec.md"
+    spec.write_text(
+        "## Requirements (Non-Functional)\n\n"
+        "### NFR-001: Route protection\n"
+        "The observed route constant `ALL_KPI` resolves to `/settings/all-kpi`. "
+        "Evidence Scope: bounded. `src/routes.ts:1-4`\n\n"
+        + _coverage(),
+        encoding="utf-8",
+    )
+
+    assert check_semantic_preflight(spec, None) == ()
+
+
 def test_preflight_accepts_not_verified_against_every_possible_as_bounded_scope(
     tmp_path: Path,
 ) -> None:

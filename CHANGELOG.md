@@ -34,6 +34,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **RE v2 declared-source snapshots** — New opt-in v2 runs use protocol `2.1`
+  and atomically snapshot only declared, clean Git source roots at pinned
+  commits. Dirty, non-Git, conflicted, or divergent-submodule sources now fail
+  before run creation with commit/stash/revert guidance; ignored dependencies
+  and orchestration tooling are excluded. Existing protocol `2.0` runs remain
+  continuable from their original pinned snapshots.
+
+- **EGR-163 truthful RE analysis** — `echelon re analyze` now reads the
+  authoritative continued-run profile and active duration, reports canonical
+  semantic failures as blocking, intersects repair history with current audit
+  identities, leaves unavailable first-pass outcomes unset, and derives wall
+  clock from lifecycle intervals instead of copied-file timestamps. Token
+  summaries continue to expose known versus unknown dispatch coverage.
+
 - **RE transient provider recovery and terminal status** — Claude stream errors
   now preserve provider 5xx details even after earlier assistant output. A
   transient source-domain specification failure validates the staged artifact
@@ -147,6 +161,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   minor version.
 
 ### Added
+
+- **EGR-164 opt-in pinned RE v2 kernel** — `echelon re run --engine v2`
+  now freezes the source, pins engine/protocol, partition, goals,
+  provider/result contract, artifact policy, and independent budgets, then
+  controller-certifies deterministic L0 source and partition inventory.
+  Durable candidates survive restart and are reconciled before replacement
+  work; hash-chained events and object-backed receipts rebuild authoritative
+  status with known/unknown token coverage and a final-state banner. Resource
+  authorization can raise only token or active-time totals, while attempt and
+  semantic limits remain fixed. RE v1 remains the default. L1-L4 producers,
+  audit, workspace synthesis, layered reuse, checkpoint adoption, and selective
+  deepening are not part of this pilot.
 
 - **Source topology foundation** — CodeGraph and PerlGraph now publish
   schema-2 evidence with stable symbol keys, exact relationship endpoints,

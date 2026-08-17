@@ -87,6 +87,7 @@ class SquadAgentResult:
     echelon_result_validation_reason: str = ""
     echelon_result_debug_path: str = ""
     provider_limit_message: str = ""
+    token_budget_exhausted: bool = False
     quarantined_state_updates: dict = field(default_factory=dict)
     stderr: str = ""
 
@@ -517,6 +518,9 @@ class SquadCliProvider(AICodingCliProvider):
             echelon_result_validation_reason=validation_reason or "",
             echelon_result_debug_path=debug_path,
             provider_limit_message=provider_limit_message,
+            token_budget_exhausted=(
+                backend_result.metadata.get("token_budget_exhausted") is True
+            ),
             quarantined_state_updates=quarantined_state_updates,
             stderr=backend_result.stderr,
         )

@@ -7,6 +7,7 @@ import json
 import pytest
 
 from echelon.cli import _cmd_re_publish
+from harness.re_artifacts import ReArtifactCatalogError
 from tests.unit.test_re_publication import write_valid_re_run
 
 
@@ -41,6 +42,14 @@ def test_publish_without_commit_leaves_re_changes_uncommitted(
 
     assert _git(tmp_path, "status", "--short", "--", "re").stdout.strip()
     assert _git(tmp_path, "log", "-1", "--format=%s").stdout.strip() == "initial"
+    outer = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    inner = json.loads((run_dir / "re/state.json").read_text(encoding="utf-8"))
+    assert outer["status"] == "done"
+    assert outer["publication_pending"] is False
+    assert outer["publication_complete"] is True
+    assert outer["generation"] == 1
+    assert inner["publication_status"] == "complete"
+    assert inner["publication_generation"] == 1
 
 
 def test_publish_commit_stages_only_durable_re_paths(
@@ -97,6 +106,32 @@ def test_publish_republishes_the_run_that_owns_current_generation(
     index = json.loads((tmp_path / "re/index.json").read_text(encoding="utf-8"))
     assert index["generation"] == 2
     assert index["published_from_run"] == run_dir.name
+
+
+def test_publish_renders_artifact_catalog_failure_without_traceback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    run_dir = tmp_path / "runs" / "re-broken"
+    run_dir.mkdir(parents=True)
+    (run_dir / "state.json").write_text(
+        json.dumps({"expected_generation": 0}), encoding="utf-8"
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("harness.re_migration.import_legacy_re_cache", lambda _root: [])
+    monkeypatch.setattr(
+        "harness.re_publication.publish_re_run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            ReArtifactCatalogError("unsupported artifact path: .DS_Store")
+        ),
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        _cmd_re_publish([run_dir.name])
+
+    assert exc_info.value.code == 1
+    assert "unsupported artifact path: .DS_Store" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("run_id", ["../outside", "a/b", ".", ""])

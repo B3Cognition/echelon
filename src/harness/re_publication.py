@@ -123,6 +123,7 @@ def validate_re_run(
     *,
     allow_partial: bool,
     status_override: Literal["complete", "partial"] | None = None,
+    allow_same_run_republish: bool = False,
 ) -> RePublicationCandidate:
     """Validate a run without changing the published registry."""
     root = workspace_root.resolve()
@@ -163,10 +164,25 @@ def validate_re_run(
         raise RePublicationValidationError("partial RE output requires --allow-partial")
     if status not in {"complete", "partial"}:
         raise RePublicationValidationError(f"RE publication status is not publishable: {status!r}")
+    if status == "partial":
+        partial_sources.update(
+            _partial_finalization_debt_sources(
+                run_re,
+                run_id=run_id,
+                plan=plan,
+                re_state=re_state,
+                controller_debt_sources=partial_sources,
+            )
+        )
 
     _validate_source_index(run_re / "re-source-index.json", plan)
     _validate_workspace_inputs(run_re / "re-workspace-inputs.json", plan)
     current = load_published_index(root)
+    same_run_republish = bool(
+        allow_same_run_republish
+        and current is not None
+        and current.published_from_run == run_id
+    )
     if current is not None:
         try:
             canonical_re_artifacts(root, current)
@@ -209,7 +225,10 @@ def validate_re_run(
         ) from exc
 
     for removed_id in plan.removed_sources:
-        if current is None or removed_id not in current.sources:
+        if (
+            current is None
+            or (removed_id not in current.sources and not same_run_republish)
+        ):
             raise RePublicationValidationError(
                 f"removed source is not present in current publication: {removed_id}"
             )
@@ -305,6 +324,109 @@ def _partial_quality_debt_sources(
     return partial
 
 
+def _partial_finalization_debt_sources(
+    run_re: Path,
+    *,
+    run_id: str,
+    plan: ReExecutionPlan,
+    re_state: dict[str, Any],
+    controller_debt_sources: set[str],
+) -> set[str]:
+    """Validate explicit operator-acknowledged debt for a partial finalization."""
+    path = run_re / "quality" / "partial-finalization.json"
+    if not path.is_file():
+        return set()
+    manifest = _read_json(path)
+    if (
+        manifest.get("schema_version") != 1
+        or manifest.get("run_id") != run_id
+        or manifest.get("status") != "partial"
+        or not isinstance(manifest.get("finalized_at"), str)
+        or not str(manifest.get("finalized_at")).strip()
+    ):
+        raise RePublicationValidationError(
+            f"invalid partial finalization manifest: {path}"
+        )
+    finalized_from = manifest.get("finalized_from")
+    if (
+        not isinstance(finalized_from, dict)
+        or finalized_from.get("outer_status") != "blocked"
+        or finalized_from.get("inner_status") not in {"blocked", "in_progress"}
+        or not isinstance(finalized_from.get("blocked_reason"), str)
+        or not str(finalized_from.get("blocked_reason")).strip()
+    ):
+        raise RePublicationValidationError(
+            f"partial finalization must preserve its blocked origin: {path}"
+        )
+    debt = manifest.get("debt")
+    if not isinstance(debt, dict):
+        raise RePublicationValidationError(
+            f"partial finalization manifest has no debt snapshot: {path}"
+        )
+    source_quality_debt = debt.get("source_quality_debt")
+    if (
+        not isinstance(source_quality_debt, list)
+        or any(not isinstance(value, str) or not value for value in source_quality_debt)
+        or set(source_quality_debt) != controller_debt_sources
+    ):
+        raise RePublicationValidationError(
+            f"partial finalization source-quality debt does not match controller state: {path}"
+        )
+    semantic_failure_sources = debt.get("semantic_failure_sources")
+    if not isinstance(semantic_failure_sources, dict):
+        raise RePublicationValidationError(
+            f"partial finalization semantic debt is invalid: {path}"
+        )
+    review = _read_json(run_re / "quality" / "semantic-quality-review.json", required=False)
+    expected_semantic: dict[str, set[str]] = {}
+    failures = review.get("failures")
+    if isinstance(failures, list):
+        for failure in failures:
+            if not isinstance(failure, dict):
+                continue
+            source_id = failure.get("source_id")
+            domain_id = failure.get("domain_id")
+            if isinstance(source_id, str) and source_id:
+                expected_semantic.setdefault(source_id, set()).add(
+                    domain_id if isinstance(domain_id, str) and domain_id else "(source)"
+                )
+    observed_semantic: dict[str, set[str]] = {}
+    for source_id, domains in semantic_failure_sources.items():
+        if (
+            not isinstance(source_id, str)
+            or not source_id
+            or not isinstance(domains, list)
+            or any(not isinstance(domain, str) or not domain for domain in domains)
+        ):
+            raise RePublicationValidationError(
+                f"partial finalization semantic debt is invalid: {path}"
+            )
+        observed_semantic[source_id] = set(domains)
+    if observed_semantic != expected_semantic:
+        raise RePublicationValidationError(
+            f"partial finalization semantic debt does not match current review: {path}"
+        )
+    refresh_ids = {source.id for source in plan.refresh_sources}
+    acknowledged_sources = set(source_quality_debt) | set(observed_semantic)
+    if not acknowledged_sources <= refresh_ids:
+        raise RePublicationValidationError(
+            f"partial finalization names a source outside the refresh plan: {path}"
+        )
+    workspace_incomplete = debt.get("workspace_synthesis_incomplete")
+    if (
+        not isinstance(workspace_incomplete, bool)
+        or workspace_incomplete != (re_state.get("re_workspace_synthesis_complete") is not True)
+    ):
+        raise RePublicationValidationError(
+            f"partial finalization workspace debt is invalid: {path}"
+        )
+    if debt.get("controller_incomplete") is not True:
+        raise RePublicationValidationError(
+            f"partial finalization must acknowledge incomplete controller execution: {path}"
+        )
+    return acknowledged_sources
+
+
 def publish_re_run(
     workspace_root: Path,
     run_dir: Path,
@@ -322,6 +444,7 @@ def publish_re_run(
         run_dir,
         allow_partial=allow_partial,
         status_override=status_override,
+        allow_same_run_republish=allow_same_run_republish,
     )
     paths = ensure_re_layout(root)
     with RePublishLock.acquire(root, candidate.run_id, candidate.run_dir):
@@ -463,6 +586,7 @@ def _prepare_transaction(
             shutil.copytree(
                 workspace_root / "re" / "sources" / source_id,
                 durable_source,
+                ignore=_ignore_platform_metadata,
             )
             if preserve_reused_sources:
                 continue
@@ -543,10 +667,18 @@ def _prepare_transaction(
             shutil.copy2(staged_source / "contracts.md", durable_source / "contracts.md")
             shutil.copy2(staged_source / "components.md", durable_source / "components.md")
             if (staged_source / "adrs").is_dir():
-                shutil.copytree(staged_source / "adrs", durable_source / "adrs")
+                shutil.copytree(
+                    staged_source / "adrs",
+                    durable_source / "adrs",
+                    ignore=_ignore_platform_metadata,
+                )
             staged_specs = staged_source / "specs"
             if staged_specs.is_dir():
-                shutil.copytree(staged_specs, durable_source / "specs")
+                shutil.copytree(
+                    staged_specs,
+                    durable_source / "specs",
+                    ignore=_ignore_platform_metadata,
+                )
             else:
                 (durable_source / "specs").mkdir()
             domain_manifest = _copy_optional_source_artifact(
@@ -633,7 +765,11 @@ def _prepare_transaction(
         )
 
     workspace_stage = new_root / "re" / "workspace"
-    shutil.copytree(candidate.run_dir / "re" / "workspace", workspace_stage)
+    shutil.copytree(
+        candidate.run_dir / "re" / "workspace",
+        workspace_stage,
+        ignore=_ignore_platform_metadata,
+    )
     workspace_manifest = {
         "schema_version": 1,
         "generation": generation,
@@ -667,6 +803,14 @@ def _prepare_transaction(
     controller_state = _read_json(candidate.run_dir / "re" / "state.json")
     execution_profile = controller_state.get("re_execution_profile")
     semantic_audits = controller_state.get("re_semantic_domain_audits")
+    semantic_review = _read_json(
+        candidate.run_dir / "re" / "quality" / "semantic-quality-review.json",
+        required=False,
+    )
+    semantic_failures = semantic_review.get("failures")
+    blocking_findings = (
+        len(semantic_failures) if isinstance(semantic_failures, list) else 0
+    )
     index_payload = {
         "schema_version": 1,
         "generation": generation,
@@ -688,7 +832,7 @@ def _prepare_transaction(
             "audited_domain_count": (
                 len(semantic_audits) if isinstance(semantic_audits, dict) else 0
             ),
-            "blocking_findings": 0,
+            "blocking_findings": blocking_findings,
         },
         "sources": dict(sorted(source_records.items())),
         "workspace": {
@@ -725,6 +869,8 @@ def _prepare_transaction(
                 & set(candidate.refreshed_sources + candidate.empty_sources)
             )
         )
+        if candidate.status == "partial":
+            required_topology_sources = ()
         topology_candidates = _topology_candidates(
             candidate,
             configured_ids,
@@ -733,6 +879,15 @@ def _prepare_transaction(
             ),
             workspace_root=workspace_root,
         )
+        if (
+            candidate.status == "partial"
+            and topology_current is None
+            and {item.source_id for item in topology_candidates} != configured_ids
+        ):
+            # A first topology generation must be workspace-complete. A
+            # partial semantic publication may therefore leave topology
+            # unpublished, but must never fabricate empty graph evidence.
+            topology_candidates = ()
         unavailable_bootstrap = bool(
             topology_current is None and preserve_reused_sources
         )
@@ -1232,6 +1387,45 @@ def _topology_candidates(
             )
             for provider in ("codegraph", "perlgraph")
         }
+        if is_historical_codegraph_v1_artifact(paths["codegraph"]):
+            upgraded = upgrade_legacy_codegraph_candidate(
+                source.id,
+                source.path,
+                source.fingerprint,
+                paths["codegraph"],
+                provenance,
+            )
+            if upgraded is not None:
+                providers = list(upgraded.candidate.providers)
+                if _provider_schema_version(paths["perlgraph"]) == 2:
+                    try:
+                        perl_evidence = build_topology_snapshot_candidate(
+                            source.id,
+                            source.path,
+                            source.fingerprint,
+                            {"perlgraph": paths["perlgraph"]},
+                            provenance,
+                        )
+                    except TopologyEvidenceError:
+                        if candidate.status != "partial":
+                            raise
+                    else:
+                        providers.extend(perl_evidence.candidate.providers)
+                snapshots.append(
+                    TopologySnapshotCandidate(
+                        source_id=upgraded.candidate.source_id,
+                        source_path=upgraded.candidate.source_path,
+                        source_fingerprint=upgraded.candidate.source_fingerprint,
+                        analyzed_commit=upgraded.candidate.analyzed_commit,
+                        provenance=upgraded.candidate.provenance,
+                        providers=tuple(
+                            sorted(providers, key=lambda item: item.provider)
+                        ),
+                    )
+                )
+                continue
+            if candidate.status == "partial":
+                continue
         try:
             snapshots.append(
                 build_topology_snapshot_candidate(
@@ -1243,6 +1437,8 @@ def _topology_candidates(
                 ).candidate
             )
         except TopologyEvidenceError as exc:
+            if candidate.status == "partial":
+                continue
             if "no usable provider evidence" in str(exc):
                 raise TopologyEvidenceError(
                     f"no usable topology evidence for refreshed source: {source.id}"
@@ -1494,6 +1690,8 @@ def _copy_heavy_source_artifacts(source: Path, destination: Path) -> None:
         if not path.is_file():
             continue
         relative = path.relative_to(source)
+        if ".DS_Store" in relative.parts:
+            continue
         if relative.parts[0] == "specs" or relative.as_posix() in {
             "overview.md",
             "architecture.md",
@@ -1509,6 +1707,11 @@ def _copy_heavy_source_artifacts(source: Path, destination: Path) -> None:
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, target)
+
+
+def _ignore_platform_metadata(_directory: str, names: list[str]) -> set[str]:
+    """Exclude host-generated files that are never RE artifacts."""
+    return {name for name in names if name == ".DS_Store"}
 
 
 def _copy_optional_source_artifact(

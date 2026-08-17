@@ -83,6 +83,33 @@ def test_codex_event_without_usage_keeps_usage_unavailable() -> None:
     assert event.token_usage is None
 
 
+def test_codex_event_reads_usage_from_modern_turn_completed_event() -> None:
+    from harness.ai_cli_backends.codex import _codex_event
+
+    event = _codex_event(
+        json.dumps(
+            {
+                "type": "turn.completed",
+                "usage": {
+                    "input_tokens": 20_960,
+                    "cached_input_tokens": 9_984,
+                    "output_tokens": 5,
+                    "reasoning_output_tokens": 0,
+                },
+            }
+        )
+    )
+
+    assert event.token_usage == 20_965
+    assert event.token_usage_details == {
+        "input_tokens": 20_960,
+        "cached_input_tokens": 9_984,
+        "output_tokens": 5,
+        "reasoning_output_tokens": 0,
+        "total_tokens": 20_965,
+    }
+
+
 def test_cli_run_request_carries_prompt_and_timeout(tmp_path) -> None:
     request = CliRunRequest(
         cwd=str(tmp_path),
@@ -2988,6 +3015,61 @@ def test_claude_backend_streams_json_and_captures_result_error(tmp_path) -> None
     assert result.token_usage == 12
 
 
+def test_claude_backend_stops_when_streamed_usage_reaches_token_allowance(
+    tmp_path,
+) -> None:
+    backend = ClaudeCliBackend(_config("claude"))
+
+    class FakeProcess:
+        stdout = io.BytesIO(
+            (
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "message": {
+                            "content": [{"type": "text", "text": "working"}],
+                            "usage": {"input_tokens": 80, "output_tokens": 20},
+                        },
+                    }
+                )
+                + "\n"
+            ).encode()
+        )
+        returncode = 0
+        terminated = False
+
+        def kill(self) -> None:
+            return None
+
+        def terminate(self) -> None:
+            self.terminated = True
+            self.returncode = -15
+
+        def wait(self) -> int:
+            return self.returncode
+
+    process = FakeProcess()
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Build this.",
+        env={},
+        timeout_s=10,
+        metadata={"prompt_metadata": {"max_token_usage": 100}},
+    )
+
+    with patch(
+        "harness.ai_cli_backends.claude.subprocess.Popen",
+        return_value=process,
+    ):
+        result = backend.run_prompt(request)
+
+    assert process.terminated is True
+    assert result.exit_code == -15
+    assert result.token_usage == 100
+    assert result.metadata["token_budget_exhausted"] is True
+    assert "token budget exhausted" in result.stderr
+
+
 def test_claude_backend_uses_prompt_metadata_model(tmp_path) -> None:
     backend = ClaudeCliBackend(_config("claude"))
     captured = {}
@@ -3952,6 +4034,94 @@ def test_codex_backend_returns_on_task_complete_even_when_process_lingers(tmp_pa
     assert "echelon_result:" in result.stdout
     assert "codex diagnostic" in result.stderr
     assert result.token_usage == 15
+    assert result.metadata["token_usage_details"] == {
+        "input_tokens": 10,
+        "output_tokens": 5,
+        "total_tokens": 15,
+    }
+
+
+def test_codex_backend_enforces_workspace_synthesis_boundary(tmp_path) -> None:
+    backend = CodexCliBackend(_config("codex"))
+    captured = {}
+
+    class FakeProcess:
+        stdout = io.BytesIO(b"")
+        stderr = io.BytesIO(b"")
+        returncode = 0
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self) -> int:
+            return self.returncode
+
+    def fake_popen(command, **_kwargs):
+        captured["command"] = command
+        return FakeProcess()
+
+    run_root = (tmp_path / "runs" / "run-1" / "re").resolve()
+    write_path = (run_root / "workspace" / "overview.md").resolve()
+    forbidden_root = (tmp_path / "sources" / "web").resolve()
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Synthesize workspace artifacts.",
+        env={},
+        timeout_s=10,
+        metadata={
+            "prompt_metadata": {
+                "tool_read_roots": [str(run_root)],
+                "tool_write_paths": [str(write_path)],
+                "tool_forbidden_roots": [str(forbidden_root)],
+            }
+        },
+    )
+
+    with (
+        patch("harness.ai_cli_backends.codex.subprocess.Popen", fake_popen),
+        patch(
+            "harness.ai_cli_backends.codex._sandbox_exec_path",
+            return_value="/usr/bin/sandbox-exec",
+        ),
+    ):
+        backend.run_prompt(request)
+
+    command = captured["command"]
+    assert command[:2] == ["/usr/bin/sandbox-exec", "-p"]
+    profile = command[2]
+    assert f'(literal "{forbidden_root}")' in profile
+    assert f'(subpath "{forbidden_root}")' in profile
+    assert f'(allow file-read* (subpath "{run_root}"))' in profile
+    assert f'(allow file-write* (literal "{write_path}"))' in profile
+    assert "codex" in command[3]
+
+
+def test_codex_backend_fails_closed_without_workspace_boundary(tmp_path) -> None:
+    backend = CodexCliBackend(_config("codex"))
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Synthesize workspace artifacts.",
+        env={},
+        timeout_s=10,
+        metadata={
+            "prompt_metadata": {
+                "tool_forbidden_roots": [str(tmp_path / "sources" / "web")],
+            }
+        },
+    )
+
+    with (
+        patch(
+            "harness.ai_cli_backends.codex._sandbox_exec_path", return_value=None
+        ),
+        patch("harness.ai_cli_backends.codex.subprocess.Popen") as popen,
+    ):
+        result = backend.run_prompt(request)
+
+    assert result.exit_code == 125
+    assert result.metadata == {"workspace_synthesis_boundary": "unavailable"}
+    assert "workspace synthesis host boundary is unavailable" in result.stderr
+    popen.assert_not_called()
 
 
 def test_codex_backend_suppresses_successful_command_event_noise(tmp_path, capsys) -> None:

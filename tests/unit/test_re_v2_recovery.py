@@ -1,0 +1,1600 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, replace
+import json
+from pathlib import Path
+import stat
+from typing import Callable
+
+import pytest
+
+import harness.re_v2.recovery as recovery_module
+from harness.re_v2.budget import evaluate_budget
+from harness.re_v2.candidates import CandidateStore, ProcessIdentity
+from harness.re_v2.canonical import canonical_json_bytes, content_digest
+from harness.re_v2.events import EventStore
+from harness.re_v2.ledger import (
+    CertificationDecision,
+    Ledger,
+    ObjectStore,
+    ReV2LedgerError,
+)
+from harness.re_v2.model import (
+    ArtifactKey,
+    ArtifactReceipt,
+    BudgetPolicy,
+    CertificationKey,
+    CertificationReceipt,
+    ExecutionObservation,
+    RunManifest,
+    WorkItem,
+    WorkTemplate,
+)
+from harness.re_v2.planner import plan_next, validate_work_graph
+from harness.re_v2.recovery import (
+    ProcessState,
+    ReV2RecoveryError,
+    ReV2RunContext,
+    next_dispatch_attempt,
+    recover_run,
+)
+from harness.re_v2.run_store import create_run_store
+from harness.re_v2.snapshot import (
+    SnapshotComponent,
+    capture_source_snapshot,
+    publish_workspace_snapshot_tree,
+)
+from harness.re_v2.workspace_snapshot import composite_partition_manifest_id
+
+
+NOW = "2026-08-14T12:00:00Z"
+OBSERVED = "2026-08-14T12:00:01Z"
+PERSISTED = "2026-08-14T12:00:02Z"
+CERTIFIED = "2026-08-14T12:00:03Z"
+PROCESS_START = "linux:fixture-start"
+POLICY_VERSION = "egr-164-v1"
+
+
+@dataclass
+class FixtureCertifier:
+    objects: ObjectStore
+    calls: int = 0
+    verifier_id: str = "fixture-verifier"
+    verifier_version: str = "v1"
+
+    def certify(
+        self, candidate: object, work_item: WorkItem
+    ) -> CertificationDecision:
+        self.calls += 1
+        candidate_id = getattr(candidate, "candidate_id")
+        payload_path = getattr(candidate, "payload_path")
+        artifact_hash = self.objects.put_tree(payload_path)
+        certification = CertificationReceipt(
+            certification_key=CertificationKey(
+                artifact_hash=artifact_hash,
+                verifier_id=self.verifier_id,
+                verifier_version=self.verifier_version,
+                source_snapshot_id=work_item.output_key.source_snapshot_id,
+                audit_epoch_id=None,
+            ),
+            candidate_id=candidate_id,
+            work_item_id=work_item.work_item_id,
+            verdict="accepted",
+            normalized_diagnostics=(),
+            evidence_references=(),
+            scope_verified=True,
+            certified_at=CERTIFIED,
+        )
+        artifact = ArtifactReceipt(
+            artifact_key=work_item.output_key,
+            artifact_hash=artifact_hash,
+            certification_id=certification.identity,
+            candidate_id=candidate_id,
+            work_item_id=work_item.work_item_id,
+            accepted_at=CERTIFIED,
+        )
+        return CertificationDecision(certification, artifact)
+
+
+class RecordingInspector:
+    def __init__(self, states: dict[int, ProcessState]) -> None:
+        self.states = states
+        self.calls: list[ProcessIdentity] = []
+
+    def inspect(self, identity: ProcessIdentity) -> ProcessState:
+        self.calls.append(identity)
+        return self.states[identity.pid]
+
+
+def _template(
+    *,
+    artifact_kind: str = "fixture-inventory",
+    layer: str = "L0",
+    protocol: str = "v1",
+    dependencies: tuple[str, ...] = (),
+) -> WorkTemplate:
+    return WorkTemplate(
+        goal_id="inventory",
+        artifact_kind=artifact_kind,
+        layer=layer,
+        producer_id="fixture-producer",
+        producer_protocol_version=protocol,
+        layer_policy_hash=content_digest(
+            {
+                "artifact_kind": artifact_kind,
+                "policy_version": POLICY_VERSION,
+            }
+        ),
+        required_template_ids=dependencies,
+        verifier_id="fixture-verifier",
+        verifier_version="v1",
+        result_contract_id="fixture-result-v1",
+        max_provider_attempts=3,
+        max_generation_attempts=3,
+        max_semantic_rounds=1,
+        max_result_contract_retries=2,
+    )
+
+
+def _work_item(snapshot_id: str, partition_id: str) -> WorkItem:
+    template = _template()
+    output_key = ArtifactKey(
+        source_snapshot_id=snapshot_id,
+        partition_manifest_id=partition_id,
+        artifact_kind=template.artifact_kind,
+        layer=template.layer,
+        producer_protocol_version=template.producer_protocol_version,
+        layer_policy_hash=template.layer_policy_hash,
+        dependency_hashes=(),
+    )
+    return WorkItem(
+        template_id=template.template_id,
+        goal_id=template.goal_id,
+        output_key=output_key,
+        required_artifact_hashes=(),
+        producer_id=template.producer_id,
+        producer_protocol_version=template.producer_protocol_version,
+        verifier_id=template.verifier_id,
+        verifier_version=template.verifier_version,
+        result_contract_id=template.result_contract_id,
+        max_provider_attempts=template.max_provider_attempts,
+        max_generation_attempts=template.max_generation_attempts,
+        max_semantic_rounds=template.max_semantic_rounds,
+        max_result_contract_retries=template.max_result_contract_retries,
+    )
+
+
+def _context(
+    tmp_path: Path,
+    templates: tuple[WorkTemplate, ...] | None = None,
+    *,
+    composite: bool = False,
+    partition_id_override: str | None = None,
+) -> ReV2RunContext:
+    selected_templates = templates or (_template(),)
+    if composite:
+        prepared = tmp_path / "prepared"
+        source = prepared / "source"
+        source.mkdir(parents=True)
+        target = source / "api.py"
+        target.write_text("VALUE = 1\n", encoding="utf-8")
+        component = SnapshotComponent(
+            source_id="source",
+            git_role="source",
+            workspace_path="source",
+            repository_path=".",
+            commit="a" * 40,
+            submodules=(),
+            tree_digest=content_digest(
+                [
+                    {
+                        "digest": content_digest(target.read_bytes()),
+                        "mode": stat.S_IMODE(target.stat().st_mode),
+                        "path": "api.py",
+                        "size": target.stat().st_size,
+                    }
+                ]
+            ),
+        )
+        snapshot = publish_workspace_snapshot_tree(
+            prepared,
+            tmp_path / "snapshots",
+            (component,),
+        )
+        from harness.re_v2.snapshot import load_snapshot_manifest
+
+        partition_id = composite_partition_manifest_id(
+            load_snapshot_manifest(snapshot)
+        )
+        protocol = "2.1"
+    else:
+        source = tmp_path / "source"
+        source.mkdir()
+        (source / "api.py").write_text("VALUE = 1\n", encoding="utf-8")
+        snapshot = capture_source_snapshot(
+            source, tmp_path / "snapshots", exclusions=()
+        )
+        partition_id = content_digest(b"fixture-partitions")
+        protocol = "2.0"
+    partition_id = partition_id_override or partition_id
+    run_dir = tmp_path / "runs" / "re-fixture"
+    manifest = RunManifest(
+        schema_version=1,
+        engine="re-v2",
+        engine_protocol_version=protocol,
+        run_id=run_dir.name,
+        created_at=NOW,
+        source_snapshot_id=snapshot.snapshot_id,
+        source_snapshot_kind=snapshot.kind,
+        partition_manifest_id=partition_id,
+        requested_goals=("inventory",),
+        initial_budget_policy=BudgetPolicy(
+            token_limit=100,
+            active_ms_limit=100_000,
+            provider_attempt_limit=5,
+            artifact_generation_attempt_limit=5,
+            semantic_repair_round_limit=2,
+            result_contract_retry_limit=2,
+        ),
+        provider_contract={"provider": "fixture"},
+        artifact_policy_versions={"L0": POLICY_VERSION},
+        parent_run_id=None,
+    )
+    paths = create_run_store(run_dir, manifest)
+    objects = ObjectStore(paths.objects)
+    ledger = Ledger(
+        paths,
+        objects,
+        supported_verifiers={"fixture-verifier": "v1"},
+    )
+    candidates = CandidateStore(
+        paths,
+        process_probe=lambda pid: PROCESS_START if pid in {1234, 5678} else None,
+        clock=lambda: PERSISTED,
+    )
+    graph = validate_work_graph(
+        selected_templates,
+        requested_goals=manifest.requested_goals,
+        source_snapshot_id=snapshot.snapshot_id,
+        partition_manifest_id=partition_id,
+    )
+    return ReV2RunContext(
+        paths=paths,
+        snapshot=snapshot,
+        graph=graph,
+        event_store=EventStore(paths),
+        object_store=objects,
+        ledger=ledger,
+        candidate_store=candidates,
+        certifier=FixtureCertifier(objects),
+    )
+
+
+def _identity(pid: int = 1234) -> ProcessIdentity:
+    return ProcessIdentity(
+        pid=pid,
+        process_start_identity=PROCESS_START,
+        command_hash=content_digest(f"fixture-command-{pid}".encode()),
+        provider_identity=content_digest(b"fixture-provider"),
+        started_at=NOW,
+    )
+
+
+def _observation(*, result_contract_valid: bool = False) -> ExecutionObservation:
+    return ExecutionObservation(
+        started_at=NOW,
+        ended_at=OBSERVED,
+        duration_ms=1_000,
+        exit_code=None,
+        timed_out=True,
+        output_truncated=False,
+        result_contract_valid=result_contract_valid,
+        token_usage=None,
+        provider_name="fixture",
+        model_name="fixture-model",
+        stderr_digest=None,
+    )
+
+
+def _start_run(context: ReV2RunContext) -> None:
+    manifest = context.manifest
+    context.event_store.append(
+        "run_created",
+        {"run_manifest_id": manifest.run_manifest_id},
+        occurred_at=NOW,
+    )
+
+
+def _persist_orphan_candidate(
+    context: ReV2RunContext,
+) -> tuple[WorkItem, object]:
+    _start_run(context)
+    item = _work_item(
+        context.snapshot.snapshot_id,
+        context.manifest.partition_manifest_id,
+    )
+    lease = context.candidate_store.begin(
+        item,
+        _identity(),
+        dispatch_id="dispatch-fixture",
+        leased_at=NOW,
+    )
+    context.event_store.append(
+        "dispatch_leased",
+        {"dispatch_id": lease.dispatch_id, "work_item_id": item.work_item_id},
+        occurred_at=NOW,
+    )
+    context.event_store.append(
+        "dispatch_started",
+        {
+            "attempt_index": 1,
+            "attempt_kind": "initial_generation",
+            "dispatch_id": lease.dispatch_id,
+            "work_item_id": item.work_item_id,
+        },
+        occurred_at=NOW,
+    )
+    observation = _observation()
+    context.event_store.append(
+        "dispatch_observed",
+        {
+            "dispatch_id": lease.dispatch_id,
+            "observation": observation.to_json_dict(),
+            "work_item_id": item.work_item_id,
+        },
+        occurred_at=OBSERVED,
+    )
+    output = context.paths.root.parent.parent.parent / "provider-output"
+    output.mkdir()
+    (output / "artifact.md").write_text(
+        "complete bytes despite missing result object\n", encoding="utf-8"
+    )
+    return item, context.candidate_store.persist(lease, output, observation)
+
+
+def _replace_output_key(item: WorkItem, **changes: object) -> WorkItem:
+    output_key = replace(item.output_key, **changes)
+    required = (
+        output_key.dependency_hashes
+        if "dependency_hashes" in changes
+        else item.required_artifact_hashes
+    )
+    return replace(
+        item,
+        output_key=output_key,
+        required_artifact_hashes=required,
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "mutate"),
+    (
+        (
+            "source_snapshot_id",
+            lambda item: _replace_output_key(
+                item, source_snapshot_id=content_digest(b"foreign-source")
+            ),
+        ),
+        (
+            "partition_manifest_id",
+            lambda item: _replace_output_key(
+                item, partition_manifest_id=content_digest(b"foreign-partitions")
+            ),
+        ),
+        (
+            "artifact_kind",
+            lambda item: _replace_output_key(item, artifact_kind="foreign-inventory"),
+        ),
+        ("layer", lambda item: _replace_output_key(item, layer="L1")),
+        (
+            "layer_policy_hash",
+            lambda item: _replace_output_key(
+                item, layer_policy_hash=content_digest(b"foreign-policy")
+            ),
+        ),
+        ("producer_id", lambda item: replace(item, producer_id="foreign-producer")),
+        (
+            "producer_protocol_version",
+            lambda item: replace(
+                _replace_output_key(item, producer_protocol_version="v2"),
+                producer_protocol_version="v2",
+            ),
+        ),
+        (
+            "result_contract_id",
+            lambda item: replace(item, result_contract_id="foreign-result-v1"),
+        ),
+        ("verifier_id", lambda item: replace(item, verifier_id="foreign-verifier")),
+        (
+            "verifier_version",
+            lambda item: replace(item, verifier_version="foreign-v2"),
+        ),
+        ("goal_id", lambda item: replace(item, goal_id="foreign-goal")),
+        (
+            "template_id",
+            lambda item: replace(
+                item, template_id=content_digest(b"foreign-template")
+            ),
+        ),
+        (
+            "max_provider_attempts",
+            lambda item: replace(item, max_provider_attempts=99),
+        ),
+        (
+            "max_generation_attempts",
+            lambda item: replace(item, max_generation_attempts=99),
+        ),
+        (
+            "max_semantic_rounds",
+            lambda item: replace(item, max_semantic_rounds=99),
+        ),
+        (
+            "max_result_contract_retries",
+            lambda item: replace(item, max_result_contract_retries=99),
+        ),
+        (
+            "dependency_hashes",
+            lambda item: _replace_output_key(
+                item, dependency_hashes=(content_digest(b"foreign-dependency"),)
+            ),
+        ),
+    ),
+    ids=lambda value: value if isinstance(value, str) else None,
+)
+def test_recovery_rejects_every_foreign_work_item_field_before_side_effects(
+    tmp_path: Path,
+    field: str,
+    mutate: object,
+) -> None:
+    """A recovered WorkItem is authority only when it exactly materializes the graph."""
+    context = _context(tmp_path)
+    _start_run(context)
+    canonical = _work_item(
+        context.snapshot.snapshot_id,
+        context.manifest.partition_manifest_id,
+    )
+    foreign = mutate(canonical)  # type: ignore[operator]
+    lease = context.candidate_store.begin(
+        foreign,
+        _identity(),
+        dispatch_id=f"dispatch-foreign-{field}",
+        leased_at=NOW,
+    )
+    output = tmp_path / f"foreign-output-{field}"
+    output.mkdir()
+    (output / "artifact.md").write_text("foreign candidate\n", encoding="utf-8")
+    context.candidate_store.persist(
+        lease,
+        output,
+        _observation(result_contract_valid=True),
+    )
+    inspector = RecordingInspector({1234: ProcessState.DEAD})
+    events_before = context.event_store.replay()
+    ledger_before = context.ledger.replay()
+
+    with pytest.raises(ReV2RecoveryError, match="WorkItem|work item|graph"):
+        recover_run(
+            context,
+            process_inspector=inspector,
+            clock=lambda: CERTIFIED,
+        )
+
+    assert inspector.calls == []
+    assert context.certifier.calls == 0
+    assert context.event_store.replay() == events_before
+    assert context.ledger.replay() == ledger_before
+
+
+def test_recovery_binds_dependency_hash_to_exact_accepted_prerequisite(
+    tmp_path: Path,
+) -> None:
+    prerequisite = _template(artifact_kind="source-inventory")
+    dependent = _template(
+        artifact_kind="partition-inventory",
+        dependencies=(prerequisite.template_id,),
+    )
+    context = _context(tmp_path, (prerequisite, dependent))
+    _start_run(context)
+    budget = evaluate_budget(
+        context.manifest.initial_budget_policy,
+        context.event_store.replay(),
+        now=NOW,
+    )
+    prerequisite_item = plan_next(
+        context.graph,
+        context.ledger.replay(),
+        budget,
+    ).ready[0]
+    first_lease = context.candidate_store.begin(
+        prerequisite_item,
+        _identity(),
+        dispatch_id="dispatch-prerequisite",
+        leased_at=NOW,
+    )
+    context.event_store.append(
+        "dispatch_leased",
+        {
+            "dispatch_id": first_lease.dispatch_id,
+            "work_item_id": prerequisite_item.work_item_id,
+        },
+        occurred_at=NOW,
+    )
+    context.event_store.append(
+        "dispatch_started",
+        {
+            "attempt_index": 1,
+            "attempt_kind": "initial_generation",
+            "dispatch_id": first_lease.dispatch_id,
+            "work_item_id": prerequisite_item.work_item_id,
+        },
+        occurred_at=NOW,
+    )
+    observation = _observation(result_contract_valid=True)
+    context.event_store.append(
+        "dispatch_observed",
+        {
+            "dispatch_id": first_lease.dispatch_id,
+            "observation": observation.to_json_dict(),
+            "work_item_id": prerequisite_item.work_item_id,
+        },
+        occurred_at=OBSERVED,
+    )
+    first_output = tmp_path / "prerequisite-output"
+    first_output.mkdir()
+    (first_output / "artifact.md").write_text("prerequisite\n", encoding="utf-8")
+    context.candidate_store.persist(first_lease, first_output, observation)
+    recover_run(
+        context,
+        process_inspector=RecordingInspector({}),
+        clock=lambda: CERTIFIED,
+    )
+
+    canonical_dependent = plan_next(
+        context.graph,
+        context.ledger.replay(),
+        evaluate_budget(
+            context.manifest.initial_budget_policy,
+            context.event_store.replay(),
+            now=CERTIFIED,
+        ),
+    ).ready[0]
+    foreign_hash = content_digest(b"foreign-prerequisite-object")
+    foreign_dependent = _replace_output_key(
+        canonical_dependent,
+        dependency_hashes=(foreign_hash,),
+    )
+    foreign_lease = context.candidate_store.begin(
+        foreign_dependent,
+        _identity(5678),
+        dispatch_id="dispatch-foreign-dependency",
+        leased_at=NOW,
+    )
+    foreign_output = tmp_path / "foreign-dependent-output"
+    foreign_output.mkdir()
+    (foreign_output / "artifact.md").write_text("dependent\n", encoding="utf-8")
+    context.candidate_store.persist(foreign_lease, foreign_output, observation)
+    inspector = RecordingInspector({5678: ProcessState.DEAD})
+    certifier_calls = context.certifier.calls
+    events_before = context.event_store.replay()
+    ledger_before = context.ledger.replay()
+
+    with pytest.raises(ReV2RecoveryError, match="WorkItem|work item|graph"):
+        recover_run(
+            context,
+            process_inspector=inspector,
+            clock=lambda: CERTIFIED,
+        )
+
+    assert inspector.calls == []
+    assert context.certifier.calls == certifier_calls
+    assert context.event_store.replay() == events_before
+    assert context.ledger.replay() == ledger_before
+
+
+def test_recovery_certifies_orphan_candidate_before_redispatch(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path)
+    _item, candidate = _persist_orphan_candidate(context)
+
+    result = recover_run(
+        context,
+        process_inspector=RecordingInspector({}),
+        clock=lambda: CERTIFIED,
+    )
+
+    assert result.reconciled_candidate_ids == (candidate.candidate_id,)
+    assert [event.type for event in result.events][-4:] == [
+        "candidate_persisted",
+        "candidate_certified",
+        "artifact_accepted",
+        "checkpoint_recorded",
+    ]
+    assert len(result.ledger.accepted_artifacts) == 1
+
+
+def test_recovery_is_idempotent_after_candidate_checkpoint(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    _persist_orphan_candidate(context)
+
+    recover_run(context, process_inspector=RecordingInspector({}), clock=lambda: CERTIFIED)
+    first = context.event_store.replay()
+    recover_run(context, process_inspector=RecordingInspector({}), clock=lambda: CERTIFIED)
+    second = context.event_store.replay()
+
+    assert second == first
+    assert [event.type for event in second].count("candidate_certified") == 1
+    assert [event.type for event in second].count("artifact_accepted") == 1
+    assert [event.type for event in second].count("checkpoint_recorded") == 1
+    assert context.certifier.calls == 1
+
+
+def test_recovery_appends_missing_event_suffix_for_ledger_ahead_candidate(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path)
+    item, candidate = _persist_orphan_candidate(context)
+    decision = context.certifier.certify(candidate, item)
+    context.ledger.record_certification(decision.certification_receipt, item)
+    assert decision.artifact_receipt is not None
+    context.ledger.record_artifact(decision.artifact_receipt)
+
+    result = recover_run(
+        context,
+        process_inspector=RecordingInspector({}),
+        clock=lambda: CERTIFIED,
+    )
+
+    assert [event.type for event in result.events][-4:] == [
+        "candidate_persisted",
+        "candidate_certified",
+        "artifact_accepted",
+        "checkpoint_recorded",
+    ]
+    assert context.certifier.calls == 1
+
+
+def test_recovery_rejects_ledger_work_item_different_from_exact_candidate(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path)
+    item, candidate = _persist_orphan_candidate(context)
+    other_item = replace(item, goal_id="other-goal")
+    decision = context.certifier.certify(candidate, other_item)
+
+    with pytest.raises(ReV2LedgerError, match="goal|scope|WorkItem"):
+        context.ledger.record_certification(
+            decision.certification_receipt, other_item
+        )
+
+    assert context.ledger.replay().certifications == {}
+
+
+@pytest.mark.parametrize(
+    ("state", "message"),
+    [
+        (ProcessState.SAME_PROCESS_LIVE, "still running"),
+        (ProcessState.PID_REUSED_OR_AMBIGUOUS, "ambiguous"),
+    ],
+)
+def test_live_or_ambiguous_lease_fails_closed(
+    tmp_path: Path, state: ProcessState, message: str
+) -> None:
+    context = _context(tmp_path)
+    _start_run(context)
+    item = _work_item(
+        context.snapshot.snapshot_id,
+        context.manifest.partition_manifest_id,
+    )
+    lease = context.candidate_store.begin(
+        item, _identity(), dispatch_id="dispatch-live", leased_at=NOW
+    )
+    context.event_store.append(
+        "dispatch_leased",
+        {"dispatch_id": lease.dispatch_id, "work_item_id": item.work_item_id},
+        occurred_at=NOW,
+    )
+    context.event_store.append(
+        "dispatch_started",
+        {
+            "attempt_index": 1,
+            "attempt_kind": "initial_generation",
+            "dispatch_id": lease.dispatch_id,
+            "work_item_id": item.work_item_id,
+        },
+        occurred_at=NOW,
+    )
+
+    with pytest.raises(ReV2RecoveryError, match=message):
+        recover_run(
+            context,
+            process_inspector=RecordingInspector({1234: state}),
+            clock=lambda: CERTIFIED,
+        )
+
+    assert [event.type for event in context.event_store.replay()][-1] == (
+        "dispatch_started"
+    )
+
+
+def test_recovery_inspects_every_outstanding_lease_before_failing(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path)
+    _start_run(context)
+    item = _work_item(
+        context.snapshot.snapshot_id,
+        context.manifest.partition_manifest_id,
+    )
+    context.candidate_store.begin(
+        item, _identity(1234), dispatch_id="dispatch-one", leased_at=NOW
+    )
+    context.candidate_store.begin(
+        item, _identity(5678), dispatch_id="dispatch-two", leased_at=NOW
+    )
+    inspector = RecordingInspector(
+        {
+            1234: ProcessState.DEAD,
+            5678: ProcessState.PID_REUSED_OR_AMBIGUOUS,
+        }
+    )
+
+    with pytest.raises(ReV2RecoveryError, match="ambiguous"):
+        recover_run(context, process_inspector=inspector, clock=lambda: CERTIFIED)
+
+    assert [identity.pid for identity in inspector.calls] == [1234, 5678]
+
+
+def test_recovery_rejects_a_lease_swapped_to_a_symlink_during_inventory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    context = _context(tmp_path)
+    _start_run(context)
+    item = _work_item(
+        context.snapshot.snapshot_id,
+        context.manifest.partition_manifest_id,
+    )
+    lease = context.candidate_store.begin(
+        item, _identity(), dispatch_id="dispatch-raced", leased_at=NOW
+    )
+    lease_path = context.paths.candidates / ".leases" / f"{lease.dispatch_id}.json"
+    outside = tmp_path / "outside-lease.json"
+    outside.write_bytes(lease_path.read_bytes())
+    real_open = recovery_module.os.open
+    swapped = False
+
+    def racing_open(
+        path: object,
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        nonlocal swapped
+        if path == lease_path.name and dir_fd is not None and not swapped:
+            swapped = True
+            lease_path.unlink()
+            lease_path.symlink_to(outside)
+        if dir_fd is None:
+            return real_open(path, flags, mode)  # type: ignore[arg-type]
+        return real_open(path, flags, mode, dir_fd=dir_fd)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(recovery_module.os, "open", racing_open)
+
+    with pytest.raises(ReV2RecoveryError, match="lease"):
+        recover_run(
+            context,
+            process_inspector=RecordingInspector(
+                {1234: ProcessState.DEAD}
+            ),
+            clock=lambda: CERTIFIED,
+        )
+
+    assert swapped is True
+
+
+def test_dead_started_lease_is_closed_with_an_invalid_observation(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path)
+    _start_run(context)
+    item = _work_item(
+        context.snapshot.snapshot_id,
+        context.manifest.partition_manifest_id,
+    )
+    lease = context.candidate_store.begin(
+        item, _identity(), dispatch_id="dispatch-dead", leased_at=NOW
+    )
+    context.event_store.append(
+        "dispatch_leased",
+        {"dispatch_id": lease.dispatch_id, "work_item_id": item.work_item_id},
+        occurred_at=NOW,
+    )
+    context.event_store.append(
+        "dispatch_started",
+        {
+            "attempt_index": 1,
+            "attempt_kind": "initial_generation",
+            "dispatch_id": lease.dispatch_id,
+            "work_item_id": item.work_item_id,
+        },
+        occurred_at=NOW,
+    )
+
+    result = recover_run(
+        context,
+        process_inspector=RecordingInspector({1234: ProcessState.DEAD}),
+        clock=lambda: OBSERVED,
+    )
+
+    observed = result.events[-1]
+    assert observed.type == "dispatch_observed"
+    assert observed.payload["observation"]["result_contract_valid"] is False
+    assert observed.payload["observation"]["token_usage"] is None
+
+
+def test_paused_recovery_retires_eventless_dead_lease_without_attempt_charge(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path)
+    _start_run(context)
+    item = _work_item(
+        context.snapshot.snapshot_id,
+        context.manifest.partition_manifest_id,
+    )
+    lease = context.candidate_store.begin(
+        item,
+        _identity(),
+        dispatch_id="dispatch-eventless-dead",
+        leased_at=NOW,
+    )
+    context.event_store.append(
+        "run_paused",
+        {"reason": "operator hold", "reason_code": "operator_hold"},
+        occurred_at=NOW,
+    )
+
+    first = recover_run(
+        context,
+        process_inspector=RecordingInspector({1234: ProcessState.DEAD}),
+        clock=lambda: CERTIFIED,
+    )
+    first_events = context.event_store.replay()
+    second = recover_run(
+        context,
+        process_inspector=RecordingInspector({1234: ProcessState.DEAD}),
+        clock=lambda: CERTIFIED,
+    )
+
+    retired = [
+        event
+        for event in first.events
+        if event.type == "dispatch_lease_retired"
+    ]
+    assert len(retired) == 1
+    assert retired[0].payload == {
+        "dispatch_id": lease.dispatch_id,
+        "lease_id": lease.lease_id,
+        "reason": "dead process without a committed candidate",
+        "work_item_id": item.work_item_id,
+    }
+    assert not any(event.type == "dispatch_started" for event in first.events)
+    assert second.events == first_events
+
+
+def test_recovery_rejects_retirement_event_for_a_different_work_item(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path)
+    _start_run(context)
+    item = _work_item(
+        context.snapshot.snapshot_id,
+        context.manifest.partition_manifest_id,
+    )
+    lease = context.candidate_store.begin(
+        item,
+        _identity(),
+        dispatch_id="dispatch-forged-retirement",
+        leased_at=NOW,
+    )
+    context.event_store.append(
+        "dispatch_lease_retired",
+        {
+            "dispatch_id": lease.dispatch_id,
+            "lease_id": lease.lease_id,
+            "reason": "forged retirement",
+            "work_item_id": content_digest(b"different-work-item"),
+        },
+        occurred_at=NOW,
+    )
+
+    with pytest.raises(ReV2RecoveryError, match="retirement|work item"):
+        recover_run(
+            context,
+            process_inspector=RecordingInspector({}),
+            clock=lambda: CERTIFIED,
+        )
+
+
+def test_recovery_rejects_retirement_with_an_altered_lease_id(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path)
+    _start_run(context)
+    item = _work_item(
+        context.snapshot.snapshot_id,
+        context.manifest.partition_manifest_id,
+    )
+    lease = context.candidate_store.begin(
+        item,
+        _identity(),
+        dispatch_id="dispatch-altered-retirement",
+        leased_at=NOW,
+    )
+    context.event_store.append(
+        "dispatch_lease_retired",
+        {
+            "dispatch_id": lease.dispatch_id,
+            "lease_id": content_digest(b"altered-lease"),
+            "reason": "forged retirement",
+            "work_item_id": lease.work_item_id,
+        },
+        occurred_at=NOW,
+    )
+
+    with pytest.raises(ReV2RecoveryError, match="retirement|lease"):
+        recover_run(
+            context,
+            process_inspector=RecordingInspector({}),
+            clock=lambda: CERTIFIED,
+        )
+
+
+def test_recovery_inspects_and_rejects_an_exact_retired_live_lease(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path)
+    _start_run(context)
+    item = _work_item(
+        context.snapshot.snapshot_id,
+        context.manifest.partition_manifest_id,
+    )
+    lease = context.candidate_store.begin(
+        item,
+        _identity(),
+        dispatch_id="dispatch-retired-live",
+        leased_at=NOW,
+    )
+    context.event_store.append(
+        "dispatch_lease_retired",
+        {
+            "dispatch_id": lease.dispatch_id,
+            "lease_id": lease.lease_id,
+            "reason": "claimed dead",
+            "work_item_id": lease.work_item_id,
+        },
+        occurred_at=NOW,
+    )
+    inspector = RecordingInspector({1234: ProcessState.SAME_PROCESS_LIVE})
+
+    with pytest.raises(ReV2RecoveryError, match="still running"):
+        recover_run(context, process_inspector=inspector, clock=lambda: CERTIFIED)
+
+    assert inspector.calls == [lease.process_identity]
+
+
+def test_exact_dead_retirement_remains_idempotent_and_inspected(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path)
+    _start_run(context)
+    item = _work_item(
+        context.snapshot.snapshot_id,
+        context.manifest.partition_manifest_id,
+    )
+    lease = context.candidate_store.begin(
+        item,
+        _identity(),
+        dispatch_id="dispatch-retired-dead",
+        leased_at=NOW,
+    )
+    context.event_store.append(
+        "dispatch_lease_retired",
+        {
+            "dispatch_id": lease.dispatch_id,
+            "lease_id": lease.lease_id,
+            "reason": "dead process without a committed candidate",
+            "work_item_id": lease.work_item_id,
+        },
+        occurred_at=NOW,
+    )
+    first_inspector = RecordingInspector({1234: ProcessState.DEAD})
+
+    first = recover_run(
+        context,
+        process_inspector=first_inspector,
+        clock=lambda: CERTIFIED,
+    )
+    first_events = first.events
+    second_inspector = RecordingInspector({1234: ProcessState.DEAD})
+    second = recover_run(
+        context,
+        process_inspector=second_inspector,
+        clock=lambda: CERTIFIED,
+    )
+
+    assert first_inspector.calls == [lease.process_identity]
+    assert second_inspector.calls == [lease.process_identity]
+    assert second.events == first_events
+
+
+def test_recovery_reconstructs_eventless_committed_candidate_lifecycle(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path)
+    _start_run(context)
+    item = _work_item(
+        context.snapshot.snapshot_id,
+        context.manifest.partition_manifest_id,
+    )
+    lease = context.candidate_store.begin(
+        item,
+        _identity(),
+        dispatch_id="dispatch-eventless-candidate",
+        leased_at=NOW,
+    )
+    output = tmp_path / "eventless-candidate-output"
+    output.mkdir()
+    (output / "artifact.md").write_text("durable bytes\n", encoding="utf-8")
+    candidate = context.candidate_store.persist(
+        lease,
+        output,
+        _observation(result_contract_valid=True),
+    )
+
+    result = recover_run(
+        context,
+        process_inspector=RecordingInspector({1234: ProcessState.DEAD}),
+        clock=lambda: CERTIFIED,
+    )
+
+    lifecycle = [
+        event.type
+        for event in result.events
+        if event.type != "run_created"
+    ]
+    assert lifecycle == [
+        "dispatch_leased",
+        "dispatch_started",
+        "dispatch_observed",
+        "candidate_persisted",
+        "candidate_certified",
+        "artifact_accepted",
+        "checkpoint_recorded",
+    ]
+    assert result.reconciled_candidate_ids == (candidate.candidate_id,)
+    assert context.certifier.calls == 1
+
+
+def test_paused_recovery_closes_committed_candidate_before_return(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path)
+    _start_run(context)
+    item = _work_item(
+        context.snapshot.snapshot_id,
+        context.manifest.partition_manifest_id,
+    )
+    lease = context.candidate_store.begin(
+        item,
+        _identity(),
+        dispatch_id="dispatch-paused-candidate",
+        leased_at=NOW,
+    )
+    context.event_store.append(
+        "dispatch_leased",
+        {"dispatch_id": lease.dispatch_id, "work_item_id": item.work_item_id},
+        occurred_at=NOW,
+    )
+    context.event_store.append(
+        "dispatch_started",
+        {
+            "attempt_index": 1,
+            "attempt_kind": "initial_generation",
+            "dispatch_id": lease.dispatch_id,
+            "work_item_id": item.work_item_id,
+        },
+        occurred_at=NOW,
+    )
+    observation = _observation(result_contract_valid=True)
+    context.event_store.append(
+        "dispatch_observed",
+        {
+            "dispatch_id": lease.dispatch_id,
+            "observation": observation.to_json_dict(),
+            "work_item_id": item.work_item_id,
+        },
+        occurred_at=OBSERVED,
+    )
+    output = tmp_path / "paused-candidate-output"
+    output.mkdir()
+    (output / "artifact.md").write_text("durable bytes\n", encoding="utf-8")
+    context.candidate_store.persist(
+        lease,
+        output,
+        observation,
+    )
+    context.event_store.append(
+        "run_paused",
+        {"reason": "operator hold", "reason_code": "operator_hold"},
+        occurred_at=NOW,
+    )
+
+    result = recover_run(
+        context,
+        process_inspector=RecordingInspector({1234: ProcessState.DEAD}),
+        clock=lambda: CERTIFIED,
+    )
+
+    assert result.projection["state"] == "paused"
+    assert [event.type for event in result.events][-4:] == [
+        "candidate_persisted",
+        "candidate_certified",
+        "artifact_accepted",
+        "checkpoint_recorded",
+    ]
+
+
+def test_recovery_rebuilds_projection_without_reading_existing_projection(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path)
+    _start_run(context)
+    context.paths.projection.write_text("not authoritative", encoding="utf-8")
+
+    result = recover_run(
+        context,
+        process_inspector=RecordingInspector({}),
+        clock=lambda: CERTIFIED,
+    )
+
+    assert json.loads(context.paths.projection.read_text(encoding="utf-8")) == (
+        result.projection
+    )
+
+
+def test_recovery_validates_snapshot_before_process_inspection(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    _start_run(context)
+    inspector = RecordingInspector({})
+    mismatched = replace(
+        context,
+        snapshot=replace(
+            context.snapshot,
+            snapshot_id=content_digest(b"different-snapshot"),
+        ),
+    )
+
+    with pytest.raises(ReV2RecoveryError, match="snapshot"):
+        recover_run(mismatched, process_inspector=inspector, clock=lambda: CERTIFIED)
+
+    assert inspector.calls == []
+
+
+def _rewrite_composite_manifest(
+    context: ReV2RunContext,
+    mutate: Callable[[dict[str, object]], None],
+) -> None:
+    manifest = json.loads(context.snapshot.manifest_path.read_bytes())
+    mutate(manifest)
+    payload = canonical_json_bytes(manifest)
+    bundle = context.snapshot.manifest_path.parent
+    bundle.chmod(bundle.stat().st_mode | stat.S_IWUSR)
+    context.snapshot.manifest_path.chmod(0o600)
+    context.snapshot.manifest_path.write_bytes(payload)
+    context.snapshot.manifest_path.chmod(0o400)
+    marker = (
+        bundle.parent
+        / ".snapshot-commits"
+        / f"{context.snapshot.snapshot_id}.json"
+    )
+    marker.chmod(0o600)
+    marker.write_bytes(
+        canonical_json_bytes(
+            {
+                "capture_version": 2,
+                "manifest_digest": content_digest(payload),
+                "snapshot_id": context.snapshot.snapshot_id,
+            }
+        )
+    )
+    marker.chmod(0o400)
+
+
+@pytest.mark.parametrize("field", ("commit", "tree_digest", "workspace_path"))
+def test_recovery_rejects_composite_component_tamper_before_side_effects(
+    tmp_path: Path,
+    field: str,
+) -> None:
+    context = _context(tmp_path, composite=True)
+    inspector = RecordingInspector({})
+    before_candidates = tuple(context.paths.candidates.rglob("*"))
+    before_ledger = context.paths.ledger.exists()
+
+    def mutate(manifest: dict[str, object]) -> None:
+        component = manifest["components"][0]  # type: ignore[index]
+        if field == "commit":
+            component[field] = "b" * 40
+        elif field == "tree_digest":
+            component[field] = content_digest(b"different")
+        else:
+            component[field] = "other"
+
+    _rewrite_composite_manifest(context, mutate)
+
+    with pytest.raises(ReV2RecoveryError, match="snapshot"):
+        recover_run(context, process_inspector=inspector, clock=lambda: CERTIFIED)
+
+    assert inspector.calls == []
+    assert context.certifier.calls == 0
+    assert tuple(context.paths.candidates.rglob("*")) == before_candidates
+    assert context.paths.ledger.exists() is before_ledger
+
+
+def test_recovery_rejects_composite_partition_mismatch_before_side_effects(
+    tmp_path: Path,
+) -> None:
+    context = _context(
+        tmp_path,
+        composite=True,
+        partition_id_override=content_digest(b"forged-partition"),
+    )
+    inspector = RecordingInspector({})
+    before_candidates = tuple(context.paths.candidates.rglob("*"))
+    before_ledger = context.paths.ledger.exists()
+
+    with pytest.raises(ReV2RecoveryError, match="partition"):
+        recover_run(context, process_inspector=inspector, clock=lambda: CERTIFIED)
+
+    assert inspector.calls == []
+    assert context.certifier.calls == 0
+    assert tuple(context.paths.candidates.rglob("*")) == before_candidates
+    assert context.paths.ledger.exists() is before_ledger
+
+
+def test_recovery_binds_policy_hash_independently_of_producer_protocol(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path)
+    graph = validate_work_graph(
+        (_template(protocol="v2"),),
+        requested_goals=context.manifest.requested_goals,
+        source_snapshot_id=context.snapshot.snapshot_id,
+        partition_manifest_id=context.manifest.partition_manifest_id,
+    )
+
+    result = recover_run(
+        replace(context, graph=graph),
+        process_inspector=RecordingInspector({}),
+        clock=lambda: CERTIFIED,
+    )
+
+    assert result.manifest.artifact_policy_versions["L0"] == POLICY_VERSION
+
+
+def test_recovery_rejects_a_graph_layer_without_a_manifest_policy(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path)
+    graph = validate_work_graph(
+        (_template(layer="L1"),),
+        requested_goals=context.manifest.requested_goals,
+        source_snapshot_id=context.snapshot.snapshot_id,
+        partition_manifest_id=context.manifest.partition_manifest_id,
+    )
+
+    with pytest.raises(ReV2RecoveryError, match="no manifest artifact policy"):
+        recover_run(
+            replace(context, graph=graph),
+            process_inspector=RecordingInspector({}),
+            clock=lambda: CERTIFIED,
+        )
+
+
+def test_recovery_rejects_a_graph_policy_hash_mismatch(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    mismatched = replace(
+        _template(),
+        layer_policy_hash=content_digest(
+            {
+                "artifact_kind": "fixture-inventory",
+                "policy_version": "different-policy-v1",
+            }
+        ),
+    )
+    graph = validate_work_graph(
+        (mismatched,),
+        requested_goals=context.manifest.requested_goals,
+        source_snapshot_id=context.snapshot.snapshot_id,
+        partition_manifest_id=context.manifest.partition_manifest_id,
+    )
+
+    with pytest.raises(ReV2RecoveryError, match="policy hash"):
+        recover_run(
+            replace(context, graph=graph),
+            process_inspector=RecordingInspector({}),
+            clock=lambda: CERTIFIED,
+        )
+
+
+def test_recovery_rejects_an_object_store_outside_the_run_authority(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path)
+    outside = ObjectStore(tmp_path / "outside-objects")
+    outside_ledger = Ledger(
+        context.paths,
+        outside,
+        supported_verifiers={"fixture-verifier": "v1"},
+    )
+    mismatched = replace(
+        context,
+        object_store=outside,
+        ledger=outside_ledger,
+        certifier=FixtureCertifier(outside),
+    )
+
+    with pytest.raises(ReV2RecoveryError, match="run-local object"):
+        recover_run(
+            mismatched,
+            process_inspector=RecordingInspector({}),
+            clock=lambda: CERTIFIED,
+        )
+
+
+def test_recovery_rejects_a_handled_event_that_conflicts_with_ledger(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path)
+    item, candidate = _persist_orphan_candidate(context)
+    decision = context.certifier.certify(candidate, item)
+    context.ledger.record_certification(decision.certification_receipt, item)
+    context.event_store.append(
+        "candidate_persisted",
+        {
+            "candidate_id": candidate.candidate_id,
+            "dispatch_id": candidate.dispatch_id,
+            "work_item_id": candidate.work_item_id,
+        },
+        occurred_at=PERSISTED,
+    )
+    context.event_store.append(
+        "candidate_rejected",
+        {
+            "candidate_id": candidate.candidate_id,
+            "certification_id": content_digest(b"not-the-ledger-certification"),
+            "reason": "forged outcome",
+            "work_item_id": candidate.work_item_id,
+        },
+        occurred_at=CERTIFIED,
+    )
+
+    with pytest.raises(ReV2RecoveryError, match="matching ledger certification"):
+        recover_run(
+            context,
+            process_inspector=RecordingInspector({}),
+            clock=lambda: CERTIFIED,
+        )
+
+
+def test_recovery_cross_checks_candidate_observation_even_with_persisted_event(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path)
+    _start_run(context)
+    item = _work_item(
+        context.snapshot.snapshot_id,
+        context.manifest.partition_manifest_id,
+    )
+    lease = context.candidate_store.begin(
+        item,
+        _identity(),
+        dispatch_id="dispatch-observation-mismatch",
+        leased_at=NOW,
+    )
+    context.event_store.append(
+        "dispatch_leased",
+        {"dispatch_id": lease.dispatch_id, "work_item_id": item.work_item_id},
+        occurred_at=NOW,
+    )
+    context.event_store.append(
+        "dispatch_started",
+        {
+            "attempt_index": 1,
+            "attempt_kind": "initial_generation",
+            "dispatch_id": lease.dispatch_id,
+            "work_item_id": item.work_item_id,
+        },
+        occurred_at=NOW,
+    )
+    candidate_observation = _observation(result_contract_valid=True)
+    event_observation = replace(
+        candidate_observation,
+        model_name="different-model",
+    )
+    context.event_store.append(
+        "dispatch_observed",
+        {
+            "dispatch_id": lease.dispatch_id,
+            "observation": event_observation.to_json_dict(),
+            "work_item_id": item.work_item_id,
+        },
+        occurred_at=OBSERVED,
+    )
+    output = tmp_path / "mismatched-observation-output"
+    output.mkdir()
+    (output / "artifact.md").write_text("candidate bytes\n", encoding="utf-8")
+    candidate = context.candidate_store.persist(
+        lease, output, candidate_observation
+    )
+    context.event_store.append(
+        "candidate_persisted",
+        {
+            "candidate_id": candidate.candidate_id,
+            "dispatch_id": candidate.dispatch_id,
+            "work_item_id": candidate.work_item_id,
+        },
+        occurred_at=PERSISTED,
+    )
+
+    with pytest.raises(ReV2RecoveryError, match="observation"):
+        recover_run(
+            context,
+            process_inspector=RecordingInspector({}),
+            clock=lambda: CERTIFIED,
+        )
+
+
+def test_recovery_rejects_candidate_from_unpinned_observation_provider(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path)
+    _start_run(context)
+    item = _work_item(
+        context.snapshot.snapshot_id,
+        context.manifest.partition_manifest_id,
+    )
+    lease = context.candidate_store.begin(
+        item,
+        _identity(),
+        dispatch_id="dispatch-wrong-provider",
+        leased_at=NOW,
+    )
+    output = tmp_path / "wrong-provider-output"
+    output.mkdir()
+    (output / "artifact.md").write_text("candidate bytes\n", encoding="utf-8")
+    context.candidate_store.persist(
+        lease,
+        output,
+        replace(_observation(), provider_name="other-provider"),
+    )
+
+    with pytest.raises(ReV2RecoveryError, match="provider"):
+        recover_run(
+            context,
+            process_inspector=RecordingInspector({1234: ProcessState.DEAD}),
+            clock=lambda: CERTIFIED,
+        )
+
+
+def test_recovery_rejects_ledger_receipts_without_an_exact_candidate(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path)
+    _start_run(context)
+    item = _work_item(
+        context.snapshot.snapshot_id,
+        context.manifest.partition_manifest_id,
+    )
+    payload = tmp_path / "ledger-only-payload"
+    payload.mkdir()
+    (payload / "artifact.md").write_text("ledger only\n", encoding="utf-8")
+    artifact_hash = context.object_store.put_tree(payload)
+    certification = CertificationReceipt(
+        certification_key=CertificationKey(
+            artifact_hash=artifact_hash,
+            verifier_id=item.verifier_id,
+            verifier_version=item.verifier_version,
+            source_snapshot_id=item.output_key.source_snapshot_id,
+            audit_epoch_id=None,
+        ),
+        candidate_id="candidate-missing",
+        work_item_id=item.work_item_id,
+        verdict="accepted",
+        normalized_diagnostics=(),
+        evidence_references=(),
+        scope_verified=True,
+        certified_at=CERTIFIED,
+    )
+    artifact = ArtifactReceipt(
+        artifact_key=item.output_key,
+        artifact_hash=artifact_hash,
+        certification_id=certification.identity,
+        candidate_id=certification.candidate_id,
+        work_item_id=item.work_item_id,
+        accepted_at=CERTIFIED,
+    )
+    context.ledger.record_certification(certification, item)
+    context.ledger.record_artifact(artifact)
+
+    with pytest.raises(ReV2RecoveryError, match="candidate"):
+        recover_run(
+            context,
+            process_inspector=RecordingInspector({}),
+            clock=lambda: CERTIFIED,
+        )
+
+
+def test_attempt_selection_never_rediscovers_stale_repair_debt(
+    tmp_path: Path,
+) -> None:
+    store = EventStore(tmp_path / "events.jsonl")
+    first = _work_item(content_digest(b"source"), content_digest(b"partitions"))
+    second = replace(first, goal_id="other-goal")
+    store.append(
+        "run_created",
+        {"run_manifest_id": content_digest(b"manifest")},
+        occurred_at=NOW,
+    )
+
+    def append_rejected(item: WorkItem, suffix: str) -> None:
+        store.append(
+            "dispatch_leased",
+            {"dispatch_id": f"dispatch-{suffix}", "work_item_id": item.work_item_id},
+            occurred_at=NOW,
+        )
+        store.append(
+            "dispatch_started",
+            {
+                "attempt_index": 1,
+                "attempt_kind": "initial_generation",
+                "dispatch_id": f"dispatch-{suffix}",
+                "work_item_id": item.work_item_id,
+            },
+            occurred_at=NOW,
+        )
+        observed = _observation(result_contract_valid=True)
+        store.append(
+            "dispatch_observed",
+            {
+                "dispatch_id": f"dispatch-{suffix}",
+                "observation": observed.to_json_dict(),
+                "work_item_id": item.work_item_id,
+            },
+            occurred_at=OBSERVED,
+        )
+        store.append(
+            "candidate_persisted",
+            {
+                "candidate_id": f"candidate-{suffix}",
+                "dispatch_id": f"dispatch-{suffix}",
+                "work_item_id": item.work_item_id,
+            },
+            occurred_at=PERSISTED,
+        )
+        store.append(
+            "candidate_rejected",
+            {
+                "candidate_id": f"candidate-{suffix}",
+                "certification_id": content_digest(f"cert-{suffix}".encode()),
+                "reason": "rejected",
+                "work_item_id": item.work_item_id,
+            },
+            occurred_at=CERTIFIED,
+        )
+
+    append_rejected(first, "first")
+    append_rejected(second, "second")
+
+    with pytest.raises(ReV2RecoveryError, match="does not authorize|stale"):
+        next_dispatch_attempt(store.replay(), first)

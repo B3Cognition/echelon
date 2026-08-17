@@ -586,6 +586,98 @@ def test_publication_stages_semantic_and_topology_authorities_together(tmp_path:
 
 
 @pytest.mark.unit
+def test_refreshed_source_upgrades_historical_codegraph_evidence(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    (tmp_path / ".echelon").mkdir()
+    (tmp_path / ".echelon/config.yml").write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n",
+        encoding="utf-8",
+    )
+    source = run_dir / "re/sources/api"
+    _write_json(
+        source / "codegraph-analysis.json",
+        {
+            "version": "1.0.0",
+            "repo_path": "/provider/native/path",
+            "supported": True,
+            "symbols": [
+                {
+                    "file_path": "src/api.py",
+                    "qualified_name": "api.run",
+                    "name": "run",
+                    "kind": "function",
+                    "signature": "()",
+                    "line_start": 1,
+                    "line_end": 1,
+                }
+            ],
+            "relationships": [],
+            "call_graph": [],
+            "type_hierarchy": [],
+            "impact_radius": [],
+        },
+    )
+    _write_json(source / "codegraph-summary.json", {"legacy": True})
+
+    result = publish_re_run(tmp_path, run_dir)
+
+    assert result.topology_generation == 1
+    published = _read_json(
+        tmp_path / "re/topology/sources/api/codegraph-analysis.json"
+    )
+    assert published["schema_version"] == 2
+
+
+@pytest.mark.unit
+def test_partial_publication_leaves_unusable_legacy_topology_unpublished(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",), status="partial")
+    (tmp_path / ".echelon").mkdir()
+    (tmp_path / ".echelon/config.yml").write_text(
+        "workspace:\n  sources:\n    - id: api\n      path: sources/api\n",
+        encoding="utf-8",
+    )
+    source = run_dir / "re/sources/api"
+    duplicate_symbols = [
+        {
+            "file_path": path,
+            "qualified_name": "duplicate",
+            "name": "duplicate",
+            "kind": "function",
+            "signature": "()",
+            "line_start": 1,
+            "line_end": 1,
+        }
+        for path in ("src/a.py", "src/b.py")
+    ]
+    _write_json(
+        source / "codegraph-analysis.json",
+        {
+            "version": "1.0.0",
+            "repo_path": "/provider/native/path",
+            "supported": True,
+            "symbols": duplicate_symbols,
+            "relationships": [],
+            "call_graph": [
+                {"caller": "duplicate", "callee": "duplicate"}
+            ],
+            "type_hierarchy": [],
+            "impact_radius": [],
+        },
+    )
+    _write_json(source / "codegraph-summary.json", {"legacy": True})
+
+    result = publish_re_run(tmp_path, run_dir, allow_partial=True)
+
+    assert result.status == "partial"
+    assert result.topology_generation is None
+    assert not (tmp_path / "re/topology/index.json").exists()
+
+
+@pytest.mark.unit
 def test_targeted_publication_preserves_sibling_receipts_and_resynthesizes_workspace(
     tmp_path: Path,
 ) -> None:
@@ -1691,6 +1783,127 @@ def test_partial_publication_requires_explicit_override(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_partial_publication_accepts_audited_finalize_debt_manifest(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",), status="partial")
+    _write_json(
+        run_dir / "re/state.json",
+        {"status": "done", "publication_status": "partial"},
+    )
+    _write_json(
+        run_dir / "re/quality/semantic-quality-review.json",
+        {
+            "schema_version": 1,
+            "quality_contract_version": QUALITY_CONTRACT_VERSION,
+            "passed": False,
+            "failures": [
+                {
+                    "source_id": "api",
+                    "domain_id": "001-re-domain",
+                    "reason": "semantic_quality_incomplete",
+                }
+            ],
+        },
+    )
+    _write_json(
+        run_dir / "re/quality/partial-finalization.json",
+        {
+            "schema_version": 1,
+            "run_id": run_dir.name,
+            "status": "partial",
+            "finalized_at": "2026-08-14T10:00:00+00:00",
+            "finalized_from": {
+                "outer_status": "blocked",
+                "inner_status": "blocked",
+                "blocked_reason": "re_token_budget_exhausted",
+                "phase": "re-extract-2-specify",
+            },
+            "debt": {
+                "controller_incomplete": True,
+                "workspace_synthesis_incomplete": True,
+                "source_quality_debt": [],
+                "semantic_failure_sources": {"api": ["001-re-domain"]},
+            },
+        },
+    )
+
+    result = publish_re_run(tmp_path, run_dir, allow_partial=True)
+
+    assert result.status == "partial"
+    published = json.loads((tmp_path / "re/index.json").read_text(encoding="utf-8"))
+    assert published["sources"]["api"]["status"] == "partial"
+    assert published["quality"]["blocking_findings"] == 1
+
+
+@pytest.mark.unit
+def test_partial_publication_rejects_stale_finalize_debt_manifest(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",), status="partial")
+    _write_json(
+        run_dir / "re/state.json",
+        {
+            "status": "done",
+            "publication_status": "partial",
+            "re_workspace_synthesis_complete": True,
+        },
+    )
+    _write_json(
+        run_dir / "re/quality/semantic-quality-review.json",
+        {
+            "schema_version": 1,
+            "quality_contract_version": QUALITY_CONTRACT_VERSION,
+            "passed": False,
+            "failures": [
+                {
+                    "source_id": "api",
+                    "domain_id": "001-re-domain",
+                    "reason": "semantic_quality_incomplete",
+                }
+            ],
+        },
+    )
+    _write_json(
+        run_dir / "re/quality/partial-finalization.json",
+        {
+            "schema_version": 1,
+            "run_id": run_dir.name,
+            "status": "partial",
+            "finalized_at": "2026-08-14T10:00:00+00:00",
+            "finalized_from": {
+                "outer_status": "blocked",
+                "inner_status": "blocked",
+                "blocked_reason": "re_token_budget_exhausted",
+                "phase": "re-extract-2-specify",
+            },
+            "debt": {
+                "controller_incomplete": True,
+                "workspace_synthesis_incomplete": False,
+                "source_quality_debt": [],
+                "semantic_failure_sources": {},
+            },
+        },
+    )
+
+    with pytest.raises(RePublicationValidationError, match="does not match current review"):
+        publish_re_run(tmp_path, run_dir, allow_partial=True)
+
+
+@pytest.mark.unit
+def test_publication_ignores_macos_finder_metadata(tmp_path: Path) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    (run_dir / "re/sources/api/.DS_Store").write_bytes(b"finder metadata")
+    (run_dir / "re/sources/api/specs/.DS_Store").write_bytes(b"finder metadata")
+    (run_dir / "re/workspace/.DS_Store").write_bytes(b"finder metadata")
+
+    result = publish_re_run(tmp_path, run_dir)
+
+    assert result.status == "complete"
+    assert not list((tmp_path / "re").rglob(".DS_Store"))
+
+
+@pytest.mark.unit
 def test_failed_run_is_never_publishable(tmp_path: Path) -> None:
     run_dir = write_valid_re_run(tmp_path, ("api",), status="failed")
 
@@ -1885,6 +2098,36 @@ def test_same_run_republish_can_rebase_its_stale_generation(tmp_path: Path) -> N
     index = _read_json(tmp_path / "re/index.json")
     assert index["generation"] == 2
     assert index["published_from_run"] == run_dir.name
+
+
+@pytest.mark.unit
+def test_same_run_republish_accepts_source_already_removed_by_that_run(
+    tmp_path: Path,
+) -> None:
+    run_1 = write_valid_re_run(
+        tmp_path,
+        ("api", "legacy"),
+        run_id="run-1",
+    )
+    publish_re_run(tmp_path, run_1)
+    _finish_run(run_1)
+    run_2 = write_valid_re_run(
+        tmp_path,
+        ("api",),
+        run_id="run-2",
+        removed_sources=("legacy",),
+    )
+    publish_re_run(tmp_path, run_2, expected_generation=1)
+
+    result = publish_re_run(
+        tmp_path,
+        run_2,
+        expected_generation=1,
+        allow_same_run_republish=True,
+    )
+
+    assert result.generation == 3
+    assert "legacy" not in _read_json(tmp_path / "re/index.json")["sources"]
 
 
 @pytest.mark.unit

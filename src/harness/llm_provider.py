@@ -83,7 +83,7 @@ class AICodingCliProvider:
         if self._cli == "openai-compatible":
             return True
         return bool(
-            self._cli == "claude"
+            self._cli in {"claude", "codex"}
             and host_workspace_synthesis_boundary_available()
         )
 

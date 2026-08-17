@@ -9,7 +9,7 @@
 - `{state.output_dir}/workspace/relationships.md`
 - `{state.output_dir}/sources/{source-id}/analysis.json`
 - `{state.output_dir}/sources/{source-id}/specs/{domain-id}/spec.md`
-- `{state.output_dir}/quality/{source-id}/coverage-report.md`
+- `{state.output_dir}/quality/sources/{source-id}.json`
 
 ## Dispatch Prompt
 
@@ -25,6 +25,9 @@ exhaustive` claim against the cited branches or invariant test.
 - An `echelon_result.semantic_quality_review` object covering the requested domain exactly once.
 
 The controller validates and persists the domain audit in run state, then assembles `{state.output_dir}/quality/semantic-quality-review.json` after every domain has a current audit.
+That aggregate file is controller-owned output with gate-shaped `passed` and
+`failures` fields, not a `.domains` audit input. RE-VALIDATOR must independently
+audit the requested domain against its current spec and owned source evidence.
 
 ## echelon_result Schema
 

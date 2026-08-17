@@ -143,6 +143,13 @@ re_app = typer.Typer(
     help="Publish and inspect workspace reverse engineering.",
     no_args_is_help=True,
 )
+
+
+class ReEngine(str, Enum):
+    V1 = "v1"
+    V2 = "v2"
+
+
 re_memory_app = typer.Typer(
     add_completion=False,
     help="Mine workspace reverse-engineering memory in MemPalace.",
@@ -841,6 +848,17 @@ def re_run(
         "--no-reuse",
         help="Ignore published RE artifacts and reconstruct from source.",
     ),
+    engine: ReEngine = typer.Option(
+        ReEngine.V1,
+        "--engine",
+        case_sensitive=True,
+        help="Creation engine: v1 (default) or the opt-in pinned v2 kernel.",
+    ),
+    shadow: bool = typer.Option(
+        False,
+        "--shadow",
+        help="For v2 only, explain the authoritative plan without dispatching work.",
+    ),
 ) -> None:
     """Run or resume workspace reverse engineering; publish explicitly afterward."""
     args = ["--re-policy", re_policy]
@@ -852,6 +870,10 @@ def re_run(
         args.append("--reset")
     if no_reuse:
         args.append("--no-reuse")
+    if engine is ReEngine.V2:
+        args.extend(["--engine", engine.value])
+    if shadow:
+        args.append("--shadow")
     _legacy_cli()._cmd_re_run(args)
 
 
@@ -868,9 +890,15 @@ def re_refresh(
 
 
 @re_app.command("status")
-def re_status() -> None:
+def re_status(
+    as_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Render the authoritative v2 status document as JSON.",
+    ),
+) -> None:
     """Show live RE state, source quality, debt, and the next safe action."""
-    _legacy_cli()._cmd_re_status([])
+    _legacy_cli()._cmd_re_status(["--json"] if as_json else [])
 
 
 @re_app.command("continue")
@@ -953,6 +981,62 @@ def re_publish(
     if commit:
         args.append("--commit")
     _legacy_cli()._cmd_re_publish(args)
+
+
+@re_app.command("finalize")
+def re_finalize(
+    run_id: Optional[str] = typer.Argument(
+        None,
+        help="Blocked RE run id below runs/; defaults to the active RE run.",
+    ),
+    allow_partial: bool = typer.Option(
+        False,
+        "--allow-partial",
+        help="Acknowledge unresolved debt and finalize as partial.",
+    ),
+) -> None:
+    """Finalize a structurally publishable blocked RE run with explicit debt."""
+    args: list[str] = []
+    if run_id:
+        args.append(run_id)
+    if allow_partial:
+        args.append("--allow-partial")
+    _legacy_cli()._cmd_re_finalize(args)
+
+
+@re_app.command("synthesize")
+def re_synthesize(
+    run_id: Optional[str] = typer.Argument(
+        None,
+        help="Finalized partial RE run id; defaults to the active RE run.",
+    ),
+    allow_partial: bool = typer.Option(
+        False,
+        "--allow-partial",
+        help="Use accepted partial source results as synthesis inputs.",
+    ),
+    re_token_limit: Optional[int] = typer.Option(
+        None,
+        "--re-token-limit",
+        min=1,
+        help="Raise the run token ceiling for the synthesis dispatch.",
+    ),
+    re_time_limit_minutes: Optional[int] = typer.Option(
+        None,
+        "--re-time-limit-minutes",
+        min=1,
+        help="Raise the run active-time ceiling for the synthesis dispatch.",
+    ),
+) -> None:
+    """Regenerate workspace synthesis from finalized partial source results."""
+    args: list[str] = []
+    if run_id:
+        args.append(run_id)
+    if allow_partial:
+        args.append("--allow-partial")
+    _extend_option(args, "--re-token-limit", re_token_limit)
+    _extend_option(args, "--re-time-limit-minutes", re_time_limit_minutes)
+    _legacy_cli()._cmd_re_synthesize(args)
 
 
 @re_app.command("analyze", hidden=True)

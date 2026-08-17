@@ -58,7 +58,7 @@ echelon_result:
   phase_id: re-extract-3-verify
   state_updates: {}
   output_files:
-    - $RE_OUTPUT_DIR/quality/{source-id}/coverage-report.md
+    - $RE_OUTPUT_DIR/quality/sources/{source-id}.json
   journal_entries:
     - type: phase_complete
       phase: re-extract-3-verify
