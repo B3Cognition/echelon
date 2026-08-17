@@ -10236,52 +10236,36 @@ def _re_v2_snapshot_root(project_root: Path) -> Path:
 
 
 def _re_v2_partition_manifest_id(
-    workspace_manifest: object, source_snapshot_id: str
+    workspace_manifest: object, snapshot: object
 ) -> str:
-    from harness.re_v2.canonical import content_digest
+    from harness.re_v2.snapshot import load_snapshot_manifest
+    from harness.re_v2.workspace_snapshot import composite_partition_manifest_id
 
-    workspace_root = Path(getattr(getattr(workspace_manifest, "workspace"), "root"))
-    sources: list[dict[str, str]] = []
-    seen_ids: set[str] = set()
-    for source in getattr(workspace_manifest, "sources"):
-        source_id = str(getattr(source, "id"))
-        configured_path = str(getattr(source, "path"))
-        if (
-            not source_id
-            or source_id in seen_ids
-            or (source_id != "." and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", source_id) is None)
-        ):
-            raise ValueError(f"unsafe or duplicate RE v2 source id: {source_id!r}")
-        source_path = Path(configured_path)
-        if source_path.is_absolute():
-            resolved = source_path.resolve()
-        else:
-            if ".." in source_path.parts:
-                raise ValueError(f"unsafe RE v2 source path: {configured_path!r}")
-            resolved = (workspace_root / source_path).resolve()
-        if (
-            not resolved.is_relative_to(workspace_root)
-            or resolved.is_symlink()
-            or not resolved.is_dir()
-        ):
-            raise ValueError(f"unsafe or unavailable RE v2 source path: {configured_path!r}")
-        seen_ids.add(source_id)
-        sources.append(
-            {
-                "git_role": str(getattr(source, "git_role")),
-                "id": source_id,
-                "path": resolved.relative_to(workspace_root).as_posix() or ".",
-            }
+    snapshot_manifest = load_snapshot_manifest(snapshot)
+    components = snapshot_manifest.components
+    if components is None:
+        raise ValueError("RE v2 creation requires a composite source snapshot")
+    expected = sorted(
+        (
+            str(getattr(source, "id")),
+            str(getattr(source, "git_role")),
+            str(getattr(source, "path")),
         )
-    if not sources:
-        raise ValueError("workspace has no source roots for RE v2 inventory")
-    return content_digest(
-        {
-            "partition_protocol": "re-v2-partition-v1",
-            "source_snapshot_id": source_snapshot_id,
-            "sources": sorted(sources, key=lambda item: (item["id"], item["path"])),
-        }
+        for source in getattr(workspace_manifest, "sources")
     )
+    observed = sorted(
+        (
+            component.source_id,
+            component.git_role,
+            component.workspace_path,
+        )
+        for component in components
+    )
+    if expected != observed:
+        raise ValueError(
+            "workspace source set does not match the committed RE v2 snapshot"
+        )
+    return composite_partition_manifest_id(snapshot_manifest)
 
 
 def _new_re_v2_run_id(project_root: Path) -> str:
@@ -10529,17 +10513,17 @@ def _run_re_v2_create(
         RunManifest,
     )
     from harness.re_v2.run_store import create_run_store
-    from harness.re_v2.snapshot import capture_source_snapshot
+    from harness.re_v2.workspace_snapshot import capture_workspace_snapshot
 
     workspace_root = project_root.resolve()
     workspace_manifest = discover_workspace(workspace_root)
-    snapshot = capture_source_snapshot(
+    snapshot = capture_workspace_snapshot(
         workspace_root,
+        workspace_manifest.sources,
         _re_v2_snapshot_root(workspace_root),
-        exclusions=(".echelon/cache", "re/.cache", "runs"),
     )
     partition_manifest_id = _re_v2_partition_manifest_id(
-        workspace_manifest, snapshot.snapshot_id
+        workspace_manifest, snapshot
     )
     run_id = _new_re_v2_run_id(workspace_root)
     run_dir = workspace_root / "runs" / run_id

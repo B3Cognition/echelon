@@ -17,6 +17,7 @@ from .snapshot import (
     FaultHook,
     ReV2SnapshotError,
     SnapshotComponent,
+    SnapshotManifest,
     _copy_regular_files,
     _inventory,
     _safe_destination_root,
@@ -57,6 +58,32 @@ class _ResolvedSource:
     path: Path
     repository: Path
     repository_path: str
+
+
+def composite_partition_manifest_id(manifest: SnapshotManifest) -> str:
+    """Derive the immutable partition identity from a composite manifest."""
+    if (
+        manifest.kind != "workspace-git-composite"
+        or manifest.capture_version != 2
+        or manifest.components is None
+    ):
+        raise ReV2WorkspaceSourceError(
+            "partition identity requires a validated composite snapshot manifest"
+        )
+    return content_digest(
+        {
+            "partition_protocol": "re-v2-partition-v2",
+            "source_snapshot_id": manifest.snapshot_id,
+            "sources": [
+                {
+                    "git_role": component.git_role,
+                    "id": component.source_id,
+                    "path": component.workspace_path,
+                }
+                for component in manifest.components
+            ],
+        }
+    )
 
 
 def capture_workspace_snapshot(
@@ -227,7 +254,7 @@ def plan_clean_workspace_sources(
         git_role = getattr(source, "git_role", "source")
         label = source_id if isinstance(source_id, str) and source_id else "<unknown>"
 
-        if not isinstance(source_id, str) or not _SAFE_ID_RE.fullmatch(source_id):
+        if not isinstance(source_id, str) or not _safe_source_id(source_id):
             issues.append(f"source {label!r}: ID must be a nonempty safe ID")
             continue
         if source_id in seen_ids:
@@ -355,6 +382,10 @@ def _canonical_workspace_path(value: object) -> str | None:
     if canonical != value or canonical.startswith("./"):
         return None
     return canonical
+
+
+def _safe_source_id(value: str) -> bool:
+    return value == "." or _SAFE_ID_RE.fullmatch(value) is not None
 
 
 def _first_symlink(root: Path, workspace_path: str) -> str | None:

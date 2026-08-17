@@ -1327,7 +1327,7 @@ def _canonical_components(
 
 
 def _validate_component(component: SnapshotComponent) -> None:
-    if not _SAFE_ID_RE.fullmatch(component.source_id):
+    if component.source_id != "." and not _SAFE_ID_RE.fullmatch(component.source_id):
         raise ValueError("component.source_id must be a nonempty safe ID")
     if not _SAFE_ID_RE.fullmatch(component.git_role):
         raise ValueError("component.git_role must be a nonempty safe ID")

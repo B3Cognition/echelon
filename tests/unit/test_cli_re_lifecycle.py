@@ -1,11 +1,42 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from typer.testing import CliRunner
+
+
+def _init_clean_v2_source(project: Path) -> None:
+    project.mkdir(parents=True, exist_ok=True)
+    (project / "pyproject.toml").write_text(
+        "[project]\nname = 'fixture'\nversion = '0.1.0'\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "init", str(project)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(project), "add", "pyproject.toml"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(project),
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.test",
+            "commit",
+            "-m",
+            "fixture",
+        ],
+        check=True,
+        capture_output=True,
+    )
 
 
 @pytest.mark.unit
@@ -1010,14 +1041,11 @@ def test_re_v2_shadow_creation_pins_l0_without_dispatch(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from echelon.cli import _cmd_re_run
+    from echelon.cli import _cmd_re_run, _load_re_v2_snapshot
     from harness.re_v2.events import EventStore
     from harness.re_v2.run_store import ReV2Paths, load_run_manifest
 
-    (tmp_path / "pyproject.toml").write_text(
-        "[project]\nname = 'fixture'\nversion = '0.1.0'\n",
-        encoding="utf-8",
-    )
+    _init_clean_v2_source(tmp_path)
     external_home = tmp_path.parent / f"{tmp_path.name}-echelon-home"
     monkeypatch.setenv("ECHELON_HOME", str(external_home))
     monkeypatch.chdir(tmp_path)
@@ -1033,7 +1061,15 @@ def test_re_v2_shadow_creation_pins_l0_without_dispatch(
     manifest = load_run_manifest(run_dir)
     events = EventStore(ReV2Paths.for_run(run_dir)).replay()
     assert manifest.engine == "re-v2"
-    assert manifest.engine_protocol_version == "2.0"
+    assert manifest.engine_protocol_version == "2.1"
+    assert manifest.source_snapshot_kind == "workspace-git-composite"
+    from harness.re_v2.snapshot import load_snapshot_manifest
+
+    snapshot = _load_re_v2_snapshot(tmp_path, manifest)
+    components = load_snapshot_manifest(snapshot).components or ()
+    assert [(component.source_id, component.workspace_path) for component in components] == [
+        (".", ".")
+    ]
     assert manifest.requested_goals == ("inventory",)
     assert manifest.provider_contract["provider"] == "deterministic-inventory"
     assert manifest.artifact_policy_versions == {"L0": "egr-164-v1"}
@@ -1043,6 +1079,63 @@ def test_re_v2_shadow_creation_pins_l0_without_dispatch(
     assert "SHADOW PLAN" in output
     assert "generate" in output
     assert "RE V2 — ACTIVE" in output
+
+
+@pytest.mark.unit
+def test_re_v2_dirty_polyrepo_fails_before_run_or_pointer_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _cmd_re_run
+
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    _init_clean_v2_source(first)
+    _init_clean_v2_source(second)
+    (second / "dirty.py").write_text("dirty\n", encoding="utf-8")
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    pointer = runs / ".current-re"
+    pointer.write_text("re-existing\n", encoding="utf-8")
+    external_home = tmp_path.parent / f"{tmp_path.name}-echelon-home"
+    monkeypatch.setenv("ECHELON_HOME", str(external_home))
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(SystemExit) as exc:
+        _cmd_re_run(["--engine", "v2", "--shadow"])
+
+    assert exc.value.code == 2
+    assert pointer.read_text(encoding="utf-8") == "re-existing\n"
+    assert sorted(path.name for path in runs.iterdir()) == [".current-re"]
+    error = capsys.readouterr().err
+    assert "second" in error and "untracked" in error
+    assert all(word in error.lower() for word in ("stash", "commit", "revert"))
+
+
+@pytest.mark.unit
+def test_re_v2_partition_binding_rejects_forged_workspace_source_set(
+    tmp_path: Path,
+) -> None:
+    from echelon.cli import _re_v2_partition_manifest_id
+    from harness.re_v2.workspace_snapshot import capture_workspace_snapshot
+
+    source = tmp_path / "source"
+    _init_clean_v2_source(source)
+    declared = SimpleNamespace(id="source", path="source", git_role="source")
+    snapshot = capture_workspace_snapshot(
+        tmp_path,
+        (declared,),
+        tmp_path.parent / f"{tmp_path.name}-snapshots",
+    )
+    forged = SimpleNamespace(
+        sources=(SimpleNamespace(id="other", path="other", git_role="source"),)
+    )
+
+    with pytest.raises(ValueError, match="source set"):
+        _re_v2_partition_manifest_id(forged, snapshot)
+
+    assert not (tmp_path / "runs").exists()
 
 
 @pytest.mark.unit
@@ -1057,10 +1150,7 @@ def test_re_v2_live_creation_certifies_registered_l0_without_synthesis(
     from harness.re_v2.planner import build_initial_inventory_graph
     from harness.re_v2.run_store import ReV2Paths, load_run_manifest
 
-    (tmp_path / "pyproject.toml").write_text(
-        "[project]\nname = 'fixture'\nversion = '0.1.0'\n",
-        encoding="utf-8",
-    )
+    _init_clean_v2_source(tmp_path)
     external_home = tmp_path.parent / f"{tmp_path.name}-echelon-home"
     monkeypatch.setenv("ECHELON_HOME", str(external_home))
     monkeypatch.chdir(tmp_path)
@@ -1102,10 +1192,7 @@ def test_re_v2_continue_authorizes_only_resource_ceiling_and_resumes(
     from harness.re_v2.events import EventStore
     from harness.re_v2.run_store import ReV2Paths, load_run_manifest
 
-    (tmp_path / "pyproject.toml").write_text(
-        "[project]\nname = 'fixture'\nversion = '0.1.0'\n",
-        encoding="utf-8",
-    )
+    _init_clean_v2_source(tmp_path)
     external_home = tmp_path.parent / f"{tmp_path.name}-echelon-home"
     monkeypatch.setenv("ECHELON_HOME", str(external_home))
     monkeypatch.chdir(tmp_path)
@@ -1218,6 +1305,39 @@ def _create_v2_run_with_provider_contract(
         run_dir.name + "\n", encoding="utf-8"
     )
     return run_dir
+
+
+@pytest.mark.unit
+def test_re_v2_continue_preserves_legacy_content_snapshot_routing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _cmd_re_continue
+    from harness.re_v2.events import EventStore
+    from harness.re_v2.run_store import ReV2Paths, load_run_manifest
+
+    (tmp_path / "pyproject.toml").write_text("original\n", encoding="utf-8")
+    external_home = tmp_path.parent / f"{tmp_path.name}-legacy-home"
+    monkeypatch.setenv("ECHELON_HOME", str(external_home))
+    run_dir = _create_v2_run_with_provider_contract(
+        tmp_path,
+        external_home / "re-v2" / "snapshots",
+        {
+            "provider": "deterministic-inventory",
+            "provider_protocol_version": "re-v2-l0-v1",
+            "result_contract_id": "deterministic-inventory-v1",
+        },
+    )
+    before = load_run_manifest(run_dir)
+    (tmp_path / "pyproject.toml").write_text("changed after capture\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    _cmd_re_continue([])
+
+    assert load_run_manifest(run_dir) == before
+    assert EventStore(ReV2Paths.for_run(run_dir)).replay()[-1].type == "run_completed"
+    assert "RE V2 — COMPLETE" in capsys.readouterr().out
 
 
 @pytest.mark.unit
