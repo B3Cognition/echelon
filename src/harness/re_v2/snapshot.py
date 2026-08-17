@@ -284,7 +284,11 @@ def _capture_git_worktree_locked(
         ):
             cleanup_error, deregistered, preserved = (
                 _resolve_failed_git_publication(
-                    source, destination, manifest, registered
+                    source,
+                    destination,
+                    manifest,
+                    registered,
+                    fault_hook=fault_hook,
                 )
             )
         else:
@@ -306,8 +310,12 @@ def _capture_git_worktree_locked(
             _remove_tree(temporary)
 
 
-def _cleanup_git_failure(source: Path, registered: Path | None, bundle: Path | None) -> tuple[Exception | None, bool]:
+def _cleanup_git_failure(source: Path | None, registered: Path | None, bundle: Path | None) -> tuple[Exception | None, bool]:
     if registered is not None:
+        if source is None:
+            return ReV2SnapshotError(
+                "registered Git worktree is missing its source repository"
+            ), False
         try:
             if bundle is not None and os.path.lexists(bundle):
                 _make_owned_writable(bundle)
@@ -327,6 +335,26 @@ def _resolve_failed_git_publication(
     destination: Path,
     manifest: SnapshotManifest,
     registered: Path | None,
+    *,
+    fault_hook: FaultHook | None,
+) -> tuple[Exception | None, bool, bool]:
+    with _snapshot_lock(destination, manifest.snapshot_id):
+        return _resolve_failed_git_publication_locked(
+            source,
+            destination,
+            manifest,
+            registered,
+            fault_hook=fault_hook,
+        )
+
+
+def _resolve_failed_git_publication_locked(
+    source: Path | None,
+    destination: Path,
+    manifest: SnapshotManifest,
+    registered: Path | None,
+    *,
+    fault_hook: FaultHook | None,
 ) -> tuple[Exception | None, bool, bool]:
     bundle = destination / manifest.snapshot_id
     captured = CapturedSnapshot(
@@ -335,45 +363,55 @@ def _resolve_failed_git_publication(
         bundle / "source",
         bundle / _MANIFEST_NAME,
     )
-    with _snapshot_lock(destination, manifest.snapshot_id):
-        marker = _commit_marker_path(destination, manifest.snapshot_id)
-        if os.path.lexists(marker):
-            _recover_marker_temporary_links(destination, manifest.snapshot_id)
+    marker = _commit_marker_path(destination, manifest.snapshot_id)
+    if os.path.lexists(marker):
+        _recover_marker_temporary_links(destination, manifest.snapshot_id)
+        try:
+            validate_source_snapshot(captured)
+        except (OSError, ReV2SnapshotError) as validation_error:
+            owner = _read_owner(bundle)
+            if not _owner_matches(owner, manifest, source):
+                return validation_error, False, True
+            marker_root = marker.parent
+            if marker_root.is_symlink() or not marker_root.is_dir():
+                return ReV2SnapshotError(
+                    "snapshot commit directory is unsafe during cleanup"
+                ), False, True
             try:
-                validate_source_snapshot(captured)
-            except (OSError, ReV2SnapshotError) as validation_error:
-                owner = _read_owner(bundle)
-                if not _owner_matches(owner, manifest, source):
-                    return validation_error, False, True
-                try:
-                    expected = canonical_json_bytes(_marker_payload(captured))
-                    marker_info = marker.lstat()
-                    if (
-                        not stat.S_ISREG(marker_info.st_mode)
-                        or marker.read_bytes() != expected
-                    ):
-                        return validation_error, False, True
-                    marker.unlink()
-                    _fsync_directory(marker.parent)
-                except OSError as cleanup_error:
-                    return cleanup_error, False, True
-            else:
-                try:
-                    _fsync_directory(marker.parent)
-                    _fsync_directory(destination)
-                except OSError as durability_error:
-                    return durability_error, False, True
-                return None, False, True
-
-        cleanup_error, deregistered = _cleanup_git_failure(
-            source, registered, bundle
-        )
-        if cleanup_error is None:
+                marker.unlink()
+                _fault(fault_hook, "marker_cleanup_unlinked")
+                _fsync_directory(marker_root)
+                _fault(fault_hook, "marker_cleanup_root_fsynced")
+            except (OSError, ReV2SnapshotError) as cleanup_error:
+                return cleanup_error, False, True
+        else:
             try:
+                _fsync_directory(marker.parent)
                 _fsync_directory(destination)
-            except OSError as exc:
-                return exc, deregistered, False
-        return cleanup_error, deregistered, False
+            except OSError as durability_error:
+                return durability_error, False, True
+            return None, False, True
+
+    if os.path.lexists(marker):
+        return ReV2SnapshotError(
+            "refusing to remove snapshot bundle while its marker remains"
+        ), False, True
+    owner = _read_owner(bundle)
+    if not _owner_matches(owner, manifest, source):
+        return ReV2SnapshotError(
+            "refusing to remove snapshot bundle without its exact owner"
+        ), False, True
+    cleanup_error, deregistered = _cleanup_git_failure(
+        source, registered, bundle
+    )
+    if cleanup_error is None:
+        _fault(fault_hook, "bundle_cleanup_removed")
+        try:
+            _fsync_directory(destination)
+            _fault(fault_hook, "bundle_cleanup_destination_fsynced")
+        except OSError as exc:
+            return exc, deregistered, False
+    return cleanup_error, deregistered, False
 
 
 def _publish_staged_bundle(
@@ -386,14 +424,24 @@ def _publish_staged_bundle(
 ) -> CapturedSnapshot:
     with _snapshot_lock(destination, manifest.snapshot_id):
         _cleanup_owned_stages(destination, manifest, source_repo, exclude=temporary)
-        existing = _existing_snapshot(destination, manifest, source_repo)
+        existing = _existing_snapshot(
+            destination,
+            manifest,
+            source_repo,
+            fault_hook=fault_hook,
+        )
         if existing is not None:
             return existing
         bundle = destination / manifest.snapshot_id
         try:
             _rename_noreplace(temporary, bundle)
         except FileExistsError:
-            existing = _existing_snapshot(destination, manifest, source_repo)
+            existing = _existing_snapshot(
+                destination,
+                manifest,
+                source_repo,
+                fault_hook=fault_hook,
+            )
             if existing is not None:
                 return existing
             raise ReV2SnapshotError(
@@ -424,6 +472,8 @@ def _existing_snapshot(
     destination: Path,
     manifest: SnapshotManifest,
     source_repo: Path | None,
+    *,
+    fault_hook: FaultHook | None,
 ) -> CapturedSnapshot | None:
     bundle = destination / manifest.snapshot_id
     marker = _commit_marker_path(destination, manifest.snapshot_id)
@@ -455,12 +505,26 @@ def _existing_snapshot(
             _repair_git_worktree(source_repo, captured.read_root, manifest)
         _validate_snapshot_payload(captured)
         _fsync_tree(bundle)
-        _publish_commit_marker(captured, fault_hook=None)
+        _publish_commit_marker(captured, fault_hook=fault_hook)
         validate_source_snapshot(captured)
         return captured
-    except (OSError, ReV2SnapshotError):
-        _remove_owned_bundle(bundle, owner)
-        _fsync_directory(destination)
+    except (OSError, ReV2SnapshotError) as adoption_error:
+        cleanup_error, _deregistered, preserved = (
+            _resolve_failed_git_publication_locked(
+                source_repo,
+                destination,
+                manifest,
+                captured.read_root if source_repo is not None else None,
+                fault_hook=fault_hook,
+            )
+        )
+        if preserved and cleanup_error is None:
+            return captured
+        if cleanup_error is not None:
+            raise ReV2SnapshotError(
+                f"snapshot adoption failed: {adoption_error}; "
+                f"cleanup failed: {cleanup_error}"
+            ) from adoption_error
         return None
 
 
@@ -516,6 +580,7 @@ def _write_bootstrap_owner(
 ) -> None:
     _write_new_file(bundle / _OWNER_NAME, canonical_json_bytes(owner))
     _fsync_directory(bundle)
+    _fsync_directory(bundle.parent)
 
 
 def _replace_owner(
@@ -673,10 +738,7 @@ def _snapshot_lock(destination: Path, snapshot_id: str) -> Iterator[None]:
 def _source_capture_lock(
     destination: Path, bootstrap_owner: dict[str, object]
 ) -> Iterator[None]:
-    identity = {
-        key: bootstrap_owner[key]
-        for key in ("exclusions", "kind", "source_commit", "source_repo")
-    }
+    identity = {"source_repo": bootstrap_owner["source_repo"]}
     with _advisory_lock(
         destination, _SOURCE_LOCK_DIRECTORY, content_digest(identity)
     ):
@@ -723,11 +785,35 @@ def _source_owner_matches(
     owner: dict[str, object] | None,
     bootstrap_owner: dict[str, object],
 ) -> bool:
-    if owner is None or owner.get("phase") not in {"bootstrap", "final"}:
+    expected_keys = {
+        "exclusions",
+        "kind",
+        "manifest_digest",
+        "owner_version",
+        "phase",
+        "snapshot_id",
+        "source_commit",
+        "source_repo",
+    }
+    if owner is None or set(owner) != expected_keys:
         return False
-    return all(
-        owner.get(key) == bootstrap_owner.get(key)
-        for key in ("exclusions", "kind", "owner_version", "source_commit", "source_repo")
+    phase = owner.get("phase")
+    exclusions = owner.get("exclusions")
+    if (
+        phase not in {"bootstrap", "final"}
+        or owner.get("kind") != "git-worktree"
+        or owner.get("owner_version") != _OWNER_VERSION
+        or owner.get("source_repo") != bootstrap_owner.get("source_repo")
+        or not isinstance(owner.get("source_commit"), str)
+        or not isinstance(exclusions, list)
+        or not all(isinstance(value, str) for value in exclusions)
+    ):
+        return False
+    if phase == "bootstrap":
+        return owner.get("snapshot_id") is None and owner.get("manifest_digest") is None
+    return (
+        isinstance(owner.get("snapshot_id"), str)
+        and isinstance(owner.get("manifest_digest"), str)
     )
 
 

@@ -110,9 +110,14 @@ def _nested_submodule_source(tmp_path: Path) -> tuple[Path, str, str]:
 
 
 def _capture_in_crashing_process(
-    source: Path, destination: Path, fault_point: str
+    source: Path,
+    destination: Path,
+    fault_point: str,
+    *,
+    exclusions: tuple[str, ...] = (),
 ) -> subprocess.CompletedProcess[str]:
     script = """
+import json
 import os
 import sys
 from pathlib import Path
@@ -128,6 +133,64 @@ def fault(observed: str) -> None:
 capture_source_snapshot(
     Path(sys.argv[1]),
     Path(sys.argv[2]),
+    exclusions=tuple(json.loads(sys.argv[4])),
+    fault_hook=fault,
+)
+"""
+    environment = os.environ.copy()
+    source_path = str(Path(__file__).parents[2] / "src")
+    environment["PYTHONPATH"] = os.pathsep.join(
+        value
+        for value in (source_path, environment.get("PYTHONPATH", ""))
+        if value
+    )
+    return subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            script,
+            str(source),
+            str(destination),
+            fault_point,
+            json.dumps(exclusions),
+        ],
+        check=False,
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+
+def _crash_during_invalid_adoption(
+    source: Path, destination: Path, cleanup_point: str
+) -> subprocess.CompletedProcess[str]:
+    script = """
+import os
+import stat
+import sys
+from pathlib import Path
+
+from harness.re_v2.snapshot import capture_source_snapshot
+
+destination = Path(sys.argv[2])
+cleanup_point = sys.argv[3]
+
+def fault(point: str) -> None:
+    if point == "marker_destination_fsynced":
+        bundles = list(destination.glob("sha256:*"))
+        if len(bundles) != 1:
+            raise RuntimeError("expected one adoption bundle")
+        target = bundles[0] / "source/api.py"
+        target.chmod(target.stat().st_mode | stat.S_IWUSR)
+        target.write_text("corrupt during adoption\\n", encoding="utf-8")
+        raise OSError("injected invalid adoption")
+    if point == cleanup_point:
+        os._exit(75)
+
+capture_source_snapshot(
+    Path(sys.argv[1]),
+    destination,
     exclusions=(),
     fault_hook=fault,
 )
@@ -140,13 +203,215 @@ capture_source_snapshot(
         if value
     )
     return subprocess.run(
-        [sys.executable, "-c", script, str(source), str(destination), fault_point],
+        [
+            sys.executable,
+            "-c",
+            script,
+            str(source),
+            str(destination),
+            cleanup_point,
+        ],
         check=False,
         env=environment,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
+
+
+@pytest.mark.unit
+def test_git_bootstrap_owner_and_parent_are_durable_before_worktree_add(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Removing the destination fsync must expose Git before its owner is durable."""
+    source = tmp_path / "source"
+    _init_git_repository(source)
+    (source / "api.py").write_text("VALUE = 1\n", encoding="utf-8")
+    _commit_all(source, "source")
+    destination = tmp_path / "snapshots"
+    events: list[tuple[str, Path | None]] = []
+
+    from harness.re_v2 import snapshot as snapshot_module
+
+    real_write_new_file = snapshot_module._write_new_file
+    real_fsync_directory = snapshot_module._fsync_directory
+    real_run_git = snapshot_module.run_git
+
+    def record_write(path: Path, payload: bytes) -> None:
+        real_write_new_file(path, payload)
+        if path.name == ".snapshot-owner.json":
+            events.append(("owner", path.parent))
+
+    def record_fsync(path: Path) -> None:
+        real_fsync_directory(path)
+        events.append(("fsync", path))
+
+    def record_git(args: list[str]) -> str:
+        if "worktree" in args and "add" in args:
+            events.append(("git-add", None))
+        return real_run_git(args)
+
+    monkeypatch.setattr(snapshot_module, "_write_new_file", record_write)
+    monkeypatch.setattr(snapshot_module, "_fsync_directory", record_fsync)
+    monkeypatch.setattr(snapshot_module, "run_git", record_git)
+
+    capture_source_snapshot(source, destination, exclusions=())
+
+    git_add_index = events.index(("git-add", None))
+    prior = events[:git_add_index]
+    owner_index = next(
+        index for index, event in enumerate(prior) if event[0] == "owner"
+    )
+    stage = prior[owner_index][1]
+    assert stage is not None
+    stage_fsync_index = prior.index(("fsync", stage))
+    destination_fsync_index = prior.index(("fsync", destination))
+    assert owner_index < stage_fsync_index < destination_fsync_index
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("fault_point", ["worktree_added", "worktree_moved"])
+def test_new_commit_capture_cleans_old_source_owned_stage(
+    tmp_path: Path, fault_point: str
+) -> None:
+    """A commit/exclusion-specific source lock strands prior owned worktrees."""
+    source = tmp_path / "source"
+    _init_git_repository(source)
+    (source / "api.py").write_text("VALUE = 1\n", encoding="utf-8")
+    first_commit = _commit_all(source, "first")
+    destination = tmp_path / "snapshots"
+
+    crashed = _capture_in_crashing_process(
+        source, destination, fault_point, exclusions=()
+    )
+    assert crashed.returncode == 74, crashed.stderr
+    assert first_commit in _git(source, "worktree", "list", "--porcelain")
+
+    (source / "api.py").write_text("VALUE = 2\n", encoding="utf-8")
+    (source / "excluded.txt").write_text("excluded\n", encoding="utf-8")
+    _commit_all(source, "second")
+    captured = capture_source_snapshot(
+        source, destination, exclusions=("excluded.txt",)
+    )
+
+    validate_source_snapshot(captured)
+    worktrees = _git(source, "worktree", "list", "--porcelain")
+    assert ".snapshot-stage-" not in worktrees
+    assert not list(destination.glob(".snapshot-stage-*"))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("failed_directory", ["marker", "destination"])
+def test_adoption_fsync_failure_preserves_valid_committed_pair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failed_directory: str,
+) -> None:
+    """Adoption must not replace a valid pair after a publication fsync error."""
+    source = tmp_path / "source"
+    _init_git_repository(source)
+    (source / "api.py").write_text("VALUE = 1\n", encoding="utf-8")
+    _commit_all(source, "source")
+    destination = tmp_path / "snapshots"
+    crashed = _capture_in_crashing_process(source, destination, "final_promoted")
+    assert crashed.returncode == 74, crashed.stderr
+    bundle = next(destination.glob("sha256:*"))
+    original_inode = bundle.stat().st_ino
+
+    from harness.re_v2 import snapshot as snapshot_module
+
+    real_fsync_directory = snapshot_module._fsync_directory
+    failed = False
+
+    def fail_once(path: Path) -> None:
+        nonlocal failed
+        marker = destination / ".snapshot-commits" / f"{bundle.name}.json"
+        target = marker.parent if failed_directory == "marker" else destination
+        if not failed and marker.exists() and path == target:
+            failed = True
+            raise OSError(f"injected {failed_directory} fsync failure")
+        real_fsync_directory(path)
+
+    monkeypatch.setattr(snapshot_module, "_fsync_directory", fail_once)
+    captured = capture_source_snapshot(source, destination, exclusions=())
+
+    assert failed
+    assert captured.manifest_path.parent.stat().st_ino == original_inode
+    validate_source_snapshot(captured)
+    assert not list(destination.glob(".snapshot-stage-*"))
+
+
+@pytest.mark.unit
+def test_copy_adoption_fsync_failure_preserves_valid_committed_pair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Marker-aware adoption applies to owned content snapshots as well as Git."""
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "api.py").write_text("VALUE = 1\n", encoding="utf-8")
+    destination = tmp_path / "snapshots"
+    crashed = _capture_in_crashing_process(source, destination, "final_promoted")
+    assert crashed.returncode == 74, crashed.stderr
+    bundle = next(destination.glob("sha256:*"))
+    original_inode = bundle.stat().st_ino
+
+    from harness.re_v2 import snapshot as snapshot_module
+
+    real_fsync_directory = snapshot_module._fsync_directory
+    failed = False
+
+    def fail_once(path: Path) -> None:
+        nonlocal failed
+        marker = destination / ".snapshot-commits" / f"{bundle.name}.json"
+        if not failed and marker.exists() and path == marker.parent:
+            failed = True
+            raise OSError("injected content marker fsync failure")
+        real_fsync_directory(path)
+
+    monkeypatch.setattr(snapshot_module, "_fsync_directory", fail_once)
+    captured = capture_source_snapshot(source, destination, exclusions=())
+
+    assert failed
+    assert captured.manifest_path.parent.stat().st_ino == original_inode
+    validate_source_snapshot(captured)
+    assert not list(destination.glob(".snapshot-stage-*"))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "cleanup_point",
+    [
+        "marker_cleanup_unlinked",
+        "marker_cleanup_root_fsynced",
+        "bundle_cleanup_removed",
+        "bundle_cleanup_destination_fsynced",
+    ],
+)
+def test_invalid_adoption_crash_at_cleanup_boundary_is_retryable(
+    tmp_path: Path, cleanup_point: str
+) -> None:
+    """Every marker-first cleanup crash must remain retryable without poison."""
+    source = tmp_path / "source"
+    _init_git_repository(source)
+    (source / "api.py").write_text("VALUE = 1\n", encoding="utf-8")
+    _commit_all(source, "source")
+    destination = tmp_path / "snapshots"
+    promoted = _capture_in_crashing_process(source, destination, "final_promoted")
+    assert promoted.returncode == 74, promoted.stderr
+
+    crashed = _crash_during_invalid_adoption(
+        source, destination, cleanup_point
+    )
+    assert crashed.returncode == 75, crashed.stderr
+
+    captured = capture_source_snapshot(source, destination, exclusions=())
+    validate_source_snapshot(captured)
+    markers = list(destination.glob(".snapshot-commits/*.json"))
+    assert markers == [_snapshot_marker(captured)]
+    assert not list(destination.glob(".snapshot-stage-*"))
+    worktrees = _git(source, "worktree", "list", "--porcelain")
+    assert worktrees.count(f"worktree {captured.read_root}") == 1
+    assert ".snapshot-stage-" not in worktrees
 
 
 @pytest.mark.unit
