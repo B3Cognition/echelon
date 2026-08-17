@@ -4,11 +4,26 @@ from __future__ import annotations
 
 import re
 import subprocess
+import shutil
+import tempfile
+from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Iterable
 
-from .snapshot import ReV2SnapshotError
+from .canonical import content_digest
+from .snapshot import (
+    CapturedSnapshot,
+    FaultHook,
+    ReV2SnapshotError,
+    SnapshotComponent,
+    _copy_regular_files,
+    _inventory,
+    _safe_destination_root,
+    lock_workspace_source_repositories,
+    materialize_pinned_git_tree,
+    publish_workspace_snapshot_tree,
+)
 
 _SAFE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]*\Z")
 
@@ -42,6 +57,142 @@ class _ResolvedSource:
     path: Path
     repository: Path
     repository_path: str
+
+
+def capture_workspace_snapshot(
+    workspace_root: Path,
+    sources: Iterable[object],
+    destination_root: Path,
+    *,
+    fault_hook: FaultHook | None = None,
+) -> CapturedSnapshot:
+    """Freeze exactly the clean Git trees declared as workspace sources."""
+    declared = tuple(sources)
+    initial = plan_clean_workspace_sources(workspace_root, declared)
+    destination = _safe_destination_root(destination_root, initial.workspace_root)
+
+    with lock_workspace_source_repositories(destination, initial.repositories):
+        locked = plan_clean_workspace_sources(workspace_root, declared)
+        if locked != initial:
+            raise ReV2WorkspaceSourceError(
+                "declared sources changed during capture; retry from a clean workspace"
+            )
+
+        prepared_holder = Path(
+            tempfile.mkdtemp(prefix=".workspace-prepare-", dir=destination)
+        )
+        prepared = prepared_holder / "source"
+        try:
+            with ExitStack() as stack:
+                materialized: dict[
+                    Path, tuple[Path, tuple[dict[str, str], ...]]
+                ] = {}
+                for repository in locked.repositories:
+                    materialized[repository] = stack.enter_context(
+                        materialize_pinned_git_tree(
+                            repository,
+                            _repository_commit(locked, repository),
+                            destination,
+                            fault_hook=fault_hook,
+                        )
+                    )
+
+                components: list[SnapshotComponent] = []
+                for proof in locked.sources:
+                    repository_tree, submodules = materialized[proof.repository]
+                    source_tree = (
+                        repository_tree
+                        if proof.repository_path == "."
+                        else repository_tree.joinpath(*proof.repository_path.split("/"))
+                    )
+                    if source_tree.is_symlink() or not source_tree.is_dir():
+                        raise ReV2WorkspaceSourceError(
+                            f"source {proof.source_id!r} is missing from its pinned Git tree"
+                        )
+                    entries = _inventory(source_tree, (".git",))
+                    target = (
+                        prepared
+                        if proof.workspace_path == "."
+                        else prepared.joinpath(*proof.workspace_path.split("/"))
+                    )
+                    if target.exists() or target.is_symlink():
+                        raise ReV2WorkspaceSourceError(
+                            f"source {proof.source_id!r} collides in the composite tree"
+                        )
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    _copy_regular_files(source_tree, target, entries)
+                    component_submodules = _component_submodules(
+                        proof.repository_path,
+                        submodules,
+                    )
+                    components.append(
+                        SnapshotComponent(
+                            source_id=proof.source_id,
+                            git_role=proof.git_role,
+                            workspace_path=proof.workspace_path,
+                            repository_path=proof.repository_path,
+                            commit=proof.commit,
+                            submodules=component_submodules,
+                            tree_digest=content_digest(
+                                [entry.to_json_dict() for entry in entries]
+                            ),
+                        )
+                    )
+
+                _fault(fault_hook, "before_publish")
+                try:
+                    final = plan_clean_workspace_sources(workspace_root, declared)
+                except ReV2WorkspaceSourceError as exc:
+                    raise ReV2WorkspaceSourceError(
+                        f"declared sources changed during capture: {exc}"
+                    ) from exc
+                if final != locked:
+                    raise ReV2WorkspaceSourceError(
+                        "declared sources changed during capture; retry from a clean workspace"
+                    )
+                return publish_workspace_snapshot_tree(
+                    prepared,
+                    destination,
+                    tuple(components),
+                    fault_hook=fault_hook,
+                )
+        finally:
+            if prepared_holder.exists():
+                shutil.rmtree(prepared_holder)
+
+
+def _repository_commit(plan: WorkspaceCapturePlan, repository: Path) -> str:
+    commits = {
+        proof.commit for proof in plan.sources if proof.repository == repository
+    }
+    if len(commits) != 1:
+        raise ReV2WorkspaceSourceError(
+            f"repository has inconsistent pinned commits: {repository}"
+        )
+    return commits.pop()
+
+
+def _component_submodules(
+    repository_path: str,
+    submodules: tuple[dict[str, str], ...],
+) -> tuple[tuple[str, str], ...]:
+    prefix = "" if repository_path == "." else repository_path + "/"
+    selected: list[tuple[str, str]] = []
+    for submodule in submodules:
+        path = submodule["path"]
+        if repository_path == ".":
+            relative = path
+        elif path.startswith(prefix):
+            relative = path[len(prefix) :]
+        else:
+            continue
+        selected.append((relative, submodule["commit"]))
+    return tuple(sorted(selected))
+
+
+def _fault(fault_hook: FaultHook | None, point: str) -> None:
+    if fault_hook is not None:
+        fault_hook(point)
 
 
 def plan_clean_workspace_sources(

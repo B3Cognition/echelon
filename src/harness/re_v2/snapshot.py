@@ -13,7 +13,7 @@ import sys
 import tempfile
 import uuid
 import re
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable, Iterator, Literal, TypeVar
@@ -157,6 +157,98 @@ def capture_source_snapshot(
     if commit is None:
         return _capture_copy(source, destination, excluded, fault_hook)
     return _capture_git_worktree(source, destination, excluded, commit, fault_hook)
+
+
+@contextmanager
+def materialize_pinned_git_tree(
+    repository: Path,
+    commit: str,
+    staging_parent: Path,
+    *,
+    fault_hook: FaultHook | None = None,
+) -> Iterator[tuple[Path, tuple[dict[str, str], ...]]]:
+    """Materialize a pinned repository and its local submodules temporarily."""
+    source = _safe_source_root(repository)
+    if not _GIT_OBJECT_RE.fullmatch(commit):
+        raise ReV2SnapshotError("pinned Git commit is not a canonical object ID")
+    if staging_parent.is_symlink() or not staging_parent.is_dir():
+        raise ReV2SnapshotError("Git materialization parent is not a safe directory")
+    holder = Path(tempfile.mkdtemp(prefix=f"{_STAGE_PREFIX}worktree-", dir=staging_parent))
+    worktree = holder / "source"
+    registered = False
+    cleanup_error: Exception | None = None
+    try:
+        run_git(
+            ["-C", str(source), "worktree", "add", "--detach", str(worktree), commit]
+        )
+        registered = True
+        _fault(fault_hook, "worktree_added")
+        submodule_sources = _submodule_sources(source, commit)
+        _materialize_submodules(
+            worktree,
+            submodule_sources,
+            fault_hook=fault_hook,
+        )
+        identities = tuple(
+            {"commit": item.commit, "path": item.path}
+            for item in sorted(submodule_sources, key=lambda item: item.path)
+        )
+        yield worktree, identities
+    finally:
+        if registered:
+            try:
+                run_git(
+                    [
+                        "-C",
+                        str(source),
+                        "worktree",
+                        "remove",
+                        "--force",
+                        str(worktree),
+                    ]
+                )
+            except Exception as exc:
+                try:
+                    run_git(
+                        ["-C", str(source), "worktree", "repair", str(worktree)]
+                    )
+                    run_git(
+                        [
+                            "-C",
+                            str(source),
+                            "worktree",
+                            "remove",
+                            "--force",
+                            str(worktree),
+                        ]
+                    )
+                except Exception as retry_exc:
+                    cleanup_error = retry_exc
+                else:
+                    cleanup_error = None
+        if holder.exists() and cleanup_error is None:
+            _remove_tree(holder)
+        if cleanup_error is not None:
+            raise ReV2SnapshotError(
+                f"failed to clean pinned Git worktree: {cleanup_error}"
+            ) from cleanup_error
+
+
+@contextmanager
+def lock_workspace_source_repositories(
+    destination: Path,
+    repositories: tuple[Path, ...],
+) -> Iterator[None]:
+    """Serialize captures for a canonical set of source repositories."""
+    with ExitStack() as stack:
+        for repository in repositories:
+            stack.enter_context(
+                _source_capture_lock(
+                    destination,
+                    {"source_repo": str(repository.resolve())},
+                )
+            )
+        yield
 
 
 def publish_workspace_snapshot_tree(

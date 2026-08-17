@@ -8,8 +8,10 @@ from typing import Mapping
 import pytest
 
 from echelon.workspace_model import SourceRoot
+from harness.re_v2.snapshot import ReV2SnapshotError, load_snapshot_manifest
 from harness.re_v2.workspace_snapshot import (
     ReV2WorkspaceSourceError,
+    capture_workspace_snapshot,
     plan_clean_workspace_sources,
 )
 
@@ -183,3 +185,140 @@ def test_preflight_rejects_uninitialized_submodule(tmp_path: Path) -> None:
 
     with pytest.raises(ReV2WorkspaceSourceError, match="submodule"):
         plan_clean_workspace_sources(tmp_path, (_source("parent", "parent"),))
+
+
+@pytest.mark.unit
+def test_composite_capture_uses_declared_repositories_not_orchestration_root(
+    tmp_path: Path,
+) -> None:
+    workspace = _clean_repo(
+        tmp_path / "workspace",
+        {
+            ".gitignore": "/sources/*\n!/sources/README.md\n",
+            "sources/README.md": "repos\n",
+        },
+    )
+    tooling_link = workspace / ".claude" / "skills" / "tool" / "SKILL.md"
+    tooling_link.parent.mkdir(parents=True)
+    tooling_link.symlink_to("../../../../outside-skill.md")
+    first = _clean_repo(workspace / "sources" / "first", {"src/a.py": "a\n"})
+    second = _clean_repo(workspace / "sources" / "second", {"src/b.py": "b\n"})
+    ignored_link = second / "node_modules" / ".bin" / "tool"
+    (second / ".gitignore").write_text("node_modules/\n", encoding="utf-8")
+    _git(second, "add", ".gitignore")
+    _git(second, "commit", "-m", "ignore dependencies")
+    ignored_link.parent.mkdir(parents=True)
+    ignored_link.symlink_to("../tool.js")
+
+    snapshot = capture_workspace_snapshot(
+        workspace,
+        (_source("first", "sources/first"), _source("second", "sources/second")),
+        tmp_path / "snapshots",
+    )
+
+    assert (snapshot.read_root / "sources/first/src/a.py").read_text() == "a\n"
+    assert (snapshot.read_root / "sources/second/src/b.py").read_text() == "b\n"
+    assert not (snapshot.read_root / ".claude").exists()
+    assert not (snapshot.read_root / "sources/README.md").exists()
+    assert not (snapshot.read_root / "sources/second/node_modules").exists()
+
+
+@pytest.mark.unit
+def test_composite_capture_materializes_shared_repository_subtrees_once(
+    tmp_path: Path,
+) -> None:
+    workspace = _clean_repo(
+        tmp_path / "workspace",
+        {"apps/a/a.py": "a\n", "apps/b/b.py": "b\n", "outside.txt": "no\n"},
+    )
+
+    snapshot = capture_workspace_snapshot(
+        workspace,
+        (_source("a", "apps/a"), _source("b", "apps/b")),
+        tmp_path / "snapshots",
+    )
+
+    assert (snapshot.read_root / "apps/a/a.py").read_text() == "a\n"
+    assert (snapshot.read_root / "apps/b/b.py").read_text() == "b\n"
+    assert not (snapshot.read_root / "outside.txt").exists()
+    assert len(load_snapshot_manifest(snapshot).components or ()) == 2
+
+
+@pytest.mark.unit
+def test_composite_capture_materializes_recursive_submodule_identity_and_bytes(
+    tmp_path: Path,
+) -> None:
+    child = _clean_repo(tmp_path / "child", {"child.py": "child\n"})
+    workspace = _clean_repo(tmp_path / "workspace", {"parent.py": "parent\n"})
+    _git(
+        workspace,
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        str(child),
+        "modules/child",
+    )
+    _git(workspace, "commit", "-am", "add child")
+
+    snapshot = capture_workspace_snapshot(
+        workspace,
+        (_source("workspace", "."),),
+        tmp_path / "snapshots",
+    )
+    component = (load_snapshot_manifest(snapshot).components or ())[0]
+
+    assert (snapshot.read_root / "modules/child/child.py").read_text() == "child\n"
+    assert component.submodules == (
+        ("modules/child", _git(child, "rev-parse", "HEAD").strip()),
+    )
+
+
+@pytest.mark.unit
+def test_composite_capture_rejects_tracked_symlink_and_cleans_worktree(
+    tmp_path: Path,
+) -> None:
+    workspace = _clean_repo(tmp_path / "workspace", {"app.py": "pass\n"})
+    (workspace / "linked.py").symlink_to("app.py")
+    _git(workspace, "add", "linked.py")
+    _git(workspace, "commit", "-m", "track link")
+
+    with pytest.raises(ReV2SnapshotError, match="symlink"):
+        capture_workspace_snapshot(
+            workspace,
+            (_source("workspace", "."),),
+            tmp_path / "snapshots",
+        )
+
+    assert ".snapshot-stage-worktree-" not in _git(
+        workspace, "worktree", "list", "--porcelain"
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("mutation", ("untracked", "head"))
+def test_composite_capture_rejects_source_mutation_before_publish(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    workspace = _clean_repo(tmp_path / "workspace", {"app.py": "pass\n"})
+
+    def mutate(point: str) -> None:
+        if point != "before_publish":
+            return
+        (workspace / "late.py").write_text("late\n", encoding="utf-8")
+        if mutation == "head":
+            _git(workspace, "add", "late.py")
+            _git(workspace, "commit", "-m", "late")
+
+    with pytest.raises(ReV2WorkspaceSourceError, match="changed during capture"):
+        capture_workspace_snapshot(
+            workspace,
+            (_source("workspace", "."),),
+            tmp_path / "snapshots",
+            fault_hook=mutate,
+        )
+
+    assert ".snapshot-stage-worktree-" not in _git(
+        workspace, "worktree", "list", "--porcelain"
+    )
