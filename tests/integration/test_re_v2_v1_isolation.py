@@ -3,23 +3,23 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
 import json
+import os
 from pathlib import Path
 import stat
 
 import pytest
 from typer.testing import CliRunner
 
-from echelon.workspace_model import WorkspaceInfo, WorkspaceManifest
-from harness.re_controller import ReControllerResult
-from harness.re_fingerprint import ReFingerprintProfile
 from harness.re_lifecycle import ReLifecycleController
-from harness.re_planner import ReExecutionPlan
 from harness.re_profiles import builtin_re_profile
+from harness.squad_provider import SquadAgentResult
 from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.run_store import detect_re_engine
-from tests.unit.test_re_publication import write_valid_re_run
+from tests.unit.test_re_publication import _deep_spec, write_valid_re_run
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _write_json(path: Path, value: dict[str, object]) -> None:
@@ -130,121 +130,156 @@ def _legacy_fixture(project_root: Path, name: str) -> LegacyFixture:
 
 @dataclass
 class V1ProviderBoundary:
-    """The only fake: one completed provider/extraction response."""
+    """Script only the external provider boundary; controller behavior stays real."""
 
     provider_configs: list[object] = field(default_factory=list)
-    extraction_calls: list[dict[str, object]] = field(default_factory=list)
+    provider_phases: list[str] = field(default_factory=list)
+    provider_kwargs: list[dict[str, object]] = field(default_factory=list)
+    artifact_writes: list[str] = field(default_factory=list)
+    fail_once_at: str | None = None
+    failure_emitted: bool = False
 
 
-class _FixedDateTime(datetime):
-    @classmethod
-    def now(cls, tz=None):  # type: ignore[no-untyped-def]
-        return cls(2026, 8, 14, 12, 0, 0, tzinfo=tz)
+def _provider_phase_label(phase: str, prompt: str) -> str:
+    if phase != "re-extract-2-specify":
+        return phase
+    if "Source ID: `" in prompt:
+        return f"{phase}:source-domain"
+    if "workspace-synthesis" in prompt:
+        return f"{phase}:workspace-synthesis"
+    return f"{phase}:unknown-target"
 
 
-def _empty_manifest(root: Path) -> WorkspaceManifest:
-    return WorkspaceManifest(
-        schema_version=1,
-        workspace=WorkspaceInfo(
-            root=root,
-            git_role="orchestration",
-            git_present=False,
-        ),
-        sources=(),
-    )
+def _write_scripted_provider_artifacts(
+    prompt: str,
+    run_re_dir: Path,
+    boundary: V1ProviderBoundary,
+) -> None:
+    """Write only files explicitly assigned to the provider in its real prompt."""
+    if "Source ID: `" in prompt:
+        source_id = prompt.split("Source ID: `", 1)[1].split("`", 1)[0]
+        domain_id = prompt.split("Domain ID: `", 1)[1].split("`", 1)[0]
+        path = run_re_dir / "sources" / source_id / "specs" / domain_id / "spec.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_deep_spec(source_id, "v1"), encoding="utf-8")
+        boundary.artifact_writes.append(path.relative_to(run_re_dir).as_posix())
+        return
 
-
-def _work_plan(profile: ReFingerprintProfile) -> ReExecutionPlan:
-    return ReExecutionPlan(
-        policy="refresh-all",
-        requested_policy="refresh-all",
-        target_source="",
-        sources=(),
-        forbidden_source_roots=[],
-        profile=profile,
-        analysis_required=True,
-        workspace_synthesis_required=True,
-        publication_required=True,
-    )
+    marker = "Required workspace-synthesis output files (write every file exactly once):\n"
+    if marker not in prompt:
+        marker = (
+            "Repair only these missing workspace-synthesis output files. "
+            "Do not rewrite already-valid synthesis artifacts:\n"
+        )
+    if marker not in prompt:
+        return
+    for line in prompt.split(marker, 1)[1].splitlines():
+        if not line.startswith("- `"):
+            break
+        path = Path(line.removeprefix("- `").removesuffix("`"))
+        assert path.is_absolute()
+        resolved = path.resolve()
+        assert resolved.is_relative_to(run_re_dir.resolve())
+        relative = resolved.relative_to(run_re_dir.resolve()).as_posix()
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+        resolved.write_text(f"# Scripted provider artifact: {relative}\n", encoding="utf-8")
+        boundary.artifact_writes.append(relative)
 
 
 def _install_v1_provider_boundary(
     monkeypatch: pytest.MonkeyPatch,
     project_root: Path,
+    *,
+    fail_once_at: str | None = None,
 ) -> V1ProviderBoundary:
-    """Keep lifecycle/publication real and replace only external agent execution."""
-    boundary = V1ProviderBoundary()
-    profile = ReFingerprintProfile()
-    config = object()
+    """Install a real workspace and fake only ``SquadCliProvider`` execution."""
+    boundary = V1ProviderBoundary(fail_once_at=fail_once_at)
 
-    class RecordingProvider:
+    echelon_root = project_root / ".echelon"
+    echelon_root.mkdir()
+    (echelon_root / "config.yml").write_text(
+        "workspace:\n"
+        "  git_role: orchestration\n"
+        "  sources:\n"
+        "    - id: api\n"
+        "      path: sources/api\n"
+        "re:\n"
+        "  default_profile: fast\n",
+        encoding="utf-8",
+    )
+    (echelon_root / "runtime").symlink_to(
+        REPO_ROOT / "runtime",
+        target_is_directory=True,
+    )
+    (echelon_root / "prosaic").symlink_to(
+        REPO_ROOT / "prosaic",
+        target_is_directory=True,
+    )
+    source_root = project_root / "sources" / "api" / "src"
+    source_root.mkdir(parents=True)
+    for number in range(1, 6):
+        (source_root / f"file-{number}.ts").write_text(
+            f"export const value{number} = {number};\n",
+            encoding="utf-8",
+        )
+
+    class ScriptedSquadProvider:
+        supports_result_contract = True
+        supports_prompt_metadata = True
+        enforces_workspace_synthesis_boundary = True
+
         def __init__(self, received_config: object) -> None:
-            assert received_config is config
             boundary.provider_configs.append(received_config)
 
-    class CompleteExtraction:
-        def __init__(self, **kwargs: object) -> None:
-            boundary.extraction_calls.append(dict(kwargs))
-            self.run_dir = Path(kwargs["run_dir"])
+        def exec_agent(
+            self,
+            provider_project_root: str,
+            prompt: str,
+            **kwargs: object,
+        ) -> SquadAgentResult:
+            assert Path(provider_project_root).resolve() == project_root.resolve()
+            phase = prompt.split("RE phase: ", 1)[1].split("\n", 1)[0]
+            label = _provider_phase_label(phase, prompt)
+            boundary.provider_phases.append(label)
+            boundary.provider_kwargs.append(dict(kwargs))
+            if boundary.fail_once_at == label and not boundary.failure_emitted:
+                boundary.failure_emitted = True
+                return SquadAgentResult(
+                    exit_code=1,
+                    echelon_result=None,
+                    raw_output="scripted provider interruption",
+                    duration_ms=1,
+                    timed_out=False,
+                    provider_name="scripted-v1",
+                    model_name="fixture",
+                    stderr="scripted provider interruption",
+                )
+            run_re_dir = Path(
+                prompt.split("RE output directory: ", 1)[1]
+                .split("\n", 1)[0]
+                .strip("`")
+            )
+            _write_scripted_provider_artifacts(prompt, run_re_dir, boundary)
+            return SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "DONE",
+                    "state_updates": {},
+                    "journal_entries": [],
+                },
+                raw_output="",
+                duration_ms=1,
+                timed_out=False,
+                token_usage=10,
+                token_usage_details={"input_tokens": 8, "output_tokens": 2},
+                provider_name="scripted-v1",
+                model_name="fixture",
+            )
 
-        def run(self) -> ReControllerResult:
-            outer = json.loads(
-                (self.run_dir / "state.json").read_text(encoding="utf-8")
-            )
-            write_valid_re_run(
-                project_root,
-                ("api",),
-                run_id=self.run_dir.name,
-            )
-            _write_json(self.run_dir / "state.json", outer)
-            inner = json.loads(
-                (self.run_dir / "re" / "state.json").read_text(encoding="utf-8")
-            )
-            inner.update(
-                {
-                    "status": "done",
-                    "phase": "re-extract-6-complete",
-                    "coverage_threshold": 99,
-                    "resolution_threshold": 99,
-                    "re_workspace_synthesis_complete": True,
-                    "re_source_order": ["api"],
-                    "re_source_states": {
-                        "api": {"status": "passed", "coverage_pct": 100.0}
-                    },
-                    "re_execution_profile": outer["re_execution_profile"],
-                }
-            )
-            _write_json(self.run_dir / "re" / "state.json", inner)
-            return ReControllerResult(completed=True)
-
-    monkeypatch.setattr("harness.re_lifecycle.datetime", _FixedDateTime)
-    monkeypatch.setattr("harness.re_lifecycle.discover_workspace", _empty_manifest)
     monkeypatch.setattr(
-        "harness.re_lifecycle.resolve_re_execution_profile",
-        lambda *_args, **_kwargs: builtin_re_profile("balanced"),
+        "harness.squad_provider.SquadCliProvider",
+        ScriptedSquadProvider,
     )
-    monkeypatch.setattr(
-        "harness.re_lifecycle.resolve_re_fingerprint_profile",
-        lambda _root: profile,
-    )
-    monkeypatch.setattr("harness.re_lifecycle.load_published_index", lambda _root: None)
-    monkeypatch.setattr(
-        "harness.re_lifecycle.build_re_execution_plan",
-        lambda **_kwargs: _work_plan(profile),
-    )
-    monkeypatch.setattr("harness.re_lifecycle.ReExtractionController", CompleteExtraction)
-    monkeypatch.setattr(
-        "echelon.cli._installed_re_runtime_or_exit",
-        lambda _root: (
-            project_root / "extension",
-            project_root / "prosaic" / "subagents",
-        ),
-    )
-    monkeypatch.setattr(
-        "harness.config.load_config",
-        lambda *_args, **_kwargs: config,
-    )
-    monkeypatch.setattr("harness.squad_provider.SquadCliProvider", RecordingProvider)
     return boundary
 
 
@@ -595,29 +630,42 @@ def test_fresh_v1_front_door_runs_real_lifecycle_without_v2(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     boundary = _install_v1_provider_boundary(monkeypatch, tmp_path)
+    before = _tree_snapshot(tmp_path)
     _install_v2_sentinels(monkeypatch)
     monkeypatch.chdir(tmp_path)
 
-    result = _invoke_re("run", "--re-policy", "refresh-all")
+    result = _invoke_re("run", "--re-policy", "refresh-all", "--profile", "fast")
 
     assert result.exit_code == 0, result.output
     assert result.exception is None
     assert _captured_stderr(result) == ""
-    assert boundary.provider_configs and len(boundary.provider_configs) == 1
-    assert len(boundary.extraction_calls) == 1
-    run_dir = Path(boundary.extraction_calls[0]["run_dir"])
-    assert run_dir.name == "re-20260814-120000-000000"
-    assert result.stdout == _complete_output(run_dir.name)
-    assert _tree_delta({}, _tree_snapshot(tmp_path)) == (
-        _fresh_created_paths(run_dir.name),
-        (),
-        (),
-    )
+    assert len(boundary.provider_configs) == 1
+    assert boundary.provider_phases == [
+        "re-extract-2-specify:source-domain",
+        "re-extract-2-specify:workspace-synthesis",
+        "re-extract-6-checklist",
+        "re-extract-7-constitute",
+    ]
+    assert all("result_contract" in kwargs for kwargs in boundary.provider_kwargs)
+    assert all("prompt_metadata" in kwargs for kwargs in boundary.provider_kwargs)
+    run_id = (tmp_path / "runs/.current-re").read_text(encoding="utf-8").strip()
+    run_dir = tmp_path / "runs" / run_id
+    assert _tree_delta(before, _tree_snapshot(tmp_path))[1:] == ((), ())
     fixture = LegacyFixture("fresh", tmp_path, run_dir)
     _assert_valid_v1_state(fixture)
     assert detect_re_engine(run_dir) == "v1"
-    assert json.loads((run_dir / "state.json").read_text())["status"] == "done"
-    assert json.loads((run_dir / "re/state.json").read_text())["status"] == "done"
+    outer = json.loads((run_dir / "state.json").read_text())
+    inner = json.loads((run_dir / "re/state.json").read_text())
+    assert outer["status"] == "done"
+    assert outer["extraction_complete"] is True
+    assert outer["publication_pending"] is True
+    assert inner["status"] == "done"
+    assert inner["phase"] == "re-extract-7-constitute"
+    assert inner["re_workspace_synthesis_complete"] is True
+    assert inner["re_source_states"]["api"]["status"] == "passed"
+    assert inner["re_source_states"]["api"]["coverage_pct"] == 100.0
+    assert inner["re_token_usage"] == 40
+    assert result.stdout.endswith(_complete_output(run_id))
     _assert_no_v2_state(tmp_path)
 
 
@@ -649,33 +697,63 @@ def test_blocked_v1_front_door_continue_runs_real_lifecycle_without_v2(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    fixture = _legacy_fixture(tmp_path, "blocked")
-    assert fixture.run_dir is not None
-    before = _tree_snapshot(tmp_path)
-    assert tuple(before) == _minimal_fixture_paths("re-v1-blocked")
-    boundary = _install_v1_provider_boundary(monkeypatch, tmp_path)
+    boundary = _install_v1_provider_boundary(
+        monkeypatch,
+        tmp_path,
+        fail_once_at="re-extract-2-specify:source-domain",
+    )
     _install_v2_sentinels(monkeypatch)
     monkeypatch.chdir(tmp_path)
 
-    result = _invoke_re("continue", "--re-max-inner", "5")
+    interrupted = _invoke_re(
+        "run",
+        "--re-policy",
+        "refresh-all",
+        "--profile",
+        "fast",
+    )
+
+    assert interrupted.exit_code == 1, interrupted.output
+    run_id = (tmp_path / "runs/.current-re").read_text(encoding="utf-8").strip()
+    run_dir = tmp_path / "runs" / run_id
+    plan_before = (run_dir / "re/re-execution-plan.json").read_bytes()
+    blocked_outer = json.loads((run_dir / "state.json").read_text())
+    blocked_inner = json.loads((run_dir / "re/state.json").read_text())
+    assert blocked_outer["status"] == "blocked"
+    assert blocked_outer["blocked_reason"] == "re_agent_dispatch_failed"
+    assert blocked_inner["status"] == "blocked"
+    assert blocked_inner["blocked_reason"] == "re_agent_dispatch_failed"
+    assert boundary.provider_phases == ["re-extract-2-specify:source-domain"]
+
+    before_continue = _tree_snapshot(tmp_path)
+    result = _invoke_re("continue")
 
     assert result.exit_code == 0, result.output
     assert result.exception is None
     assert _captured_stderr(result) == ""
-    assert len(boundary.provider_configs) == 1
-    assert len(boundary.extraction_calls) == 1
-    assert result.stdout == _continue_output(tmp_path)
+    assert len(boundary.provider_configs) == 2
+    assert boundary.provider_phases == [
+        "re-extract-2-specify:source-domain",
+        "re-extract-2-specify:source-domain",
+        "re-extract-2-specify:workspace-synthesis",
+        "re-extract-6-checklist",
+        "re-extract-7-constitute",
+    ]
     after = _tree_snapshot(tmp_path)
-    created, removed, modified = _tree_delta(before, after)
-    assert created == _provider_result_created_paths("re-v1-blocked")
+    created, removed, modified = _tree_delta(before_continue, after)
+    assert created
     assert removed == ()
-    assert modified == (
-        "runs/re-v1-blocked/re/state.json",
-        "runs/re-v1-blocked/state.json",
-    )
-    assert tuple(after) == _staged_v1_tree_paths("re-v1-blocked")
+    assert modified
+    assert (run_dir / "re/re-execution-plan.json").read_bytes() == plan_before
+    fixture = LegacyFixture("blocked", tmp_path, run_dir)
     _assert_valid_v1_state(fixture)
-    assert json.loads((fixture.run_dir / "state.json").read_text())["status"] == "done"
+    outer = json.loads((run_dir / "state.json").read_text())
+    inner = json.loads((run_dir / "re/state.json").read_text())
+    assert outer["status"] == "done"
+    assert inner["status"] == "done"
+    assert inner["phase"] == "re-extract-7-constitute"
+    assert inner["re_source_states"]["api"]["status"] == "passed"
+    assert result.stdout.endswith(_complete_output(run_id))
     _assert_no_v2_state(tmp_path)
 
 
@@ -802,8 +880,15 @@ def _tree_snapshot(root: Path) -> dict[str, tuple[str, int, bytes | None]]:
     for path in sorted(root.rglob("*")):
         relative = path.relative_to(root).as_posix()
         details = path.lstat()
-        kind = "dir" if stat.S_ISDIR(details.st_mode) else "file"
-        payload = path.read_bytes() if kind == "file" else None
+        if stat.S_ISLNK(details.st_mode):
+            kind = "symlink"
+            payload = os.readlink(path).encode()
+        elif stat.S_ISDIR(details.st_mode):
+            kind = "dir"
+            payload = None
+        else:
+            kind = "file"
+            payload = path.read_bytes()
         snapshot[relative] = (kind, stat.S_IMODE(details.st_mode), payload)
     return snapshot
 

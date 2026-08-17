@@ -148,3 +148,48 @@ def test_dry_run_rejects_engine_option_owned_by_shadow_parameter(
     assert "RE run option ownership is invalid: engine -> --engine" in (
         result.stdout + result.stderr
     )
+
+
+def test_dry_run_rejects_removed_engine_callback_route(tmp_path: Path) -> None:
+    result = _mutated_dry_run(
+        tmp_path,
+        replace=(
+            'args.extend(["--engine", engine.value])',
+            'args.extend(["--engine"])',
+        ),
+    )
+
+    assert result.returncode != 0
+    assert "RE run --engine callback routing is invalid" in (
+        result.stdout + result.stderr
+    )
+
+
+def test_dry_run_rejects_misdirected_shadow_callback_route(tmp_path: Path) -> None:
+    result = _mutated_dry_run(
+        tmp_path,
+        replace=(
+            'args.append("--shadow")',
+            'args.append("--engine-shadow")',
+        ),
+    )
+
+    assert result.returncode != 0
+    assert "RE run --shadow callback routing is invalid" in (
+        result.stdout + result.stderr
+    )
+
+
+def test_dry_run_rejects_misdirected_legacy_run_callback(tmp_path: Path) -> None:
+    result = _mutated_dry_run(
+        tmp_path,
+        replace=(
+            "_legacy_cli()._cmd_re_run(args)",
+            "_legacy_cli()._cmd_re_status(args)",
+        ),
+    )
+
+    assert result.returncode != 0
+    assert "RE run legacy callback routing is invalid" in (
+        result.stdout + result.stderr
+    )
