@@ -12,10 +12,12 @@ import pytest
 from harness.re_v2.snapshot import (
     CapturedSnapshot,
     ReV2SnapshotError,
+    ReV2SnapshotIntegrityError,
     ReV2SnapshotUnavailableError,
     capture_source_snapshot,
     validate_source_snapshot,
 )
+from harness.re_v2.canonical import canonical_json_bytes, content_digest
 
 
 def _copied_snapshot(tmp_path: Path):
@@ -34,6 +36,26 @@ def _snapshot_marker(captured: CapturedSnapshot) -> Path:
     manifest_path = captured.manifest_path
     snapshot_id = captured.snapshot_id
     return manifest_path.parent.parent / ".snapshot-commits" / f"{snapshot_id}.json"
+
+
+def _replace_manifest_bytes(captured: CapturedSnapshot, payload: bytes) -> None:
+    """Keep the marker authoritative while exercising manifest validation."""
+    _make_writable(captured.manifest_path)
+    captured.manifest_path.write_bytes(payload)
+    captured.manifest_path.chmod(0o444)
+
+    marker = _snapshot_marker(captured)
+    _make_writable(marker)
+    marker.write_bytes(
+        canonical_json_bytes(
+            {
+                "capture_version": 1,
+                "manifest_digest": content_digest(payload),
+                "snapshot_id": captured.snapshot_id,
+            }
+        )
+    )
+    marker.chmod(0o400)
 
 
 def _regular_tree_bytes(root: Path) -> dict[str, bytes]:
@@ -481,6 +503,87 @@ def test_transient_adoption_validation_failure_preserves_published_pair(
 
 @pytest.mark.unit
 @pytest.mark.parametrize(
+    "failed_operation",
+    ["temporary_unlink", "marker_root_fsync", "destination_fsync"],
+)
+def test_temporary_marker_recovery_io_failure_preserves_committed_pair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failed_operation: str,
+) -> None:
+    """Recovery I/O uncertainty must never be classified as corruption."""
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "api.py").write_text("VALUE = 1\n", encoding="utf-8")
+    destination = tmp_path / "snapshots"
+    captured = capture_source_snapshot(source, destination, exclusions=())
+    bundle = captured.manifest_path.parent
+    marker = _snapshot_marker(captured)
+    temporary = marker.parent / f".{captured.snapshot_id}.interrupted.tmp"
+    os.link(marker, temporary, follow_symlinks=False)
+
+    original_bundle_inode = bundle.stat().st_ino
+    original_marker_inode = marker.stat().st_ino
+    original_marker_bytes = marker.read_bytes()
+    original_bundle_bytes = _regular_tree_bytes(bundle)
+
+    from harness.re_v2 import snapshot as snapshot_module
+
+    real_unlink = Path.unlink
+    real_fsync_directory = snapshot_module._fsync_directory
+    failed = False
+
+    def fail_unlink(path: Path, *args: object, **kwargs: object) -> None:
+        nonlocal failed
+        if (
+            not failed
+            and failed_operation == "temporary_unlink"
+            and path == temporary
+        ):
+            failed = True
+            raise OSError("injected temporary-marker unlink failure")
+        real_unlink(path, *args, **kwargs)
+
+    def fail_fsync(path: Path) -> None:
+        nonlocal failed
+        target = (
+            marker.parent
+            if failed_operation == "marker_root_fsync"
+            else destination
+        )
+        if (
+            not failed
+            and failed_operation != "temporary_unlink"
+            and path == target
+        ):
+            failed = True
+            raise OSError(f"injected {failed_operation} failure")
+        real_fsync_directory(path)
+
+    monkeypatch.setattr(Path, "unlink", fail_unlink)
+    monkeypatch.setattr(snapshot_module, "_fsync_directory", fail_fsync)
+
+    with pytest.raises(ReV2SnapshotUnavailableError, match="unavailable"):
+        capture_source_snapshot(source, destination, exclusions=())
+
+    assert failed
+    assert bundle.stat().st_ino == original_bundle_inode
+    assert marker.stat().st_ino == original_marker_inode
+    assert marker.read_bytes() == original_marker_bytes
+    assert _regular_tree_bytes(bundle) == original_bundle_bytes
+
+    retried = capture_source_snapshot(source, destination, exclusions=())
+
+    assert retried.manifest_path.parent.stat().st_ino == original_bundle_inode
+    assert _snapshot_marker(retried).stat().st_ino == original_marker_inode
+    assert _snapshot_marker(retried).read_bytes() == original_marker_bytes
+    assert _regular_tree_bytes(retried.manifest_path.parent) == original_bundle_bytes
+    assert not temporary.exists()
+    validate_source_snapshot(retried)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
     "cleanup_point",
     [
         "marker_cleanup_unlinked",
@@ -789,6 +892,88 @@ def test_snapshot_validation_rejects_hardlinked_marker(tmp_path: Path) -> None:
     os.link(marker, marker.parent / "alias.json", follow_symlinks=False)
 
     with pytest.raises(ReV2SnapshotError, match="link"):
+        validate_source_snapshot(captured)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("constant", "value"),
+    [
+        ("NaN", float("nan")),
+        ("Infinity", float("inf")),
+        ("-Infinity", float("-inf")),
+    ],
+)
+def test_snapshot_validation_classifies_nonfinite_manifest_json_as_integrity(
+    tmp_path: Path, constant: str, value: float
+) -> None:
+    """JSON extensions must not escape the explicit snapshot error taxonomy."""
+    captured = _copied_snapshot(tmp_path)
+    manifest = json.loads(captured.manifest_path.read_bytes())
+    manifest["entries"][0]["size"] = value
+    payload = (
+        json.dumps(
+            manifest,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=True,
+        ).encode("utf-8")
+        + b"\n"
+    )
+    assert constant.encode("ascii") in payload
+    _replace_manifest_bytes(captured, payload)
+
+    with pytest.raises(
+        ReV2SnapshotIntegrityError, match="invalid snapshot manifest"
+    ):
+        validate_source_snapshot(captured)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "case",
+    [
+        "top_level_extra",
+        "top_level_missing",
+        "capture_version_type",
+        "entry_extra",
+        "entry_missing",
+        "entry_field_type",
+        "exclusions_member_type",
+        "git_type",
+    ],
+)
+def test_snapshot_validation_requires_complete_typed_manifest_schema(
+    tmp_path: Path, case: str
+) -> None:
+    """Schema drift must fail at parsing, before content-address comparison."""
+    captured = _copied_snapshot(tmp_path)
+    manifest = json.loads(captured.manifest_path.read_bytes())
+    if case == "top_level_extra":
+        manifest["unexpected"] = None
+    elif case == "top_level_missing":
+        del manifest["git"]
+    elif case == "capture_version_type":
+        manifest["capture_version"] = "1"
+    elif case == "entry_extra":
+        manifest["entries"][0]["unexpected"] = None
+    elif case == "entry_missing":
+        del manifest["entries"][0]["digest"]
+    elif case == "entry_field_type":
+        manifest["entries"][0]["mode"] = "292"
+    elif case == "exclusions_member_type":
+        manifest["exclusions"] = [1]
+    elif case == "git_type":
+        manifest["git"] = []
+    else:  # pragma: no cover - the parametrization is exhaustive.
+        raise AssertionError(case)
+    payload = canonical_json_bytes(manifest)
+    _replace_manifest_bytes(captured, payload)
+
+    with pytest.raises(
+        ReV2SnapshotIntegrityError, match="invalid snapshot manifest"
+    ):
         validate_source_snapshot(captured)
 
 

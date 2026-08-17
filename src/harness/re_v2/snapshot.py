@@ -137,10 +137,25 @@ def _validate_snapshot_payload(snapshot: CapturedSnapshot) -> None:
             f"snapshot manifest validation is temporarily unavailable: {exc}"
         ) from exc
     try:
-        manifest = _manifest_from_json(json.loads(manifest_payload))
-    except (ValueError, TypeError, KeyError, AttributeError) as exc:
+        manifest = _manifest_from_json(
+            json.loads(
+                manifest_payload,
+                parse_constant=_reject_nonfinite_json_constant,
+            )
+        )
+        canonical_manifest_payload = canonical_json_bytes(
+            manifest.to_json_dict()
+        )
+    except (
+        ValueError,
+        TypeError,
+        KeyError,
+        AttributeError,
+        OverflowError,
+        RecursionError,
+    ) as exc:
         raise ReV2SnapshotIntegrityError(f"invalid snapshot manifest: {exc}") from exc
-    if manifest_payload != canonical_json_bytes(manifest.to_json_dict()):
+    if manifest_payload != canonical_manifest_payload:
         raise ReV2SnapshotIntegrityError("snapshot manifest is not canonical")
     if manifest.snapshot_id != snapshot.snapshot_id or manifest.kind != snapshot.kind:
         raise ReV2SnapshotIntegrityError("snapshot handle does not match manifest")
@@ -537,8 +552,14 @@ def _existing_snapshot(
         raise ReV2SnapshotError(f"snapshot ID already exists: {manifest.snapshot_id}")
     captured = CapturedSnapshot(manifest.snapshot_id, manifest.kind, bundle / "source", bundle / _MANIFEST_NAME)
     if os.path.lexists(marker):
-        if _recover_marker_temporary_links(destination, manifest.snapshot_id):
-            _fsync_directory(destination)
+        try:
+            if _recover_marker_temporary_links(destination, manifest.snapshot_id):
+                _fsync_directory(destination)
+        except OSError as exc:
+            raise ReV2SnapshotUnavailableError(
+                "snapshot commit-marker recovery is temporarily unavailable: "
+                f"{exc}"
+            ) from exc
         try:
             validate_source_snapshot(captured)
         except ReV2SnapshotUnavailableError:
@@ -690,18 +711,12 @@ def _commit_marker_path(destination: Path, snapshot_id: str) -> Path:
 def _recover_marker_temporary_links(destination: Path, snapshot_id: str) -> bool:
     marker_root = destination / _COMMIT_DIRECTORY
     marker = _commit_marker_path(destination, snapshot_id)
-    try:
-        marker_info = marker.lstat()
-    except OSError:
-        return False
+    marker_info = marker.lstat()
     if not stat.S_ISREG(marker_info.st_mode):
         return False
     removed = False
     for temporary in marker_root.glob(f".{snapshot_id}.*.tmp"):
-        try:
-            temporary_info = temporary.lstat()
-        except OSError:
-            continue
+        temporary_info = temporary.lstat()
         if (
             stat.S_ISREG(temporary_info.st_mode)
             and temporary_info.st_dev == marker_info.st_dev
@@ -1353,10 +1368,132 @@ def _run_git_bytes(args: list[str]) -> bytes:
 
 
 def _manifest_from_json(value: object) -> SnapshotManifest:
-    if not isinstance(value, dict) or not isinstance(value.get("entries"), list):
-        raise ValueError("manifest must be an object with entries")
-    entries = tuple(SnapshotEntry(item["path"], item["digest"], item["mode"], item["size"]) for item in value["entries"])
-    kind = value["kind"]
+    manifest = _exact_json_object(
+        value,
+        {
+            "capture_version",
+            "entries",
+            "exclusions",
+            "git",
+            "kind",
+            "snapshot_id",
+        },
+        "manifest",
+    )
+    snapshot_id = _json_string(manifest["snapshot_id"], "manifest.snapshot_id")
+    capture_version = _json_integer(
+        manifest["capture_version"], "manifest.capture_version"
+    )
+    if capture_version != _CAPTURE_VERSION:
+        raise ValueError("manifest.capture_version is unsupported")
+
+    raw_entries = manifest["entries"]
+    if not isinstance(raw_entries, list):
+        raise ValueError("manifest.entries must be an array")
+    entries: list[SnapshotEntry] = []
+    for index, raw_entry in enumerate(raw_entries):
+        entry = _exact_json_object(
+            raw_entry,
+            {"digest", "mode", "path", "size"},
+            f"manifest.entries[{index}]",
+        )
+        path = _json_string(entry["path"], f"manifest.entries[{index}].path")
+        digest = _json_string(
+            entry["digest"], f"manifest.entries[{index}].digest"
+        )
+        mode = _json_integer(entry["mode"], f"manifest.entries[{index}].mode")
+        size = _json_integer(entry["size"], f"manifest.entries[{index}].size")
+        if mode < 0:
+            raise ValueError(f"manifest.entries[{index}].mode must be non-negative")
+        if size < 0:
+            raise ValueError(f"manifest.entries[{index}].size must be non-negative")
+        entries.append(SnapshotEntry(path, digest, mode, size))
+
+    raw_exclusions = manifest["exclusions"]
+    if not isinstance(raw_exclusions, list):
+        raise ValueError("manifest.exclusions must be an array")
+    exclusions = tuple(
+        _json_string(item, f"manifest.exclusions[{index}]")
+        for index, item in enumerate(raw_exclusions)
+    )
+
+    kind = manifest["kind"]
     if kind not in {"git-worktree", "content-snapshot"}:
         raise ValueError("unsupported snapshot kind")
-    return SnapshotManifest(value["snapshot_id"], kind, entries, tuple(value["exclusions"]), value.get("git"), value["capture_version"])
+    git = _manifest_git_from_json(manifest["git"], kind)
+    return SnapshotManifest(
+        snapshot_id,
+        kind,
+        tuple(entries),
+        exclusions,
+        git,
+        capture_version,
+    )
+
+
+def _manifest_git_from_json(
+    value: object, kind: Literal["git-worktree", "content-snapshot"]
+) -> dict[str, object] | None:
+    if kind == "content-snapshot":
+        if value is not None:
+            raise ValueError("content snapshot manifest.git must be null")
+        return None
+    git = _exact_json_object(value, {"commit", "submodules"}, "manifest.git")
+    commit = _json_string(git["commit"], "manifest.git.commit")
+    raw_submodules = git["submodules"]
+    if not isinstance(raw_submodules, list):
+        raise ValueError("manifest.git.submodules must be an array")
+    submodules: list[dict[str, object]] = []
+    for index, raw_submodule in enumerate(raw_submodules):
+        submodule = _exact_json_object(
+            raw_submodule,
+            {"commit", "path"},
+            f"manifest.git.submodules[{index}]",
+        )
+        submodules.append(
+            {
+                "commit": _json_string(
+                    submodule["commit"],
+                    f"manifest.git.submodules[{index}].commit",
+                ),
+                "path": _json_string(
+                    submodule["path"],
+                    f"manifest.git.submodules[{index}].path",
+                ),
+            }
+        )
+    return {"commit": commit, "submodules": submodules}
+
+
+def _exact_json_object(
+    value: object, fields: set[str], label: str
+) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be an object")
+    observed = set(value)
+    missing = sorted(fields - observed)
+    extra = sorted(observed - fields)
+    if missing or extra:
+        details: list[str] = []
+        if missing:
+            details.append(f"missing {', '.join(missing)}")
+        if extra:
+            details.append(f"unexpected {', '.join(extra)}")
+        raise ValueError(f"{label} has invalid fields: {'; '.join(details)}")
+    return value
+
+
+def _json_string(value: object, label: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must be a string")
+    return value
+
+
+def _json_integer(value: object, label: str) -> int:
+    if type(value) is not int:
+        raise ValueError(f"{label} must be an integer")
+    return value
+
+
+def _reject_nonfinite_json_constant(value: str) -> None:
+    raise ValueError(f"non-finite JSON number is not permitted: {value}")
