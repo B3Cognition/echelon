@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from . import RE_V2_ENGINE, RE_V2_PROTOCOL, ReV2ModelError
+from . import RE_V2_ENGINE, RE_V2_SUPPORTED_PROTOCOLS, ReV2ModelError
 from .canonical import canonical_json_bytes
 from .model import RunManifest
 
@@ -161,7 +161,10 @@ def _reject_symlinked_run_path(run_dir: Path) -> None:
 
 
 def _validate_supported_manifest(manifest: RunManifest) -> None:
-    if manifest.engine != RE_V2_ENGINE or manifest.engine_protocol_version != RE_V2_PROTOCOL:
+    if (
+        manifest.engine != RE_V2_ENGINE
+        or manifest.engine_protocol_version not in RE_V2_SUPPORTED_PROTOCOLS
+    ):
         raise ReV2RunStoreError(
             "unsupported pinned RE engine/protocol "
             f"{manifest.engine!r}/{manifest.engine_protocol_version!r}"

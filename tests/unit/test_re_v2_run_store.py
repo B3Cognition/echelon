@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -21,7 +22,7 @@ def _manifest(*, run_id: str) -> RunManifest:
     return RunManifest(
         schema_version=1,
         engine=RE_V2_ENGINE,
-        engine_protocol_version=RE_V2_PROTOCOL,
+        engine_protocol_version="2.0",
         run_id=run_id,
         created_at="2026-08-14T12:00:00Z",
         source_snapshot_id="sha256:" + "1" * 64,
@@ -40,6 +41,31 @@ def _manifest(*, run_id: str) -> RunManifest:
         artifact_policy_versions={"L0": "egr-164-v1"},
         parent_run_id=None,
     )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("protocol_version", "snapshot_kind"),
+    (
+        ("2.0", "git-worktree"),
+        ("2.0", "content-snapshot"),
+        ("2.1", "workspace-git-composite"),
+    ),
+)
+def test_run_store_round_trips_supported_protocol_snapshot_pairs(
+    tmp_path: Path,
+    protocol_version: str,
+    snapshot_kind: str,
+) -> None:
+    manifest = replace(
+        _manifest(run_id="re-1"),
+        engine_protocol_version=protocol_version,
+        source_snapshot_kind=snapshot_kind,
+    )
+
+    create_run_store(tmp_path / "runs" / "re-1", manifest)
+
+    assert load_run_manifest(tmp_path / "runs" / "re-1") == manifest
 
 
 @pytest.mark.unit

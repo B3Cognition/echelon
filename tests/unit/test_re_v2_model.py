@@ -45,7 +45,7 @@ def valid_run_manifest_dict() -> dict[str, object]:
         "run_id": "re-demo",
         "created_at": "2026-08-14T12:00:00Z",
         "source_snapshot_id": digest("1"),
-        "source_snapshot_kind": "git-worktree",
+        "source_snapshot_kind": "workspace-git-composite",
         "partition_manifest_id": digest("2"),
         "requested_goals": ["api", "inventory"],
         "initial_budget_policy": valid_budget_policy().to_json_dict(),
@@ -134,6 +134,33 @@ def test_run_manifest_rejects_unknown_engine() -> None:
     raw = valid_run_manifest_dict()
     raw["engine"] = "re-v3"
     with pytest.raises(ReV2ModelError, match="unsupported engine"):
+        RunManifest.from_json_dict(raw)
+
+
+@pytest.mark.parametrize("snapshot_kind", ("git-worktree", "content-snapshot"))
+def test_protocol_2_0_accepts_only_legacy_snapshot_kinds(snapshot_kind: str) -> None:
+    raw = valid_run_manifest_dict()
+    raw["engine_protocol_version"] = "2.0"
+    raw["source_snapshot_kind"] = snapshot_kind
+
+    assert RunManifest.from_json_dict(raw).source_snapshot_kind == snapshot_kind
+
+
+def test_protocol_2_0_rejects_workspace_composite_snapshot() -> None:
+    raw = valid_run_manifest_dict()
+    raw["engine_protocol_version"] = "2.0"
+
+    with pytest.raises(ReV2ModelError, match="protocol 2.0"):
+        RunManifest.from_json_dict(raw)
+
+
+def test_protocol_2_1_accepts_only_workspace_composite_snapshot() -> None:
+    raw = valid_run_manifest_dict()
+    raw["engine_protocol_version"] = "2.1"
+    assert RunManifest.from_json_dict(raw).source_snapshot_kind == "workspace-git-composite"
+
+    raw["source_snapshot_kind"] = "git-worktree"
+    with pytest.raises(ReV2ModelError, match="protocol 2.1"):
         RunManifest.from_json_dict(raw)
 
 

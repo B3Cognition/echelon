@@ -12,7 +12,14 @@ from typing import ClassVar, Literal, Mapping
 from .canonical import canonical_json_bytes, content_digest
 
 RE_V2_ENGINE = "re-v2"
-RE_V2_PROTOCOL = "2.0"
+RE_V2_PROTOCOL = "2.1"
+RE_V2_SUPPORTED_PROTOCOLS = ("2.0", "2.1")
+
+SnapshotKind = Literal[
+    "git-worktree",
+    "content-snapshot",
+    "workspace-git-composite",
+]
 
 _DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _SAFE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]*\Z")
@@ -447,7 +454,7 @@ class RunManifest:
     run_id: str
     created_at: str
     source_snapshot_id: str
-    source_snapshot_kind: Literal["git-worktree", "content-snapshot"]
+    source_snapshot_kind: SnapshotKind
     partition_manifest_id: str
     requested_goals: tuple[str, ...]
     initial_budget_policy: BudgetPolicy
@@ -460,13 +467,17 @@ class RunManifest:
             _error("unsupported schema version")
         if self.engine != RE_V2_ENGINE:
             _error("unsupported engine")
-        if self.engine_protocol_version != RE_V2_PROTOCOL:
+        if self.engine_protocol_version not in RE_V2_SUPPORTED_PROTOCOLS:
             _error("unsupported engine protocol version")
         _safe_id(self.run_id, "run_id")
         _utc_timestamp(self.created_at, "created_at")
         _digest(self.source_snapshot_id, "source_snapshot_id")
-        if self.source_snapshot_kind not in ("git-worktree", "content-snapshot"):
-            _error("unsupported source_snapshot_kind")
+        legacy_kinds = {"git-worktree", "content-snapshot"}
+        if self.engine_protocol_version == "2.0":
+            if self.source_snapshot_kind not in legacy_kinds:
+                _error("protocol 2.0 requires a legacy source snapshot kind")
+        elif self.source_snapshot_kind != "workspace-git-composite":
+            _error("protocol 2.1 requires workspace-git-composite")
         _digest(self.partition_manifest_id, "partition_manifest_id")
         object.__setattr__(self, "requested_goals", _sorted_unique_ids(self.requested_goals, "requested_goals"))
         if not isinstance(self.initial_budget_policy, BudgetPolicy):
