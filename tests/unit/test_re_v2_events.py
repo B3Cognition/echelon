@@ -139,7 +139,7 @@ def test_event_chain_rejects_a_modified_middle_record(tmp_path: Path) -> None:
     [
         (b'{"schema_version":1', "partial"),
         (b"not-json\n", "JSON"),
-        (b"\n", "JSON"),
+        (b"\n", "framing"),
     ],
 )
 def test_replay_fails_closed_on_torn_or_invalid_records(
@@ -154,6 +154,29 @@ def test_replay_fails_closed_on_torn_or_invalid_records(
     with pytest.raises(ReV2EventError, match=message):
         store.replay()
     assert store.path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    ("mutate", "case"),
+    (
+        (lambda payload: payload.replace(b"\n", b"\r\n"), "CRLF"),
+        (lambda payload: payload.replace(b'\"payload\"', b'\"payload\"\r', 1), "embedded CR"),
+        (lambda payload: payload + b"\n", "empty record"),
+        (lambda payload: payload[:-1], "partial final record"),
+    ),
+)
+def test_replay_requires_strict_lf_record_framing(
+    tmp_path: Path, mutate, case: str
+) -> None:
+    store = event_store(tmp_path)
+    store.append("run_created", {"run_manifest_id": digest("run")}, occurred_at=NOW)
+    malformed = mutate(store.path.read_bytes())
+    store.path.write_bytes(malformed)
+
+    with pytest.raises(ReV2EventError, match="framing|partial final"):
+        store.replay()
+
+    assert store.path.read_bytes() == malformed, case
 
 
 def test_append_rejects_noncanonical_payload_values_and_exact_schema_violations(

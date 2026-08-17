@@ -4,15 +4,18 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 from typing import Mapping
 
+from .canonical import content_digest
 from .budget import BudgetDecision, evaluate_budget
 from .events import EventRecord, EventStore
 from .ledger import Ledger, LedgerView, ObjectStore
 from .planner import PlanDecision, WorkGraph, build_initial_inventory_graph, plan_next
 from .projection import rebuild_projection
-from .publication import load_published_v2_index
+from . import publication as publication_store
+from .publication import GenerationManifest
 from .run_store import ReV2Paths, ReV2RunStoreError, detect_re_engine, load_run_manifest
 
 
@@ -132,9 +135,16 @@ def _status_document(
     )
     reason_code, reason = _reason(events, status)
     next_action = _next_action(status, reason_code, reason)
-    publication = load_published_v2_index(run_dir.resolve().parent.parent)
     explanations = tuple(plan.explanations.values())
     accepted = tuple(ledger.accepted_artifacts.values())
+    publication_generation_id = _matching_publication_generation_id(
+        run_dir.resolve().parent.parent,
+        run_id=str(getattr(manifest, "run_id")),
+        accepted_root_hashes=tuple(
+            sorted({receipt.artifact_hash for receipt in accepted})
+        ),
+        events=events,
+    )
     certifications = tuple(ledger.certifications.values())
     templates = graph.templates
     layers: dict[str, dict[str, object]] = {}
@@ -200,9 +210,7 @@ def _status_document(
             ),
             "reuse": sum(item.action == "reuse" for item in explanations),
         },
-        "publication_generation_id": (
-            publication.generation_id if publication is not None else None
-        ),
+        "publication_generation_id": publication_generation_id,
         "reason": reason,
         "reason_code": reason_code,
         "requested_goals": list(getattr(manifest, "requested_goals")),
@@ -216,6 +224,89 @@ def _status_document(
             "unknown_dispatches": budget.unknown_token_dispatches,
         },
     }
+
+
+def _matching_publication_generation_id(
+    workspace_root: Path,
+    *,
+    run_id: str,
+    accepted_root_hashes: tuple[str, ...],
+    events: tuple[EventRecord, ...],
+) -> str | None:
+    """Attribute the current exact-root generation only to its proven run."""
+    with publication_store._pinned_layout(workspace_root, create=False) as layout:
+        if layout.v2_fd is None:
+            return None
+        with publication_store._publication_lock(layout):
+            index = publication_store._load_index(layout)
+            if index is None or index.run_id != run_id:
+                return None
+            if layout.generations_fd is None:
+                raise publication_store.ReV2PublicationError(
+                    f"generation manifest is missing for {index.generation_id}"
+                )
+            flags = (
+                os.O_RDONLY
+                | os.O_DIRECTORY
+                | os.O_NOFOLLOW
+                | getattr(os, "O_CLOEXEC", 0)
+            )
+            generation_fd = publication_store._open_at(
+                layout.generations_fd, index.generation_id, flags
+            )
+            try:
+                publication_store._require_entry_matches_fd(
+                    layout.generations_fd,
+                    index.generation_id,
+                    generation_fd,
+                    f"generation {index.generation_id}",
+                )
+                payload, _ = publication_store._read_regular_at(
+                    generation_fd,
+                    "manifest.json",
+                    "generation manifest",
+                    expected_mode=0o400,
+                    require_single_link=True,
+                )
+                publication_store._require_entry_matches_fd(
+                    layout.generations_fd,
+                    index.generation_id,
+                    generation_fd,
+                    f"generation {index.generation_id}",
+                )
+            finally:
+                os.close(generation_fd)
+
+    generation = GenerationManifest.from_bytes(payload)
+    if (
+        generation.generation_id != index.generation_id
+        or content_digest(payload) != index.generation_manifest_hash
+    ):
+        raise publication_store.ReV2PublicationError(
+            f"generation collision at {index.generation_id}"
+        )
+    if generation.accepted_root_hashes != accepted_root_hashes:
+        return None
+    expected_policy = _applicable_synthesis_policy(events, accepted_root_hashes)
+    if (
+        expected_policy is not None
+        and generation.synthesis_policy_hash != expected_policy
+    ):
+        return None
+    return generation.generation_id
+
+
+def _applicable_synthesis_policy(
+    events: tuple[EventRecord, ...], accepted_root_hashes: tuple[str, ...]
+) -> str | None:
+    policy: str | None = None
+    for event in events:
+        if (
+            event.type == "synthesis_accepted"
+            and tuple(event.payload["input_root_hashes"]) == accepted_root_hashes
+        ):
+            policy = str(event.payload["synthesis_policy_hash"])
+    return policy
 
 
 def _budget_document(budget: BudgetDecision) -> dict[str, object]:

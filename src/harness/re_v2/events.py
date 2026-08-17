@@ -610,11 +610,16 @@ class EventStore:
         payload = self.path.read_bytes()
         if not payload:
             return ()
+        if b"\r" in payload:
+            raise ReV2EventError("event log has invalid LF record framing")
         if not payload.endswith(b"\n"):
             raise ReV2EventError("partial final event record")
+        records = payload[:-1].split(b"\n")
+        if any(not record for record in records):
+            raise ReV2EventError("event log has empty LF record framing")
 
         events: list[EventRecord] = []
-        for index, line in enumerate(payload.splitlines(), start=1):
+        for index, line in enumerate(records, start=1):
             try:
                 raw = json.loads(
                     line,

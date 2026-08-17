@@ -253,7 +253,7 @@ def _append_rejected_attempts(run_dir: Path, count: int) -> tuple[str, ...]:
     return tuple(work_item_ids)
 
 
-def _record_unmatched_l0_artifact(run_dir: Path, artifact_kind: str) -> None:
+def _record_unmatched_l0_artifact(run_dir: Path, artifact_kind: str) -> str:
     from harness.re_v2.ledger import Ledger, ObjectStore
     from harness.re_v2.model import (
         ArtifactKey,
@@ -274,7 +274,12 @@ def _record_unmatched_l0_artifact(run_dir: Path, artifact_kind: str) -> None:
         artifact_kind=artifact_kind,
         layer="L0",
         producer_protocol_version="re-v2-l0-v1",
-        layer_policy_hash=content_digest(b"incompatible-layer-policy"),
+        layer_policy_hash=content_digest(
+            {
+                "artifact_kind": artifact_kind,
+                "policy_version": "egr-164-v1",
+            }
+        ),
         dependency_hashes=(),
     )
     work_item = WorkItem(
@@ -323,6 +328,7 @@ def _record_unmatched_l0_artifact(run_dir: Path, artifact_kind: str) -> None:
     )
     ledger.record_certification(certification, work_item)
     ledger.record_artifact(artifact)
+    return artifact_hash
 
 
 @pytest.mark.unit
@@ -519,7 +525,7 @@ def test_v2_status_represents_attempt_limits_per_work_item(
 @pytest.mark.unit
 @pytest.mark.parametrize(
     "artifact_kind",
-    ("unrelated-inventory", "source-inventory"),
+    ("unrelated-inventory", "source-inventory-legacy"),
     ids=("unrelated", "incompatible"),
 )
 def test_v2_layer_completion_counts_only_exact_graph_certifications(
@@ -541,3 +547,127 @@ def test_v2_layer_completion_counts_only_exact_graph_certifications(
             "status": "pending",
         }
     }
+
+
+@pytest.mark.unit
+def test_v2_publication_attribution_tracks_only_the_current_index_run(
+    tmp_path: Path,
+) -> None:
+    from harness.re_v2.publication import current_index_hash, publish_generation
+    from harness.re_v2.status import render_v2_status
+
+    policy_hash = content_digest(b"publication-policy")
+    first_run = _created_run(tmp_path, suffix="publication-first")
+    first_root = _record_unmatched_l0_artifact(first_run, "first-root")
+    first = publish_generation(
+        tmp_path,
+        first_run.name,
+        (first_root,),
+        policy_hash,
+        expected_index_hash=current_index_hash(tmp_path),
+    )
+    assert json.loads(render_v2_status(first_run, as_json=True))[
+        "publication_generation_id"
+    ] == first.generation_id
+
+    second_run = _created_run(tmp_path, suffix="publication-second")
+    second_root = _record_unmatched_l0_artifact(second_run, "second-root")
+    second = publish_generation(
+        tmp_path,
+        second_run.name,
+        (second_root,),
+        policy_hash,
+        expected_index_hash=current_index_hash(tmp_path),
+    )
+
+    assert json.loads(render_v2_status(first_run, as_json=True))[
+        "publication_generation_id"
+    ] is None
+    assert json.loads(render_v2_status(second_run, as_json=True))[
+        "publication_generation_id"
+    ] == second.generation_id
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("mismatch", ("roots", "policy"))
+def test_v2_publication_attribution_requires_exact_roots_and_applicable_policy(
+    tmp_path: Path, mismatch: str
+) -> None:
+    from harness.re_v2.publication import current_index_hash, publish_generation
+    from harness.re_v2.run_store import ReV2Paths
+    from harness.re_v2.status import render_v2_status
+
+    run_dir = _created_run(tmp_path, suffix=f"publication-wrong-{mismatch}")
+    accepted_root = _record_unmatched_l0_artifact(run_dir, "accepted-root")
+    expected_policy = content_digest(b"expected-synthesis-policy")
+    events = EventStore(ReV2Paths.for_run(run_dir))
+    events.append(
+        "synthesis_requested",
+        {
+            "input_root_hashes": [accepted_root],
+            "synthesis_policy_hash": expected_policy,
+        },
+        occurred_at="2026-08-14T12:00:01Z",
+    )
+    events.append(
+        "synthesis_accepted",
+        {
+            "artifact_hash": content_digest(b"synthesis-artifact"),
+            "input_root_hashes": [accepted_root],
+            "synthesis_policy_hash": expected_policy,
+        },
+        occurred_at="2026-08-14T12:00:02Z",
+    )
+    published_roots = (
+        (content_digest(b"wrong-root"),)
+        if mismatch == "roots"
+        else (accepted_root,)
+    )
+    published_policy = (
+        content_digest(b"wrong-policy")
+        if mismatch == "policy"
+        else expected_policy
+    )
+    publish_generation(
+        tmp_path,
+        run_dir.name,
+        published_roots,
+        published_policy,
+        expected_index_hash=current_index_hash(tmp_path),
+    )
+
+    assert json.loads(render_v2_status(run_dir, as_json=True))[
+        "publication_generation_id"
+    ] is None
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("damage", ("missing", "corrupt"))
+def test_v2_publication_attribution_fails_closed_on_damaged_matching_generation(
+    tmp_path: Path, damage: str
+) -> None:
+    from harness.re_v2.publication import current_index_hash, publish_generation
+    from harness.re_v2.status import ReV2StatusError, render_v2_status
+
+    run_dir = _created_run(tmp_path, suffix=f"publication-{damage}")
+    accepted_root = _record_unmatched_l0_artifact(run_dir, "accepted-root")
+    published = publish_generation(
+        tmp_path,
+        run_dir.name,
+        (accepted_root,),
+        content_digest(b"publication-policy"),
+        expected_index_hash=current_index_hash(tmp_path),
+    )
+    generation_dir = tmp_path / "re/v2/generations" / published.generation_id
+    manifest_path = generation_dir / "manifest.json"
+    generation_dir.chmod(0o700)
+    if damage == "missing":
+        manifest_path.unlink()
+    else:
+        manifest_path.chmod(0o600)
+        manifest_path.write_bytes(b"corrupt\n")
+        manifest_path.chmod(0o400)
+    generation_dir.chmod(0o500)
+
+    with pytest.raises(ReV2StatusError):
+        render_v2_status(run_dir, as_json=True)
