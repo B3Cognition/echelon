@@ -7,7 +7,7 @@ is output only; it is never read as authority here.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from enum import Enum
 import fcntl
@@ -20,6 +20,7 @@ import subprocess
 import sys
 from typing import Callable, Mapping
 
+from .budget import ReV2BudgetError, evaluate_budget
 from .candidates import (
     CandidateStore,
     DispatchLease,
@@ -43,8 +44,9 @@ from .model import (
     ExecutionObservation,
     ReV2ModelError,
     RunManifest,
+    WorkItem,
 )
-from .planner import WorkGraph
+from .planner import ReV2PlanError, WorkGraph, plan_next
 from .projection import (
     ReV2ProjectionError,
     project_run,
@@ -147,16 +149,26 @@ def recover_run(
 
     # Validate projection inputs without consulting an existing projection.
     _project(manifest, events, ledger_view)
-    if not events:
-        context.event_store.append(
-            "run_created",
-            {"run_manifest_id": manifest.run_manifest_id},
-            occurred_at=manifest.created_at,
-        )
-        events = context.event_store.replay()
-        _project(manifest, events, ledger_view)
-
     leases = _discover_leases(context)
+    try:
+        candidates = context.candidate_store.discover()
+    except ReV2CandidateError as exc:
+        raise ReV2RecoveryError(f"committed candidate validation failed: {exc}") from exc
+    _validate_persisted_candidate_events(events, candidates)
+    _validate_candidates_against_authorities(
+        events,
+        leases,
+        candidates,
+        expected_provider=str(manifest.provider_contract["provider"]),
+    )
+    _validate_recovered_work_items(
+        manifest,
+        context.graph,
+        ledger_view,
+        leases,
+        candidates,
+    )
+
     outstanding = _outstanding_leases(events, leases)
     retired_dispatches = {
         str(event.payload["dispatch_id"])
@@ -197,18 +209,16 @@ def recover_run(
             reason_code="lease_process_live",
         )
 
-    try:
-        candidates = context.candidate_store.discover()
-    except ReV2CandidateError as exc:
-        raise ReV2RecoveryError(f"committed candidate validation failed: {exc}") from exc
-    _validate_persisted_candidate_events(events, candidates)
-    _validate_candidates_against_authorities(
-        events,
-        leases,
-        candidates,
-        expected_provider=str(manifest.provider_contract["provider"]),
-    )
     _audit_ledger_receipts(context, ledger_view, candidates)
+
+    if not events:
+        context.event_store.append(
+            "run_created",
+            {"run_manifest_id": manifest.run_manifest_id},
+            occurred_at=manifest.created_at,
+        )
+        events = context.event_store.replay()
+        _project(manifest, events, ledger_view)
 
     if _is_terminal(events) and outstanding:
         raise ReV2RecoveryError(
@@ -313,6 +323,14 @@ def _validate_authorities(
     if context.ledger.pinned_source_snapshot_id != manifest.source_snapshot_id:
         raise ReV2RecoveryError("ledger is not pinned to the manifest snapshot")
     if (
+        context.ledger.pinned_partition_manifest_id
+        != manifest.partition_manifest_id
+        or context.ledger.pinned_requested_goals != frozenset(manifest.requested_goals)
+        or dict(context.ledger.pinned_artifact_policy_versions or {})
+        != dict(manifest.artifact_policy_versions)
+    ):
+        raise ReV2RecoveryError("ledger is not pinned to the full run manifest scope")
+    if (
         context.graph.source_snapshot_id != manifest.source_snapshot_id
         or context.graph.partition_manifest_id != manifest.partition_manifest_id
         or context.graph.requested_goals != manifest.requested_goals
@@ -348,6 +366,96 @@ def _validate_authorities(
         events, str(manifest.provider_contract["provider"])
     )
     return manifest, events, ledger_view
+
+
+def _validate_recovered_work_items(
+    manifest: RunManifest,
+    graph: WorkGraph,
+    ledger: LedgerView,
+    leases: tuple[DispatchLease, ...],
+    candidates: tuple[PersistedCandidate, ...],
+) -> None:
+    """Require exact canonical graph materialization for every durable WorkItem."""
+    work_items = {
+        work_item.work_item_id: work_item
+        for work_item in (
+            *ledger.certification_work_items.values(),
+            *(lease.work_item for lease in leases),
+            *(candidate.work_item for candidate in candidates),
+        )
+    }
+    for work_item in sorted(
+        work_items.values(), key=lambda item: (item.template_id, item.work_item_id)
+    ):
+        expected = _materialize_graph_work_item(manifest, graph, ledger, work_item)
+        if work_item != expected:
+            raise ReV2RecoveryError(
+                "recovered WorkItem does not exactly match canonical graph materialization",
+                reason_code="foreign_work_item",
+            )
+
+
+def _materialize_graph_work_item(
+    manifest: RunManifest,
+    graph: WorkGraph,
+    ledger: LedgerView,
+    work_item: WorkItem,
+) -> WorkItem:
+    template_ids = {template.template_id for template in graph.templates}
+    if work_item.template_id not in template_ids:
+        raise ReV2RecoveryError(
+            "recovered WorkItem template is not authorized by the run graph",
+            reason_code="foreign_work_item",
+        )
+
+    target_certifications = {
+        certification_id
+        for certification_id, certified_item in ledger.certification_work_items.items()
+        if certified_item.template_id == work_item.template_id
+    }
+    materialization_view = LedgerView(
+        accepted_artifacts={
+            key_id: receipt
+            for key_id, receipt in ledger.accepted_artifacts.items()
+            if receipt.certification_id not in target_certifications
+        },
+        certifications=ledger.certifications,
+        certification_work_items=ledger.certification_work_items,
+    )
+    try:
+        budget = replace(
+            evaluate_budget(
+                manifest.initial_budget_policy,
+                (),
+                now=manifest.created_at,
+            ),
+            exhausted_dimensions=(),
+        )
+        decision = plan_next(
+            graph,
+            materialization_view,
+            budget,
+            requested_goals=manifest.requested_goals,
+        )
+    except (ReV2BudgetError, ReV2PlanError) as exc:
+        raise ReV2RecoveryError(
+            f"cannot materialize authoritative WorkItem from graph: {exc}",
+            reason_code="foreign_work_item",
+        ) from exc
+    expected = next(
+        (
+            candidate
+            for candidate in decision.ready
+            if candidate.template_id == work_item.template_id
+        ),
+        None,
+    )
+    if expected is None:
+        raise ReV2RecoveryError(
+            "recovered WorkItem is not dependency-complete in the canonical graph",
+            reason_code="foreign_work_item",
+        )
+    return expected
 
 
 def _project(

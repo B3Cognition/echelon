@@ -9,6 +9,7 @@ import fcntl
 import inspect
 import os
 from pathlib import Path
+import secrets
 import stat
 import tempfile
 from types import MappingProxyType
@@ -41,7 +42,7 @@ class ReV2ControllerError(RuntimeError):
 
 
 class WorkExecutor(Protocol):
-    """Produce observable candidate bytes without granting them authority."""
+    """Common immutable metadata for one pinned execution implementation."""
 
     @property
     def provider_name(self) -> str: ...
@@ -49,7 +50,37 @@ class WorkExecutor(Protocol):
     @property
     def provider_contract_hash(self) -> str: ...
 
+    @property
+    def execution_mode(self) -> Literal["in_process", "provider_process"]: ...
+
+
+class InProcessWorkExecutor(WorkExecutor, Protocol):
+    """Execute deterministic work in the already-leased controller process."""
+
     def execute(
+        self,
+        snapshot_root: Path,
+        work_item: WorkItem,
+        lease: DispatchLease,
+    ) -> tuple[Path, ExecutionObservation]: ...
+
+
+class ProviderProcessWorkExecutor(WorkExecutor, Protocol):
+    """Create a gated child, then release/collect it only after durable leasing.
+
+    ``start`` may perform safe process creation only.  The child must not perform
+    provider work before ``collect`` and must self-terminate when an unleased
+    controller disappears.  ``collect`` is the first provider-side-effect gate.
+    """
+
+    def start(
+        self,
+        snapshot_root: Path,
+        work_item: WorkItem,
+        dispatch_id: str,
+    ) -> ProcessIdentity: ...
+
+    def collect(
         self,
         snapshot_root: Path,
         work_item: WorkItem,
@@ -71,6 +102,7 @@ class ExecutorRegistration:
     producer_protocol_version: str
     layer: str
     result_contract_id: str
+    execution_mode: Literal["in_process", "provider_process"]
     executor: WorkExecutor
 
     def __post_init__(self) -> None:
@@ -78,9 +110,29 @@ class ExecutorRegistration:
             raise ReV2ControllerError(
                 "executor registration must contain exact provider and protocol pins"
             )
-        if not callable(getattr(self.executor, "execute", None)):
+        if self.execution_mode not in {"in_process", "provider_process"}:
+            raise ReV2ControllerError("executor registration has an invalid mode")
+        declared_mode = _executor_execution_mode(self.executor)
+        if declared_mode != self.execution_mode:
             raise ReV2ControllerError(
-                "registered executor must provide execute(snapshot, work, lease)"
+                "executor-declared mode does not match registration"
+            )
+        required_methods = (
+            ("execute",)
+            if self.execution_mode == "in_process"
+            else ("start", "collect")
+        )
+        if any(
+            not callable(getattr(self.executor, method, None))
+            for method in required_methods
+        ):
+            contract = (
+                "execute(snapshot, work, lease)"
+                if self.execution_mode == "in_process"
+                else "start(snapshot, work, dispatch_id) and collect(snapshot, work, lease)"
+            )
+            raise ReV2ControllerError(
+                f"registered {self.execution_mode} executor must provide {contract}"
             )
         declared_binding = _executor_provider_binding(self.executor)
         if declared_binding != (
@@ -146,6 +198,10 @@ class DeterministicInventoryExecutor:
     @property
     def provider_contract_hash(self) -> str:
         return self._provider_contract_hash
+
+    @property
+    def execution_mode(self) -> Literal["in_process"]:
+        return "in_process"
 
     def execute(
         self,
@@ -220,6 +276,7 @@ def production_executor_registry(
             producer_protocol_version="re-v2-l0-v1",
             layer="L0",
             result_contract_id="deterministic-inventory-v1",
+            execution_mode="in_process",
             executor=executor,
         )
         for producer in sorted(DeterministicInventoryExecutor._PRODUCERS)
@@ -260,6 +317,7 @@ class ReV2Controller:
         provider_name, provider_contract_hash = _provider_binding(manifest)
         if executor is not None:
             declared_binding = _executor_provider_binding(executor)
+            declared_mode = _executor_execution_mode(executor)
             if declared_binding != (provider_name, provider_contract_hash):
                 raise ReV2ControllerError(
                     "convenience executor does not match manifest provider contract"
@@ -272,6 +330,7 @@ class ReV2Controller:
                     producer_protocol_version=template.producer_protocol_version,
                     layer=template.layer,
                     result_contract_id=template.result_contract_id,
+                    execution_mode=declared_mode,
                     executor=executor,
                 )
                 for template in context.graph.templates
@@ -305,6 +364,12 @@ class ReV2Controller:
             ):
                 raise ReV2ControllerError(
                     "executor-declared provider metadata does not match registration"
+                )
+            if _executor_execution_mode(registration.executor) != (
+                registration.execution_mode
+            ):
+                raise ReV2ControllerError(
+                    "executor-declared mode does not match registration"
                 )
             if (
                 registration.provider_name != provider_name
@@ -470,28 +535,56 @@ class ReV2Controller:
         manifest_provider_contract_hash: str,
         now: str,
     ) -> ReV2ControllerResult:
-        try:
-            identity = self._process_identity_factory(
-                item, attempt_kind, attempt_index, now
-            )
-        except Exception as exc:
-            raise ReV2ControllerError(
-                f"cannot create dispatch process identity: {exc}"
-            ) from exc
-        if not isinstance(identity, ProcessIdentity):
-            raise ReV2ControllerError(
-                "process_identity_factory must return ProcessIdentity"
-            )
         _validate_selected_executor_binding(
             registration,
             provider_name=manifest_provider_name,
             provider_contract_hash=manifest_provider_contract_hash,
         )
+        dispatch_id: str | None = None
+        if registration.execution_mode == "provider_process":
+            dispatch_id = _new_dispatch_id(
+                item,
+                attempt_kind=attempt_kind,
+                attempt_index=attempt_index,
+            )
+            try:
+                identity = _start_provider_process(
+                    registration.executor,
+                    self.context.snapshot.read_root,
+                    item,
+                    dispatch_id,
+                )
+            except ReV2ControllerError:
+                raise
+            except Exception as exc:
+                raise ReV2ControllerError(
+                    f"cannot safely start provider process: {exc}"
+                ) from exc
+            if identity.pid == os.getpid():
+                raise ReV2ControllerError(
+                    "provider_process executor returned the controller PID"
+                )
+            leased_at = _timestamp(self._clock(), "post-start controller clock")
+        else:
+            try:
+                identity = self._process_identity_factory(
+                    item, attempt_kind, attempt_index, now
+                )
+            except Exception as exc:
+                raise ReV2ControllerError(
+                    f"cannot create in-process dispatch identity: {exc}"
+                ) from exc
+            if not isinstance(identity, ProcessIdentity):
+                raise ReV2ControllerError(
+                    "process_identity_factory must return ProcessIdentity"
+                )
+            leased_at = now
         try:
             lease = self.context.candidate_store.begin(
                 item,
                 identity,
-                leased_at=now,
+                dispatch_id=dispatch_id,
+                leased_at=leased_at,
             )
             self._fault("lease_written")
             self.context.event_store.append(
@@ -515,8 +608,16 @@ class ReV2Controller:
             )
             self._fault("dispatch_started")
 
-            outcome = registration.executor.execute(
-                self.context.snapshot.read_root, item, lease
+            _validate_selected_executor_binding(
+                registration,
+                provider_name=manifest_provider_name,
+                provider_contract_hash=manifest_provider_contract_hash,
+            )
+            outcome = _collect_execution(
+                registration,
+                self.context.snapshot.read_root,
+                item,
+                lease,
             )
             if (
                 not isinstance(outcome, tuple)
@@ -786,6 +887,24 @@ def _executor_provider_binding(executor: object) -> tuple[str, str]:
     return provider_name, provider_contract_hash
 
 
+def _executor_execution_mode(
+    executor: object,
+) -> Literal["in_process", "provider_process"]:
+    descriptor = inspect.getattr_static(type(executor), "execution_mode", None)
+    if (
+        not isinstance(descriptor, property)
+        or descriptor.fset is not None
+        or descriptor.fdel is not None
+    ):
+        raise ReV2ControllerError(
+            "executor execution_mode must use an immutable read-only property"
+        )
+    mode = getattr(executor, "execution_mode", None)
+    if mode not in {"in_process", "provider_process"}:
+        raise ReV2ControllerError("executor execution_mode is invalid")
+    return mode
+
+
 def _validate_selected_executor_binding(
     registration: ExecutorRegistration,
     *,
@@ -801,11 +920,68 @@ def _validate_selected_executor_binding(
     if (
         registration_binding != manifest_binding
         or declared_binding != registration_binding
+        or _executor_execution_mode(registration.executor)
+        != registration.execution_mode
     ):
         raise ReV2ControllerError(
             "selected executor provider binding does not match its immutable "
             "registration and manifest provider contract"
         )
+
+
+def _start_provider_process(
+    executor: object,
+    snapshot_root: Path,
+    work_item: WorkItem,
+    dispatch_id: str,
+) -> ProcessIdentity:
+    start = getattr(executor, "start", None)
+    if not callable(start):
+        raise ReV2ControllerError(
+            "provider_process executor has no start method"
+        )
+    identity = start(snapshot_root, work_item, dispatch_id)
+    if not isinstance(identity, ProcessIdentity):
+        raise ReV2ControllerError(
+            "provider_process start must return the actual ProcessIdentity"
+        )
+    return identity
+
+
+def _collect_execution(
+    registration: ExecutorRegistration,
+    snapshot_root: Path,
+    work_item: WorkItem,
+    lease: DispatchLease,
+) -> tuple[Path, ExecutionObservation]:
+    method_name = (
+        "execute"
+        if registration.execution_mode == "in_process"
+        else "collect"
+    )
+    method = getattr(registration.executor, method_name, None)
+    if not callable(method):
+        raise ReV2ControllerError(
+            f"{registration.execution_mode} executor has no {method_name} method"
+        )
+    return method(snapshot_root, work_item, lease)
+
+
+def _new_dispatch_id(
+    work_item: WorkItem,
+    *,
+    attempt_kind: str,
+    attempt_index: int,
+) -> str:
+    suffix = content_digest(
+        {
+            "attempt_index": attempt_index,
+            "attempt_kind": attempt_kind,
+            "nonce": secrets.token_hex(32),
+            "work_item_id": work_item.work_item_id,
+        }
+    ).removeprefix("sha256:")
+    return f"dispatch-{suffix}"
 
 
 def _provider_binding(manifest: RunManifest) -> tuple[str, str]:
@@ -992,7 +1168,9 @@ __all__ = (
     "DeterministicInventoryExecutor",
     "ExecutorKey",
     "ExecutorRegistration",
+    "InProcessWorkExecutor",
     "ProcessIdentityFactory",
+    "ProviderProcessWorkExecutor",
     "ReV2Controller",
     "ReV2ControllerError",
     "ReV2ControllerResult",

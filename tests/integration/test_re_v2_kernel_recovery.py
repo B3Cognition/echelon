@@ -153,6 +153,10 @@ class RecordingExecutor(WorkExecutor):
     def provider_contract_hash(self) -> str:
         return PROVIDER_CONTRACT_HASH
 
+    @property
+    def execution_mode(self) -> str:
+        return "in_process"
+
     def execute(
         self,
         snapshot_root: Path,

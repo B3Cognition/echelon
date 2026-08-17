@@ -1,8 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dataclass_replace
+from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
+import signal
+import subprocess
+import sys
+import time
 
 import pytest
 
@@ -33,7 +39,12 @@ from harness.re_v2.model import (
     WorkTemplate,
 )
 from harness.re_v2.planner import plan_next, validate_work_graph
-from harness.re_v2.recovery import ProcessState, ReV2RunContext
+from harness.re_v2.recovery import (
+    ProcessInspector,
+    ProcessState,
+    ReV2RecoveryError,
+    ReV2RunContext,
+)
 from harness.re_v2.run_store import create_run_store
 from harness.re_v2.snapshot import capture_source_snapshot
 
@@ -120,6 +131,10 @@ class FakeProviderExecutor(WorkExecutor):
     def provider_contract_hash(self) -> str:
         return self._provider_contract_hash
 
+    @property
+    def execution_mode(self) -> str:
+        return "in_process"
+
     def execute(
         self, snapshot_root: Path, work_item: WorkItem, lease: DispatchLease
     ) -> tuple[Path, ExecutionObservation]:
@@ -156,6 +171,86 @@ class WritableMetadataExecutor:
     ) -> tuple[Path, ExecutionObservation]:
         self.calls.append((snapshot_root, work_item, lease))
         raise AssertionError("writable-metadata executor must never execute")
+
+
+class GatedSubprocessExecutor:
+    """Create a real provider child, but do no provider work before collect()."""
+
+    def __init__(self) -> None:
+        self.processes: dict[str, subprocess.Popen[bytes]] = {}
+        self.start_calls: list[str] = []
+        self.collect_calls: list[str] = []
+
+    @property
+    def provider_name(self) -> str:
+        return "fixture"
+
+    @property
+    def provider_contract_hash(self) -> str:
+        return PROVIDER_CONTRACT_HASH
+
+    @property
+    def execution_mode(self) -> str:
+        return "provider_process"
+
+    def start(
+        self,
+        snapshot_root: Path,
+        work_item: WorkItem,
+        dispatch_id: str,
+    ) -> ProcessIdentity:
+        assert snapshot_root.is_dir()
+        command = [sys.executable, "-c", "import time; time.sleep(120)"]
+        child = subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        observed = recovery_process_start(child.pid)
+        assert observed is not None
+        self.processes[dispatch_id] = child
+        self.start_calls.append(dispatch_id)
+        return ProcessIdentity(
+            pid=child.pid,
+            process_start_identity=observed,
+            command_hash=content_digest(command),
+            provider_identity=content_digest(
+                {
+                    "producer_id": work_item.producer_id,
+                    "provider": self.provider_name,
+                }
+            ),
+            started_at=_utc_now(),
+        )
+
+    def collect(
+        self,
+        snapshot_root: Path,
+        work_item: WorkItem,
+        lease: DispatchLease,
+    ) -> tuple[Path, ExecutionObservation]:
+        self.collect_calls.append(lease.dispatch_id)
+        raise AssertionError("crash test must never release the gated provider child")
+
+    def terminate_all(self) -> None:
+        for process in self.processes.values():
+            if process.poll() is None:
+                process.terminate()
+                process.wait(timeout=5)
+
+
+def recovery_process_start(pid: int) -> str | None:
+    return ProcessInspector()._probe(pid)
+
+
+def _utc_now() -> str:
+    return (
+        datetime.now(timezone.utc)
+        .isoformat(timespec="microseconds")
+        .replace("+00:00", "Z")
+    )
 
 
 def _template(
@@ -293,6 +388,7 @@ def _registration(
         producer_protocol_version=template.producer_protocol_version,
         layer=template.layer,
         result_contract_id=template.result_contract_id,
+        execution_mode="in_process",
         executor=executor,
     )
 
@@ -419,6 +515,7 @@ def test_executor_registry_requires_the_exact_work_protocol_tuple(
         producer_protocol_version="wrong-protocol",
         layer="L0",
         result_contract_id="fixture-result-v1",
+        execution_mode="in_process",
         executor=executor,
     )
     controller = ReV2Controller(
@@ -456,6 +553,24 @@ def test_executor_registry_rejects_raw_executor_values(tmp_path: Path) -> None:
 
     assert executor.calls == []
     assert context.event_store.replay() == ()
+
+
+def test_provider_process_registration_requires_two_phase_executor_contract() -> None:
+    template = _template("inventory", goal="inventory")
+    executor = GatedSubprocessExecutor()
+
+    registration = ExecutorRegistration(
+        provider_name="fixture",
+        provider_contract_hash=PROVIDER_CONTRACT_HASH,
+        producer_id=template.producer_id,
+        producer_protocol_version=template.producer_protocol_version,
+        layer=template.layer,
+        result_contract_id=template.result_contract_id,
+        execution_mode="provider_process",
+        executor=executor,
+    )
+
+    assert registration.execution_mode == "provider_process"
 
 
 def test_convenience_executor_rejects_writable_provider_metadata(
@@ -862,6 +977,144 @@ def test_production_registry_does_not_write_before_recovery_validation(
     )
 
     assert not output_root.exists()
+
+
+def test_real_provider_child_is_leased_before_collect_and_blocks_redispatch(
+    tmp_path: Path,
+) -> None:
+    """A provider child surviving controller death remains the recovery authority."""
+    context = _context(tmp_path, (_template("inventory", goal="inventory"),))
+    context = dataclass_replace(
+        context,
+        candidate_store=CandidateStore(context.paths, clock=_utc_now),
+    )
+    first = GatedSubprocessExecutor()
+    replacement = GatedSubprocessExecutor()
+
+    def controller_died(boundary: str) -> None:
+        if boundary == "dispatch_started":
+            raise RuntimeError("controller died")
+
+    try:
+        crashing = ReV2Controller(
+            context,
+            executor=first,
+            process_inspector=ProcessInspector(),
+            clock=_utc_now,
+            fault_hook=controller_died,
+        )
+
+        with pytest.raises(RuntimeError, match="controller died"):
+            crashing.run_once()
+
+        assert len(first.start_calls) == 1
+        assert first.collect_calls == []
+        dispatch_id = first.start_calls[0]
+        child = first.processes[dispatch_id]
+        assert child.poll() is None
+        lease_envelope = json.loads(
+            (
+                context.paths.candidates
+                / ".leases"
+                / f"{dispatch_id}.json"
+            ).read_bytes()
+        )
+        lease = DispatchLease.from_json_dict(lease_envelope["lease"])
+        assert lease.process_identity.pid == child.pid
+        assert lease.process_identity.pid != os.getpid()
+
+        recovering = ReV2Controller(
+            context,
+            executor=replacement,
+            process_inspector=ProcessInspector(),
+            clock=_utc_now,
+        )
+        with pytest.raises(ReV2RecoveryError, match="still running"):
+            recovering.run_once()
+
+        assert replacement.start_calls == []
+        assert replacement.collect_calls == []
+        assert [
+            event.type for event in context.event_store.replay()
+        ].count("dispatch_started") == 1
+    finally:
+        first.terminate_all()
+        replacement.terminate_all()
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="requires POSIX process recovery")
+def test_provider_child_survives_actual_controller_process_death(
+    tmp_path: Path,
+) -> None:
+    """The durable lease names the grandchild after its controller exits abruptly."""
+    context = _context(tmp_path, (_template("inventory", goal="inventory"),))
+    context = dataclass_replace(
+        context,
+        candidate_store=CandidateStore(context.paths, clock=_utc_now),
+    )
+    controller_pid = os.fork()
+    if controller_pid == 0:  # pragma: no cover - assertions run in the parent
+        try:
+            executor = GatedSubprocessExecutor()
+
+            def die_after_durable_start(boundary: str) -> None:
+                if boundary == "dispatch_started":
+                    os._exit(73)
+
+            ReV2Controller(
+                context,
+                executor=executor,
+                process_inspector=ProcessInspector(),
+                clock=_utc_now,
+                fault_hook=die_after_durable_start,
+            ).run_once()
+        except BaseException:
+            os._exit(74)
+        os._exit(75)
+
+    _waited_pid, status = os.waitpid(controller_pid, 0)
+    assert os.waitstatus_to_exitcode(status) == 73
+    lease_files = tuple(
+        (context.paths.candidates / ".leases").glob("*.json")
+    )
+    assert len(lease_files) == 1
+    lease = DispatchLease.from_json_dict(
+        json.loads(lease_files[0].read_bytes())["lease"]
+    )
+    provider_pid = lease.process_identity.pid
+    replacement = GatedSubprocessExecutor()
+    try:
+        assert provider_pid != controller_pid
+        assert provider_pid != os.getpid()
+        assert (
+            ProcessInspector().inspect(lease.process_identity)
+            is ProcessState.SAME_PROCESS_LIVE
+        )
+
+        recovering = ReV2Controller(
+            context,
+            executor=replacement,
+            process_inspector=ProcessInspector(),
+            clock=_utc_now,
+        )
+        with pytest.raises(ReV2RecoveryError, match="still running"):
+            recovering.run_once()
+
+        assert replacement.start_calls == []
+        assert replacement.collect_calls == []
+        assert [
+            event.type for event in context.event_store.replay()
+        ].count("dispatch_started") == 1
+    finally:
+        try:
+            os.kill(provider_pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        for _attempt in range(100):
+            if ProcessInspector().inspect(lease.process_identity) is ProcessState.DEAD:
+                break
+            time.sleep(0.01)
+        replacement.terminate_all()
 
 
 @pytest.mark.parametrize(

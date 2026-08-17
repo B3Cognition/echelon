@@ -264,6 +264,16 @@ class LedgerView:
     certification_work_items: Mapping[str, WorkItem]
 
 
+@dataclass(frozen=True, slots=True)
+class _LedgerScope:
+    """Immutable run-manifest scope enforced during append and replay."""
+
+    source_snapshot_id: str
+    partition_manifest_id: str | None
+    requested_goals: frozenset[str] | None
+    artifact_policy_versions: Mapping[str, str] | None
+
+
 @dataclass(slots=True)
 class _LedgerState:
     certifications: dict[str, CertificationReceipt]
@@ -280,7 +290,7 @@ class _LedgerState:
         record: LedgerRecord,
         object_store: ObjectStore,
         supported_verifiers: frozenset[tuple[str, str]],
-        pinned_source_snapshot_id: str,
+        scope: _LedgerScope,
     ) -> None:
         if record.type == "certification":
             try:
@@ -294,7 +304,7 @@ class _LedgerState:
             except (ReV2ModelError, TypeError, ValueError) as exc:
                 raise ReV2LedgerError(f"invalid certification receipt: {exc}") from exc
             _validate_certification_work_item(
-                receipt, work_item, pinned_source_snapshot_id
+                receipt, work_item, scope
             )
             _validate_supported_verifier(receipt, supported_verifiers)
             object_store.verify(receipt.certification_key.artifact_hash)
@@ -319,7 +329,7 @@ class _LedgerState:
                 receipt = ArtifactReceipt.from_json_dict(record.payload)
             except (ReV2ModelError, TypeError, ValueError) as exc:
                 raise ReV2LedgerError(f"invalid artifact receipt: {exc}") from exc
-            if receipt.artifact_key.source_snapshot_id != pinned_source_snapshot_id:
+            if receipt.artifact_key.source_snapshot_id != scope.source_snapshot_id:
                 raise ReV2LedgerError(
                     "artifact receipt does not match pinned source snapshot"
                 )
@@ -344,7 +354,7 @@ class _LedgerState:
                 receipt,
                 certification,
                 work_item=work_item,
-                pinned_source_snapshot_id=pinned_source_snapshot_id,
+                pinned_source_snapshot_id=scope.source_snapshot_id,
             )
             object_store.verify(receipt.artifact_hash)
             self.accepted_artifacts[receipt.artifact_key.identity] = receipt
@@ -377,7 +387,8 @@ class Ledger:
         if isinstance(path, ReV2Paths):
             self.path = path.ledger
             try:
-                manifest_source = load_run_manifest(path.root.parent).source_snapshot_id
+                manifest = load_run_manifest(path.root.parent)
+                manifest_source = manifest.source_snapshot_id
             except ReV2RunStoreError as exc:
                 raise ReV2LedgerError(
                     f"cannot bind ledger to immutable run manifest: {exc}"
@@ -390,14 +401,33 @@ class Ledger:
                     "explicit pinned source does not match immutable run manifest"
                 )
             pinned_source_snapshot_id = manifest_source
+            pinned_partition_manifest_id: str | None = manifest.partition_manifest_id
+            pinned_requested_goals: frozenset[str] | None = frozenset(
+                manifest.requested_goals
+            )
+            pinned_artifact_policies: Mapping[str, str] | None = MappingProxyType(
+                dict(manifest.artifact_policy_versions)
+            )
         else:
             self.path = Path(path)
             if pinned_source_snapshot_id is None:
                 raise ReV2LedgerError(
                     "bare ledger path requires an explicit pinned source snapshot"
                 )
+            pinned_partition_manifest_id = None
+            pinned_requested_goals = None
+            pinned_artifact_policies = None
         self.pinned_source_snapshot_id = _digest(
             pinned_source_snapshot_id, "pinned_source_snapshot_id"
+        )
+        self.pinned_partition_manifest_id = pinned_partition_manifest_id
+        self.pinned_requested_goals = pinned_requested_goals
+        self.pinned_artifact_policy_versions = pinned_artifact_policies
+        self.scope = _LedgerScope(
+            source_snapshot_id=self.pinned_source_snapshot_id,
+            partition_manifest_id=pinned_partition_manifest_id,
+            requested_goals=pinned_requested_goals,
+            artifact_policy_versions=pinned_artifact_policies,
         )
         self.lock_path = self.path.with_name("ledger.lock")
         self.object_store = object_store
@@ -481,7 +511,7 @@ class Ledger:
                 record,
                 self.object_store,
                 self.supported_verifiers,
-                self.pinned_source_snapshot_id,
+                self.scope,
             )
 
             existed = self.path.exists()
@@ -550,7 +580,7 @@ class Ledger:
                     record,
                     self.object_store,
                     self.supported_verifiers,
-                    self.pinned_source_snapshot_id,
+                    self.scope,
                 )
             except ReV2LedgerError as exc:
                 raise ReV2LedgerError(
@@ -721,18 +751,55 @@ def _validate_artifact_authority(
 def _validate_certification_work_item(
     receipt: CertificationReceipt,
     work_item: WorkItem,
-    pinned_source_snapshot_id: str,
+    scope: _LedgerScope,
 ) -> None:
     key = receipt.certification_key
     if receipt.work_item_id != work_item.work_item_id:
         raise ReV2LedgerError("certification receipt does not match work item identity")
     if (
-        work_item.output_key.source_snapshot_id != pinned_source_snapshot_id
-        or key.source_snapshot_id != pinned_source_snapshot_id
+        work_item.output_key.source_snapshot_id != scope.source_snapshot_id
+        or key.source_snapshot_id != scope.source_snapshot_id
     ):
         raise ReV2LedgerError(
             "certification work item does not match pinned source snapshot"
         )
+    if (
+        work_item.output_key.producer_protocol_version
+        != work_item.producer_protocol_version
+    ):
+        raise ReV2LedgerError(
+            "certification work item producer protocol is internally inconsistent"
+        )
+    if scope.partition_manifest_id is not None and (
+        work_item.output_key.partition_manifest_id != scope.partition_manifest_id
+    ):
+        raise ReV2LedgerError(
+            "certification work item does not match pinned partition manifest"
+        )
+    if scope.requested_goals is not None and (
+        work_item.goal_id not in scope.requested_goals
+    ):
+        raise ReV2LedgerError(
+            "certification work item goal is outside pinned run scope"
+        )
+    if scope.artifact_policy_versions is not None:
+        policy_version = scope.artifact_policy_versions.get(
+            work_item.output_key.layer
+        )
+        if policy_version is None:
+            raise ReV2LedgerError(
+                "certification work item layer has no pinned artifact policy"
+            )
+        expected_policy_hash = content_digest(
+            {
+                "artifact_kind": work_item.output_key.artifact_kind,
+                "policy_version": policy_version,
+            }
+        )
+        if work_item.output_key.layer_policy_hash != expected_policy_hash:
+            raise ReV2LedgerError(
+                "certification work item does not match pinned artifact policy"
+            )
     if (
         key.verifier_id != work_item.verifier_id
         or key.verifier_version != work_item.verifier_version

@@ -646,7 +646,7 @@ def test_re_v2_paths_bind_ledger_to_the_immutable_run_manifest(
         requested_goals=("inventory",),
         initial_budget_policy=BudgetPolicy(None, None, 1, 1, 0, 0),
         provider_contract={"provider": "fixture"},
-        artifact_policy_versions={"inventory": "v1"},
+        artifact_policy_versions={"L0": "v1"},
         parent_run_id=None,
     )
     paths = create_run_store(tmp_path / "run-1", manifest)
@@ -656,12 +656,97 @@ def test_re_v2_paths_bind_ledger_to_the_immutable_run_manifest(
         objects,
         supported_verifiers={"fixture-verifier": "v1"},
     )
-    certification, artifact = accepted_receipts(objects)
+    item = replace(
+        work_item(),
+        output_key=replace(
+            work_item().output_key,
+            layer_policy_hash=content_digest(
+                {"artifact_kind": "inventory", "policy_version": "v1"}
+            ),
+        ),
+    )
+    certification, artifact = accepted_receipts(objects, item=item)
 
-    ledger.record_certification(certification, work_item())
+    ledger.record_certification(certification, item)
     ledger.record_artifact(artifact)
 
     assert artifact.artifact_key.identity in ledger.replay().accepted_artifacts
+
+
+@pytest.mark.parametrize(
+    ("field", "mutate"),
+    (
+        (
+            "partition",
+            lambda item: replace(
+                item,
+                output_key=replace(
+                    item.output_key,
+                    partition_manifest_id=digest("foreign-partitions"),
+                ),
+            ),
+        ),
+        (
+            "policy",
+            lambda item: replace(
+                item,
+                output_key=replace(
+                    item.output_key,
+                    layer_policy_hash=digest("foreign-policy"),
+                ),
+            ),
+        ),
+        ("goal", lambda item: replace(item, goal_id="foreign-goal")),
+        (
+            "producer_protocol",
+            lambda item: replace(item, producer_protocol_version="v2"),
+        ),
+    ),
+)
+def test_run_bound_ledger_rejects_foreign_manifest_scope_before_append(
+    tmp_path: Path,
+    field: str,
+    mutate: object,
+) -> None:
+    manifest = RunManifest(
+        schema_version=1,
+        engine="re-v2",
+        engine_protocol_version="2.0",
+        run_id="run-scope",
+        created_at=NOW,
+        source_snapshot_id=digest("source"),
+        source_snapshot_kind="content-snapshot",
+        partition_manifest_id=digest("partitions"),
+        requested_goals=("inventory",),
+        initial_budget_policy=BudgetPolicy(None, None, 1, 1, 0, 0),
+        provider_contract={"provider": "fixture"},
+        artifact_policy_versions={"L0": "v1"},
+        parent_run_id=None,
+    )
+    paths = create_run_store(tmp_path / "run-scope", manifest)
+    objects = ObjectStore(paths.objects)
+    ledger = Ledger(
+        paths,
+        objects,
+        supported_verifiers={"fixture-verifier": "v1"},
+    )
+    canonical = replace(
+        work_item(),
+        output_key=replace(
+            work_item().output_key,
+            layer_policy_hash=content_digest(
+                {"artifact_kind": "inventory", "policy_version": "v1"}
+            ),
+        ),
+    )
+    foreign = mutate(canonical)  # type: ignore[operator]
+    certification, _artifact = accepted_receipts(objects, item=foreign)
+
+    with pytest.raises(ReV2LedgerError, match="partition|policy|goal|protocol|scope"):
+        ledger.record_certification(certification, foreign)
+
+    assert ledger.replay().certifications == {}
+    assert not paths.ledger.exists()
 
 
 def test_certification_persists_and_validates_the_full_work_item(

@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 import harness.re_v2.recovery as recovery_module
+from harness.re_v2.budget import evaluate_budget
 from harness.re_v2.candidates import CandidateStore, ProcessIdentity
 from harness.re_v2.canonical import content_digest
 from harness.re_v2.events import EventStore
@@ -14,6 +15,7 @@ from harness.re_v2.ledger import (
     CertificationDecision,
     Ledger,
     ObjectStore,
+    ReV2LedgerError,
 )
 from harness.re_v2.model import (
     ArtifactKey,
@@ -26,7 +28,7 @@ from harness.re_v2.model import (
     WorkItem,
     WorkTemplate,
 )
-from harness.re_v2.planner import validate_work_graph
+from harness.re_v2.planner import plan_next, validate_work_graph
 from harness.re_v2.recovery import (
     ProcessState,
     ReV2RecoveryError,
@@ -97,20 +99,26 @@ class RecordingInspector:
         return self.states[identity.pid]
 
 
-def _template(*, layer: str = "L0", protocol: str = "v1") -> WorkTemplate:
+def _template(
+    *,
+    artifact_kind: str = "fixture-inventory",
+    layer: str = "L0",
+    protocol: str = "v1",
+    dependencies: tuple[str, ...] = (),
+) -> WorkTemplate:
     return WorkTemplate(
         goal_id="inventory",
-        artifact_kind="fixture-inventory",
+        artifact_kind=artifact_kind,
         layer=layer,
         producer_id="fixture-producer",
         producer_protocol_version=protocol,
         layer_policy_hash=content_digest(
             {
-                "artifact_kind": "fixture-inventory",
+                "artifact_kind": artifact_kind,
                 "policy_version": POLICY_VERSION,
             }
         ),
-        required_template_ids=(),
+        required_template_ids=dependencies,
         verifier_id="fixture-verifier",
         verifier_version="v1",
         result_contract_id="fixture-result-v1",
@@ -149,7 +157,11 @@ def _work_item(snapshot_id: str, partition_id: str) -> WorkItem:
     )
 
 
-def _context(tmp_path: Path) -> ReV2RunContext:
+def _context(
+    tmp_path: Path,
+    templates: tuple[WorkTemplate, ...] | None = None,
+) -> ReV2RunContext:
+    selected_templates = templates or (_template(),)
     source = tmp_path / "source"
     source.mkdir()
     (source / "api.py").write_text("VALUE = 1\n", encoding="utf-8")
@@ -193,7 +205,7 @@ def _context(tmp_path: Path) -> ReV2RunContext:
         clock=lambda: PERSISTED,
     )
     graph = validate_work_graph(
-        (_template(),),
+        selected_templates,
         requested_goals=manifest.requested_goals,
         source_snapshot_id=snapshot.snapshot_id,
         partition_manifest_id=partition_id,
@@ -292,6 +304,245 @@ def _persist_orphan_candidate(
     return item, context.candidate_store.persist(lease, output, observation)
 
 
+def _replace_output_key(item: WorkItem, **changes: object) -> WorkItem:
+    output_key = replace(item.output_key, **changes)
+    required = (
+        output_key.dependency_hashes
+        if "dependency_hashes" in changes
+        else item.required_artifact_hashes
+    )
+    return replace(
+        item,
+        output_key=output_key,
+        required_artifact_hashes=required,
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "mutate"),
+    (
+        (
+            "source_snapshot_id",
+            lambda item: _replace_output_key(
+                item, source_snapshot_id=content_digest(b"foreign-source")
+            ),
+        ),
+        (
+            "partition_manifest_id",
+            lambda item: _replace_output_key(
+                item, partition_manifest_id=content_digest(b"foreign-partitions")
+            ),
+        ),
+        (
+            "artifact_kind",
+            lambda item: _replace_output_key(item, artifact_kind="foreign-inventory"),
+        ),
+        ("layer", lambda item: _replace_output_key(item, layer="L1")),
+        (
+            "layer_policy_hash",
+            lambda item: _replace_output_key(
+                item, layer_policy_hash=content_digest(b"foreign-policy")
+            ),
+        ),
+        ("producer_id", lambda item: replace(item, producer_id="foreign-producer")),
+        (
+            "producer_protocol_version",
+            lambda item: replace(
+                _replace_output_key(item, producer_protocol_version="v2"),
+                producer_protocol_version="v2",
+            ),
+        ),
+        (
+            "result_contract_id",
+            lambda item: replace(item, result_contract_id="foreign-result-v1"),
+        ),
+        ("verifier_id", lambda item: replace(item, verifier_id="foreign-verifier")),
+        (
+            "verifier_version",
+            lambda item: replace(item, verifier_version="foreign-v2"),
+        ),
+        ("goal_id", lambda item: replace(item, goal_id="foreign-goal")),
+        (
+            "template_id",
+            lambda item: replace(
+                item, template_id=content_digest(b"foreign-template")
+            ),
+        ),
+        (
+            "max_provider_attempts",
+            lambda item: replace(item, max_provider_attempts=99),
+        ),
+        (
+            "max_generation_attempts",
+            lambda item: replace(item, max_generation_attempts=99),
+        ),
+        (
+            "max_semantic_rounds",
+            lambda item: replace(item, max_semantic_rounds=99),
+        ),
+        (
+            "max_result_contract_retries",
+            lambda item: replace(item, max_result_contract_retries=99),
+        ),
+        (
+            "dependency_hashes",
+            lambda item: _replace_output_key(
+                item, dependency_hashes=(content_digest(b"foreign-dependency"),)
+            ),
+        ),
+    ),
+    ids=lambda value: value if isinstance(value, str) else None,
+)
+def test_recovery_rejects_every_foreign_work_item_field_before_side_effects(
+    tmp_path: Path,
+    field: str,
+    mutate: object,
+) -> None:
+    """A recovered WorkItem is authority only when it exactly materializes the graph."""
+    context = _context(tmp_path)
+    _start_run(context)
+    canonical = _work_item(
+        context.snapshot.snapshot_id,
+        context.manifest.partition_manifest_id,
+    )
+    foreign = mutate(canonical)  # type: ignore[operator]
+    lease = context.candidate_store.begin(
+        foreign,
+        _identity(),
+        dispatch_id=f"dispatch-foreign-{field}",
+        leased_at=NOW,
+    )
+    output = tmp_path / f"foreign-output-{field}"
+    output.mkdir()
+    (output / "artifact.md").write_text("foreign candidate\n", encoding="utf-8")
+    context.candidate_store.persist(
+        lease,
+        output,
+        _observation(result_contract_valid=True),
+    )
+    inspector = RecordingInspector({1234: ProcessState.DEAD})
+    events_before = context.event_store.replay()
+    ledger_before = context.ledger.replay()
+
+    with pytest.raises(ReV2RecoveryError, match="WorkItem|work item|graph"):
+        recover_run(
+            context,
+            process_inspector=inspector,
+            clock=lambda: CERTIFIED,
+        )
+
+    assert inspector.calls == []
+    assert context.certifier.calls == 0
+    assert context.event_store.replay() == events_before
+    assert context.ledger.replay() == ledger_before
+
+
+def test_recovery_binds_dependency_hash_to_exact_accepted_prerequisite(
+    tmp_path: Path,
+) -> None:
+    prerequisite = _template(artifact_kind="source-inventory")
+    dependent = _template(
+        artifact_kind="partition-inventory",
+        dependencies=(prerequisite.template_id,),
+    )
+    context = _context(tmp_path, (prerequisite, dependent))
+    _start_run(context)
+    budget = evaluate_budget(
+        context.manifest.initial_budget_policy,
+        context.event_store.replay(),
+        now=NOW,
+    )
+    prerequisite_item = plan_next(
+        context.graph,
+        context.ledger.replay(),
+        budget,
+    ).ready[0]
+    first_lease = context.candidate_store.begin(
+        prerequisite_item,
+        _identity(),
+        dispatch_id="dispatch-prerequisite",
+        leased_at=NOW,
+    )
+    context.event_store.append(
+        "dispatch_leased",
+        {
+            "dispatch_id": first_lease.dispatch_id,
+            "work_item_id": prerequisite_item.work_item_id,
+        },
+        occurred_at=NOW,
+    )
+    context.event_store.append(
+        "dispatch_started",
+        {
+            "attempt_index": 1,
+            "attempt_kind": "initial_generation",
+            "dispatch_id": first_lease.dispatch_id,
+            "work_item_id": prerequisite_item.work_item_id,
+        },
+        occurred_at=NOW,
+    )
+    observation = _observation(result_contract_valid=True)
+    context.event_store.append(
+        "dispatch_observed",
+        {
+            "dispatch_id": first_lease.dispatch_id,
+            "observation": observation.to_json_dict(),
+            "work_item_id": prerequisite_item.work_item_id,
+        },
+        occurred_at=OBSERVED,
+    )
+    first_output = tmp_path / "prerequisite-output"
+    first_output.mkdir()
+    (first_output / "artifact.md").write_text("prerequisite\n", encoding="utf-8")
+    context.candidate_store.persist(first_lease, first_output, observation)
+    recover_run(
+        context,
+        process_inspector=RecordingInspector({}),
+        clock=lambda: CERTIFIED,
+    )
+
+    canonical_dependent = plan_next(
+        context.graph,
+        context.ledger.replay(),
+        evaluate_budget(
+            context.manifest.initial_budget_policy,
+            context.event_store.replay(),
+            now=CERTIFIED,
+        ),
+    ).ready[0]
+    foreign_hash = content_digest(b"foreign-prerequisite-object")
+    foreign_dependent = _replace_output_key(
+        canonical_dependent,
+        dependency_hashes=(foreign_hash,),
+    )
+    foreign_lease = context.candidate_store.begin(
+        foreign_dependent,
+        _identity(5678),
+        dispatch_id="dispatch-foreign-dependency",
+        leased_at=NOW,
+    )
+    foreign_output = tmp_path / "foreign-dependent-output"
+    foreign_output.mkdir()
+    (foreign_output / "artifact.md").write_text("dependent\n", encoding="utf-8")
+    context.candidate_store.persist(foreign_lease, foreign_output, observation)
+    inspector = RecordingInspector({5678: ProcessState.DEAD})
+    certifier_calls = context.certifier.calls
+    events_before = context.event_store.replay()
+    ledger_before = context.ledger.replay()
+
+    with pytest.raises(ReV2RecoveryError, match="WorkItem|work item|graph"):
+        recover_run(
+            context,
+            process_inspector=inspector,
+            clock=lambda: CERTIFIED,
+        )
+
+    assert inspector.calls == []
+    assert context.certifier.calls == certifier_calls
+    assert context.event_store.replay() == events_before
+    assert context.ledger.replay() == ledger_before
+
+
 def test_recovery_certifies_orphan_candidate_before_redispatch(
     tmp_path: Path,
 ) -> None:
@@ -362,18 +613,13 @@ def test_recovery_rejects_ledger_work_item_different_from_exact_candidate(
     item, candidate = _persist_orphan_candidate(context)
     other_item = replace(item, goal_id="other-goal")
     decision = context.certifier.certify(candidate, other_item)
-    context.ledger.record_certification(
-        decision.certification_receipt, other_item
-    )
-    assert decision.artifact_receipt is not None
-    context.ledger.record_artifact(decision.artifact_receipt)
 
-    with pytest.raises(ReV2RecoveryError, match="WorkItem"):
-        recover_run(
-            context,
-            process_inspector=RecordingInspector({}),
-            clock=lambda: CERTIFIED,
+    with pytest.raises(ReV2LedgerError, match="goal|scope|WorkItem"):
+        context.ledger.record_certification(
+            decision.certification_receipt, other_item
         )
+
+    assert context.ledger.replay().certifications == {}
 
 
 @pytest.mark.parametrize(
