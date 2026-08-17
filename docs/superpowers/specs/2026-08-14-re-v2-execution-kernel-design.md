@@ -341,6 +341,8 @@ new work item.
 
 ## Persistence and Publication Layout
 
+EGR-164 implements this authoritative run-local layout:
+
 ```text
 runs/<run-id>/v2/
   run.json                 immutable run manifest
@@ -348,28 +350,38 @@ runs/<run-id>/v2/
   projection.json          rebuildable status view
   ledger.jsonl             artifact/certification receipts
   candidates/              isolated durable provider outputs
-
-<workspace>/re/v2/
-  index.json               atomic pointer to published generations
-  generations/<id>/        tracked semantic artifact roots/manifests
-
-<workspace>/re/.cache/v2/
-  objects/                 deterministic or unpublished content objects
-  extracted/               reproducible L0 extraction cache
-  checkpoints/             unpublished certified checkpoints
+  objects/                 run-local immutable artifact objects
 ```
 
-Published semantic artifacts and their manifests are cloneable and tracked.
-Large deterministic L0 objects and unpublished candidates/checkpoints may stay
-in a local ignored cache because they are reproducible or not yet published.
-Publication writes a complete immutable generation first and changes
-`re/v2/index.json` last with compare-and-swap against the expected prior index.
+EGR-164 also implements this generic exact-root manifest/index primitive:
 
-Synthesis is keyed by the exact accepted source-root hash set and synthesis
-policy. At most one accepted synthesis exists for a unique input set and
-policy. Later deepening creates a new input set and synthesis node; it does not
-erase an earlier valid generation. EGR-168 will define when a source outcome is
-accepted as complete or explicit partial and therefore eligible for synthesis.
+```text
+<workspace>/re/v2/
+  index.json
+  generations/<id>/manifest.json
+```
+
+That primitive writes one immutable manifest for an exact caller-supplied root
+hash set and policy hash, then compare-and-swaps `re/v2/index.json`. It does not
+materialize or copy semantic artifacts, validate certification or completeness,
+provide a production operator publication or synthesis workflow, or make the
+generation Git-tracked. Those responsibilities are deliberately outside the
+EGR-164 primitive.
+
+The previously proposed `<workspace>/re/.cache/v2/{objects,extracted,checkpoints}`
+tree is not implemented and is not a reserved physical layout. EGR-165 owns
+layered artifact materialization, extracted-cache policy, and tracking policy;
+EGR-166 owns checkpoint storage and adoption; EGR-167 owns audit artifact
+storage; and EGR-168 owns synthesis materialization and the operator
+publication/tracking workflow. Those EGRs may select paths only after their
+durability and lifecycle contracts are approved.
+
+The future EGR-168 synthesis contract keys synthesis by the exact accepted
+source-root hash set and synthesis policy. At most one accepted synthesis may
+exist for a unique input set and policy. Later deepening creates a new input set
+and synthesis node; it does not erase an earlier valid generation. EGR-168 will
+define when a source outcome is accepted as complete or explicit partial and
+therefore eligible for synthesis.
 
 ## V1 Compatibility and Adoption
 
