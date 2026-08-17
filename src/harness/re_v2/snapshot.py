@@ -182,7 +182,7 @@ def materialize_pinned_git_tree(
             ["-C", str(source), "worktree", "add", "--detach", str(worktree), commit]
         )
         registered = True
-        _fault(fault_hook, "worktree_added")
+        _fault(fault_hook, "source_worktree_added")
         submodule_sources = _submodule_sources(source, commit)
         _materialize_submodules(
             worktree,

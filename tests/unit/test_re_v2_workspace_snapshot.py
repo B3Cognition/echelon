@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Mapping
 
@@ -322,3 +323,118 @@ def test_composite_capture_rejects_source_mutation_before_publish(
     assert ".snapshot-stage-worktree-" not in _git(
         workspace, "worktree", "list", "--porcelain"
     )
+
+
+COMPOSITE_FAULTS = (
+    "source_worktree_added",
+    "source_tree_copied",
+    "before_publish",
+    "source_installed",
+    "manifest_installed",
+    "permissions_normalized",
+    "bundle_fsynced",
+    "final_promoted",
+    "marker_linked",
+    "marker_root_fsynced",
+    "marker_destination_fsynced",
+    "marker_temporary_cleaned",
+    "final_validated",
+)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("boundary", COMPOSITE_FAULTS)
+def test_composite_capture_recovers_every_publication_fault(
+    tmp_path: Path,
+    boundary: str,
+) -> None:
+    first = _clean_repo(tmp_path / "first", {"a.py": "a\n"})
+    second = _clean_repo(tmp_path / "second", {"b.py": "b\n"})
+    sources = _sources(tmp_path, first, second)
+    destination = tmp_path.parent / f"{tmp_path.name}-snapshots"
+    fired = False
+
+    def crash_once(point: str) -> None:
+        nonlocal fired
+        if point == boundary and not fired:
+            fired = True
+            raise RuntimeError(f"crash at {point}")
+
+    with pytest.raises(Exception, match="crash at"):
+        capture_workspace_snapshot(
+            tmp_path,
+            sources,
+            destination,
+            fault_hook=crash_once,
+        )
+    assert fired
+
+    snapshot = capture_workspace_snapshot(tmp_path, sources, destination)
+    manifest = load_snapshot_manifest(snapshot)
+
+    assert [component.source_id for component in manifest.components or ()] == [
+        "first",
+        "second",
+    ]
+    assert len(
+        [
+            path
+            for path in destination.iterdir()
+            if path.is_dir() and not path.name.startswith(".")
+        ]
+    ) == 1
+    assert len(list((destination / ".snapshot-commits").glob("*.json"))) == 1
+    assert not list(destination.glob(".snapshot-stage-*"))
+    assert not list(destination.glob(".workspace-prepare-*"))
+    for repository in (first, second):
+        assert ".snapshot-stage-worktree-" not in _git(
+            repository, "worktree", "list", "--porcelain"
+        )
+
+
+@pytest.mark.unit
+def test_composite_capture_converges_for_concurrent_writers(tmp_path: Path) -> None:
+    first = _clean_repo(tmp_path / "first", {"a.py": "a\n"})
+    second = _clean_repo(tmp_path / "second", {"b.py": "b\n"})
+    destination = tmp_path.parent / f"{tmp_path.name}-snapshots"
+    script = """
+from pathlib import Path
+from types import SimpleNamespace
+import sys
+from harness.re_v2.workspace_snapshot import capture_workspace_snapshot
+
+workspace = Path(sys.argv[1])
+destination = Path(sys.argv[2])
+sources = tuple(
+    SimpleNamespace(id=name, path=name, git_role="source")
+    for name in ("first", "second")
+)
+print(capture_workspace_snapshot(workspace, sources, destination).snapshot_id)
+"""
+    processes = [
+        subprocess.Popen(
+            [sys.executable, "-c", script, str(tmp_path), str(destination)],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[2] / "src")},
+        )
+        for _ in range(2)
+    ]
+    results = [process.communicate(timeout=30) for process in processes]
+
+    assert all(process.returncode == 0 for process in processes), results
+    snapshot_ids = [stdout.strip().splitlines()[-1] for stdout, _stderr in results]
+    assert len(set(snapshot_ids)) == 1
+    assert len(
+        [
+            path
+            for path in destination.iterdir()
+            if path.is_dir() and not path.name.startswith(".")
+        ]
+    ) == 1
+    assert len(list((destination / ".snapshot-commits").glob("*.json"))) == 1
+    for repository in (first, second):
+        assert ".snapshot-stage-worktree-" not in _git(
+            repository, "worktree", "list", "--porcelain"
+        )

@@ -148,6 +148,7 @@ def capture_workspace_snapshot(
                         )
                     target.parent.mkdir(parents=True, exist_ok=True)
                     _copy_regular_files(source_tree, target, entries)
+                    _fault(fault_hook, "source_tree_copied")
                     component_submodules = _component_submodules(
                         proof.repository_path,
                         submodules,

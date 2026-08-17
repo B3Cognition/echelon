@@ -21,6 +21,7 @@ def _mutated_dry_run(
     tmp_path: Path,
     *,
     replace: tuple[str, str],
+    relative_path: str = "src/echelon/cli_app.py",
 ) -> subprocess.CompletedProcess[str]:
     """Run the checked-in validator against one deliberately broken CLI tree."""
     root = tmp_path / "mutated-repository"
@@ -30,7 +31,7 @@ def _mutated_dry_run(
     (root / "prosaic").symlink_to(REPO_ROOT / "prosaic", target_is_directory=True)
     (root / "runtime").symlink_to(REPO_ROOT / "runtime", target_is_directory=True)
 
-    cli_path = root / "src" / "echelon" / "cli_app.py"
+    cli_path = root / relative_path
     original, replacement = replace
     source = cli_path.read_text(encoding="utf-8")
     assert source.count(original) == 1
@@ -191,5 +192,39 @@ def test_dry_run_rejects_misdirected_legacy_run_callback(tmp_path: Path) -> None
 
     assert result.returncode != 0
     assert "RE run legacy callback routing is invalid" in (
+        result.stdout + result.stderr
+    )
+
+
+def test_dry_run_rejects_removed_composite_capture(tmp_path: Path) -> None:
+    result = _mutated_dry_run(
+        tmp_path,
+        relative_path="src/echelon/cli.py",
+        replace=(
+            "snapshot = capture_workspace_snapshot(",
+            "snapshot = removed_workspace_snapshot(",
+        ),
+    )
+
+    assert result.returncode != 0
+    assert "RE v2 creation lifecycle calls are missing or ambiguous" in (
+        result.stdout + result.stderr
+    )
+
+
+def test_dry_run_rejects_activation_before_run_creation(tmp_path: Path) -> None:
+    result = _mutated_dry_run(
+        tmp_path,
+        relative_path="src/echelon/cli.py",
+        replace=(
+            "    create_run_store(run_dir, manifest)\n"
+            "    _activate_re_v2_run(workspace_root, run_id)",
+            "    _activate_re_v2_run(workspace_root, run_id)\n"
+            "    create_run_store(run_dir, manifest)",
+        ),
+    )
+
+    assert result.returncode != 0
+    assert "RE v2 source capture must precede run creation and activation" in (
         result.stdout + result.stderr
     )

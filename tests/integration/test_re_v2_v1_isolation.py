@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import stat
+import subprocess
 
 import pytest
 from typer.testing import CliRunner
@@ -891,6 +892,59 @@ def _tree_snapshot(root: Path) -> dict[str, tuple[str, int, bytes | None]]:
             payload = path.read_bytes()
         snapshot[relative] = (kind, stat.S_IMODE(details.st_mode), payload)
     return snapshot
+
+
+def _init_clean_isolation_source(path: Path) -> None:
+    path.mkdir()
+    (path / "pyproject.toml").write_text("[project]\nname='fixture'\n", encoding="utf-8")
+    subprocess.run(["git", "init", str(path)], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(path), "add", "."], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(path),
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.test",
+            "commit",
+            "-m",
+            "fixture",
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+
+@pytest.mark.integration
+def test_dirty_composite_preflight_preserves_active_v1_run_byte_for_byte(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _legacy_fixture(tmp_path, "running")
+    assert fixture.run_dir is not None
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    _init_clean_isolation_source(first)
+    _init_clean_isolation_source(second)
+    (second / "dirty.py").write_text("dirty\n", encoding="utf-8")
+    pointer = tmp_path / "runs" / ".current-re"
+    pointer_before = pointer.read_bytes()
+    v1_before = _tree_snapshot(fixture.run_dir)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv(
+        "ECHELON_HOME",
+        str(tmp_path.parent / f"{tmp_path.name}-echelon-home"),
+    )
+    monkeypatch.setattr("echelon.cli._re_lifecycle_controller", _never_v2)
+
+    result = _invoke_re("run", "--engine", "v2", "--shadow")
+
+    assert result.exit_code == 2
+    assert "untracked" in result.output and "stash" in result.output
+    assert pointer.read_bytes() == pointer_before
+    assert _tree_snapshot(fixture.run_dir) == v1_before
 
 
 @pytest.mark.integration

@@ -44,6 +44,54 @@ with tempfile.TemporaryDirectory(prefix="echelon-re-static-") as temporary:
     for module_name in sorted(module_names):
         importlib.import_module(module_name)
 
+    legacy_cli_tree = ast.parse(
+        (source_root / "src" / "echelon" / "cli.py").read_text(
+            encoding="utf-8"
+        )
+    )
+    creation_functions = [
+        node
+        for node in legacy_cli_tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "_run_re_v2_create"
+    ]
+    if len(creation_functions) != 1:
+        raise SystemExit("RE v2 creation function is missing or ambiguous")
+    creation_function = creation_functions[0]
+    workspace_imports = [
+        node
+        for node in ast.walk(creation_function)
+        if isinstance(node, ast.ImportFrom)
+        and node.module == "harness.re_v2.workspace_snapshot"
+        and any(alias.name == "capture_workspace_snapshot" for alias in node.names)
+    ]
+    if len(workspace_imports) != 1:
+        raise SystemExit("RE v2 creation must import capture_workspace_snapshot")
+    creation_calls = {
+        name: sorted(
+            node.lineno
+            for node in ast.walk(creation_function)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == name
+        )
+        for name in (
+            "capture_workspace_snapshot",
+            "create_run_store",
+            "_activate_re_v2_run",
+        )
+    }
+    if any(len(lines) != 1 for lines in creation_calls.values()):
+        raise SystemExit("RE v2 creation lifecycle calls are missing or ambiguous")
+    if not (
+        creation_calls["capture_workspace_snapshot"][0]
+        < creation_calls["create_run_store"][0]
+        < creation_calls["_activate_re_v2_run"][0]
+    ):
+        raise SystemExit(
+            "RE v2 source capture must precede run creation and activation"
+        )
+
     cli_tree = ast.parse(
         (source_root / "src" / "echelon" / "cli_app.py").read_text(
             encoding="utf-8"
@@ -287,7 +335,7 @@ with tempfile.TemporaryDirectory(prefix="echelon-re-static-") as temporary:
 
 print(
     f"PASS: {len(module_names)} RE v2 modules import; "
-    "RE root, complete command surface, and run option routing are valid "
+    "RE root, composite creation order, complete command surface, and run option routing are valid "
     "without runtime work"
 )
 PY
