@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from harness.re_v2.snapshot import (
+    CapturedSnapshot,
     ReV2SnapshotError,
     capture_source_snapshot,
     validate_source_snapshot,
@@ -26,6 +27,12 @@ def _copied_snapshot(tmp_path: Path):
 def _make_writable(path: Path) -> None:
     path.parent.chmod(path.parent.stat().st_mode | stat.S_IWUSR)
     path.chmod(path.stat().st_mode | stat.S_IWUSR)
+
+
+def _snapshot_marker(captured: CapturedSnapshot) -> Path:
+    manifest_path = captured.manifest_path
+    snapshot_id = captured.snapshot_id
+    return manifest_path.parent.parent / ".snapshot-commits" / f"{snapshot_id}.json"
 
 
 def _git(repository: Path, *args: str) -> str:
@@ -50,6 +57,56 @@ def _commit_all(repository: Path, message: str) -> str:
     _git(repository, "add", "-A")
     _git(repository, "commit", "-q", "-m", message)
     return _git(repository, "rev-parse", "HEAD").strip()
+
+
+def _nested_submodule_source(tmp_path: Path) -> tuple[Path, str, str]:
+    inner = tmp_path / "inner"
+    _init_git_repository(inner)
+    (inner / "inner.txt").write_text("inner bytes\n", encoding="utf-8")
+    inner_commit = _commit_all(inner, "inner")
+
+    outer = tmp_path / "outer"
+    _init_git_repository(outer)
+    (outer / "outer.txt").write_text("outer bytes\n", encoding="utf-8")
+    _commit_all(outer, "outer")
+    _git(
+        outer,
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        "-q",
+        str(inner),
+        "nested folder",
+    )
+    outer_commit = _commit_all(outer, "add inner")
+
+    source = tmp_path / "source"
+    _init_git_repository(source)
+    (source / "root.txt").write_text("root\n", encoding="utf-8")
+    _commit_all(source, "root")
+    _git(
+        source,
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        "-q",
+        str(outer),
+        "modules/outer",
+    )
+    _commit_all(source, "add outer")
+    _git(
+        source,
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "update",
+        "-q",
+        "--init",
+        "--recursive",
+    )
+    return source, outer_commit, inner_commit
 
 
 def _capture_in_crashing_process(
@@ -127,11 +184,20 @@ def test_copy_snapshot_crash_at_publication_boundary_is_retryable(
 @pytest.mark.parametrize(
     "fault_point",
     [
+        "stage_created",
+        "worktree_added",
+        "worktree_moved",
+        "final_owner_replaced",
         "source_installed",
         "manifest_installed",
         "permissions_normalized",
         "bundle_fsynced",
         "final_promoted",
+        "marker_linked",
+        "marker_root_fsynced",
+        "marker_destination_fsynced",
+        "marker_temporary_cleaned",
+        "final_validated",
     ],
 )
 def test_git_snapshot_crash_at_publication_boundary_repairs_registration(
@@ -142,6 +208,105 @@ def test_git_snapshot_crash_at_publication_boundary_repairs_registration(
     _init_git_repository(source)
     (source / "api.py").write_text("VALUE = 1\n", encoding="utf-8")
     _commit_all(source, "source")
+    destination = tmp_path / "snapshots"
+
+    crashed = _capture_in_crashing_process(source, destination, fault_point)
+
+    assert crashed.returncode == 74, crashed.stderr
+    captured = capture_source_snapshot(source, destination, exclusions=())
+    validate_source_snapshot(captured)
+    worktrees = _git(source, "worktree", "list", "--porcelain")
+    assert worktrees.count(f"worktree {captured.read_root}") == 1
+    assert ".snapshot-stage-" not in worktrees
+    assert not list(destination.glob(".snapshot-stage-*"))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "fault_point",
+    [
+        "marker_linked",
+        "marker_root_fsynced",
+        "marker_destination_fsynced",
+        "marker_temporary_cleaned",
+        "final_validated",
+    ],
+)
+def test_git_snapshot_marker_io_failure_does_not_poison_id(
+    tmp_path: Path, fault_point: str
+) -> None:
+    source = tmp_path / "source"
+    _init_git_repository(source)
+    (source / "api.py").write_text("VALUE = 1\n", encoding="utf-8")
+    _commit_all(source, "source")
+    destination = tmp_path / "snapshots"
+
+    def fail(point: str) -> None:
+        if point == fault_point:
+            raise OSError(f"injected {point}")
+
+    with pytest.raises(ReV2SnapshotError, match=fault_point):
+        capture_source_snapshot(
+            source, destination, exclusions=(), fault_hook=fail
+        )
+
+    captured = capture_source_snapshot(source, destination, exclusions=())
+    validate_source_snapshot(captured)
+    worktrees = _git(source, "worktree", "list", "--porcelain")
+    assert worktrees.count(f"worktree {captured.read_root}") == 1
+    assert ".snapshot-stage-" not in worktrees
+    assert not list(destination.glob(".snapshot-stage-*"))
+
+
+@pytest.mark.unit
+def test_invalid_post_marker_bundle_cleanup_removes_marker_before_bundle(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    _init_git_repository(source)
+    (source / "api.py").write_text("VALUE = 1\n", encoding="utf-8")
+    _commit_all(source, "source")
+    destination = tmp_path / "snapshots"
+
+    def corrupt_then_fail(point: str) -> None:
+        if point != "marker_destination_fsynced":
+            return
+        bundles = list(destination.glob("sha256:*"))
+        assert len(bundles) == 1
+        target = bundles[0] / "source/api.py"
+        _make_writable(target)
+        target.write_text("corrupt\n", encoding="utf-8")
+        raise OSError("injected invalid committed pair")
+
+    with pytest.raises(ReV2SnapshotError, match="invalid committed pair"):
+        capture_source_snapshot(
+            source,
+            destination,
+            exclusions=(),
+            fault_hook=corrupt_then_fail,
+        )
+
+    assert not list(destination.glob(".snapshot-commits/*.json"))
+    assert not list(destination.glob("sha256:*"))
+    assert ".snapshot-stage-" not in _git(
+        source, "worktree", "list", "--porcelain"
+    )
+    captured = capture_source_snapshot(source, destination, exclusions=())
+    validate_source_snapshot(captured)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "fault_point",
+    [
+        "submodule_materialized:modules/outer",
+        "submodule_materialized:modules/outer/nested folder",
+    ],
+)
+def test_git_snapshot_crash_after_each_submodule_step_is_retryable(
+    tmp_path: Path, fault_point: str
+) -> None:
+    source, _outer_commit, _inner_commit = _nested_submodule_source(tmp_path)
     destination = tmp_path / "snapshots"
 
     crashed = _capture_in_crashing_process(source, destination, fault_point)
@@ -225,6 +390,39 @@ print(captured.snapshot_id)
         captured.snapshot_id
     ]
     assert not list(destination.glob(".snapshot-stage-*"))
+
+
+@pytest.mark.unit
+def test_snapshot_validation_rejects_noncanonical_marker_bytes(tmp_path: Path) -> None:
+    captured = _copied_snapshot(tmp_path)
+    marker = _snapshot_marker(captured)
+    value = json.loads(marker.read_bytes())
+    _make_writable(marker)
+    marker.write_text(json.dumps(value, indent=2), encoding="utf-8")
+    marker.chmod(0o400)
+
+    with pytest.raises(ReV2SnapshotError, match="canonical"):
+        validate_source_snapshot(captured)
+
+
+@pytest.mark.unit
+def test_snapshot_validation_rejects_writable_marker(tmp_path: Path) -> None:
+    captured = _copied_snapshot(tmp_path)
+    marker = _snapshot_marker(captured)
+    _make_writable(marker)
+
+    with pytest.raises(ReV2SnapshotError, match="mode|writable"):
+        validate_source_snapshot(captured)
+
+
+@pytest.mark.unit
+def test_snapshot_validation_rejects_hardlinked_marker(tmp_path: Path) -> None:
+    captured = _copied_snapshot(tmp_path)
+    marker = _snapshot_marker(captured)
+    os.link(marker, marker.parent / "alias.json", follow_symlinks=False)
+
+    with pytest.raises(ReV2SnapshotError, match="link"):
+        validate_source_snapshot(captured)
 
 
 @pytest.mark.unit
@@ -572,52 +770,7 @@ def test_git_snapshot_physically_omits_tracked_excluded_file(
 def test_recursive_submodules_are_materialized_with_root_relative_identities(
     tmp_path: Path,
 ) -> None:
-    inner = tmp_path / "inner"
-    _init_git_repository(inner)
-    (inner / "inner.txt").write_text("inner bytes\n", encoding="utf-8")
-    inner_commit = _commit_all(inner, "inner")
-
-    outer = tmp_path / "outer"
-    _init_git_repository(outer)
-    (outer / "outer.txt").write_text("outer bytes\n", encoding="utf-8")
-    _commit_all(outer, "outer")
-    _git(
-        outer,
-        "-c",
-        "protocol.file.allow=always",
-        "submodule",
-        "add",
-        "-q",
-        str(inner),
-        "nested folder",
-    )
-    outer_commit = _commit_all(outer, "add inner")
-
-    source = tmp_path / "source"
-    _init_git_repository(source)
-    (source / "root.txt").write_text("root\n", encoding="utf-8")
-    _commit_all(source, "root")
-    _git(
-        source,
-        "-c",
-        "protocol.file.allow=always",
-        "submodule",
-        "add",
-        "-q",
-        str(outer),
-        "modules/outer",
-    )
-    _commit_all(source, "add outer")
-    _git(
-        source,
-        "-c",
-        "protocol.file.allow=always",
-        "submodule",
-        "update",
-        "-q",
-        "--init",
-        "--recursive",
-    )
+    source, outer_commit, inner_commit = _nested_submodule_source(tmp_path)
 
     captured = capture_source_snapshot(source, tmp_path / "snapshots", exclusions=())
 
