@@ -12,6 +12,7 @@ import pytest
 from harness.re_v2.snapshot import (
     CapturedSnapshot,
     ReV2SnapshotError,
+    ReV2SnapshotUnavailableError,
     capture_source_snapshot,
     validate_source_snapshot,
 )
@@ -33,6 +34,14 @@ def _snapshot_marker(captured: CapturedSnapshot) -> Path:
     manifest_path = captured.manifest_path
     snapshot_id = captured.snapshot_id
     return manifest_path.parent.parent / ".snapshot-commits" / f"{snapshot_id}.json"
+
+
+def _regular_tree_bytes(root: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file() and not path.is_symlink()
+    }
 
 
 def _git(repository: Path, *args: str) -> str:
@@ -373,6 +382,99 @@ def test_copy_adoption_fsync_failure_preserves_valid_committed_pair(
 
     assert failed
     assert captured.manifest_path.parent.stat().st_ino == original_inode
+    validate_source_snapshot(captured)
+    assert not list(destination.glob(".snapshot-stage-*"))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("source_kind", ["git", "content"])
+@pytest.mark.parametrize("failed_read", ["manifest", "inventory"])
+def test_transient_adoption_validation_failure_preserves_published_pair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    source_kind: str,
+    failed_read: str,
+) -> None:
+    """A validation I/O outage must not be mistaken for snapshot corruption."""
+    source = tmp_path / "source"
+    if source_kind == "git":
+        _init_git_repository(source)
+    else:
+        source.mkdir()
+    (source / "api.py").write_text("VALUE = 1\n", encoding="utf-8")
+    if source_kind == "git":
+        _commit_all(source, "source")
+
+    destination = tmp_path / "snapshots"
+    promoted = _capture_in_crashing_process(source, destination, "final_promoted")
+    assert promoted.returncode == 74, promoted.stderr
+    bundle = next(destination.glob("sha256:*"))
+    original_bundle_inode = bundle.stat().st_ino
+    manifest = bundle / "manifest.json"
+    marker = destination / ".snapshot-commits" / f"{bundle.name}.json"
+    assert not marker.exists()
+
+    from harness.re_v2 import snapshot as snapshot_module
+
+    real_read_bytes = Path.read_bytes
+    real_inventory = snapshot_module._inventory
+    unavailable = False
+    published: dict[str, object] = {}
+
+    def transient_read_bytes(path: Path) -> bytes:
+        if unavailable and failed_read == "manifest" and path == manifest:
+            raise OSError("injected transient manifest read failure")
+        return real_read_bytes(path)
+
+    def transient_inventory(
+        root: Path,
+        exclusions: tuple[str, ...],
+        *,
+        allow_worktree_git: bool = False,
+    ):
+        if unavailable and failed_read == "inventory" and root == bundle / "source":
+            raise OSError("injected transient inventory read failure")
+        return real_inventory(
+            root,
+            exclusions,
+            allow_worktree_git=allow_worktree_git,
+        )
+
+    def fail_after_marker_publication(point: str) -> None:
+        nonlocal unavailable
+        if point != "marker_destination_fsynced":
+            return
+        published.update(
+            marker_inode=marker.stat().st_ino,
+            marker_bytes=real_read_bytes(marker),
+            bundle_bytes=_regular_tree_bytes(bundle),
+        )
+        unavailable = True
+        raise OSError("injected adoption publication failure")
+
+    monkeypatch.setattr(Path, "read_bytes", transient_read_bytes)
+    monkeypatch.setattr(snapshot_module, "_inventory", transient_inventory)
+
+    with pytest.raises(ReV2SnapshotUnavailableError, match="unavailable"):
+        capture_source_snapshot(
+            source,
+            destination,
+            exclusions=(),
+            fault_hook=fail_after_marker_publication,
+        )
+
+    unavailable = False
+    assert bundle.stat().st_ino == original_bundle_inode
+    assert marker.stat().st_ino == published["marker_inode"]
+    assert marker.read_bytes() == published["marker_bytes"]
+    assert _regular_tree_bytes(bundle) == published["bundle_bytes"]
+
+    captured = capture_source_snapshot(source, destination, exclusions=())
+
+    assert captured.manifest_path.parent.stat().st_ino == original_bundle_inode
+    assert _snapshot_marker(captured).stat().st_ino == published["marker_inode"]
+    assert _snapshot_marker(captured).read_bytes() == published["marker_bytes"]
+    assert _regular_tree_bytes(captured.manifest_path.parent) == published["bundle_bytes"]
     validate_source_snapshot(captured)
     assert not list(destination.glob(".snapshot-stage-*"))
 

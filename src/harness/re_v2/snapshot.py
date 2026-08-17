@@ -36,6 +36,14 @@ class ReV2SnapshotError(RuntimeError):
     """Raised when a source cannot be frozen or a snapshot is no longer valid."""
 
 
+class ReV2SnapshotIntegrityError(ReV2SnapshotError):
+    """Raised when deterministic evidence proves a snapshot is corrupt."""
+
+
+class ReV2SnapshotUnavailableError(ReV2SnapshotError):
+    """Raised when snapshot integrity cannot currently be established."""
+
+
 @dataclass(frozen=True, slots=True)
 class SnapshotEntry:
     path: str
@@ -108,41 +116,66 @@ def capture_source_snapshot(
 
 
 def validate_source_snapshot(snapshot: CapturedSnapshot) -> None:
-    _validate_commit_marker(snapshot)
-    _validate_snapshot_payload(snapshot)
+    try:
+        _validate_commit_marker(snapshot)
+        _validate_snapshot_payload(snapshot)
+    except ReV2SnapshotError:
+        raise
+    except OSError as exc:
+        raise ReV2SnapshotUnavailableError(
+            f"snapshot validation is temporarily unavailable: {exc}"
+        ) from exc
 
 
 def _validate_snapshot_payload(snapshot: CapturedSnapshot) -> None:
     if snapshot.read_root.is_symlink() or snapshot.manifest_path.is_symlink():
-        raise ReV2SnapshotError("unsafe symlink in source snapshot")
+        raise ReV2SnapshotIntegrityError("unsafe symlink in source snapshot")
     try:
         manifest_payload = snapshot.manifest_path.read_bytes()
+    except OSError as exc:
+        raise ReV2SnapshotUnavailableError(
+            f"snapshot manifest validation is temporarily unavailable: {exc}"
+        ) from exc
+    try:
         manifest = _manifest_from_json(json.loads(manifest_payload))
-    except (OSError, ValueError, TypeError, KeyError) as exc:
-        raise ReV2SnapshotError(f"invalid snapshot manifest: {exc}") from exc
+    except (ValueError, TypeError, KeyError, AttributeError) as exc:
+        raise ReV2SnapshotIntegrityError(f"invalid snapshot manifest: {exc}") from exc
     if manifest_payload != canonical_json_bytes(manifest.to_json_dict()):
-        raise ReV2SnapshotError("snapshot manifest is not canonical")
+        raise ReV2SnapshotIntegrityError("snapshot manifest is not canonical")
     if manifest.snapshot_id != snapshot.snapshot_id or manifest.kind != snapshot.kind:
-        raise ReV2SnapshotError("snapshot handle does not match manifest")
+        raise ReV2SnapshotIntegrityError("snapshot handle does not match manifest")
     if content_digest(manifest.identity_dict()) != manifest.snapshot_id:
-        raise ReV2SnapshotError("snapshot manifest content address mismatch")
+        raise ReV2SnapshotIntegrityError("snapshot manifest content address mismatch")
     operational_git = manifest.kind == "git-worktree"
-    actual = _inventory(snapshot.read_root, (), allow_worktree_git=operational_git)
+    try:
+        actual = _inventory(
+            snapshot.read_root,
+            (),
+            allow_worktree_git=operational_git,
+        )
+    except OSError as exc:
+        raise ReV2SnapshotUnavailableError(
+            f"snapshot inventory validation is temporarily unavailable: {exc}"
+        ) from exc
+    except ReV2SnapshotUnavailableError:
+        raise
+    except ReV2SnapshotError as exc:
+        raise ReV2SnapshotIntegrityError(str(exc)) from exc
     expected = {entry.path: entry for entry in manifest.entries}
     found = {entry.path: entry for entry in actual}
     missing, extra = sorted(expected.keys() - found.keys()), sorted(found.keys() - expected.keys())
     if missing:
-        raise ReV2SnapshotError(f"snapshot missing file: {missing[0]}")
+        raise ReV2SnapshotIntegrityError(f"snapshot missing file: {missing[0]}")
     if extra:
-        raise ReV2SnapshotError(f"snapshot has extra file: {extra[0]}")
+        raise ReV2SnapshotIntegrityError(f"snapshot has extra file: {extra[0]}")
     for path, entry in expected.items():
         observed = found[path]
         if observed.digest != entry.digest:
-            raise ReV2SnapshotError(f"snapshot hash mismatch: {path}")
+            raise ReV2SnapshotIntegrityError(f"snapshot hash mismatch: {path}")
         if observed.size != entry.size:
-            raise ReV2SnapshotError(f"snapshot size mismatch: {path}")
+            raise ReV2SnapshotIntegrityError(f"snapshot size mismatch: {path}")
         if observed.mode != _frozen_mode(entry.mode):
-            raise ReV2SnapshotError(f"snapshot mode mismatch: {path}")
+            raise ReV2SnapshotIntegrityError(f"snapshot mode mismatch: {path}")
 
 
 def _capture_copy(
@@ -365,10 +398,19 @@ def _resolve_failed_git_publication_locked(
     )
     marker = _commit_marker_path(destination, manifest.snapshot_id)
     if os.path.lexists(marker):
-        _recover_marker_temporary_links(destination, manifest.snapshot_id)
+        try:
+            _recover_marker_temporary_links(destination, manifest.snapshot_id)
+        except OSError as exc:
+            return _validation_unavailable(exc), False, True
         try:
             validate_source_snapshot(captured)
-        except (OSError, ReV2SnapshotError) as validation_error:
+        except ReV2SnapshotUnavailableError as validation_error:
+            return validation_error, False, True
+        except OSError as validation_error:
+            return _validation_unavailable(validation_error), False, True
+        except ReV2SnapshotError as validation_error:
+            if not isinstance(validation_error, ReV2SnapshotIntegrityError):
+                return _validation_unavailable(validation_error), False, True
             owner = _read_owner(bundle)
             if not _owner_matches(owner, manifest, source):
                 return validation_error, False, True
@@ -389,7 +431,7 @@ def _resolve_failed_git_publication_locked(
                 _fsync_directory(marker.parent)
                 _fsync_directory(destination)
             except OSError as durability_error:
-                return durability_error, False, True
+                return _validation_unavailable(durability_error), False, True
             return None, False, True
 
     if os.path.lexists(marker):
@@ -412,6 +454,14 @@ def _resolve_failed_git_publication_locked(
         except OSError as exc:
             return exc, deregistered, False
     return cleanup_error, deregistered, False
+
+
+def _validation_unavailable(exc: BaseException) -> ReV2SnapshotUnavailableError:
+    if isinstance(exc, ReV2SnapshotUnavailableError):
+        return exc
+    return ReV2SnapshotUnavailableError(
+        f"snapshot validation is temporarily unavailable: {exc}"
+    )
 
 
 def _publish_staged_bundle(
@@ -491,8 +541,13 @@ def _existing_snapshot(
             _fsync_directory(destination)
         try:
             validate_source_snapshot(captured)
-        except ReV2SnapshotError as exc:
-            raise ReV2SnapshotError(f"snapshot ID already exists and is invalid: {manifest.snapshot_id}: {exc}") from exc
+        except ReV2SnapshotUnavailableError:
+            raise
+        except ReV2SnapshotIntegrityError as exc:
+            raise ReV2SnapshotIntegrityError(
+                f"snapshot ID already exists and is invalid: "
+                f"{manifest.snapshot_id}: {exc}"
+            ) from exc
         return captured
 
     owner = _read_owner(bundle)
@@ -521,6 +576,8 @@ def _existing_snapshot(
         if preserved and cleanup_error is None:
             return captured
         if cleanup_error is not None:
+            if isinstance(cleanup_error, ReV2SnapshotUnavailableError):
+                raise cleanup_error from adoption_error
             raise ReV2SnapshotError(
                 f"snapshot adoption failed: {adoption_error}; "
                 f"cleanup failed: {cleanup_error}"
@@ -668,27 +725,43 @@ def _marker_payload(snapshot: CapturedSnapshot) -> dict[str, object]:
 def _validate_commit_marker(snapshot: CapturedSnapshot) -> None:
     bundle = snapshot.manifest_path.parent
     if snapshot.read_root != bundle / "source" or bundle.name != snapshot.snapshot_id:
-        raise ReV2SnapshotError("snapshot handle paths do not match snapshot ID")
+        raise ReV2SnapshotIntegrityError(
+            "snapshot handle paths do not match snapshot ID"
+        )
     if snapshot.manifest_path.is_symlink() or not snapshot.manifest_path.is_file():
-        raise ReV2SnapshotError("snapshot manifest is not a safe regular file")
+        raise ReV2SnapshotIntegrityError(
+            "snapshot manifest is not a safe regular file"
+        )
     marker = _commit_marker_path(bundle.parent, snapshot.snapshot_id)
     try:
         marker_info = marker.lstat()
     except OSError as exc:
-        raise ReV2SnapshotError("snapshot is not committed") from exc
+        raise ReV2SnapshotUnavailableError(
+            f"snapshot commit-marker validation is temporarily unavailable: {exc}"
+        ) from exc
     if not stat.S_ISREG(marker_info.st_mode):
-        raise ReV2SnapshotError("snapshot is not committed")
+        raise ReV2SnapshotIntegrityError("snapshot is not committed")
     if marker_info.st_nlink != 1:
-        raise ReV2SnapshotError("snapshot commit marker must have one link")
+        raise ReV2SnapshotIntegrityError(
+            "snapshot commit marker must have one link"
+        )
     if stat.S_IMODE(marker_info.st_mode) != 0o400:
-        raise ReV2SnapshotError("snapshot commit marker mode must be 0400")
+        raise ReV2SnapshotIntegrityError(
+            "snapshot commit marker mode must be 0400"
+        )
     try:
         observed = marker.read_bytes()
         expected = canonical_json_bytes(_marker_payload(snapshot))
-    except (OSError, ValueError, TypeError) as exc:
-        raise ReV2SnapshotError(f"invalid snapshot commit marker: {exc}") from exc
+    except OSError as exc:
+        raise ReV2SnapshotUnavailableError(
+            f"snapshot commit-marker validation is temporarily unavailable: {exc}"
+        ) from exc
+    except (ValueError, TypeError) as exc:
+        raise ReV2SnapshotIntegrityError(
+            f"invalid snapshot commit marker: {exc}"
+        ) from exc
     if observed != expected:
-        raise ReV2SnapshotError(
+        raise ReV2SnapshotIntegrityError(
             "snapshot commit marker bytes are not canonical or do not match manifest"
         )
 
