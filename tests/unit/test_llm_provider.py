@@ -67,7 +67,10 @@ class TestAICodingCliProvider:
             stdout="done",
             stderr="",
             token_usage=0,
-            metadata={"request_model": "gpt-5.6-luna"},
+            metadata={
+                "request_model": "gpt-5.6-luna",
+                "isolated_user_config": True,
+            },
         )
 
         with patch.object(provider._backend, "run_prompt", return_value=backend_result):
@@ -87,6 +90,7 @@ class TestAICodingCliProvider:
             "model": "gpt-5.6-luna",
             "profile": "fast",
             "effort": "low",
+            "isolated_user_config": True,
         }
 
     @pytest.mark.parametrize(

@@ -503,6 +503,7 @@ def test_llm_defaults():
     config = _parse_config(MINIMAL)
     assert config.llm.timeout_ms == 10_800_000
     assert config.llm.config_dir is None
+    assert config.llm.codex_inherit_user_config is False
 
 
 def test_llm_config_dir_set():
@@ -512,6 +513,15 @@ def test_llm_config_dir_set():
         "llm": {"config_dir": "/home/user/.config/claude-work"},
     })
     assert config.llm.config_dir == "/home/user/.config/claude-work"
+
+
+def test_llm_codex_user_config_can_be_inherited_explicitly():
+    config = _parse_config({
+        "provider": "docker",
+        "llm": {"cli": "codex", "codex_inherit_user_config": True},
+    })
+
+    assert config.llm.codex_inherit_user_config is True
 
 
 def test_llm_timeout_ms_set():

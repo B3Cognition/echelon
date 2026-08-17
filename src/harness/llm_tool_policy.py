@@ -73,6 +73,7 @@ def build_llm_cli_command(
     codex_json: bool = False,
     codex_model: str | None = None,
     codex_skip_git_repo_check: bool = False,
+    codex_ignore_user_config: bool = False,
     output_last_message: str | None = None,
     opencode_json: bool = False,
     copilot_json: bool = False,
@@ -92,9 +93,19 @@ def build_llm_cli_command(
         return cmd
 
     if cli == "codex":
-        cmd = [bin_, "exec"]
+        cmd = [bin_]
         if unsafe:
-            cmd.append("--dangerously-bypass-approvals-and-sandbox")
+            cmd += ["exec", "--dangerously-bypass-approvals-and-sandbox"]
+        else:
+            cmd += [
+                "--sandbox",
+                "workspace-write",
+                "--ask-for-approval",
+                "never",
+                "exec",
+            ]
+        if codex_ignore_user_config:
+            cmd.append("--ignore-user-config")
         if codex_model:
             cmd += ["--model", codex_model]
         if codex_json:

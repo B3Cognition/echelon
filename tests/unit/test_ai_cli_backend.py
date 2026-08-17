@@ -3755,6 +3755,72 @@ def test_codex_backend_maps_neutral_model_tier_to_cli_model(
     assert result.metadata["request_model"] == expected_model
 
 
+def test_codex_backend_isolates_user_config_with_explicit_safe_policy(tmp_path) -> None:
+    backend = CodexCliBackend(_config("codex"))
+    captured = {}
+
+    class FakeProcess:
+        stdout = io.BytesIO(b"")
+        stderr = io.BytesIO(b"")
+        returncode = 0
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self) -> int:
+            return self.returncode
+
+    def fake_popen(command, **_kwargs):
+        captured["command"] = command
+        return FakeProcess()
+
+    request = CliRunRequest(
+        cwd=str(tmp_path), prompt="Do work.", env={}, timeout_s=10
+    )
+
+    with patch("harness.ai_cli_backends.codex.subprocess.Popen", fake_popen):
+        result = backend.run_prompt(request)
+
+    command = captured["command"]
+    assert "--ignore-user-config" in command
+    assert command[command.index("--sandbox") + 1] == "workspace-write"
+    assert command[command.index("--ask-for-approval") + 1] == "never"
+    assert "--ephemeral" not in command
+    assert result.metadata["isolated_user_config"] is True
+
+
+def test_codex_backend_can_inherit_user_config_explicitly(tmp_path) -> None:
+    config = _config("codex")
+    config.llm.codex_inherit_user_config = True
+    backend = CodexCliBackend(config)
+    captured = {}
+
+    class FakeProcess:
+        stdout = io.BytesIO(b"")
+        stderr = io.BytesIO(b"")
+        returncode = 0
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self) -> int:
+            return self.returncode
+
+    def fake_popen(command, **_kwargs):
+        captured["command"] = command
+        return FakeProcess()
+
+    request = CliRunRequest(
+        cwd=str(tmp_path), prompt="Do work.", env={}, timeout_s=10
+    )
+
+    with patch("harness.ai_cli_backends.codex.subprocess.Popen", fake_popen):
+        result = backend.run_prompt(request)
+
+    assert "--ignore-user-config" not in captured["command"]
+    assert result.metadata["isolated_user_config"] is False
+
+
 def test_codex_backend_ignores_unknown_model_tier(tmp_path) -> None:
     backend = CodexCliBackend(_config("codex"))
     captured = {}

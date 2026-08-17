@@ -50,6 +50,7 @@ class CodexCliBackend:
 
         model = _codex_model_for_request(request)
         allow_non_git_cwd = request.metadata.get("allow_non_git_cwd") is True
+        isolated_user_config = not self._config.llm.codex_inherit_user_config
         cmd = build_llm_cli_command(
             "codex",
             self._bin,
@@ -58,6 +59,7 @@ class CodexCliBackend:
             codex_json=True,
             codex_model=model,
             codex_skip_git_repo_check=allow_non_git_cwd,
+            codex_ignore_user_config=isolated_user_config,
             output_last_message=final_path or None,
         )
         proc = subprocess.Popen(
@@ -133,6 +135,7 @@ class CodexCliBackend:
                 # Codex JSON events do not reliably include a response model.
                 # Preserve the explicitly requested model for durable telemetry.
                 "request_model": model or "",
+                "isolated_user_config": isolated_user_config,
             },
         )
 

@@ -233,12 +233,16 @@ def _normalized_invocation_metadata(
         or _metadata_text(config.llm.features, "reasoning_effort")
         or _metadata_text(config.llm.features, "effort")
     )
-    return {
+    normalized: dict[str, object] = {
         "provider": provider,
         "model": model,
         "profile": profile,
         "effort": effort,
     }
+    isolated_user_config = result_metadata.get("isolated_user_config")
+    if isinstance(isolated_user_config, bool):
+        normalized["isolated_user_config"] = isolated_user_config
+    return normalized
 
 
 def _metadata_text(metadata: Mapping[str, object], key: str) -> str | None:

@@ -159,6 +159,7 @@ class LlmConfig:
     enabled: bool = False              # true when llm section is present in config
     cli: str = "claude"               # "claude", "copilot", "opencode", "codex", or "openai-compatible"
     config_dir: Optional[str] = None   # passed as CLAUDE_CONFIG_DIR env var (claude only)
+    codex_inherit_user_config: bool = False  # opt in to personal Codex plugins/skills
     timeout_ms: int = 10_800_000       # 3 hours per autonomous build invocation
     tool_policy: LlmToolPolicy = field(default_factory=LlmToolPolicy)
     base_url: Optional[str] = None     # OpenAI-compatible endpoint base URL
@@ -545,6 +546,9 @@ def _parse_llm(data: Dict[str, Any]) -> LlmConfig:
         enabled="llm" in data,
         cli=cli,
         config_dir=str(raw["config_dir"]) if raw.get("config_dir") else None,
+        codex_inherit_user_config=bool(
+            raw.get("codex_inherit_user_config", False)
+        ),
         timeout_ms=int(raw.get("timeout_ms", 10_800_000)),
         tool_policy=tool_policy,
         base_url=base_url,
