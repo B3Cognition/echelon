@@ -65,6 +65,26 @@ class InProcessWorkExecutor(WorkExecutor, Protocol):
     ) -> tuple[Path, ExecutionObservation]: ...
 
 
+class ProviderProcessHandle(Protocol):
+    """Owned gate for one child that cannot work before durable admission.
+
+    The provider child must remain blocked while the handle is unreleased.  If
+    the controller dies, the provider-side gate must observe loss of ownership
+    and exit without provider side effects.  ``abort_unleased`` synchronously
+    stops and reaps that child; ``close`` releases all remaining handle-owned
+    resources and is safe after either abort or release.
+    """
+
+    @property
+    def process_identity(self) -> ProcessIdentity: ...
+
+    def release_leased(self) -> None: ...
+
+    def abort_unleased(self) -> None: ...
+
+    def close(self) -> None: ...
+
+
 class ProviderProcessWorkExecutor(WorkExecutor, Protocol):
     """Create a gated child, then release/collect it only after durable leasing.
 
@@ -78,7 +98,7 @@ class ProviderProcessWorkExecutor(WorkExecutor, Protocol):
         snapshot_root: Path,
         work_item: WorkItem,
         dispatch_id: str,
-    ) -> ProcessIdentity: ...
+    ) -> ProviderProcessHandle: ...
 
     def collect(
         self,
@@ -541,51 +561,65 @@ class ReV2Controller:
             provider_contract_hash=manifest_provider_contract_hash,
         )
         dispatch_id: str | None = None
-        if registration.execution_mode == "provider_process":
-            dispatch_id = _new_dispatch_id(
-                item,
-                attempt_kind=attempt_kind,
-                attempt_index=attempt_index,
-            )
-            try:
-                identity = _start_provider_process(
-                    registration.executor,
-                    self.context.snapshot.read_root,
-                    item,
-                    dispatch_id,
-                )
-            except ReV2ControllerError:
-                raise
-            except Exception as exc:
-                raise ReV2ControllerError(
-                    f"cannot safely start provider process: {exc}"
-                ) from exc
-            if identity.pid == os.getpid():
-                raise ReV2ControllerError(
-                    "provider_process executor returned the controller PID"
-                )
-            leased_at = _timestamp(self._clock(), "post-start controller clock")
-        else:
-            try:
-                identity = self._process_identity_factory(
-                    item, attempt_kind, attempt_index, now
-                )
-            except Exception as exc:
-                raise ReV2ControllerError(
-                    f"cannot create in-process dispatch identity: {exc}"
-                ) from exc
-            if not isinstance(identity, ProcessIdentity):
-                raise ReV2ControllerError(
-                    "process_identity_factory must return ProcessIdentity"
-                )
-            leased_at = now
+        provider_handle: object | None = None
+        provider_released = False
         try:
+            if registration.execution_mode == "provider_process":
+                dispatch_id = _new_dispatch_id(
+                    item,
+                    attempt_kind=attempt_kind,
+                    attempt_index=attempt_index,
+                )
+                try:
+                    provider_handle = _start_provider_process(
+                        registration.executor,
+                        self.context.snapshot.read_root,
+                        item,
+                        dispatch_id,
+                    )
+                except ReV2ControllerError:
+                    raise
+                except Exception as exc:
+                    raise ReV2ControllerError(
+                        f"cannot safely start provider process: {exc}"
+                    ) from exc
+                self._fault("provider_started")
+                identity = _provider_process_identity(provider_handle)
+                if identity.pid == os.getpid():
+                    raise ReV2ControllerError(
+                        "provider_process executor returned the controller PID"
+                    )
+                leased_at = _timestamp(
+                    self._clock(), "post-start controller clock"
+                )
+                _validate_selected_executor_binding(
+                    registration,
+                    provider_name=manifest_provider_name,
+                    provider_contract_hash=manifest_provider_contract_hash,
+                )
+            else:
+                try:
+                    identity = self._process_identity_factory(
+                        item, attempt_kind, attempt_index, now
+                    )
+                except Exception as exc:
+                    raise ReV2ControllerError(
+                        f"cannot create in-process dispatch identity: {exc}"
+                    ) from exc
+                if not isinstance(identity, ProcessIdentity):
+                    raise ReV2ControllerError(
+                        "process_identity_factory must return ProcessIdentity"
+                    )
+                leased_at = now
             lease = self.context.candidate_store.begin(
                 item,
                 identity,
                 dispatch_id=dispatch_id,
                 leased_at=leased_at,
             )
+            if provider_handle is not None:
+                _release_provider_process(provider_handle)
+                provider_released = True
             self._fault("lease_written")
             self.context.event_store.append(
                 "dispatch_leased",
@@ -668,6 +702,13 @@ class ReV2Controller:
             ReV2ProjectionError,
         ) as exc:
             raise ReV2ControllerError(f"dispatch persistence failed: {exc}") from exc
+        finally:
+            if provider_handle is not None:
+                try:
+                    if not provider_released:
+                        _abort_unleased_provider_process(provider_handle)
+                finally:
+                    _close_provider_process(provider_handle)
         return ReV2ControllerResult(
             status="active",
             reason_code="work_item_processed",
@@ -934,18 +975,49 @@ def _start_provider_process(
     snapshot_root: Path,
     work_item: WorkItem,
     dispatch_id: str,
-) -> ProcessIdentity:
+) -> object:
     start = getattr(executor, "start", None)
     if not callable(start):
         raise ReV2ControllerError(
             "provider_process executor has no start method"
         )
-    identity = start(snapshot_root, work_item, dispatch_id)
+    return start(snapshot_root, work_item, dispatch_id)
+
+
+def _provider_process_identity(handle: object) -> ProcessIdentity:
+    for method_name in ("release_leased", "abort_unleased", "close"):
+        if not callable(getattr(handle, method_name, None)):
+            raise ReV2ControllerError(
+                "provider_process start must return an owned gated handle with "
+                "release_leased(), abort_unleased(), and close()"
+            )
+    identity = getattr(handle, "process_identity", None)
     if not isinstance(identity, ProcessIdentity):
         raise ReV2ControllerError(
-            "provider_process start must return the actual ProcessIdentity"
+            "provider_process gated handle must expose the actual ProcessIdentity"
         )
     return identity
+
+
+def _release_provider_process(handle: object) -> None:
+    release = getattr(handle, "release_leased", None)
+    if not callable(release):
+        raise ReV2ControllerError(
+            "provider_process gated handle has no release_leased method"
+        )
+    release()
+
+
+def _abort_unleased_provider_process(handle: object) -> None:
+    abort = getattr(handle, "abort_unleased", None)
+    if callable(abort):
+        abort()
+
+
+def _close_provider_process(handle: object) -> None:
+    close = getattr(handle, "close", None)
+    if callable(close):
+        close()
 
 
 def _collect_execution(
@@ -1170,6 +1242,7 @@ __all__ = (
     "ExecutorRegistration",
     "InProcessWorkExecutor",
     "ProcessIdentityFactory",
+    "ProviderProcessHandle",
     "ProviderProcessWorkExecutor",
     "ReV2Controller",
     "ReV2ControllerError",

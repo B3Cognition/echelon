@@ -9,9 +9,11 @@ import signal
 import subprocess
 import sys
 import time
+from typing import Callable
 
 import pytest
 
+from harness.re_v2 import candidates as candidate_module
 from harness.re_v2.budget import authorize_resource_increase, evaluate_budget
 from harness.re_v2.candidates import CandidateStore, DispatchLease, ProcessIdentity
 from harness.re_v2.canonical import content_digest
@@ -173,17 +175,76 @@ class WritableMetadataExecutor:
         raise AssertionError("writable-metadata executor must never execute")
 
 
-class GatedSubprocessExecutor:
-    """Create a real provider child, but do no provider work before collect()."""
+class PipeGatedProcessHandle:
+    """Test handle whose child treats pipe EOF as an unleased abort."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        process: subprocess.Popen[bytes],
+        control_fd: int,
+        process_identity: object,
+    ) -> None:
+        self.process = process
+        self._control_fd: int | None = control_fd
+        self._process_identity = process_identity
+        self.release_calls = 0
+        self.abort_calls = 0
+        self.close_calls = 0
+
+    @property
+    def process_identity(self) -> object:
+        return self._process_identity
+
+    def release_leased(self) -> None:
+        self.release_calls += 1
+        if self._control_fd is None:
+            raise AssertionError("gated handle was already released or closed")
+        os.write(self._control_fd, b"L")
+        os.close(self._control_fd)
+        self._control_fd = None
+
+    def abort_unleased(self) -> None:
+        self.abort_calls += 1
+        if self._control_fd is not None:
+            os.close(self._control_fd)
+            self._control_fd = None
+        try:
+            self.process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            self.process.terminate()
+            self.process.wait(timeout=5)
+
+    def close(self) -> None:
+        self.close_calls += 1
+        if self._control_fd is not None:
+            os.close(self._control_fd)
+            self._control_fd = None
+
+
+class GatedSubprocessExecutor:
+    """Create a real provider child gated by an owned control-pipe handle."""
+
+    def __init__(
+        self,
+        *,
+        side_effect_path: Path | None = None,
+        identity_path: Path | None = None,
+        after_start: Callable[[PipeGatedProcessHandle, WorkItem, str], None]
+        | None = None,
+    ) -> None:
         self.processes: dict[str, subprocess.Popen[bytes]] = {}
+        self.handles: dict[str, PipeGatedProcessHandle] = {}
         self.start_calls: list[str] = []
         self.collect_calls: list[str] = []
+        self.side_effect_path = side_effect_path
+        self.identity_path = identity_path
+        self.after_start = after_start
+        self._provider_name = "fixture"
+        self._execution_mode = "provider_process"
 
     @property
     def provider_name(self) -> str:
-        return "fixture"
+        return self._provider_name
 
     @property
     def provider_contract_hash(self) -> str:
@@ -191,28 +252,49 @@ class GatedSubprocessExecutor:
 
     @property
     def execution_mode(self) -> str:
-        return "provider_process"
+        return self._execution_mode
 
     def start(
         self,
         snapshot_root: Path,
         work_item: WorkItem,
         dispatch_id: str,
-    ) -> ProcessIdentity:
+    ) -> PipeGatedProcessHandle:
         assert snapshot_root.is_dir()
-        command = [sys.executable, "-c", "import time; time.sleep(120)"]
+        read_fd, write_fd = os.pipe()
+        child_script = (
+            "import os, pathlib, sys, time\n"
+            "fd = int(sys.argv[1])\n"
+            "token = os.read(fd, 1)\n"
+            "os.close(fd)\n"
+            "if token != b'L':\n"
+            "    raise SystemExit(0)\n"
+            "marker = sys.argv[2]\n"
+            "if marker:\n"
+            "    pathlib.Path(marker).write_text('provider work started\\n')\n"
+            "time.sleep(120)\n"
+        )
+        command = [
+            sys.executable,
+            "-c",
+            child_script,
+            str(read_fd),
+            str(self.side_effect_path) if self.side_effect_path is not None else "",
+        ]
         child = subprocess.Popen(
             command,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
+            pass_fds=(read_fd,),
         )
+        os.close(read_fd)
         observed = recovery_process_start(child.pid)
         assert observed is not None
         self.processes[dispatch_id] = child
         self.start_calls.append(dispatch_id)
-        return ProcessIdentity(
+        identity = ProcessIdentity(
             pid=child.pid,
             process_start_identity=observed,
             command_hash=content_digest(command),
@@ -224,6 +306,15 @@ class GatedSubprocessExecutor:
             ),
             started_at=_utc_now(),
         )
+        handle = PipeGatedProcessHandle(child, write_fd, identity)
+        self.handles[dispatch_id] = handle
+        if self.identity_path is not None:
+            self.identity_path.write_bytes(
+                json.dumps(identity.to_json_dict(), sort_keys=True).encode()
+            )
+        if self.after_start is not None:
+            self.after_start(handle, work_item, dispatch_id)
+        return handle
 
     def collect(
         self,
@@ -231,10 +322,13 @@ class GatedSubprocessExecutor:
         work_item: WorkItem,
         lease: DispatchLease,
     ) -> tuple[Path, ExecutionObservation]:
+        assert self.handles[lease.dispatch_id].release_calls == 1
         self.collect_calls.append(lease.dispatch_id)
         raise AssertionError("crash test must never release the gated provider child")
 
     def terminate_all(self) -> None:
+        for handle in self.handles.values():
+            handle.close()
         for process in self.processes.values():
             if process.poll() is None:
                 process.terminate()
@@ -251,6 +345,29 @@ def _utc_now() -> str:
         .isoformat(timespec="microseconds")
         .replace("+00:00", "Z")
     )
+
+
+def _wait_for_dead(identity: ProcessIdentity) -> None:
+    for _attempt in range(200):
+        if ProcessInspector().inspect(identity) is ProcessState.DEAD:
+            return
+        time.sleep(0.01)
+    pytest.fail(f"provider child {identity.pid} remained live")
+
+
+def _assert_unleased_child_aborted(
+    executor: GatedSubprocessExecutor,
+    side_effect_path: Path,
+) -> None:
+    assert len(executor.handles) == 1
+    handle = next(iter(executor.handles.values()))
+    assert isinstance(handle.process_identity, ProcessIdentity)
+    assert handle.release_calls == 0
+    assert handle.abort_calls == 1
+    assert handle.close_calls == 1
+    assert handle.process.poll() is not None
+    assert executor.collect_calls == []
+    assert not side_effect_path.exists()
 
 
 def _template(
@@ -977,6 +1094,318 @@ def test_production_registry_does_not_write_before_recovery_validation(
     )
 
     assert not output_root.exists()
+
+
+def test_probe_mismatch_aborts_and_reaps_unleased_provider_child(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path, (_template("inventory", goal="inventory"),))
+    context = dataclass_replace(
+        context,
+        candidate_store=CandidateStore(
+            context.paths,
+            process_probe=lambda _pid: "wrong-process-start",
+            clock=_utc_now,
+        ),
+    )
+    marker = tmp_path / "provider-side-effect"
+    executor = GatedSubprocessExecutor(side_effect_path=marker)
+
+    try:
+        with pytest.raises(ReV2ControllerError, match="start identity mismatch"):
+            ReV2Controller(
+                context,
+                executor=executor,
+                process_inspector=ProcessInspector(),
+                clock=_utc_now,
+            ).run_once()
+
+        _assert_unleased_child_aborted(executor, marker)
+    finally:
+        executor.terminate_all()
+
+
+def test_controller_pid_identity_aborts_actual_owned_provider_child(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path, (_template("inventory", goal="inventory"),))
+    context = dataclass_replace(
+        context,
+        candidate_store=CandidateStore(context.paths, clock=_utc_now),
+    )
+    marker = tmp_path / "provider-side-effect"
+
+    def return_controller_identity(
+        handle: PipeGatedProcessHandle,
+        _item: WorkItem,
+        _dispatch_id: str,
+    ) -> None:
+        controller_start = recovery_process_start(os.getpid())
+        assert controller_start is not None
+        actual = handle.process_identity
+        assert isinstance(actual, ProcessIdentity)
+        handle._process_identity = dataclass_replace(
+            actual,
+            pid=os.getpid(),
+            process_start_identity=controller_start,
+        )
+
+    executor = GatedSubprocessExecutor(
+        side_effect_path=marker,
+        after_start=return_controller_identity,
+    )
+    try:
+        with pytest.raises(ReV2ControllerError, match="controller PID"):
+            ReV2Controller(
+                context,
+                executor=executor,
+                process_inspector=ProcessInspector(),
+                clock=_utc_now,
+            ).run_once()
+
+        handle = next(iter(executor.handles.values()))
+        assert handle.abort_calls == 1
+        assert handle.close_calls == 1
+        assert handle.process.poll() is not None
+        assert not marker.exists()
+    finally:
+        executor.terminate_all()
+
+
+def test_invalid_handle_identity_aborts_and_reaps_owned_provider_child(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path, (_template("inventory", goal="inventory"),))
+    marker = tmp_path / "provider-side-effect"
+
+    def return_invalid_identity(
+        handle: PipeGatedProcessHandle,
+        _item: WorkItem,
+        _dispatch_id: str,
+    ) -> None:
+        handle._process_identity = object()
+
+    executor = GatedSubprocessExecutor(
+        side_effect_path=marker,
+        after_start=return_invalid_identity,
+    )
+    try:
+        with pytest.raises(ReV2ControllerError, match="ProcessIdentity"):
+            ReV2Controller(
+                context,
+                executor=executor,
+                process_inspector=ProcessInspector(),
+                clock=_utc_now,
+            ).run_once()
+
+        handle = next(iter(executor.handles.values()))
+        assert handle.release_calls == 0
+        assert handle.abort_calls == 1
+        assert handle.close_calls == 1
+        assert handle.process.poll() is not None
+        assert not marker.exists()
+    finally:
+        executor.terminate_all()
+
+
+def test_post_start_clock_rejection_aborts_and_reaps_unleased_provider_child(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path, (_template("inventory", goal="inventory"),))
+    marker = tmp_path / "provider-side-effect"
+    executor = GatedSubprocessExecutor(side_effect_path=marker)
+    clock_values = iter((NOW, "not-a-timestamp"))
+
+    try:
+        with pytest.raises(ReV2ControllerError, match="post-start controller clock"):
+            ReV2Controller(
+                context,
+                executor=executor,
+                process_inspector=ProcessInspector(),
+                clock=lambda: next(clock_values),
+            ).run_once()
+
+        _assert_unleased_child_aborted(executor, marker)
+    finally:
+        executor.terminate_all()
+
+
+@pytest.mark.parametrize(
+    ("attribute", "wrong_value"),
+    (
+        ("_provider_name", "other-provider"),
+        ("_execution_mode", "in_process"),
+    ),
+)
+def test_post_start_binding_or_mode_rejection_aborts_unleased_provider_child(
+    tmp_path: Path,
+    attribute: str,
+    wrong_value: str,
+) -> None:
+    context = _context(tmp_path, (_template("inventory", goal="inventory"),))
+    marker = tmp_path / "provider-side-effect"
+    executor: GatedSubprocessExecutor
+
+    def mutate_executor_binding(
+        _handle: PipeGatedProcessHandle,
+        _item: WorkItem,
+        _dispatch_id: str,
+    ) -> None:
+        setattr(executor, attribute, wrong_value)
+
+    executor = GatedSubprocessExecutor(
+        side_effect_path=marker,
+        after_start=mutate_executor_binding,
+    )
+    try:
+        with pytest.raises(ReV2ControllerError, match="provider binding"):
+            ReV2Controller(
+                context,
+                executor=executor,
+                process_inspector=ProcessInspector(),
+                clock=_utc_now,
+            ).run_once()
+
+        _assert_unleased_child_aborted(executor, marker)
+        assert not (context.paths.candidates / ".leases").exists()
+    finally:
+        executor.terminate_all()
+
+
+def test_conflicting_lease_aborts_and_reaps_unleased_provider_child(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path, (_template("inventory", goal="inventory"),))
+    context = dataclass_replace(
+        context,
+        candidate_store=CandidateStore(context.paths, clock=_utc_now),
+    )
+    marker = tmp_path / "provider-side-effect"
+
+    def write_conflicting_lease(
+        handle: PipeGatedProcessHandle,
+        item: WorkItem,
+        dispatch_id: str,
+    ) -> None:
+        actual = handle.process_identity
+        assert isinstance(actual, ProcessIdentity)
+        conflicting = dataclass_replace(
+            actual,
+            command_hash=content_digest({"conflicting": dispatch_id}),
+        )
+        context.candidate_store.begin(
+            item,
+            conflicting,
+            dispatch_id=dispatch_id,
+            leased_at=_utc_now(),
+        )
+
+    executor = GatedSubprocessExecutor(
+        side_effect_path=marker,
+        after_start=write_conflicting_lease,
+    )
+    try:
+        with pytest.raises(ReV2ControllerError, match="conflicting lease"):
+            ReV2Controller(
+                context,
+                executor=executor,
+                process_inspector=ProcessInspector(),
+                clock=_utc_now,
+            ).run_once()
+
+        _assert_unleased_child_aborted(executor, marker)
+    finally:
+        executor.terminate_all()
+
+
+@pytest.mark.parametrize("failure_point", ("write", "link", "fsync"))
+def test_lease_publication_failure_aborts_and_reaps_unleased_provider_child(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_point: str,
+) -> None:
+    context = _context(tmp_path, (_template("inventory", goal="inventory"),))
+    context = dataclass_replace(
+        context,
+        candidate_store=CandidateStore(context.paths, clock=_utc_now),
+    )
+    if failure_point == "fsync":
+        (context.paths.candidates / ".leases").mkdir(mode=0o700)
+    marker = tmp_path / "provider-side-effect"
+
+    def fail_lease_publication(
+        _handle: PipeGatedProcessHandle,
+        _item: WorkItem,
+        _dispatch_id: str,
+    ) -> None:
+        def fail(*_args: object, **_kwargs: object) -> None:
+            raise OSError(f"lease {failure_point} failed")
+
+        if failure_point == "write":
+            monkeypatch.setattr(candidate_module, "_write_new_file", fail)
+        elif failure_point == "link":
+            monkeypatch.setattr(candidate_module.os, "link", fail)
+        else:
+            monkeypatch.setattr(candidate_module, "_fsync_directory", fail)
+
+    executor = GatedSubprocessExecutor(
+        side_effect_path=marker,
+        after_start=fail_lease_publication,
+    )
+    try:
+        with pytest.raises(OSError, match=f"lease {failure_point} failed"):
+            ReV2Controller(
+                context,
+                executor=executor,
+                process_inspector=ProcessInspector(),
+                clock=_utc_now,
+            ).run_once()
+
+        _assert_unleased_child_aborted(executor, marker)
+    finally:
+        executor.terminate_all()
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="requires POSIX process recovery")
+def test_unleased_provider_child_exits_when_controller_hard_crashes(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path, (_template("inventory", goal="inventory"),))
+    context = dataclass_replace(
+        context,
+        candidate_store=CandidateStore(context.paths, clock=_utc_now),
+    )
+    marker = tmp_path / "provider-side-effect"
+    identity_path = tmp_path / "provider-identity.json"
+    controller_pid = os.fork()
+    if controller_pid == 0:  # pragma: no cover - assertions run in the parent
+        try:
+            executor = GatedSubprocessExecutor(
+                side_effect_path=marker,
+                identity_path=identity_path,
+            )
+
+            def die_before_lease(boundary: str) -> None:
+                if boundary == "provider_started":
+                    os._exit(81)
+
+            ReV2Controller(
+                context,
+                executor=executor,
+                process_inspector=ProcessInspector(),
+                clock=_utc_now,
+                fault_hook=die_before_lease,
+            ).run_once()
+        except BaseException:
+            os._exit(82)
+        os._exit(83)
+
+    _waited_pid, status = os.waitpid(controller_pid, 0)
+    assert os.waitstatus_to_exitcode(status) == 81
+    identity = ProcessIdentity.from_json_dict(json.loads(identity_path.read_bytes()))
+    _wait_for_dead(identity)
+    assert not marker.exists()
+    assert not tuple((context.paths.candidates / ".leases").glob("*.json"))
 
 
 def test_real_provider_child_is_leased_before_collect_and_blocks_redispatch(
