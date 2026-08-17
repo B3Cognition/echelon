@@ -12,9 +12,11 @@ import pytest
 from echelon.cli import (
     _classify_run_recovery,
     _cmd_continue,
+    _current_quality_debt_cli_facts,
     _ensure_active_continue_spec_context,
     _next_continue_phase,
     _phase_a_readiness_candidate_dirs,
+    _print_squad_summary,
     _reset_quality_remediation_dispatch_counts,
     _supersede_quality_guard_decision,
 )
@@ -159,6 +161,124 @@ def _v2_continue_instruction(status: str) -> dict[str, object]:
         schema_version=2,
         decision_id="dec-cli-continue-side-effect",
     ).to_dict()
+
+
+def test_declined_quality_debt_cannot_be_reopened_by_ordinary_continue(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _write_run_state(
+        tmp_path,
+        {
+            "run_id": "spec-test",
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "proportional_quality_debt_declined",
+            "user_message": "prepare the release",
+            "autonomy_mode": "guided",
+            "spec_dir": "specs/001-demo",
+        },
+    )
+
+    _cmd_continue(
+        [],
+        project_root=tmp_path,
+        ext_dir=tmp_path / ".specify/extensions/echelon",
+    )
+
+    output = capsys.readouterr().out
+    assert "inspect the retained quality evidence" in output.lower()
+    assert "start a new or amended specification run" in output.lower()
+    assert "echelon spec continue" not in output
+
+
+def test_terminal_summary_keeps_quality_debt_and_provider_limit_independent(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_dir = tmp_path / "runs/spec-test"
+    spec_dir = tmp_path / "specs/001-demo"
+    run_dir.mkdir(parents=True)
+    spec_dir.mkdir(parents=True)
+    state = {
+        "run_id": "spec-test",
+        "spec_id": "001-demo",
+        "status": "done",
+        "phase": "DONE",
+        "spec_dir": "specs/001-demo",
+        "published_spec_dir": "specs/001-demo",
+        "provider_limit_message": "Provider limit reached; resets at 21:10.",
+        "spec_quality_debt_authorization": {
+            "status": "accepted_with_debt",
+            "debt_artifact": "specs/001-demo/quality-debt.json",
+            "debt_artifact_sha256": "a" * 64,
+            "resolved_by": "user",
+            "failed_gates": [
+                {"name": "overall", "score": 0.70, "threshold": 0.80, "margin": -0.10}
+            ],
+        },
+    }
+    (run_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    monkeypatch.setattr(
+        "harness.phase1_quality_debt.has_current_quality_debt_authorization",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        "harness.run_summary.summarize_run_for_cli",
+        lambda _context: "Continued with authorized quality debt.",
+    )
+
+    _print_squad_summary(
+        tmp_path,
+        run_dir,
+        SimpleNamespace(status="done", phase="DONE"),
+        mode="guided",
+        message="Prepare a proportional specification.",
+    )
+
+    output = capsys.readouterr().out
+    assert output.count("SQUAD SUMMARY") == 1
+    assert "accepted with quality debt" in output.lower()
+    assert "overall 0.70 < 0.80" in output
+    assert "debt resolver" in output.lower() and "user" in output
+    assert "quality-debt.json" in output
+    assert "provider limit" in output.lower()
+    assert "Provider limit reached" in output
+    assert "quality passed" not in output.lower()
+
+
+def test_cli_quality_debt_facts_preserve_qualitative_only_findings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = {
+        "spec_quality_debt_authorization": {
+            "status": "accepted_with_debt",
+            "debt_artifact": "specs/001-demo/quality-debt.json",
+            "resolved_by": "COMMANDER",
+            "failed_gates": [],
+            "qualitative_debt": [
+                {
+                    "issue_id": "ISS-QUALITY-0",
+                    "title": "Residual quality debt",
+                    "route": "spec_repair",
+                }
+            ],
+        }
+    }
+    monkeypatch.setattr(
+        "harness.phase1_quality_debt.has_current_quality_debt_authorization",
+        lambda *_args, **_kwargs: True,
+    )
+
+    facts = _current_quality_debt_cli_facts(state, tmp_path)
+
+    assert facts is not None
+    assert facts["failed_gates"] == ()
+    assert facts["qualitative_issues"] == (
+        "ISS-QUALITY-0: Residual quality debt",
+    )
 
 
 def test_continue_uses_sealed_v2_decision_mode_not_cli_override(
@@ -449,6 +569,71 @@ THEN: The dashboard is visible
     assert "echelon phase run phase1-lexicon-derive" in output
     assert "echelon phase run phase1-what" not in output
     assert "echelon phase run phase1-lexicon\n" not in output
+
+
+@pytest.mark.parametrize(
+    "blocked_reason",
+    ["tasks_lexicon_gate_exhausted", "lexicon_gate_exhausted"],
+)
+def test_continue_routes_exhausted_tasks_lexicon_to_phase3_plan_repair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+    blocked_reason: str,
+) -> None:
+    """Current and legacy Tasks blocks repair planning, not Phase 1 Lexicon."""
+    _write_real_constitution(tmp_path)
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": blocked_reason,
+            "spec_id": "001-demo",
+            "spec_dir": "runs/spec-test/specs/001-demo",
+            "completed_phases": [
+                "phase1-constitution",
+                "phase1-lexicon",
+                "phase3-plan",
+                "phase3-tasks-lexicon",
+            ],
+            "last_dispatch": {"phase_id": "phase3-tasks-lexicon"},
+            "user_message": "build the dashboard",
+            "autonomy_mode": "banzai",
+        },
+    )
+    spec_dir = run_dir / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Dashboard\n", encoding="utf-8")
+    (spec_dir / "tasks.md").write_text("# Tasks\n", encoding="utf-8")
+    (spec_dir / "tasks-lexicon-report.json").write_text(
+        json.dumps({"ok": False, "findings": [{"code": "parse-error"}]}),
+        encoding="utf-8",
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_run",
+        lambda args, **_kwargs: calls.append(args),
+    )
+
+    _cmd_continue(
+        [],
+        project_root=tmp_path,
+        ext_dir=tmp_path / ".specify/extensions/echelon",
+    )
+
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == "terminal-blocked"
+    assert state["status"] == "blocked"
+    assert state["blocked_reason"] == blocked_reason
+    assert calls == []
+    output = capsys.readouterr().out
+    assert "Manual recovery required" in output
+    assert "tasks.md" in output
+    assert "tasks-lexicon-report.json" in output
+    assert "echelon phase run phase3-plan" in output
+    assert "requirements.lexicon.md" not in output
+    assert "phase1-lexicon-derive" not in output
 
 
 def test_continue_honors_persisted_banzai_judgment_after_readiness_misroute(

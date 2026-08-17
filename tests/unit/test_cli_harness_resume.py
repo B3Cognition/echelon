@@ -328,6 +328,23 @@ class TestCmdHarnessResume:
         mock_run.assert_called_once()
         assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
         assert mock_run.call_args.kwargs["orchestration_root"] == tmp_path.resolve()
+        assert mock_run.call_args.kwargs["summary_command"] == "echelon delivery resume"
+
+    def test_valid_continue_labels_summary_as_continue(self, tmp_path: Path) -> None:
+        _make_echelon_yml(tmp_path, verify_command="pytest")
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked", "termination_reason": "verify_command_needed",
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.cli import _cmd_harness_continue
+            _cmd_harness_continue(["001"])
+
+        assert mock_run.call_args.kwargs["summary_command"] == "echelon delivery continue"
 
     def test_blocker_escalation_resume_calls_run_without_redirecting_to_run(
         self,

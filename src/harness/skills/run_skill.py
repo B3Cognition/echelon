@@ -6,12 +6,17 @@ Acquires lock, runs GC, launches coordinator, prints results.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
 import logging
 import json
+import os
 import re
 import sys
 from pathlib import Path
-from typing import Any, Dict
+from types import SimpleNamespace
+from typing import Any, Dict, Mapping
 
 from harness.config import load_config
 from harness.coordinator import StrategyCoordinator
@@ -29,6 +34,23 @@ _CHECKPOINT_REASONS = {"build_incomplete", "publish_failed", "checkpoint_outer_c
 
 class RunContextError(ValueError):
     """The delivery caller supplied an invalid orchestration context."""
+
+
+@dataclass
+class _DeliverySummaryScope:
+    intent: Any
+    harness_root: Path
+    workspace_root: Path
+    spec_dir: Path | None
+    config: Any
+    summary_command: str
+    emitted: bool = False
+
+
+_ACTIVE_DELIVERY_SUMMARY: ContextVar[_DeliverySummaryScope | None] = ContextVar(
+    "echelon_delivery_summary_scope",
+    default=None,
+)
 
 
 def print_run_context_error(spec_id: str, error: RunContextError) -> None:
@@ -187,6 +209,124 @@ def _verified_ledger_line(info: dict[str, Any]) -> str:
     )
 
 
+def _delivery_provider_limit_message(
+    result_map: Mapping[str, Any],
+    comparison: Mapping[str, Any],
+) -> str:
+    messages: list[str] = []
+    for sid, info in comparison.get("strategies", {}).items():
+        result = result_map.get(sid)
+        if _is_provider_limited_summary_row(info, result):
+            message = str(info.get("provider_limit_message") or "").strip()
+            messages.append(message or f"Strategy {sid} reached its provider limit")
+    if not messages:
+        return ""
+    if len(messages) == 1:
+        return messages[0]
+    return f"{len(messages)} strategies reached provider limits; first: {messages[0]}"
+
+
+def _delivery_summary_facts(
+    result_map: Mapping[str, Any],
+    comparison: Mapping[str, Any],
+):
+    from harness.run_summary import (
+        SummaryFact,
+        SummaryFactCategory,
+        SummaryFactImportance,
+    )
+
+    strategies = comparison.get("strategies", {})
+    summary = comparison.get("summary", {})
+    n_converged = int(summary.get("converged", 0) or 0)
+    n_provider_limited = sum(
+        1
+        for sid, info in strategies.items()
+        if _is_provider_limited_summary_row(info, result_map.get(sid))
+    )
+    n_checkpointed = sum(
+        1
+        for sid, info in strategies.items()
+        if not info.get("converged", False)
+        and not _is_provider_limited_summary_row(info, result_map.get(sid))
+        and (
+            getattr(result_map.get(sid), "termination_reason", None)
+            or info.get("termination_reason")
+        )
+        in _CHECKPOINT_REASONS
+    )
+    n_failed = max(
+        0,
+        int(summary.get("failed", 0) or 0) - n_checkpointed - n_provider_limited,
+    )
+    outcome_parts = [f"{n_converged} converged", f"{n_failed} failed"]
+    if n_checkpointed:
+        outcome_parts.append(f"{n_checkpointed} checkpointed")
+    if n_provider_limited:
+        outcome_parts.append(f"{n_provider_limited} provider-limited")
+    outcome = ", ".join(outcome_parts[:-1])
+    if len(outcome_parts) > 1:
+        outcome += f", and {outcome_parts[-1]}"
+    else:
+        outcome = outcome_parts[0]
+    facts = [
+        SummaryFact(
+            SummaryFactCategory.OUTCOME,
+            SummaryFactImportance.HIGH,
+            f"Delivery finished with {outcome} strategies.",
+            0,
+        )
+    ]
+    for sid, info in strategies.items():
+        result = result_map.get(sid)
+        converged = bool(info.get("converged", False))
+        reason = (
+            getattr(result, "termination_reason", None)
+            if result is not None
+            else info.get("termination_reason")
+        )
+        provider_limited = _is_provider_limited_summary_row(info, result)
+        if converged:
+            facts.append(
+                SummaryFact(
+                    SummaryFactCategory.WORK,
+                    SummaryFactImportance.HIGH,
+                    f"Strategy {sid} converged successfully.",
+                    len(facts),
+                )
+            )
+        elif provider_limited or reason in _CHECKPOINT_REASONS:
+            facts.append(
+                SummaryFact(
+                    SummaryFactCategory.HANDOFF,
+                    SummaryFactImportance.HIGH,
+                    f"Prepared strategy {sid} for durable continuation.",
+                    len(facts),
+                )
+            )
+        else:
+            facts.append(
+                SummaryFact(
+                    SummaryFactCategory.BLOCKER,
+                    SummaryFactImportance.CRITICAL,
+                    f"Strategy {sid} stopped before convergence.",
+                    len(facts),
+                )
+            )
+        verification = getattr(result, "final_verify", None)
+        if verification is not None:
+            verdict = "passed" if verification.passed else "failed"
+            facts.append(
+                SummaryFact(
+                    SummaryFactCategory.VERIFICATION,
+                    SummaryFactImportance.HIGH,
+                    f"Strategy {sid} verification {verdict}.",
+                    len(facts),
+                )
+            )
+    return tuple(facts)
+
+
 def _print_delivery_summary(
     intent: Any,
     result_map: Dict[str, Any],
@@ -195,9 +335,15 @@ def _print_delivery_summary(
     spec_dir: Path | None,
     config: Any = None,
     landing: LandingOutcome | None = None,
+    summary_command: str = "echelon delivery run",
 ) -> None:
     """Print a structured delivery summary to stderr."""
     from echelon.ui import banner as _banner
+
+    scope = _ACTIVE_DELIVERY_SUMMARY.get()
+    if scope is not None:
+        if scope.emitted:
+            return
 
     task_count = _count_tasks(intent.spec_id, str(workspace_root))
     task_note = f"  ({task_count} tasks)" if task_count else ""
@@ -340,15 +486,166 @@ def _print_delivery_summary(
     if total_tokens:
         result_str += f"  ·  {total_tokens:,} tokens"
     fields.append(("delivery", result_str))
+    provider_limit_message = _delivery_provider_limit_message(result_map, comparison)
+    if provider_limit_message:
+        fields.append(("provider limit", provider_limit_message))
+    next_step = ""
+    if n_checkpointed or n_provider_limited:
+        next_step = f"echelon delivery continue {intent.spec_id}"
+    elif n_failed:
+        next_step = f"echelon delivery run {intent.spec_id}"
+    elif n_converged and (landing is None or landing.status != "landed"):
+        next_step = f"echelon delivery land {intent.spec_id}"
     if landing is not None:
         landing_text = landing.status
-        if landing.status == "blocked":
-            landing_text += f"\nnext step: echelon delivery land {intent.spec_id}"
-        elif landing.reason:
+        if landing.reason:
             landing_text += f" ({landing.reason})"
         fields.append(("landing", landing_text))
 
+    if not os.environ.get("ECHELON_SUPPRESS_RUN_SUMMARY"):
+        from harness.run_summary import RunSummaryContext, summarize_run_for_cli
+
+        worked_on = summarize_run_for_cli(
+            RunSummaryContext(
+                project_root=workspace_root,
+                command=summary_command,
+                task=str(
+                    getattr(intent, "task_description", "")
+                    or f"Deliver spec {intent.spec_id}"
+                ),
+                status=(
+                    "done"
+                    if n_converged
+                    and not (n_failed or n_checkpointed or n_provider_limited)
+                    else "blocked"
+                ),
+                facts=_delivery_summary_facts(result_map, comparison),
+                next_step=next_step,
+                provider_limit_message=provider_limit_message,
+            )
+        )
+        fields.append(("worked on", worked_on))
+        if next_step:
+            fields.append(("next", next_step))
+
     _banner("DELIVERY SUMMARY", fields, file=sys.stderr)
+    if scope is not None:
+        scope.emitted = True
+
+
+def _print_delivery_exception_summary(
+    intent: Any,
+    harness_root: Path,
+    workspace_root: Path,
+    spec_dir: Path | None,
+    *,
+    config: Any,
+    summary_command: str,
+) -> None:
+    """Render the durable command handoff without masking its exception."""
+
+    def durable_counter(value: object) -> int:
+        try:
+            return int(value or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    result_map: dict[str, object] = {}
+    strategies: dict[str, dict[str, object]] = {}
+    durable_states: dict[str, dict[str, object]] = {}
+    try:
+        build_id = current_build_marker(
+            harness_root,
+            str(intent.spec_id),
+        ).read_text(encoding="utf-8").strip()
+        state_dir = runs_dir(harness_root) / build_id / "state"
+        for state_path in sorted(state_dir.glob("*.json")):
+            value = json.loads(state_path.read_text(encoding="utf-8"))
+            if isinstance(value, dict):
+                durable_states[state_path.stem] = value
+    except (OSError, ValueError, json.JSONDecodeError):
+        durable_states = {}
+    strategy_ids = tuple(
+        dict.fromkeys(
+            (
+                *tuple(str(value) for value in getattr(intent, "strategies", ()) or ()),
+                *tuple(durable_states),
+            )
+            or ("default",)
+        )
+    )
+    for strategy in strategy_ids:
+        state = durable_states.get(strategy, {})
+        reason = str(
+            state.get("termination_reason")
+            or state.get("blocked_reason")
+            or "coordinator_exception"
+        )
+        result = SimpleNamespace(
+            status=str(state.get("status") or "blocked"),
+            termination_reason=reason,
+            outer_iterations=durable_counter(state.get("outer_iteration")),
+            inner_iterations=durable_counter(state.get("inner_iteration")),
+            pr_url=state.get("pr_url"),
+            final_verify=None,
+        )
+        result_map[strategy] = result
+        strategies[strategy] = {
+            "status": str(state.get("status") or "blocked"),
+            "termination_reason": reason,
+            "build_status": str(state.get("build_status") or "failed"),
+            "outer_iterations": result.outer_iterations,
+            "inner_iterations": result.inner_iterations,
+            "converged": False,
+            "branch": state.get("branch"),
+            "pr_url": state.get("pr_url"),
+            "provider_limit_message": state.get("provider_limit_message"),
+            "provider_reset_hint": state.get("provider_reset_hint"),
+            "completed_task_ids": state.get("completed_task_ids") or [],
+        }
+    _print_delivery_summary(
+        intent,
+        result_map,
+        {
+            "strategies": strategies,
+            "summary": {
+                "converged": 0,
+                "failed": len(strategies),
+                "total_tokens": 0,
+            },
+        },
+        workspace_root,
+        spec_dir,
+        config,
+        LandingOutcome("not_requested"),
+        summary_command,
+    )
+
+
+@contextmanager
+def _delivery_summary_session(scope: _DeliverySummaryScope):
+    active = _ACTIVE_DELIVERY_SUMMARY.get()
+    if active is not None:
+        yield active
+        return
+    token = _ACTIVE_DELIVERY_SUMMARY.set(scope)
+    try:
+        yield scope
+    finally:
+        try:
+            if not scope.emitted:
+                _print_delivery_exception_summary(
+                    scope.intent,
+                    scope.harness_root,
+                    scope.workspace_root,
+                    scope.spec_dir,
+                    config=scope.config,
+                    summary_command=scope.summary_command,
+                )
+        except BaseException:
+            pass
+        finally:
+            _ACTIVE_DELIVERY_SUMMARY.reset(token)
 
 
 def _print_harness_history_summary(
@@ -414,6 +711,106 @@ def _append_harness_history(
         )
 
 
+def _execute_delivery_run(
+    *,
+    intent: Any,
+    provider: Any,
+    gitops: Any,
+    harness_root: Path,
+    workspace_root: Path,
+    spec_dir: Path | None,
+    config: Any,
+    resume_build_id: str | None,
+    summary_command: str,
+) -> DeliveryRunOutcome:
+    """Execute one already-identified delivery command inside its summary scope."""
+
+    build_id = resume_build_id or make_build_id()
+    rd = runs_dir(harness_root)
+    rd.mkdir(parents=True, exist_ok=True)
+    current_build_marker(harness_root, intent.spec_id).write_text(build_id)
+    logger.info("Build ID: %s", build_id)
+
+    coordinator = StrategyCoordinator(
+        provider=provider,
+        gitops=gitops,
+        config=config,
+        base_dir=harness_root,
+        build_id=build_id,
+        orchestration_root=workspace_root,
+    )
+    try:
+        run_gc(config, base_dir=str(harness_root))
+    except Exception as exc:
+        logger.warning("GC failed (continuing): %s", exc)
+
+    _print_harness_history_summary(spec_dir=spec_dir, title="HARNESS HISTORY")
+    results = coordinator.start(intent)
+    result_map = dict(zip(intent.strategies, results))
+    comparison = coordinator.compare_results(result_map)
+    _append_harness_history(
+        spec_dir=spec_dir,
+        spec_id=intent.spec_id,
+        build_id=build_id,
+        mode=intent.mode,
+        result_map=result_map,
+        comparison=comparison,
+        coordinator=coordinator,
+    )
+    _print_harness_history_summary(spec_dir=spec_dir, title="HARNESS HISTORY")
+
+    landing = LandingOutcome("not_requested")
+    converged = comparison.get("summary", {}).get("converged", 0) > 0
+    if intent.auto_merge and converged:
+        targets = read_targets(spec_dir) if spec_dir is not None else []
+        if len(targets) > 1:
+            logger.warning(
+                "auto-land skipped for spec %s: aggregate multi-target landing is "
+                "unsupported (%d targets)",
+                intent.spec_id,
+                len(targets),
+            )
+            landing = LandingOutcome("skipped", "multi_target")
+        else:
+            from harness.land import land
+
+            try:
+                landed = land(
+                    intent.spec_id,
+                    project_dir=workspace_root,
+                    gitops=gitops,
+                    harness_root=harness_root,
+                )
+                if landed:
+                    print("  Auto-landed successfully!", file=sys.stderr)
+                    landing = LandingOutcome("landed")
+                else:
+                    logger.warning(
+                        "auto-land: land() returned False for spec %s",
+                        intent.spec_id,
+                    )
+                    landing = LandingOutcome("blocked", "land_returned_false")
+            except Exception as exc:
+                logger.warning(
+                    "auto-land: land() raised for spec %s: %s",
+                    intent.spec_id,
+                    exc,
+                )
+                landing = LandingOutcome("blocked", "land_exception")
+
+    _print_delivery_summary(
+        intent,
+        result_map,
+        comparison,
+        workspace_root,
+        spec_dir,
+        config,
+        landing,
+        summary_command,
+    )
+    return DeliveryRunOutcome(results=tuple(results), landing=landing)
+
+
 def run(
     user_message: str,
     provider: Any,
@@ -422,6 +819,7 @@ def run(
     config: Any = None,
     resume_build_id: str | None = None,
     orchestration_root: str | Path | None = None,
+    summary_command: str = "echelon delivery run",
 ) -> DeliveryRunOutcome:
     """Execute an Echelon delivery run.
 
@@ -447,94 +845,26 @@ def run(
             f"orchestration root {workspace_root}"
         )
 
-    # 2. Load config unless caller supplied a pre-resolved/overridden config.
-    config = config or load_config()
-
-    # 3. Delivery operates through the GitOps mirror and its ephemeral worktrees.
-    # Do not prepare the Phase A authoring checkout: an explicitly selected spec
-    # may be delivered while another spec remains active there.
-
-    # 4. Generate or reuse build ID and write .current-build marker
-    build_id = resume_build_id or make_build_id()
-    rd = runs_dir(harness_root)
-    rd.mkdir(parents=True, exist_ok=True)
-    current_build_marker(harness_root, intent.spec_id).write_text(build_id)
-    logger.info("Build ID: %s", build_id)
-
-    # 5. Create coordinator
-    coordinator = StrategyCoordinator(
-        provider=provider,
-        gitops=gitops,
-        config=config,
-        base_dir=harness_root,
-        build_id=build_id,
-        orchestration_root=workspace_root,
-    )
-
-    # 6. Run GC before starting
-    try:
-        run_gc(config, base_dir=str(harness_root))
-    except Exception as e:
-        logger.warning("GC failed (continuing): %s", e)
-
-    _print_harness_history_summary(spec_dir=spec_dir, title="HARNESS HISTORY")
-
-    # 7. Launch coordinator
-    results = coordinator.start(intent)
-
-    # 8. Print results
-    result_map = dict(zip(intent.strategies, results))
-    comparison = coordinator.compare_results(result_map)
-    _append_harness_history(
+    scope = _DeliverySummaryScope(
+        intent=intent,
+        harness_root=harness_root,
+        workspace_root=workspace_root,
         spec_dir=spec_dir,
-        spec_id=intent.spec_id,
-        build_id=build_id,
-        mode=intent.mode,
-        result_map=result_map,
-        comparison=comparison,
-        coordinator=coordinator,
+        config=config,
+        summary_command=summary_command,
     )
-    _print_harness_history_summary(spec_dir=spec_dir, title="HARNESS HISTORY")
-
-    # 9. Auto-land if applicable
-    landing = LandingOutcome("not_requested")
-    converged = comparison.get("summary", {}).get("converged", 0) > 0
-    if intent.auto_merge and converged:
-        targets = read_targets(spec_dir) if spec_dir is not None else []
-        if len(targets) > 1:
-            logger.warning(
-                "auto-land skipped for spec %s: aggregate multi-target landing is "
-                "unsupported (%d targets)",
-                intent.spec_id,
-                len(targets),
-            )
-            landing = LandingOutcome("skipped", "multi_target")
-        else:
-            from harness.land import land
-            try:
-                landed = land(
-                    intent.spec_id,
-                    project_dir=workspace_root,
-                    gitops=gitops,
-                    harness_root=harness_root,
-                )
-                if landed:
-                    print("  Auto-landed successfully!", file=sys.stderr)
-                    landing = LandingOutcome("landed")
-                else:
-                    logger.warning("auto-land: land() returned False for spec %s", intent.spec_id)
-                    landing = LandingOutcome("blocked", "land_returned_false")
-            except Exception as e:
-                logger.warning("auto-land: land() raised for spec %s: %s", intent.spec_id, e)
-                landing = LandingOutcome("blocked", "land_exception")
-
-    _print_delivery_summary(
-        intent,
-        result_map,
-        comparison,
-        workspace_root,
-        spec_dir,
-        config,
-        landing,
-    )
-    return DeliveryRunOutcome(results=tuple(results), landing=landing)
+    with _delivery_summary_session(scope):
+        # Load config only after the valid run identity is inside emit-once scope.
+        config = config or load_config()
+        scope.config = config
+        return _execute_delivery_run(
+            intent=intent,
+            provider=provider,
+            gitops=gitops,
+            harness_root=harness_root,
+            workspace_root=workspace_root,
+            spec_dir=spec_dir,
+            config=config,
+            resume_build_id=resume_build_id,
+            summary_command=summary_command,
+        )

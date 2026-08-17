@@ -87,6 +87,8 @@ def analyze_with_enhanced_metrics(
     text: str,
     use_spacy: bool = True,
     mode: str = "standard",
+    metric_requirements: list[str] | None = None,
+    depth_requirement_ids: set[str] | None = None,
 ) -> Dict[str, Any]:
     """
     Analyze requirements with all 34 enhanced metrics.
@@ -100,11 +102,17 @@ def analyze_with_enhanced_metrics(
         Dictionary with 34 normalized metrics (0-1 range) across 7 categories
     """
     # Get base 18 metrics (readability, structure, cognitive)
-    base_result = analyze_with_normalized_metrics(text)
+    base_result = analyze_with_normalized_metrics(
+        text, metric_requirements=metric_requirements
+    )
     base_normalized = base_result["normalized_metrics"]
 
     # Extract requirements using markdown-aware parser (replaces broken re.split)
-    requirements = extract_requirements(text)
+    requirements = (
+        list(metric_requirements)
+        if metric_requirements is not None
+        else extract_requirements(text)
+    )
 
     # Create combined normalized metrics
     enhanced = NormalizedMetrics()
@@ -283,14 +291,18 @@ def analyze_with_enhanced_metrics(
 
     # Add depth metrics (Layer 5) — NEW in v3.6
     depth_analyzer = DepthAnalyzer()
-    dependency_graph = depth_analyzer.extract_dependency_graph(requirements)
+    dependency_graph = depth_analyzer.extract_dependency_graph(
+        requirements, depth_requirement_ids
+    )
     # Count unique concepts from semantic analyzer for coverage density
     _sem = SemanticAnalyzer(use_spacy=False)
     unique_concepts = len(set(
         a for r in requirements
         for a in (_sem.extract_semantic_roles_basic(r).actors + _sem.extract_semantic_roles_basic(r).objects)
     )) if requirements else 0
-    depth_metrics = depth_analyzer.analyze(requirements, text, unique_concepts)
+    depth_metrics = depth_analyzer.analyze(
+        requirements, text, unique_concepts, depth_requirement_ids
+    )
 
     cat = "depth"
     cat_weight = ENHANCED_CATEGORY_WEIGHTS[cat]

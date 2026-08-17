@@ -23,6 +23,8 @@ import re
 from typing import Dict, List, Set, Tuple
 from dataclasses import dataclass
 
+from .role_detection import detect_requirement_roles
+
 # spaCy is loaded lazily on first use to avoid slow startup
 _nlp = None
 _nlp_loaded = False
@@ -300,13 +302,15 @@ class SemanticAnalyzer:
         Returns:
             Dict with keys: actors, actions, objects, outcomes, triggers
         """
+        shared = detect_requirement_roles(text)
         roles = self.extract_semantic_roles(text)
         return {
-            "actors": roles.actors,
-            "actions": roles.actions,
-            "objects": roles.objects,
+            "actors": [shared.actor] if shared.actor else [],
+            "actions": [shared.action] if shared.action else [],
+            "objects": [shared.object] if shared.object else [],
             "outcomes": roles.outcomes,
             "triggers": roles.triggers,
+            "detector_evidence": list(shared.detector_evidence),
         }
 
     def analyze_requirements(self, requirements: List[str]) -> SemanticMetrics:
@@ -330,13 +334,14 @@ class SemanticAnalyzer:
         trigger_count = 0
 
         for req in requirements:
+            shared = detect_requirement_roles(req)
             roles = self.extract_semantic_roles(req)
 
-            if roles.has_actor():
+            if shared.actor:
                 actor_count += 1
-            if roles.has_action():
+            if shared.action:
                 action_count += 1
-            if roles.has_object():
+            if shared.object:
                 object_count += 1
             if roles.has_outcome():
                 outcome_count += 1

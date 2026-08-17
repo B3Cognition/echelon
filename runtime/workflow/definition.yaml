@@ -573,11 +573,23 @@ phases:
     allowed_verdicts: [PASS, FAIL, STOP_AND_ASK]
     evidence_routing: finding_routes
     controller_state_contract: phase1_quality_certificate
+    controller_policy:
+      proportional_quality:
+        owner: controller
+        responsibilities:
+          - repair_accounting
+          - exhaustion_routing
+          - decision_options
+          - debt_authorization
     transitions:
       # Externally verifiable product facts need evidence collection, not another
       # speculative WHAT pass. This must precede the generic FAIL repair routes.
       - to: phase1-investigate
         condition: "evidence_resolution_status = pending"
+      # These generic iteration routes remain the perfectionist policy. In
+      # proportional mode the harness controller intercepts eligible WHY2
+      # failures and owns its bounded repair/debt policy; do not reproduce its
+      # counters or sealed-decision logic in workflow conditions.
       - to: phase1-what
         condition: "verdict = FAIL AND iteration < max_iterations"
         action: increment_iteration

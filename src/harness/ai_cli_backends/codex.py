@@ -55,6 +55,8 @@ class CodexCliBackend:
                 final_path = temp_file.name
 
         model = _codex_model_for_request(request)
+        allow_non_git_cwd = request.metadata.get("allow_non_git_cwd") is True
+        isolated_user_config = not self._config.llm.codex_inherit_user_config
         cmd = build_llm_cli_command(
             "codex",
             self._bin,
@@ -62,6 +64,8 @@ class CodexCliBackend:
             self._config.llm.tool_policy,
             codex_json=True,
             codex_model=model,
+            codex_skip_git_repo_check=allow_non_git_cwd,
+            codex_ignore_user_config=isolated_user_config,
             output_last_message=final_path or None,
         )
         raw_prompt_metadata = request.metadata.get("prompt_metadata")
@@ -162,6 +166,7 @@ class CodexCliBackend:
         }
         if token_usage_details:
             metadata["token_usage_details"] = token_usage_details
+        metadata["isolated_user_config"] = isolated_user_config
 
         return CliRunResult(
             exit_code=(

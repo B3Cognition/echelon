@@ -524,3 +524,86 @@ def test_ensure_blocked_decision_never_replaces_a_schema_v2_mapping(
     ensure_blocked_decision(state)
 
     assert state["blocked_decision"] is decision
+
+
+def _proportional_quality_decision() -> dict[str, object]:
+    decision = _v2_decision()
+    decision.update(
+        {
+            "source_kind": "controller_safeguard",
+            "producer_id": "proportional_quality_budget_exhausted",
+            "source_phase": "phase1-why2",
+            "reason_code": "proportional_quality_budget_exhausted",
+            "classification": "material",
+            "question": "Choose how to resolve the exhausted quality budget.",
+            "resolution_handler": "proportional_quality_debt",
+            "options": [
+                {
+                    "id": "extend_once",
+                    "label": "Extend once",
+                    "description": "Authorize one final specification quality repair.",
+                    "recommended": True,
+                    "risk_level": "medium",
+                    "next_phase": "phase1-what",
+                    "outcome": None,
+                },
+                {
+                    "id": "continue_with_debt",
+                    "label": "Continue with debt",
+                    "description": "Accept the restored candidate with explicit quality debt.",
+                    "recommended": False,
+                    "risk_level": "high",
+                    "next_phase": None,
+                    "outcome": None,
+                },
+                {
+                    "id": "stop",
+                    "label": "Stop",
+                    "description": "Preserve the blocked run without accepting quality debt.",
+                    "recommended": False,
+                    "risk_level": "low",
+                    "next_phase": "terminal-blocked",
+                    "outcome": None,
+                },
+            ],
+        }
+    )
+    return decision
+
+
+def test_schema_v2_accepts_a_sealed_proportional_quality_choice_decision() -> None:
+    decision = _proportional_quality_decision()
+
+    normalized = validate_blocked_decision_v2(decision)
+
+    assert normalized["schema_version"] == 2
+    assert [option["id"] for option in normalized["options"]] == [
+        "extend_once",
+        "continue_with_debt",
+        "stop",
+    ]
+
+
+def test_schema_v2_requires_an_option_for_proportional_quality_debt_resolution(
+) -> None:
+    decision = _proportional_quality_decision()
+    decision["options"] = []
+
+    with pytest.raises(BlockedDecisionError, match="option"):
+        validate_blocked_decision_v2(decision)
+
+
+def test_schema_v2_keeps_two_as_the_proportional_commander_attempt_limit() -> None:
+    decision = _proportional_quality_decision()
+    decision.update(
+        {
+            "status": "failed",
+            "attempts": 2,
+            "failure_code": "invalid_resolution_result",
+        }
+    )
+    assert validate_blocked_decision_v2(decision)["attempts"] == 2
+
+    decision["attempts"] = 3
+    with pytest.raises(BlockedDecisionError, match="attempts must not exceed 2"):
+        validate_blocked_decision_v2(decision)

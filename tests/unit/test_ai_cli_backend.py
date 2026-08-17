@@ -110,6 +110,39 @@ def test_codex_event_reads_usage_from_modern_turn_completed_event() -> None:
     }
 
 
+def test_codex_backend_allows_explicit_non_git_working_directory(tmp_path) -> None:
+    backend = CodexCliBackend(_config("codex"))
+    captured = {}
+
+    class FakeProcess:
+        stdout = io.BytesIO(b"")
+        stderr = io.BytesIO(b"")
+        returncode = 0
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self) -> int:
+            return self.returncode
+
+    def fake_popen(command, **_kwargs):
+        captured["command"] = command
+        return FakeProcess()
+
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Summarize evidence.",
+        env={},
+        timeout_s=10,
+        metadata={"allow_non_git_cwd": True},
+    )
+
+    with patch("harness.ai_cli_backends.codex.subprocess.Popen", fake_popen):
+        backend.run_prompt(request)
+
+    assert "--skip-git-repo-check" in captured["command"]
+
+
 def test_cli_run_request_carries_prompt_and_timeout(tmp_path) -> None:
     request = CliRunRequest(
         cwd=str(tmp_path),
@@ -3119,6 +3152,40 @@ def test_claude_backend_uses_prompt_metadata_model(tmp_path) -> None:
     assert captured["cmd"][model_index + 1] == "claude-opus-4-1"
 
 
+def test_claude_backend_captures_native_stderr_for_quiet_requests(tmp_path) -> None:
+    backend = ClaudeCliBackend(_config("claude"))
+    captured = {}
+
+    class FakeProcess:
+        stdout = io.BytesIO(b"")
+        stderr = io.BytesIO(b"native provider warning\n")
+        returncode = 0
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self) -> int:
+            return self.returncode
+
+    def fake_popen(command, **kwargs):
+        captured["stderr"] = kwargs["stderr"]
+        return FakeProcess()
+
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Summarize this run.",
+        env={},
+        timeout_s=10,
+        metadata={"prompt_metadata": {"quiet": True}},
+    )
+
+    with patch("harness.ai_cli_backends.claude.subprocess.Popen", fake_popen):
+        result = backend.run_prompt(request)
+
+    assert captured["stderr"] is subprocess.PIPE
+    assert result.stderr == "native provider warning"
+
+
 @pytest.mark.parametrize(
     ("model_tier", "expected_model"),
     [
@@ -3919,6 +3986,72 @@ def test_codex_backend_maps_neutral_model_tier_to_cli_model(
     command = captured["command"]
     assert command[command.index("--model") + 1] == expected_model
     assert result.metadata["request_model"] == expected_model
+
+
+def test_codex_backend_isolates_user_config_with_explicit_safe_policy(tmp_path) -> None:
+    backend = CodexCliBackend(_config("codex"))
+    captured = {}
+
+    class FakeProcess:
+        stdout = io.BytesIO(b"")
+        stderr = io.BytesIO(b"")
+        returncode = 0
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self) -> int:
+            return self.returncode
+
+    def fake_popen(command, **_kwargs):
+        captured["command"] = command
+        return FakeProcess()
+
+    request = CliRunRequest(
+        cwd=str(tmp_path), prompt="Do work.", env={}, timeout_s=10
+    )
+
+    with patch("harness.ai_cli_backends.codex.subprocess.Popen", fake_popen):
+        result = backend.run_prompt(request)
+
+    command = captured["command"]
+    assert "--ignore-user-config" in command
+    assert command[command.index("--sandbox") + 1] == "workspace-write"
+    assert command[command.index("--ask-for-approval") + 1] == "never"
+    assert "--ephemeral" not in command
+    assert result.metadata["isolated_user_config"] is True
+
+
+def test_codex_backend_can_inherit_user_config_explicitly(tmp_path) -> None:
+    config = _config("codex")
+    config.llm.codex_inherit_user_config = True
+    backend = CodexCliBackend(config)
+    captured = {}
+
+    class FakeProcess:
+        stdout = io.BytesIO(b"")
+        stderr = io.BytesIO(b"")
+        returncode = 0
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self) -> int:
+            return self.returncode
+
+    def fake_popen(command, **_kwargs):
+        captured["command"] = command
+        return FakeProcess()
+
+    request = CliRunRequest(
+        cwd=str(tmp_path), prompt="Do work.", env={}, timeout_s=10
+    )
+
+    with patch("harness.ai_cli_backends.codex.subprocess.Popen", fake_popen):
+        result = backend.run_prompt(request)
+
+    assert "--ignore-user-config" not in captured["command"]
+    assert result.metadata["isolated_user_config"] is False
 
 
 def test_codex_backend_ignores_unknown_model_tier(tmp_path) -> None:

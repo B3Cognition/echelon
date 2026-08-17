@@ -7,19 +7,461 @@ import stat
 import threading
 from dataclasses import FrozenInstanceError
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 import harness.squad_publication as publication_module
+from harness.squad import SquadController
+from harness.controller_state_contracts import ControllerStateContractViolation
 from harness.squad_publication import (
     PublicationError,
     PublicationMarker,
     SquadPublicationTransaction,
+    add_verified_quality_debt_publication,
     load_prepared_publication,
 )
 
 
 TRANSACTION_ID = "a" * 32
+
+
+def test_verified_quality_debt_is_an_explicit_exact_publication_operation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root, squad_dir = _roots(tmp_path)
+    active = project_root / "runs/spec-1/specs/001-demo"
+    published = project_root / "specs/001-demo"
+    active.mkdir(parents=True)
+    published.mkdir(parents=True)
+    debt_bytes = (
+        b'{"failed_gates":[],"qualitative_debt":['
+        b'{"issue_id":"ISS-QUALITY-0","route":"spec_repair",'
+        b'"title":"Residual quality debt"}],"resolved_by":"COMMANDER",'
+        b'"status":"accepted_with_debt"}\n'
+    )
+    (active / "quality-debt.json").write_bytes(debt_bytes)
+    digest = hashlib.sha256(debt_bytes).hexdigest()
+    state = {
+        "spec_quality_debt_authorization": {
+            "status": "accepted_with_debt",
+            "debt_artifact": (
+                "runs/spec-1/specs/001-demo/quality-debt.json"
+            ),
+            "debt_artifact_sha256": digest,
+        }
+    }
+    monkeypatch.setattr(
+        "harness.phase1_quality_debt.has_current_quality_debt_authorization",
+        lambda *_args, **_kwargs: True,
+    )
+    transaction = SquadPublicationTransaction.begin(
+        project_root,
+        squad_dir,
+        TRANSACTION_ID,
+    )
+    staged = transaction.build_path("staged/001-demo")
+    staged.mkdir(parents=True)
+    (staged / "quality-debt.json").write_bytes(debt_bytes)
+
+    count = add_verified_quality_debt_publication(
+        transaction,
+        project_root=project_root,
+        state=state,
+        active_spec_dir=active,
+        published_spec_dir=published,
+        staged_spec_dir=staged,
+    )
+    prepared = transaction.seal()
+    manifest_path = next(squad_dir.rglob("manifest.json"))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert count == 1
+    assert manifest["operations"] == [
+        {
+            "action": "write",
+            "postimage": {
+                "kind": "file",
+                "sha256": digest,
+                "mode": stat.S_IMODE(
+                    (staged / "quality-debt.json").stat().st_mode
+                ),
+            },
+            "preimage": {"kind": "missing"},
+            "staged": "staged/001-demo/quality-debt.json",
+            "target": "specs/001-demo/quality-debt.json",
+        }
+    ]
+    prepared.publish()
+    assert (published / "quality-debt.json").read_bytes() == debt_bytes
+
+
+def test_quality_debt_publication_fails_closed_when_authority_is_not_current(
+    tmp_path: Path,
+) -> None:
+    project_root, squad_dir = _roots(tmp_path)
+    active = project_root / "runs/spec-1/specs/001-demo"
+    published = project_root / "specs/001-demo"
+    for root in (active, published):
+        root.mkdir(parents=True)
+    (active / "quality-debt.json").write_text("{}\n", encoding="utf-8")
+    transaction = SquadPublicationTransaction.begin(
+        project_root,
+        squad_dir,
+        TRANSACTION_ID,
+    )
+    staged = transaction.build_path("staged/001-demo")
+    staged.mkdir(parents=True)
+    (staged / "quality-debt.json").write_text("{}\n", encoding="utf-8")
+
+    with pytest.raises(PublicationError, match="manifest_invalid"):
+        add_verified_quality_debt_publication(
+            transaction,
+            project_root=project_root,
+            state={
+                "spec_quality_debt_authorization": {
+                    "status": "accepted_with_debt"
+                }
+            },
+            active_spec_dir=active,
+            published_spec_dir=published,
+            staged_spec_dir=staged,
+        )
+
+
+def test_quality_debt_publication_rejects_staged_swap_before_manifest_pin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root, squad_dir = _roots(tmp_path)
+    active = project_root / "runs/spec-1/specs/001-demo"
+    published = project_root / "specs/001-demo"
+    active.mkdir(parents=True)
+    published.mkdir(parents=True)
+    debt_bytes = b'{"status":"accepted_with_debt"}\n'
+    (active / "quality-debt.json").write_bytes(debt_bytes)
+    transaction = SquadPublicationTransaction.begin(
+        project_root,
+        squad_dir,
+        TRANSACTION_ID,
+    )
+    staged = transaction.build_path("staged/001-demo")
+    staged.mkdir(parents=True)
+    staged_debt = staged / "quality-debt.json"
+    staged_debt.write_bytes(debt_bytes)
+    monkeypatch.setattr(
+        "harness.phase1_quality_debt.has_current_quality_debt_authorization",
+        lambda *_args, **_kwargs: True,
+    )
+    original_add_write = transaction.add_write
+
+    def swap_then_add(*args, **kwargs):
+        staged_debt.write_bytes(b'{"status":"tampered"}\n')
+        return original_add_write(*args, **kwargs)
+
+    monkeypatch.setattr(transaction, "add_write", swap_then_add)
+
+    with pytest.raises(PublicationError, match="manifest_invalid"):
+        add_verified_quality_debt_publication(
+            transaction,
+            project_root=project_root,
+            state={
+                "spec_quality_debt_authorization": {
+                    "status": "accepted_with_debt",
+                    "debt_artifact": (
+                        "runs/spec-1/specs/001-demo/quality-debt.json"
+                    ),
+                    "debt_artifact_sha256": hashlib.sha256(debt_bytes).hexdigest(),
+                }
+            },
+            active_spec_dir=active,
+            published_spec_dir=published,
+            staged_spec_dir=staged,
+        )
+
+
+def test_downstream_planning_context_receives_exact_verified_debt_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "project"
+    spec_dir = project_root / "specs/001-demo"
+    spec_dir.mkdir(parents=True)
+    debt = {
+        "schema_version": 1,
+        "status": "accepted_with_debt",
+        "resolved_by": "user",
+        "failed_gates": [
+            {"name": "overall", "score": 0.7, "threshold": 0.8, "margin": -0.1}
+        ],
+        "qualitative_debt": [
+            {
+                "issue_id": "ISS-QUALITY-0",
+                "route": "spec_repair",
+                "title": "Residual quality debt",
+            }
+        ],
+    }
+    debt_bytes = (json.dumps(debt, sort_keys=True) + "\n").encode("utf-8")
+    (spec_dir / "quality-debt.json").write_bytes(debt_bytes)
+    state = {
+        "spec_dir": "specs/001-demo",
+        "spec_quality_debt_authorization": {
+            "status": "accepted_with_debt",
+            "debt_artifact": "specs/001-demo/quality-debt.json",
+            "debt_artifact_sha256": hashlib.sha256(debt_bytes).hexdigest(),
+            "resolved_by": "user",
+            "failed_gates": debt["failed_gates"],
+            "qualitative_debt": debt["qualitative_debt"],
+        },
+    }
+    saved: list[dict[str, object]] = []
+    controller = object.__new__(SquadController)
+    controller._project_root = project_root
+    controller._state_store = SimpleNamespace(
+        load=lambda: dict(state),
+        save=lambda value: saved.append(dict(value)),
+    )
+    node = SimpleNamespace(
+        id="phase3-plan",
+        type="agent",
+        lexicon_artifact=None,
+        context_pack=[],
+    )
+    monkeypatch.setattr(
+        "harness.phase1_quality_debt.has_current_quality_debt_authorization",
+        lambda *_args, **_kwargs: True,
+    )
+
+    dispatched = controller._materialize_controller_phase_inputs(node)
+
+    assert dispatched is not node
+    assert node.context_pack == []
+    assert dispatched.context_pack == []
+    assert json.dumps(debt, sort_keys=True) in dispatched.controller_context
+    assert "accepted_with_debt" in dispatched.controller_context
+    assert saved[-1]["spec_quality_status"] == "accepted_with_debt"
+    assert saved[-1]["spec_quality_debt_context"] == {
+        "status": "accepted_with_debt",
+        "artifact": "specs/001-demo/quality-debt.json",
+        "artifact_sha256": hashlib.sha256(debt_bytes).hexdigest(),
+        "resolved_by": "user",
+        "failed_gates": debt["failed_gates"],
+        "qualitative_debt": debt["qualitative_debt"],
+    }
+
+
+def test_staged_verification_agents_each_receive_verified_debt_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "project"
+    spec_dir = project_root / "specs/001-demo"
+    spec_dir.mkdir(parents=True)
+    debt = {"status": "accepted_with_debt", "failed_gates": []}
+    debt_bytes = (json.dumps(debt) + "\n").encode("utf-8")
+    (spec_dir / "quality-debt.json").write_bytes(debt_bytes)
+    state = {
+        "spec_dir": "specs/001-demo",
+        "spec_quality_debt_authorization": {
+            "status": "accepted_with_debt",
+            "debt_artifact": "specs/001-demo/quality-debt.json",
+            "debt_artifact_sha256": hashlib.sha256(debt_bytes).hexdigest(),
+            "resolved_by": "COMMANDER",
+            "failed_gates": [],
+        },
+    }
+    controller = object.__new__(SquadController)
+    controller._project_root = project_root
+    controller._state_store = SimpleNamespace(
+        load=lambda: dict(state),
+        save=lambda _value: None,
+    )
+    node = SimpleNamespace(
+        id="phase3-consensus",
+        type="staged_parallel",
+        lexicon_artifact=None,
+        context_pack=[],
+        agents=[
+            {"id": "echelon.sage", "context_pack": ["{spec_dir}/spec.md"]},
+            {"id": "echelon.gatekeeper", "context_pack": []},
+        ],
+    )
+    monkeypatch.setattr(
+        "harness.phase1_quality_debt.has_current_quality_debt_authorization",
+        lambda *_args, **_kwargs: True,
+    )
+
+    dispatched = controller._materialize_controller_phase_inputs(node)
+
+    assert dispatched is not node
+    assert node.agents[0]["context_pack"] == ["{spec_dir}/spec.md"]
+    assert node.agents[1]["context_pack"] == []
+    assert dispatched.agents == node.agents
+    assert json.dumps(debt) in dispatched.controller_context
+
+
+def test_downstream_dispatch_rejects_invalid_debt_instead_of_silently_continuing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "project"
+    spec_dir = project_root / "specs/001-demo"
+    spec_dir.mkdir(parents=True)
+    debt_bytes = b'{"status":"accepted_with_debt"}\n'
+    (spec_dir / "quality-debt.json").write_bytes(debt_bytes)
+    state = {
+        "spec_dir": "specs/001-demo",
+        "spec_quality_debt_authorization": {
+            "status": "accepted_with_debt",
+            "debt_artifact": "specs/001-demo/quality-debt.json",
+            "debt_artifact_sha256": hashlib.sha256(debt_bytes).hexdigest(),
+        },
+    }
+    controller = object.__new__(SquadController)
+    controller._project_root = project_root
+    controller._state_store = SimpleNamespace(load=lambda: dict(state))
+    node = SimpleNamespace(
+        id="phase3-plan",
+        type="agent",
+        lexicon_artifact=None,
+        context_pack=[],
+    )
+    monkeypatch.setattr(
+        "harness.phase1_quality_debt.has_current_quality_debt_authorization",
+        lambda *_args, **_kwargs: False,
+    )
+
+    with pytest.raises(
+        ControllerStateContractViolation,
+        match="quality-debt authorization is stale",
+    ):
+        controller._materialize_controller_phase_inputs(node)
+
+
+def test_dispatch_context_pins_verified_debt_bytes_against_source_replacement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "project"
+    spec_dir = project_root / "specs/001-demo"
+    spec_dir.mkdir(parents=True)
+    debt = {
+        "status": "accepted_with_debt",
+        "resolved_by": "user",
+        "failed_gates": [{"name": "overall", "score": 0.7, "threshold": 0.8}],
+    }
+    debt_bytes = (json.dumps(debt, sort_keys=True) + "\n").encode("utf-8")
+    debt_path = spec_dir / "quality-debt.json"
+    debt_path.write_bytes(debt_bytes)
+    state = {
+        "spec_dir": "specs/001-demo",
+        "spec_quality_debt_authorization": {
+            "status": "accepted_with_debt",
+            "debt_artifact": "specs/001-demo/quality-debt.json",
+            "debt_artifact_sha256": hashlib.sha256(debt_bytes).hexdigest(),
+            "resolved_by": "user",
+            "failed_gates": debt["failed_gates"],
+        },
+    }
+    controller = object.__new__(SquadController)
+    controller._project_root = project_root
+    controller._state_store = SimpleNamespace(load=lambda: dict(state), save=lambda _value: None)
+    node = SimpleNamespace(
+        id="phase3-specialists",
+        type="conditional_sequential",
+        lexicon_artifact=None,
+        context_pack=[],
+        agents=[{"id": "echelon.guardian", "context_pack": []}],
+    )
+    monkeypatch.setattr(
+        "harness.phase1_quality_debt.has_current_quality_debt_authorization",
+        lambda *_args, **_kwargs: True,
+    )
+
+    first = controller._materialize_controller_phase_inputs(node)
+    debt_path.write_text('{"status":"tampered"}\n', encoding="utf-8")
+
+    assert debt_bytes.decode("utf-8") in first.controller_context
+    assert "tampered" not in first.controller_context
+    assert not hasattr(node, "controller_context")
+
+
+def test_phase_a_publication_state_preserves_accepted_with_debt_status(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller = object.__new__(SquadController)
+    controller._project_root = tmp_path
+    active = tmp_path / "runs/spec-1/specs/001-demo"
+    published = tmp_path / "specs/001-demo"
+    controller._active_phase_a_spec_dir = lambda _state: active
+    controller._published_phase_a_spec_dir = lambda _state, _active: published
+    monkeypatch.setattr(
+        "harness.phase1_quality_debt.has_current_quality_debt_authorization",
+        lambda *_args, **_kwargs: True,
+    )
+
+    updates = controller._planned_phase_a_publication_updates(
+        "phase4-document",
+        {
+            "spec_quality_debt_authorization": {
+                "status": "accepted_with_debt"
+            }
+        },
+    )
+
+    assert updates == {
+        "published_spec_dir": "specs/001-demo",
+        "spec_status": "accepted_with_debt",
+    }
+
+
+def test_phase_a_publication_status_does_not_trust_authorization_shape(
+    tmp_path: Path,
+) -> None:
+    controller = object.__new__(SquadController)
+    controller._project_root = tmp_path
+    active = tmp_path / "runs/spec-1/specs/001-demo"
+    published = tmp_path / "specs/001-demo"
+    controller._active_phase_a_spec_dir = lambda _state: active
+    controller._published_phase_a_spec_dir = lambda _state, _active: published
+
+    updates = controller._planned_phase_a_publication_updates(
+        "phase4-document",
+        {"spec_quality_debt_authorization": {"status": "accepted_with_debt"}},
+    )
+
+    assert updates == {"published_spec_dir": "specs/001-demo"}
+
+
+def test_stale_quality_debt_guard_removes_presentation_and_publication_status(
+    tmp_path: Path,
+) -> None:
+    state = {
+        "phase": "checkpoint-assess",
+        "completed_phases": ["phase1-why2", "phase1-lexicon"],
+        "spec_quality_debt_authorization": {"status": "accepted_with_debt"},
+        "spec_status": "accepted_with_debt",
+        "spec_quality_status": "accepted_with_debt",
+        "spec_quality_debt_context": {"status": "accepted_with_debt"},
+    }
+    saved: list[dict[str, object]] = []
+    controller = object.__new__(SquadController)
+    controller._project_root = tmp_path
+    controller._state_store = SimpleNamespace(
+        load=lambda: dict(state),
+        save=lambda value: saved.append(dict(value)),
+    )
+
+    routed = controller._guard_phase1_quality_evidence("checkpoint-assess")
+
+    assert routed == "phase1-understanding"
+    assert "spec_quality_debt_authorization" not in saved[-1]
+    assert "spec_status" not in saved[-1]
+    assert "spec_quality_status" not in saved[-1]
+    assert "spec_quality_debt_context" not in saved[-1]
 
 
 @pytest.mark.parametrize(

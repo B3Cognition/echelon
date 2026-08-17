@@ -247,7 +247,7 @@ def test_attempt_exhaustion_policy_is_explicit(
     assert result.attempts == 3
     assert result.passed is False
     if expected == "block":
-        assert result.blocked_reason == "lexicon_gate_exhausted"
+        assert result.blocked_reason == "tasks_lexicon_gate_exhausted"
 
 
 def test_iteration_exhaustion_uses_warning_policy(tmp_path: Path) -> None:

@@ -14,7 +14,8 @@ Auto-detected from ECHELON_LLM (default: claude).
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -26,7 +27,6 @@ import shlex
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from harness.gitops import copy_prosaic_runtime_tree, copy_runtime_tree
@@ -66,6 +66,28 @@ SKILL_MAP = {
 
 CLI_VERSION = "4.0.3"
 LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
+_SPEC_SUMMARY_COMMAND: ContextVar[str] = ContextVar(
+    "echelon_spec_summary_command",
+    default="echelon spec run",
+)
+
+
+@dataclass
+class _SpecSummaryScope:
+    project_root: Path
+    command: str
+    run_dir: Path | None = None
+    mode: str = "semi"
+    message: str = ""
+    implementation_targets: tuple[str, ...] = ()
+    emitted: bool = False
+    next_already_printed: bool = False
+
+
+_SPEC_SUMMARY_SCOPE: ContextVar[_SpecSummaryScope | None] = ContextVar(
+    "echelon_spec_summary_scope",
+    default=None,
+)
 
 from echelon.workspace_model import discover_workspace  # noqa: E402  (after stdlib imports)
 from echelon.ui import banner as _banner  # noqa: E402  (after stdlib imports)
@@ -2301,6 +2323,7 @@ def _cmd_harness_run(
             config=config,
             resume_build_id=delivery_build_id,
             orchestration_root=spec_search_root,
+            summary_command=command_prefix,
         )
     except Exception as exc:
         if _is_docker_unavailable_error(exc):
@@ -2947,6 +2970,7 @@ def _cmd_harness_resume(
                 config=config,
                 resume_build_id=build_id or None,
                 orchestration_root=spec_search_root,
+                summary_command=command_prefix,
             )
         except Exception as exc:
             if _is_docker_unavailable_error(exc):
@@ -3016,6 +3040,7 @@ def _cmd_harness_resume(
                 config=config,
                 resume_build_id=build_id or None,
                 orchestration_root=spec_search_root,
+                summary_command=command_prefix,
             )
         except Exception as exc:
             if _is_docker_unavailable_error(exc):
@@ -3104,6 +3129,7 @@ def _cmd_harness_resume(
                 config=config,
                 resume_build_id=build_id or None,
                 orchestration_root=spec_search_root,
+                summary_command=command_prefix,
             )
         except Exception as exc:
             if _is_docker_unavailable_error(exc):
@@ -3159,6 +3185,7 @@ def _cmd_harness_resume(
             config=config,
             resume_build_id=build_id or None,
             orchestration_root=spec_search_root,
+            summary_command=command_prefix,
         )
     except Exception as exc:
         if _is_docker_unavailable_error(exc):
@@ -3539,6 +3566,324 @@ def _v2_decision_recommendation(decision: dict[str, object]) -> str:
     return str(decision.get("recommended_answer") or "(none)")
 
 
+def _proportional_quality_decision_fields(
+    state: Mapping[str, object],
+    decision: Mapping[str, object],
+) -> list[tuple[str, str]]:
+    """Render sealed proportional budget evidence without inferring choices."""
+    if decision.get("resolution_handler") != "proportional_quality_debt":
+        return []
+    fields: list[tuple[str, str]] = []
+    repair = state.get("phase1_quality_repair")
+    if isinstance(repair, Mapping):
+        automatic = repair.get("automatic_consumed")
+        automatic_limit = repair.get("automatic_limit")
+        extension = repair.get("extension_consumed")
+        extension_limit = repair.get("extension_limit")
+        extension_authorized = repair.get("extension_authorized")
+        if type(automatic) is int and type(automatic_limit) is int:
+            fields.append(
+                (
+                    "Automatic repairs",
+                    f"{automatic} of {automatic_limit} consumed "
+                    f"({max(0, automatic_limit - automatic)} remaining)",
+                )
+            )
+        if type(extension) is int and type(extension_limit) is int:
+            authorization = (
+                f"; {extension_authorized} authorized"
+                if type(extension_authorized) is int
+                else ""
+            )
+            fields.append(
+                (
+                    "Extension repairs",
+                    f"{extension} of {extension_limit} consumed "
+                    f"({max(0, extension_limit - extension)} remaining"
+                    f"{authorization})",
+                )
+            )
+    evidence = state.get("proportional_quality_candidate_evidence")
+    if isinstance(evidence, Mapping):
+        candidate = str(evidence.get("selected_candidate_id") or "").strip()
+        if candidate:
+            fields.append(("Selected candidate", candidate))
+        failed_gates: list[str] = []
+        raw_gates = evidence.get("failed_gates")
+        if isinstance(raw_gates, list):
+            for gate in raw_gates[:8]:
+                if not isinstance(gate, Mapping):
+                    continue
+                name = str(gate.get("name") or "").strip()
+                score = gate.get("score")
+                threshold = gate.get("threshold")
+                if (
+                    name
+                    and type(score) in {int, float}
+                    and type(threshold) in {int, float}
+                ):
+                    failed_gates.append(
+                        f"{name} {float(score):.2f} < {float(threshold):.2f}"
+                    )
+        if failed_gates:
+            fields.append(("Residual gate evidence", ", ".join(failed_gates)))
+        sage_findings: list[str] = []
+        raw_findings = evidence.get("sage_finding_routes")
+        if isinstance(raw_findings, list):
+            for finding in raw_findings[:5]:
+                if not isinstance(finding, Mapping):
+                    continue
+                issue_id = str(finding.get("issue_id") or "").strip()
+                severity = str(finding.get("severity") or "").strip()
+                issue_type = str(finding.get("type") or "").strip()
+                rationale = str(finding.get("rationale") or "").strip()
+                identity = issue_id or "SAGE finding"
+                classification = "/".join(
+                    value for value in (severity, issue_type) if value
+                )
+                rendered = (
+                    f"{identity} [{classification}]" if classification else identity
+                )
+                if rationale:
+                    rendered += f": {rationale[:240]}"
+                sage_findings.append(rendered)
+        if sage_findings:
+            fields.append(("Material SAGE findings", "\n".join(sage_findings)))
+        recommendation_evidence = evidence.get("recommendation_evidence")
+        if isinstance(recommendation_evidence, Mapping):
+            baseline_candidate = str(
+                recommendation_evidence.get("baseline_candidate_id") or ""
+            ).strip()
+            current_candidate = str(
+                recommendation_evidence.get("current_candidate_id") or ""
+            ).strip()
+            if baseline_candidate and current_candidate:
+                fields.append(
+                    (
+                        "Growth comparison",
+                        f"{baseline_candidate} → {current_candidate}",
+                    )
+                )
+            comparison_previous = str(
+                recommendation_evidence.get(
+                    "comparison_previous_candidate_id"
+                ) or ""
+            ).strip()[:128]
+            comparison_current = str(
+                recommendation_evidence.get(
+                    "comparison_current_candidate_id"
+                ) or ""
+            ).strip()[:128]
+            if comparison_previous and comparison_current:
+                fields.append(
+                    (
+                        "Repair comparison",
+                        f"{comparison_previous} → {comparison_current}",
+                    )
+                )
+            baseline_statements = recommendation_evidence.get(
+                "baseline_formal_statement_count"
+            )
+            statements = recommendation_evidence.get("formal_statement_count")
+            statement_growth = recommendation_evidence.get(
+                "formal_statement_growth"
+            )
+            if all(
+                type(value) is int
+                for value in (baseline_statements, statements, statement_growth)
+            ):
+                fields.append(
+                    (
+                        "Formal statements",
+                        f"{baseline_statements:,} → {statements:,} "
+                        f"({statement_growth:+,})",
+                    )
+                )
+            baseline_bytes = recommendation_evidence.get("baseline_byte_count")
+            byte_count = recommendation_evidence.get("byte_count")
+            byte_growth = recommendation_evidence.get("byte_growth")
+            if all(
+                type(value) is int
+                for value in (baseline_bytes, byte_count, byte_growth)
+            ):
+                fields.append(
+                    (
+                        "Specification bytes",
+                        f"{baseline_bytes:,} → {byte_count:,} "
+                        f"({byte_growth:+,} bytes)",
+                    )
+                )
+            score_history_lines: list[str] = []
+            raw_score_history = recommendation_evidence.get("score_history")
+            if isinstance(raw_score_history, list):
+                for entry in raw_score_history[:5]:
+                    if not isinstance(entry, Mapping):
+                        continue
+                    repair_number = entry.get("repair_number")
+                    candidate_id = str(
+                        entry.get("candidate_id") or ""
+                    ).strip()[:128]
+                    scores = entry.get("scores")
+                    if (
+                        type(repair_number) is not int
+                        or repair_number < 0
+                        or not candidate_id
+                        or not isinstance(scores, list)
+                    ):
+                        continue
+                    rendered_scores: list[str] = []
+                    for score_entry in scores[:8]:
+                        if not isinstance(score_entry, Mapping):
+                            continue
+                        name = str(
+                            score_entry.get("name") or ""
+                        ).strip()[:80]
+                        score = score_entry.get("score")
+                        threshold = score_entry.get("threshold")
+                        if (
+                            name
+                            and type(score) in {int, float}
+                            and type(threshold) in {int, float}
+                        ):
+                            rendered_scores.append(
+                                f"{name} {float(score):.2f}/{float(threshold):.2f}"
+                            )
+                    if rendered_scores:
+                        score_history_lines.append(
+                            f"repair {repair_number} {candidate_id}: "
+                            + ", ".join(rendered_scores)
+                        )
+            if score_history_lines:
+                fields.append(("Score history", "\n".join(score_history_lines)))
+            delta_lines: list[str] = []
+            raw_deltas = recommendation_evidence.get("per_repair_deltas")
+            if isinstance(raw_deltas, list):
+                for entry in raw_deltas[:4]:
+                    if not isinstance(entry, Mapping):
+                        continue
+                    repair_number = entry.get("repair_number")
+                    statement_delta = entry.get("formal_statement_delta")
+                    byte_delta = entry.get("byte_delta")
+                    score_deltas = entry.get("score_deltas")
+                    if (
+                        type(repair_number) is not int
+                        or repair_number < 0
+                        or type(statement_delta) is not int
+                        or type(byte_delta) is not int
+                        or not isinstance(score_deltas, list)
+                    ):
+                        continue
+                    rendered_deltas: list[str] = []
+                    for score_delta in score_deltas[:8]:
+                        if not isinstance(score_delta, Mapping):
+                            continue
+                        name = str(
+                            score_delta.get("name") or ""
+                        ).strip()[:80]
+                        delta = score_delta.get("delta")
+                        if name and type(delta) in {int, float}:
+                            rendered_deltas.append(
+                                f"{name} {float(delta):+.2f}"
+                            )
+                    if rendered_deltas:
+                        delta_lines.append(
+                            f"repair {repair_number}: "
+                            + ", ".join(rendered_deltas)
+                            + f"; statements {statement_delta:+d}"
+                            + f"; bytes {byte_delta:+d}"
+                        )
+            if delta_lines:
+                fields.append(("Per-repair deltas", "\n".join(delta_lines)))
+            rationale = str(
+                recommendation_evidence.get("rationale") or ""
+            ).strip()
+            if rationale:
+                fields.append(("Recommendation rationale", rationale[:500]))
+    options = decision.get("options")
+    if isinstance(options, list):
+        recommended = next(
+            (
+                option
+                for option in options
+                if isinstance(option, Mapping)
+                and option.get("recommended") is True
+            ),
+            None,
+        )
+        if isinstance(recommended, Mapping):
+            fields.append(
+                (
+                    "Quality recommendation",
+                    f"{recommended.get('id')} ({recommended.get('label')})",
+                )
+            )
+        choice_commands = [
+            f'echelon spec resume "{option.get("id")}"'
+            for option in options
+            if isinstance(option, Mapping)
+            and isinstance(option.get("id"), str)
+            and option.get("id")
+        ]
+        if choice_commands:
+            fields.append(("Choice syntax", "\n".join(choice_commands)))
+    return fields
+
+
+def _current_quality_debt_cli_facts(
+    state: Mapping[str, object],
+    project_root: Path,
+) -> dict[str, object] | None:
+    """Return bounded display facts only for Task 6-verified live authority."""
+    authorization = state.get("spec_quality_debt_authorization")
+    if not isinstance(authorization, Mapping):
+        return None
+    from harness.phase1_quality_debt import (
+        has_current_quality_debt_authorization,
+    )
+
+    if not has_current_quality_debt_authorization(
+        state,
+        project_root=project_root,
+    ):
+        return None
+    if authorization.get("status") != "accepted_with_debt":
+        return None
+    failed_gates: list[str] = []
+    raw_gates = authorization.get("failed_gates")
+    if isinstance(raw_gates, list):
+        for gate in raw_gates[:8]:
+            if not isinstance(gate, Mapping):
+                continue
+            name = str(gate.get("name") or "").strip()
+            score = gate.get("score")
+            threshold = gate.get("threshold")
+            if name and type(score) in {int, float} and type(threshold) in {int, float}:
+                failed_gates.append(
+                    f"{name} {float(score):.2f} < {float(threshold):.2f}"
+                )
+    qualitative_issues: list[str] = []
+    raw_qualitative = authorization.get("qualitative_debt")
+    if isinstance(raw_qualitative, list):
+        for finding in raw_qualitative[:8]:
+            if not isinstance(finding, Mapping):
+                continue
+            issue_id = str(finding.get("issue_id") or "").strip()
+            title = str(finding.get("title") or "").strip()
+            if issue_id and title:
+                qualitative_issues.append(
+                    f"{issue_id[:80]}: {title[:120]}"
+                )
+            elif issue_id:
+                qualitative_issues.append(issue_id[:80])
+    return {
+        "status": "accepted_with_debt",
+        "artifact": str(authorization.get("debt_artifact") or "").strip(),
+        "resolved_by": str(authorization.get("resolved_by") or "").strip(),
+        "failed_gates": tuple(failed_gates),
+        "qualitative_issues": tuple(qualitative_issues),
+    }
+
+
 def _persisted_or_legacy_recovery_instruction(
     run_state: dict,
 ) -> RecoveryInstruction | None:
@@ -3781,6 +4126,21 @@ def _classify_run_recovery(
     if status != "blocked":
         return _RunRecoveryAction("advance")
 
+    if reason == "proportional_quality_debt_declined":
+        return _RunRecoveryAction(
+            "manual_recovery",
+            reason=reason,
+            command=(
+                "inspect the retained quality evidence, then start a new or "
+                "amended specification run"
+            ),
+            note=(
+                "The exhausted proportional repair loop was explicitly stopped. "
+                "Ordinary continue cannot reopen it; deliberately amend the request "
+                "or quality policy and start a new run."
+            ),
+        )
+
     ledger = run_state.get("issue_resolution_ledger")
     ledger_entries = (
         [entry for entry in ledger.values() if isinstance(entry, dict)]
@@ -3975,6 +4335,31 @@ def _classify_run_recovery(
             reason=reason,
             command="increase analysis.token_budget_k, then echelon spec continue",
             note="the run cannot continue until the configured budget is higher",
+        )
+
+    last_dispatch = run_state.get("last_dispatch")
+    last_dispatch_phase = (
+        str(last_dispatch.get("phase_id") or "").strip()
+        if isinstance(last_dispatch, dict)
+        else ""
+    )
+    tasks_lexicon_block = reason == "tasks_lexicon_gate_exhausted" or (
+        reason == "lexicon_gate_exhausted"
+        and last_dispatch_phase
+        in {"phase3-tasks-lexicon", "phase3-consensus-tasks-lexicon"}
+    )
+    if tasks_lexicon_block:
+        return _RunRecoveryAction(
+            "manual_recovery",
+            reason="tasks_lexicon_gate_exhausted",
+            phase="phase3-plan",
+            command="echelon phase run phase3-plan",
+            note=(
+                "The hard Tasks Lexicon gate failed. Re-run the Phase 3 planning "
+                "node to repair tasks.md from tasks-lexicon-report.json; the "
+                "controller will revalidate the repaired plan through the "
+                "deterministic Tasks Lexicon gate."
+            ),
         )
 
     if reason == "lexicon_gate_exhausted":
@@ -4499,6 +4884,161 @@ def _cmd_spec_resolve(args: list[str], *, project_root: Path, ext_dir: Path) -> 
     )
 
 
+def _register_spec_summary_run(
+    project_root: Path,
+    squad_dir: Path,
+    *,
+    mode: object,
+    message: object,
+    implementation_targets: object = (),
+) -> None:
+    scope = _SPEC_SUMMARY_SCOPE.get()
+    if scope is None:
+        return
+    scope.run_dir = Path(squad_dir)
+    scope.mode = str(mode or "semi")
+    scope.message = str(message or "")
+    if isinstance(implementation_targets, (list, tuple)):
+        scope.implementation_targets = tuple(
+            str(value) for value in implementation_targets if str(value).strip()
+        )
+
+
+def _note_spec_summary_next_printed() -> None:
+    scope = _SPEC_SUMMARY_SCOPE.get()
+    if scope is not None:
+        scope.next_already_printed = True
+
+
+@contextmanager
+def _spec_summary_session(project_root: Path, command: str):
+    active = _SPEC_SUMMARY_SCOPE.get()
+    if active is not None:
+        yield active
+        return
+    scope = _SpecSummaryScope(
+        project_root=Path(project_root).resolve(),
+        command=command,
+    )
+    token = _SPEC_SUMMARY_SCOPE.set(scope)
+    try:
+        yield scope
+    finally:
+        try:
+            if scope.run_dir is not None and not scope.emitted:
+                state_file = scope.run_dir / "state.json"
+                state = json.loads(state_file.read_text(encoding="utf-8"))
+                if isinstance(state, dict) and state:
+                    persisted_targets = state.get("implementation_targets")
+                    fallback_targets = (
+                        tuple(
+                            str(value)
+                            for value in persisted_targets
+                            if str(value).strip()
+                        )
+                        if isinstance(persisted_targets, list)
+                        else ()
+                    )
+                    _print_squad_summary(
+                        scope.project_root,
+                        scope.run_dir,
+                        object(),
+                        mode=scope.mode,
+                        message=scope.message
+                        or str(state.get("user_message") or ""),
+                        implementation_targets=list(
+                            scope.implementation_targets
+                            or fallback_targets
+                        ),
+                        command=scope.command,
+                        include_next=not scope.next_already_printed,
+                    )
+        except BaseException:
+            pass
+        finally:
+            _SPEC_SUMMARY_SCOPE.reset(token)
+
+
+def _phase_a_summary_facts(
+    state: Mapping[str, object],
+    *,
+    spec_dir: str,
+    stopped: str,
+):
+    from harness.run_summary import (
+        SummaryFact,
+        SummaryFactCategory,
+        SummaryFactImportance,
+    )
+
+    facts: list[SummaryFact] = []
+    if spec_dir:
+        facts.append(
+            SummaryFact(
+                SummaryFactCategory.WORK,
+                SummaryFactImportance.HIGH,
+                f"Published the specification at {spec_dir}.",
+                len(facts),
+            )
+        )
+    completed = tuple(
+        str(value).strip()
+        for value in state.get("completed_phases", ())
+        if str(value).strip()
+    )
+    repair_state = state.get("phase1_quality_repair")
+    certificate = state.get("spec_quality_certificate")
+    if isinstance(repair_state, Mapping) and isinstance(certificate, Mapping):
+        consumed = int(repair_state.get("automatic_consumed", 0) or 0)
+        if (
+            repair_state.get("authoring_mode") == "proportional"
+            and certificate.get("status") == "passed"
+        ):
+            if consumed == 1:
+                quality_text = (
+                    "One proportional quality repair produced a passing "
+                    "specification quality certificate."
+                )
+            elif consumed > 1:
+                quality_text = (
+                    f"{consumed} proportional quality repairs produced a passing "
+                    "specification quality certificate."
+                )
+            else:
+                quality_text = (
+                    "The proportional quality review produced a passing "
+                    "specification quality certificate."
+                )
+            facts.append(
+                SummaryFact(
+                    SummaryFactCategory.VERIFICATION,
+                    SummaryFactImportance.HIGH,
+                    quality_text,
+                    len(facts),
+                )
+            )
+    if completed:
+        facts.append(
+            SummaryFact(
+                SummaryFactCategory.HANDOFF,
+                SummaryFactImportance.NORMAL,
+                f"Completed {len(completed)} specification phases and preserved "
+                "durable state.",
+                len(facts),
+            )
+        )
+    if stopped and stopped != "completed":
+        facts.append(
+            SummaryFact(
+                SummaryFactCategory.BLOCKER,
+                SummaryFactImportance.CRITICAL,
+                f"Specification work stopped because {stopped}.",
+                len(facts),
+            )
+        )
+    return tuple(facts)
+
+
 def _print_squad_summary(
     project_root: Path,
     squad_dir: Path,
@@ -4507,9 +5047,16 @@ def _print_squad_summary(
     mode: str,
     message: str,
     implementation_targets: list[str] | None = None,
+    command: str = "echelon spec run",
+    include_next: bool = True,
 ) -> None:
     """Render a delivery-style Phase A/spec authoring summary."""
     import json as _json
+
+    scope = _SPEC_SUMMARY_SCOPE.get()
+    if scope is not None:
+        if scope.emitted:
+            return
 
     state: dict = {}
     state_file = squad_dir / "state.json"
@@ -4571,16 +5118,25 @@ def _print_squad_summary(
         stopped = "completed"
     if stopped:
         fields.append(("stopped", stopped))
-    if status == "blocked" and stopped == "provider_session_limit":
-        provider_message = str(state.get("provider_limit_message") or "").strip()
-        if provider_message:
-            fields.append(("provider", provider_message))
+    provider_message = str(state.get("provider_limit_message") or "").strip()
+    if provider_message:
+        fields.append(("provider limit", provider_message))
+
+    debt_facts = _current_quality_debt_cli_facts(state, project_root)
+    if debt_facts is not None:
+        fields.append(("specification quality", "accepted with quality debt"))
+        debt_gates = debt_facts["failed_gates"]
+        if debt_gates:
+            fields.append(("residual gates", ", ".join(debt_gates)))
+        debt_issues = debt_facts["qualitative_issues"]
+        if debt_issues:
+            fields.append(("residual SAGE", ", ".join(debt_issues)))
+        if debt_facts["resolved_by"]:
+            fields.append(("debt resolver", str(debt_facts["resolved_by"])))
+        if debt_facts["artifact"]:
+            fields.append(("debt evidence", str(debt_facts["artifact"])))
 
     if status in {"blocked", "interrupted", "budget_exhausted"}:
-        command = action.command or "echelon spec continue"
-        if command:
-            label = "answer" if action.kind == "human_resume" else "continue"
-            fields.append((label, command))
         if action.note:
             fields.append(("note", action.note))
         if status == "blocked" and (
@@ -4596,8 +5152,63 @@ def _print_squad_summary(
                 fields.extend(
                     _issue_resolution_screen_guidance(project_root, squad_dir, state)
                 )
-    fields.append(("result", _phase_a_result_line(status, state)))
+    try:
+        summary_decision = _active_v2_decision(state)
+    except (RecoveryInstructionError, ValueError):
+        summary_decision = None
+    if summary_decision is not None:
+        fields.extend(
+            _proportional_quality_decision_fields(state, summary_decision)
+        )
+    result_line = _phase_a_result_line(status, state)
+    fields.append(("result", result_line))
+    next_step = ""
+    if status == "done" and spec_id:
+        next_step = f"echelon delivery run {spec_id}"
+    elif status in {"blocked", "interrupted", "budget_exhausted"}:
+        next_step = action.command or "echelon spec continue"
+
+    from harness.run_summary import RunSummaryContext, summarize_run_for_cli
+
+    facts = _phase_a_summary_facts(state, spec_dir=spec_dir, stopped=stopped)
+    worked_on = summarize_run_for_cli(
+        RunSummaryContext(
+            project_root=project_root,
+            command=command,
+            task=message,
+            status=status,
+            facts=facts,
+            next_step=next_step,
+            quality_debt_status=(
+                str(debt_facts["status"]) if debt_facts is not None else ""
+            ),
+            quality_debt_artifact=(
+                str(debt_facts["artifact"]) if debt_facts is not None else ""
+            ),
+            quality_debt_failed_gates=(
+                tuple(debt_facts["failed_gates"])
+                if debt_facts is not None
+                else ()
+            ),
+            quality_debt_qualitative_issues=(
+                tuple(debt_facts["qualitative_issues"])
+                if debt_facts is not None
+                else ()
+            ),
+            quality_debt_resolved_by=(
+                str(debt_facts["resolved_by"])
+                if debt_facts is not None
+                else ""
+            ),
+            provider_limit_message=provider_message,
+        )
+    )
+    fields.append(("worked on", worked_on))
+    if next_step and include_next:
+        fields.append(("next", next_step))
     _banner("SQUAD SUMMARY", fields, subtitle=f"{icon} {status_text}")
+    if scope is not None:
+        scope.emitted = True
 
 
 def _normalize_rewind_spec_dir(project_root: Path, state: dict) -> tuple[Path | None, str | None]:
@@ -6473,6 +7084,13 @@ def _cmd_run(
         existing_message = str(existing_state.get("user_message") or "").strip()
         if existing_message:
             run_message = existing_message
+    _register_spec_summary_run(
+        project_root,
+        squad_dir,
+        mode=mode,
+        message=run_message,
+        implementation_targets=implementation_targets,
+    )
     existing_inputs = existing_state.get("product_inputs") if existing_state else None
     if existing_inputs and not reset:
         declared_before = existing_inputs.get("declarations") if isinstance(existing_inputs, dict) else None
@@ -6566,8 +7184,8 @@ def _cmd_run(
         mode=mode,
         message=run_message,
         implementation_targets=implementation_targets,
+        command=_SPEC_SUMMARY_COMMAND.get(),
     )
-    _print_next_steps(project_root, result.status)
     if result.status != "done":
         sys.exit(1)
 
@@ -7404,6 +8022,26 @@ def _cmd_status(project_root: Path) -> None:
             fields.append(("Task", snippet))
         if elapsed:
             fields.append(("Started", elapsed))
+        debt_facts = _current_quality_debt_cli_facts(state, project_root)
+        if debt_facts is not None:
+            fields.append(("Specification quality", "accepted with quality debt"))
+            failed_gates = debt_facts["failed_gates"]
+            if failed_gates:
+                fields.append(("Residual gates", ", ".join(failed_gates)))
+            qualitative_issues = debt_facts["qualitative_issues"]
+            if qualitative_issues:
+                fields.append(
+                    ("Residual SAGE", ", ".join(qualitative_issues))
+                )
+            if debt_facts["resolved_by"]:
+                fields.append(("Debt resolver", str(debt_facts["resolved_by"])))
+            if debt_facts["artifact"]:
+                fields.append(("Debt evidence", str(debt_facts["artifact"])))
+        provider_limit_message = str(
+            state.get("provider_limit_message") or ""
+        ).strip()
+        if provider_limit_message:
+            fields.append(("Provider limit", provider_limit_message))
         if run_status in ("running", "in_progress"):
             fields.append(("Next", "echelon spec continue"))
         elif run_status == "blocked":
@@ -7433,6 +8071,9 @@ def _cmd_status(project_root: Path) -> None:
                         ("Risk", str(decision.get("risk_level") or "(none)")),
                         ("Decision action", action.command),
                     ]
+                )
+                fields.extend(
+                    _proportional_quality_decision_fields(state, decision)
                 )
 
         _banner("RUN STATE", fields)
@@ -7536,6 +8177,13 @@ def _cmd_continue_impl(
         )
     user_message = state.get("user_message", "")
     mode = mode_override or state.get("autonomy_mode") or state.get("mode", "semi")
+    _register_spec_summary_run(
+        project_root,
+        squad_dir,
+        mode=mode,
+        message=user_message,
+        implementation_targets=state.get("implementation_targets") or (),
+    )
     try:
         decision = _active_v2_decision(state)
     except (RecoveryInstructionError, ValueError) as exc:
@@ -7581,9 +8229,11 @@ def _cmd_continue_impl(
             ]
             fields.append(("options", _render_v2_decision_options(decision)))
             fields.append(("resume with", action.command))
+            _note_spec_summary_next_printed()
             _banner("CHECKPOINT", fields, subtitle="Run paused. Human decision required.")
             return
         if action.kind == "manual_recovery":
+            _note_spec_summary_next_printed()
             _banner(
                 "CHECKPOINT",
                 [
@@ -7762,6 +8412,7 @@ def _cmd_continue_impl(
             ("recover with", action.command),
             ("then", "echelon spec continue"),
         ])
+        _note_spec_summary_next_printed()
         _banner(
             "CHECKPOINT",
             fields,
@@ -7800,6 +8451,7 @@ def _cmd_continue_impl(
         if rendered_options:
             fields.append(("options", rendered_options))
         fields.append(("resume with", action.command))
+        _note_spec_summary_next_printed()
         _banner(
             "CHECKPOINT",
             fields,
@@ -7813,6 +8465,7 @@ def _cmd_continue_impl(
             ("note", action.note),
         ]
         fields.extend(_issue_resolution_screen_guidance(project_root, squad_dir, state))
+        _note_spec_summary_next_printed()
         _banner(
             "CHECKPOINT",
             fields,
@@ -7827,6 +8480,7 @@ def _cmd_continue_impl(
     if cur_phase == "terminal-blocked":
         next_phase = _next_continue_phase(project_root)
         if next_phase is None:
+            _note_spec_summary_next_printed()
             print(
                 "Build is ready — nothing left to do in Phase A.\n\n"
                 "  echelon delivery run <spec-id>",
@@ -7845,6 +8499,7 @@ def _cmd_continue_impl(
     # Determine the next phase automatically
     next_phase = _next_continue_phase(project_root)
     if next_phase is None:
+        _note_spec_summary_next_printed()
         print(
             "Build is ready — nothing left to do in Phase A.\n\n"
             "  echelon delivery run <spec-id>",
@@ -9063,6 +9718,7 @@ def _resume_v2_human_input(
         raise SystemExit(1) from exc
 
     current = store.load()
+    _note_spec_summary_next_printed()
     _banner(
         "HUMAN DECISION SUBMITTED",
         [
@@ -9118,6 +9774,13 @@ def _cmd_resume(
         with PhaseAExecutionLock.acquire(project_root, operation_id):
             with SpecRunExecutionLock.acquire(squad_dir, operation_id):
                 state = store.load()
+                _register_spec_summary_run(
+                    project_root,
+                    squad_dir,
+                    mode=state.get("autonomy_mode") or state.get("mode", "semi"),
+                    message=state.get("user_message", ""),
+                    implementation_targets=state.get("implementation_targets") or (),
+                )
                 raw_decision = state.get("blocked_decision")
                 if (
                     isinstance(raw_decision, dict)
@@ -9301,14 +9964,19 @@ def _cmd_resume(
         mode=state.get("autonomy_mode") or state.get("mode", "semi"),
     )
 
-    _banner("SQUAD RESUMED", [
-        ("Phase resumed", state.get("phase", "?")),
-        ("Answer given", (answer[:60] + "…") if len(answer) > 60 else answer),
-        ("Status", result.status),
-        ("Current phase", result.phase),
-        ("Artifacts", str(squad_dir)),
-    ])
-    _print_next_steps(project_root, result.status)
+    _print_squad_summary(
+        project_root,
+        squad_dir,
+        result,
+        mode=state.get("autonomy_mode") or state.get("mode", "semi"),
+        message=state.get("user_message", ""),
+        implementation_targets=[
+            str(value)
+            for value in (state.get("implementation_targets") or [])
+            if str(value).strip()
+        ],
+        command="echelon spec resume",
+    )
 
 
 def _resolve_escalation_option(answer: str, options: object) -> dict | None:
@@ -11515,7 +12183,8 @@ def _cmd_spec_run(args: list[str]) -> None:
         )
         sys.exit(1)
     _require_provider_capability("echelon spec run", ProviderCapability.ARTIFACT, project_dir=project_root)
-    _cmd_run(args, project_root=project_root, ext_dir=ext_dir)
+    with _spec_summary_session(project_root, "echelon spec run"):
+        _cmd_run(args, project_root=project_root, ext_dir=ext_dir)
 
 
 def _cmd_spec_retarget(args: list[str]) -> None:
@@ -11546,7 +12215,12 @@ def _cmd_spec_continue(args: list[str]) -> None:
     project_root = Path.cwd()
     ext_dir = _installed_phase_runtime_or_exit(project_root)
     _require_provider_capability("echelon spec continue", ProviderCapability.ARTIFACT, project_dir=project_root)
-    _cmd_continue(args, project_root=project_root, ext_dir=ext_dir)
+    token = _SPEC_SUMMARY_COMMAND.set("echelon spec continue")
+    try:
+        with _spec_summary_session(project_root, "echelon spec continue"):
+            _cmd_continue(args, project_root=project_root, ext_dir=ext_dir)
+    finally:
+        _SPEC_SUMMARY_COMMAND.reset(token)
 
 
 def _cmd_spec_resume(args: list[str]) -> None:
@@ -11559,7 +12233,12 @@ def _cmd_spec_resume(args: list[str]) -> None:
     project_root = Path.cwd()
     ext_dir = _installed_phase_runtime_or_exit(project_root)
     _require_provider_capability("echelon spec resume", ProviderCapability.ARTIFACT, project_dir=project_root)
-    _cmd_resume(args, project_root=project_root, ext_dir=ext_dir)
+    token = _SPEC_SUMMARY_COMMAND.set("echelon spec resume")
+    try:
+        with _spec_summary_session(project_root, "echelon spec resume"):
+            _cmd_resume(args, project_root=project_root, ext_dir=ext_dir)
+    finally:
+        _SPEC_SUMMARY_COMMAND.reset(token)
 
 
 def _cmd_spec_add_input(args: list[str]) -> None:

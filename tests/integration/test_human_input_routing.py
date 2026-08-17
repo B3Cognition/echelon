@@ -23,7 +23,10 @@ from harness.human_input import (
     HumanInputPolicyError,
     HumanInputPolicyRegistry,
     HumanInputResolution,
+    ProportionalQualityRecommendationEvidence,
     controller_safeguard_policies,
+    prepare_controller_proportional_quality_decision,
+    select_initial_decision_status,
 )
 from harness.phase_graph import PhaseGraph, PhaseNode
 from harness.prepared_phase_result import prepare_phase_result
@@ -278,6 +281,55 @@ def _safeguard_policy(
             else policy.source_kind
         ),
         allowed_phase_ids=frozenset({phase_id}),
+    )
+
+
+def _proportional_repair_state(
+    *,
+    extension_authorized: int = 0,
+    extension_consumed: int = 0,
+) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "authoring_mode": "proportional",
+        "automatic_limit": 3,
+        "automatic_consumed": 3,
+        "extension_limit": 1,
+        "extension_authorized": extension_authorized,
+        "extension_consumed": extension_consumed,
+        "migration_basis": "fresh",
+        "baseline_candidate_id": "quality-candidate-0",
+        "candidate_ids": [
+            "quality-candidate-0",
+            "quality-candidate-1",
+            "quality-candidate-2",
+            "quality-candidate-3",
+        ],
+    }
+
+
+def _proportional_recommendation_evidence(
+    *,
+    current_depth: float = 0.72,
+    previous_depth: float = 0.70,
+    borderline_margin: float = 0.05,
+    formal_statement_count: int = 8,
+    previous_formal_statement_count: int = 8,
+) -> ProportionalQualityRecommendationEvidence:
+    return ProportionalQualityRecommendationEvidence(
+        borderline_margin=borderline_margin,
+        previous_gates=(
+            ("depth", previous_depth, 0.75, False),
+            ("overall", 0.74, 0.75, False),
+            ("structure", 0.80, 0.75, True),
+        ),
+        current_gates=(
+            ("depth", current_depth, 0.75, False),
+            ("overall", 0.745, 0.75, False),
+            ("structure", 0.80, 0.75, True),
+        ),
+        previous_formal_statement_count=previous_formal_statement_count,
+        formal_statement_count=formal_statement_count,
     )
 
 
@@ -2790,6 +2842,7 @@ def test_consecutive_fail_and_why2_metric_stagnation_return_safeguard_request(
     state = store.load()
     state.update(
         {
+            "spec_authoring_mode": "perfectionist",
             "why_fail_count": 1,
             "why2_metric_stagnation_count": stagnation_count,
             "why_failure_baseline": {
@@ -4054,3 +4107,312 @@ def test_pending_and_resolving_v2_decisions_block_controller_phase_bypass(
     assert result.status == "blocked"
     assert store.load() == before
     provider.exec_agent.assert_not_called()
+
+
+def test_proportional_budget_recommends_one_extension_only_for_bounded_progress(
+) -> None:
+    registry = HumanInputPolicyRegistry(controller_safeguard_policies())
+    policy = registry.lookup(
+        "controller_safeguard",
+        "proportional_quality_budget_exhausted",
+        "proportional_quality_budget_exhausted",
+    )
+
+    request = prepare_controller_proportional_quality_decision(
+        registry,
+        reason_code="proportional_quality_budget_exhausted",
+        phase_id="phase1-why2",
+        question="Choose how to resolve the exhausted proportional quality budget.",
+        source_state_revision=12,
+        repair_state=_proportional_repair_state(),
+        recommendation_evidence=_proportional_recommendation_evidence(),
+        option_contract=policy.options,
+    )
+
+    assert [option.id for option in request.options if option.recommended] == [
+        "extend_once"
+    ]
+    assert tuple(
+        replace(option, recommended=False) for option in request.options
+    ) == policy.options
+
+
+@pytest.mark.parametrize(
+    ("current_depth", "expected_recommendation"),
+    (
+        (0.70, "extend_once"),
+        (0.699999999999, "continue_with_debt"),
+    ),
+    ids=("exact_inclusive_boundary", "just_outside_boundary"),
+)
+def test_proportional_budget_borderline_margin_is_stably_inclusive(
+    current_depth: float,
+    expected_recommendation: str,
+) -> None:
+    registry = HumanInputPolicyRegistry(controller_safeguard_policies())
+    policy = registry.lookup(
+        "controller_safeguard",
+        "proportional_quality_budget_exhausted",
+        "proportional_quality_budget_exhausted",
+    )
+
+    request = prepare_controller_proportional_quality_decision(
+        registry,
+        reason_code="proportional_quality_budget_exhausted",
+        phase_id="phase1-why2",
+        question="Choose how to resolve the exhausted proportional quality budget.",
+        source_state_revision=12,
+        repair_state=_proportional_repair_state(),
+        recommendation_evidence=_proportional_recommendation_evidence(
+            current_depth=current_depth,
+            previous_depth=0.69,
+        ),
+        option_contract=policy.options,
+    )
+
+    assert [option.id for option in request.options if option.recommended] == [
+        expected_recommendation
+    ]
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        _proportional_recommendation_evidence(current_depth=0.69),
+        _proportional_recommendation_evidence(
+            current_depth=0.70,
+            previous_depth=0.70,
+        ),
+        _proportional_recommendation_evidence(formal_statement_count=9),
+    ],
+    ids=("outside_borderline_margin", "failed_dimension_not_improved", "formal_growth"),
+)
+def test_proportional_budget_recommends_debt_when_any_extension_predicate_fails(
+    evidence: ProportionalQualityRecommendationEvidence,
+) -> None:
+    registry = HumanInputPolicyRegistry(controller_safeguard_policies())
+    policy = registry.lookup(
+        "controller_safeguard",
+        "proportional_quality_budget_exhausted",
+        "proportional_quality_budget_exhausted",
+    )
+
+    request = prepare_controller_proportional_quality_decision(
+        registry,
+        reason_code="proportional_quality_budget_exhausted",
+        phase_id="phase1-why2",
+        question="Choose how to resolve the exhausted proportional quality budget.",
+        source_state_revision=12,
+        repair_state=_proportional_repair_state(),
+        recommendation_evidence=evidence,
+        option_contract=policy.options,
+    )
+
+    assert [option.id for option in request.options if option.recommended] == [
+        "continue_with_debt"
+    ]
+    assert not next(option for option in request.options if option.id == "stop").recommended
+
+
+def test_proportional_extension_exhaustion_never_recommends_another_extension(
+) -> None:
+    registry = HumanInputPolicyRegistry(controller_safeguard_policies())
+    policy = registry.lookup(
+        "controller_safeguard",
+        "proportional_quality_extension_exhausted",
+        "proportional_quality_extension_exhausted",
+    )
+
+    request = prepare_controller_proportional_quality_decision(
+        registry,
+        reason_code="proportional_quality_extension_exhausted",
+        phase_id="phase1-why2",
+        question="Choose how to resolve the exhausted proportional quality extension.",
+        source_state_revision=13,
+        repair_state=_proportional_repair_state(
+            extension_authorized=1,
+            extension_consumed=1,
+        ),
+        recommendation_evidence=_proportional_recommendation_evidence(),
+        option_contract=policy.options,
+    )
+
+    assert [option.id for option in request.options] == [
+        "continue_with_debt",
+        "stop",
+    ]
+    assert [option.id for option in request.options if option.recommended] == [
+        "continue_with_debt"
+    ]
+
+
+def test_qualitative_only_failure_never_vacuously_recommends_extension() -> None:
+    registry = HumanInputPolicyRegistry(controller_safeguard_policies())
+    policy = registry.lookup(
+        "controller_safeguard",
+        "proportional_quality_budget_exhausted",
+        "proportional_quality_budget_exhausted",
+    )
+    passing = (
+        ("overall", 0.90, 0.80, True),
+        ("structure", 0.85, 0.80, True),
+    )
+    evidence = ProportionalQualityRecommendationEvidence(
+        borderline_margin=0.05,
+        previous_gates=passing,
+        current_gates=passing,
+        previous_formal_statement_count=8,
+        formal_statement_count=8,
+        qualitative_failure_count=1,
+    )
+
+    request = prepare_controller_proportional_quality_decision(
+        registry,
+        reason_code="proportional_quality_budget_exhausted",
+        phase_id="phase1-why2",
+        question="Resolve the qualitative-only SAGE failure.",
+        source_state_revision=12,
+        repair_state=_proportional_repair_state(),
+        recommendation_evidence=evidence,
+        option_contract=policy.options,
+    )
+
+    assert [option.id for option in request.options] == [
+        "extend_once",
+        "continue_with_debt",
+        "stop",
+    ]
+    assert [option.id for option in request.options if option.recommended] == [
+        "continue_with_debt"
+    ]
+    assert next(
+        option for option in request.options if option.id == "continue_with_debt"
+    ).risk_level == "high"
+
+
+def test_proportional_budget_policy_cannot_be_prepared_after_extension_authorization(
+) -> None:
+    registry = HumanInputPolicyRegistry(controller_safeguard_policies())
+    policy = registry.lookup(
+        "controller_safeguard",
+        "proportional_quality_budget_exhausted",
+        "proportional_quality_budget_exhausted",
+    )
+
+    with pytest.raises(HumanInputPolicyError, match="extension"):
+        prepare_controller_proportional_quality_decision(
+            registry,
+            reason_code="proportional_quality_budget_exhausted",
+            phase_id="phase1-why2",
+            question="Choose how to resolve the exhausted proportional quality budget.",
+            source_state_revision=12,
+            repair_state=_proportional_repair_state(extension_authorized=1),
+            recommendation_evidence=_proportional_recommendation_evidence(),
+            option_contract=policy.options,
+        )
+
+
+@pytest.mark.parametrize(
+    "option_contract",
+    [
+        lambda options: (replace(options[0], id="forged"), *options[1:]),
+        lambda options: (
+            replace(options[0], description="Provider-authored effect."),
+            *options[1:],
+        ),
+        lambda options: (
+            replace(options[0], next_phase="terminal-blocked"),
+            *options[1:],
+        ),
+        lambda options: (replace(options[0], outcome="approved"), *options[1:]),
+    ],
+    ids=("id", "description", "target", "outcome"),
+)
+def test_controller_recommendation_helper_rejects_non_recommendation_option_changes(
+    option_contract,
+) -> None:
+    registry = HumanInputPolicyRegistry(controller_safeguard_policies())
+    policy = registry.lookup(
+        "controller_safeguard",
+        "proportional_quality_budget_exhausted",
+        "proportional_quality_budget_exhausted",
+    )
+
+    with pytest.raises(HumanInputPolicyError, match="option contract"):
+        prepare_controller_proportional_quality_decision(
+            registry,
+            reason_code="proportional_quality_budget_exhausted",
+            phase_id="phase1-why2",
+            question="Choose how to resolve the exhausted proportional quality budget.",
+            source_state_revision=12,
+            repair_state=_proportional_repair_state(),
+            recommendation_evidence=_proportional_recommendation_evidence(),
+            option_contract=option_contract(policy.options),
+        )
+
+
+def test_provider_preparation_cannot_supply_quality_options_or_recommendation_evidence(
+) -> None:
+    registry = HumanInputPolicyRegistry(controller_safeguard_policies())
+
+    with pytest.raises(HumanInputPolicyError, match="provider options"):
+        registry.prepare(
+            source_kind="controller_safeguard",
+            producer_id="proportional_quality_budget_exhausted",
+            phase_id="phase1-why2",
+            reason_code="proportional_quality_budget_exhausted",
+            question="Choose how to resolve the exhausted proportional quality budget.",
+            source_state_revision=12,
+            options=[],
+        )
+
+    with pytest.raises(HumanInputPolicyError, match="policy-owned fields"):
+        registry.prepare(
+            source_kind="controller_safeguard",
+            producer_id="proportional_quality_budget_exhausted",
+            phase_id="phase1-why2",
+            reason_code="proportional_quality_budget_exhausted",
+            question="Choose how to resolve the exhausted proportional quality budget.",
+            source_state_revision=12,
+            recommendation_evidence=_proportional_recommendation_evidence(),
+        )
+
+
+@pytest.mark.parametrize(
+    ("autonomy_mode", "expected_status"),
+    (
+        ("guided", "awaiting_human"),
+        ("semi", "awaiting_human"),
+        ("banzai", "pending"),
+    ),
+)
+@pytest.mark.parametrize(
+    "reason_code",
+    (
+        "proportional_quality_budget_exhausted",
+        "proportional_quality_extension_exhausted",
+    ),
+)
+def test_material_proportional_quality_decision_status_is_autonomy_bounded(
+    reason_code: str,
+    autonomy_mode: str,
+    expected_status: str,
+) -> None:
+    registry = HumanInputPolicyRegistry(controller_safeguard_policies())
+    policy = registry.lookup(
+        "controller_safeguard",
+        reason_code,
+        reason_code,
+    )
+    request = registry.prepare(
+        source_kind="controller_safeguard",
+        producer_id=policy.producer_id,
+        phase_id="phase1-why2",
+        reason_code=policy.reason_code,
+        question="Choose how to resolve the exhausted proportional quality budget.",
+        source_state_revision=12,
+    )
+
+    assert select_initial_decision_status(autonomy_mode, policy, request) == (
+        expected_status
+    )

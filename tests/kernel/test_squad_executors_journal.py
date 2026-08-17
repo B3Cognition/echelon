@@ -564,7 +564,7 @@ def test_unknown_entry_type_is_preserved_without_schema_warning(tmp_path):
 
 # ── SquadController._judgment_dispatch journal coverage ──────────────────────
 
-def _squad_controller(tmp_path: Path):
+def _squad_controller(tmp_path: Path, *, spec_authoring_mode: str = "proportional"):
     """Minimal SquadController wired to a mock provider."""
     from harness.phase_graph import PhaseGraph, PhaseNode
     from harness.squad import SquadController
@@ -589,6 +589,7 @@ def _squad_controller(tmp_path: Path):
         user_message="test",
         token_budget=0,
         entry_phase="init",
+        spec_authoring_mode=spec_authoring_mode,
     )
     ctrl = SquadController(
         provider=provider,
@@ -670,7 +671,10 @@ def test_judgment_journal_entries_publish_only_after_committed_route(tmp_path):
 
 def test_judgment_dispatch_replaces_null_journal_metadata(tmp_path):
     """COMMANDER/SAGE placeholders like id: null must not persist to JSONL."""
-    ctrl, provider = _squad_controller(tmp_path)
+    ctrl, provider = _squad_controller(
+        tmp_path,
+        spec_authoring_mode="perfectionist",
+    )
     provider.exec_agent.return_value = SquadAgentResult(
         exit_code=0,
         echelon_result={
@@ -2359,6 +2363,155 @@ def test_conditional_sequential_prompt_includes_allowed_state_updates(tmp_path):
     assert "## Shared Agent Contract" in prompt
     assert "## Allowed state_updates for this dispatch" in prompt
     assert "- `risk_status`" in prompt
+
+
+def test_agent_provider_prompt_preserves_opaque_controller_context_placeholders(
+    tmp_path,
+):
+    """Template substitution must not rewrite verified debt JSON bytes."""
+    squad_dir = tmp_path / "squad" / "run-test"
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("r", "greenfield", "msg", 0, "phase-test")
+    state = state_store.load()
+    state.update(
+        {
+            "spec_dir": "specs/001-demo",
+            "context_dir": "runs/run-test/context",
+            "staging_dir": "runs/run-test/staging",
+        }
+    )
+    state_store.save(state)
+    opaque = (
+        '\n# Verified specification quality debt\n'
+        '{"literal":"{spec_dir}|{squad_dir}|{context_dir}|{staging_dir}"}\n'
+    )
+    provider = MagicMock()
+    provider.exec_agent.return_value = _result(verdict="DONE")
+    graph = MagicMock()
+    graph.agent_file.return_value = None
+    graph.all_phase_ids.return_value = []
+    executor = AgentExecutor(
+        provider,
+        graph,
+        tmp_path / "ext",
+        tmp_path,
+        squad_dir,
+    )
+    node = PhaseNode(
+        id="phase-test",
+        type="agent",
+        controller_context=opaque,
+    )
+
+    executor.execute(node, state_store)
+
+    prompt = provider.exec_agent.call_args.args[1]
+    assert prompt.count(opaque) == 1
+
+
+def test_staged_provider_prompt_preserves_opaque_controller_context_placeholders(
+    tmp_path,
+):
+    """Every staged provider receives the exact verified debt JSON bytes."""
+    squad_dir = tmp_path / "squad" / "run-test"
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("r", "greenfield", "msg", 0, "phase3-consensus")
+    state = state_store.load()
+    state.update(
+        {
+            "spec_dir": "specs/001-demo",
+            "context_dir": "runs/run-test/context",
+            "staging_dir": "runs/run-test/staging",
+        }
+    )
+    state_store.save(state)
+    opaque = (
+        '\n# Verified specification quality debt\n'
+        '{"literal":"{spec_dir}|{squad_dir}|{context_dir}|{staging_dir}"}\n'
+    )
+    provider = MagicMock()
+    provider.exec_agent.return_value = _result(verdict="PASS")
+    graph = MagicMock()
+    graph.agent_file.return_value = None
+    graph.all_phase_ids.return_value = []
+    executor = StagedParallelExecutor(
+        provider,
+        graph,
+        tmp_path / "ext",
+        tmp_path,
+        squad_dir,
+    )
+    node = PhaseNode(
+        id="phase3-consensus",
+        type="staged_parallel",
+        agents=[
+            {
+                "id": "echelon-sage",
+                "mode": "WHY3",
+                "stage": 1,
+                "context_pack": [],
+            }
+        ],
+        controller_context=opaque,
+    )
+
+    executor.execute(node, state_store)
+
+    prompt = provider.exec_agent.call_args.args[1]
+    assert prompt.count(opaque) == 1
+
+
+def test_conditional_provider_prompt_preserves_opaque_controller_context_placeholders(
+    tmp_path,
+):
+    """Conditional specialists append verified debt after template content."""
+    squad_dir = tmp_path / "squad" / "run-test"
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "guardian.md").write_text(
+        "# Guardian\nRead {spec_dir}/spec.md.\n",
+        encoding="utf-8",
+    )
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("r", "greenfield", "msg", 0, "phase-test")
+    state = state_store.load()
+    state.update(
+        {
+            "spec_dir": "specs/001-demo",
+            "context_dir": "runs/run-test/context",
+            "staging_dir": "runs/run-test/staging",
+        }
+    )
+    state_store.save(state)
+    opaque = (
+        '\n# Verified specification quality debt\n'
+        '{"literal":"{spec_dir}|{squad_dir}|{context_dir}|{staging_dir}"}\n'
+    )
+    provider = MagicMock()
+    provider.exec_agent.return_value = _result(verdict="DONE")
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/guardian.md"
+    graph.all_phase_ids.return_value = []
+    executor = ConditionalSequentialExecutor(
+        provider,
+        graph,
+        ext_dir,
+        tmp_path,
+        squad_dir,
+    )
+    node = PhaseNode(
+        id="phase-test",
+        type="conditional_sequential",
+        agents=[{"id": "echelon-guardian", "condition": "always"}],
+        controller_context=opaque,
+    )
+
+    executor.execute(node, state_store)
+
+    prompt = provider.exec_agent.call_args.args[1]
+    assert "Read specs/001-demo/spec.md." in prompt
+    assert prompt.count(opaque) == 1
 
 
 def test_staged_prompt_uses_state_spec_dir_before_other_specs(tmp_path):

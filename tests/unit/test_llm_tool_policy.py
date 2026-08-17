@@ -53,6 +53,10 @@ def test_unapproved_codex_command_uses_default_exec_boundary() -> None:
 
     assert cmd == [
         "codex",
+        "--sandbox",
+        "workspace-write",
+        "--ask-for-approval",
+        "never",
         "exec",
         inject_llm_tool_policy_preamble("Do the work.", LlmToolPolicy()),
     ]
@@ -80,7 +84,7 @@ def test_codex_command_can_request_json_and_output_last_message() -> None:
         output_last_message="/tmp/codex-last.txt",
     )
 
-    assert cmd[:2] == ["codex", "exec"]
+    assert "exec" in cmd
     assert "--json" in cmd
     assert "--output-last-message" in cmd
     assert cmd[cmd.index("--output-last-message") + 1] == "/tmp/codex-last.txt"
@@ -96,7 +100,7 @@ def test_codex_command_can_request_a_specific_model() -> None:
         codex_model="gpt-5.6-terra",
     )
 
-    assert cmd[:4] == ["codex", "exec", "--model", "gpt-5.6-terra"]
+    assert cmd[cmd.index("--model") + 1] == "gpt-5.6-terra"
 
 
 def test_opencode_prompt_command_can_request_json() -> None:

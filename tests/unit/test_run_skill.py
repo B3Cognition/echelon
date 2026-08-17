@@ -7,6 +7,7 @@ when auto_merge is True on the intent.
 from __future__ import annotations
 
 from dataclasses import replace
+import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -182,6 +183,61 @@ class TestRunSkillAutoLand:
     """Test that run() calls land() when auto_merge is True."""
 
     @patch("harness.skills.run_skill.parse_intent")
+    @patch("harness.skills.run_skill.load_config")
+    @patch("harness.skills.run_skill.run_gc")
+    @patch("harness.skills.run_skill.StrategyCoordinator")
+    def test_coordinator_exception_still_emits_one_delivery_summary(
+        self,
+        mock_coordinator_cls: MagicMock,
+        _mock_gc: MagicMock,
+        _mock_config: MagicMock,
+        mock_parse: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from harness.skills.run_skill import run
+
+        spec_dir = tmp_path / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        mock_parse.return_value = RunIntent(
+            spec_id="001-demo",
+            mode="semi",
+            strategies=("default",),
+        )
+        mock_coordinator_cls.return_value.start.side_effect = RuntimeError(
+            "coordinator exploded"
+        )
+        runs = tmp_path / "runs"
+        state_dir = runs / "build-durable" / "state"
+        state_dir.mkdir(parents=True)
+        (runs / ".current-build-001-demo").write_text(
+            "build-durable\n",
+            encoding="utf-8",
+        )
+        (state_dir / "default.json").write_text(
+            '{"status":"blocked","outer_iteration":"unknown"}',
+            encoding="utf-8",
+        )
+
+        with patch(
+            "harness.run_summary.summarize_run_for_cli",
+            return_value="Recorded the failed delivery handoff.",
+        ):
+            with pytest.raises(RuntimeError, match="coordinator exploded"):
+                run(
+                    "spec 001-demo",
+                    MagicMock(),
+                    MagicMock(),
+                    base_dir=tmp_path,
+                    resume_build_id="build-durable",
+                )
+
+        output = capsys.readouterr().err
+        assert output.count("DELIVERY SUMMARY") == 1
+        assert output.count("worked on") == 1
+        assert "Recorded the failed delivery handoff." in output
+
+    @patch("harness.skills.run_skill.parse_intent")
     @patch("harness.skills.run_skill.run_gc")
     @patch("harness.skills.run_skill.StrategyCoordinator")
     @patch("harness.land.land", return_value=False)
@@ -192,6 +248,7 @@ class TestRunSkillAutoLand:
         _mock_gc: MagicMock,
         mock_parse: MagicMock,
         tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         """A failed post-convergence land is reported independently."""
         from harness.skills.run_skill import run
@@ -212,6 +269,10 @@ class TestRunSkillAutoLand:
         assert outcome.results[0].status == "converged"
         assert outcome.landing.status == "blocked"
         mock_land.assert_called_once()
+        output = capsys.readouterr().err
+        assert output.count("DELIVERY SUMMARY") == 1
+        assert output.count("worked on") == 1
+        assert output.count("echelon delivery land 042") == 1
 
     @patch("harness.skills.run_skill.parse_intent")
     @patch("harness.skills.run_skill.load_config")
@@ -641,6 +702,209 @@ class TestRunSkillAutoLand:
         assert "stopped: checkpoint recovery needed" in captured.err
         assert "continue: echelon delivery continue 001-demo" in captured.err
         assert "0 converged, 0 failed, 1 checkpointed" in captured.err
+
+    def test_delivery_summary_includes_human_readable_worked_on_section(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from harness.run_intent import RunIntent
+        from harness.skills.run_skill import _print_delivery_summary
+
+        intent = RunIntent(spec_id="001-demo", mode="semi")
+        result = _make_converged_result()
+        comparison = {
+            "strategies": {
+                "default": {
+                    "status": result.status,
+                    "termination_reason": result.termination_reason,
+                    "converged": True,
+                    "outer_iterations": 1,
+                    "inner_iterations": 0,
+                    "branch": "001-demo",
+                }
+            },
+            "summary": {"converged": 1, "failed": 0, "total_tokens": 10_000},
+        }
+
+        with patch(
+            "harness.run_summary.summarize_run_for_cli",
+            return_value="Implemented the requested delivery.",
+        ) as summarize:
+            _print_delivery_summary(
+                intent,
+                {"default": result},
+                comparison,
+                tmp_path,
+                None,
+                summary_command="echelon delivery continue",
+            )
+
+        assert summarize.call_args.args[0].command == "echelon delivery continue"
+        from harness.run_summary import SummaryFact
+
+        assert all(
+            isinstance(fact, SummaryFact)
+            for fact in summarize.call_args.args[0].facts
+        )
+        assert not hasattr(summarize.call_args.args[0], "inspect_paths")
+
+        output = capsys.readouterr().err
+        assert output.count("DELIVERY SUMMARY") == 1
+        assert "worked on" in output
+        assert "Implemented the requested delivery." in output
+
+    def test_delivery_summary_preserves_late_authority_in_bounded_packet(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from harness.ai_cli_backend import CliRunResult
+        from harness.run_summary import SummaryAgent, summarize_run
+        from harness.skills.run_skill import _print_delivery_summary
+
+        intent = RunIntent(spec_id="001-demo", mode="semi")
+        result_map: dict[str, DeliveryResult] = {}
+        strategies: dict[str, dict[str, object]] = {}
+        for index in range(30):
+            sid = f"strategy-{index:02}"
+            result = _make_converged_result()
+            result_map[sid] = result
+            strategies[sid] = {
+                "status": result.status,
+                "termination_reason": result.termination_reason,
+                "converged": True,
+                "outer_iterations": 1,
+                "inner_iterations": 0,
+                "branch": f"harness/001-demo/{sid}/{'segment-' * 55}",
+            }
+        limited_sid = "strategy-provider-limited"
+        limited = replace(
+            _make_checkpoint_result(),
+            termination_reason="provider_session_limit",
+        )
+        provider_message = "You've hit your session limit · resets 9:10pm"
+        result_map[limited_sid] = limited
+        strategies[limited_sid] = {
+            "status": limited.status,
+            "termination_reason": limited.termination_reason,
+            "converged": False,
+            "outer_iterations": limited.outer_iterations,
+            "inner_iterations": limited.inner_iterations,
+            "branch": f"harness/001-demo/{limited_sid}/{'segment-' * 55}",
+            "build_status": "provider_session_limit",
+            "provider_limit_message": provider_message,
+            "provider_reset_hint": "9:10pm",
+        }
+        comparison = {
+            "strategies": strategies,
+            "summary": {"converged": 30, "failed": 1, "total_tokens": 300_000},
+        }
+        captured: dict[str, object] = {}
+
+        class RecordingProvider:
+            prompt = ""
+
+            def run_agent_result(self, _cwd, prompt, **_kwargs):
+                self.prompt = prompt
+                return CliRunResult(
+                    exit_code=0,
+                    stdout=json.dumps(
+                        {"selected_fact_ids": ["f0001", "f0002"]}
+                    ),
+                    stderr="",
+                )
+
+        provider = RecordingProvider()
+
+        def render(context):
+            captured["context"] = context
+            return summarize_run(
+                context,
+                provider=provider,
+                agent=SummaryAgent(prompt="Summarize.", metadata={}),
+            )
+
+        with patch(
+            "harness.run_summary.summarize_run_for_cli",
+            side_effect=render,
+        ):
+            _print_delivery_summary(
+                intent,
+                result_map,
+                comparison,
+                tmp_path,
+                None,
+            )
+
+        capsys.readouterr()
+        context = captured["context"]
+        from harness.run_summary import SummaryFact
+
+        assert context.facts
+        assert all(isinstance(fact, SummaryFact) for fact in context.facts)
+        packet = provider.prompt.split("<evidence_packet>", 1)[1].split(
+            "</evidence_packet>", 1
+        )[0]
+        assert len(packet.encode("utf-8")) <= 12 * 1024
+        decoded = json.loads(packet)
+        assert decoded["schema_version"] == 2
+        facts = decoded["facts"]
+        assert all(
+            set(fact) == {"id", "category", "importance", "text"}
+            for fact in facts
+        )
+        assert any(fact["category"] == "verification" for fact in facts)
+        assert context.provider_limit_message == provider_message
+        assert all(provider_message not in fact["text"] for fact in facts)
+
+    def test_delivery_summary_marks_mixed_strategy_outcome_blocked(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        from harness.run_intent import RunIntent
+        from harness.skills.run_skill import _print_delivery_summary
+
+        converged = _make_converged_result()
+        checkpointed = _make_checkpoint_result()
+        comparison = {
+            "strategies": {
+                "default": {
+                    "status": converged.status,
+                    "termination_reason": converged.termination_reason,
+                    "converged": True,
+                    "outer_iterations": 1,
+                    "inner_iterations": 0,
+                },
+                "backup": {
+                    "status": checkpointed.status,
+                    "termination_reason": checkpointed.termination_reason,
+                    "converged": False,
+                    "outer_iterations": checkpointed.outer_iterations,
+                    "inner_iterations": checkpointed.inner_iterations,
+                },
+            },
+            "summary": {"converged": 1, "failed": 1, "total_tokens": 10_000},
+        }
+        captured: dict[str, object] = {}
+
+        def summarize(context):
+            captured["context"] = context
+            return "One strategy completed while another needs continuation."
+
+        with patch(
+            "harness.run_summary.summarize_run_for_cli",
+            side_effect=summarize,
+        ):
+            _print_delivery_summary(
+                RunIntent(spec_id="001-demo", mode="semi"),
+                {"default": converged, "backup": checkpointed},
+                comparison,
+                tmp_path,
+                None,
+            )
+
+        assert captured["context"].status == "blocked"
 
     def test_delivery_summary_renders_provider_session_limit_as_block(
         self,

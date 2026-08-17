@@ -6,13 +6,17 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
 import re
 import secrets
 import stat
-from typing import Callable, Iterator, Mapping
+from typing import TYPE_CHECKING, Callable, Iterator, Mapping
+
+if TYPE_CHECKING:
+    from harness.git_first_restore import RestoreCommitEntry
 
 from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_message
 from echelon.git_helpers import GitHelperError, run_git
@@ -37,6 +41,8 @@ _COMPLETION_TRAILER_KEYS = (
     "Echelon-Retarget-Revision",
     "Echelon-Baseline-Run",
     "Echelon-Replacement-Run",
+    "Echelon-Selected-Candidate",
+    "Echelon-Selected-Manifest-SHA256",
 )
 _CHECKPOINT_GIT_EXCLUDES = (
     "**/.echelon/checkpoints.lock",
@@ -620,22 +626,39 @@ def _owned_pathspecs(
                     f"{(relative / CHECKPOINT_LEDGER_REL.parent).as_posix()}"
                     "/.checkpoints.json.*.tmp"
                 ),
+                (
+                    f":(exclude){relative.as_posix()}"
+                    "/.echelon-quality-restore-*.tmp"
+                ),
             ]
         )
     seen_paths: set[Path] = set()
     for owned_path in additional_owned_paths:
-        resolved_path = Path(owned_path).resolve()
-        if resolved_path in seen_paths:
+        lexical_path = Path(os.path.abspath(owned_path))
+        if lexical_path in seen_paths:
             continue
         try:
-            relative = resolved_path.relative_to(root)
+            relative = lexical_path.relative_to(root)
         except ValueError as exc:
             raise PhaseCheckpointError(
                 "additional owned path must be inside the project root"
             ) from exc
-        if relative == Path(".") or not resolved_path.is_file():
-            raise PhaseCheckpointError("additional owned path must be an existing file")
-        seen_paths.add(resolved_path)
+        try:
+            metadata = lexical_path.lstat()
+            canonical_path = lexical_path.resolve(strict=True)
+        except OSError as exc:
+            raise PhaseCheckpointError(
+                "additional owned path must be an existing regular file"
+            ) from exc
+        if (
+            relative == Path(".")
+            or not stat.S_ISREG(metadata.st_mode)
+            or canonical_path != lexical_path
+        ):
+            raise PhaseCheckpointError(
+                "additional owned path must be a regular non-symlink file"
+            )
+        seen_paths.add(lexical_path)
         pathspecs.append(relative.as_posix())
     if not pathspecs:
         raise PhaseCheckpointError("at least one owned path is required")
@@ -1218,6 +1241,153 @@ def _ensure_checkpoint_runtime_ignored(project_root: Path) -> None:
             os.close(descriptor)
 
 
+def _open_checkpoint_exclude_parent(path: Path) -> int:
+    """Pin every directory component without following a symlink."""
+
+    if not path.is_absolute() or not path.name:
+        raise PhaseCheckpointError("checkpoint Git exclude path is invalid")
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+    )
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(path.anchor or os.sep, flags)
+        for component in path.parent.parts[1:]:
+            if component in {"", ".", ".."}:
+                raise OSError("unsafe Git exclude path component")
+            next_descriptor = os.open(component, flags, dir_fd=descriptor)
+            try:
+                if not stat.S_ISDIR(os.fstat(next_descriptor).st_mode):
+                    raise OSError("Git exclude ancestor is not a directory")
+            except Exception:
+                os.close(next_descriptor)
+                raise
+            os.close(descriptor)
+            descriptor = next_descriptor
+        return descriptor
+    except OSError as exc:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        raise PhaseCheckpointError(
+            "checkpoint Git exclude path is unsafe"
+        ) from exc
+
+
+def _preflight_checkpoint_runtime_ignored(project_root: Path) -> None:
+    """Inspect the checkpoint exclude authority without mutating it."""
+
+    try:
+        result = run_git(
+            project_root,
+            "rev-parse",
+            "--git-path",
+            "info/exclude",
+            check=False,
+        )
+    except GitHelperError as exc:
+        raise PhaseCheckpointError(
+            "could not resolve checkpoint Git excludes"
+        ) from exc
+    raw_path = result.stdout.strip()
+    if result.returncode != 0 or not raw_path:
+        raise PhaseCheckpointError(
+            "could not resolve checkpoint Git excludes"
+        )
+    path = Path(raw_path)
+    if not path.is_absolute():
+        path = project_root / path
+    path = Path(os.path.abspath(path))
+    parent_descriptor = _open_checkpoint_exclude_parent(path)
+    descriptor: int | None = None
+    try:
+        try:
+            metadata = os.stat(
+                path.name,
+                dir_fd=parent_descriptor,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            return
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+            raise PhaseCheckpointError(
+                "checkpoint Git excludes must be a regular file"
+            )
+        flags = (
+            os.O_RDONLY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+        )
+        descriptor = os.open(path.name, flags, dir_fd=parent_descriptor)
+        opened = os.fstat(descriptor)
+        token = (
+            opened.st_dev,
+            opened.st_ino,
+            opened.st_mode,
+            opened.st_size,
+            opened.st_mtime_ns,
+            opened.st_ctime_ns,
+        )
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or (opened.st_dev, opened.st_ino)
+            != (metadata.st_dev, metadata.st_ino)
+        ):
+            raise PhaseCheckpointError(
+                "checkpoint Git exclude identity changed"
+            )
+        content = bytearray()
+        while True:
+            chunk = os.read(descriptor, 65_536)
+            if not chunk:
+                break
+            content.extend(chunk)
+        after = os.fstat(descriptor)
+        if (
+            after.st_dev,
+            after.st_ino,
+            after.st_mode,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        ) != token:
+            raise PhaseCheckpointError(
+                "checkpoint Git exclude identity changed"
+            )
+        current = os.stat(
+            path.name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        if (
+            current.st_dev,
+            current.st_ino,
+            current.st_mode,
+            current.st_size,
+            current.st_mtime_ns,
+            current.st_ctime_ns,
+        ) != token:
+            raise PhaseCheckpointError(
+                "checkpoint Git exclude identity changed"
+            )
+        content.decode("utf-8")
+    except PhaseCheckpointError:
+        raise
+    except (OSError, UnicodeDecodeError) as exc:
+        raise PhaseCheckpointError(
+            "could not inspect checkpoint Git excludes"
+        ) from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        os.close(parent_descriptor)
+
+
 def create_or_recover_completion_checkpoint(
     *,
     project_root: Path,
@@ -1230,6 +1400,7 @@ def create_or_recover_completion_checkpoint(
     checkpoint_prestate: Mapping[str, object],
     additional_spec_dirs: tuple[Path, ...] = (),
     additional_owned_paths: tuple[Path, ...] = (),
+    force_commit: bool = False,
     expected_receipt: object | None = None,
     fault_hook: Callable[[str], None] | None = None,
 ) -> dict[str, object]:
@@ -1252,6 +1423,8 @@ def create_or_recover_completion_checkpoint(
         checkpoint_prestate=checkpoint_prestate,
         fault_hook=fault_hook,
     )
+    if type(force_commit) is not bool:
+        raise PhaseCheckpointError("invalid completion checkpoint force flag")
     common = _checkpoint_receipt_common(
         completion_id=completion_value,
         run_id=run_value,
@@ -1265,6 +1438,8 @@ def create_or_recover_completion_checkpoint(
         spec_dir=spec_dir,
         checkpoint_head=checkpoint_head,
     )
+    if force_commit and expected is not None and expected.get("outcome") != "committed":
+        raise PhaseCheckpointError("checkpoint receipt mismatch")
     if spec_dir is None:
         receipt = {**common, "outcome": "not_applicable"}
         if expected is not None and expected != receipt:
@@ -1447,21 +1622,46 @@ def create_or_recover_completion_checkpoint(
             additional_owned_paths,
         )
         if commit is None:
-            try:
-                verified_head = run_git(
-                    root,
-                    "rev-parse",
-                    "HEAD^{commit}",
-                ).stdout.strip()
-            except GitHelperError as exc:
-                raise PhaseCheckpointError(str(exc)) from exc
-            if verified_head != checkpoint_head:
-                raise PhaseCheckpointError("checkpoint prestate mismatch")
-            return {
-                **common,
-                "outcome": "no_change",
-                "head": checkpoint_head,
-            }
+            if force_commit:
+                try:
+                    pathspecs = _owned_pathspecs(
+                        root,
+                        owned_spec_dirs,
+                        additional_owned_paths,
+                    )
+                    run_git(
+                        root,
+                        "commit",
+                        "--allow-empty",
+                        "--only",
+                        "-m",
+                        message,
+                        "--",
+                        *pathspecs,
+                    )
+                    commit = run_git(
+                        root,
+                        "rev-parse",
+                        "HEAD^{commit}",
+                    ).stdout.strip()
+                except GitHelperError as exc:
+                    raise PhaseCheckpointError(str(exc)) from exc
+            else:
+                try:
+                    verified_head = run_git(
+                        root,
+                        "rev-parse",
+                        "HEAD^{commit}",
+                    ).stdout.strip()
+                except GitHelperError as exc:
+                    raise PhaseCheckpointError(str(exc)) from exc
+                if verified_head != checkpoint_head:
+                    raise PhaseCheckpointError("checkpoint prestate mismatch")
+                return {
+                    **common,
+                    "outcome": "no_change",
+                    "head": checkpoint_head,
+                }
         if fault_hook is not None:
             fault_hook("after_commit")
         record = _show_completion_commit(root, commit)
@@ -1489,6 +1689,481 @@ def create_or_recover_completion_checkpoint(
         if fault_hook is not None:
             fault_hook("after_ledger")
         return _committed_checkpoint_receipt(common, commit)
+
+
+def _prebuilt_worktree_entry(
+    directory_fd: int,
+    name: str,
+) -> tuple[str, int]:
+    try:
+        metadata = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+    except OSError as exc:
+        raise PhaseCheckpointError("prebuilt checkpoint worktree entry is missing") from exc
+    if not stat.S_ISREG(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
+        raise PhaseCheckpointError(
+            "prebuilt checkpoint worktree entry is not a regular file"
+        )
+    try:
+        descriptor = os.open(
+            name,
+            os.O_RDONLY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0),
+            dir_fd=directory_fd,
+        )
+    except OSError as exc:
+        raise PhaseCheckpointError(
+            "prebuilt checkpoint worktree entry could not be opened"
+        ) from exc
+    try:
+        opened = os.fstat(descriptor)
+        token = (
+            opened.st_dev,
+            opened.st_ino,
+            opened.st_mode,
+            opened.st_size,
+            opened.st_mtime_ns,
+            opened.st_ctime_ns,
+        )
+        if not stat.S_ISREG(opened.st_mode) or token[:4] != (
+            metadata.st_dev,
+            metadata.st_ino,
+            metadata.st_mode,
+            metadata.st_size,
+        ):
+            raise PhaseCheckpointError(
+                "prebuilt checkpoint worktree entry identity changed"
+            )
+        digest = hashlib.sha256()
+        remaining = opened.st_size
+        while remaining:
+            chunk = os.read(descriptor, min(1_048_576, remaining))
+            if not chunk:
+                raise PhaseCheckpointError(
+                    "prebuilt checkpoint worktree entry changed"
+                )
+            remaining -= len(chunk)
+            digest.update(chunk)
+        after = os.fstat(descriptor)
+        current = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        if (
+            (
+                after.st_dev,
+                after.st_ino,
+                after.st_mode,
+                after.st_size,
+                after.st_mtime_ns,
+                after.st_ctime_ns,
+            )
+            != token
+            or (
+                current.st_dev,
+                current.st_ino,
+                current.st_mode,
+                current.st_size,
+                current.st_mtime_ns,
+                current.st_ctime_ns,
+            )
+            != token
+        ):
+            raise PhaseCheckpointError(
+                "prebuilt checkpoint worktree entry identity changed"
+            )
+        return digest.hexdigest(), stat.S_IMODE(opened.st_mode)
+    except OSError as exc:
+        raise PhaseCheckpointError(
+            "prebuilt checkpoint worktree entry could not be read"
+        ) from exc
+    finally:
+        os.close(descriptor)
+
+
+@dataclass(frozen=True)
+class _PrebuiltCheckpointAuthority:
+    root: Path
+    active_spec: Path
+    phase: str
+    next_phase: str
+    run_id: str
+    spec_id: str
+    completion_id: str
+    parent: str
+    commit: str
+    entries: tuple["RestoreCommitEntry", ...]
+    common: Mapping[str, object]
+    expected: Mapping[str, object] | None
+    record: Mapping[str, str]
+    checkpoint: PhaseCheckpoint
+    receipt: Mapping[str, object]
+
+
+def _preflight_prebuilt_completion_checkpoint(
+    project_root: Path,
+    spec_dir: Path,
+    phase: str,
+    next_phase: str,
+    run_id: str,
+    spec_id: str,
+    completion_id: str,
+    expected_parent: str,
+    commit: str,
+    expected_entries: tuple["RestoreCommitEntry", ...],
+    expected_receipt: object | None = None,
+) -> _PrebuiltCheckpointAuthority:
+    """Validate immutable checkpoint and ledger authority without mutation."""
+
+    (
+        phase_value,
+        next_value,
+        run_value,
+        spec_value,
+        completion_value,
+        parent_value,
+    ) = _validate_completion_checkpoint_inputs(
+        spec_dir=spec_dir,
+        phase=phase,
+        next_phase=next_phase,
+        run_id=run_id,
+        spec_id=spec_id,
+        completion_id=completion_id,
+        checkpoint_prestate={"kind": "git_head", "head": expected_parent},
+        fault_hook=None,
+    )
+    if (
+        type(commit) is not str
+        or _GIT_OBJECT_ID_PATTERN.fullmatch(commit) is None
+        or type(expected_entries) is not tuple
+        or not expected_entries
+    ):
+        raise PhaseCheckpointError("invalid prebuilt checkpoint authority")
+    root = Path(project_root).resolve()
+    active_spec = Path(os.path.abspath(spec_dir))
+    try:
+        spec_relative = active_spec.relative_to(root)
+        if active_spec.resolve(strict=True) != active_spec:
+            raise OSError("spec directory contains a symlink")
+    except (OSError, ValueError) as exc:
+        raise PhaseCheckpointError(
+            "prebuilt checkpoint spec directory is invalid"
+        ) from exc
+    if (
+        _spec_id_from_dir(active_spec) != spec_value
+        and not _spec_dir_allows_external_spec_id(active_spec)
+    ):
+        raise PhaseCheckpointError(
+            "checkpoint spec does not match active spec directory"
+        )
+
+    from harness.git_first_restore import (
+        GitFirstRestoreError,
+        RestoreCommitEntry,
+        _blob_sha256,
+        _tree_entries,
+    )
+
+    if any(not isinstance(entry, RestoreCommitEntry) for entry in expected_entries):
+        raise PhaseCheckpointError("invalid prebuilt checkpoint authority")
+    entries = tuple(expected_entries)
+    expected_paths = tuple(
+        (spec_relative / name).as_posix()
+        for name in sorted(Path(entry.path).name for entry in entries)
+    )
+    if tuple(entry.path for entry in entries) != expected_paths:
+        raise PhaseCheckpointError("prebuilt checkpoint path authority changed")
+    common = _checkpoint_receipt_common(
+        completion_id=completion_value,
+        run_id=run_value,
+        spec_id=spec_value,
+        phase=phase_value,
+        next_phase=next_value,
+    )
+    expected = _validate_expected_checkpoint_receipt(
+        expected_receipt,
+        common=common,
+        spec_dir=active_spec,
+        checkpoint_head=parent_value,
+    )
+    if expected is not None and (
+        expected.get("outcome") != "committed"
+        or expected.get("commit") != commit
+    ):
+        raise PhaseCheckpointError("checkpoint receipt mismatch")
+
+    record = _show_completion_commit(root, commit)
+    identity = _completion_commit_identity(
+        completion_id=completion_value,
+        run_id=run_value,
+        spec_id=spec_value,
+        phase=phase_value,
+        next_phase=next_value,
+    )
+    trailers = _parse_commit_trailers(record["message"])
+    candidate_values = trailers.get("Echelon-Selected-Candidate", ())
+    manifest_values = trailers.get("Echelon-Selected-Manifest-SHA256", ())
+    if (
+        record["parents"] != parent_value
+        or frozenset(trailers)
+        != frozenset(identity)
+        | {
+            "Echelon-Selected-Candidate",
+            "Echelon-Selected-Manifest-SHA256",
+        }
+        or any(trailers.get(key) != [value] for key, value in identity.items())
+        or len(candidate_values) != 1
+        or not candidate_values[0]
+        or len(manifest_values) != 1
+        or re.fullmatch(r"[0-9a-f]{64}", manifest_values[0]) is None
+    ):
+        raise PhaseCheckpointError("prebuilt checkpoint commit identity drift")
+    message = build_echelon_commit_message(
+        f"echelon-checkpoint: {spec_value} {phase_value}",
+        EchelonCommitMetadata(
+            origin="phase-a",
+            action="checkpoint",
+            spec_id=spec_value,
+            run_id=run_value,
+            phase=phase_value,
+            checkpoint_id=phase_value,
+            next_phase=next_value,
+            completion_id=completion_value,
+        ),
+    )
+    expected_message = (
+        message
+        + f"\nEchelon-Selected-Candidate: {candidate_values[0]}"
+        + "\nEchelon-Selected-Manifest-SHA256: "
+        + manifest_values[0]
+    )
+    if record["message"].rstrip("\n") != expected_message:
+        raise PhaseCheckpointError("prebuilt checkpoint message drift")
+
+    try:
+        base_entries = _tree_entries(root, parent_value)
+        target_entries = _tree_entries(root, commit)
+        owned: set[bytes] = set()
+        owned_ancestors: set[bytes] = set()
+        for entry in entries:
+            path = entry.path.encode("utf-8")
+            if path in owned:
+                raise PhaseCheckpointError("duplicate prebuilt checkpoint path")
+            owned.add(path)
+            parts = path.split(b"/")
+            owned_ancestors.update(
+                b"/".join(parts[:offset]) for offset in range(1, len(parts))
+            )
+            if base_entries.get(path) != (
+                entry.base_mode,
+                "blob",
+                entry.base_blob_oid,
+            ) or target_entries.get(path) != (
+                entry.target_mode,
+                "blob",
+                entry.target_blob_oid,
+            ):
+                raise PhaseCheckpointError("prebuilt checkpoint tree entry drift")
+            if (
+                _blob_sha256(root, entry.base_blob_oid) != entry.base_sha256
+                or _blob_sha256(root, entry.target_blob_oid)
+                != entry.target_sha256
+            ):
+                raise PhaseCheckpointError("prebuilt checkpoint blob drift")
+        if {
+            path: value
+            for path, value in base_entries.items()
+            if path not in owned and path not in owned_ancestors
+        } != {
+            path: value
+            for path, value in target_entries.items()
+            if path not in owned and path not in owned_ancestors
+        }:
+            raise PhaseCheckpointError("prebuilt checkpoint unowned tree drift")
+    except GitFirstRestoreError as exc:
+        raise PhaseCheckpointError("prebuilt checkpoint tree could not be read") from exc
+
+    checkpoint = _completion_checkpoint_from_commit(
+        record=record,
+        completion_id=completion_value,
+        run_id=run_value,
+        spec_id=spec_value,
+        phase=phase_value,
+        next_phase=next_value,
+    )
+    receipt = _committed_checkpoint_receipt(common, commit)
+    if expected is not None and expected != receipt:
+        raise PhaseCheckpointError("checkpoint receipt mismatch")
+    _preflight_checkpoint_runtime_ignored(active_spec)
+    metadata_directory = checkpoint_ledger_path(active_spec).parent
+    try:
+        metadata = metadata_directory.lstat()
+    except FileNotFoundError:
+        metadata = None
+    except OSError as exc:
+        raise PhaseCheckpointError(
+            "checkpoint metadata directory could not be inspected"
+        ) from exc
+    if metadata is not None and not stat.S_ISDIR(metadata.st_mode):
+        raise PhaseCheckpointError(
+            "checkpoint metadata directory must be a directory"
+        )
+    _reject_nonregular_file(checkpoint_lock_path(active_spec), missing_ok=True)
+    ledger, ledger_was_present = _load_completion_checkpoint_ledger(active_spec)
+    if ledger_was_present and ledger.spec_id != spec_value:
+        raise PhaseCheckpointError("checkpoint ledger spec mismatch")
+    rows = [
+        item
+        for item in ledger.checkpoints
+        if item.completion_id == completion_value
+    ]
+    if len(rows) > 1:
+        raise PhaseCheckpointError("duplicate checkpoint completion identity")
+    if rows and rows[0] != checkpoint:
+        raise PhaseCheckpointError("checkpoint completion identity drift")
+    return _PrebuiltCheckpointAuthority(
+        root=root,
+        active_spec=active_spec,
+        phase=phase_value,
+        next_phase=next_value,
+        run_id=run_value,
+        spec_id=spec_value,
+        completion_id=completion_value,
+        parent=parent_value,
+        commit=commit,
+        entries=entries,
+        common=common,
+        expected=expected,
+        record=record,
+        checkpoint=checkpoint,
+        receipt=receipt,
+    )
+
+
+def preflight_prebuilt_completion_checkpoint(
+    project_root: Path,
+    spec_dir: Path,
+    phase: str,
+    next_phase: str,
+    run_id: str,
+    spec_id: str,
+    completion_id: str,
+    expected_parent: str,
+    commit: str,
+    expected_entries: tuple["RestoreCommitEntry", ...],
+    expected_receipt: object | None = None,
+) -> None:
+    """Preflight every checkpoint-specific input before restore side effects."""
+
+    _preflight_prebuilt_completion_checkpoint(
+        project_root=project_root,
+        spec_dir=spec_dir,
+        phase=phase,
+        next_phase=next_phase,
+        run_id=run_id,
+        spec_id=spec_id,
+        completion_id=completion_id,
+        expected_parent=expected_parent,
+        commit=commit,
+        expected_entries=expected_entries,
+        expected_receipt=expected_receipt,
+    )
+
+
+def record_prebuilt_completion_checkpoint(
+    project_root: Path,
+    spec_dir: Path,
+    phase: str,
+    next_phase: str,
+    run_id: str,
+    spec_id: str,
+    completion_id: str,
+    expected_parent: str,
+    commit: str,
+    expected_entries: tuple["RestoreCommitEntry", ...],
+    expected_receipt: object | None = None,
+) -> dict[str, object]:
+    """Reverify and record a prebuilt checkpoint without staging."""
+
+    authority = _preflight_prebuilt_completion_checkpoint(
+        project_root=project_root,
+        spec_dir=spec_dir,
+        phase=phase,
+        next_phase=next_phase,
+        run_id=run_id,
+        spec_id=spec_id,
+        completion_id=completion_id,
+        expected_parent=expected_parent,
+        commit=commit,
+        expected_entries=expected_entries,
+        expected_receipt=expected_receipt,
+    )
+
+    try:
+        target_tree = run_git(
+            authority.root,
+            "rev-parse",
+            f"{authority.commit}^{{tree}}",
+        ).stdout.strip()
+        current_head = run_git(
+            authority.root,
+            "rev-parse",
+            "HEAD^{commit}",
+        ).stdout.strip()
+        index_tree = run_git(authority.root, "write-tree").stdout.strip()
+    except GitHelperError as exc:
+        raise PhaseCheckpointError(str(exc)) from exc
+    if current_head != authority.commit:
+        raise PhaseCheckpointError("prebuilt checkpoint ref authority changed")
+    if index_tree != target_tree:
+        raise PhaseCheckpointError("prebuilt checkpoint index authority changed")
+
+    directory_fd = os.open(
+        authority.active_spec,
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+    )
+    try:
+        for entry in authority.entries:
+            digest, mode = _prebuilt_worktree_entry(
+                directory_fd,
+                Path(entry.path).name,
+            )
+            if digest != entry.target_sha256 or mode != int(
+                entry.target_mode[-3:],
+                8,
+            ):
+                raise PhaseCheckpointError(
+                    "prebuilt checkpoint worktree authority changed"
+                )
+    finally:
+        os.close(directory_fd)
+
+    with _checkpoint_ledger_lock(authority.active_spec):
+        ledger, ledger_was_present = _load_completion_checkpoint_ledger(
+            authority.active_spec
+        )
+        if ledger_was_present and ledger.spec_id != authority.spec_id:
+            raise PhaseCheckpointError("checkpoint ledger spec mismatch")
+        rows = [
+            item
+            for item in ledger.checkpoints
+            if item.completion_id == authority.completion_id
+        ]
+        if len(rows) > 1:
+            raise PhaseCheckpointError(
+                "duplicate checkpoint completion identity"
+            )
+        if rows:
+            if rows[0] != authority.checkpoint:
+                raise PhaseCheckpointError(
+                    "checkpoint completion identity drift"
+                )
+        else:
+            _record_completion_checkpoint_unlocked(
+                authority.active_spec,
+                ledger,
+                authority.checkpoint,
+            )
+    return dict(authority.receipt)
 
 
 def _verify_retarget_commit_tree(
@@ -2119,28 +2794,51 @@ def create_phase_checkpoint(
     spec_id: str = "",
     additional_spec_dirs: tuple[Path, ...] = (),
     additional_owned_paths: tuple[Path, ...] = (),
+    checkpoint_owned_paths: tuple[Path, ...] = (),
+    force_commit: bool = False,
 ) -> PhaseCheckpoint:
     spec_id = spec_id or _spec_id_from_dir(spec_dir)
-    subject = f"echelon-checkpoint: {spec_id} {phase}"
-    message = build_echelon_commit_message(
-        subject,
-        EchelonCommitMetadata(
-            origin="phase-a",
-            action="checkpoint",
-            spec_id=spec_id,
-            run_id=run_id,
-            phase=phase,
-            checkpoint_id=phase,
-        ),
+    message = build_phase_checkpoint_message(
+        spec_id=spec_id,
+        phase=phase,
+        run_id=run_id,
     )
-    commit = _commit_spec_changes(
-        project_root,
-        (spec_dir, *additional_spec_dirs),
-        message,
-        additional_owned_paths,
-    )
+    if checkpoint_owned_paths:
+        commit = _commit_spec_changes(
+            project_root,
+            (),
+            message,
+            checkpoint_owned_paths,
+        )
+    else:
+        commit = _commit_spec_changes(
+            project_root,
+            (spec_dir, *additional_spec_dirs),
+            message,
+            additional_owned_paths,
+        )
     if commit is None:
         try:
+            if force_commit:
+                forced_pathspecs = _owned_pathspecs(
+                    project_root,
+                    (
+                        ()
+                        if checkpoint_owned_paths
+                        else (spec_dir, *additional_spec_dirs)
+                    ),
+                    checkpoint_owned_paths or additional_owned_paths,
+                )
+                run_git(
+                    project_root,
+                    "commit",
+                    "--allow-empty",
+                    "--only",
+                    "-m",
+                    message,
+                    "--",
+                    *forced_pathspecs,
+                )
             commit = run_git(project_root, "rev-parse", "HEAD^{commit}").stdout.strip()
         except GitHelperError as exc:
             raise PhaseCheckpointError(str(exc)) from exc
@@ -2157,6 +2855,235 @@ def create_phase_checkpoint(
     )
     record_phase_checkpoint(spec_dir, checkpoint)
     return checkpoint
+
+
+def build_phase_checkpoint_message(*, spec_id: str, phase: str, run_id: str) -> str:
+    return build_echelon_commit_message(
+        f"echelon-checkpoint: {spec_id} {phase}",
+        EchelonCommitMetadata(
+            origin="phase-a",
+            action="checkpoint",
+            spec_id=spec_id,
+            run_id=run_id,
+            phase=phase,
+            checkpoint_id=phase,
+        ),
+    )
+
+
+def restore_checkpoint_artifacts(
+    *,
+    project_root: Path,
+    spec_dir: Path,
+    checkpoint_commit: str,
+    artifact_digests: Mapping[str, str],
+) -> None:
+    """Restore a narrow, digest-bound set of spec files from one commit.
+
+    This intentionally reads individual blobs and never changes Git HEAD,
+    the index, or files outside the explicit candidate artifact allowlist.
+    """
+    allowed = frozenset(
+        {"spec.md", "requirements-overview.md", "quality-gates.md", "issues.md"}
+    )
+    required = frozenset({"spec.md", "quality-gates.md", "issues.md"})
+    if type(artifact_digests) is not dict:
+        raise PhaseCheckpointError("candidate artifact digests are malformed")
+    names = frozenset(artifact_digests)
+    if not required <= names or not names <= allowed:
+        raise PhaseCheckpointError("candidate artifact path is missing or unsafe")
+    if any(
+        type(name) is not str
+        or type(digest) is not str
+        or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+        for name, digest in artifact_digests.items()
+    ):
+        raise PhaseCheckpointError("candidate artifact digests are malformed")
+    if (
+        type(checkpoint_commit) is not str
+        or _GIT_OBJECT_ID_PATTERN.fullmatch(checkpoint_commit) is None
+    ):
+        raise PhaseCheckpointError("candidate checkpoint commit is invalid")
+
+    root = Path(project_root).resolve()
+    resolved_spec = Path(spec_dir).resolve()
+    try:
+        spec_relative = resolved_spec.relative_to(root)
+    except ValueError as exc:
+        raise PhaseCheckpointError("candidate spec directory escapes project root") from exc
+    if not resolved_spec.is_dir():
+        raise PhaseCheckpointError("candidate spec directory is missing")
+    relative_paths = tuple(
+        (spec_relative / name).as_posix() for name in sorted(names)
+    )
+    try:
+        commit_probe = run_git(
+            root, "cat-file", "-e", f"{checkpoint_commit}^{{commit}}", check=False
+        )
+        if commit_probe.returncode != 0:
+            raise PhaseCheckpointError("candidate checkpoint commit is missing")
+        dirty = run_git(
+            root, "status", "--porcelain", "--", *relative_paths, check=False
+        )
+        if dirty.returncode != 0 or dirty.stdout.strip():
+            raise PhaseCheckpointError("candidate artifact path is dirty")
+        restored: dict[str, bytes] = {}
+        for name, relative in zip(sorted(names), relative_paths, strict=True):
+            result = run_git(
+                root, "show", f"{checkpoint_commit}:{relative}", check=False
+            )
+            if result.returncode != 0:
+                raise PhaseCheckpointError(
+                    f"candidate owned artifact is missing: {name}"
+                )
+            content = result.stdout.encode("utf-8")
+            if hashlib.sha256(content).hexdigest() != artifact_digests[name]:
+                raise PhaseCheckpointError(f"candidate artifact digest mismatch: {name}")
+            restored[name] = content
+    except GitHelperError as exc:
+        raise PhaseCheckpointError(str(exc)) from exc
+
+    temporary_paths: list[Path] = []
+    try:
+        for name in sorted(restored):
+            destination = resolved_spec / name
+            temporary = destination.with_name(
+                f".{destination.name}.{os.getpid()}.{secrets.token_hex(8)}.tmp"
+            )
+            temporary_paths.append(temporary)
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            descriptor = os.open(temporary, flags, 0o600)
+            try:
+                offset = 0
+                content = restored[name]
+                while offset < len(content):
+                    written = os.write(descriptor, content[offset:])
+                    if written <= 0:
+                        raise OSError("short candidate artifact write")
+                    offset += written
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+        for name, temporary in zip(sorted(restored), temporary_paths, strict=True):
+            os.replace(temporary, resolved_spec / name)
+        _fsync_directory(resolved_spec)
+        for name, expected in artifact_digests.items():
+            if (
+                hashlib.sha256((resolved_spec / name).read_bytes()).hexdigest()
+                != expected
+            ):
+                raise PhaseCheckpointError(f"restored candidate digest mismatch: {name}")
+    except (OSError, ValueError) as exc:
+        raise PhaseCheckpointError("could not restore candidate artifacts") from exc
+    finally:
+        for temporary in temporary_paths:
+            try:
+                temporary.unlink()
+            except FileNotFoundError:
+                pass
+
+
+def verify_checkpoint_artifact_digests(
+    *,
+    project_root: Path,
+    spec_dir: Path,
+    checkpoint_commit: str,
+    artifact_digests: Mapping[str, str],
+) -> None:
+    """Verify literal candidate-owned blobs in a recorded checkpoint commit."""
+    allowed = frozenset(
+        {"spec.md", "requirements-overview.md", "quality-gates.md", "issues.md"}
+    )
+    required = frozenset({"spec.md", "quality-gates.md", "issues.md"})
+    if type(artifact_digests) is not dict:
+        raise PhaseCheckpointError("candidate artifact digests are malformed")
+    names = frozenset(artifact_digests)
+    if not required <= names or not names <= allowed:
+        raise PhaseCheckpointError("candidate artifact path is missing or unsafe")
+    if any(
+        type(name) is not str
+        or type(digest) is not str
+        or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+        for name, digest in artifact_digests.items()
+    ):
+        raise PhaseCheckpointError("candidate artifact digests are malformed")
+    if (
+        type(checkpoint_commit) is not str
+        or _GIT_OBJECT_ID_PATTERN.fullmatch(checkpoint_commit) is None
+    ):
+        raise PhaseCheckpointError("candidate checkpoint commit is invalid")
+
+    root = Path(project_root).resolve()
+    resolved_spec = Path(spec_dir).resolve()
+    try:
+        spec_relative = resolved_spec.relative_to(root)
+    except ValueError as exc:
+        raise PhaseCheckpointError(
+            "candidate spec directory escapes project root"
+        ) from exc
+    commit_probe = run_git(
+        root,
+        "cat-file",
+        "-e",
+        f"{checkpoint_commit}^{{commit}}",
+        check=False,
+    )
+    if commit_probe.returncode != 0:
+        raise PhaseCheckpointError("candidate checkpoint commit is missing")
+    for name in sorted(names):
+        relative = (spec_relative / name).as_posix()
+        mode_result = run_git(
+            root,
+            "ls-tree",
+            checkpoint_commit,
+            "--",
+            relative,
+            check=False,
+        )
+        mode_fields = mode_result.stdout.split(None, 3)
+        if (
+            mode_result.returncode != 0
+            or len(mode_fields) != 4
+            or mode_fields[0] not in {"100644", "100755"}
+            or mode_fields[1] != "blob"
+        ):
+            raise PhaseCheckpointError(
+                f"candidate owned artifact is not a regular blob: {name}"
+            )
+        result = run_git(
+            root,
+            "show",
+            f"{checkpoint_commit}:{relative}",
+            check=False,
+        )
+        if result.returncode != 0:
+            raise PhaseCheckpointError(
+                f"candidate owned artifact is missing: {name}"
+            )
+        actual = hashlib.sha256(result.stdout.encode("utf-8")).hexdigest()
+        if actual != artifact_digests[name]:
+            raise PhaseCheckpointError(
+                f"candidate checkpoint artifact digest mismatch: {name}"
+            )
+    tree = run_git(
+        root,
+        "ls-tree",
+        "-r",
+        "--name-only",
+        checkpoint_commit,
+        "--",
+        spec_relative.as_posix(),
+        check=False,
+    )
+    if tree.returncode != 0 or any(
+        Path(name).name.startswith(".echelon-quality-restore-")
+        for name in tree.stdout.splitlines()
+    ):
+        raise PhaseCheckpointError(
+            "candidate checkpoint contains restore exchange residue"
+        )
 
 
 def accept_checkpoint_baseline(

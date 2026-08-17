@@ -11,11 +11,13 @@ from harness.phase_checkpoints import (
     CheckpointLedger,
     PhaseCheckpointError,
     PhaseCheckpoint,
+    build_phase_checkpoint_message,
     commit_manual_checkpoint,
     commit_retarget_checkpoint,
     create_phase_checkpoint,
     load_checkpoint_ledger,
     record_phase_checkpoint,
+    restore_checkpoint_artifacts,
     resolve_checkpoint,
 )
 from echelon.spec_retarget_history import (
@@ -28,6 +30,23 @@ from echelon.spec_retarget_history import (
 
 COMPLETION_A = "a" * 32
 COMPLETION_B = "b" * 32
+
+
+def test_phase_checkpoint_message_builder_preserves_ordinary_identity() -> None:
+    assert build_phase_checkpoint_message(
+        spec_id="001-demo",
+        phase="phase1-what",
+        run_id="squad-1",
+    ) == (
+        "echelon-checkpoint: 001-demo phase1-what\n\n"
+        "Co-authored-by: Echelon <echelon@b3cognition.dev>\n"
+        "Echelon-Origin: phase-a\n"
+        "Echelon-Action: checkpoint\n"
+        "Echelon-Spec: 001-demo\n"
+        "Echelon-Run: squad-1\n"
+        "Echelon-Phase: phase1-what\n"
+        "Echelon-Checkpoint: phase1-what"
+    )
 
 
 def test_checkpoint_ledger_round_trips_under_spec_dir(tmp_path: Path) -> None:
@@ -2081,6 +2100,37 @@ def test_create_phase_checkpoint_rejects_spec_dir_outside_project(tmp_path: Path
         _git(repo, "diff", "--cached", "--name-only"),
     ) == position_before
     assert not (outside / ".echelon" / "checkpoints.json").exists()
+
+
+def test_restore_checkpoint_artifacts_rejects_missing_owned_blob(tmp_path: Path) -> None:
+    repo, spec_dir = _checkpoint_repo(tmp_path)
+    commit = _git(repo, "rev-parse", "HEAD")
+
+    with pytest.raises(PhaseCheckpointError, match="missing"):
+        restore_checkpoint_artifacts(
+            project_root=repo,
+            spec_dir=spec_dir,
+            checkpoint_commit=commit,
+            artifact_digests={"quality-gates.md": "a" * 64},
+        )
+
+
+def test_create_phase_checkpoint_rejects_symlink_owned_file(tmp_path: Path) -> None:
+    repo, spec_dir = _checkpoint_repo(tmp_path)
+    target = repo / "target.md"
+    target.write_text("# Target\n", encoding="utf-8")
+    link = repo / "owned-link.md"
+    link.symlink_to(target)
+
+    with pytest.raises(PhaseCheckpointError, match="regular|symlink"):
+        create_phase_checkpoint(
+            project_root=repo,
+            spec_dir=spec_dir,
+            phase="phase1-quality-candidate-0",
+            next_phase="phase1-what",
+            run_id="run-1",
+            checkpoint_owned_paths=(link,),
+        )
 
 
 def test_commit_manual_checkpoint_commits_only_active_spec_path(tmp_path: Path) -> None:

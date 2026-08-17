@@ -79,6 +79,52 @@ VALID_PUBLICATION_MARKER = {
 
 
 @pytest.mark.parametrize(
+    "restore_receipt",
+    (
+        {
+            "schema_version": 1,
+            "candidate_id": "quality-candidate-0",
+            "artifact_preimage_digests": {"spec.md": "a" * 64},
+            "artifact_postimage_digests": {"spec.md": "b" * 64},
+            "checkpoint": {"commit": "c" * 40},
+        },
+        {
+            "schema_version": 1,
+            "candidate_id": "quality-candidate-0",
+            "artifact_preimage_digests": {"spec.md": "a" * 64},
+            "artifact_postimage_digests": {"spec.md": "b" * 64},
+            "restore_protocol": "git_first_v1",
+            "plan_sha256": "d" * 64,
+            "target_commit": "e" * 40,
+            "checkpoint": {"commit": "e" * 40},
+        },
+    ),
+)
+def test_schema_v1_outbox_accepts_legacy_and_git_first_restore_receipts(
+    restore_receipt: dict[str, object],
+) -> None:
+    value = {
+        "schema_version": 1,
+        "completion_id": COMPLETION_ID,
+        "effects": {
+            "quality": {
+                "schema_version": 1,
+                "operation": "restore",
+                "restore": restore_receipt,
+            }
+        },
+    }
+
+    assert completion_module._validate_receipts(
+        value,
+        intent={
+            "completion_id": COMPLETION_ID,
+            "effect_plan": ["quality"],
+        },
+    ) == value
+
+
+@pytest.mark.parametrize(
     "mutation",
     [
         lambda value: {**value, "extra": True},
@@ -265,6 +311,7 @@ def test_prepare_completion_seals_exact_canonical_intent_and_empty_receipts(
         "route": ROUTED_ROUTE,
         "effect_plan": [],
         "checkpoint_prestate": {"kind": "none"},
+        "quality_effect": {"kind": "none"},
         "context_reason": "routed phase completion",
         "mine_phase_a": False,
         "judgment_payload_sha256": [],
@@ -348,12 +395,33 @@ def test_prepare_completion_accepts_sha1_or_sha256_checkpoint_head(
             judgment_payload_sha256=(),
             judgments=(),
         )
-
         assert prepared.intent.checkpoint_prestate == {
             "kind": "git_head",
             "head": head,
         }
 
+
+def test_prepare_completion_binds_quality_effect_to_quality_plan(
+    tmp_path: Path,
+) -> None:
+    quality = {
+        "kind": "proportional_quality",
+        "operation": "debt_remove",
+        "payload": {"operation": "debt_remove", "debt_path": "spec/debt.json"},
+    }
+    _root, _squad, prepared = _prepare_minimal(
+        tmp_path,
+        effect_plan=("quality",),
+        quality_effect=quality,
+    )
+    assert prepared.intent.quality_effect == quality
+    assert prepared.intent.checkpoint_prestate == {"kind": "none"}
+
+    for plan, effect in (((), quality), (("quality",), {"kind": "none"})):
+        other = tmp_path / f"invalid-{len(plan)}-{effect['kind']}"
+        with pytest.raises(CompletionError) as raised:
+            _prepare_minimal(other, effect_plan=plan, quality_effect=effect)
+        assert raised.value.code == "intent_invalid"
 
 def test_prepare_completion_accepts_exact_external_publication_union(
     tmp_path: Path,
@@ -1028,6 +1096,81 @@ def test_load_completion_rejects_missing_intent_or_receipts(
                 prepared.marker,
             ),
         )
+
+
+@pytest.mark.parametrize("origin", ["routed", "terminal"])
+def test_load_previous_release_schema_v1_intent_without_quality_effect(
+    tmp_path: Path,
+    origin: str,
+) -> None:
+    route = (
+        ROUTED_ROUTE
+        if origin == "routed"
+        else {"kind": "terminal", "terminal_phase": "DONE"}
+    )
+    project_root, squad_dir, prepared = _prepare_minimal(
+        tmp_path,
+        origin=origin,
+        route=route,
+    )
+    intent_path = prepared._transaction_root / "intent.json"
+    legacy_intent = json.loads(intent_path.read_bytes())
+    assert legacy_intent.pop("quality_effect") == {"kind": "none"}
+    legacy_bytes = (
+        json.dumps(legacy_intent, sort_keys=True, separators=(",", ":"))
+        + "\n"
+    ).encode("utf-8")
+    intent_path.write_bytes(legacy_bytes)
+    marker = replace(
+        prepared.marker,
+        intent_sha256=hashlib.sha256(legacy_bytes).hexdigest(),
+        origin=origin,
+    )
+
+    loaded = load_prepared_controller_completion(
+        project_root,
+        squad_dir,
+        marker,
+    )
+
+    assert loaded.intent.quality_effect == {"kind": "none"}
+    assert "quality_effect" not in loaded.intent.to_dict()
+    assert loaded.marker.intent_sha256 == hashlib.sha256(legacy_bytes).hexdigest()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda intent: intent.update(effect_plan=["quality"]),
+        lambda intent: intent.update(extra=True),
+    ],
+)
+def test_load_does_not_reinterpret_malformed_schema_v1_without_quality_effect(
+    tmp_path: Path,
+    mutation,
+) -> None:
+    project_root, squad_dir, prepared = _prepare_minimal(tmp_path)
+    intent_path = prepared._transaction_root / "intent.json"
+    intent = json.loads(intent_path.read_bytes())
+    intent.pop("quality_effect")
+    mutation(intent)
+    content = (
+        json.dumps(intent, sort_keys=True, separators=(",", ":")) + "\n"
+    ).encode("utf-8")
+    intent_path.write_bytes(content)
+    marker = replace(
+        prepared.marker,
+        intent_sha256=hashlib.sha256(content).hexdigest(),
+    )
+
+    _assert_completion_error(
+        "intent_invalid",
+        lambda: load_prepared_controller_completion(
+            project_root,
+            squad_dir,
+            marker,
+        ),
+    )
 
 
 @pytest.mark.parametrize(

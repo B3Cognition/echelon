@@ -18,6 +18,23 @@ def _write_workspace_config(project_dir, deploy_block: str) -> None:
     )
 
 
+def _assert_proportional_why2_policy(why2_instructions: str) -> None:
+    normalized = " ".join(why2_instructions.split())
+    required_policy_language = (
+        "Never authorize quality debt",
+        "change or infer controller repair counters",
+        "invent, rename, recommend, or select a sealed decision option",
+        "represent an accepted-with-debt candidate as PASS or certified",
+        "Never waive a CRITICAL issue or contradiction",
+        "unresolved evidence or human-policy request",
+        "invalid product input mapping or traceability contract",
+        "invalid mandatory artifact",
+        "provider, timeout, controller-contract, checkpoint, or state-integrity failure",
+        "other hard structural contract required for safe downstream consumption",
+    )
+    assert [anchor for anchor in required_policy_language if anchor not in normalized] == []
+
+
 def test_http_deploy_preflight_skips_when_docker_missing(capsys) -> None:
     ready = cli._preflight_deploy_runtime(
         {"type": "http"},
@@ -133,6 +150,31 @@ def test_workspace_init_seeds_config_without_spec_kit(
     assert "Project config created" in captured.out
     assert (tmp_path / ".echelon" / "config.yml").exists()
     assert not (tmp_path / ".specify").exists()
+
+
+def test_workspace_init_deploys_proportional_why2_controller_contract(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    _write_workspace_config(
+        tmp_path,
+        "  enabled: false\n  type: cli\n",
+    )
+    monkeypatch.setattr(cli, "_provision_wing", lambda _project_dir, _config: "test-wing")
+
+    cli._cmd_init(tmp_path)
+
+    runtime = tmp_path / ".echelon" / "runtime"
+    why2_instructions = (runtime / "workflow/phases/phase1-why2.md").read_text(
+        encoding="utf-8"
+    )
+    assert "Controller-Owned Proportional Quality Policy" in why2_instructions
+    _assert_proportional_why2_policy(why2_instructions)
+    workflow = yaml.safe_load(
+        (runtime / "workflow/definition.yaml").read_text(encoding="utf-8")
+    )
+    why2 = next(phase for phase in workflow["phases"] if phase["id"] == "phase1-why2")
+    assert why2["controller_policy"]["proportional_quality"]["owner"] == "controller"
 
 
 def test_workspace_init_prefers_echelon_runtime_config_over_reference_template(

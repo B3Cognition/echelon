@@ -60,6 +60,7 @@ from harness.state_transaction_namespace import (
     validate_pending_external_publication,
     validate_product_input_mutation,
 )
+from harness.proportional_quality import initialize_repair_state
 from echelon.spec_authoring import normalize_spec_authoring_mode
 from echelon.strict_json import loads_strict_json
 
@@ -117,6 +118,7 @@ _COMPLETION_EFFECT_ORDER = (
     "journal",
     "timing",
     "checkpoint",
+    "quality",
     "context",
     "mining",
     "retarget",
@@ -155,7 +157,18 @@ _HUMAN_INPUT_PAIR_AUTHORITY_KEYS = frozenset(
     {"blocked_decision", "recovery_instruction"}
 )
 _PROVIDER_ADVANCE_SAFEGUARD_PRODUCERS = frozenset(
-    {"consecutive_why_fails", "why2_metric_stagnation"}
+    {
+        "consecutive_why_fails",
+        "why2_metric_stagnation",
+        "proportional_quality_budget_exhausted",
+        "proportional_quality_extension_exhausted",
+    }
+)
+_SETTER_SAFEGUARD_PRODUCERS = frozenset(
+    {
+        "phase_dispatch_limit",
+        "agent_blocked",
+    }
 )
 _HUMAN_INPUT_STATE_EFFECT_RESERVED_KEYS = frozenset(
     {
@@ -642,24 +655,27 @@ def _validate_prepared_controller_completion(
             json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
             validator="completion_intent",
         ) from exc
+    current_intent_keys = frozenset(
+        {
+            "schema_version",
+            "completion_id",
+            "origin",
+            "publication",
+            "route",
+            "effect_plan",
+            "checkpoint_prestate",
+            "quality_effect",
+            "context_reason",
+            "mine_phase_a",
+            "judgment_payload_sha256",
+            "judgments",
+        }
+    )
+    legacy_intent_keys = current_intent_keys - {"quality_effect"}
+    intent_keys = frozenset(dict.keys(intent)) if type(intent) is dict else frozenset()
     if (
         type(intent) is not dict
-        or frozenset(dict.keys(intent))
-        != frozenset(
-            {
-                "schema_version",
-                "completion_id",
-                "origin",
-                "publication",
-                "route",
-                "effect_plan",
-                "checkpoint_prestate",
-                "context_reason",
-                "mine_phase_a",
-                "judgment_payload_sha256",
-                "judgments",
-            }
-        )
+        or intent_keys not in {current_intent_keys, legacy_intent_keys}
         or type(intent["schema_version"]) is not int
         or intent["schema_version"] != 1
         or intent["completion_id"] != marker["completion_id"]
@@ -732,6 +748,12 @@ def _validate_prepared_controller_completion(
     if indexes != tuple(sorted(set(indexes))):
         raise StateAdvanceError(
             "controller completion effect plan is not monotonic",
+            json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}.step",
+            validator="completion_step",
+        )
+    if intent_keys == legacy_intent_keys and "quality" in plan:
+        raise StateAdvanceError(
+            "legacy controller completion cannot contain a quality effect",
             json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}.step",
             validator="completion_step",
         )
@@ -1020,7 +1042,14 @@ def _validate_human_input_seal_path(
                 in _PROVIDER_ADVANCE_SAFEGUARD_PRODUCERS
             )
         )
-        if request.phase_id != from_phase:
+        source_matches = request.phase_id == from_phase or (
+            request.source_kind == "controller_safeguard"
+            and request.producer_id
+            == "proportional_quality_budget_exhausted"
+            and from_phase == "phase1-what"
+            and request.phase_id == "phase1-why2"
+        )
+        if not source_matches:
             raise StateAdvanceError(
                 "human-input source phase does not match state advance",
                 json_path="$.human_input.phase_id",
@@ -1031,7 +1060,7 @@ def _validate_human_input_seal_path(
             request.source_kind in {"human_gate", "legacy_recovery"}
             or (
                 request.source_kind == "controller_safeguard"
-                and request.producer_id in {"phase_dispatch_limit", "agent_blocked"}
+                and request.producer_id in _SETTER_SAFEGUARD_PRODUCERS
             )
         )
     if not accepted:
@@ -2163,6 +2192,8 @@ class SquadStateStore:
         state_updates: Mapping[str, Any],
         state_removals: Iterable[str],
         token_usage_delta: int = 0,
+        prepared_completion: PreparedControllerCompletion | None = None,
+        resolved_at: str | None = None,
     ) -> dict[str, Any]:
         if type(resolution) is not HumanInputResolution:
             raise StateAdvanceError(
@@ -2174,6 +2205,14 @@ class SquadStateStore:
             raise StateAdvanceError(
                 "human-input token usage delta is invalid",
                 json_path="$.token_usage_delta",
+                validator="type",
+            )
+        if resolved_at is not None and (
+            type(resolved_at) is not str or not resolved_at
+        ):
+            raise StateAdvanceError(
+                "human-input resolution timestamp is invalid",
+                json_path="$.resolved_at",
                 validator="type",
             )
         if not isinstance(state_updates, Mapping):
@@ -2227,6 +2266,31 @@ class SquadStateStore:
                 validator="human_input_authority",
             )
 
+        completion_marker: dict[str, object] | None = None
+        completion_intent: dict[str, object] | None = None
+        if prepared_completion is not None:
+            (
+                completion_marker,
+                completion_intent,
+                _,
+                _,
+                prefix_kind,
+            ) = _validate_prepared_controller_completion(prepared_completion)
+            route = completion_intent["route"]
+            if (
+                completion_marker["origin"] != "resolution"
+                or prefix_kind != "bound"
+                or completion_marker["step"] != "quality"
+                or type(route) is not dict
+                or route.get("kind") != "resolution"
+                or route.get("decision_id") != decision_id
+            ):
+                raise StateAdvanceError(
+                    "human-input completion binding is invalid",
+                    json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
+                    validator="completion_binding",
+                )
+
         with self._lock(exclusive=True):
             before = self._load_unlocked()
             decision = self._human_input_decision_for_cas_unlocked(
@@ -2243,7 +2307,11 @@ class SquadStateStore:
                     "answer_text": resolution.answer_text,
                     "resolved_by": resolution.resolved_by,
                     "failure_code": None,
-                    "resolved_at": datetime.now(timezone.utc).isoformat(),
+                    "resolved_at": (
+                        datetime.now(timezone.utc).isoformat()
+                        if resolved_at is None
+                        else resolved_at
+                    ),
                 }
             )
             desired = deepcopy(before)
@@ -2265,6 +2333,19 @@ class SquadStateStore:
                 int(desired.get("token_usage") or 0) + token_usage_delta
             )
             self._replace_human_input_decision_unlocked(desired, resolved)
+            if completion_marker is not None and completion_intent is not None:
+                route = completion_intent["route"]
+                if (
+                    route["from_phase"] != before.get("phase")
+                    or route["to_phase"] != desired.get("phase")
+                    or PENDING_CONTROLLER_COMPLETION_KEY in before
+                ):
+                    raise StateAdvanceError(
+                        "human-input completion route changed",
+                        json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
+                        validator="completion_binding",
+                    )
+                desired[PENDING_CONTROLLER_COMPLETION_KEY] = completion_marker
             return self._commit_human_input_state_unlocked(before, desired)
 
     def initialize(
@@ -2287,15 +2368,14 @@ class SquadStateStore:
             mode = "greenfield"
         logger.debug("squad init run_id=%s mode=%s entry_phase=%s", run_id, mode, entry_phase)
         ts = datetime.now(timezone.utc).isoformat()
+        authoring_mode = normalize_spec_authoring_mode(spec_authoring_mode)
         initial_state = {
             "run_id": run_id,
             "status": "running",
             "phase": entry_phase,
             "mode": mode,
             "autonomy_mode": autonomy_mode,
-            "spec_authoring_mode": normalize_spec_authoring_mode(
-                spec_authoring_mode
-            ),
+            "spec_authoring_mode": authoring_mode,
             "iteration": 0,
             "max_iterations": max_iterations,
             "token_usage": 0,
@@ -2321,6 +2401,11 @@ class SquadStateStore:
             "staging_dir": str(self._staging_dir),
             "context_dir": str(self._squad_dir / "context"),
         }
+        repair_state = initialize_repair_state(
+            {"spec_authoring_mode": authoring_mode}
+        )
+        if repair_state is not None:
+            initial_state["phase1_quality_repair"] = repair_state
         with self._lock(exclusive=True):
             self._save_unlocked(initial_state)
 
@@ -3634,6 +3719,26 @@ class SquadStateStore:
                     validator="completion_binding",
                 )
             return
+        if marker["origin"] == "resolution":
+            decision = state.get("blocked_decision")
+            if (
+                type(route) is not dict
+                or frozenset(dict.keys(route))
+                != frozenset(
+                    {"kind", "decision_id", "from_phase", "to_phase"}
+                )
+                or route.get("kind") != "resolution"
+                or state.get("phase") != route.get("to_phase")
+                or not isinstance(decision, Mapping)
+                or decision.get("id") != route.get("decision_id")
+                or decision.get("status") != "resolved"
+            ):
+                raise StateAdvanceError(
+                    "human-input completion provenance changed",
+                    json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
+                    validator="completion_binding",
+                )
+            return
         if (
             type(route) is not dict
             or frozenset(dict.keys(route))
@@ -3971,8 +4076,14 @@ class SquadStateStore:
             )
             desired = deepcopy(state)
             desired[_CONTROLLER_COMPLETION_FAILURE_KEY] = diagnostic
-            desired["status"] = "blocked"
-            desired["blocked_reason"] = "controller_completion_pending"
+            active_decision = state.get("blocked_decision")
+            if not (
+                _is_human_input_decision_v2(active_decision)
+                and active_decision.get("status")
+                in _ACTIVE_HUMAN_INPUT_DECISION_STATUSES
+            ):
+                desired["status"] = "blocked"
+                desired["blocked_reason"] = "controller_completion_pending"
             self._save_exact_completion_state_unlocked(
                 state,
                 desired,
@@ -4083,7 +4194,37 @@ class SquadStateStore:
                     desired[
                         "phase_a_published_postimage_sha256"
                     ] = phase_a_published_postimage_sha256
-            else:
+                if "quality" in intent["effect_plan"]:
+                    quality_receipt = prepared.receipts["effects"].get(
+                        "quality"
+                    )
+                    candidate_receipt = (
+                        quality_receipt.get("candidate")
+                        if isinstance(quality_receipt, Mapping)
+                        else None
+                    )
+                    evidence = desired.get(
+                        "proportional_quality_candidate_evidence"
+                    )
+                    if (
+                        isinstance(candidate_receipt, Mapping)
+                        and isinstance(evidence, Mapping)
+                        and candidate_receipt.get("candidate_id")
+                        == evidence.get("current_candidate_id")
+                        and evidence.get("selected_candidate_id")
+                        in {None, evidence.get("current_candidate_id")}
+                        and _valid_completion_sha256(
+                            candidate_receipt.get("manifest_sha256")
+                        )
+                    ):
+                        updated_evidence = deepcopy(dict(evidence))
+                        updated_evidence["candidate_manifest_sha256"] = (
+                            candidate_receipt["manifest_sha256"]
+                        )
+                        desired[
+                            "proportional_quality_candidate_evidence"
+                        ] = updated_evidence
+            elif expected_marker["origin"] == "terminal":
                 desired["status"] = "done"
                 desired.pop("blocked_reason", None)
                 terminal_receipt = {
@@ -4110,6 +4251,18 @@ class SquadStateStore:
                         }
                     )
                 desired["last_terminal_completion"] = terminal_receipt
+            else:
+                self._restore_failure_lifecycle(
+                    desired,
+                    diagnostic_key=_CONTROLLER_COMPLETION_FAILURE_KEY,
+                )
+                desired["last_human_input_completion"] = {
+                    "schema_version": 1,
+                    "completion_id": expected_marker["completion_id"],
+                    "intent_sha256": expected_marker["intent_sha256"],
+                    "receipts_sha256": receipts_sha256,
+                    "decision_id": route["decision_id"],
+                }
             if "retarget" in intent["effect_plan"]:
                 from echelon.spec_retarget_finalization import (
                     verify_retarget_finalization_receipt,

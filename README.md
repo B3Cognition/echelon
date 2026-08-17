@@ -2,7 +2,7 @@
 
 A multi-agent system for AI-assisted software development. Instead of one AI doing everything, specialized agents handle specific cognitive tasks — understanding, critiquing, planning, building, and learning.
 
-**Version 4.0.3** — 56 neutral Prosaic agent roles across the Echelon architecture, with 38 workflow-dispatched roles and 18 direct-use roles, a first-class independently resumable RE lifecycle, immutable published-RE snapshots for spec authoring, MemPalace requirements memory, endocrine context, journal contracts, Understanding quality gates, BUILD/QA workflow, and multi-LLM provider support (Claude, Codex, Copilot, Opencode)
+**Version 4.0.3** — 57 neutral Prosaic agent roles across the Echelon architecture, with 38 workflow-dispatched roles and 19 direct-use roles, a first-class independently resumable RE lifecycle, immutable published-RE snapshots for spec authoring, MemPalace requirements memory, endocrine context, journal contracts, Understanding quality gates, BUILD/QA workflow, and multi-LLM provider support (Claude, Codex, Copilot, Opencode)
 
 For the grounded role inventory, see [Agent Role Catalog](docs/agent-role-catalog.md).
 
@@ -597,6 +597,14 @@ deterministically impacted. In short: full fulfillment evidence is still require
 
 Harness `run` and `resume` also print `HARNESS HISTORY`: tracked runs, checkpoint state, and token/cost totals for the same spec so repeated resumes do not feel like a black box.
 
+When a spec or delivery invocation actually runs Echelon work, its final
+`SQUAD SUMMARY` or `DELIVERY SUMMARY` includes a short `worked on` handoff.
+Echelon builds human-readable facts from authoritative run state; a dedicated
+fast, low-effort SUMMARIZER selects and orders their IDs, and Echelon renders the
+exact controller-authored sentences. Invalid output or provider failure falls
+back silently to deterministic fact selection. The agent runs once at the final
+banner, not at internal phase exits.
+
 ### Explicit scope deferrals
 
 Use `echelon spec defer <id> <T-*|FR-*|NFR-*|AC-*|SC-*> --reason "..."` when an
@@ -675,6 +683,11 @@ configure `harness.llm.cli` to select the concrete adapter:
 | `copilot` | GitHub Copilot CLI |
 | `opencode` | Opencode CLI |
 | `openai-compatible` | Configured OpenAI-compatible HTTP endpoint |
+
+Echelon starts Codex with user configuration ignored by default. Authentication
+and Codex sessions still work, but personal plugins and skills do not leak into
+Echelon agents. To deliberately restore the normal personal Codex environment,
+set `harness.llm.codex_inherit_user_config: true` in `.echelon/config.yml`.
 
 ```bash
 # Use Copilot for all echelon commands
@@ -1143,6 +1156,50 @@ every applicable behavior, boundary, quality dimension, uncertainty, scope,
 and traceability concern. This changes authoring depth only; it does not change
 autonomy, provider, model, effort, templates, validation gates, or downstream
 planning.
+
+### Proportional quality repair and debt decisions
+
+Proportional validation uses an **initial candidate plus three automatic repairs**.
+The initial Understanding/SAGE assessment is not a repair. An automatic repair
+is consumed only by a valid, changed CARTOGRAPHER result. The one authorized
+extension is consumed by any valid WHAT completion, including unchanged output,
+because that authorized attempt has concluded. Provider failures, timeouts,
+invalid results or artifacts, controller/state/checkpoint failures, and evidence
+or human-decision routes keep their existing recovery behavior without consuming
+either kind of attempt.
+
+If quality still fails, Echelon restores the best eligible candidate and stops
+at a sealed decision. Guided and semi runs require an explicit human choice;
+banzai asks COMMANDER to choose from the same bounded evidence and options.
+The choices may include **plus one optional authorized repair**, continuation
+with recorded quality debt, or stopping. The extra repair can be authorized
+only once. Debt is never accepted automatically in any mode.
+
+A passing candidate receives the normal content-bound quality certificate.
+Choosing debt instead records `accepted with quality debt`, creates and
+references `quality-debt.json`, and does not turn the failed assessment into
+PASS or certification. Debt is unavailable for CRITICAL findings or
+contradictions, unresolved evidence or product-policy decisions, unsupported
+product inputs or invalid traceability, missing/invalid mandatory artifacts,
+and provider, timeout, controller-contract, checkpoint, or state-integrity
+failures.
+
+Use `echelon spec status` to inspect repair counts, failed gates, the restored
+candidate, recommendation, decision owner, and debt artifact. In guided or semi
+mode, use the exact choice syntax shown for `echelon spec resume`; ordinary
+`echelon spec continue` may recover operational work but cannot choose a pending
+debt decision or authorize the extension. In banzai mode, `echelon spec continue`
+resumes the persisted sealed decision so COMMANDER may select its declared
+`extend_once` option; the controller validates and applies that selection without
+bypassing policy. No ordinary continuation can reopen a resolved stop or the
+terminal `proportional_quality_debt_declined` state. Continue and resume preserve
+the same run-local counters and evidence.
+
+Each invocation that actually runs work prints one concise `SQUAD SUMMARY` on
+exit. It names accepted quality debt and the most important failed gates while
+leaving full evidence to status and `quality-debt.json`. If a provider limit
+was also hit, the summary shows provider-limit and quality-debt facts
+independently rather than allowing either one to hide the other.
 
 ### delivery — build, verify, PR
 

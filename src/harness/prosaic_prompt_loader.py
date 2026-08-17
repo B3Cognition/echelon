@@ -42,10 +42,22 @@ class ProsaicPromptLoader:
 
     def load_command(self, command_id: str) -> ProsaicCommandArtifact | None:
         """Return a command artifact, or ``None`` when the bundle is not installed."""
-        if not (self._source_dir / "commands").is_dir():
+        return self._load_artifact("commands", command_id, "command")
+
+    def load_subagent(self, agent_id: str) -> ProsaicCommandArtifact | None:
+        """Return a subagent artifact, or ``None`` when the bundle is not installed."""
+        return self._load_artifact("subagents", agent_id, "subagent")
+
+    def _load_artifact(
+        self,
+        directory: str,
+        artifact_name: str,
+        expected_type: str,
+    ) -> ProsaicCommandArtifact | None:
+        if not (self._source_dir / directory).is_dir():
             return None
 
-        artifact_id = f"commands/{command_id}.md"
+        artifact_id = f"{directory}/{artifact_name}.md"
         try:
             result = subprocess.run(
                 [
@@ -71,7 +83,11 @@ class ProsaicPromptLoader:
                 f"Prosaic could not inspect {artifact_id}: {detail}"
             )
 
-        artifact = _parse_command_artifact(artifact_id, result.stdout)
+        artifact = _parse_command_artifact(
+            artifact_id,
+            result.stdout,
+            expected_type=expected_type,
+        )
         return ProsaicCommandArtifact(
             frontmatter=artifact.frontmatter,
             body=append_prompt_companions(
@@ -99,6 +115,8 @@ class ProsaicPromptLoader:
 def _parse_command_artifact(
     artifact_id: str,
     raw: str,
+    *,
+    expected_type: str = "command",
 ) -> ProsaicCommandArtifact:
     try:
         artifact = json.loads(raw)
@@ -111,9 +129,10 @@ def _parse_command_artifact(
         raise ProsaicPromptLoadError(
             f"Prosaic returned an invalid artifact for {artifact_id}: expected object"
         )
-    if artifact.get("type") != "command":
+    if artifact.get("type") != expected_type:
         raise ProsaicPromptLoadError(
-            f"Prosaic returned {artifact.get('type')!r} for {artifact_id}, expected command"
+            f"Prosaic returned {artifact.get('type')!r} for {artifact_id}, "
+            f"expected {expected_type}"
         )
     frontmatter = artifact.get("frontmatter")
     body = artifact.get("body")

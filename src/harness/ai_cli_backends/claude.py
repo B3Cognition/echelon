@@ -149,12 +149,13 @@ class ClaudeCliBackend:
         return self.run_prompt(request)
 
     def _run_stream_json(self, cmd: list[str], request: CliRunRequest) -> CliRunResult:
+        quiet = _prompt_metadata_bool(request, "quiet")
         proc = subprocess.Popen(
             cmd,
             cwd=request.cwd,
             env=dict(request.env),
             stdout=subprocess.PIPE,
-            stderr=None,
+            stderr=subprocess.PIPE if quiet else None,
         )
         captured_lines: list[str] = []
         text_chunks: list[str] = []
@@ -169,6 +170,15 @@ class ClaudeCliBackend:
         cost_usd = 0.0
         response_model = ""
         printer = StreamEventPrinter()
+        native_stderr: list[str] = []
+
+        def drain_stderr() -> None:
+            stream = getattr(proc, "stderr", None)
+            if stream is None:
+                return
+            text = stream.read().decode("utf-8", errors="replace").strip()
+            if text:
+                native_stderr.append(text)
 
         def kill() -> None:
             nonlocal timed_out
@@ -190,8 +200,11 @@ class ClaudeCliBackend:
             captured_lines[:] = list(reversed(bounded))
 
         timer = threading.Timer(request.timeout_s, kill)
+        stderr_thread = threading.Thread(target=drain_stderr, daemon=True)
         try:
             timer.start()
+            if quiet:
+                stderr_thread.start()
             assert proc.stdout is not None
             for raw in proc.stdout:
                 line = raw.decode("utf-8", errors="replace").strip()
@@ -199,7 +212,8 @@ class ClaudeCliBackend:
                     continue
                 try:
                     event = json.loads(line)
-                    printer(event)
+                    if not quiet:
+                        printer(event)
                     etype = event.get("type")
                     if etype == "assistant":
                         raw_message = event.get("message")
@@ -240,18 +254,21 @@ class ClaudeCliBackend:
                 except json.JSONDecodeError:
                     capture(line)
                     text_chunks.append(line)
-                    print(line, flush=True)
+                    if not quiet:
+                        print(line, flush=True)
             proc.stdout.close()
             proc.wait()
         finally:
             timer.cancel()
+            if quiet:
+                stderr_thread.join(timeout=1.0)
 
         stdout = "".join(text_chunks).strip() or "\n".join(captured_lines)
         token_usage = max(token_usage, observed_token_usage)
         metadata: dict[str, object] = {}
         if response_model:
             metadata["response_model"] = response_model
-        stderr = "\n".join(dict.fromkeys(error_chunks))
+        stderr = "\n".join(dict.fromkeys([*error_chunks, *native_stderr]))
         if token_budget_exhausted:
             metadata["token_budget_exhausted"] = True
             budget_message = "RE token budget exhausted during provider invocation"
@@ -317,6 +334,11 @@ def _prompt_metadata_positive_int(
         return None
     parsed = int(value)
     return parsed if parsed > 0 else None
+
+
+def _prompt_metadata_bool(request: CliRunRequest, key: str) -> bool:
+    metadata = request.metadata.get("prompt_metadata")
+    return isinstance(metadata, Mapping) and metadata.get(key) is True
 
 
 def _execution_profile(request: CliRunRequest) -> str:

@@ -72,6 +72,56 @@ def test_load_command_returns_none_for_an_agent_only_prosaic_bundle(tmp_path: Pa
 
 
 @pytest.mark.unit
+def test_load_subagent_inspects_the_project_prosaic_bundle(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / ".echelon" / "prosaic"
+    (source / "subagents").mkdir(parents=True)
+
+    def fake_run(command, **_kwargs):
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps(
+                {
+                    "id": "subagents/echelon.summarizer.md",
+                    "type": "subagent",
+                    "frontmatter": {
+                        "name": "echelon.summarizer",
+                        "model_tier": "fast",
+                        "effort": "low",
+                        "tools": "write",
+                    },
+                    "body": "Summarize the run for a human.",
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr("harness.prosaic_prompt_loader.subprocess.run", fake_run)
+
+    artifact = ProsaicPromptLoader(tmp_path).load_subagent("echelon.summarizer")
+
+    assert artifact is not None
+    assert artifact.body == "Summarize the run for a human."
+    assert artifact.frontmatter["model_tier"] == "fast"
+
+
+@pytest.mark.unit
+def test_deployed_summarizer_uses_the_id_only_selection_contract() -> None:
+    root = Path(__file__).resolve().parents[2]
+    text = (root / "prosaic/subagents/echelon.summarizer.md").read_text(
+        encoding="utf-8"
+    )
+    assert "selected_fact_ids" in text
+    assert '"bullets"' not in text
+    assert "model_tier: fast" in text
+    assert "effort: low" in text
+    assert "tools: write" in text
+
+
+@pytest.mark.unit
 def test_load_command_inlines_referenced_companion_markdown(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

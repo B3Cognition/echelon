@@ -1488,6 +1488,7 @@ def _prepare_state_effects(
         "status",
         "blocked_reason",
         "lexicon_gate_exhausted",
+        "tasks_lexicon_gate_exhausted",
         "lexicon_repair_no_artifact_progress",
         "quality_gate_remediation_no_artifact_progress",
     }
@@ -1528,6 +1529,15 @@ def _prepare_state_effects(
             "lexicon exhaustion metadata must be true",
             contract="preparation",
             json_path="$.control_updates.lexicon_gate_exhausted",
+            validator="state_effects",
+        )
+    if "tasks_lexicon_gate_exhausted" in normalized and (
+        normalized["tasks_lexicon_gate_exhausted"] is not True
+    ):
+        raise ControllerStateContractViolation(
+            "tasks Lexicon exhaustion metadata must be true",
+            contract="preparation",
+            json_path="$.control_updates.tasks_lexicon_gate_exhausted",
             validator="state_effects",
         )
     if "lexicon_repair_no_artifact_progress" in normalized and (

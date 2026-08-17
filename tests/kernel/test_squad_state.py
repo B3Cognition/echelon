@@ -490,7 +490,20 @@ class TestSquadStateStore:
             spec_authoring_mode="perfectionist",
         )
 
-        assert store.load()["spec_authoring_mode"] == "perfectionist"
+        state = store.load()
+        assert state["spec_authoring_mode"] == "perfectionist"
+        assert "phase1_quality_repair" not in state
+
+    def test_initialize_adds_proportional_quality_repair_state(self, tmp_path):
+        store = _store(tmp_path)
+
+        store.initialize("run-001", "greenfield", "do stuff", 500_000, "init")
+
+        repair = store.load()["phase1_quality_repair"]
+        assert repair["automatic_limit"] == 3
+        assert repair["automatic_consumed"] == 0
+        assert repair["extension_limit"] == 1
+        assert repair["extension_consumed"] == 0
 
     def test_initialize_can_store_project_and_autonomy_modes_separately(self, tmp_path):
         store = _store(tmp_path)

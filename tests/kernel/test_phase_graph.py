@@ -366,6 +366,76 @@ class TestPhaseGraph:
                 frozenset({"phase1-why2"}), frozenset({"phase1-why2"}),
                 ("phase", "why_fail_count", "why2_metric_stagnation_count"), (), (),
             ),
+            (
+                "controller_safeguard",
+                "proportional_quality_budget_exhausted",
+                "proportional_quality_budget_exhausted",
+            ): (
+                "material", "require_human", "proportional_quality_debt", False,
+                frozenset({"phase1-why2"}),
+                frozenset({
+                    "phase1-what",
+                    "phase1-lexicon-derive",
+                    "checkpoint-assess",
+                    "terminal-blocked",
+                }),
+                (
+                    "phase",
+                    "phase1_quality_repair",
+                    "understanding_evidence",
+                    "proportional_quality_candidate_evidence",
+                ),
+                (),
+                (
+                    (
+                        "extend_once", "Extend once",
+                        "Authorize one final specification quality repair.",
+                        False, "medium", "phase1-what", None,
+                    ),
+                    (
+                        "continue_with_debt", "Continue with debt",
+                        "Accept the restored candidate with explicit quality debt.",
+                        False, "high", None, None,
+                    ),
+                    (
+                        "stop", "Stop",
+                        "Preserve the blocked run without accepting quality debt.",
+                        False, "low", "terminal-blocked", None,
+                    ),
+                ),
+            ),
+            (
+                "controller_safeguard",
+                "proportional_quality_extension_exhausted",
+                "proportional_quality_extension_exhausted",
+            ): (
+                "material", "require_human", "proportional_quality_debt", False,
+                frozenset({"phase1-why2"}),
+                frozenset({
+                    "phase1-lexicon-derive",
+                    "checkpoint-assess",
+                    "terminal-blocked",
+                }),
+                (
+                    "phase",
+                    "phase1_quality_repair",
+                    "understanding_evidence",
+                    "proportional_quality_candidate_evidence",
+                ),
+                (),
+                (
+                    (
+                        "continue_with_debt", "Continue with debt",
+                        "Accept the restored candidate with explicit quality debt.",
+                        False, "high", None, None,
+                    ),
+                    (
+                        "stop", "Stop",
+                        "Preserve the blocked run without accepting quality debt.",
+                        False, "low", "terminal-blocked", None,
+                    ),
+                ),
+            ),
             ("controller_safeguard", "agent_blocked", "agent_blocked"): (
                 "material", "require_human", "clarification_resume", True,
                 dispatch_phases, frozenset(),
@@ -526,6 +596,48 @@ class TestPhaseGraph:
         ]
         assert set(why2.allowed_verdicts) == {"PASS", "FAIL", "STOP_AND_ASK"}
         assert why2.evidence_routing == "finding_routes"
+
+    def test_why2_declares_proportional_quality_policy_as_controller_owned(self):
+        workflow = yaml.safe_load(PROSAIC_RUNTIME_DEFINITION.read_text(encoding="utf-8"))
+        why2_definition = next(
+            phase for phase in workflow["phases"] if phase["id"] == "phase1-why2"
+        )
+        why2 = self.graph.get("phase1-why2")
+
+        assert why2_definition["controller_policy"]["proportional_quality"] == {
+            "owner": "controller",
+            "responsibilities": [
+                "repair_accounting",
+                "exhaustion_routing",
+                "decision_options",
+                "debt_authorization",
+            ],
+        }
+        assert {
+            "phase1_quality_repair",
+            "proportional_quality_candidate_evidence",
+            "spec_quality_debt_authorization",
+        }.isdisjoint(why2.allowed_state_updates or [])
+
+    def test_why2_keeps_global_iteration_routes_for_perfectionist_mode(self):
+        why2 = self.graph.get("phase1-why2")
+
+        assert why2.transitions[1:3] == [
+            {
+                "to": "phase1-what",
+                "condition": "verdict = FAIL AND iteration < max_iterations",
+                "action": "increment_iteration",
+            },
+            {
+                "to": "phase1-what",
+                "condition": "quality_gates.fail AND iteration < max_iterations",
+                "action": "increment_iteration",
+            },
+        ]
+        assert why2.transitions[-1] == {
+            "to": "terminal-blocked",
+            "condition": "iteration >= max_iterations",
+        }
 
     def test_phase_timing_windows_are_controller_metadata(self):
         decide = self.graph.get("phase2-decide")

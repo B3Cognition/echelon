@@ -1245,6 +1245,7 @@ harness:
   # llm:
   #   cli: claude
   #   config_dir: ~/.claude-personal   # sets CLAUDE_CONFIG_DIR (claude only)
+  #   codex_inherit_user_config: false # Codex only; false excludes personal plugins/skills
   #   timeout_ms: 1200000              # 20 minutes
   #
   #   # OpenAI-compatible artifact-only provider example:

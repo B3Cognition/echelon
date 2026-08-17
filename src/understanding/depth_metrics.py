@@ -39,8 +39,11 @@ class DepthAnalyzer:
 
     # Requirement ID pattern for cross-reference detection
     REQ_ID_PATTERN = re.compile(r'(?:[A-Z]+-)?(?:FR|REQ|NFR|AC|SC)-\d+')
+    EXPLICIT_ID_PATTERN = re.compile(r'(?:[A-Z][A-Z0-9]*(?:-\d+)+|[A-Z]+\d+)')
 
-    def extract_dependency_graph(self, requirements: List[str]) -> Dict[str, List[str]]:
+    def extract_dependency_graph(
+        self, requirements: List[str], explicit_ids: set[str] | None = None
+    ) -> Dict[str, List[str]]:
         """
         Build an adjacency dict of cross-references between requirements.
 
@@ -54,13 +57,21 @@ class DepthAnalyzer:
         Returns:
             Dict mapping requirement ID -> list of referenced IDs
         """
+        pattern = self.EXPLICIT_ID_PATTERN if explicit_ids is not None else self.REQ_ID_PATTERN
+
+        def identifiers(text: str) -> list[str]:
+            ids = [identifier.upper() for identifier in pattern.findall(text)]
+            if explicit_ids is None:
+                return ids
+            return [identifier for identifier in ids if identifier in explicit_ids]
+
         # First pass: discover the "owning" ID for each requirement.
         # Heuristic: the first ID token in the string is the requirement's own ID.
         req_own_ids: List[str | None] = []
         all_known_ids: set = set()
 
         for req in requirements:
-            ids_in_req = self.REQ_ID_PATTERN.findall(req)
+            ids_in_req = identifiers(req)
             own_id = ids_in_req[0] if ids_in_req else None
             req_own_ids.append(own_id)
             all_known_ids.update(ids_in_req)
@@ -72,13 +83,19 @@ class DepthAnalyzer:
             own_id = req_own_ids[idx]
             if own_id is None:
                 continue
-            ids_in_req = self.REQ_ID_PATTERN.findall(req)
+            ids_in_req = identifiers(req)
             refs = [rid for rid in ids_in_req if rid != own_id and rid in all_known_ids]
             graph[own_id] = refs
 
         return graph
 
-    def analyze(self, requirements: List[str], full_text: str, unique_concepts: int = 0) -> DepthMetrics:
+    def analyze(
+        self,
+        requirements: List[str],
+        full_text: str,
+        unique_concepts: int = 0,
+        explicit_ids: set[str] | None = None,
+    ) -> DepthMetrics:
         """Analyze specification depth.
 
         Args:
@@ -102,6 +119,13 @@ class DepthAnalyzer:
         concepts = max(unique_concepts, 1)
         reqs_per_concept = n / concepts
         cd = 1.0 - math.exp(-reqs_per_concept / 3.0)
+
+        if explicit_ids is not None:
+            graph = self.extract_dependency_graph(requirements, explicit_ids)
+            cross_refs = sum(len(references) for references in graph.values())
+            cri = 1.0 - math.exp(-cross_refs / max(n, 1))
+            depth_score = 0.40 * rvs + 0.35 * cd + 0.25 * cri
+            return DepthMetrics(rvs, cd, cri, depth_score)
 
         # CRI: count cross-references between requirements
         # Extract all req IDs from full text

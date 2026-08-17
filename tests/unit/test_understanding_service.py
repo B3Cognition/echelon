@@ -180,6 +180,119 @@ def test_parse_requirements_accepts_conventional_heading_statement_format() -> N
 
 
 @pytest.mark.unit
+def test_parse_requirements_is_compatibility_view_of_canonical_projection() -> None:
+    parsed = parse_requirements(
+        "- **FR-001**: The command SHALL emit the result. "
+        "Constraint: Exit status is zero. Verified by: AC-001.\n"
+    )
+
+    assert parsed["requirements"] == [
+        {"id": "FR-001", "text": "The command SHALL emit the result."}
+    ]
+
+
+@pytest.mark.unit
+def test_bundle_uses_shared_roles_for_semantic_gate_and_every_identifier_family(
+    tmp_path: Path,
+) -> None:
+    spec = tmp_path / "spec.md"
+    spec.write_text(
+        "- **FR-001**: The greeting command must write the configured message.\n"
+        "- **AC-001**: No action is specified.\n",
+        encoding="utf-8",
+    )
+
+    bundle = analyze_spec_bundle(
+        spec,
+        thresholds=DEFAULT_QUALITY_GATES,
+        enhanced=True,
+        use_nlp=False,
+    ).to_dict()
+
+    semantic_scores = {
+        score["name"]: score["score"]
+        for score in bundle["analysis"]["metrics"]["scores"]
+        if score["category"] == "semantic"
+    }
+    assert bundle["requirement_count"] == 2
+    assert semantic_scores["actor_presence"] == 0.5
+    assert semantic_scores["action_presence"] == 0.5
+    assert semantic_scores["object_presence"] == 0.5
+
+
+@pytest.mark.unit
+def test_bundle_keeps_constraints_in_one_testability_requirement_unit(
+    tmp_path: Path,
+) -> None:
+    spec = tmp_path / "spec.md"
+    spec.write_text(
+        "- **FR-001**: The greeting command must write the configured message. "
+        "Constraint: output_length <= 128 bytes.\n",
+        encoding="utf-8",
+    )
+
+    bundle = analyze_spec_bundle(
+        spec,
+        thresholds=DEFAULT_QUALITY_GATES,
+        enhanced=True,
+        use_nlp=False,
+    ).to_dict()
+
+    testability_scores = {
+        score["name"]: score["raw_value"]
+        for score in bundle["analysis"]["metrics"]["scores"]
+        if score["category"] == "testability"
+    }
+    item_scores = {
+        score["name"]: score["raw_value"]
+        for score in bundle["per_requirement"][0]["metrics"]["scores"]
+        if score["category"] == "testability"
+    }
+    assert testability_scores["constraint_density"] == pytest.approx(0.9975212478)
+    assert item_scores["constraint_density"] == pytest.approx(0.9975212478)
+
+
+@pytest.mark.unit
+def test_bundle_depth_uses_generic_lexicon_ids_from_explicit_projection(
+    tmp_path: Path,
+) -> None:
+    spec = tmp_path / "spec.md"
+    spec.write_text(
+        "ARTIFACT: SPEC\n\n"
+        "REQ: R1\n"
+        "THEN: the greeting command MUST write a message\n"
+        "DEPENDS: TASK-07\n\n"
+        "REQ: TASK-07\n"
+        "THEN: the greeting command MUST write an audit record\n",
+        encoding="utf-8",
+    )
+
+    bundle = analyze_spec_bundle(
+        spec,
+        thresholds=DEFAULT_QUALITY_GATES,
+        enhanced=True,
+        use_nlp=False,
+    ).to_dict()
+
+    assert bundle["analysis"]["depth_analysis"]["dependency_graph"] == {
+        "R1": ["TASK-07"],
+        "TASK-07": [],
+    }
+
+
+@pytest.mark.unit
+def test_direct_enhanced_depth_does_not_treat_technical_tokens_as_ids() -> None:
+    from understanding.enhanced_metrics import analyze_with_enhanced_metrics
+
+    result = analyze_with_enhanced_metrics(
+        "FR-001: The command MUST store SHA256 and TLS1 values.",
+        use_spacy=False,
+    )
+
+    assert result["dependency_graph"] == {"FR-001": []}
+
+
+@pytest.mark.unit
 def test_zero_requirements_is_a_completed_deterministic_failure(
     tmp_path: Path,
 ) -> None:

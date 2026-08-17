@@ -101,6 +101,254 @@ def _v2_decision(
     )
 
 
+def _proportional_quality_decision() -> dict[str, object]:
+    return build_blocked_decision_v2(
+        decision_id="dec-quality-status",
+        status="awaiting_human",
+        source_kind="controller_safeguard",
+        producer_id="proportional_quality_budget_exhausted",
+        source_phase="phase1-why2",
+        reason_code="proportional_quality_budget_exhausted",
+        classification="material",
+        question="Choose how to resolve the exhausted quality budget.",
+        options=[
+            {
+                "id": "extend_once",
+                "label": "Extend once",
+                "description": "Authorize one final specification quality repair.",
+                "recommended": True,
+                "risk_level": "medium",
+                "next_phase": "phase1-what",
+                "outcome": None,
+            },
+            {
+                "id": "continue_with_debt",
+                "label": "Continue with debt",
+                "description": "Accept the restored candidate with explicit quality debt.",
+                "recommended": False,
+                "risk_level": "high",
+                "next_phase": None,
+                "outcome": None,
+            },
+            {
+                "id": "stop",
+                "label": "Stop",
+                "description": "Preserve the blocked run without accepting quality debt.",
+                "recommended": False,
+                "risk_level": "low",
+                "next_phase": "terminal-blocked",
+                "outcome": None,
+            },
+        ],
+        recommended_answer=None,
+        risk_level="medium",
+        resolution_handler="proportional_quality_debt",
+        autonomy_mode="guided",
+        source_state_revision=0,
+        now="2026-08-14T10:00:00+00:00",
+    )
+
+
+def test_status_shows_current_authorized_quality_debt_without_calling_it_passed(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_dir = tmp_path / "runs/spec-debt"
+    spec_dir = tmp_path / "specs/001-demo"
+    run_dir.mkdir(parents=True)
+    spec_dir.mkdir(parents=True)
+    (tmp_path / "runs/.current").write_text(run_dir.name, encoding="utf-8")
+    debt = {
+        "status": "accepted_with_debt",
+        "resolved_by": "COMMANDER",
+        "failed_gates": [
+            {"name": "overall", "score": 0.70, "threshold": 0.80, "margin": -0.10},
+            {"name": "atomicity", "score": 0.72, "threshold": 0.85, "margin": -0.13},
+        ],
+    }
+    (spec_dir / "quality-debt.json").write_text(json.dumps(debt), encoding="utf-8")
+    state = {
+        "run_id": run_dir.name,
+        "status": "done",
+        "phase": "DONE",
+        "spec_dir": "specs/001-demo",
+        "published_spec_dir": "specs/001-demo",
+        "provider_limit_message": "Provider limit reached; resets at 21:10.",
+        "spec_quality_debt_authorization": {
+            "status": "accepted_with_debt",
+            "debt_artifact": "specs/001-demo/quality-debt.json",
+            "debt_artifact_sha256": "a" * 64,
+            "resolved_by": "COMMANDER",
+            "failed_gates": debt["failed_gates"],
+        },
+    }
+    (run_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    monkeypatch.setattr(
+        "harness.phase1_quality_debt.has_current_quality_debt_authorization",
+        lambda *_args, **_kwargs: True,
+    )
+
+    _cmd_status(tmp_path)
+
+    output = capsys.readouterr().out
+    assert "accepted with quality debt" in output.lower()
+    assert "overall 0.70 < 0.80" in output
+    assert "atomicity 0.72 < 0.85" in output
+    assert "COMMANDER" in output
+    assert "quality-debt.json" in output
+    assert "Provider limit reached" in output
+    assert "quality passed" not in output.lower()
+
+
+def test_status_shows_sealed_proportional_choice_evidence_and_exact_resume_syntax(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir = tmp_path / "runs/spec-quality-choice"
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs/.current").write_text(run_dir.name, encoding="utf-8")
+    decision = _proportional_quality_decision()
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_dir.name,
+                "status": "blocked",
+                "phase": "terminal-blocked",
+                "blocked_reason": "proportional_quality_budget_exhausted",
+                "blocked_decision": decision,
+                "recovery_instruction": RecoveryInstruction(
+                    kind=RecoveryKind.AWAIT_HUMAN_ANSWER,
+                    reason_code="proportional_quality_budget_exhausted",
+                    phase="phase1-why2",
+                    requires_human_input=True,
+                    schema_version=2,
+                    decision_id="dec-quality-status",
+                ).to_dict(),
+                "phase1_quality_repair": {
+                    "schema_version": 1,
+                    "automatic_limit": 3,
+                    "automatic_consumed": 3,
+                    "extension_limit": 1,
+                    "extension_authorized": 0,
+                    "extension_consumed": 0,
+                },
+                "proportional_quality_candidate_evidence": {
+                    "selected_candidate_id": "quality-candidate-2",
+                    "failed_gates": [
+                        {"name": "overall", "score": 0.70, "threshold": 0.80},
+                        {"name": "atomicity", "score": 0.72, "threshold": 0.85},
+                    ],
+                    "sage_finding_routes": [
+                        {
+                            "issue_id": "ISS-QUALITY-7",
+                            "severity": "MEDIUM",
+                            "type": "incompleteness",
+                            "rationale": "The failure path is not observable.",
+                        }
+                    ],
+                    "recommendation_evidence": {
+                        "baseline_candidate_id": "quality-candidate-0",
+                        "current_candidate_id": "quality-candidate-2",
+                        "comparison_previous_candidate_id": (
+                            "quality-candidate-1"
+                        ),
+                        "comparison_current_candidate_id": (
+                            "quality-candidate-2"
+                        ),
+                        "baseline_formal_statement_count": 8,
+                        "formal_statement_count": 14,
+                        "formal_statement_growth": 6,
+                        "baseline_byte_count": 700,
+                        "byte_count": 1320,
+                        "byte_growth": 620,
+                        "score_history": [
+                            {
+                                "repair_number": 0,
+                                "candidate_id": "quality-candidate-0",
+                                "scores": [
+                                    {
+                                        "name": "overall",
+                                        "score": 0.68,
+                                        "threshold": 0.80,
+                                        "pass": False,
+                                    }
+                                ],
+                                "formal_statement_count": 8,
+                                "byte_count": 700,
+                            },
+                            {
+                                "repair_number": 1,
+                                "candidate_id": "quality-candidate-2",
+                                "scores": [
+                                    {
+                                        "name": "overall",
+                                        "score": 0.70,
+                                        "threshold": 0.80,
+                                        "pass": False,
+                                    }
+                                ],
+                                "formal_statement_count": 14,
+                                "byte_count": 1320,
+                            },
+                        ],
+                        "per_repair_deltas": [
+                            {
+                                "repair_number": 1,
+                                "previous_repair_number": 0,
+                                "previous_candidate_id": "quality-candidate-0",
+                                "current_candidate_id": "quality-candidate-2",
+                                "score_deltas": [
+                                    {"name": "overall", "delta": 0.02}
+                                ],
+                                "formal_statement_delta": 6,
+                                "byte_delta": 620,
+                            }
+                        ],
+                        "recommended_option_id": "extend_once",
+                        "rationale": (
+                            "Residual gates improved within the borderline margin."
+                        ),
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _cmd_status(tmp_path)
+
+    output = capsys.readouterr().out
+    assert "Automatic repairs" in output and "3 of 3" in output
+    assert "0 remaining" in output
+    assert "Extension repairs" in output and "0 of 1" in output
+    assert "1 remaining; 0 authorized" in output
+    assert "quality-candidate-2" in output
+    assert "overall 0.70 < 0.80" in output
+    assert "atomicity 0.72 < 0.85" in output
+    assert "ISS-QUALITY-7" in output
+    assert "MEDIUM/incompleteness" in output
+    assert "The failure path is not observable." in output
+    assert "quality-candidate-0 → quality-candidate-2" in output
+    assert "Repair comparison" in output
+    assert "quality-candidate-1 → quality-candidate-2" in output
+    assert "Score history" in output
+    assert "repair 0 quality-candidate-0: overall 0.68/0.80" in output
+    assert "repair 1 quality-candidate-2: overall 0.70/0.80" in output
+    assert "Per-repair deltas" in output
+    assert "repair 1: overall +0.02; statements +6; bytes +620" in output
+    assert "8 → 14 (+6)" in output
+    assert "700 → 1,320 (+620 bytes)" in output
+    assert "Residual gates improved within the borderline margin." in output
+    assert "extend_once: Extend once" in output
+    assert "continue_with_debt: Continue with debt" in output
+    assert "stop: Stop" in output
+    assert "extend_once (Extend once)" in output
+    assert 'echelon spec resume "extend_once"' in output
+    assert 'echelon spec resume "continue_with_debt"' in output
+    assert 'echelon spec resume "stop"' in output
+
+
 def test_status_roadmap_reads_the_deployed_runtime_workflow(tmp_path: Path) -> None:
     run_dir = tmp_path / "runs" / "run-status"
     run_dir.mkdir(parents=True)

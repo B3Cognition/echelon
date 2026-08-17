@@ -68,6 +68,7 @@ class PhaseNode:
     timing_window_transition: dict = field(default_factory=dict)
     agents: list = field(default_factory=list)
     context_pack: list = field(default_factory=list)
+    controller_context: str = ""
     pre_dispatch: list = field(default_factory=list)
     outputs: list = field(default_factory=list)
     condition: Optional[str] = None

@@ -104,7 +104,6 @@ def test_cmd_run_exits_nonzero_when_squad_blocks(
     monkeypatch.setattr("echelon.cli._print_prior_knowledge", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.cli._print_staging_artifacts", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("echelon.cli._print_open_issues", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("echelon.cli._print_next_steps", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("harness.config.load_config", lambda *_args, **_kwargs: object())
     monkeypatch.setattr("harness.config.get_full_resolved_config", lambda *_args, **_kwargs: {})
     monkeypatch.setattr("harness.squad_provider.SquadCliProvider", lambda *_args, **_kwargs: object())
@@ -128,8 +127,71 @@ def test_cmd_run_exits_nonzero_when_squad_blocks(
     assert "Understanding validation unavailable" in out
     assert "continue" in out
     assert "echelon spec continue" in out
+    assert "NEXT STEP" not in out
     assert "will retry the blocked phase; it was not marked complete" in out
     assert "blocked  ·  2m 31s  ·  $0.1234" in out
+
+
+def test_cmd_run_controller_exception_still_emits_one_squad_summary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from unittest.mock import patch
+
+    from echelon.cli import _spec_summary_session
+
+    squad_dir = tmp_path / "runs" / "spec-20260706-120000-000001"
+
+    class FailingController:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def run(self, **_kwargs: object) -> SimpleNamespace:
+            squad_dir.mkdir(parents=True, exist_ok=True)
+            (squad_dir / "state.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": squad_dir.name,
+                        "spec_id": "905-import-prose",
+                        "status": "interrupted",
+                        "phase": "phase1-why2",
+                        "user_message": "build notes",
+                        "blocked_reason": "controller exception",
+                        "completed_phases": ["phase1-what"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            raise RuntimeError("controller exploded")
+
+    monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", lambda *_a, **_k: None)
+    monkeypatch.setattr("echelon.cli._workspace_git_preflight", lambda *_a, **_k: None)
+    monkeypatch.setattr("echelon.cli._workspace_git_preflight_for_squad_run", lambda *_a, **_k: None)
+    monkeypatch.setattr("echelon.cli._find_current_run_dir", lambda *_a, **_k: None)
+    monkeypatch.setattr("echelon.cli._select_squad_dir", lambda *_a, **_k: (squad_dir, True))
+    monkeypatch.setattr("echelon.cli._print_cost_summary", lambda *_a, **_k: None)
+    monkeypatch.setattr("echelon.cli._print_prior_knowledge", lambda *_a, **_k: None)
+    monkeypatch.setattr("echelon.cli._print_staging_artifacts", lambda *_a, **_k: None)
+    monkeypatch.setattr("echelon.cli._print_open_issues", lambda *_a, **_k: None)
+    monkeypatch.setattr("harness.config.load_config", lambda *_a, **_k: object())
+    monkeypatch.setattr("harness.config.get_full_resolved_config", lambda *_a, **_k: {})
+    monkeypatch.setattr("harness.squad_provider.SquadCliProvider", lambda *_a, **_k: object())
+    monkeypatch.setattr("harness.phase_graph.load_workspace_phase_graph", lambda *_a: (object(), tmp_path / "runtime"))
+    monkeypatch.setattr("harness.squad.SquadController", FailingController)
+
+    with patch(
+        "harness.run_summary.summarize_run_for_cli",
+        return_value="Recorded the interrupted controller handoff.",
+    ):
+        with pytest.raises(RuntimeError, match="controller exploded"):
+            with _spec_summary_session(tmp_path, "echelon spec run"):
+                _cmd_run(["build notes"], project_root=tmp_path, ext_dir=tmp_path / "ext")
+
+    output = capsys.readouterr().out
+    assert output.count("SQUAD SUMMARY") == 1
+    assert output.count("worked on") == 1
+    assert "Recorded the interrupted controller handoff." in output
 
 
 def test_blocked_summary_recaps_current_issues_and_prints_absolute_path(

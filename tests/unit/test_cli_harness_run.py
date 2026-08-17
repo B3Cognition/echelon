@@ -938,6 +938,7 @@ class TestHarnessTargetPreflight:
         kwargs = mock_run.call_args.kwargs
         assert kwargs["base_dir"] == str(harness_base)
         assert kwargs["orchestration_root"] == root.resolve()
+        assert kwargs["summary_command"] == "echelon delivery run"
         assert not list((root / "runs").glob("build-*"))
 
     @pytest.mark.parametrize(
