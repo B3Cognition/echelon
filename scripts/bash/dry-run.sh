@@ -6,10 +6,35 @@ SCRIPT_DIR="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
 SOURCE_ROOT="$(CDPATH='' cd "$SCRIPT_DIR/../.." && pwd)"
 INPUT_ROOT="${1:-$SOURCE_ROOT}"
 
-if [[ -x "$SOURCE_ROOT/.venv/bin/python" ]]; then
+python_supports_runtime() {
+  "$1" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' \
+    >/dev/null 2>&1
+}
+
+REQUESTED_PYTHON="${PYTHON:-}"
+PYTHON=""
+if [[ -n "$REQUESTED_PYTHON" ]] && python_supports_runtime "$REQUESTED_PYTHON"; then
+  PYTHON="$REQUESTED_PYTHON"
+elif [[ -x "$SOURCE_ROOT/.venv/bin/python" ]] && \
+     python_supports_runtime "$SOURCE_ROOT/.venv/bin/python"; then
   PYTHON="$SOURCE_ROOT/.venv/bin/python"
+elif [[ -x "$HOME/.echelon/venv/bin/python" ]] && \
+     python_supports_runtime "$HOME/.echelon/venv/bin/python"; then
+  PYTHON="$HOME/.echelon/venv/bin/python"
 else
-  PYTHON="${PYTHON:-python3}"
+  for candidate in /opt/homebrew/bin/python3.12 /opt/homebrew/bin/python3 \
+      python3.12 python3 python; do
+    if { [[ -x "$candidate" ]] || command -v "$candidate" >/dev/null 2>&1; } && \
+       python_supports_runtime "$candidate"; then
+      PYTHON="$candidate"
+      break
+    fi
+  done
+fi
+
+if [[ -z "$PYTHON" ]]; then
+  echo "ERROR: Python 3.11+ is required for Echelon bundle validation." >&2
+  exit 1
 fi
 
 export PYTHONPATH="$SOURCE_ROOT/src${PYTHONPATH:+:$PYTHONPATH}"

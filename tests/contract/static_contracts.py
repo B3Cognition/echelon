@@ -600,7 +600,7 @@ def validate_re_source_ownership_contract(root: Path) -> list[str]:
         PatternCheck("specifier source overview", specifier, r"\$RE_OUTPUT_DIR/sources/\{source-id\}/overview\.md"),
         PatternCheck("specifier source spec", specifier, r"\$RE_OUTPUT_DIR/sources/\{source-id\}/specs/\{domain-id\}/spec\.md"),
         PatternCheck("specifier workspace contracts", specifier, r"\$RE_OUTPUT_DIR/workspace/contracts\.md"),
-        PatternCheck("verifier source quality", verifier, r"\$RE_OUTPUT_DIR/quality/\{source-id\}/coverage-report\.md"),
+        PatternCheck("verifier source quality", verifier, r"\$RE_OUTPUT_DIR/quality/sources/\{source-id\}\.json"),
         PatternCheck("expander source ownership", expander, r"\$RE_OUTPUT_DIR/sources/\{source-id\}/specs/\{domain-id\}/spec\.md"),
         PatternCheck("validator semantic quality", validator, r"semantic_quality_review"),
         PatternCheck("checklister source checklist", checklister, r"\$RE_OUTPUT_DIR/sources/\{source-id\}/specs/\{domain-id\}/checklist\.md"),
