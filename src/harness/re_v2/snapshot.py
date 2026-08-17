@@ -12,9 +12,10 @@ import subprocess
 import sys
 import tempfile
 import uuid
+import re
 from contextlib import contextmanager
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Callable, Iterator, Literal, TypeVar
 
 from .canonical import canonical_json_bytes, content_digest
@@ -27,6 +28,10 @@ _STAGE_PREFIX = ".snapshot-stage-"
 _COMMIT_DIRECTORY = ".snapshot-commits"
 _LOCK_DIRECTORY = ".snapshot-locks"
 _SOURCE_LOCK_DIRECTORY = ".snapshot-source-locks"
+_COMPOSITE_CAPTURE_VERSION = 2
+_COMPOSITE_SELECTION_POLICY = "declared-clean-git-tree-v1"
+_SAFE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]*\Z")
+_GIT_OBJECT_RE = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 
 _T = TypeVar("_T")
 FaultHook = Callable[[str], None]
@@ -56,16 +61,55 @@ class SnapshotEntry:
 
 
 @dataclass(frozen=True, slots=True)
+class SnapshotComponent:
+    source_id: str
+    git_role: str
+    workspace_path: str
+    repository_path: str
+    commit: str
+    submodules: tuple[tuple[str, str], ...]
+    tree_digest: str
+
+    def to_json_dict(self) -> dict[str, object]:
+        return {
+            "commit": self.commit,
+            "git_role": self.git_role,
+            "repository_path": self.repository_path,
+            "source_id": self.source_id,
+            "submodules": [
+                {"commit": commit, "path": path}
+                for path, commit in self.submodules
+            ],
+            "tree_digest": self.tree_digest,
+            "workspace_path": self.workspace_path,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class SnapshotManifest:
     snapshot_id: str
-    kind: Literal["git-worktree", "content-snapshot"]
+    kind: Literal["git-worktree", "content-snapshot", "workspace-git-composite"]
     entries: tuple[SnapshotEntry, ...]
     exclusions: tuple[str, ...]
     git: dict[str, object] | None
     capture_version: int = _CAPTURE_VERSION
+    components: tuple[SnapshotComponent, ...] | None = None
+    selection_policy: str | None = None
 
     def identity_dict(self) -> dict[str, object]:
-        return {"capture_version": self.capture_version, "entries": [x.to_json_dict() for x in self.entries], "exclusions": list(self.exclusions), "git": self.git, "kind": self.kind}
+        identity: dict[str, object] = {
+            "capture_version": self.capture_version,
+            "entries": [x.to_json_dict() for x in self.entries],
+            "exclusions": list(self.exclusions),
+            "git": self.git,
+            "kind": self.kind,
+        }
+        if self.components is not None:
+            identity["components"] = [
+                component.to_json_dict() for component in self.components
+            ]
+            identity["selection_policy"] = self.selection_policy
+        return identity
 
     def to_json_dict(self) -> dict[str, object]:
         return {"snapshot_id": self.snapshot_id, **self.identity_dict()}
@@ -74,7 +118,7 @@ class SnapshotManifest:
 @dataclass(frozen=True, slots=True)
 class CapturedSnapshot:
     snapshot_id: str
-    kind: Literal["git-worktree", "content-snapshot"]
+    kind: Literal["git-worktree", "content-snapshot", "workspace-git-composite"]
     read_root: Path
     manifest_path: Path
 
@@ -115,6 +159,46 @@ def capture_source_snapshot(
     return _capture_git_worktree(source, destination, excluded, commit, fault_hook)
 
 
+def publish_workspace_snapshot_tree(
+    prepared_root: Path,
+    destination_root: Path,
+    components: tuple[SnapshotComponent, ...],
+    *,
+    fault_hook: FaultHook | None = None,
+) -> CapturedSnapshot:
+    """Atomically publish a prepared, workspace-relative composite tree."""
+    prepared = _safe_source_root(prepared_root)
+    destination = _safe_destination_root(destination_root, prepared)
+    canonical_components = _canonical_components(components)
+    entries = _inventory(prepared, ())
+    _validate_composite_entries(entries, canonical_components)
+    manifest = _new_composite_manifest(entries, canonical_components)
+    temporary = Path(tempfile.mkdtemp(prefix=_STAGE_PREFIX, dir=destination))
+    try:
+        staged = temporary / "source"
+        _copy_regular_files(prepared, staged, entries)
+        if _inventory(prepared, ()) != entries or _inventory(staged, ()) != entries:
+            raise ReV2SnapshotError("prepared workspace tree changed while staging snapshot")
+        _write_owner(temporary, manifest, source_repo=None)
+        _fault(fault_hook, "source_installed")
+        _publish_manifest(temporary / _MANIFEST_NAME, manifest)
+        _fault(fault_hook, "manifest_installed")
+        _make_read_only(temporary)
+        _fault(fault_hook, "permissions_normalized")
+        _fsync_tree(temporary)
+        _fault(fault_hook, "bundle_fsynced")
+        return _publish_staged_bundle(
+            temporary,
+            destination,
+            manifest,
+            source_repo=None,
+            fault_hook=fault_hook,
+        )
+    finally:
+        if temporary.exists():
+            _remove_tree(temporary)
+
+
 def validate_source_snapshot(snapshot: CapturedSnapshot) -> None:
     try:
         _validate_commit_marker(snapshot)
@@ -127,7 +211,8 @@ def validate_source_snapshot(snapshot: CapturedSnapshot) -> None:
         ) from exc
 
 
-def _validate_snapshot_payload(snapshot: CapturedSnapshot) -> None:
+def load_snapshot_manifest(snapshot: CapturedSnapshot) -> SnapshotManifest:
+    """Load and authenticate the canonical manifest named by a snapshot handle."""
     if snapshot.read_root.is_symlink() or snapshot.manifest_path.is_symlink():
         raise ReV2SnapshotIntegrityError("unsafe symlink in source snapshot")
     try:
@@ -161,6 +246,16 @@ def _validate_snapshot_payload(snapshot: CapturedSnapshot) -> None:
         raise ReV2SnapshotIntegrityError("snapshot handle does not match manifest")
     if content_digest(manifest.identity_dict()) != manifest.snapshot_id:
         raise ReV2SnapshotIntegrityError("snapshot manifest content address mismatch")
+    if manifest.components is not None:
+        try:
+            _validate_composite_entries(manifest.entries, manifest.components)
+        except ReV2SnapshotError as exc:
+            raise ReV2SnapshotIntegrityError(str(exc)) from exc
+    return manifest
+
+
+def _validate_snapshot_payload(snapshot: CapturedSnapshot) -> None:
+    manifest = load_snapshot_manifest(snapshot)
     operational_git = manifest.kind == "git-worktree"
     try:
         actual = _inventory(
@@ -730,8 +825,15 @@ def _recover_marker_temporary_links(destination: Path, snapshot_id: str) -> bool
 
 
 def _marker_payload(snapshot: CapturedSnapshot) -> dict[str, object]:
+    capture_version: object = _CAPTURE_VERSION
+    try:
+        raw_manifest = json.loads(snapshot.manifest_path.read_bytes())
+        if isinstance(raw_manifest, dict):
+            capture_version = raw_manifest.get("capture_version", _CAPTURE_VERSION)
+    except (OSError, ValueError, TypeError):
+        pass
     return {
-        "capture_version": _CAPTURE_VERSION,
+        "capture_version": capture_version,
         "manifest_digest": content_digest(snapshot.manifest_path.read_bytes()),
         "snapshot_id": snapshot.snapshot_id,
     }
@@ -1081,6 +1183,130 @@ def _new_manifest(kind: Literal["git-worktree", "content-snapshot"], entries: tu
     return SnapshotManifest(content_digest(partial.identity_dict()), kind, entries, exclusions, git)
 
 
+def _new_composite_manifest(
+    entries: tuple[SnapshotEntry, ...],
+    components: tuple[SnapshotComponent, ...],
+) -> SnapshotManifest:
+    partial = SnapshotManifest(
+        "",
+        "workspace-git-composite",
+        entries,
+        (),
+        None,
+        _COMPOSITE_CAPTURE_VERSION,
+        components,
+        _COMPOSITE_SELECTION_POLICY,
+    )
+    return SnapshotManifest(
+        content_digest(partial.identity_dict()),
+        partial.kind,
+        partial.entries,
+        partial.exclusions,
+        partial.git,
+        partial.capture_version,
+        partial.components,
+        partial.selection_policy,
+    )
+
+
+def _canonical_components(
+    components: tuple[SnapshotComponent, ...],
+) -> tuple[SnapshotComponent, ...]:
+    if not isinstance(components, tuple) or not components:
+        raise ReV2SnapshotError("composite snapshot requires at least one component")
+    for component in components:
+        if not isinstance(component, SnapshotComponent):
+            raise ReV2SnapshotError("composite snapshot has an invalid component")
+        try:
+            _validate_component(component)
+        except ValueError as exc:
+            raise ReV2SnapshotError(f"invalid snapshot component: {exc}") from exc
+    keys = tuple((component.source_id, component.workspace_path) for component in components)
+    if keys != tuple(sorted(keys)) or len({key[0] for key in keys}) != len(keys):
+        raise ReV2SnapshotError("composite snapshot components must have sorted unique source IDs")
+    paths = [PurePosixPath(component.workspace_path).parts for component in components]
+    if len(set(paths)) != len(paths):
+        raise ReV2SnapshotError("composite snapshot component paths must be unique")
+    for index, first in enumerate(paths):
+        for second in paths[index + 1 :]:
+            if first == second[: len(first)] or second == first[: len(second)]:
+                raise ReV2SnapshotError("composite snapshot component paths overlap")
+    return components
+
+
+def _validate_component(component: SnapshotComponent) -> None:
+    if not _SAFE_ID_RE.fullmatch(component.source_id):
+        raise ValueError("component.source_id must be a nonempty safe ID")
+    if not _SAFE_ID_RE.fullmatch(component.git_role):
+        raise ValueError("component.git_role must be a nonempty safe ID")
+    _validate_relative_path(component.workspace_path, "component.workspace_path")
+    _validate_relative_path(component.repository_path, "component.repository_path")
+    if not _GIT_OBJECT_RE.fullmatch(component.commit):
+        raise ValueError("component.commit must be a canonical Git object ID")
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", component.tree_digest):
+        raise ValueError("component.tree_digest must be a SHA-256 digest")
+    if not isinstance(component.submodules, tuple):
+        raise ValueError("component.submodules must be a tuple")
+    previous: str | None = None
+    for path, commit in component.submodules:
+        _validate_relative_path(path, "component.submodule.path", allow_dot=False)
+        if not _GIT_OBJECT_RE.fullmatch(commit):
+            raise ValueError("component.submodule.commit must be a canonical Git object ID")
+        if previous is not None and path <= previous:
+            raise ValueError("component.submodules must be sorted and unique")
+        previous = path
+
+
+def _validate_relative_path(value: str, label: str, *, allow_dot: bool = True) -> None:
+    if not isinstance(value, str) or not value or "\\" in value:
+        raise ValueError(f"{label} must be a canonical relative path")
+    path = PurePosixPath(value)
+    if (
+        path.is_absolute()
+        or ".." in path.parts
+        or path.as_posix() != value
+        or (not allow_dot and value == ".")
+    ):
+        raise ValueError(f"{label} must be a canonical relative path")
+
+
+def _validate_composite_entries(
+    entries: tuple[SnapshotEntry, ...],
+    components: tuple[SnapshotComponent, ...],
+) -> None:
+    canonical = _canonical_components(components)
+    assigned: set[str] = set()
+    for component in canonical:
+        prefix = "" if component.workspace_path == "." else component.workspace_path + "/"
+        relative_entries: list[dict[str, object]] = []
+        for entry in entries:
+            if component.workspace_path == ".":
+                relative = entry.path
+            elif entry.path.startswith(prefix):
+                relative = entry.path[len(prefix) :]
+            else:
+                continue
+            if not relative:
+                continue
+            if entry.path in assigned:
+                raise ReV2SnapshotError(
+                    f"snapshot entry is selected by multiple components: {entry.path}"
+                )
+            assigned.add(entry.path)
+            relative_entries.append(
+                SnapshotEntry(relative, entry.digest, entry.mode, entry.size).to_json_dict()
+            )
+        if content_digest(relative_entries) != component.tree_digest:
+            raise ReV2SnapshotError(
+                f"snapshot component tree digest mismatch: {component.source_id}"
+            )
+    outside = sorted(entry.path for entry in entries if entry.path not in assigned)
+    if outside:
+        raise ReV2SnapshotError(
+            f"snapshot contains file outside declared components: {outside[0]}"
+        )
+
+
 def _safe_source_root(source: Path) -> Path:
     if source.is_symlink() or not source.is_dir():
         raise ReV2SnapshotError(f"source root is not a safe directory: {source}")
@@ -1368,24 +1594,39 @@ def _run_git_bytes(args: list[str]) -> bytes:
 
 
 def _manifest_from_json(value: object) -> SnapshotManifest:
-    manifest = _exact_json_object(
-        value,
-        {
+    if not isinstance(value, dict):
+        raise ValueError("manifest must be an object")
+    capture_version = _json_integer(
+        value.get("capture_version"), "manifest.capture_version"
+    )
+    if capture_version == _CAPTURE_VERSION:
+        fields = {
             "capture_version",
             "entries",
             "exclusions",
             "git",
             "kind",
             "snapshot_id",
-        },
+        }
+    elif capture_version == _COMPOSITE_CAPTURE_VERSION:
+        fields = {
+            "capture_version",
+            "components",
+            "entries",
+            "exclusions",
+            "git",
+            "kind",
+            "selection_policy",
+            "snapshot_id",
+        }
+    else:
+        raise ValueError("manifest.capture_version is unsupported")
+    manifest = _exact_json_object(
+        value,
+        fields,
         "manifest",
     )
     snapshot_id = _json_string(manifest["snapshot_id"], "manifest.snapshot_id")
-    capture_version = _json_integer(
-        manifest["capture_version"], "manifest.capture_version"
-    )
-    if capture_version != _CAPTURE_VERSION:
-        raise ValueError("manifest.capture_version is unsupported")
 
     raw_entries = manifest["entries"]
     if not isinstance(raw_entries, list):
@@ -1418,17 +1659,102 @@ def _manifest_from_json(value: object) -> SnapshotManifest:
     )
 
     kind = manifest["kind"]
-    if kind not in {"git-worktree", "content-snapshot"}:
-        raise ValueError("unsupported snapshot kind")
-    git = _manifest_git_from_json(manifest["git"], kind)
+    if capture_version == _CAPTURE_VERSION:
+        if kind not in {"git-worktree", "content-snapshot"}:
+            raise ValueError("unsupported legacy snapshot kind")
+        git = _manifest_git_from_json(manifest["git"], kind)
+        return SnapshotManifest(
+            snapshot_id,
+            kind,
+            tuple(entries),
+            exclusions,
+            git,
+            capture_version,
+        )
+
+    if kind != "workspace-git-composite":
+        raise ValueError("capture version 2 requires workspace-git-composite")
+    if manifest["git"] is not None:
+        raise ValueError("composite snapshot manifest.git must be null")
+    if exclusions:
+        raise ValueError("composite snapshot manifest.exclusions must be empty")
+    selection_policy = _json_string(
+        manifest["selection_policy"], "manifest.selection_policy"
+    )
+    if selection_policy != _COMPOSITE_SELECTION_POLICY:
+        raise ValueError("unsupported composite snapshot selection policy")
+    components = _components_from_json(manifest["components"])
+    if [entry.path for entry in entries] != sorted({entry.path for entry in entries}):
+        raise ValueError("composite snapshot entries must be sorted and unique")
     return SnapshotManifest(
         snapshot_id,
-        kind,
+        "workspace-git-composite",
         tuple(entries),
-        exclusions,
-        git,
+        (),
+        None,
         capture_version,
+        components,
+        selection_policy,
     )
+
+
+def _components_from_json(value: object) -> tuple[SnapshotComponent, ...]:
+    if not isinstance(value, list):
+        raise ValueError("manifest.components must be an array")
+    components: list[SnapshotComponent] = []
+    for index, raw_component in enumerate(value):
+        label = f"manifest.components[{index}]"
+        component = _exact_json_object(
+            raw_component,
+            {
+                "commit",
+                "git_role",
+                "repository_path",
+                "source_id",
+                "submodules",
+                "tree_digest",
+                "workspace_path",
+            },
+            label,
+        )
+        raw_submodules = component["submodules"]
+        if not isinstance(raw_submodules, list):
+            raise ValueError(f"{label}.submodules must be an array")
+        submodules: list[tuple[str, str]] = []
+        for submodule_index, raw_submodule in enumerate(raw_submodules):
+            submodule_label = f"{label}.submodules[{submodule_index}]"
+            submodule = _exact_json_object(
+                raw_submodule,
+                {"commit", "path"},
+                submodule_label,
+            )
+            submodules.append(
+                (
+                    _json_string(submodule["path"], f"{submodule_label}.path"),
+                    _json_string(submodule["commit"], f"{submodule_label}.commit"),
+                )
+            )
+        parsed = SnapshotComponent(
+            source_id=_json_string(component["source_id"], f"{label}.source_id"),
+            git_role=_json_string(component["git_role"], f"{label}.git_role"),
+            workspace_path=_json_string(
+                component["workspace_path"], f"{label}.workspace_path"
+            ),
+            repository_path=_json_string(
+                component["repository_path"], f"{label}.repository_path"
+            ),
+            commit=_json_string(component["commit"], f"{label}.commit"),
+            submodules=tuple(submodules),
+            tree_digest=_json_string(
+                component["tree_digest"], f"{label}.tree_digest"
+            ),
+        )
+        _validate_component(parsed)
+        components.append(parsed)
+    try:
+        return _canonical_components(tuple(components))
+    except ReV2SnapshotError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 def _manifest_git_from_json(

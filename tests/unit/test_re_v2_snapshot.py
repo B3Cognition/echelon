@@ -14,7 +14,10 @@ from harness.re_v2.snapshot import (
     ReV2SnapshotError,
     ReV2SnapshotIntegrityError,
     ReV2SnapshotUnavailableError,
+    SnapshotComponent,
     capture_source_snapshot,
+    load_snapshot_manifest,
+    publish_workspace_snapshot_tree,
     validate_source_snapshot,
 )
 from harness.re_v2.canonical import canonical_json_bytes, content_digest
@@ -22,7 +25,7 @@ from harness.re_v2.canonical import canonical_json_bytes, content_digest
 
 def _copied_snapshot(tmp_path: Path):
     source = tmp_path / "source"
-    source.mkdir()
+    source.mkdir(parents=True)
     (source / "api.py").write_text("VALUE = 1\n", encoding="utf-8")
     return capture_source_snapshot(source, tmp_path / "snapshots", exclusions=())
 
@@ -46,16 +49,48 @@ def _replace_manifest_bytes(captured: CapturedSnapshot, payload: bytes) -> None:
 
     marker = _snapshot_marker(captured)
     _make_writable(marker)
+    try:
+        capture_version = json.loads(payload)["capture_version"]
+    except (ValueError, KeyError, TypeError):
+        capture_version = 1
     marker.write_bytes(
         canonical_json_bytes(
             {
-                "capture_version": 1,
+                "capture_version": capture_version,
                 "manifest_digest": content_digest(payload),
                 "snapshot_id": captured.snapshot_id,
             }
         )
     )
     marker.chmod(0o400)
+
+
+def _composite_component(
+    *,
+    source_id: str = "api",
+    workspace_path: str = "sources/api",
+    relative_path: str = "app.py",
+    payload: bytes = b"pass\n",
+    mode: int = 0o644,
+) -> SnapshotComponent:
+    return SnapshotComponent(
+        source_id=source_id,
+        git_role="source",
+        workspace_path=workspace_path,
+        repository_path=".",
+        commit="a" * 40,
+        submodules=(),
+        tree_digest=content_digest(
+            [
+                {
+                    "digest": content_digest(payload),
+                    "mode": mode,
+                    "path": relative_path,
+                    "size": len(payload),
+                }
+            ]
+        ),
+    )
 
 
 def _regular_tree_bytes(root: Path) -> dict[str, bytes]:
@@ -974,6 +1009,133 @@ def test_snapshot_validation_requires_complete_typed_manifest_schema(
     with pytest.raises(
         ReV2SnapshotIntegrityError, match="invalid snapshot manifest"
     ):
+        validate_source_snapshot(captured)
+
+
+@pytest.mark.unit
+def test_composite_manifest_identity_includes_canonical_components(
+    tmp_path: Path,
+) -> None:
+    prepared = tmp_path / "prepared"
+    source = prepared / "sources" / "api"
+    source.mkdir(parents=True)
+    target = source / "app.py"
+    target.write_text("pass\n", encoding="utf-8")
+    component = _composite_component(mode=stat.S_IMODE(target.stat().st_mode))
+
+    snapshot = publish_workspace_snapshot_tree(
+        prepared,
+        tmp_path / "snapshots",
+        (component,),
+    )
+    manifest = load_snapshot_manifest(snapshot)
+
+    assert manifest.kind == "workspace-git-composite"
+    assert manifest.capture_version == 2
+    assert manifest.components == (component,)
+    assert manifest.selection_policy == "declared-clean-git-tree-v1"
+    assert manifest.git is None
+    validate_source_snapshot(snapshot)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "case",
+    (
+        "missing_component_field",
+        "extra_component_field",
+        "unsafe_workspace_path",
+        "unsafe_repository_path",
+        "malformed_commit",
+        "noncanonical_submodules",
+        "git_not_null",
+        "wrong_selection_policy",
+    ),
+)
+def test_composite_manifest_rejects_noncanonical_schema(
+    tmp_path: Path,
+    case: str,
+) -> None:
+    prepared = tmp_path / "prepared"
+    source = prepared / "sources" / "api"
+    source.mkdir(parents=True)
+    target = source / "app.py"
+    target.write_text("pass\n", encoding="utf-8")
+    captured = publish_workspace_snapshot_tree(
+        prepared,
+        tmp_path / "snapshots",
+        (_composite_component(mode=stat.S_IMODE(target.stat().st_mode)),),
+    )
+    manifest = json.loads(captured.manifest_path.read_bytes())
+    component = manifest["components"][0]
+    if case == "missing_component_field":
+        del component["git_role"]
+    elif case == "extra_component_field":
+        component["unexpected"] = True
+    elif case == "unsafe_workspace_path":
+        component["workspace_path"] = "../api"
+    elif case == "unsafe_repository_path":
+        component["repository_path"] = "/tmp/api"
+    elif case == "malformed_commit":
+        component["commit"] = "not-a-commit"
+    elif case == "noncanonical_submodules":
+        component["submodules"] = [
+            {"path": "z", "commit": "b" * 40},
+            {"path": "a", "commit": "c" * 40},
+        ]
+    elif case == "git_not_null":
+        manifest["git"] = {"commit": "a" * 40, "submodules": []}
+    elif case == "wrong_selection_policy":
+        manifest["selection_policy"] = "all-files"
+    else:  # pragma: no cover
+        raise AssertionError(case)
+    _replace_manifest_bytes(captured, canonical_json_bytes(manifest))
+
+    with pytest.raises(ReV2SnapshotIntegrityError, match="invalid snapshot manifest"):
+        validate_source_snapshot(captured)
+
+
+@pytest.mark.unit
+def test_composite_manifest_rejects_mismatched_component_tree_digest(
+    tmp_path: Path,
+) -> None:
+    prepared = tmp_path / "prepared"
+    source = prepared / "sources" / "api"
+    source.mkdir(parents=True)
+    (source / "app.py").write_text("pass\n", encoding="utf-8")
+    component = _composite_component(payload=b"different\n")
+
+    with pytest.raises(ReV2SnapshotError, match="tree digest"):
+        publish_workspace_snapshot_tree(
+            prepared,
+            tmp_path / "snapshots",
+            (component,),
+        )
+
+
+@pytest.mark.unit
+def test_legacy_snapshot_manifests_and_markers_omit_composite_fields(
+    tmp_path: Path,
+) -> None:
+    copied = _copied_snapshot(tmp_path / "copy")
+    repository = tmp_path / "git" / "source"
+    repository.parent.mkdir()
+    _init_git_repository(repository)
+    (repository / "app.py").write_text("pass\n", encoding="utf-8")
+    _commit_all(repository, "fixture")
+    git_snapshot = capture_source_snapshot(
+        repository,
+        tmp_path / "git" / "snapshots",
+        exclusions=(),
+    )
+
+    for captured in (copied, git_snapshot):
+        manifest = json.loads(captured.manifest_path.read_bytes())
+        marker = json.loads(_snapshot_marker(captured).read_bytes())
+        assert manifest["capture_version"] == 1
+        assert "components" not in manifest
+        assert "selection_policy" not in manifest
+        assert marker["capture_version"] == 1
         validate_source_snapshot(captured)
 
 
