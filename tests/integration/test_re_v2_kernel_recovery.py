@@ -4,13 +4,15 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
+import json
 from pathlib import Path
+from typing import Callable
 
 import pytest
 
 from harness.re_v2.budget import evaluate_budget
 from harness.re_v2.candidates import CandidateStore, DispatchLease, ProcessIdentity
-from harness.re_v2.canonical import content_digest
+from harness.re_v2.canonical import canonical_json_bytes, content_digest
 from harness.re_v2.controller import ReV2Controller, WorkExecutor
 from harness.re_v2.events import EventStore
 from harness.re_v2.ledger import (
@@ -29,6 +31,7 @@ from harness.re_v2.model import (
     WorkTemplate,
 )
 from harness.re_v2.planner import plan_next, validate_work_graph
+from harness.re_v2.projection import project_run
 from harness.re_v2.publication import (
     GenerationManifest,
     current_index_hash,
@@ -36,8 +39,16 @@ from harness.re_v2.publication import (
     publish_generation,
 )
 from harness.re_v2.recovery import ProcessState, ReV2RunContext
-from harness.re_v2.run_store import ReV2Paths, create_run_store
-from harness.re_v2.snapshot import CapturedSnapshot, capture_source_snapshot
+from harness.re_v2.run_store import (
+    ReV2Paths,
+    create_run_store,
+    load_run_manifest,
+)
+from harness.re_v2.snapshot import (
+    CapturedSnapshot,
+    capture_source_snapshot,
+    validate_source_snapshot,
+)
 
 
 NOW = "2026-08-14T12:00:00Z"
@@ -69,6 +80,39 @@ EXPECTED_DISPATCHES = {
     "checkpoint_recorded": 1,
     "generation_promoted": 1,
     "index_replaced": 1,
+}
+
+DISPATCH_EVENT_PREFIX = (
+    "run_created",
+    "work_planned",
+    "dispatch_leased",
+    "dispatch_started",
+)
+PERSISTED_CANDIDATE_EVENT_PREFIX = (
+    *DISPATCH_EVENT_PREFIX,
+    "dispatch_observed",
+    "candidate_persisted",
+)
+CHECKPOINT_EVENT_PREFIX = (
+    *PERSISTED_CANDIDATE_EVENT_PREFIX,
+    "candidate_certified",
+    "artifact_accepted",
+    "checkpoint_recorded",
+)
+COMPLETED_EVENT_PREFIX = (
+    *CHECKPOINT_EVENT_PREFIX,
+    "work_planned",
+    "run_completed",
+)
+
+EXPECTED_EVENT_PREFIXES = {
+    "dispatch_started": DISPATCH_EVENT_PREFIX,
+    "provider_terminated": DISPATCH_EVENT_PREFIX,
+    "candidate_renamed": DISPATCH_EVENT_PREFIX,
+    "certification_written": PERSISTED_CANDIDATE_EVENT_PREFIX,
+    "checkpoint_recorded": CHECKPOINT_EVENT_PREFIX,
+    "generation_promoted": COMPLETED_EVENT_PREFIX,
+    "index_replaced": COMPLETED_EVENT_PREFIX,
 }
 
 
@@ -117,6 +161,7 @@ class RecordingExecutor(WorkExecutor):
     ) -> tuple[Path, ExecutionObservation]:
         assert snapshot_root.is_dir()
         self.calls.append(lease.dispatch_id)
+        self.output_root.mkdir(parents=True, exist_ok=True)
         output = self.output_root / lease.dispatch_id
         output.mkdir(parents=True)
         (output / "artifact.json").write_text(
@@ -207,9 +252,6 @@ class FaultHarness:
         self.run_dir = root / "runs" / "re-fault-matrix"
         self.workspace = root / "workspace"
         self.outputs = root / "provider-output"
-        self.executor = RecordingExecutor(self.outputs)
-        self.snapshot: CapturedSnapshot | None = None
-        self._graph = None
 
     @property
     def expected_dispatches(self) -> int:
@@ -217,7 +259,8 @@ class FaultHarness:
 
     @property
     def work_item_id(self) -> str:
-        context = self._new_context()
+        snapshot = self._load_persisted_snapshot()
+        context = self._new_context(snapshot)
         budget = evaluate_budget(
             context.manifest.initial_budget_policy,
             context.event_store.replay(),
@@ -234,27 +277,46 @@ class FaultHarness:
         work_items = context.ledger.replay().certification_work_items.values()
         return next(iter(work_items)).work_item_id
 
-    def start_and_crash(self) -> None:
+    def start_and_crash(self, *, verify_prefix: bool = True) -> None:
         try:
-            self._ensure_snapshot()
-            context = self._new_context()
-            self._controller(context).run_until_stopped()
-            self._publish(context)
+            snapshot = self._capture_snapshot()
+            self.fault("snapshot_created")
+            context = self._new_context(snapshot)
+            executor = RecordingExecutor(self.outputs)
+            self._controller(
+                context,
+                executor=executor,
+                fault_hook=self.fault,
+            ).run_until_stopped()
+            self._publish(context, fault_hook=self.fault)
         except InjectedCrash as exc:
             assert exc.boundary == self.fail_once_at
         else:  # pragma: no cover - every matrix row must hit its named seam.
             pytest.fail(f"fault hook {self.fail_once_at!r} did not fire")
         assert self.fault.fired is True
+        if verify_prefix:
+            self.assert_durable_prefix()
 
     def restart(self) -> RecoveredRun:
-        self._ensure_snapshot()
-        context = self._new_context()
-        result = self._controller(context).run_until_stopped()
+        # Simulate a new process: every restart authority is reconstructed from
+        # persisted bytes, with a new executor and no fail-once hook object.
+        snapshot = self._load_persisted_snapshot()
+        context = self._new_context(snapshot)
+        executor = RecordingExecutor(self.outputs)
+        result = self._controller(
+            context,
+            executor=executor,
+            fault_hook=None,
+        ).run_until_stopped()
         assert result.status == "complete"
-        published = self._publish(context)
+        published = self._publish(context, fault_hook=None)
 
         history = context.event_store.replay()
         ledger = context.ledger.replay()
+        expected_projection = canonical_json_bytes(
+            project_run(context.manifest, history, ledger)
+        )
+        assert context.paths.projection.read_bytes() == expected_projection
         dispatches = Counter(
             str(event.payload["work_item_id"])
             for event in history
@@ -303,23 +365,150 @@ class FaultHarness:
             published_root_hashes=frozenset(generation.accepted_root_hashes),
         )
 
-    def _ensure_snapshot(self) -> None:
-        if self.snapshot is not None:
+    def assert_durable_prefix(self, boundary: str | None = None) -> None:
+        """Validate the exact on-disk prefix immediately after one crash."""
+        selected = boundary or self.fail_once_at
+        snapshot = self._load_persisted_snapshot()
+        validate_source_snapshot(snapshot)
+        provider_outputs = self._provider_output_directories()
+
+        if selected == "snapshot_created":
+            assert not self.run_dir.exists(), "snapshot seam created a run attempt"
+            assert provider_outputs == (), "snapshot seam invoked the provider"
             return
+
+        paths = ReV2Paths.for_run(self.run_dir)
+        manifest = load_run_manifest(self.run_dir)
+        assert manifest.source_snapshot_id == snapshot.snapshot_id
+        history = EventStore(paths).replay()
+        event_types = tuple(event.type for event in history)
+        assert event_types == EXPECTED_EVENT_PREFIXES[selected], (
+            f"{selected} durable event prefix mismatch: {event_types}"
+        )
+
+        candidates = CandidateStore(
+            paths,
+            process_probe=lambda pid: f"fixture-process:{pid}",
+            clock=lambda: NOW,
+        ).discover()
+        candidate_expected = selected in {
+            "candidate_renamed",
+            "certification_written",
+            "checkpoint_recorded",
+            "generation_promoted",
+            "index_replaced",
+        }
+        assert len(candidates) == int(candidate_expected), (
+            f"{selected} committed candidate durable prefix mismatch"
+        )
+        provider_expected = selected != "dispatch_started"
+        assert len(provider_outputs) == int(provider_expected), (
+            f"{selected} provider-output durable prefix mismatch"
+        )
+
+        objects = ObjectStore(paths.objects)
+        ledger = Ledger(
+            paths,
+            objects,
+            supported_verifiers={"fixture-verifier": "v1"},
+        ).replay()
+        certification_expected = selected in {
+            "certification_written",
+            "checkpoint_recorded",
+            "generation_promoted",
+            "index_replaced",
+        }
+        artifact_expected = selected in {
+            "checkpoint_recorded",
+            "generation_promoted",
+            "index_replaced",
+        }
+        assert len(ledger.certifications) == int(certification_expected), (
+            f"{selected} certification receipt durable prefix mismatch"
+        )
+        assert len(ledger.accepted_artifacts) == int(artifact_expected), (
+            f"{selected} artifact receipt durable prefix mismatch"
+        )
+        if selected == "certification_written":
+            assert "candidate_certified" not in event_types, (
+                "certification event must follow the durable receipt boundary"
+            )
+        if selected in {
+            "checkpoint_recorded",
+            "generation_promoted",
+            "index_replaced",
+        }:
+            assert event_types.count("checkpoint_recorded") == 1
+
+        generation_root = self.workspace / "re" / "v2" / "generations"
+        generations = (
+            tuple(
+                path
+                for path in generation_root.iterdir()
+                if path.is_dir() and not path.name.startswith(".")
+            )
+            if generation_root.is_dir()
+            else ()
+        )
+        generation_expected = selected in {"generation_promoted", "index_replaced"}
+        assert len(generations) == int(generation_expected), (
+            f"{selected} generation durable prefix mismatch"
+        )
+        index_path = self.workspace / "re" / "v2" / "index.json"
+        assert index_path.exists() is (selected == "index_replaced"), (
+            f"{selected} workspace index durable prefix mismatch"
+        )
+        if generation_expected:
+            GenerationManifest.from_bytes(
+                (generations[0] / "manifest.json").read_bytes()
+            )
+        if selected == "generation_promoted":
+            assert load_published_v2_index(self.workspace) is None
+        elif selected == "index_replaced":
+            assert load_published_v2_index(self.workspace) is not None
+
+    def _capture_snapshot(self) -> CapturedSnapshot:
         self.source.mkdir()
         self.snapshots.mkdir()
-        self.workspace.mkdir()
-        self.outputs.mkdir()
         (self.source / "api.py").write_text("VALUE = 1\n", encoding="utf-8")
-        self.snapshot = capture_source_snapshot(
+        return capture_source_snapshot(
             self.source,
             self.snapshots,
             exclusions=(),
         )
-        self.fault("snapshot_created")
 
-    def _new_context(self) -> ReV2RunContext:
-        assert self.snapshot is not None
+    def _load_persisted_snapshot(self) -> CapturedSnapshot:
+        assert self.snapshots.is_dir(), "durable source snapshot root is missing"
+        bundles = tuple(
+            path
+            for path in self.snapshots.iterdir()
+            if path.is_dir() and not path.name.startswith(".")
+        )
+        assert len(bundles) == 1, "exactly one durable source snapshot is required"
+        bundle = bundles[0]
+        manifest_path = bundle / "manifest.json"
+        raw = json.loads(manifest_path.read_bytes())
+        kind = raw.get("kind")
+        assert kind in {"git-worktree", "content-snapshot"}
+        snapshot = CapturedSnapshot(
+            snapshot_id=str(raw["snapshot_id"]),
+            kind=kind,
+            read_root=bundle / "source",
+            manifest_path=manifest_path,
+        )
+        validate_source_snapshot(snapshot)
+        return snapshot
+
+    def _provider_output_directories(self) -> tuple[Path, ...]:
+        if not self.outputs.is_dir():
+            return ()
+        return tuple(
+            path
+            for path in sorted(self.outputs.iterdir())
+            if path.is_dir() and not path.name.startswith(".")
+        )
+
+    def _new_context(self, snapshot: CapturedSnapshot) -> ReV2RunContext:
         if not self.run_dir.exists():
             manifest = RunManifest(
                 schema_version=1,
@@ -327,8 +516,8 @@ class FaultHarness:
                 engine_protocol_version="2.0",
                 run_id=self.run_dir.name,
                 created_at=NOW,
-                source_snapshot_id=self.snapshot.snapshot_id,
-                source_snapshot_kind=self.snapshot.kind,
+                source_snapshot_id=snapshot.snapshot_id,
+                source_snapshot_kind=snapshot.kind,
                 partition_manifest_id=content_digest(b"fault-matrix-partitions"),
                 requested_goals=("inventory",),
                 initial_budget_policy=BudgetPolicy(
@@ -346,39 +535,39 @@ class FaultHarness:
             paths = create_run_store(self.run_dir, manifest)
         else:
             paths = ReV2Paths.for_run(self.run_dir)
-        if self._graph is None:
-            template = WorkTemplate(
-                goal_id="inventory",
-                artifact_kind="fixture-inventory",
-                layer="L0",
-                producer_id="fixture-producer",
-                producer_protocol_version="v1",
-                layer_policy_hash=content_digest(
-                    {
-                        "artifact_kind": "fixture-inventory",
-                        "policy_version": POLICY_VERSION,
-                    }
-                ),
-                required_template_ids=(),
-                verifier_id="fixture-verifier",
-                verifier_version="v1",
-                result_contract_id="fixture-result-v1",
-                max_provider_attempts=3,
-                max_generation_attempts=3,
-                max_semantic_rounds=1,
-                max_result_contract_retries=2,
-            )
-            self._graph = validate_work_graph(
-                (template,),
-                requested_goals=("inventory",),
-                source_snapshot_id=self.snapshot.snapshot_id,
-                partition_manifest_id=content_digest(b"fault-matrix-partitions"),
-            )
+        manifest = load_run_manifest(self.run_dir)
+        template = WorkTemplate(
+            goal_id="inventory",
+            artifact_kind="fixture-inventory",
+            layer="L0",
+            producer_id="fixture-producer",
+            producer_protocol_version="v1",
+            layer_policy_hash=content_digest(
+                {
+                    "artifact_kind": "fixture-inventory",
+                    "policy_version": POLICY_VERSION,
+                }
+            ),
+            required_template_ids=(),
+            verifier_id="fixture-verifier",
+            verifier_version="v1",
+            result_contract_id="fixture-result-v1",
+            max_provider_attempts=3,
+            max_generation_attempts=3,
+            max_semantic_rounds=1,
+            max_result_contract_retries=2,
+        )
+        graph = validate_work_graph(
+            (template,),
+            requested_goals=manifest.requested_goals,
+            source_snapshot_id=manifest.source_snapshot_id,
+            partition_manifest_id=manifest.partition_manifest_id,
+        )
         objects = ObjectStore(paths.objects)
         return ReV2RunContext(
             paths=paths,
-            snapshot=self.snapshot,
-            graph=self._graph,
+            snapshot=snapshot,
+            graph=graph,
             event_store=EventStore(paths),
             object_store=objects,
             ledger=Ledger(
@@ -394,10 +583,16 @@ class FaultHarness:
             certifier=AcceptingCertifier(objects),
         )
 
-    def _controller(self, context: ReV2RunContext) -> ReV2Controller:
+    def _controller(
+        self,
+        context: ReV2RunContext,
+        *,
+        executor: WorkExecutor,
+        fault_hook: Callable[[str], None] | None,
+    ) -> ReV2Controller:
         return ReV2Controller(
             context,
-            executor=self.executor,
+            executor=executor,
             process_inspector=DeadInspector(),
             process_identity_factory=lambda item, kind, index, started: ProcessIdentity(
                 pid=4_000 + index,
@@ -409,10 +604,16 @@ class FaultHarness:
                 started_at=started,
             ),
             clock=lambda: NOW,
-            fault_hook=self.fault,
+            fault_hook=fault_hook,
         )
 
-    def _publish(self, context: ReV2RunContext):
+    def _publish(
+        self,
+        context: ReV2RunContext,
+        *,
+        fault_hook: Callable[[str], None] | None,
+    ):
+        self.workspace.mkdir(exist_ok=True)
         roots = tuple(
             receipt.artifact_hash
             for receipt in context.ledger.replay().accepted_artifacts.values()
@@ -423,7 +624,7 @@ class FaultHarness:
             roots,
             SYNTHESIS_POLICY_HASH,
             expected_index_hash=current_index_hash(self.workspace),
-            fault_hook=self.fault,
+            fault_hook=fault_hook,
         )
 
 
@@ -447,3 +648,63 @@ def test_restart_preserves_certified_work_without_duplicate_dispatch(
     assert recovered.generation_count == 1
     assert recovered.published_generation_id.startswith("sha256:")
     assert recovered.published_root_hashes == recovered.accepted_root_hashes
+
+
+@pytest.mark.integration
+def test_crash_prefix_oracle_rejects_certification_hook_before_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation proof: the named seam cannot move before its durable write."""
+    harness = FaultHarness(tmp_path, fail_once_at="certification_written")
+    original = Ledger.record_certification
+
+    def moved_hook_before_receipt(
+        ledger: Ledger,
+        receipt: CertificationReceipt,
+        work_item: WorkItem,
+    ) -> object:
+        harness.fault("certification_written")
+        return original(ledger, receipt, work_item)
+
+    monkeypatch.setattr(Ledger, "record_certification", moved_hook_before_receipt)
+    harness.start_and_crash(verify_prefix=False)
+
+    with pytest.raises(AssertionError, match="certification receipt"):
+        harness.assert_durable_prefix()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("expected_boundary", "premature_boundary"),
+    (
+        ("dispatch_started", "dispatch_leased"),
+        ("provider_terminated", "dispatch_started"),
+        ("candidate_renamed", "provider_terminated"),
+        ("certification_written", "candidate_renamed"),
+        ("checkpoint_recorded", "artifact_acceptance_written"),
+        ("generation_promoted", "generation_temporary_written"),
+        ("index_replaced", "index_temporary_written"),
+    ),
+)
+def test_crash_prefix_oracle_rejects_each_premature_boundary(
+    tmp_path: Path,
+    expected_boundary: str,
+    premature_boundary: str,
+) -> None:
+    """Each named post-write seam fails if observed at its prior prefix."""
+    harness = FaultHarness(tmp_path, fail_once_at=premature_boundary)
+    harness.start_and_crash(verify_prefix=False)
+
+    with pytest.raises(AssertionError):
+        harness.assert_durable_prefix(expected_boundary)
+
+
+@pytest.mark.integration
+def test_snapshot_prefix_oracle_rejects_hook_before_snapshot_commit(
+    tmp_path: Path,
+) -> None:
+    harness = FaultHarness(tmp_path, fail_once_at="snapshot_created")
+
+    with pytest.raises(AssertionError, match="source snapshot"):
+        harness.assert_durable_prefix("snapshot_created")
