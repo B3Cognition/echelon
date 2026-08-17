@@ -163,11 +163,11 @@ hash is the `run_manifest_id`. It contains:
 {
   "schema_version": 1,
   "engine": "re-v2",
-  "engine_protocol_version": "2.0",
+  "engine_protocol_version": "2.1",
   "run_id": "re-...",
   "created_at": "...",
   "source_snapshot_id": "sha256:...",
-  "source_snapshot_kind": "git-worktree|content-snapshot",
+  "source_snapshot_kind": "workspace-git-composite",
   "partition_manifest_id": "sha256:...",
   "requested_goals": [],
   "initial_budget_policy": {},
@@ -185,16 +185,23 @@ pinned engine/protocol combination or refuse with an actionable error.
 
 ### Source freezing
 
-- A clean Git source is frozen as a detached, read-only worktree at its resolved
-  commit. Submodule identities, when present, are part of the snapshot
-  manifest.
-- A dirty or non-Git source is captured into a content-addressed snapshot.
-  Implementations may use reflinks or safe hard links where immutability can be
-  guaranteed and copies otherwise.
-- The snapshot manifest records canonical relative paths, file content hashes,
-  modes relevant to analysis, exclusions, and capture implementation version.
+- Protocol `2.1` requires every declared source to be Git-backed and clean.
+  Staged, modified, untracked non-ignored, conflicted, or divergent submodule
+  state fails before run creation. Operators must commit, stash including
+  untracked files, or deliberately revert/remove the reported changes.
+- Each distinct repository is frozen once as a detached worktree at its pinned
+  commit. Declared non-overlapping subtrees are copied to their original
+  workspace-relative paths in one atomic composite snapshot. Recursive local
+  submodule commits are component identity; network fetching is forbidden.
+- The composite manifest records the sorted source ID/Git role/path/commit set,
+  per-component tree digests, canonical flat file hashes and modes, and the
+  `declared-clean-git-tree-v1` selection policy. Orchestration-root tooling,
+  ignored dependencies, and files outside declared sources are not captured.
 - Providers read only the snapshot path. They never read the mutable checkout
   from which the run was launched.
+- Protocol `2.0` remains loadable for existing immutable runs with their pinned
+  `git-worktree` or `content-snapshot` bundle. New runs do not create those
+  legacy variants, and continuation never upgrades them in place.
 
 ## Artifact and Certification Model
 

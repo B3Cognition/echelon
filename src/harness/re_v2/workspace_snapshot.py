@@ -343,10 +343,12 @@ def plan_clean_workspace_sources(
     if issues:
         detail = "\n".join(f"- {issue}" for issue in issues)
         raise ReV2WorkspaceSourceError(
-            "RE v2 requires every declared source to be Git-backed and clean.\n"
+            "RE v2 requires clean Git sources; every declared source must be "
+            "Git-backed and clean.\n"
             f"{detail}\n"
             "Commit the source changes, stash them including untracked files "
-            "(`git stash --include-untracked`), or revert/remove them before proceeding."
+            "(`git stash --include-untracked`), or revert or remove them before "
+            "proceeding. Then retry `echelon re run --engine v2`."
         )
 
     proofs = tuple(

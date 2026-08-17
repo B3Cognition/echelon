@@ -34,11 +34,42 @@ echelon re run --engine v2
 
 Both commands capture the source first, then write
 `runs/<run-id>/v2/run.json` once. That manifest pins engine `re-v2`, protocol
-`2.0`, the source snapshot and partition identities, requested goal, provider
+`2.1`, the source snapshot and partition identities, requested goal, provider
 and result contract, artifact policy, and independent initial budgets. A clean
-Git workspace is captured as a detached worktree; a dirty or non-Git workspace
-is copied into a content-addressed snapshot. Providers read that frozen path,
-not the mutable checkout.
+Git worktree is materialized for each declared source repository and published
+as one content-addressed, workspace-relative composite snapshot. Orchestration
+tooling and Git-ignored dependencies are outside that snapshot. Providers read
+the frozen composite path, not the mutable checkouts.
+
+Every declared source must be Git-backed and clean before creation. Staged or
+modified tracked files, untracked non-ignored files, uninitialized or divergent
+submodules, and non-Git source roots block the command before a run ID is
+allocated or `runs/.current-re` is changed. Resolve the diagnostic by doing one
+of the following in every reported source, then retry
+`echelon re run --engine v2`:
+
+```bash
+# Keep the work as a durable source revision.
+git add -A && git commit
+
+# Keep it locally without including it in RE; include untracked files.
+git stash --include-untracked
+
+# Or deliberately revert tracked changes and remove unwanted untracked files.
+git status --short
+git restore --staged .
+git restore .
+# Review untracked paths, then remove only the intended files.
+```
+
+Do not clean sources by blindly deleting files. Ignored files such as
+`node_modules/` do not make a source dirty and are not captured. A declaration
+or commit change requires a new run; continuation always uses the component set
+and commits pinned by the existing run.
+
+Existing protocol `2.0` runs remain supported and continue against their
+original `git-worktree` or `content-snapshot` bundle. They are not rewritten or
+upgraded to protocol `2.1`.
 
 Unless `ECHELON_HOME` is set, snapshots are under
 `~/.echelon/re-v2/snapshots/<source-snapshot-id>/`. Do not edit or recapture a

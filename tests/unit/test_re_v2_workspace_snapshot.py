@@ -103,6 +103,15 @@ def test_preflight_aggregates_dirty_sources_and_remediation(tmp_path: Path) -> N
     assert "commit" in message.lower()
     assert "stash" in message.lower() and "untracked" in message.lower()
     assert "revert" in message.lower()
+    for phrase in (
+        "RE v2 requires clean Git sources",
+        "Commit",
+        "stash",
+        "including untracked files",
+        "revert or remove",
+        "echelon re run --engine v2",
+    ):
+        assert phrase in message
 
 
 @pytest.mark.unit

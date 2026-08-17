@@ -34,6 +34,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **RE v2 declared-source snapshots** — New opt-in v2 runs use protocol `2.1`
+  and atomically snapshot only declared, clean Git source roots at pinned
+  commits. Dirty, non-Git, conflicted, or divergent-submodule sources now fail
+  before run creation with commit/stash/revert guidance; ignored dependencies
+  and orchestration tooling are excluded. Existing protocol `2.0` runs remain
+  continuable from their original pinned snapshots.
+
 - **EGR-163 truthful RE analysis** — `echelon re analyze` now reads the
   authoritative continued-run profile and active duration, reports canonical
   semantic failures as blocking, intersects repair history with current audit
