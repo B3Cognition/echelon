@@ -155,6 +155,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **EGR-164 opt-in pinned RE v2 kernel** — `echelon re run --engine v2`
+  now freezes the source, pins engine/protocol, partition, goals,
+  provider/result contract, artifact policy, and independent budgets, then
+  controller-certifies deterministic L0 source and partition inventory.
+  Durable candidates survive restart and are reconciled before replacement
+  work; hash-chained events and object-backed receipts rebuild authoritative
+  status with known/unknown token coverage and a final-state banner. Resource
+  authorization can raise only token or active-time totals, while attempt and
+  semantic limits remain fixed. RE v1 remains the default. L1-L4 producers,
+  audit, workspace synthesis, layered reuse, checkpoint adoption, and selective
+  deepening are not part of this pilot.
+
 - **Source topology foundation** — CodeGraph and PerlGraph now publish
   schema-2 evidence with stable symbol keys, exact relationship endpoints,
   explicit completeness and capability receipts, and no symbol cap. Canonical

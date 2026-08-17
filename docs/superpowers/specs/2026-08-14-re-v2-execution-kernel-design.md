@@ -2,10 +2,44 @@
 
 ## Status
 
-Approved in design review on 2026-08-14. This document defines EGR-164 and the
-stable boundaries required by EGR-165 through EGR-169. It does not implement
-those later behaviors. Existing RE v1 runs and artifacts remain supported under
-their existing contract; the v2 kernel is additive and initially opt-in.
+Implemented as the opt-in EGR-164 deterministic L0 kernel on 2026-08-17. The
+implementation range is `9248509f6707804a852bbff8a934c8891e2147f2` through
+`cd26f6fcf9eb84bef0d4b791a4f0ef5ceca07eab`. This document also defines the
+stable boundaries required by EGR-165 through EGR-170; it does not claim those
+later behaviors. Existing RE v1 runs and artifacts remain supported under their
+existing contract and v1 remains the default.
+
+Production v2 currently registers only deterministic L0 source and partition
+inventory. Layered reuse, checkpoint adoption, semantic audit, synthesis,
+selective deepening, L1-L4 producers, and atomic element repair remain later
+EGR work. The generic exact-root publication primitive is implemented, but no
+v2 synthesis producer or operator synthesis workflow is registered.
+
+### EGR-164 implementation evidence
+
+- The exact plan matrix passed 485 tests in a clean process with
+  `COLUMNS=200`; the expanded matrix, including dry-run mutation coverage,
+  passed 495 tests. Task 11's final CLI/status slice passed 118 tests and its
+  broader RE/CLI matrix passed 460.
+- The strengthened Task 12 fault/isolation slice passed 35 tests. It covers
+  snapshot creation, dispatch start, provider termination, candidate rename,
+  certification, checkpoint, generation promotion, and index replacement.
+- The truthful dispatch counts are one after `snapshot_created`, two after
+  `dispatch_started` or `provider_terminated`, and one after
+  `candidate_renamed` and every later seam. The durable-candidate cases recover
+  without redispatch, and fresh replay reproduces `projection.json` byte for
+  byte.
+- V1 creation, blocked continuation, partial publication, and status execute
+  through the real Typer and lifecycle boundaries while guards prove that no v2
+  construction path is reached. Malformed or unsupported v2 pins fail before
+  execution and preserve the filesystem.
+- `bash scripts/bash/dry-run.sh` imported all 15 RE v2 modules and passed all 9
+  bundle-validation checks, including the complete RE command surface and
+  exact `--engine`/`--shadow` routing.
+
+The pilot and recovery commands are documented in
+`docs/runbooks/re-v2-kernel-pilot.md`. Default cutover and full-quality RE still
+depend on EGR-165 through EGR-170 and the quantitative gates below.
 
 ## Context
 
@@ -392,24 +426,26 @@ this design make it possible.
 
 ## Operator Experience and Observability
 
-`echelon re status` for v2 must show, in a compact summary and machine-readable
-form:
+The implemented `echelon re status` and `echelon re status --json` views show:
 
 - engine and protocol version;
 - source snapshot and partition manifest identities;
-- requested goals and layer completion by source/domain;
+- requested goals and exact L0 accepted/required artifact counts;
 - current or next work item;
 - known tokens, unknown-token dispatches, and coverage completeness;
-- each independent budget's used, remaining, and authorized values;
+- token and active-time used, remaining, and authorized values;
+- provider, generation, semantic-round, and result-contract attempt usage by
+  work item against the authorized per-item limit;
 - artifacts reused, adopted, generated, certified, and rejected;
-- audit epoch, open findings, repair rounds, and accepted debt;
-- synthesis input-root set and publication generation;
-- pause, blocked, partial, failed, or complete reason.
+- plan counts, publication generation when present, lifecycle reason, and next
+  action; and
+- literal `not registered` values for audit and synthesis in the EGR-164 pilot.
 
-Every terminal CLI path prints a visually distinct final banner derived from
-the same authoritative state. Shadow mode additionally explains, without
-dispatching, why each item would be reused, generated, rejected, blocked, or
-scheduled.
+The human heading is the final-state banner and is derived from the same replay
+as JSON. Shadow mode additionally explains, without dispatching, why each L0
+template would be reused, generated, rejected, or blocked. Source/domain layer
+breakdown, audit epochs and debt, and synthesis input roots are follow-on
+status-schema work owned by EGR-165 through EGR-169.
 
 ## Failure Handling
 
@@ -448,30 +484,39 @@ scheduled.
 - Changing one layer/domain invalidates only its dependent subgraph.
 - Imported v1 artifacts cannot become accepted without v2 certification.
 
+EGR-164 implements and tests the canonical identity, DAG, event replay, budget,
+L0 goal-completion, and v1-isolation subset. Finding epochs, selective
+invalidation, and v1 artifact adoption remain acceptance tests for their owning
+follow-on EGRs.
+
 ### Fault-injection tests
 
-Crash or kill the controller immediately after each of:
+The implemented EGR-164 matrix crashes the controller immediately after each
+of:
 
 - snapshot creation;
-- dispatch lease and provider start;
+- dispatch start;
 - provider termination;
 - candidate rename;
 - certification receipt write;
 - checkpoint recording;
-- synthesis object write;
 - generation promotion;
 - workspace-index replacement.
 
 Recovery must neither lose certified work nor duplicate a completed dispatch.
 It must certify a durable orphan candidate before generating a replacement.
+EGR-168 adds the synthesis-object boundary when it registers synthesis.
 
 ### Compatibility tests
 
 - Existing v1 fixtures and lifecycle tests remain unchanged.
 - V1 runs never invoke v2 modules.
 - V2 rejects engine/protocol mismatches.
-- V1 artifacts enter only through candidate import and v2 recertification.
 - No v1 state field is authoritative in a v2 projection or publication.
+
+EGR-166 owns the additional proof that a v1 artifact can enter only through
+candidate import and independent v2 recertification; no such import path is
+registered by EGR-164.
 
 ## Quantitative Acceptance Gates
 
@@ -496,19 +541,22 @@ demonstrated by automated fixtures or retained-run replay:
 - Selected live pilots use fewer tokens than matched v1 goals without reducing
   certified quality outcomes.
 
-The first two, third, fourth, and fifth gates depend respectively on EGR-166,
-EGR-169, EGR-167, and EGR-168. EGR-164 must supply the deterministic fixtures
-and interfaces needed to measure them; default cutover waits until the full
-set passes.
+EGR-164 proves the resource-limit isolation, truthful token summary,
+byte-identical projection replay, and L0 shadow-explanation gates. Checkpoint
+adoption, selective deepening, bounded audit/debt, idempotent synthesis, and
+matched live-pilot efficiency depend on EGR-166, EGR-169, EGR-167, EGR-168,
+and the later pilots respectively. EGR-164 supplies their deterministic
+fixtures and interfaces; default cutover waits until the full set passes.
 
 ## Rollout
 
-1. Build and test the v2 kernel with deterministic fake providers and replay
-   fixtures.
-2. Expose explicit `--engine v2` creation while continuing existing runs from
-   their recorded engine.
-3. Run v2 in shadow-planning mode against retained v1 runs and explain every
-   proposed scheduling and reuse decision without dispatching.
+1. **Complete:** build and test the v2 kernel with deterministic providers and
+   replay fixtures.
+2. **Complete:** expose explicit `--engine v2` creation while continuing
+   existing runs from their recorded engine.
+3. **Partially complete:** shadow planning is implemented and covered by a
+   zero-dispatch fixture. Comparative shadow runs against retained v1 outcomes
+   remain pilot work.
 4. Run selected live pilots with fixed goals and compare certified outcome,
    dispatch count, tokens, convergence, and recovery behavior.
 5. Make v2 the default only after compatibility and quantitative gates pass.
